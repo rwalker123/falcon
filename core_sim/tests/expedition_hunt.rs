@@ -8,6 +8,18 @@
 //! that raid, pinned here to a real party run (fix the forecast, never the sim). The band-path guards
 //! below still pin the *resident* `hunt_take`, which this arc leaves untouched.
 
+/// **The shipped EQUIPPED haul rate** — what a kitted band drags, off the sled's own tier.
+/// `labor_config`'s `hunt.per_worker_biomass_capacity` is the *bare-handed* baseline since quality
+/// tiers landed, so a fixture that wants "an ordinary band" asks the item table.
+fn equipped_haul_rate() -> f32 {
+    core_sim::EquipmentConfig::builtin().equipped_reference(
+        core_sim::EquipmentStat::HuntCarry,
+        core_sim::LaborConfig::builtin()
+            .hunt
+            .per_worker_biomass_capacity,
+    )
+}
+
 use std::sync::Arc;
 
 use bevy::app::App;
@@ -28,13 +40,13 @@ use core_sim::{
     DiscoveryProgressLedger, Expedition, ExpeditionConfig, ExpeditionConfigHandle,
     ExpeditionMission, ExpeditionPhase, FactionId, FactionInventory, FaunaConfig,
     FaunaConfigHandle, ForageRegistry, GenerationId, GenerationRegistry, Herd, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, HuntDraw, HuntTripBound, LaborAllocation, LaborConfig,
-    LaborConfigHandle, LadderConfig, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
-    MoraleCause, PopulationCohort, ResidentBand, Scalar, SimulationConfig, SimulationTick,
-    SizeClass, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
-    TileRegistry, VisibilityConfig, VisibilityConfigHandle, VisibilityLedger,
-    WellbeingConfigHandle, FOOD, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
+    HerdRegistry, HerdTelemetry, HuntDraw, HuntTripBound, LaborAllocation, LaborConfigHandle,
+    LadderConfig, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause,
+    PopulationCohort, ResidentBand, Scalar, SimulationConfig, SimulationTick, SizeClass,
+    SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
+    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
+    VisibilityConfig, VisibilityConfigHandle, VisibilityLedger, WellbeingConfigHandle, FOOD,
+    NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
 
 /// Party size used by every trip test: 4 hunters (the design's reference party).
@@ -125,6 +137,8 @@ fn spawn_world() -> App {
         .insert_resource(core_sim::CreaturesConfigHandle::default());
     app.world
         .insert_resource(core_sim::EquipmentConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::MaterialsConfigHandle::default());
     app.world.insert_resource(ExpeditionConfigHandle::default());
     app.world
         .insert_resource(VisibilityConfigHandle::new(VisibilityConfig::builtin()));
@@ -269,11 +283,11 @@ fn spawn_home_band(app: &mut App, herd_pos: UVec2) -> bevy::prelude::Entity {
             cohort(tile, 10),
             ResidentBand,
             // Addressable + kitted, so the pre-launch estimate can be ASKED for through the
-            // same query the client uses (`pre_launch_delivery`). `BandEquipment::default()` is
+            // same query the client uses (`pre_launch_delivery`). `BandEquipment::start_stocked(&core_sim::EquipmentConfig::builtin())` is
             // zero wear, which is the condition the retired estimate tables assumed of every
             // band; here it is stated rather than assumed.
             BandId(FIXTURE_BAND_ID),
-            BandEquipment::default(),
+            BandEquipment::start_stocked(&core_sim::EquipmentConfig::builtin()),
         ))
         .id()
 }
@@ -292,11 +306,11 @@ fn spawn_home_band_same_row(app: &mut App, herd_pos: UVec2) -> bevy::prelude::En
             cohort(tile, 10),
             ResidentBand,
             // Addressable + kitted, so the pre-launch estimate can be ASKED for through the
-            // same query the client uses (`pre_launch_delivery`). `BandEquipment::default()` is
+            // same query the client uses (`pre_launch_delivery`). `BandEquipment::start_stocked(&core_sim::EquipmentConfig::builtin())` is
             // zero wear, which is the condition the retired estimate tables assumed of every
             // band; here it is stated rather than assumed.
             BandId(FIXTURE_BAND_ID),
-            BandEquipment::default(),
+            BandEquipment::start_stocked(&core_sim::EquipmentConfig::builtin()),
         ))
         .id()
 }
@@ -514,9 +528,9 @@ const PARITY_PARTY: u32 = 5;
 #[test]
 fn a_raid_and_a_resident_band_reach_the_same_animals() {
     let fauna = deterministic_fauna();
-    let labor = LaborConfig::builtin();
+
     let cfg = unbounded_carry_config();
-    let per_worker = labor.hunt.per_worker_biomass_capacity;
+    let per_worker = equipped_haul_rate();
     // A full herd: at `B == K` regrowth is zero, so the raid's first simulated turn sees exactly the
     // herd the band does and the two are comparable turn-for-turn.
     let herd = wild_herd_of("Red Deer", DEER_K, DEER_K, DEER_BODY, BOAR_R);
@@ -546,7 +560,7 @@ fn a_raid_and_a_resident_band_reach_the_same_animals() {
         &herd,
         PEAK_FLOOR,
         &fauna,
-        labor.hunt.per_worker_biomass_capacity,
+        equipped_haul_rate(),
         &cfg,
         &hunting_party(),
     );
@@ -590,7 +604,7 @@ fn unbounded_carry_config() -> Arc<ExpeditionConfig> {
 #[test]
 fn more_hunters_raid_the_surplus_faster() {
     let fauna = deterministic_fauna();
-    let labor = LaborConfig::builtin();
+
     let cfg = unbounded_carry_config();
     let herd = wild_herd(1010.0, BOAR_K, BOAR_BODY, BOAR_R);
     // **The sweep starts at the crew that can bring one boar down, not at 1.** Below it the raid takes
@@ -609,7 +623,7 @@ fn more_hunters_raid_the_surplus_faster() {
             &herd,
             0.5,
             &fauna,
-            labor.hunt.per_worker_biomass_capacity,
+            equipped_haul_rate(),
             &cfg,
             &hunting_party(),
         );
@@ -631,7 +645,7 @@ fn more_hunters_raid_the_surplus_faster() {
         &herd,
         0.5,
         &fauna,
-        labor.hunt.per_worker_biomass_capacity,
+        equipped_haul_rate(),
         &cfg,
         &hunting_party(),
     );
@@ -640,7 +654,7 @@ fn more_hunters_raid_the_surplus_faster() {
         &herd,
         0.5,
         &fauna,
-        labor.hunt.per_worker_biomass_capacity,
+        equipped_haul_rate(),
         &cfg,
         &hunting_party(),
     );
@@ -658,7 +672,7 @@ fn more_hunters_raid_the_surplus_faster() {
 #[test]
 fn a_second_hunter_raids_more_animals_no_slower() {
     let fauna = deterministic_fauna();
-    let labor = LaborConfig::builtin();
+
     let cfg = ExpeditionConfig::builtin(); // pack = party × per_worker_carry (4 food = 4 boar)
     let herd = wild_herd(1010.0, BOAR_K, BOAR_BODY, BOAR_R);
     // The smallest crew that can bring one boar down — see `hunters_to_bring_one_down`. "A second
@@ -671,7 +685,7 @@ fn a_second_hunter_raids_more_animals_no_slower() {
             &herd,
             0.5,
             &fauna,
-            labor.hunt.per_worker_biomass_capacity,
+            equipped_haul_rate(),
             &cfg,
             &hunting_party(),
         );
@@ -686,7 +700,7 @@ fn a_second_hunter_raids_more_animals_no_slower() {
         &herd,
         0.5,
         &fauna,
-        labor.hunt.per_worker_biomass_capacity,
+        equipped_haul_rate(),
         &cfg,
         &hunting_party(),
     );
@@ -695,7 +709,7 @@ fn a_second_hunter_raids_more_animals_no_slower() {
         &herd,
         0.5,
         &fauna,
-        labor.hunt.per_worker_biomass_capacity,
+        equipped_haul_rate(),
         &cfg,
         &hunting_party(),
     );
@@ -723,7 +737,7 @@ fn a_second_hunter_raids_more_animals_no_slower() {
 #[test]
 fn animals_delivered_scale_with_the_pack_and_never_over_kill() {
     let fauna = deterministic_fauna();
-    let labor = LaborConfig::builtin();
+
     let cfg = ExpeditionConfig::builtin(); // pack = workers × per_worker_carry (0.8 food/worker)
                                            // Marsh Grazer: body 100 ⇒ food/animal = 100 × 0.02 = 2; a full 6000-K herd stands 3000 (30 animals)
                                            // of surplus above K/2 — vastly more than any legal party's pack, so every size is pack-limited.
@@ -740,7 +754,7 @@ fn animals_delivered_scale_with_the_pack_and_never_over_kill() {
             &herd,
             0.5,
             &fauna,
-            labor.hunt.per_worker_biomass_capacity,
+            equipped_haul_rate(),
             &cfg,
             &hunting_party(),
         );
@@ -765,7 +779,7 @@ fn animals_delivered_scale_with_the_pack_and_never_over_kill() {
 #[test]
 fn a_sustain_raid_leaves_about_half_k() {
     let fauna = deterministic_fauna();
-    let labor = LaborConfig::builtin();
+
     let cfg = unbounded_carry_config();
     let herd = wild_herd(BOAR_K, BOAR_K, BOAR_BODY, BOAR_R);
 
@@ -774,7 +788,7 @@ fn a_sustain_raid_leaves_about_half_k() {
         &herd,
         0.5,
         &fauna,
-        labor.hunt.per_worker_biomass_capacity,
+        equipped_haul_rate(),
         &cfg,
         &hunting_party(),
     );
@@ -816,7 +830,7 @@ fn fauna_msy(_fauna: &FaunaConfig, cap: f32, r: f32) -> f32 {
 #[test]
 fn deeper_policies_raid_deeper() {
     let fauna = deterministic_fauna();
-    let labor = LaborConfig::builtin();
+
     let cfg = unbounded_carry_config();
     let herd = wild_herd(BOAR_K, BOAR_K, BOAR_BODY, BOAR_R);
 
@@ -826,7 +840,7 @@ fn deeper_policies_raid_deeper() {
             &herd,
             p,
             &fauna,
-            labor.hunt.per_worker_biomass_capacity,
+            equipped_haul_rate(),
             &cfg,
             &hunting_party(),
         )
@@ -857,7 +871,7 @@ fn deeper_policies_raid_deeper() {
 #[test]
 fn the_standing_surplus_caps_the_raid() {
     let fauna = deterministic_fauna();
-    let labor = LaborConfig::builtin();
+
     let cfg = unbounded_carry_config();
     let herd = wild_herd(1010.0, BOAR_K, BOAR_BODY, BOAR_R);
 
@@ -866,7 +880,7 @@ fn the_standing_surplus_caps_the_raid() {
         &herd,
         0.5,
         &fauna,
-        labor.hunt.per_worker_biomass_capacity,
+        equipped_haul_rate(),
         &cfg,
         &hunting_party(),
     );
@@ -875,7 +889,7 @@ fn the_standing_surplus_caps_the_raid() {
         &herd,
         0.5,
         &fauna,
-        labor.hunt.per_worker_biomass_capacity,
+        equipped_haul_rate(),
         &cfg,
         &hunting_party(),
     );
@@ -899,7 +913,7 @@ fn the_standing_surplus_caps_the_raid() {
 #[test]
 fn a_herd_at_its_floor_has_no_surplus() {
     let fauna = deterministic_fauna();
-    let labor = LaborConfig::builtin();
+
     let cfg = unbounded_carry_config();
     // Exactly at Sustain's K/2 floor → no surplus.
     let herd = wild_herd(BOAR_K * 0.5, BOAR_K, BOAR_BODY, BOAR_R);
@@ -909,7 +923,7 @@ fn a_herd_at_its_floor_has_no_surplus() {
         &herd,
         0.5,
         &fauna,
-        labor.hunt.per_worker_biomass_capacity,
+        equipped_haul_rate(),
         &cfg,
         &hunting_party(),
     );
@@ -929,7 +943,7 @@ fn a_herd_at_its_floor_has_no_surplus() {
         &collapsing,
         0.5,
         &fauna,
-        labor.hunt.per_worker_biomass_capacity,
+        equipped_haul_rate(),
         &cfg,
         &hunting_party(),
     );
@@ -959,7 +973,7 @@ fn a_herd_at_its_floor_has_no_surplus() {
 #[test]
 fn a_small_party_on_a_big_animal_delivers_a_partial_with_waste() {
     let fauna = deterministic_fauna();
-    let labor = LaborConfig::builtin();
+
     let cfg = ExpeditionConfig::builtin(); // pack = workers × per_worker_carry (4 food/worker = 200 biomass)
     const MAMMOTH_BODY: f32 = 800.0; // 16 food; a 1-worker pack (200 biomass) seats 0 whole
     const MAMMOTH_K: f32 = 15600.0;
@@ -983,7 +997,7 @@ fn a_small_party_on_a_big_animal_delivers_a_partial_with_waste() {
         &herd,
         0.5,
         &fauna,
-        labor.hunt.per_worker_biomass_capacity,
+        equipped_haul_rate(),
         &cfg,
         &hunting_party(),
     );
@@ -1021,7 +1035,7 @@ fn a_small_party_on_a_big_animal_delivers_a_partial_with_waste() {
         &at_floor,
         0.5,
         &fauna,
-        labor.hunt.per_worker_biomass_capacity,
+        equipped_haul_rate(),
         &cfg,
         &hunting_party(),
     );
@@ -1092,7 +1106,7 @@ fn the_raid_forecast_matches_a_real_party_run() {
             let (herd_pos, _before, _cap) = seed_herd(&mut app, &id, cap_fraction);
             let home = spawn_home_band(&mut app, herd_pos);
 
-            let (fauna, labor, cfg) = (
+            let (fauna, _labor, cfg) = (
                 app.world.resource::<FaunaConfigHandle>().get(),
                 app.world.resource::<LaborConfigHandle>().get(),
                 expedition_config(&app),
@@ -1104,7 +1118,7 @@ fn the_raid_forecast_matches_a_real_party_run() {
                     herd,
                     policy,
                     &fauna,
-                    labor.hunt.per_worker_biomass_capacity,
+                    equipped_haul_rate(),
                     &cfg,
                     &hunting_party(),
                 )
@@ -1293,7 +1307,7 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                         herd,
                         &fauna,
                         &LadderConfig::builtin(),
-                        labor.hunt.per_worker_biomass_capacity,
+                        equipped_haul_rate(),
                         &hunting_party(),
                         output_multiplier,
                         workers,
@@ -1323,7 +1337,7 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                     workers,
                     policy,
                     NO_IMPROVEMENT_UNDERWAY,
-                    labor.hunt.per_worker_biomass_capacity,
+                    equipped_haul_rate(),
                     &hunting_party(),
                     &fauna,
                     &LadderConfig::builtin(),
@@ -1964,11 +1978,11 @@ fn spawn_home_band_near_herd(
             cohort(tile, 10),
             ResidentBand,
             // Addressable + kitted, so the pre-launch estimate can be ASKED for through the
-            // same query the client uses (`pre_launch_delivery`). `BandEquipment::default()` is
+            // same query the client uses (`pre_launch_delivery`). `BandEquipment::start_stocked(&core_sim::EquipmentConfig::builtin())` is
             // zero wear, which is the condition the retired estimate tables assumed of every
             // band; here it is stated rather than assumed.
             BandId(FIXTURE_BAND_ID),
-            BandEquipment::default(),
+            BandEquipment::start_stocked(&core_sim::EquipmentConfig::builtin()),
         ))
         .id()
 }
@@ -2144,7 +2158,7 @@ const FOWL_RAID_DRIVE_LIMIT: u32 = 40;
 #[test]
 fn a_raids_length_is_invariant_in_party_size_while_its_payload_is_not() {
     let fauna = deterministic_fauna();
-    let labor = LaborConfig::builtin();
+
     let cfg = ExpeditionConfig::builtin();
     let flock = wild_herd_of("Wild Fowl", FOWL_K, FOWL_K, FOWL_BODY, FOWL_R);
     let raid_for = |workers: u32| {
@@ -2153,7 +2167,7 @@ fn a_raids_length_is_invariant_in_party_size_while_its_payload_is_not() {
             &flock,
             PEAK_FLOOR,
             &fauna,
-            labor.hunt.per_worker_biomass_capacity,
+            equipped_haul_rate(),
             &cfg,
             &hunting_party(),
         )
@@ -2403,7 +2417,7 @@ fn a_floor_zero_raid_reports_the_turn_the_herd_runs_out() {
     );
     let forecast = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
-        let labor = app.world.resource::<LaborConfigHandle>().get();
+
         let cfg = expedition_config(&app);
         let registry = app.world.resource::<HerdRegistry>();
         let herd = registry.find(&id).expect("the herd is alive");
@@ -2412,7 +2426,7 @@ fn a_floor_zero_raid_reports_the_turn_the_herd_runs_out() {
             herd,
             STRIP_IT_BARE,
             &fauna,
-            labor.hunt.per_worker_biomass_capacity,
+            equipped_haul_rate(),
             &cfg,
             &hunting_party(),
         )
@@ -2458,7 +2472,7 @@ fn a_floor_zero_raid_reports_the_turn_the_herd_runs_out() {
     );
     let unfinished = {
         let fauna = endless.world.resource::<FaunaConfigHandle>().get();
-        let labor = endless.world.resource::<LaborConfigHandle>().get();
+
         let cfg = expedition_config(&endless);
         let registry = endless.world.resource::<HerdRegistry>();
         let herd = registry.find(&endless_id).expect("the warren is alive");
@@ -2467,7 +2481,7 @@ fn a_floor_zero_raid_reports_the_turn_the_herd_runs_out() {
             herd,
             PEAK_FLOOR,
             &fauna,
-            labor.hunt.per_worker_biomass_capacity,
+            equipped_haul_rate(),
             &cfg,
             &hunting_party(),
         )

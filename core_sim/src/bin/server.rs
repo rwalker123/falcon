@@ -29,13 +29,13 @@ use core_sim::{
     apply_port_base, available_workers, floor_is_valid, forage_source_yield_preview,
     hunt_source_yield_preview, knows, load_simulation_config_for_new_world, output_multiplier,
     resolve_active_profile, resolve_committed_species, rung_site_refusal, tile_flora_composition,
-    tile_is_fresh_watered, ActiveStartProfile, BandEquipment, BandTravel, BeatCatalogHandle,
-    BeatConfigHandle, BeatLedger, CampaignLabel, CombatConfigHandle, CreaturesConfigHandle,
-    Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FloraConfigHandle,
-    FoodModuleTag, ForkAnswerError, HuntingParty, KitChoice, KitJob, LaborAllocation, LaborTarget,
-    LadderConfigHandle, LocalStore, ResidentBand, RungKey, SiteRefusal, SpeciesRefusal,
-    StartProfile, StartProfileOverrides, WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR,
-    NO_FORAGE_SEASON,
+    tile_is_fresh_watered, ActiveStartProfile, BandBench, BandEquipment, BandTravel, BandWorkforce,
+    BeatCatalogHandle, BeatConfigHandle, BeatLedger, CampaignLabel, CombatConfigHandle,
+    CreaturesConfigHandle, Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase,
+    FloraConfigHandle, FoodModuleTag, ForkAnswerError, HuntingParty, KitChoice, KitJob,
+    LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore, MaterialsConfigHandle,
+    RecipesConfigHandle, ResidentBand, RungKey, SiteRefusal, SpeciesRefusal, StartProfile,
+    StartProfileOverrides, WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
@@ -61,7 +61,8 @@ use core_sim::{
 use sim_runtime::{
     commands::{
         query_error, ConfigOverrideKind, EspionageGeneratorUpdate as CommandGeneratorUpdate,
-        QueryPayload, QueryReply, QueryReplyEnvelope, ReloadConfigKind, MAX_PROTO_FRAME,
+        QueryPayload, QueryReply, QueryReplyEnvelope, ReloadConfigKind, BENCH_CREW_UNSPECIFIED,
+        MAX_PROTO_FRAME,
     },
     CancelScope, CommandEnvelope as ProtoCommandEnvelope, CommandPayload as ProtoCommandPayload,
     OrdersDirective as ProtoOrdersDirective, SecurityPolicyKind, TerrainTags,
@@ -606,6 +607,26 @@ enum Command {
         faction: FactionId,
         target_x: u32,
         target_y: u32,
+    },
+    /// Put a recipe on a band's crafting bench and draw idle workers onto it. See
+    /// `handle_set_bench` — **make IS the assignment**, so there is no Crafter role card and no
+    /// `LaborTarget` variant.
+    SetBench {
+        faction: FactionId,
+        band_id: Option<u64>,
+        recipe_id: String,
+        workers: u32,
+    },
+    /// Take the job off a band's bench and hand its crew back.
+    ClearBench {
+        faction: FactionId,
+        band_id: Option<u64>,
+    },
+    /// Re-crew a band's running bench, leaving the job and its progress alone.
+    BenchCrew {
+        faction: FactionId,
+        band_id: Option<u64>,
+        workers: u32,
     },
     CancelOrder {
         faction: FactionId,
@@ -1865,6 +1886,13 @@ fn seed_source_yield(
                 &tile_composition,
                 &labor.forage,
                 &flora,
+                // A rung-3 Field's collection cap is quoted at the EQUIPPED reference rate, not at
+                // this crew's basket tier — the same seam `advance_labor_allocation` reads, so the
+                // seed and the resolved row agree (`equipment.md` → "What is NOT wired yet").
+                equipment_cfg.equipped_reference(
+                    core_sim::EquipmentStat::ForageCarry,
+                    labor.forage.per_worker_biomass_capacity,
+                ),
                 &ladder,
                 per_worker_biomass,
                 seasonal,
@@ -2733,11 +2761,12 @@ fn handle_assign_labor(
         return;
     };
 
-    let available = app
-        .world
-        .get::<PopulationCohort>(band.entity)
-        .map(|cohort| available_workers(cohort.working))
-        .unwrap_or(0);
+    // **The bench's crew is off the table.** `Make` draws idle workers onto a recipe, so a band with
+    // four hands at the bench has four fewer to send anywhere — see [`BandWorkforce::assignable`],
+    // which nets the bench out for the command path and the published `idleWorkers` alike. Not
+    // modelled as a `LaborTarget` because a bench is not an in-range source, and giving it one would
+    // put a fictitious row on every yield readout in the game.
+    let available = band_workforce(app, band.entity).assignable();
 
     let kind_label = target.kind();
     let (applied, assigned_total, improvement) = {
@@ -2965,12 +2994,14 @@ fn handle_send_expedition(
             LaborAllocation::default(),
             // **The party leaves OUTFITTED** — a detached party is a band in its own right, so it
             // carries the same full kit a band spawns with, and `advance_expeditions` then **wears**
-            // it: `BandEquipment::wear_hunting` per animal killed and `wear_sled` per unit hauled,
-            // charged on a scout's opportunistic roadside kill exactly as on a raid's take
+            // it: the hunting kit per animal killed and the sled per unit hauled, charged on a
+            // scout's opportunistic roadside kill exactly as on a raid's take
             // (`.claude/rules/core_sim/equipment.md`). Without the component there would be nothing
             // for that wear to land on, and the party would publish a dry kit beside an equipped
-            // haul rate — a contradiction on the wire.
-            BandEquipment::default(),
+            // haul rate — a contradiction on the wire. **Stated rather than defaulted**: an absent
+            // ledger entry means NOT OWNED since the count slice, so `Default` would send the party
+            // out bare-handed.
+            outfitted_party_equipment(app),
             StartingUnit::new(unit_kind, unit_tags),
             Expedition {
                 home_band: band.entity,
@@ -3130,6 +3161,20 @@ fn outfit_raiding_party(
     })
 }
 
+/// **What a detached party leaves outfitted with** — one unworn unit of every item some kit
+/// carries, exactly as a band spawns.
+///
+/// One helper for both outfitting paths, because *"a party leaves outfitted"* is one fact: two
+/// call sites reaching for the ledger separately is how one of them ends up sending a bare-handed
+/// raid out under a kitted forecast.
+fn outfitted_party_equipment(app: &bevy::prelude::App) -> BandEquipment {
+    BandEquipment::start_stocked_owned(
+        &app.world.resource::<EquipmentConfigHandle>().get(),
+        &app.world.resource::<RecipesConfigHandle>().get(),
+        &app.world.resource::<MaterialsConfigHandle>().get(),
+    )
+}
+
 /// **The party a launch forecast is quoted for** — the kit the player is sending it with, over a
 /// **fresh** set of components ([`BandEquipment::default`] is zero wear), because the party leaves
 /// outfitted and that is the tier it will fight its first turns at. Wear is what moves it later, and
@@ -3150,7 +3195,7 @@ fn launch_forecast_party(
     let combat = app.world.resource::<CombatConfigHandle>().get();
     // A fresh ledger: the launch line quotes the KIT the party is being sent with, before it has worn
     // any of it. The party's own wear then moves its tiers turn by turn once it is in flight.
-    let fresh = BandEquipment::default();
+    let fresh = BandEquipment::start_stocked(&equipment_cfg);
     HuntingParty {
         hunter: equipment_cfg.hunter_profile_against(
             app.world.resource::<CreaturesConfigHandle>().get().person(),
@@ -3171,13 +3216,14 @@ fn launch_forecast_party(
 /// party that kills nothing and drags it home fast.
 fn launch_forecast_haul(app: &bevy::prelude::App, kit: &KitChoice) -> f32 {
     let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-    let equipped_rate = app
+    let baseline_rate = app
         .world
         .resource::<LaborConfigHandle>()
         .get()
         .hunt
         .per_worker_biomass_capacity;
-    equipment_cfg.hunt_per_worker_biomass_capacity(equipped_rate, kit, &BandEquipment::default())
+    let fresh = BandEquipment::start_stocked(&equipment_cfg);
+    equipment_cfg.hunt_per_worker_biomass_capacity(baseline_rate, kit, &fresh)
 }
 
 /// Resolve the kit a raiding verb was given, or refuse the launch with a reason.
@@ -3357,7 +3403,8 @@ fn launch_detached_party(
             cohort,
             expedition_band_id,
             LaborAllocation::default(),
-            BandEquipment::default(),
+            // **Outfitted, stated rather than defaulted** — see the scout's spawn above.
+            outfitted_party_equipment(app),
             StartingUnit::new(unit_kind, unit_tags),
             Expedition {
                 home_band: band.entity,
@@ -3959,7 +4006,7 @@ fn cancel_party_standing_in_camp(
     if party_owes_a_report(&expedition) {
         return None;
     }
-    let party = app.world.get::<PopulationCohort>(entity)?.clone();
+    let mut party = app.world.get::<PopulationCohort>(entity)?.clone();
     let position = app.world.get::<Tile>(party.current_tile)?.position;
     let home_tile = app
         .world
@@ -3972,7 +4019,7 @@ fn cancel_party_standing_in_camp(
     let mut home = app
         .world
         .get_mut::<PopulationCohort>(expedition.home_band)?;
-    let banked_trade = fold_party_into_band(&party, &mut expedition, &mut home);
+    let banked_trade = fold_party_into_band(&mut party, &mut expedition, &mut home);
     Some(CancelledInCamp {
         position,
         banked_trade,
@@ -4805,6 +4852,245 @@ fn handle_abandon_improvement(
             "status=abandoned action=abandon_improvement improvement={} bands={}",
             improvement.as_str(),
             cleared
+        )),
+    );
+}
+
+/// **A band's head-count, read off the world for a command to clamp against.**
+///
+/// The arithmetic lives on [`BandWorkforce`] — the one authority, shared with the snapshot that
+/// publishes `idleWorkers` — so a command and the readout the player sized it against can never
+/// disagree about who is free. This is only the ECS lookup.
+fn band_workforce(app: &bevy::prelude::App, band: Entity) -> BandWorkforce {
+    BandWorkforce::resolve(
+        app.world.get::<PopulationCohort>(band),
+        app.world.get::<LaborAllocation>(band),
+        app.world.get::<BandBench>(band),
+    )
+}
+
+/// The band's bench, inserted on demand so a band spawned before the component existed still has
+/// one — the same shape `band_allocation_mut` uses for the labor allocation.
+fn band_bench_mut(app: &mut bevy::prelude::App, band: Entity) -> bevy::prelude::Mut<'_, BandBench> {
+    if app.world.get::<BandBench>(band).is_none() {
+        app.world.entity_mut(band).insert(BandBench::default());
+    }
+    app.world
+        .get_mut::<BandBench>(band)
+        .expect("bench inserted above")
+}
+
+/// **Put a recipe on a band's bench and draw idle workers onto it** — `set_bench <faction> <band>
+/// recipe <id> [workers <n>]`.
+///
+/// Two refusals, both **command failures with a reason** rather than silent no-ops, for the same
+/// reason an unknown kit id is one: the player is choosing between recipes, so a quiet substitution
+/// or a quiet nothing answers a different question than the one asked.
+///
+/// - an id the book does not carry, and
+/// - a recipe whose `requires_knowledge` this faction has not learned — which is only ever a **tool**
+///   (see `recipes.json`), so *"you cannot build a loom yet"* is a sentence the player is told, not
+///   a bench that sits there doing nothing.
+///
+/// **There is no third refusal for material.** A band that is short simply makes no progress — the
+/// draw takes nothing and the turn is a no-op — which is `docs/plan_crafting_and_materials.md` §5's
+/// *"no 'you cannot craft that' branch in the sim"*: the panel names the shortfall, the sim just
+/// does not move.
+///
+/// **The crew is the player's to name, never the sim's to guess** — see [`BENCH_CREW_UNSPECIFIED`]
+/// at the clamp below. Naming no crew leaves the crew where it is; `bench_crew` is what takes a
+/// number.
+fn handle_set_bench(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: Option<u64>,
+    recipe_id: &str,
+    workers: u32,
+) {
+    let event_kind = CommandEventKind::Craft;
+    let recipes = app.world.resource::<RecipesConfigHandle>().get();
+    let Some(recipe) = recipes.recipe(recipe_id) else {
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!(
+                "set_bench: unknown recipe '{recipe_id}' — the book offers {}.",
+                recipes.recipe_ids_for_message()
+            ),
+        );
+        return;
+    };
+    let threshold = app
+        .world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .knowledge
+        .completion_threshold;
+    let unknown_craft = {
+        let ledger = app.world.resource::<DiscoveryProgressLedger>();
+        recipe
+            .requires_knowledge
+            .iter()
+            .find(|craft| {
+                core_sim::crafting::craft_discovery_id(craft)
+                    .is_none_or(|id| !knows(ledger, faction, id, threshold))
+            })
+            .cloned()
+    };
+    if let Some(craft) = unknown_craft {
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!(
+                "set_bench: {} needs {craft}, which this people has not learned — a craft is \
+                 learned by practising it bare-handed.",
+                recipe.display_name
+            ),
+        );
+        return;
+    }
+    let display_name = recipe.display_name.clone();
+
+    let Some(band) = select_starting_band(app, faction, band_id, "set_bench", event_kind) else {
+        return;
+    };
+    // The band's OWN crew stays on the bench while the job is swapped, so the pool this is clamped
+    // against is the free hands PLUS the crew already standing there — [`BandWorkforce::benchable`],
+    // which is the one place that decides not to count them twice.
+    let benchable = band_workforce(app, band.entity).benchable();
+    // **A crew of zero changes nothing about the crew.** The command arrives over a proto3 scalar,
+    // which cannot tell an absent `workers` from an explicit `0`, and the client sends neither —
+    // so this verb keeps whoever is already standing at the bench and recruits nobody. An idle
+    // bench therefore stages at zero and the player staffs it, which is the point: labor is the
+    // scarce currency and dividing the band is the decision the game is made of, so the one number
+    // the sim must not pick is how many hands stop hunting. `bench_crew <n>` sets the crew, zero
+    // included, so no reachable intent is lost.
+    let standing = band_bench_mut(app, band.entity).workers;
+    let applied = if workers == BENCH_CREW_UNSPECIFIED {
+        standing.min(benchable)
+    } else {
+        workers.min(benchable)
+    };
+    {
+        let mut bench = band_bench_mut(app, band.entity);
+        bench.set_job(recipe_id, applied);
+    }
+    let tick = app.world.resource::<SimulationTick>().0;
+    let clamp_note = if applied < workers {
+        format!(" (clamped from {workers} — the band has only {benchable} hands off other work)")
+    } else {
+        String::new()
+    };
+    push_command_event(
+        app,
+        tick,
+        event_kind,
+        faction,
+        format!(
+            "{} is making {display_name} x{applied}{clamp_note}",
+            band.label
+        ),
+        Some(format!(
+            "status=applied action=set_bench recipe={recipe_id} workers={applied} \
+             benchable={benchable}"
+        )),
+    );
+}
+
+/// **Take the job off a band's bench** — `clear_bench <faction> <band>`. The crew returns to the
+/// idle pool.
+///
+/// **Materials already drawn for the pass in flight are spent.** They were cut for the thing the
+/// player has just stopped making, and the store has no representation for a half-worked pile; the
+/// command's help text says so rather than the sim pretending otherwise.
+fn handle_clear_bench(app: &mut bevy::prelude::App, faction: FactionId, band_id: Option<u64>) {
+    let event_kind = CommandEventKind::Craft;
+    let Some(band) = select_starting_band(app, faction, band_id, "clear_bench", event_kind) else {
+        return;
+    };
+    let running = {
+        let mut bench = band_bench_mut(app, band.entity);
+        let running = bench.recipe_id.clone();
+        bench.clear_job();
+        running
+    };
+    let Some(recipe_id) = running else {
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!("clear_bench: {} has nothing on its bench.", band.label),
+        );
+        return;
+    };
+    let tick = app.world.resource::<SimulationTick>().0;
+    push_command_event(
+        app,
+        tick,
+        event_kind,
+        faction,
+        format!("{} stopped making {recipe_id}", band.label),
+        Some(format!(
+            "status=cleared action=clear_bench recipe={recipe_id}"
+        )),
+    );
+}
+
+/// **Re-crew a band's running bench** — `bench_crew <faction> <band> workers <n>`. The job and its
+/// progress are untouched, exactly as `assign_labor` leaves an improvement in flight alone: editing
+/// the crew is a crew-side edit and must not restart a build the player committed to.
+fn handle_bench_crew(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: Option<u64>,
+    workers: u32,
+) {
+    let event_kind = CommandEventKind::Craft;
+    let Some(band) = select_starting_band(app, faction, band_id, "bench_crew", event_kind) else {
+        return;
+    };
+    if app
+        .world
+        .get::<BandBench>(band.entity)
+        .is_none_or(|bench| !bench.is_running())
+    {
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!("bench_crew: {} has nothing on its bench.", band.label),
+        );
+        return;
+    }
+    // Same ceiling `set_bench` clamps against, and for the same reason: the crew already on the
+    // bench is being re-set, not added to.
+    let benchable = band_workforce(app, band.entity).benchable();
+    // **Zero is an order here, not a question.** This verb exists to name a crew, so it is the one
+    // way to stand the bench down without taking the job off it — the opposite reading from
+    // `set_bench`'s [`BENCH_CREW_UNSPECIFIED`].
+    let applied = workers.min(benchable);
+    let recipe_id = {
+        let mut bench = band_bench_mut(app, band.entity);
+        bench.workers = applied;
+        bench.recipe_id.clone().unwrap_or_default()
+    };
+    let tick = app.world.resource::<SimulationTick>().0;
+    let clamp_note = if applied < workers {
+        format!(" (clamped from {workers} — the band has only {benchable} hands off other work)")
+    } else {
+        String::new()
+    };
+    push_command_event(
+        app,
+        tick,
+        event_kind,
+        faction,
+        format!("{} bench crew x{applied}{clamp_note}", band.label),
+        Some(format!(
+            "status=applied action=bench_crew recipe={recipe_id} workers={applied} \
+             benchable={benchable}"
         )),
     );
 }
@@ -5820,6 +6106,33 @@ fn command_from_payload(
             target_x,
             target_y,
         }),
+        ProtoCommandPayload::SetBench {
+            faction_id,
+            band_id,
+            recipe_id,
+            workers,
+        } => Some(Command::SetBench {
+            faction: FactionId(faction_id),
+            band_id: Some(band_id),
+            recipe_id,
+            workers,
+        }),
+        ProtoCommandPayload::ClearBench {
+            faction_id,
+            band_id,
+        } => Some(Command::ClearBench {
+            faction: FactionId(faction_id),
+            band_id: Some(band_id),
+        }),
+        ProtoCommandPayload::BenchCrew {
+            faction_id,
+            band_id,
+            workers,
+        } => Some(Command::BenchCrew {
+            faction: FactionId(faction_id),
+            band_id: Some(band_id),
+            workers,
+        }),
         ProtoCommandPayload::CancelOrder {
             faction_id,
             band_id,
@@ -6172,6 +6485,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::Cultivate => "Cultivate",
         CommandEventKind::Sow => "Sow",
         CommandEventKind::Corral => "Corral",
+        CommandEventKind::Craft => "Craft",
         CommandEventKind::HuntDanger => "Dangerous hunt",
         CommandEventKind::HuntReport => "Hunt report",
         CommandEventKind::PredatorRaid => "Predator raid",
@@ -6647,6 +6961,24 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
             target_y,
         } => {
             handle_extend_pen(app, faction, UVec2::new(target_x, target_y));
+        }
+        Command::SetBench {
+            faction,
+            band_id,
+            recipe_id,
+            workers,
+        } => {
+            handle_set_bench(app, faction, band_id, &recipe_id, workers);
+        }
+        Command::ClearBench { faction, band_id } => {
+            handle_clear_bench(app, faction, band_id);
+        }
+        Command::BenchCrew {
+            faction,
+            band_id,
+            workers,
+        } => {
+            handle_bench_crew(app, faction, band_id, workers);
         }
         Command::CancelOrder {
             faction,
@@ -7171,6 +7503,27 @@ fn handle_rollback(
 
 #[cfg(test)]
 mod tests {
+    /// **The shipped EQUIPPED haul rate** — off the sled's own tier. `labor_config`'s
+    /// `hunt.per_worker_biomass_capacity` is the *bare-handed* baseline since quality tiers landed.
+    fn equipped_haul_reference() -> f32 {
+        core_sim::EquipmentConfig::builtin().equipped_reference(
+            core_sim::EquipmentStat::HuntCarry,
+            core_sim::LaborConfig::builtin()
+                .hunt
+                .per_worker_biomass_capacity,
+        )
+    }
+
+    /// The gather twin of [`equipped_haul_reference`] — the baskets' own tier.
+    fn equipped_gather_reference() -> f32 {
+        core_sim::EquipmentConfig::builtin().equipped_reference(
+            core_sim::EquipmentStat::ForageCarry,
+            core_sim::LaborConfig::builtin()
+                .forage
+                .per_worker_biomass_capacity,
+        )
+    }
+
     use super::*;
     use bevy::math::UVec2;
     // The ladder's knowledge ids are named only by the tests now: the handlers resolve their gate
@@ -7263,8 +7616,9 @@ mod tests {
                     }],
                     ..Default::default()
                 },
-                // A spawned band is KITTED, exactly as `spawn_profile_population` spawns one.
-                BandEquipment::default(),
+                // A spawned band is KITTED, exactly as `spawn_profile_population` spawns one —
+                // **stated**, because an absent ledger entry means NOT OWNED since the count slice.
+                BandEquipment::start_stocked(&core_sim::EquipmentConfig::builtin()),
             ))
             .id()
     }
@@ -10868,10 +11222,11 @@ mod tests {
             &composition,
             &labor.forage,
             &flora,
+            equipped_gather_reference(),
             &ladder,
             // The band under test is freshly spawned, so its baskets are whole — the seed path
             // resolves the same equipped tier.
-            labor.forage.per_worker_biomass_capacity,
+            equipped_gather_reference(),
             1.0,
             1.0,
             BAND_WORKERS,
@@ -10942,7 +11297,7 @@ mod tests {
             herd,
             &fauna,
             &ladder,
-            labor.hunt.per_worker_biomass_capacity,
+            equipped_haul_reference(),
             &HuntingParty::builtin_equipped(),
             1.0,
             BAND_WORKERS,
@@ -11396,19 +11751,10 @@ mod tests {
         (band, coord)
     }
 
-    /// Unassigned workers, exactly as the snapshot derives them.
+    /// Unassigned workers, through the same seam the snapshot publishes and the commands clamp
+    /// against — so a fixture cannot drift from either.
     fn idle_workers(app: &bevy::prelude::App, band: Entity) -> u32 {
-        let working = app
-            .world
-            .get::<PopulationCohort>(band)
-            .expect("band has a cohort")
-            .working;
-        let assigned = app
-            .world
-            .get::<LaborAllocation>(band)
-            .map(|allocation| allocation.assigned_total())
-            .unwrap_or(0);
-        available_workers(working).saturating_sub(assigned)
+        band_workforce(app, band).idle()
     }
 
     fn staffed_kinds(app: &bevy::prelude::App, band: Entity) -> Vec<&'static str> {
@@ -11792,6 +12138,252 @@ mod tests {
         assert!(
             is_replayable(&Command::Turn(1)),
             "the predicate must still admit an ordinary command, or it proves nothing"
+        );
+    }
+
+    // --- the bench crew is not idle -------------------------------------------------------------
+
+    /// An **ungated** recipe — nothing in `requires_knowledge` a fresh faction lacks — so the bench
+    /// fixtures below are about the crew, not about a refusal.
+    const BENCH_IDLE_RECIPE: &str = "sled";
+    /// The crew the fixtures stand at the bench. Small enough that any campaign band has the hands,
+    /// large enough that a lost subtraction is unmistakable in the assertion.
+    const BENCH_IDLE_CREW: u32 = 3;
+
+    /// `PopulationCohortState.idleWorkers` for one band, read off the **encoded** envelope. The claim
+    /// is about what the client is told, and a field that never reached the codec still satisfies an
+    /// in-process check.
+    fn published_idle_workers(app: &mut bevy::prelude::App, band: Entity) -> u32 {
+        use core_sim::{recapture_snapshot_in_place, SnapshotHistory};
+        use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+        recapture_snapshot_in_place(&mut app.world);
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = fb::root_as_envelope(&bytes).expect("the snapshot encodes");
+        envelope
+            .payload_as_snapshot()
+            .expect("the envelope carries a snapshot")
+            .population()
+            .and_then(|section| section.populations())
+            .expect("the population section carries the cohort list")
+            .iter()
+            .find(|cohort| cohort.entity() == band.to_bits())
+            .expect("the band is on the wire")
+            .idleWorkers()
+    }
+
+    /// The world's first resident band, the one a band-less command picks — see
+    /// `select_starting_band`'s default picker.
+    fn first_resident_band(app: &mut bevy::prelude::App) -> Entity {
+        let mut query = app
+            .world
+            .query_filtered::<Entity, (With<PopulationCohort>, With<ResidentBand>)>();
+        query
+            .iter(&app.world)
+            .next()
+            .expect("worldgen spawned a resident band")
+    }
+
+    /// **A crew at the bench is published as BUSY** — the same hands `assign_labor` refuses to send
+    /// anywhere.
+    ///
+    /// The published field was `working_age − assigned`, and a bench crew is a number on
+    /// [`BandBench`] rather than a `LaborTarget`, so it was never in `assigned`: every "n idle of m"
+    /// readout in the game counted the bench's hands as free, in the *reassuring* direction.
+    #[test]
+    fn a_bench_crew_is_missing_from_the_published_idle_count() {
+        let mut app = build_headless_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = first_resident_band(&mut app);
+        let idle_before = published_idle_workers(&mut app, band);
+        assert!(
+            idle_before >= BENCH_IDLE_CREW,
+            "the fixture band must have the hands to staff the bench at all"
+        );
+
+        handle_set_bench(&mut app, faction, None, BENCH_IDLE_RECIPE, BENCH_IDLE_CREW);
+        // Liveness: the crew really is standing there. Without this the assertion below passes on a
+        // bench that silently refused the job — and on a sim that stopped publishing idle at all.
+        assert_eq!(
+            app.world
+                .get::<BandBench>(band)
+                .map(|bench| bench.workers)
+                .unwrap_or(0),
+            BENCH_IDLE_CREW,
+            "the command must have put the crew on the bench"
+        );
+
+        assert_eq!(
+            published_idle_workers(&mut app, band),
+            idle_before - BENCH_IDLE_CREW,
+            "the bench's crew must leave the published idle count"
+        );
+
+        // …and handing them back restores it, so the subtraction is a live one rather than a band
+        // that simply lost workers.
+        handle_clear_bench(&mut app, faction, None);
+        assert_eq!(
+            published_idle_workers(&mut app, band),
+            idle_before,
+            "clearing the job returns the crew to the idle pool"
+        );
+    }
+
+    /// **The published idle count is exactly what the command path will let the player assign.**
+    ///
+    /// The liveness half of the pair above: a sim that published `0` idle forever would satisfy
+    /// "fewer with a bench crew" and fail here. Asserted by asking `assign_labor` for *more* hands
+    /// than exist and reading what it applied — the clamp is `BandWorkforce::assignable()` minus the
+    /// other assignments, which is the same arithmetic `idle()` reports.
+    #[test]
+    fn the_published_idle_count_is_what_assign_labor_will_staff() {
+        let mut app = build_headless_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = first_resident_band(&mut app);
+        handle_set_bench(&mut app, faction, None, BENCH_IDLE_RECIPE, BENCH_IDLE_CREW);
+        let published = published_idle_workers(&mut app, band);
+        assert!(
+            published > 0,
+            "the fixture must leave hands free, or the equality below proves nothing"
+        );
+
+        // A band-wide role, so the answer is about the head-count and not about a source's range.
+        handle_assign_labor(
+            &mut app,
+            faction,
+            None,
+            "scout".to_string(),
+            published + BENCH_IDLE_CREW,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(
+            app.world
+                .get::<LaborAllocation>(band)
+                .map(|allocation| allocation.assigned_total())
+                .unwrap_or(0),
+            published,
+            "the command staffs exactly the workers the wire called idle — no more, and not fewer"
+        );
+        assert_eq!(
+            published_idle_workers(&mut app, band),
+            0,
+            "and with them staffed the band publishes nobody idle"
+        );
+    }
+
+    /// A **second** ungated recipe, so a swap is a real change of job rather than a re-set of the
+    /// same one.
+    const BENCH_SWAP_RECIPE: &str = "baskets";
+
+    /// What is actually standing at a band's bench.
+    fn bench_crew(app: &bevy::prelude::App, band: Entity) -> u32 {
+        app.world
+            .get::<BandBench>(band)
+            .map(|bench| bench.workers)
+            .unwrap_or(0)
+    }
+
+    /// **Naming no crew recruits nobody; naming one is obeyed to the head.**
+    ///
+    /// A pairing, because every other bench fixture passes an explicit crew — which is the one call
+    /// shape the client never makes. **The player staffs the bench and the sim never does**: labor
+    /// is the scarce currency and splitting the band is the game's turn-to-turn decision, so an
+    /// idle bench stages at zero and waits for the stepper. The second half is what keeps that from
+    /// meaning *"a named crew is ignored too"*.
+    #[test]
+    fn a_set_bench_with_no_crew_named_recruits_nobody() {
+        let mut app = build_headless_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = first_resident_band(&mut app);
+        let idle_before = published_idle_workers(&mut app, band);
+        assert!(
+            idle_before > BENCH_IDLE_CREW,
+            "the fixture band must have more hands than the explicit crew, or the two halves \
+             below cannot be told apart"
+        );
+
+        handle_set_bench(
+            &mut app,
+            faction,
+            None,
+            BENCH_IDLE_RECIPE,
+            BENCH_CREW_UNSPECIFIED,
+        );
+        assert_eq!(
+            bench_crew(&app, band),
+            0,
+            "a set_bench that names no crew stages the recipe with nobody on it — the sim does not \
+             pick how many hands stop hunting"
+        );
+        assert_eq!(
+            published_idle_workers(&mut app, band),
+            idle_before,
+            "…so the band's idle count is untouched: every hand is still free to be spent elsewhere"
+        );
+
+        handle_set_bench(&mut app, faction, None, BENCH_IDLE_RECIPE, BENCH_IDLE_CREW);
+        assert_eq!(
+            bench_crew(&app, band),
+            BENCH_IDLE_CREW,
+            "a set_bench that DOES name a crew applies exactly that crew — an absent number means \
+             leave the crew alone, not ignore the one that is there"
+        );
+    }
+
+    /// **Swapping the job on a running bench keeps the crew standing there.**
+    ///
+    /// `BandBench::set_job` overwrites `workers`, so a swap that applied the proto's `0` dismissed a
+    /// crew the player never asked to send home — the exact case `BandWorkforce::benchable()` (pool
+    /// − assigned, deliberately *not* netting the bench) exists to preserve.
+    #[test]
+    fn swapping_the_job_on_a_running_bench_keeps_its_crew() {
+        let mut app = build_headless_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = first_resident_band(&mut app);
+
+        handle_set_bench(&mut app, faction, None, BENCH_IDLE_RECIPE, BENCH_IDLE_CREW);
+        assert_eq!(
+            bench_crew(&app, band),
+            BENCH_IDLE_CREW,
+            "the fixture must have a crew at the bench, or the swap below proves nothing"
+        );
+
+        handle_set_bench(
+            &mut app,
+            faction,
+            None,
+            BENCH_SWAP_RECIPE,
+            BENCH_CREW_UNSPECIFIED,
+        );
+        assert_eq!(
+            app.world
+                .get::<BandBench>(band)
+                .and_then(|bench| bench.recipe_id.clone())
+                .unwrap_or_default(),
+            BENCH_SWAP_RECIPE,
+            "the swap must actually have changed the job"
+        );
+        assert_eq!(
+            bench_crew(&app, band),
+            BENCH_IDLE_CREW,
+            "the crew already at the bench stays put across the swap — an absent number is not an \
+             order to send them home"
         );
     }
 }

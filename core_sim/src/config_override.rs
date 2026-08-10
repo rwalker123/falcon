@@ -30,6 +30,8 @@ use crate::{
     demographics_config::{DemographicsConfig, BUILTIN_DEMOGRAPHICS_CONFIG},
     expedition_config::{ExpeditionConfig, BUILTIN_EXPEDITION_CONFIG},
     labor_config::{LaborConfig, BUILTIN_LABOR_CONFIG},
+    materials_config::{MaterialsConfig, BUILTIN_MATERIALS_CONFIG},
+    recipes_config::{RecipesConfig, BUILTIN_RECIPES_CONFIG},
     resources::{SimulationConfig, BUILTIN_SIMULATION_CONFIG},
 };
 
@@ -90,6 +92,28 @@ pub fn spec_for(kind: ConfigOverrideKind) -> ConfigKindSpec {
             default_rel_path: "src/data/combat_config.json",
             builtin_json: BUILTIN_COMBAT_CONFIG,
             validate: |json| erase(CombatConfig::from_json_str(json)),
+        },
+        // **The two crafting tables validate only against THEMSELVES here**, which is the honest
+        // limit of this seam: their cross-config checks
+        // (`RecipesConfig::validate_against`, `EquipmentConfig::validate_against_materials`) need
+        // the *other* tables, and this path holds one kind's JSON and nothing else. A patch that
+        // renames a material would therefore install and then panic the next New Game — the failure
+        // mode this module exists to prevent — so the tuning manifest exposes **numbers** here
+        // (band seams, costs, `work`, grade seams) and never an id. See
+        // `.claude/rules/core_sim/crafting.md` → "Config files".
+        ConfigOverrideKind::Materials => ConfigKindSpec {
+            kind,
+            env_var: "MATERIALS_CONFIG_PATH",
+            default_rel_path: "src/data/materials.json",
+            builtin_json: BUILTIN_MATERIALS_CONFIG,
+            validate: |json| erase(MaterialsConfig::from_json_str(json)),
+        },
+        ConfigOverrideKind::Recipes => ConfigKindSpec {
+            kind,
+            env_var: "RECIPES_CONFIG_PATH",
+            default_rel_path: "src/data/recipes.json",
+            builtin_json: BUILTIN_RECIPES_CONFIG,
+            validate: |json| erase(RecipesConfig::from_json_str(json)),
         },
     }
 }

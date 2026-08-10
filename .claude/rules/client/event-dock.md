@@ -16,7 +16,7 @@ to keep closed.
 
 | Script | Purpose |
 |--------|---------|
-| `ui/EventDockPanel.gd` / `src/ui/EventDockPanel.tscn` | The dockable **event dock** CanvasLayer: a horizontal notification strip on `SIDE_TOP` or `SIDE_BOTTOM` that **overlays the map and reserves nothing** (see "THE BAR RESERVES NOTHING" — it is not a reserver, and it publishes neither `reservation_changed` nor `current_reservation_size()`). **The one thing it does publish is `dock_changed(edge)`**, which is the opposite direction and must never be mistaken for a reservation: it says where the bar WENT, so `Main` can re-measure what displaces it there. It is bounded horizontally by the OTHER reservers plus the HUD's own columns via `set_perpendicular_insets`, and pushed inboard on its OWN axis past whatever reserves the edge it is docked to via `set_edge_offset` (see "On a shared edge the panel keeps the rim"). Two states — the COLLAPSED bar (`recent_count` rows, newest first, with the pinned-alert exception) and the EXPANDED turn-grouped log (World/System chips, the detail floor, the row count, the dock edge, "Earlier turns"). It accumulates `command_events` and de-duplicates on **`seq`**, prunes by TURN window against the sim's `command_events_retention_turns`, and takes client-side System notes through `note_system(label, detail, alert)`. Prefs live in a new `[events]` section of `user://narrative.cfg`, with a `config_path_override` static for the harnesses. Toggled by `R` (`Main._toggle_event_dock_visibility`) |
+| `ui/EventDockPanel.gd` / `src/ui/EventDockPanel.tscn` | The dockable **event dock** CanvasLayer: a horizontal notification strip on `SIDE_TOP` or `SIDE_BOTTOM` that **overlays the map and reserves nothing** (see "THE BAR RESERVES NOTHING" — it is not a reserver, and it publishes neither `reservation_changed` nor `current_reservation_size()`). **What it does publish is `dock_changed(edge)` and `occupancy_changed(edge, extent)`**, both the opposite direction and neither to be mistaken for a reservation: the first says where the bar WENT, so `Main` can re-measure what displaces it there; the second says how deep it is DRAWN, for the free-floating cards that are placed by arithmetic and so cannot be drawn under it (see "Overlaying costs two things a reserved strip never had to pay"). It is bounded horizontally by the OTHER reservers plus the HUD's own columns via `set_perpendicular_insets`, and pushed inboard on its OWN axis past whatever reserves the edge it is docked to via `set_edge_offset` (see "On a shared edge the panel keeps the rim"). Two states — the COLLAPSED bar (`recent_count` rows, newest first, with the pinned-alert exception) and the EXPANDED turn-grouped log (World/System chips, the detail floor, the row count, the dock edge, "Earlier turns"). It accumulates `command_events` and de-duplicates on **`seq`**, prunes by TURN window against the sim's `command_events_retention_turns`, and takes client-side System notes through `note_system(label, detail, alert)`. Prefs live in a new `[events]` section of `user://narrative.cfg`, with a `config_path_override` static for the harnesses. Toggled by `R` (`Main._toggle_event_dock_visibility`) |
 | `ui/hud/hud_event_vocab.gd` (`HudEventVocab`) | The importance model, as an ALL-`const` vocabulary leaf (`hud-modules.md`): `RUNG_BY_KIND` · `CHANNEL_BY_KIND` · `RUNG_STYLE` (glyph + `HudStyle` accent per rung) · `KIND_STYLE` (the threat/casualty kinds, absorbed from the retired `CommandFeedController`) · `DETAIL_STATUS_STYLE` (the `status=` token rule) · `DETAIL_FLOOR` (the three player settings as a floor on the rung ladder) · **`IGNORED_KINDS`** (the kinds the dock drops at ingest — see "A kind the dock IGNORES") plus the two client-minted kinds `KIND_SYSTEM` / `KIND_COMMAND_ECHO` and the dock's word tables and glyphs. Reads only `HudStyle`, which reads nothing, so it cannot enter a class-load cycle |
 
 ## Three questions, kept apart
@@ -410,6 +410,19 @@ neither is contributed to them** — the perpendicular one here, the bar's own a
   terrain, which can be snow or desert. The card fills with `HudStyle.PANEL_SOLID` (alpha 1.0), not
   the translucent `PANEL` every docked card uses. `event_dock_over_bright_terrain` is the frame that
   holds that to account.
+- **It must say how deep it is drawn** — `occupancy_changed(edge, extent)` and `occupied_extent()`.
+  A container draws a docked panel underneath the bar for free; a FREE-FLOATING card places itself by
+  arithmetic against a rect and is drawn *through* it, which is how the Materials & Crafting header
+  came to be rendered underneath a top-docked bar. `Main` relays the signal to `Hud.set_overlay_inset`,
+  which shrinks **only** the free-floating room (`panel-framework.md` → "An overlay is a second kind
+  of neighbour"). **This is not a reservation growing back and must not be turned into one**: nothing
+  here enters `_reservations`, `MapView` is untouched and the HUD's own layout does not move — the
+  map still renders under the strip, which is the whole point of the section above.
+  `extent` is the strip's own depth PLUS `_edge_offset`, i.e. absolute from the screen edge, so a
+  reader can inset a rect by it without also knowing what displaced the bar; it is 0 while suppressed,
+  and it does NOT drop when the bar is empty, the depth being content-independent by design.
+  It is emitted from `_apply_dock_layout`, the one choke point the edge, the displacement, the row
+  count, expanding, suppressing and the viewport's own resize already run through.
 
 ## The strip is CAPPED and CENTRED, not stretched
 

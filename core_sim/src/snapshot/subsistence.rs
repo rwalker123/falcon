@@ -177,7 +177,12 @@ pub(crate) struct HerdSnapshotInputs<'a> {
     pub(crate) registry: &'a HerdRegistry,
     pub(crate) fauna: &'a FaunaConfig,
     pub(crate) ladder: &'a LadderConfig,
-    pub(crate) labor: &'a LaborConfig,
+    /// **The EQUIPPED reference haul rate**, resolved through the item table's default tier
+    /// ([`crate::equipment_config::EquipmentConfig::equipped_reference`]) — a herd row is a fact
+    /// about the *herd*, and a herd has no band to resolve a kit against, so it quotes what a
+    /// kitted party hauls. It must NOT be `labor.hunt.per_worker_biomass_capacity`, which is the
+    /// sledless baseline since the carries moved onto their tiers.
+    pub(crate) equipped_haul_rate: f32,
     pub(crate) grid_size: UVec2,
     pub(crate) wrap_horizontal: bool,
     /// The same ledger `visibility_raster_from_ledger` renders the client's fog from, read for the
@@ -258,7 +263,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
         registry,
         fauna,
         ladder,
-        labor,
+        equipped_haul_rate,
         grid_size,
         wrap_horizontal,
         parties,
@@ -301,7 +306,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                         herd,
                         fauna,
                         ladder,
-                        labor.hunt.per_worker_biomass_capacity,
+                        equipped_haul_rate,
                         &party,
                         FORECAST_OUTPUT_MULTIPLIER,
                     )
@@ -385,7 +390,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // It is the crew half of the composition: the vector above turns a floor into a
                 // ceiling, and this turns that ceiling into a number of people. Shipped rather than
                 // left to `per_worker_yield / provisions_per_biomass`, which is `0 / 0` on a wolf.
-                per_worker_biomass: labor.hunt.per_worker_biomass_capacity,
+                per_worker_biomass: equipped_haul_rate,
                 // **The growth curve, sampled** — the third term the panel needs and the one with no
                 // closed form the client may safely re-derive (see [`REGROWTH_CURVE_SAMPLES`]). A
                 // vanished herd publishes an empty curve rather than a row of zeros, which is a
@@ -597,9 +602,13 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
 /// are derived once per tile per world (`snapshot/flora_quotes.rs`, #410). A patch whose tile is
 /// absent from the map ships an **empty** composition — "no named plants here", never a fabricated
 /// one.
+#[allow(clippy::too_many_arguments)] // the registry, three configs, two lookup maps and a rate
 pub(crate) fn snapshot_forage_patches(
     registry: &ForageRegistry,
     forage: &ForageLaborConfig,
+    // The EQUIPPED reference gather rate — a patch row has no band to resolve a basket tier
+    // against, exactly as a herd row has none for the sled's. See `HerdSnapshotInputs`.
+    equipped_gather_rate: f32,
     flora: &FloraConfig,
     ladder: &LadderConfig,
     seasonal_weights: &HashMap<UVec2, f32>,
@@ -628,13 +637,14 @@ pub(crate) fn snapshot_forage_patches(
                 tile_composition,
                 forage,
                 flora,
+                equipped_gather_rate,
                 ladder,
                 // **The EQUIPPED reference rate, not any band's basket tier** — a patch row is a fact
                 // about the *patch*, and a patch has no band to resolve a kit against. Exactly the
                 // rule `HerdTelemetryState` already follows for the hunt's haul; a band's real,
                 // kit-resolved gather rate rides its own `PopulationCohortState`
                 // (`forageCarryPerWorkerBiomass`) and its `SourceYield` row.
-                forage_per_worker_biomass(forage.per_worker_biomass_capacity, seasonal),
+                forage_per_worker_biomass(equipped_gather_rate, seasonal),
                 FORECAST_OUTPUT_MULTIPLIER,
             );
             ForagePatchState {
@@ -701,10 +711,7 @@ pub(crate) fn snapshot_forage_patches(
                 // `per_worker_yield` beside it. Shipped rather than left to
                 // `per_worker_yield / provisions_per_biomass`, which is `0 / 0` on a Field of cotton,
                 // flax or hay.
-                per_worker_biomass: forage_per_worker_biomass(
-                    forage.per_worker_biomass_capacity,
-                    seasonal,
-                ),
+                per_worker_biomass: forage_per_worker_biomass(equipped_gather_rate, seasonal),
                 // **The growth curve, sampled** — the plant twin; non-negative at every sample, and
                 // its `0.0` entry is the reseed floor's lift.
                 regrowth_samples: patch_regrowth_samples(patch, forage),

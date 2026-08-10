@@ -31,7 +31,7 @@ pub const BUILTIN_LABOR_CONFIG: &str = include_str!("data/labor_config.json");
 /// patch sits at low biomass and recovers via `logistic_regrowth`). The per-patch *capacity* is no
 /// longer a scalar default: it is [`ForageLaborConfig::capacity_by_biome`], a per-biome table (the
 /// human-edible twin of `fauna_config`'s `graze.capacity_by_biome`).
-const DEFAULT_FORAGE_PER_WORKER_BIOMASS_CAPACITY: f32 = 8.0;
+const DEFAULT_FORAGE_PER_WORKER_BIOMASS_CAPACITY: f32 = 1.6;
 const DEFAULT_FORAGE_PROVISIONS_PER_BIOMASS: f32 = 0.05;
 const DEFAULT_FORAGE_REGROWTH_RATE: f32 = 0.25;
 const DEFAULT_FORAGE_COLLAPSE_FRACTION: f32 = 0.15;
@@ -216,9 +216,22 @@ pub struct ForageLaborConfig {
     /// The `FoodModuleTag` model is untouched: the module still decides *what kind* of gathering a
     /// tile offers and its `seasonal_weight`. This table decides *how much* is there.
     pub capacity_by_biome: HashMap<TerrainType, f32>,
-    /// Biomass one forager can gather per turn (× `seasonal_weight`), capped by the policy ceiling
-    /// (Sustain = one turn's net regrowth) and the patch's remaining biomass — the forage
-    /// counterpart of `hunt.per_worker_biomass_capacity`.
+    /// **The NO-EQUIPMENT baseline** a *bare-handed* forager gathers per turn (× `seasonal_weight`),
+    /// capped by the policy ceiling and the patch's remaining biomass — the forage counterpart of
+    /// `hunt.per_worker_biomass_capacity`.
+    ///
+    /// > **THE NUMBER MOVED; THE KEY DID NOT.** This was the *basketed* `8.0` for as long as the
+    /// > basket's own payload had nowhere else to live. Quality tiers gave it one: the baskets'
+    /// > `flint` tier declares `forage_carry equipped 8.0`, and what stands here is the `1.6` the
+    /// > item used to declare as its `unequipped` side. The key's **role** changed and its name did
+    /// > not, because every caller hands it to
+    /// > [`crate::equipment_config::EquipmentConfig::forage_per_worker_biomass_capacity`], whose
+    /// > argument is the fallback either way.
+    /// >
+    /// > **A readout with no band to resolve a tier against must NOT quote this as "what a gatherer
+    /// > collects"** — that is
+    /// > [`crate::equipment_config::EquipmentConfig::equipped_reference`], which answers `8.0` off
+    /// > the item table.
     pub per_worker_biomass_capacity: f32,
     /// Biomass→provisions conversion for a gather take (the forage counterpart of
     /// `fauna.hunt.provisions_per_biomass`).
@@ -298,9 +311,24 @@ impl Default for ForageLaborConfig {
 /// Flat per-worker hunt throughput tier.
 #[derive(Debug, Clone, Deserialize)]
 pub struct HuntLaborConfig {
-    /// Biomass one hunter can take per turn, capped by the policy ceiling (Sustain =
-    /// net regrowth, etc.). The biomass→provisions/trade conversion reuses
+    /// **The NO-EQUIPMENT baseline** a *sledless* hunter hauls per turn, capped by the policy
+    /// ceiling (Sustain = net regrowth, etc.). The biomass→provisions/trade conversion reuses
     /// `fauna_config`'s `hunt.*_per_biomass` so the ecology stays consistent.
+    ///
+    /// > **THE NUMBER MOVED; THE KEY DID NOT.** This was the *sledded* `40.0` for as long as the
+    /// > sled's own payload had nowhere else to live. Quality tiers gave it one: the sled's `flint`
+    /// > tier declares `hunt_carry equipped 40.0`, and what stands here is the `12.0` the item used
+    /// > to declare as its `unequipped` side. The key's **role** changed and its name did not,
+    /// > because every caller hands it to
+    /// > [`crate::equipment_config::EquipmentConfig::hunt_per_worker_biomass_capacity`] (or
+    /// > `::pen_per_worker_biomass_capacity`), whose argument is the fallback either way.
+    /// >
+    /// > **A herd row, a patch row or a Field's managed collection cap must NOT quote this as "what
+    /// > a hunter hauls"** — none of them has a band to resolve a tier against, and the answer they
+    /// > want is [`crate::equipment_config::EquipmentConfig::equipped_reference`], which reads
+    /// > `40.0` off the item table. **A pen still shares this rate**, resolved off the sled's tier
+    /// > through [`crate::equipment_config::EquipmentStat::shares_equipped_rate_with`], so it keeps
+    /// > exactly one home.
     pub per_worker_biomass_capacity: f32,
 }
 

@@ -698,3 +698,162 @@ pub(crate) fn food_modules_to_array(
     }
     array
 }
+
+// ==============================================================================================
+// THE CRAFTING CATALOGUES (`docs/plan_crafting_and_materials.md` §7)
+//
+// Four baselines beside the kit roster: the materials the world declares, the shared rating
+// vocabulary, the recipe book, and each faction's craft knowledge. All four are decoded on BOTH the
+// full and the delta path, which is the rule the `food_modules` / `faction_inventory` staleness
+// recorded — a whole-section field read only on the full path republishes the BASELINE's value for
+// the life of the world.
+// ==============================================================================================
+
+/// The MATERIAL CATALOGUE (`SubsistenceSection.materials`). A material is the generic thing — `hide`,
+/// never `deer_hide` — and it owns its craft, its characteristic AXES, and whether it can be worked
+/// with no tool at all.
+///
+/// **`axes` is ORDERED and the order is the contract**: a batch's readings are published in it, so a
+/// readout that re-sorted them alphabetically would put `suppleness` before `toughness` on a hide and
+/// call it the first axis.
+pub(crate) fn materials_to_array(
+    materials: Vector<'_, ForwardsUOffset<fb::MaterialDefState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for material in materials {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("id", material.id().unwrap_or(""));
+        let _ = dict.insert("craft", material.craft().unwrap_or(""));
+        let axes = material
+            .axes()
+            .map(crate::dict::strings_to_variant_array)
+            .unwrap_or_default();
+        let _ = dict.insert("axes", &axes);
+        // `false` is the WHOLE refusal mechanism for a material with no bench tool present: the rate
+        // is zero and nothing branches. The panel still has to say so out loud, which is why the flag
+        // rides rather than being inferred from a zero somewhere else.
+        let _ = dict.insert("hand_workable", material.handWorkable());
+        let _ = dict.insert("hand_working_rate", material.handWorkingRate() as f64);
+        let _ = dict.insert(
+            "hand_working_quality_ceiling",
+            material.handWorkingQualityCeiling() as f64,
+        );
+        // The equipment item that BOUNDS this material at the bench; `""` when the roster has none.
+        let _ = dict.insert("tool_item_id", material.toolItemId().unwrap_or(""));
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+/// The shared RATING VOCABULARY (`SubsistenceSection.characteristicBands`) — `poor` / `fair` /
+/// `good` / `excellent`, ascending — published ONCE for the whole world rather than per material.
+/// Every reading already carries its own band NAME, so this is only the legend.
+pub(crate) fn characteristic_bands_to_array(
+    bands: Vector<'_, ForwardsUOffset<fb::CharacteristicBandState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for band in bands {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("name", band.name().unwrap_or(""));
+        let _ = dict.insert("from", band.from() as f64);
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+/// A recipe's INPUT rows. **Inputs and outputs are both lists of THINGS**, and a thing is a material
+/// or a piece of equipment, which is what makes alloying, smelting and equipment one structure with
+/// no branch.
+fn recipe_inputs_to_array(
+    inputs: Vector<'_, ForwardsUOffset<fb::RecipeInputState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for input in inputs {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("material_id", input.materialId().unwrap_or(""));
+        let _ = dict.insert("amount", input.amount() as f64);
+        // The ONE characteristic this recipe judges, `""` on every other input row — a sled reads
+        // toughness and cordage reads suppleness, which is why there is no "best" hide.
+        let _ = dict.insert("reads_axis", input.readsAxis().unwrap_or(""));
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+/// A recipe's OUTPUT rows. Exactly one of `equipment_id` / `material_id` is set per row, and which
+/// one it is decides whether the output lands as a stock batch or as a kit entry.
+fn recipe_outputs_to_array(
+    outputs: Vector<'_, ForwardsUOffset<fb::RecipeOutputState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for output in outputs {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("equipment_id", output.equipmentId().unwrap_or(""));
+        let _ = dict.insert("material_id", output.materialId().unwrap_or(""));
+        let _ = dict.insert("amount", output.amount() as f64);
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+/// The RECIPE BOOK (`SubsistenceSection.recipes`). The Materials & Crafting ledger reads `inputs` for
+/// the rebuild cost and `outputs` for what a stock recipe makes; the per-band `craft_offers` row
+/// beside it carries the RESOLVED refusal, which is never re-derived from this.
+pub(crate) fn recipes_to_array(
+    recipes: Vector<'_, ForwardsUOffset<fb::RecipeDefState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for recipe in recipes {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("id", recipe.id().unwrap_or(""));
+        let _ = dict.insert("display_name", recipe.displayName().unwrap_or(""));
+        let _ = dict.insert("craft", recipe.craft().unwrap_or(""));
+        // "kit" | "tool" | "stock" — the three groups the ledger is one table in.
+        let _ = dict.insert("group", recipe.group().unwrap_or(""));
+        let _ = dict.insert("work", recipe.work() as f64);
+        // Empty on every ordinary kit recipe — TOOLS ARE EARNED, NEVER A PREREQUISITE.
+        let requires = recipe
+            .requiresKnowledge()
+            .map(crate::dict::strings_to_variant_array)
+            .unwrap_or_default();
+        let _ = dict.insert("requires_knowledge", &requires);
+        let inputs = recipe
+            .inputs()
+            .map(recipe_inputs_to_array)
+            .unwrap_or_default();
+        let _ = dict.insert("inputs", &inputs);
+        let outputs = recipe
+            .outputs()
+            .map(recipe_outputs_to_array)
+            .unwrap_or_default();
+        let _ = dict.insert("outputs", &outputs);
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+/// CRAFT KNOWLEDGE, per faction per craft (`SubsistenceSection.craftKnowledge`). Not a per-world
+/// constant like the three above — a craft is LEARNED — so the sim diffs it as a whole vector each
+/// frame.
+///
+/// `completion_threshold` rides beside `progress` so the client draws no scale of its own: the
+/// material rail's craft meter is `progress / completion_threshold`, and a client that guessed the
+/// denominator would draw a track disagreeing with the sim's.
+pub(crate) fn craft_knowledge_to_array(
+    tracks: Vector<'_, ForwardsUOffset<fb::CraftKnowledgeState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for track in tracks {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("faction", track.faction() as i64);
+        let _ = dict.insert("craft_id", track.craftId().unwrap_or(""));
+        // "Bone-working" — the id, hyphenated and capitalized, resolved SIM-SIDE. The client must
+        // never map a craft id to English itself.
+        let _ = dict.insert("display_name", track.displayName().unwrap_or(""));
+        let _ = dict.insert("known", track.known());
+        let _ = dict.insert("progress", track.progress() as f64);
+        let _ = dict.insert("completion_threshold", track.completionThreshold() as f64);
+        array.push(&dict.to_variant());
+    }
+    array
+}

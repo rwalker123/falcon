@@ -65,6 +65,27 @@ The bedrock number the rest of the economy builds on. Each `PopulationCohort` (a
    total is clamped to `population_cap`. The **dependency ratio** `(children+elders)/working` is
    the core tension.
 
+> #### `elder_mortality_rate` sets the elder SHARE; `initial_distribution` is where the rates settle
+>
+> Two facts about the bracket flows that decide how this block is tuned, and both are structural
+> rather than a property of the shipped numbers.
+>
+> **The elder bracket is a pure sink.** Elders neither work nor bear children, and nothing leaves the
+> bracket except death: births are `working × fertility`, and the child/working pair never reads the
+> elder count. So `elder_mortality_rate` does not appear in the growth rate **at all** — it decides
+> only how long old age lasts (`1 / rate` turns) and therefore what fraction of a band is elderly.
+> Shortening old age is a composition change, never a growth re-tune in disguise, and the pairing is
+> pinned by `elder_mortality_moves_the_elder_share_and_not_the_growth_rate` (equal growth *while* the
+> shares stay far apart, so a sim that had stopped ageing anyone could not pass it).
+>
+> **`initial_distribution` is the settled equilibrium of `maturation_rate` / `aging_rate` /
+> `elder_mortality_rate` at neutral fertility**, not a free-standing flavour dial. A seed that
+> disagrees with the rates is a band drifting off its own declared opening over its first tens of
+> turns, which is exactly what makes an early-game figure measured on turn 0 stop describing the band
+> by turn 40. Re-tune the rates and the seed moves with them — the shares are
+> `C : W : E = (λ−1+aging)/maturation : 1 : aging/(λ−1+elder_mortality)`, normalized, where `λ` is the
+> growth eigenvalue of the child/working pair.
+
 > **The flows are REPORTED, not discarded** (issue #272). `DemographicOutcome::flows` carries
 > births, **both** age transitions (maturations and agings) and the per-bracket death terms (with the
 > dominant `DeathCause` per bracket)

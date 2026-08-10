@@ -244,9 +244,13 @@ const CONFIG_RESOURCES: [&str; 42] = [
 
 /// The remaining config handles, split out only because Rust array consts need a fixed length and
 /// one 50-entry literal reads worse than two.
-const CONFIG_RESOURCES_CONT: [&str; 15] = [
+const CONFIG_RESOURCES_CONT: [&str; 19] = [
     "EquipmentConfigHandle",
     "EquipmentConfigMetadata",
+    "MaterialsConfigHandle",
+    "MaterialsConfigMetadata",
+    "RecipesConfigHandle",
+    "RecipesConfigMetadata",
     "StartProfileKnowledgeTagsHandle",
     "StartProfileKnowledgeTagsMetadata",
     "StartProfilesHandle",
@@ -265,7 +269,7 @@ const CONFIG_RESOURCES_CONT: [&str; 15] = [
 /// Component state on entities. Omitting one of these is exactly the failure `PowerNode`'s missing
 /// `base_generation` / `base_demand` already is, which is why this table exists alongside the
 /// resource one: a resource-only guard would have missed the bug that motivated the guard.
-const SIM_STATE_COMPONENTS: [&str; 17] = [
+const SIM_STATE_COMPONENTS: [&str; 18] = [
     "Tile",
     // A band's durable identity — the thing `Entity` could not be across a restore.
     "BandId",
@@ -285,6 +289,11 @@ const SIM_STATE_COMPONENTS: [&str; 17] = [
     // would silently re-stock them on rollback, and there is no replenishment path that could
     // legitimately do that.
     "BandEquipment",
+    // What is on a band's crafting bench — the job, its crew, its progress, and the pile it has
+    // already DRAWN. Carried for the same reason `BandEquipment` is, with one extra edge: the draw
+    // fixes an output's grade, and the design says that grade never moves, so a rollback that
+    // dropped it would re-fix it against different stock.
+    "BandBench",
     "Expedition",
     "LogisticsLink",
     "TradeLink",

@@ -2,7 +2,7 @@
 
 use crate::codec::{create_known_fragments, FbBuilder};
 use crate::state::population::{
-    AccessibleStockpileEntryState, GenerationState, PopulationCohortState,
+    AccessibleStockpileEntryState, GenerationState, MaterialShortfallState, PopulationCohortState,
     PopulationDemographicsState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
@@ -267,6 +267,10 @@ fn create_populations<'a>(
                             &fb::KitItemConditionArgs {
                                 itemId: Some(item_id),
                                 remaining: condition.remaining,
+                                // **Ownership, stated.** `remaining == 0` means the band owns none,
+                                // not "owns one that is dry" — a batch with no units left is
+                                // removed — so no client has to infer ownership from a zero.
+                                count: condition.count,
                             },
                         )
                     })
@@ -294,6 +298,166 @@ fn create_populations<'a>(
                                 exposure: tiers.exposure,
                                 penCarryPerWorkerBiomass: tiers.pen_carry_per_worker_biomass,
                                 scoutVantageRange: tiers.scout_vantage_range,
+                            },
+                        )
+                    })
+                    .collect();
+                builder.create_vector(&rows)
+            };
+            // --- CRAFTING & MATERIALS ------------------------------------------------------------
+            // All four built before the parent table, like every nested vector above: FlatBuffers
+            // forbids writing a child table while a parent is open.
+            //
+            // **The refusal is already resolved into words here.** Nothing below is an input to a
+            // client-side derivation — `reason`, `severity`, `outputGrade`, the shortfall numbers
+            // and the life wording are the sim's answers, for the same reason `kitTiers` is.
+            let material_batches = {
+                let rows: Vec<_> = cohort
+                    .material_batches
+                    .iter()
+                    .map(|batch| {
+                        let material_id = builder.create_string(&batch.material_id);
+                        let variety_name = builder.create_string(&batch.variety_name);
+                        // The EXACT reading and its band name both — the band is the merge key and
+                        // the panel's word, the value is what crafting actually reads.
+                        let readings: Vec<_> = batch
+                            .readings
+                            .iter()
+                            .map(|reading| {
+                                let axis = builder.create_string(&reading.axis);
+                                let band_name = builder.create_string(&reading.band_name);
+                                fb::CharacteristicReading::create(
+                                    builder,
+                                    &fb::CharacteristicReadingArgs {
+                                        axis: Some(axis),
+                                        value: reading.value,
+                                        bandName: Some(band_name),
+                                    },
+                                )
+                            })
+                            .collect();
+                        let readings = builder.create_vector(&readings);
+                        fb::MaterialBatchState::create(
+                            builder,
+                            &fb::MaterialBatchStateArgs {
+                                materialId: Some(material_id),
+                                amount: batch.amount,
+                                readings: Some(readings),
+                                varietyName: Some(variety_name),
+                            },
+                        )
+                    })
+                    .collect();
+                builder.create_vector(&rows)
+            };
+            let bench = {
+                let recipe_id = builder.create_string(&cohort.bench.recipe_id);
+                let display_name = builder.create_string(&cohort.bench.display_name);
+                let teaches = builder.create_string(&cohort.bench.teaches);
+                let blocked_reason = builder.create_string(&cohort.bench.blocked_reason);
+                // **Whether that reason is a fault or a prompt**, resolved sim-side beside it — a
+                // crewless bench is the normal state after a Make and must not render as an alarm.
+                let blocked_severity = builder.create_string(&cohort.bench.blocked_severity);
+                let output_grade = builder.create_string(&cohort.bench.output_grade);
+                let shortfalls = create_shortfalls(builder, &cohort.bench.shortfalls);
+                // **The pile already withdrawn**, in the recipe's own input order — what a clear or
+                // a swap will destroy, which the client cannot name from `drawn: bool` alone.
+                let drawn_inputs: Vec<_> = cohort
+                    .bench
+                    .drawn_inputs
+                    .iter()
+                    .map(|input| {
+                        let material_id = builder.create_string(&input.material_id);
+                        fb::DrawnInput::create(
+                            builder,
+                            &fb::DrawnInputArgs {
+                                materialId: Some(material_id),
+                                amount: input.amount,
+                            },
+                        )
+                    })
+                    .collect();
+                let drawn_inputs = builder.create_vector(&drawn_inputs);
+                fb::BenchState::create(
+                    builder,
+                    &fb::BenchStateArgs {
+                        recipeId: Some(recipe_id),
+                        displayName: Some(display_name),
+                        workers: cohort.bench.workers,
+                        progress: cohort.bench.progress,
+                        work: cohort.bench.work,
+                        teaches: Some(teaches),
+                        blockedReason: Some(blocked_reason),
+                        shortfalls: Some(shortfalls),
+                        itemsCompleted: cohort.bench.items_completed,
+                        drawn: cohort.bench.drawn,
+                        outputGrade: Some(output_grade),
+                        ratePerTurn: cohort.bench.rate_per_turn,
+                        drawnInputs: Some(drawn_inputs),
+                        blockedSeverity: Some(blocked_severity),
+                    },
+                )
+            };
+            let craft_offers = {
+                let rows: Vec<_> = cohort
+                    .craft_offers
+                    .iter()
+                    .map(|offer| {
+                        let recipe_id = builder.create_string(&offer.recipe_id);
+                        let display_name = builder.create_string(&offer.display_name);
+                        let group = builder.create_string(&offer.group);
+                        let output_item_id = builder.create_string(&offer.output_item_id);
+                        let reason = builder.create_string(&offer.reason);
+                        let severity = builder.create_string(&offer.severity);
+                        let output_grade = builder.create_string(&offer.output_grade);
+                        let output_tier_name = builder.create_string(&offer.output_tier_name);
+                        let owned_note = builder.create_string(&offer.owned_note);
+                        let shortfalls = create_shortfalls(builder, &offer.shortfalls);
+                        fb::CraftOffer::create(
+                            builder,
+                            &fb::CraftOfferArgs {
+                                recipeId: Some(recipe_id),
+                                displayName: Some(display_name),
+                                group: Some(group),
+                                outputItemId: Some(output_item_id),
+                                available: offer.available,
+                                reason: Some(reason),
+                                severity: Some(severity),
+                                shortfalls: Some(shortfalls),
+                                outputGrade: Some(output_grade),
+                                onBench: offer.on_bench,
+                                outputTierName: Some(output_tier_name),
+                                outputTierRank: offer.output_tier_rank,
+                                ownedNote: Some(owned_note),
+                            },
+                        )
+                    })
+                    .collect();
+                builder.create_vector(&rows)
+            };
+            let equipment_batches = {
+                let rows: Vec<_> = cohort
+                    .equipment_batches
+                    .iter()
+                    .map(|batch| {
+                        let item_id = builder.create_string(&batch.item_id);
+                        let tier_id = builder.create_string(&batch.tier_id);
+                        let grade = builder.create_string(&batch.grade);
+                        let quantum_noun = builder.create_string(&batch.quantum_noun);
+                        let life = builder.create_string(&batch.life);
+                        let life_severity = builder.create_string(&batch.life_severity);
+                        fb::EquipmentBatchState::create(
+                            builder,
+                            &fb::EquipmentBatchStateArgs {
+                                itemId: Some(item_id),
+                                tierId: Some(tier_id),
+                                grade: Some(grade),
+                                count: batch.count,
+                                remaining: batch.remaining,
+                                quantaLeft: batch.quanta_left,
+                                quantumNoun: Some(quantum_noun),
+                                life: Some(life),
+                                lifeSeverity: Some(life_severity),
                             },
                         )
                     })
@@ -464,12 +628,43 @@ fn create_populations<'a>(
                     // not an absent one.
                     foundingMinWorkers: cohort.founding_min_workers,
                     foundingParentMinWorkers: cohort.founding_parent_min_workers,
+                    // Crafting & materials — appended last. Always written: an absent vector and an
+                    // empty one read the same to a consumer, and `bench` is a real state even when
+                    // the bench is idle (`recipeId == ""`).
+                    materialBatches: Some(material_batches),
+                    bench: Some(bench),
+                    craftOffers: Some(craft_offers),
+                    equipmentBatches: Some(equipment_batches),
                     expeditionTargetSpecies: expedition_target_species,
                 },
             )
         })
         .collect();
     builder.create_vector(&offsets)
+}
+
+/// **What a draw is short, as numbers** — shared by the bench and by every craft offer, so the two
+/// cannot state a shortfall in two different shapes.
+fn create_shortfalls<'a>(
+    builder: &mut FbBuilder<'a>,
+    shortfalls: &[MaterialShortfallState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::MaterialShortfall<'a>>>> {
+    let rows: Vec<_> = shortfalls
+        .iter()
+        .map(|shortfall| {
+            let material_id = builder.create_string(&shortfall.material_id);
+            fb::MaterialShortfall::create(
+                builder,
+                &fb::MaterialShortfallArgs {
+                    materialId: Some(material_id),
+                    required: shortfall.required,
+                    held: shortfall.held,
+                    short: shortfall.short,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&rows)
 }
 
 fn create_accessible_stockpile_entries<'a>(

@@ -539,13 +539,46 @@ func _effort_on(key: String, bands: Array = []) -> Dictionary:
 			improvement = String(m.get("improvement", "")).strip_edges().to_lower()
 	return {"workers": workers, "improvement": improvement}
 
-## Optimistic idle = working-age minus the sum of effective worker counts.
+## Optimistic idle = working-age minus the sum of effective worker counts **minus the bench crew**.
+##
+## **A WORKER AT THE BENCH IS ASSIGNED LABOR, AND THE BENCH IS NOT A `LaborTarget`.** A band's people
+## are spent on the `labor_assignments` this overlays AND on the crafting bench, and a bench crew is
+## nowhere in that map — so netting only the assignments counted those hands as free, and every
+## "n idle" the player sees (the WORKFORCE zone's three sites, `FactionRollup`'s faction total)
+## over-reported by the crew already standing at the bench, in the reassuring direction. This is the
+## same subtraction the sim makes in `BandWorkforce::idle()`, which is what `PopulationCohortState`
+## publishes as `idle_workers`.
+##
+## **IT IS STILL COMPUTED AND NOT READ OFF THE WIRE.** `idle_workers` is last snapshot's answer; the
+## `+` steppers gate on an OPTIMISTIC idle so a just-issued assignment counts before the turn
+## resolves, which is exactly what `effective_worker_map`'s pending overlay supplies. A bench crew
+## carries no such overlay (a `bench_crew` edit shows on the next snapshot), so the published crew is
+## the right term to subtract.
 func effective_idle(band: Dictionary) -> int:
 	var assigned := 0
 	var merged := effective_worker_map(band)
 	for key in merged:
 		assigned += int((merged[key] as Dictionary).get("workers", 0))
-	return max(0, int(band.get("working_age", 0)) - assigned)
+	return max(0, int(band.get("working_age", 0)) - assigned - bench_workers(band))
+
+## The crew standing at the band's crafting bench (`PopulationCohortState.bench.workers`) — spent
+## labor that carries no `LaborAssignment`, hence its own reader. Beside `effective_idle` because it
+## is that function's third term, and public because the crew stepper's ceiling is a DIFFERENT
+## question: see `benchable_workers`.
+func bench_workers(band: Dictionary) -> int:
+	var bench_variant: Variant = band.get(HudCraftingVocab.BAND_BENCH_KEY, {})
+	if not (bench_variant is Dictionary):
+		return 0
+	var bench: Dictionary = bench_variant
+	return max(0, int(bench.get(HudCraftingVocab.BENCH_WORKERS_KEY, 0)))
+
+## **THE CEILING A BENCH CREW STEPPER CLAMPS AGAINST — "how many COULD be at the bench", which is not
+## "how many are idle".** The crew already at the bench stays put while its job is swapped, so it is
+## not spent from the player's point of view when re-crewing; the sim draws the same distinction
+## between `BandWorkforce::idle()` and `benchable()`, and capping the stepper at `effective_idle`
+## would pin it to the crew already on it.
+func benchable_workers(band: Dictionary) -> int:
+	return effective_idle(band) + bench_workers(band)
 
 ## Effective worker count on ONE forage tile, overlaying any pending value (the single-source scalar
 ## twin of `effective_worker_map` — beside it because it reads the same pending overlay + confirmed base).

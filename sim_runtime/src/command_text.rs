@@ -2,6 +2,8 @@ use std::num::{ParseFloatError, ParseIntError};
 
 use thiserror::Error;
 
+use crate::commands::BENCH_CREW_UNSPECIFIED;
+
 /// Describes a runtime command verb, its aliases, and usage hint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommandVerbHelp {
@@ -144,6 +146,24 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         aliases: &["abandon"],
         summary: "Abandon the improvement a band is building on a source: the crew keeps working it under the harvest stance you chose, and stops paying the build dip. Always allowed — abandoning a STALLED build is exactly when you want it. Accumulated progress is not zeroed; it is left to whatever the source does when nobody is improving it (a plant meter bleeds away, an animal meter is kept).",
         usage: "abandon_improvement <faction_id> forage <x> <y> | abandon_improvement <faction_id> hunt <herd_id>",
+    },
+    CommandVerbHelp {
+        verb: "set_bench",
+        aliases: &[],
+        summary: "Put a recipe on a band's crafting bench. THE PLAYER STAFFS THE BENCH, NEVER THE SIM - labor is the scarce currency, so how many hands stop hunting to craft is never guessed. There is still no Crafter role: crafting always has a subject and is staffed like a worked source rather than like a standing role. Omit 'workers' (or pass 0) and the crew is left exactly as it is - an idle bench stages the recipe with nobody on it, a running bench keeps the crew already standing there; name a number and exactly that crew is applied. Use 'bench_crew' to set a crew afterwards, zero included. ONE JOB AT A TIME: this replaces whatever was on the bench, and the materials that job had already drawn go with it. An unknown recipe, or one whose crafts the faction has not learned, is refused with a reason.",
+        usage: "set_bench <faction_id> <band_id> recipe <recipe_id> [workers <n>]",
+    },
+    CommandVerbHelp {
+        verb: "clear_bench",
+        aliases: &[],
+        summary: "Take the job off a band's crafting bench and hand its crew back to the idle pool. Materials already drawn for the pass in flight are spent - they were cut for the thing you stopped making.",
+        usage: "clear_bench <faction_id> <band_id>",
+    },
+    CommandVerbHelp {
+        verb: "bench_crew",
+        aliases: &[],
+        summary: "Change the crew on a band's running crafting bench, leaving the job and its progress alone. Clamped to the band's idle pool - the bench spends the same workers assign_labor does.",
+        usage: "bench_crew <faction_id> <band_id> workers <n>",
     },
     CommandVerbHelp {
         verb: "corral",
@@ -802,6 +822,66 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 }
                 _ => Err(CommandParseError::UnexpectedToken(kind)),
             }
+        }
+        "set_bench" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            // **Both tokens are NAMED** (`recipe <id>`, `workers <n>`), the repo's existing shape
+            // (`queue_espionage_mission … owner 1 target 2 tier 2`) rather than an invented
+            // `recipe=<id>`. Named because the crew is optional, and a trailing optional positional
+            // is exactly the ambiguity `send_hunt_expedition` already had to dodge — and because a
+            // named tail takes a new dial without reordering anything the day the bench earns one.
+            let mut tail: Vec<&str> = parts.collect();
+            let recipe_id = take_named_token(&mut tail, "recipe", "set_bench recipe id")?
+                .ok_or(CommandParseError::MissingArgument("recipe"))?;
+            let workers = take_named_token(&mut tail, "workers", "set_bench workers")?;
+            if let Some(extra) = tail.first() {
+                return Err(CommandParseError::UnexpectedToken(extra.to_string()));
+            }
+            Ok(CommandPayload::SetBench {
+                faction_id: parse_u32(faction_str, "set_bench faction")?,
+                band_id: parse_u64(band_str, "set_bench band_id")?,
+                recipe_id,
+                workers: workers
+                    .map(|value| parse_u32(&value, "set_bench workers"))
+                    .transpose()?
+                    .unwrap_or(BENCH_CREW_UNSPECIFIED),
+            })
+        }
+        "clear_bench" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            Ok(CommandPayload::ClearBench {
+                faction_id: parse_u32(faction_str, "clear_bench faction")?,
+                band_id: parse_u64(band_str, "clear_bench band_id")?,
+            })
+        }
+        "bench_crew" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let mut tail: Vec<&str> = parts.collect();
+            let workers = take_named_token(&mut tail, "workers", "bench_crew workers")?
+                .ok_or(CommandParseError::MissingArgument("workers"))?;
+            if let Some(extra) = tail.first() {
+                return Err(CommandParseError::UnexpectedToken(extra.to_string()));
+            }
+            Ok(CommandPayload::BenchCrew {
+                faction_id: parse_u32(faction_str, "bench_crew faction")?,
+                band_id: parse_u64(band_str, "bench_crew band_id")?,
+                workers: parse_u32(&workers, "bench_crew workers")?,
+            })
         }
         "corral" => {
             let faction_str = parts

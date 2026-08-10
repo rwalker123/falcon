@@ -25,6 +25,15 @@ use core_sim::{
 /// on the last bit of the representation.
 const EPSILON: f32 = 0.01;
 
+/// The start-stocked item this test wears down before splitting. Any item a fresh band carries
+/// would do; spears are the one every kit reaches for.
+const WORN_ITEM: &str = "spears";
+
+/// Condition to spend on the in-hand unit of [`WORN_ITEM`], on the config's 0–100 scale. A
+/// mid-life reading, chosen only so the ledger can be mistaken for neither a fresh unit (`0`) nor a
+/// retired one, and comfortably under the flint tier's `starting_durability`.
+const WORN_CONDITION: f32 = 37.0;
+
 /// Build a headless world on a pinned earthlike map — one `update()` runs the whole Startup worldgen
 /// chain and resolves turn 1, so there is a real resident band standing on real terrain.
 fn spawn_world() -> App {
@@ -296,9 +305,15 @@ fn the_kit_is_inherited_worn_rather_than_minted_fresh() {
             .world
             .get_mut::<BandEquipment>(parent)
             .expect("a band carries a kit");
-        // `restore_wear` is the direct setter the checkpoint path uses — the kit-driven
-        // `wear_kit` would need a config and a job, neither of which this test is about.
-        equipment.restore_wear("stone_spear", 37.0);
+        // `restore_batches` is the direct setter the checkpoint path uses — the kit-driven
+        // `wear_item` would need a config and a job, neither of which this test is about.
+        let mut batches = equipment.batches_of(WORN_ITEM).to_vec();
+        assert!(
+            !batches.is_empty(),
+            "a start-stocked band carries {WORN_ITEM}, which is what this fixture wears down"
+        );
+        batches[0].wear = WORN_CONDITION;
+        equipment.restore_batches(WORN_ITEM, batches);
         equipment.clone()
     };
     assert_ne!(

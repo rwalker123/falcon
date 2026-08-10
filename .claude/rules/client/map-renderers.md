@@ -119,6 +119,55 @@ the click's `herd_selected` → `Hud.show_herd_selection` → `select_herd` land
 so the following snapshot's `refresh_selection_payload` answers `"herd"` and `reapply_selection`
 restates it.
 
+## A POINTER-DRIVEN NAVIGATION INPUT IS DECLINED WHERE A CONTROL CLAIMS THE PIXEL
+
+**The GUI pass stops a press for the map and stops a scroll for nobody.** Measured in Godot 4.7 by
+pushing each event over a `MOUSE_FILTER_STOP` card through `Viewport.push_input`, with a sniffer on
+the `_unhandled_input` chain:
+
+| event | over a STOP control | over a PASS control | over open canvas |
+|---|---|---|---|
+| left press | **consumed** by the GUI pass | survives | survives |
+| `InputEventPanGesture` | survives | survives | survives |
+| `InputEventMagnifyGesture` | survives | survives | survives |
+| wheel button | survives | survives | survives |
+
+So a `STOP` card is a wall to a click and a window to a scroll, and `MapView._unhandled_input` acted
+on all three of the survivors — which is why a two-finger scroll over the Materials & Crafting ledger
+panned the map underneath it. **On macOS a trackpad or Magic Mouse scroll arrives as a PAN GESTURE,
+not a wheel button**, which is why the reported symptom was a pan rather than a zoom.
+
+**`MapView` therefore declines them itself, once, for every surface in the client.** This is not a
+per-panel fix: the Telling panel, the compose sheet, the band dock and the Inspector all sit on the
+same routing, so a guard written in a panel would be the same guard written five times and missed on
+the sixth. `_is_pointer_navigation_input` names the three kinds; `_pointer_claimed_by_ui` decides.
+
+**THE CLAIM TEST IS `MOUSE_FILTER_STOP`, WALKED UP THE ANCESTORS.** `STOP` is the contract this
+client already states for presses — `band-city-panel.md`'s `PanelRoot` autopsy: every pixel a `STOP`
+control claims is a pixel of dead map — and **a `PASS` control does not claim its pixel**, so it must
+not block the map, several HUD containers being `PASS` over visually empty space. The walk is what
+makes the leaf reading agree with Godot's own `Viewport::_gui_call_input`: `gui_get_hovered_control`
+answers the INNERMOST pickable control, which inside a card is routinely a `PASS` row, and a
+**`PASS` child of a `STOP` panel really does have its press eaten by that ancestor** (measured). A
+leaf-only test would therefore declare most of a card's own surface unclaimed. The walk stops at the
+first `STOP`, at a `top_level` node, or where the chain leaves `Control`s — which is what keeps a
+full-screen `MOUSE_FILTER_IGNORE` root, `PanelRoot` being one, out of it entirely.
+
+**`gui_get_hovered_control()` answers `null` over open map**, confirmed rather than assumed: it is
+exactly the property `PanelRoot`'s retirement bought, and a full-screen catcher would make the whole
+map dead to navigation rather than to clicks alone.
+
+**THE MAP ONLY DECLINES; IT DOES NOT CONSUME.** The guard `return`s without `_mark_input_handled`, so
+whatever the pointer is really over stays free to answer. That is what a live `ScrollContainer`
+does — and it is also why the fix is not redundant with it: **a container only accepts a pan gesture
+it can actually act on**, so the moment the ledger reaches its floor the gesture falls straight
+through again. That is the state a player is in when they keep scrolling at the bottom of a list.
+
+**Guarded by EFFECT, never off a `mouse_filter`** — the `band_panel_preview` idiom. The state is
+`ui_preview`'s crafting chapter (`harness-ui-preview.md` → "A scroll over the card must not also
+drive the map"): every claim is a pairing, since a one-sided one passes on a map that has stopped
+answering gestures altogether.
+
 ## Fog of war
 
 `_fow_enabled`, `set_fow_enabled` and every downstream fog gate live in `MapView`, but the

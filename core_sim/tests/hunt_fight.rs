@@ -11,11 +11,23 @@
 //! `hunt_yield_vector` / `expedition_hunt` suites own it, and they pass unchanged through this slice),
 //! and the escapement floor's monotonicity (`forage::stance_probe`).
 
+/// **The shipped EQUIPPED haul rate** — what a kitted band drags, off the sled's own tier.
+/// `labor_config`'s `hunt.per_worker_biomass_capacity` is the *bare-handed* baseline since quality
+/// tiers landed, so a fixture that wants "an ordinary band" asks the item table.
+fn equipped_haul_rate() -> f32 {
+    core_sim::EquipmentConfig::builtin().equipped_reference(
+        core_sim::EquipmentStat::HuntCarry,
+        core_sim::LaborConfig::builtin()
+            .hunt
+            .per_worker_biomass_capacity,
+    )
+}
+
 use core_sim::{
     animals_engaged, herd_capacity, hunt_take, quantise_animal_take, resolve_hunt_fight,
     BandEquipment, CombatConfig, CombatStats, CreaturesConfig, DamageLedger, EquipmentConfig,
-    FaunaConfig, FaunaConfigHandle, Herd, HuntDraw, HuntingParty, LaborConfig, LadderConfig,
-    QuarryFight, SizeClass,
+    FaunaConfig, FaunaConfigHandle, Herd, HuntDraw, HuntingParty, LadderConfig, QuarryFight,
+    SizeClass,
 };
 
 /// Standing stock far above anything a party can take, so **the escapement never binds** and the take
@@ -89,14 +101,14 @@ fn party_at(attack: f32) -> HuntingParty {
 fn hunt_once(species: &str, workers: u32, party: &HuntingParty) -> (u32, f32, bool) {
     let fauna = deterministic_fauna();
     let ladder = LadderConfig::builtin();
-    let labor = LaborConfig::builtin();
+
     let mut herd = herd_of(&fauna, species);
     let outcome = hunt_take(
         &mut herd,
         workers,
         STRIP_IT_BARE,
         NO_IMPROVEMENT,
-        labor.hunt.per_worker_biomass_capacity,
+        equipped_haul_rate(),
         party,
         &fauna,
         &ladder,
@@ -168,7 +180,7 @@ fn a_bare_handed_horde_takes_nothing_over_any_horizon() {
 
     let fauna = deterministic_fauna();
     let ladder = LadderConfig::builtin();
-    let labor = LaborConfig::builtin();
+
     let bare = HuntingParty::builtin_unequipped();
     let mut herd = herd_of(&fauna, MAMMOTH);
     let standing = herd.biomass;
@@ -181,7 +193,7 @@ fn a_bare_handed_horde_takes_nothing_over_any_horizon() {
             HORDE,
             STRIP_IT_BARE,
             NO_IMPROVEMENT,
-            labor.hunt.per_worker_biomass_capacity,
+            equipped_haul_rate(),
             &bare,
             &fauna,
             &ladder,
@@ -530,7 +542,7 @@ fn a_sub_threshold_party_kills_after_enough_turns() {
 
     let fauna = deterministic_fauna();
     let ladder = LadderConfig::builtin();
-    let labor = LaborConfig::builtin();
+
     let party = HuntingParty::builtin_equipped();
     let threshold = {
         let quarry = fauna.species_by_display(MAMMOTH).expect("shipped species");
@@ -550,7 +562,7 @@ fn a_sub_threshold_party_kills_after_enough_turns() {
             SMALL_PARTY,
             STRIP_IT_BARE,
             NO_IMPROVEMENT,
-            labor.hunt.per_worker_biomass_capacity,
+            equipped_haul_rate(),
             &party,
             &fauna,
             &ladder,
@@ -599,7 +611,7 @@ fn more_hunters_shorten_the_wait_for_a_sub_threshold_kill() {
     let turns_to_first_kill = |workers: u32| -> u32 {
         let fauna = deterministic_fauna();
         let ladder = LadderConfig::builtin();
-        let labor = LaborConfig::builtin();
+
         let party = HuntingParty::builtin_equipped();
         let mut herd = herd_of(&fauna, MAMMOTH);
         for turn in 1..=100 {
@@ -608,7 +620,7 @@ fn more_hunters_shorten_the_wait_for_a_sub_threshold_kill() {
                 workers,
                 STRIP_IT_BARE,
                 NO_IMPROVEMENT,
-                labor.hunt.per_worker_biomass_capacity,
+                equipped_haul_rate(),
                 &party,
                 &fauna,
                 &ladder,
@@ -797,7 +809,7 @@ fn the_shipped_fight_is_seed_independent() {
     const CREW: u32 = 40;
     let fauna = deterministic_fauna();
     let ladder = LadderConfig::builtin();
-    let labor = LaborConfig::builtin();
+
     let party = HuntingParty::builtin_equipped();
 
     let take_at = |seed: u64| {
@@ -807,7 +819,7 @@ fn the_shipped_fight_is_seed_independent() {
             CREW,
             STRIP_IT_BARE,
             NO_IMPROVEMENT,
-            labor.hunt.per_worker_biomass_capacity,
+            equipped_haul_rate(),
             &party,
             &fauna,
             &ladder,
@@ -836,7 +848,7 @@ fn the_escapement_floor_still_bounds_a_party_that_could_take_far_more() {
     const HUGE_CREW: u32 = 500;
     let fauna = deterministic_fauna();
     let ladder = LadderConfig::builtin();
-    let labor = LaborConfig::builtin();
+
     let mut herd = herd_of(&fauna, DEER);
     let capacity = herd_capacity(&herd, &fauna);
     // Leave exactly one body standing above a `0.5` floor.
@@ -847,7 +859,7 @@ fn the_escapement_floor_still_bounds_a_party_that_could_take_far_more() {
         HUGE_CREW,
         0.5,
         NO_IMPROVEMENT,
-        labor.hunt.per_worker_biomass_capacity,
+        equipped_haul_rate(),
         &HuntingParty::builtin_equipped(),
         &fauna,
         &ladder,
@@ -892,7 +904,7 @@ fn the_passive_device_beats_spears_on_every_small_game_row_and_takes_no_large_ga
     let fauna = FaunaConfig::builtin();
     let combat = CombatConfig::builtin();
     let intrinsic = CreaturesConfig::builtin().person();
-    let fresh = BandEquipment::default();
+    let fresh = BandEquipment::start_stocked(&core_sim::EquipmentConfig::builtin());
 
     let party_for = |kit_id: &str, body_mass: f32| {
         let kit = equipment.kit(kit_id).expect("the roster ships this kit");

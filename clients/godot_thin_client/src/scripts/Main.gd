@@ -253,6 +253,12 @@ func _ready() -> void:
             hud.connect("extend_pen_requested", Callable(self, "_on_hud_extend_pen"))
         if hud.has_signal("improvement_requested") and not hud.is_connected("improvement_requested", Callable(self, "_on_hud_improvement")):
             hud.connect("improvement_requested", Callable(self, "_on_hud_improvement"))
+        if hud.has_signal("set_bench_requested") and not hud.is_connected("set_bench_requested", Callable(self, "_on_hud_set_bench")):
+            hud.connect("set_bench_requested", Callable(self, "_on_hud_set_bench"))
+        if hud.has_signal("bench_crew_requested") and not hud.is_connected("bench_crew_requested", Callable(self, "_on_hud_bench_crew")):
+            hud.connect("bench_crew_requested", Callable(self, "_on_hud_bench_crew"))
+        if hud.has_signal("clear_bench_requested") and not hud.is_connected("clear_bench_requested", Callable(self, "_on_hud_clear_bench")):
+            hud.connect("clear_bench_requested", Callable(self, "_on_hud_clear_bench"))
         if hud.has_signal("answer_fork_requested") and not hud.is_connected("answer_fork_requested", Callable(self, "_on_hud_answer_fork")):
             hud.connect("answer_fork_requested", Callable(self, "_on_hud_answer_fork"))
         # **THE FORECAST QUERY'S TRANSPORT, injected rather than reached for.** The HUD composes the
@@ -564,6 +570,20 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         _hud_invoke("update_kit_roster", [snapshot["kits"],
             snapshot.get("default_hunt_kit_id", ""), snapshot.get("default_forage_kit_id", ""),
             snapshot.get("default_scout_kit_id", ""), snapshot.get("default_warrior_kit_id", "")])
+    # The CRAFTING CATALOGUES, forwarded as ONE call for the reason the kit roster is: they are one
+    # fact, and a recipe book ingested without its materials renders a rail with no craft tracks and
+    # costs in materials the panel cannot name. **Gated on `craft_knowledge`, not on `materials`** —
+    # the other three are per-world constants that ride a delta only on a world rebuild, while a craft
+    # is LEARNED, so knowledge is the one of the four that moves in play and therefore the one whose
+    # arrival must re-render the panel.
+    #
+    # The other three are passed as `null` when the frame does not carry them, NOT as `[]`: the
+    # ingest ignores a non-Array and lets the last value stand, so absence means unchanged — where an
+    # empty array would mean "the world has no materials" and blank the rail.
+    if snapshot.has("craft_knowledge") and SnapshotSections.changed(snapshot, "craft_knowledge"):
+        _hud_invoke("update_crafting_catalogues", [snapshot.get("materials", null),
+            snapshot.get("characteristic_bands", null), snapshot.get("recipes", null),
+            snapshot["craft_knowledge"]])
     if snapshot.has("forage_patches") and SnapshotSections.changed(snapshot, "forage_patches"):
         # The HUD needs the forage patches to cap each Current-actions Forage row's worker stepper at
         # the patch's max-useful (the same forecast the compose control reads off tile_info). Same
@@ -1057,6 +1077,62 @@ static func format_improvement(payload: Dictionary) -> Dictionary:
         "message": "%s (%d, %d)." % [improvement.capitalize(), x, y],
     }
 
+## **`set_bench <faction_id> <band_id> recipe <recipe_id>`** — put a recipe on a band's crafting bench
+## (`docs/plan_crafting_and_materials.md` §7).
+##
+## **BOTH TAILS ARE NAMED TOKENS, and this builder sends only the first.** The grammar is
+## `recipe <id> [workers <n>]`, and the crew is deliberately omitted: **the player staffs the bench**,
+## and a client-chosen crew here would be a second answer to the question the `− n +` stepper exists
+## to ask. Naming no crew leaves the crew where it is — nobody on a bench that was idle, and the crew
+## already standing there across a swap — so the number is only ever `bench_crew`'s to set.
+##
+## It takes `<faction_id> <band_id>` first, like `assign_labor`, and names the band by its DURABLE
+## `band_id` — never its ECS entity bits, which a rollback renumbers.
+static func format_set_bench(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return {}
+    var recipe_id := String(payload.get("recipe_id", "")).strip_edges()
+    if recipe_id == "":
+        return {}
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    return {
+        "line": "set_bench %d %d recipe %s" % [faction, band_id, recipe_id],
+        "message": "Put %s on the bench." % recipe_id,
+    }
+
+## **`clear_bench <faction_id> <band_id>`** — take the job off a band's bench. The crew returns to the
+## idle pool.
+##
+## **IT NAMES THE BAND AND NOTHING ELSE**, one job at a time meaning there is no job argument to
+## disambiguate. **The materials already drawn for the pass in flight are SPENT** — they were cut for
+## the thing the player has stopped making and a band's store has no representation for a half-worked
+## pile — which is why the button that emits this states the pile in its tooltip, off the published
+## `drawnInputs`, rather than being guarded by a dialog.
+static func format_clear_bench(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return {}
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    return {
+        "line": "clear_bench %d %d" % [faction, band_id],
+        "message": "Cleared the bench.",
+    }
+
+## **`bench_crew <faction_id> <band_id> workers <n>`** — re-crew the running bench, leaving the job and
+## its progress alone. `workers` is a NAMED token and is mandatory; `0` is a legal, meaningful value
+## (the recipe stays up with nobody on it) rather than a missing argument, so it is never omitted.
+static func format_bench_crew(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return {}
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var workers: int = max(0, int(payload.get("workers", 0)))
+    return {
+        "line": "bench_crew %d %d workers %d" % [faction, band_id, workers],
+        "message": "Put %d crafter%s on the bench." % [workers, "" if workers == 1 else "s"],
+    }
+
 ## **`abandon_improvement <faction> forage <x> <y>` / `abandon_improvement <faction> hunt <herd_id>`**
 ## — the command that stops a build (issue #442). Alias `abandon`.
 ##
@@ -1144,6 +1220,20 @@ func _on_hud_improvement(payload: Dictionary) -> void:
         _send_formatted_command(format_abandon_improvement(payload))
         return
     _send_formatted_command(format_improvement(payload))
+
+## Stage a recipe on the band's bench (Materials & Crafting). The player staffs the bench, so this
+## sends the recipe alone and the crew stays where it was until the stepper moves it.
+func _on_hud_set_bench(payload: Dictionary) -> void:
+    _send_formatted_command(format_set_bench(payload))
+
+## Re-crew the running bench, leaving the job and its progress alone.
+func _on_hud_bench_crew(payload: Dictionary) -> void:
+    _send_formatted_command(format_bench_crew(payload))
+
+## Take the job off the bench. The pile already drawn is spent, which the button said before it was
+## pressed.
+func _on_hud_clear_bench(payload: Dictionary) -> void:
+    _send_formatted_command(format_clear_bench(payload))
 
 ## Recall an in-flight expedition home (folds workers + provisions back on arrival).
 func _on_hud_recall_expedition(payload: Dictionary) -> void:
@@ -1274,6 +1364,11 @@ func _inspector_visible() -> bool:
 ## again — `_update_event_dock_insets`, which reads the left/right reservers.
 const RESERVER_PRIORITY := {&"inspector": 0, &"workbench": 0, &"band_panel": 1}
 const BAND_PANEL_RESERVER := &"band_panel"
+## The event dock's id in the HUD's OVERLAY registry — a different registry from `_reservations`
+## above, and it must stay that way: this one records pixels covered, not space taken. Named as a
+## const for the same reason `BAND_PANEL_RESERVER` is, so the push and any future release name the
+## same key.
+const EVENT_DOCK_OVERLAY := &"event_dock"
 
 ## Reserve space for a docked panel by insetting the game area (map + HUD) from
 ## the given edge, so the panel shrinks the play space instead of overlapping it.
@@ -1292,11 +1387,9 @@ func _apply_reservation(id: StringName, edge: int, size: float) -> void:
     # band panel keeps its `_reservations` entry either way, which is what still displaces the event dock
     # past it.
     var map_size: float = 0.0 if _reserver_overlays_map(id, edge) else size
-    var hud_size: float = 0.0 if _reserver_overlays_hud(id, edge, size) else size
     if map_view != null and map_view.has_method("set_reserved_inset"):
         map_view.call("set_reserved_inset", id, edge, map_size)
-    if hud != null and hud.has_method("set_reserved_inset"):
-        hud.call("set_reserved_inset", id, edge, hud_size)
+    push_hud_strip(hud, id, edge, size, _reserver_overlays_hud(id, edge, size))
     # A card sharing its strip with the HUD must be told what to keep clear of.
     _update_band_panel_lateral_bounds()
     # …and the HUD column that shares the strip's TRAILING corner with the parked chrome must be told
@@ -1406,6 +1499,37 @@ static func band_dock_overlays_hud(edge: int, size: float, hud_layer: Node, pane
         float(hud_layer.call("left_column_ceiling")),
         float(hud_layer.call("right_column_ceiling")),
         float(hud_layer.call("bottom_chrome_rail_width", edge, size))))
+
+## **ONE RESERVER'S STRIP, PUBLISHED TO THE HUD ACROSS BOTH REGISTRIES — AND THEY ARE COMPLEMENTS.**
+## `overlays` is `band_dock_overlays_hud`'s verdict; this is what that verdict MEANS to the HUD, and
+## it is a `static` beside it for the same reason that one is: the offline harnesses fan a reservation
+## out by hand, and a harness that publishes half of this is a harness that renders a card the live
+## client bounds (and vice versa).
+##
+## - **`set_reserved_inset`** — space TAKEN. `LayoutRoot` shrinks, so the HUD's containers reflow
+##   beside the strip and every docked card is drawn under it for free.
+## - **`set_overlay_inset`** — pixels COVERED. Withheld from the first registry, the strip is still
+##   there: the band card stands in it and the HUD's containers simply draw through it, which is the
+##   whole content of the exemption. But a FREE-FLOATING card is not laid out by a container — it
+##   places itself by arithmetic against `FloatingRoom` — so it is the one surface that is not drawn
+##   underneath, and with neither registry naming the strip it is drawn straight THROUGH the panel.
+##   Reported in play: the Materials & Crafting ledger sliced mid-row by a BOTTOM-docked Band/City
+##   panel. This is the event bar's case reached from the opposite direction, so it takes the event
+##   bar's registry.
+##
+## Exactly one of the two is ever charged, so a strip can never be counted twice, and the rule stays
+## `band_dock_overlays_hud`'s alone. **The published depth is absolute from the screen edge, as the
+## overlay registry requires**: only a HORIZONTAL band dock ever reaches the overlay branch, and the
+## sole reservers that could displace one inboard (`RESERVER_PRIORITY`) are the two LEFT-edge dev
+## surfaces, so a horizontal dock's `_edge_offset` is 0 whenever `size` is published here.
+static func push_hud_strip(hud_layer: Node, id: StringName, edge: int, size: float,
+        overlays: bool) -> void:
+    if hud_layer == null:
+        return
+    if hud_layer.has_method("set_reserved_inset"):
+        hud_layer.call("set_reserved_inset", id, edge, 0.0 if overlays else size)
+    if hud_layer.has_method("set_overlay_inset"):
+        hud_layer.call("set_overlay_inset", id, edge, size if overlays else 0.0)
 
 ## Tell the Band panel which HUD columns its card must keep clear of.
 ##
@@ -1726,16 +1850,45 @@ func _connect_event_dock() -> void:
     if event_dock.has_signal("dock_changed") and not event_dock.is_connected(
             "dock_changed", Callable(self, "_on_event_dock_dock_changed")):
         event_dock.connect("dock_changed", Callable(self, "_on_event_dock_dock_changed"))
+    # …and the OTHER direction on the same axis: how deep the bar is DRAWN, which the HUD hands to
+    # its free-floating cards as a bound. Still not a reservation — nothing here calls
+    # `_apply_reservation` and the HUD's own layout does not move — see `_on_event_dock_occupancy_changed`.
+    if event_dock.has_signal("occupancy_changed") and not event_dock.is_connected(
+            "occupancy_changed", Callable(self, "_on_event_dock_occupancy_changed")):
+        event_dock.connect("occupancy_changed", Callable(self, "_on_event_dock_occupancy_changed"))
     # Seed BOTH bounds: nothing else will, since the dock never enters `_apply_reservation`'s fan-out.
     # Wiring runs after `_connect_band_city_panel`, so the reservers are already in `_reservations`.
     _update_event_dock_insets()
     _update_event_dock_edge_offset()
+    # …and the occupancy, for the same reason ONE step earlier: the dock emits it from its own
+    # `_ready`, which runs BEFORE this parent's, so the first emission is gone by the time the
+    # connect above happens. Seeded from the panel rather than re-derived here — the depth is its
+    # geometry, not ours.
+    _push_event_dock_occupancy()
 
 ## The bar changed edge; re-measure what displaces it on the new one. The edge is carried on the
 ## signal for legibility, but `_update_event_dock_edge_offset` re-reads it from the panel — one
 ## reader of `get_dock()`, so the offset can never be computed against a stale edge.
 func _on_event_dock_dock_changed(_edge: int) -> void:
     _update_event_dock_edge_offset()
+
+## **THE BAR COVERS PIXELS; IT STILL TAKES NO SPACE.** The HUD's free-floating cards place
+## themselves by arithmetic against a rect rather than by a container, so they are the one kind of
+## surface that cannot simply be drawn under the bar — hence `Hud.set_overlay_inset`, which shrinks
+## THAT rect and nothing else. It is deliberately not `_apply_reservation`: routing the bar through
+## the reservation fan-out would inset the map and the whole HUD layout, which is precisely the
+## decision `event-dock.md` records as made the other way.
+func _on_event_dock_occupancy_changed(edge: int, extent: float) -> void:
+    if hud == null or not hud.has_method("set_overlay_inset"):
+        return
+    hud.call("set_overlay_inset", EVENT_DOCK_OVERLAY, edge, extent)
+
+func _push_event_dock_occupancy() -> void:
+    if event_dock == null or not event_dock.has_method("occupied_extent") \
+            or not event_dock.has_method("get_dock"):
+        return
+    _on_event_dock_occupancy_changed(
+        int(event_dock.call("get_dock")), float(event_dock.call("occupied_extent")))
 
 func _on_band_labels_changed(labels: Dictionary) -> void:
     _event_dock_invoke("set_band_labels", [labels])

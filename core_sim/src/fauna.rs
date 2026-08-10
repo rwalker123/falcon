@@ -5329,7 +5329,7 @@ impl HuntingParty {
         // The **hunt job's default kit** against a band with no wear — "an ordinary band", resolved
         // through the same seams a live one uses rather than by asserting which items that kit holds.
         let kit = equipment.default_kit(crate::equipment_config::KitJob::Hunt);
-        let fresh = crate::components::BandEquipment::default();
+        let fresh = crate::components::BandEquipment::start_stocked(&equipment);
         Self {
             hunter: equipment.hunter_profile_unbounded(
                 crate::creatures_config::CreaturesConfig::builtin().person(),
@@ -5352,7 +5352,7 @@ impl HuntingParty {
         // fixture cannot drift from the game if an item's unequipped side is retuned.
         let equipment = crate::equipment_config::EquipmentConfig::builtin();
         let kit = equipment.no_kit();
-        let fresh = crate::components::BandEquipment::default();
+        let fresh = crate::components::BandEquipment::start_stocked(&equipment);
         Self {
             hunter: crate::creatures_config::CreaturesConfig::builtin().person(),
             tuning: combat.tuning(),
@@ -5411,7 +5411,8 @@ pub fn per_hunter_take_biomass(hunter: CombatStats, dispersion: f32, species: &S
 ///
 /// # Wear does NOT enter
 ///
-/// Every kit is scored against [`crate::components::BandEquipment::default()`] — zero wear — so a
+/// Every kit is scored against [`crate::components::BandEquipment::start_stocked`] — one unworn
+/// unit of everything — so a
 /// herd's default is a property of **quarry × roster**, a per-world constant, and cannot reshuffle
 /// under the player as their spears wear down. The same rule the picker's greying follows.
 ///
@@ -5431,7 +5432,7 @@ pub fn quarry_default_hunt_kit(
     species: &SpeciesDef,
 ) -> crate::equipment_config::KitChoice {
     let job = crate::equipment_config::KitJob::Hunt;
-    let fresh = crate::components::BandEquipment::default();
+    let fresh = crate::components::BandEquipment::start_stocked(equipment);
     let score = |kit: &crate::equipment_config::KitChoice| {
         per_hunter_take_biomass(
             // **Against THIS animal**, so a mass-bounded weapon is scored on quarry it can actually

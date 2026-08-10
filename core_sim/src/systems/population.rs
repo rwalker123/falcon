@@ -1034,6 +1034,26 @@ mod demographics_tests {
         (s.children + s.working + s.elders).to_f32()
     }
 
+    /// Size of the sample cohorts below, in people. A round hundred so a bracket reads directly
+    /// as a percentage.
+    const COHORT: f32 = 100.0;
+
+    /// A [`COHORT`]-person cohort in the shipped **opening shape** — `initial_distribution` from
+    /// `demographics_config.json`, the same split `worldgen` seeds a band with. That split is the
+    /// settled equilibrium of the shipped maturation / aging / elder-mortality rates, so a cohort
+    /// built this way is not spending its first turns re-balancing brackets. Pinning a split here
+    /// instead would measure the *seed*: an elder-heavy start sheds elders faster than workers age
+    /// in, and a "does a fed band grow" case would read that transient as a shrinking band.
+    fn shipped_cohort(food: f32) -> DemographicState {
+        let dist = &DemographicsConfig::default().initial_distribution;
+        state(
+            COHORT * dist.children,
+            COHORT * dist.working,
+            COHORT * dist.elders,
+            food,
+        )
+    }
+
     /// One turn with **no flow telemetry** — the neutral-trend path an unprojected cohort takes.
     fn run(s: DemographicState, temp: f32) -> DemographicState {
         run_with_flow(s, temp, None)
@@ -1050,7 +1070,9 @@ mod demographics_tests {
         .state
     }
 
-    /// A **childless** working cohort (the 30-person opening band's adults: W 16.5 / E 4.5). With no
+    /// A **childless** adult cohort of a band's rough scale (W 16.5 / E 4.5) — a fixed shape, not
+    /// the shipped `initial_distribution`, so a demographic re-tune cannot silently move the
+    /// fertility numbers every case below is expressed in multiples of. With no
     /// children there is no maturation out and no child deaths, so `children` after one turn **is**
     /// exactly that turn's births — the cleanest way to read fertility, which is what every
     /// factor test below is actually measuring.
@@ -1099,10 +1121,10 @@ mod demographics_tests {
     /// A well-fed, temperate cohort grows and eats from its larder.
     #[test]
     fn fed_cohort_grows_and_consumes_food() {
-        let start = state(30.0, 55.0, 15.0, 1_000.0);
+        let start = shipped_cohort(1_000.0);
         let out = run(start, MILD_TEMP);
         assert!(
-            total(&out) > 100.0,
+            total(&out) > COHORT,
             "a fed cohort should grow: {}",
             total(&out)
         );
@@ -1111,23 +1133,26 @@ mod demographics_tests {
             "food should be consumed from the larder"
         );
         // Births land in the children bracket.
-        assert!(out.children.to_f32() > 30.0, "births should raise children");
+        assert!(
+            out.children.to_f32() > start.children.to_f32(),
+            "births should raise children"
+        );
     }
 
     /// With an empty larder the cohort starves — deaths across brackets, no births, larder stays 0.
     #[test]
     fn empty_larder_starves_the_cohort() {
-        let start = state(30.0, 55.0, 15.0, 0.0);
+        let start = shipped_cohort(0.0);
         let out = run(start, MILD_TEMP);
         assert!(
-            total(&out) < 80.0,
+            total(&out) < 0.8 * COHORT,
             "starvation should sharply cut population: {}",
             total(&out)
         );
         assert!(out.food_store.to_f32().abs() < 1e-4, "larder stays empty");
         // Dependents (1.5× vulnerability) fall harder than working-age (1.0×).
-        let child_survival = out.children.to_f32() / 30.0;
-        let working_survival = out.working.to_f32() / 55.0;
+        let child_survival = out.children.to_f32() / start.children.to_f32();
+        let working_survival = out.working.to_f32() / start.working.to_f32();
         assert!(
             child_survival < working_survival,
             "children should die faster than workers: {child_survival} vs {working_survival}"
@@ -1137,8 +1162,8 @@ mod demographics_tests {
     /// Extreme cold kills across brackets even when the larder is full.
     #[test]
     fn cold_kills_even_when_fed() {
-        let warm = run(state(30.0, 55.0, 15.0, 1_000.0), MILD_TEMP);
-        let cold = run(state(30.0, 55.0, 15.0, 1_000.0), 40.0);
+        let warm = run(shipped_cohort(1_000.0), MILD_TEMP);
+        let cold = run(shipped_cohort(1_000.0), 40.0);
         assert!(
             total(&cold) < total(&warm),
             "cold should reduce population vs temperate: {} vs {}",
@@ -1153,10 +1178,10 @@ mod demographics_tests {
     /// `fed_cohort_grows_and_consumes_food`; it exists to lock the decoupling in place.
     #[test]
     fn births_are_morale_independent() {
-        let start = state(30.0, 55.0, 15.0, 1_000.0);
+        let start = shipped_cohort(1_000.0);
         let out = run(start, MILD_TEMP);
         assert!(
-            out.children.to_f32() > 30.0,
+            out.children.to_f32() > start.children.to_f32(),
             "a fed cohort must still bear children with morale removed from the formula: {}",
             out.children.to_f32()
         );
@@ -1418,6 +1443,83 @@ mod demographics_tests {
         let start = state(0.0, 100.0, 0.0, 10_000.0);
         let out = run(start, MILD_TEMP);
         assert!(out.elders.to_f32() > 0.0, "workers should age into elders");
+    }
+
+    /// Turns of burn-in before growth is read. Elders are a pure sink, so a band approaches its
+    /// stable elder *share* at a rate set by `elder_mortality_rate` itself; reading growth before
+    /// that transient has decayed would measure the transient rather than the model's rate.
+    const BURN_IN_TURNS: u32 = 300;
+
+    /// Growth-per-turn agreement bar. The two runs carry different absolute populations, so their
+    /// per-turn flows quantize differently against `Scalar`'s six decimal places; this is that
+    /// noise floor with room to spare, and is orders of magnitude below any real rate difference.
+    const GROWTH_AGREEMENT: f32 = 1e-4;
+
+    /// The elder shares must separate by at least this factor. The model puts them ~2.6× apart at
+    /// the two rates below, so the bar leaves headroom while still refusing a run where the two
+    /// shares have quietly converged.
+    const MIN_SHARE_RATIO: f32 = 2.0;
+
+    /// An elder share below this reads as "nobody is ageing" rather than "elders are short-lived".
+    const LIVE_ELDER_SHARE: f32 = 0.01;
+
+    /// Runs a permanently-fed band forward to its settled shape and returns
+    /// `(growth per turn, elder share)`.
+    ///
+    /// The larder is topped up to **exactly** that turn's demand, so every run reads `hunger = 1`
+    /// (eaten in full) and `reserve = 1` (nothing banked) and fertility is the bare `birth_rate`.
+    /// A fixed fat larder instead would let the two runs' differing food *demands* move their
+    /// reserve factor and hence their births — which would confound the very coupling this case
+    /// exists to deny.
+    fn settled_growth_and_elder_share(elder_mortality_rate: f32) -> (f32, f32) {
+        let cfg = DemographicsConfig {
+            elder_mortality_rate,
+            ..DemographicsConfig::default()
+        };
+        let mut s = shipped_cohort(0.0);
+        let mut before = total(&s);
+        for _ in 0..=BURN_IN_TURNS {
+            before = total(&s);
+            s.food_store = super::food_demand(s.children, s.working, s.elders, &cfg.consumption);
+            s = advance_demographics(
+                s,
+                None,
+                scalar_from_f32(MILD_TEMP),
+                scalar_from_u32(NO_CAP),
+                &cfg,
+            )
+            .state;
+        }
+        (total(&s) / before, s.elders.to_f32() / total(&s))
+    }
+
+    /// **`elder_mortality_rate` sets how large the elder bracket is, not how fast the band grows.**
+    /// Elders neither work nor bear children and nothing leaves the bracket except death, so
+    /// births (`working × fertility`) and the child/working flows never read the elder count: the
+    /// rate does not appear in the growth rate at all. That is what makes shortening old age a
+    /// composition change rather than a growth re-tune in disguise.
+    ///
+    /// Asserted as a **pairing** — the growth rates must agree *while* the elder shares stay far
+    /// apart and both stay real. A sim that had stopped ageing anyone into the elder bracket would
+    /// satisfy "growth agrees" trivially, and that is the failure the pairing is here to catch.
+    #[test]
+    fn elder_mortality_moves_the_elder_share_and_not_the_growth_rate() {
+        // The shipped rate against a much longer old age — a >3× spread in how fast elders die.
+        let (short_growth, short_share) = settled_growth_and_elder_share(0.20);
+        let (long_growth, long_share) = settled_growth_and_elder_share(0.06);
+
+        assert!(
+            (short_growth - long_growth).abs() < GROWTH_AGREEMENT,
+            "elder mortality must not move growth: {short_growth} vs {long_growth} per turn"
+        );
+        assert!(
+            long_share > MIN_SHARE_RATIO * short_share,
+            "a longer old age must leave a materially larger elder share: {long_share} vs {short_share}"
+        );
+        assert!(
+            short_share > LIVE_ELDER_SHARE,
+            "both runs must still be ageing people into the elder bracket: {short_share}"
+        );
     }
 }
 

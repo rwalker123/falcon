@@ -33,6 +33,7 @@ wrapped `##` section instead. Follow the shape the file already uses.
 | `targeting.md` | Move-band and the scouting/hunting expeditions | `TargetingController.gd` |
 | `band-city-panel.md` | The 4-edge dockable command centre | `BandCityPanel.gd`, `BandPanelController.gd` |
 | `event-dock.md` | The notification bar: importance rungs, channels, the pinned alert, `seq` de-dup | `EventDockPanel.gd`, `hud_event_vocab.gd` |
+| `crafting-panel.md` | Materials & Crafting: the material rail, the bench, the kit ledger, and the rule that the sim resolves the refusal | `CraftingPanel.gd`, `CraftingPanelController.gd`, `hud_crafting_vocab.gd` |
 | `panel-framework.md` | Docked `PanelCard`s, `DockScrollFit`, `AutoSizingPanel` | `PanelCard.gd`, `PanelDock.gd` |
 | `terrain-blend-shader.md` | The per-pixel biome-blend shader: blend, shore, canopy, peaks, rivers | `*.gdshader`, `TerrainRenderer.gd` |
 | `terrain-textures.md` | Atlas assets, `terrain_config.json`, loading, the 2D pipeline | `TerrainTextureManager.gd` |

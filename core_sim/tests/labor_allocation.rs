@@ -1,6 +1,36 @@
 //! Early-Game Labor slice 3a: per-worker Forage/Hunt yields, the leashed-follow lapse, and the
 //! Σ-workers ≤ working-age invariant.
 
+/// **The shipped EQUIPPED haul rate** — what a kitted band drags, off the sled's own tier.
+/// `labor_config`'s `hunt.per_worker_biomass_capacity` is the *bare-handed* baseline since quality
+/// tiers landed, so a fixture that wants "an ordinary band" asks the item table.
+fn equipped_haul_rate() -> f32 {
+    core_sim::EquipmentConfig::builtin().equipped_reference(
+        core_sim::EquipmentStat::HuntCarry,
+        core_sim::LaborConfig::builtin()
+            .hunt
+            .per_worker_biomass_capacity,
+    )
+}
+
+/// **A per-worker haul so small a whole crew cannot out-take a herd's regrowth** — the fixture value
+/// for "the worker cap binds below the ecology", named because it has to be installed in *two*
+/// places at once (the baseline and the sled's tier) and a bare literal in each is how they drift.
+const TINY_PER_WORKER_HAUL: f32 = 0.05;
+
+/// The shipped item table with the sled's tier re-tuned to `rate`. Round-tripped through JSON
+/// because `EquipmentConfig` is `Serialize` + `Deserialize`, so this cannot fall out of step with
+/// the shape of the file the way a hand-built fixture would.
+fn equipment_with_hunt_carry(rate: f32) -> Arc<core_sim::EquipmentConfig> {
+    let mut json = serde_json::to_value(&*core_sim::EquipmentConfig::builtin())
+        .expect("the shipped item table serializes");
+    json["items"]["sled"]["tiers"][0]["effects"][0]["equipped"] = serde_json::json!(rate);
+    Arc::new(
+        core_sim::EquipmentConfig::from_json_str(&json.to_string())
+            .expect("a re-tuned haul rate is still a valid item table"),
+    )
+}
+
 use std::sync::Arc;
 
 use bevy::app::App;
@@ -74,6 +104,8 @@ fn spawn_world() -> App {
         .insert_resource(core_sim::CreaturesConfigHandle::default());
     app.world
         .insert_resource(core_sim::EquipmentConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::MaterialsConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_herds);
     // Seed depletable forage patches on every food-module tile (§0-ii).
@@ -228,10 +260,19 @@ fn forage_draws_down_depletable_patch() {
 fn sustain_hunt_below_regrowth_lets_herd_grow() {
     let mut app = spawn_world();
     // Tiny per-worker biomass cap so `worker_cap < net regrowth` at any sane worker count.
+    //
+    // **Both homes of the haul rate have to move, not just `labor_config`'s.** Since quality tiers
+    // landed, `hunt.per_worker_biomass_capacity` is only the *bare-handed* baseline: a band that
+    // owns a sled hauls at the sled tier's own `hunt_carry`, so lowering the config key alone would
+    // leave this fixture hunting at the shipped 40 and the test asserting nothing.
     app.world
         .insert_resource(LaborConfigHandle::new(tuned_labor_config(|config| {
-            config.hunt.per_worker_biomass_capacity = 0.05;
+            config.hunt.per_worker_biomass_capacity = TINY_PER_WORKER_HAUL;
         })));
+    app.world
+        .insert_resource(core_sim::EquipmentConfigHandle::new(
+            equipment_with_hunt_carry(TINY_PER_WORKER_HAUL),
+        ));
 
     // A stationary herd at half its cap → clear positive regrowth.
     let (id, start) = {
@@ -1040,7 +1081,7 @@ fn the_schedule_total_matches_the_realized_average_over_the_horizon() {
     // Both projections from the SAME state over the SAME horizon — the comparison is only meaningful
     // if the only difference is the bank.
     let horizon = labor.arrivals_horizon_turns;
-    let per_worker = labor.hunt.per_worker_biomass_capacity;
+    let per_worker = equipped_haul_rate();
     let realized = core_sim::project_realized_hunt(
         herd,
         &fauna,
@@ -1095,7 +1136,7 @@ fn a_spent_source_schedules_nothing() {
         app.world.resource::<HerdRegistry>().find(&id).unwrap(),
         &app.world.resource::<FaunaConfigHandle>().get(),
         &app.world.resource::<LadderConfigHandle>().get(),
-        labor.hunt.per_worker_biomass_capacity,
+        equipped_haul_rate(),
         &core_sim::HuntingParty::builtin_equipped(),
         1.0,
         4,

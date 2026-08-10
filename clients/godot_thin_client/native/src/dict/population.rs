@@ -205,6 +205,13 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let mut row = VarDictionary::new();
             let _ = row.insert("item_id", condition.itemId().unwrap_or_default());
             let _ = row.insert("remaining", condition.remaining() as f64);
+            // **`remaining == 0` IS NOT "DRY". IT IS "OWNS NONE".** The count slice inverted the
+            // field above: a batch that runs out of units is REMOVED, so a worn-out item and one the
+            // band never had both read `remaining 0`, and only `EquipmentBatchState.life` ("Worn
+            // out" vs "Never made") tells them apart. This is the explicit ownership statement, so
+            // no readout ever has to infer it — `count > 0` means the band holds units, and
+            // `remaining` is then the life left on the unit in hand.
+            let _ = row.insert("count", condition.count() as i64);
             kit_item_conditions.push(&row.to_variant());
         }
     }
@@ -662,7 +669,222 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         let _ = dict.insert("accessible_stockpile", &stock_dict);
     }
 
+    // --- CRAFTING & MATERIALS (`docs/plan_crafting_and_materials.md` §7) ---------------------------
+    // **THE SIM RESOLVES THE REFUSAL, THIS DECODER ONLY CARRIES IT.** Every string below —
+    // `reason`, `severity`, `life`, `life_severity`, `blocked_reason`, `quantum_noun` — is resolved
+    // sim-side and must reach the panel VERBATIM. Re-deriving one here (or above it, in GDScript) is
+    // impossible rather than merely redundant: the derivation needs the band's batch readings, the
+    // tool that bounds a material, the recipe's grade seams and the item's wear quantum, and those
+    // either do not ride this wire or cannot be joined correctly from it. That is the rule `kitTiers`
+    // exists to enforce, one subsystem over.
+    // Always inserted (empty array / all-default dict when the vector is absent) so the band dict has
+    // a stable shape and the panel never has to distinguish "no crafting" from "older snapshot".
+    let mut material_batches = VarArray::new();
+    if let Some(batches) = cohort.materialBatches() {
+        for batch in batches.iter() {
+            let mut row = VarDictionary::new();
+            // The GENERIC material id — "hide", never "deer_hide".
+            let _ = row.insert("material_id", batch.materialId().unwrap_or(""));
+            let _ = row.insert("amount", batch.amount() as f64);
+            // **THE EXACT READING AND ITS BAND, BOTH.** The band (`poor`/`fair`/`good`/`excellent`)
+            // is the merge key and the word the rail shows; the exact value is what crafting reads,
+            // so two `good` hides are not interchangeable. Published in the material's DECLARED axis
+            // order, which this decoder preserves.
+            let mut readings = VarArray::new();
+            if let Some(list) = batch.readings() {
+                for reading in list.iter() {
+                    let mut entry = VarDictionary::new();
+                    let _ = entry.insert("axis", reading.axis().unwrap_or(""));
+                    let _ = entry.insert("value", reading.value() as f64);
+                    let _ = entry.insert("band_name", reading.bandName().unwrap_or(""));
+                    readings.push(&entry.to_variant());
+                }
+            }
+            let _ = row.insert("readings", &readings);
+            // The nearest declared VARIETY ("copper", "bronze"), `""` when the material declares
+            // none — which is every shipped material. Varieties are NAMING, not materials.
+            let _ = row.insert("variety_name", batch.varietyName().unwrap_or(""));
+            material_batches.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("material_batches", &material_batches);
+
+    // WHAT IS ON THIS BAND'S BENCH — one job at a time, so the panel never has to explain a queue.
+    // An empty `recipe_id` is an IDLE bench, which is a different statement from a BLOCKED one: a
+    // blocked bench has a recipe AND a `blocked_reason`.
+    let mut bench_dict = VarDictionary::new();
+    let _ = bench_dict.insert(
+        "recipe_id",
+        cohort.bench().and_then(|b| b.recipeId()).unwrap_or(""),
+    );
+    let _ = bench_dict.insert(
+        "display_name",
+        cohort.bench().and_then(|b| b.displayName()).unwrap_or(""),
+    );
+    let _ = bench_dict.insert("workers", cohort.bench().map_or(0, |b| b.workers()) as i64);
+    let _ = bench_dict.insert(
+        "progress",
+        cohort.bench().map_or(0.0, |b| b.progress()) as f64,
+    );
+    let _ = bench_dict.insert("work", cohort.bench().map_or(0.0, |b| b.work()) as f64);
+    // The craft one completed item credits — crafting is the fourth teacher.
+    let _ = bench_dict.insert(
+        "teaches",
+        cohort.bench().and_then(|b| b.teaches()).unwrap_or(""),
+    );
+    // WHY THE BENCH IS NOT MOVING, resolved sim-side. `""` = it is working. It reads in exactly the
+    // offer vocabulary plus the crew's own refusal, because a bench with a full pile and nobody on
+    // it is also stopped.
+    let _ = bench_dict.insert(
+        "blocked_reason",
+        cohort.bench().and_then(|b| b.blockedReason()).unwrap_or(""),
+    );
+    // WHETHER THAT REASON IS A FAULT OR A PROMPT, in the same `danger`/`neutral`/`good` vocabulary as
+    // `CraftOffer.severity`, `""` when nothing is blocking. **A bench waiting for its crew is the
+    // NORMAL state one click after Make** — the player staffs the bench — so it resolves `neutral`
+    // while a shortage, an unknown craft or a zero craft rate resolve `danger`. Resolved sim-side
+    // beside the reason for the reason the reason itself is: a client tinting every refusal one
+    // colour renders the expected state as an alarm, and one re-deriving the severity from the
+    // wording is parsing a string it may only render.
+    let _ = bench_dict.insert(
+        "blocked_severity",
+        cohort
+            .bench()
+            .and_then(|b| b.blockedSeverity())
+            .unwrap_or(""),
+    );
+    let _ = bench_dict.insert(
+        "shortfalls",
+        &shortfalls_to_array(cohort.bench().and_then(|b| b.shortfalls())),
+    );
+    let _ = bench_dict.insert(
+        "items_completed",
+        cohort.bench().map_or(0, |b| b.itemsCompleted()) as i64,
+    );
+    let _ = bench_dict.insert("drawn", cohort.bench().is_some_and(|b| b.drawn()));
+    // The grade the pile in flight FIXED — `""` before the draw, or on an ungraded recipe.
+    let _ = bench_dict.insert(
+        "output_grade",
+        cohort.bench().and_then(|b| b.outputGrade()).unwrap_or(""),
+    );
+    // **WHAT ONE TURN ADDS, ALREADY THROUGH THE TOOL JOIN** — `workers × progress_per_worker_turn ×
+    // craft_speed`, where `craft_speed` is the equipped bench tool's rate or the material's
+    // bare-handed one. A client multiplying `workers` by anything of its own would miss that factor
+    // and promise a finish in half the turns it takes, which is why this rides resolved, exactly as
+    // `kit_tiers` does. `0` is a STATE — no crew, no recipe, or a craft speed of zero — and the
+    // `blocked_reason` beside it says which.
+    let _ = bench_dict.insert(
+        "rate_per_turn",
+        cohort.bench().map_or(0.0, |b| b.ratePerTurn()) as f64,
+    );
+    // **THE PILE ALREADY CUT, SO A CLEAR CAN NAME WHAT IT DESTROYS.** The WITHDRAWN amounts, not the
+    // recipe's stated inputs and not a shortfall's `required`: a bench tool's material efficiency
+    // sits between the book and the withdrawal. Empty on an undrawn bench.
+    let _ = bench_dict.insert(
+        "drawn_inputs",
+        &drawn_inputs_to_array(cohort.bench().and_then(|b| b.drawnInputs())),
+    );
+    let _ = dict.insert("bench", &bench_dict);
+
+    // **ONE ROW PER RECIPE, ALWAYS**, and `reason` + `severity` are the contract rather than
+    // `available`: "Not needed yet" is a SHRUG and "Short 4.9 bone" is a PROBLEM, and a client
+    // deriving both from a boolean cannot tell them apart.
+    let mut craft_offers = VarArray::new();
+    if let Some(offers) = cohort.craftOffers() {
+        for offer in offers.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("recipe_id", offer.recipeId().unwrap_or(""));
+            let _ = row.insert("display_name", offer.displayName().unwrap_or(""));
+            // "kit" | "tool" | "stock" — the three groups the ledger is one table in.
+            let _ = row.insert("group", offer.group().unwrap_or(""));
+            // The equipment id this recipe makes, `""` for a material recipe — the JOIN key onto
+            // `equipment_batches`.
+            let _ = row.insert("output_item_id", offer.outputItemId().unwrap_or(""));
+            let _ = row.insert("available", offer.available());
+            let _ = row.insert("reason", offer.reason().unwrap_or(""));
+            let _ = row.insert("severity", offer.severity().unwrap_or(""));
+            let _ = row.insert("shortfalls", &shortfalls_to_array(offer.shortfalls()));
+            let _ = row.insert("output_grade", offer.outputGrade().unwrap_or(""));
+            let _ = row.insert("on_bench", offer.onBench());
+            // **THE LEDGER'S GROUP HEAD** — the tier a craft would produce right now, and its rank
+            // in the item's own list. The heads run rank-DESCENDING (newest first), which is the
+            // client's only honest ordering: alphabetical would put Iron above Bronze.
+            let _ = row.insert("output_tier_name", offer.outputTierName().unwrap_or(""));
+            let _ = row.insert("output_tier_rank", offer.outputTierRank() as i64);
+            // **RENDER IT VERBATIM, and only this carries a tier word into the Owned cell.** `""`
+            // when there is no news — what the band carries is said only when it disagrees with
+            // what the band could now make.
+            let _ = row.insert("owned_note", offer.ownedNote().unwrap_or(""));
+            craft_offers.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("craft_offers", &craft_offers);
+
+    // **THE LIFE METER IS A FUEL GAUGE, NOT A PERFORMANCE METER.** A spear at 34% is exactly as
+    // deadly as one at 100%, so `life` reads in the item's OWN USE QUANTA and never in percent, and
+    // the noun those quanta are counted in is resolved sim-side off the item's `wear.per`. A client
+    // must not map quanta to English, and must not draw a percentage of its own beside them.
+    let mut equipment_batches = VarArray::new();
+    if let Some(batches) = cohort.equipmentBatches() {
+        for batch in batches.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("item_id", batch.itemId().unwrap_or(""));
+            let _ = row.insert("tier_id", batch.tierId().unwrap_or(""));
+            let _ = row.insert("grade", batch.grade().unwrap_or(""));
+            // **`count == 0` MEANS THE BAND OWNS NONE**, and it is the only honest ownership test:
+            // a batch that runs out of units is removed, so worn-out and never-made both read 0
+            // here and are told apart by `life` alone.
+            let _ = row.insert("count", batch.count() as i64);
+            let _ = row.insert("remaining", batch.remaining() as f64);
+            let _ = row.insert("quanta_left", batch.quantaLeft() as f64);
+            let _ = row.insert("quantum_noun", batch.quantumNoun().unwrap_or(""));
+            let _ = row.insert("life", batch.life().unwrap_or(""));
+            let _ = row.insert("life_severity", batch.lifeSeverity().unwrap_or(""));
+            equipment_batches.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("equipment_batches", &equipment_batches);
+
     dict
+}
+
+/// **WHAT THE STORE ACTUALLY LOST FOR THE JOB IN FLIGHT** — one row per input material, in the
+/// recipe's own input order, empty when nothing has been cut yet. It is the WITHDRAWAL rather than
+/// the recipe's price, which is the whole point: a clear or a swap spends this pile, and the tool's
+/// material efficiency means the book's number would name the wrong loss.
+fn drawn_inputs_to_array(
+    inputs: Option<Vector<'_, ForwardsUOffset<fb::DrawnInput<'_>>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    if let Some(list) = inputs {
+        for input in list.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("material_id", input.materialId().unwrap_or(""));
+            let _ = row.insert("amount", input.amount() as f64);
+            array.push(&row.to_variant());
+        }
+    }
+    array
+}
+
+/// **WHAT A DRAW IS SHORT, AS A NUMBER** — the shared shape `BenchState` and `CraftOffer` both carry.
+/// The panel says *"Short 4.9 bone"*, never *"cannot craft"*, so the arithmetic is done sim-side and
+/// this only carries it; `required` is already net of the bench tool's material efficiency.
+fn shortfalls_to_array(
+    shortfalls: Option<Vector<'_, ForwardsUOffset<fb::MaterialShortfall<'_>>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    if let Some(list) = shortfalls {
+        for shortfall in list.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("material_id", shortfall.materialId().unwrap_or(""));
+            let _ = row.insert("required", shortfall.required() as f64);
+            let _ = row.insert("held", shortfall.held() as f64);
+            let _ = row.insert("short", shortfall.short() as f64);
+            array.push(&row.to_variant());
+        }
+    }
+    array
 }
 
 pub(crate) fn populations_to_array(

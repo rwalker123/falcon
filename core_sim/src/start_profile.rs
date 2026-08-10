@@ -666,6 +666,53 @@ mod tests {
         }
     }
 
+    /// **The three CRAFTS follow the same rule, for the same reason.** They are not ladder rungs —
+    /// a bench earns them, per item completed — but *"earned by practice, never handed out"* is the
+    /// whole model, and a start profile granting Tanning would hand the player a tool they never
+    /// worked for. Declared in the tag catalog so they are mappable, granted by nothing.
+    #[test]
+    fn no_start_profile_grants_a_craft_and_every_craft_tag_maps_to_its_discovery() {
+        let crafts = [
+            (
+                crate::crafting::TANNING_CRAFT,
+                crate::crafting::TANNING_DISCOVERY_ID,
+            ),
+            (
+                crate::crafting::WEAVING_CRAFT,
+                crate::crafting::WEAVING_DISCOVERY_ID,
+            ),
+            (
+                crate::crafting::BONE_WORKING_CRAFT,
+                crate::crafting::BONE_WORKING_DISCOVERY_ID,
+            ),
+        ];
+        let catalog = StartProfileKnowledgeTags::builtin();
+        for (tag, id) in crafts {
+            let def = catalog
+                .get(tag)
+                .unwrap_or_else(|| panic!("craft '{tag}' must be declared in the tag catalog"));
+            assert_eq!(
+                def.discovery_id(),
+                id,
+                "'{tag}' maps to the wrong discovery"
+            );
+        }
+        for profile in &StartProfiles::builtin().profiles {
+            for (tag, _) in crafts {
+                assert!(
+                    !profile
+                        .overrides
+                        .starting_knowledge_tags
+                        .iter()
+                        .any(|granted| granted == tag),
+                    "start profile '{}' grants the craft '{tag}' — a band learns Tanning by \
+                     tanning, which is what makes 'tools are earned, never a prerequisite' true",
+                    profile.id
+                );
+            }
+        }
+    }
+
     /// The four ladder knowledges are **mappable** — each tag resolves to its discovery id. This is
     /// what lets `intensification::discovery_id_for` name them, and it is the other half of the
     /// contract above: declared, but never granted.

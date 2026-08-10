@@ -22,6 +22,7 @@ mod combat_config;
 mod components;
 mod config_load;
 pub mod config_override;
+pub mod crafting;
 mod creatures_config;
 mod crisis;
 mod crisis_config;
@@ -51,12 +52,14 @@ mod labor_config;
 pub mod log_stream;
 mod map_preset;
 mod mapgen;
+mod materials_config;
 pub mod metrics;
 pub mod network;
 mod orders;
 pub mod port_alloc;
 mod power;
 mod provinces;
+mod recipes_config;
 mod resources;
 mod scalar;
 mod sedentarization;
@@ -101,11 +104,13 @@ pub use combat_config::{
     BUILTIN_COMBAT_CONFIG,
 };
 pub use components::{
-    available_workers, floor_is_valid, floor_overdraws, raid_is_recurring, BandEquipment, BandId,
-    BandTravel, DeathCause, DemographicFlowAccumulator, ElementKind, Expedition, ExpeditionMission,
-    ExpeditionPhase, Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget,
-    LocalStore, LogisticsLink, MoraleCause, PendingMigration, PopulationCohort, PowerNode,
-    ResidentBand, Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink, YieldRange,
+    available_workers, floor_is_valid, floor_overdraws, raid_is_recurring, BandBench,
+    BandEquipment, BandId, BandTravel, BandWorkforce, BatchGrade, DeathCause,
+    DemographicFlowAccumulator, DrawnInputs, DrawnMaterial, ElementKind, EquipmentBatch,
+    Expedition, ExpeditionMission, ExpeditionPhase, Improvement, KnowledgeFragment,
+    LaborAllocation, LaborAssignment, LaborTarget, LocalStore, LogisticsLink, MaterialBatch,
+    MaterialDraw, MoraleCause, PendingMigration, PopulationCohort, PowerNode, ResidentBand,
+    Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink, YieldRange,
     DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE,
     TRADE_GOODS,
 };
@@ -149,9 +154,9 @@ pub use demographics_config::{
 };
 pub use equipment_config::{
     load_equipment_config_from_env, DefaultKitsConfig, EffectTier, EquipmentConfig,
-    EquipmentConfigHandle, EquipmentConfigMetadata, EquipmentEffect, EquipmentStat, ItemDefinition,
-    KitChoice, KitDefinition, KitJob, KitSelectionError, WearConfig, WearQuantum,
-    BUILTIN_EQUIPMENT_CONFIG,
+    EquipmentConfigHandle, EquipmentConfigMetadata, EquipmentEffect, EquipmentStat, EquipmentTier,
+    ItemDefinition, KitChoice, KitDefinition, KitJob, KitSelectionError, LiveItem, WearConfig,
+    WearQuantum, BUILTIN_EQUIPMENT_CONFIG,
 };
 pub use espionage::{
     AgentAssignment, CounterIntelBudgets, EspionageAgentHandle, EspionageCatalog,
@@ -235,6 +240,16 @@ pub use labor_config::{
     BUILTIN_LABOR_CONFIG, NO_FORAGE_CAPACITY,
 };
 pub use map_preset::{ErosionConfig, MapPreset, MapPresets, MapPresetsHandle, BUILTIN_MAP_PRESETS};
+pub use materials_config::{
+    credit_material_yield, load_materials_config_from_env, BandKey, CharacteristicBand,
+    HandWorking, MaterialDef, MaterialYieldDef, MaterialYieldError, MaterialsConfig,
+    MaterialsConfigError, MaterialsConfigHandle, MaterialsConfigMetadata, BUILTIN_MATERIALS_CONFIG,
+};
+pub use recipes_config::{
+    load_recipes_config_from_env, CraftingTuning, RecipeDef, RecipeGrade, RecipeInput,
+    RecipeOutput, RecipesConfig, RecipesConfigError, RecipesConfigHandle, RecipesConfigMetadata,
+    BUILTIN_RECIPES_CONFIG,
+};
 pub use sedentarization::{
     sedentarization_tick, SedentarizationEntry, SedentarizationScore, SedentarizationStage,
 };
@@ -320,13 +335,13 @@ pub use snapshot::{
 };
 pub use systems::spawn_initial_world;
 pub use systems::{
-    advance_band_movement, advance_expeditions, advance_labor_allocation, advance_predator_raids,
-    advance_tick, denial_forecast, expedition_returned_event, expedition_take_provisions,
-    fold_party_into_band, hunt_per_worker_provisions, hunt_report_event, hunt_take,
-    hunt_trip_forecast, output_multiplier, party_owes_a_report, simulate_power,
-    split_band_from_parent, split_refusals, DenialForecast, DenialOutcome, HuntOutcome,
-    HuntTripBound, HuntTripForecast, MigrationKnowledgeEvent, PowerSimParams, SplitBand,
-    SplitRefusal, SplitRefusals, TradeDiffusionEvent,
+    advance_band_movement, advance_crafting, advance_expeditions, advance_labor_allocation,
+    advance_predator_raids, advance_tick, bench_tiers, denial_forecast, expedition_returned_event,
+    expedition_take_provisions, fold_party_into_band, hunt_per_worker_provisions,
+    hunt_report_event, hunt_take, hunt_trip_forecast, output_multiplier, party_owes_a_report,
+    simulate_power, split_band_from_parent, split_refusals, BenchTiers, DenialForecast,
+    DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast, MigrationKnowledgeEvent,
+    PowerSimParams, SplitBand, SplitRefusal, SplitRefusals, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
@@ -462,15 +477,24 @@ pub fn build_headless_app() -> App {
     let (visibility_config, visibility_metadata) =
         visibility_config::load_visibility_config_from_env();
     let visibility_handle = visibility_config::VisibilityConfigHandle::new(visibility_config);
-    let (fauna_config, fauna_metadata) = fauna_config::load_fauna_config_from_env();
+    // **The materials table loads FIRST of the three**, because both food webs' yield edges are
+    // reconciled against it: a species (plant or animal) naming a material that does not exist, or
+    // stating a reading on an axis that material does not declare, is a boot panic rather than a
+    // source that silently yields nothing (`docs/plan_crafting_and_materials.md` §2).
+    let (materials_config, materials_metadata) = materials_config::load_materials_config_from_env();
+    let materials_handle = materials_config::MaterialsConfigHandle::new(materials_config.clone());
+    let (fauna_config, fauna_metadata) =
+        fauna_config::load_fauna_config_from_env(&materials_config);
     let fauna_handle = fauna_config::FaunaConfigHandle::new(fauna_config);
     let (labor_config, labor_metadata) = labor_config::load_labor_config_from_env();
     // The flora roster is validated AGAINST the human food web's own capacity table — every
     // food-bearing biome must be named, and no named plant may claim barren ground
-    // (`FloraConfig::validate_against_forage`). The table is passed in rather than re-read so it
-    // keeps exactly one copy.
-    let (flora_config, flora_metadata) =
-        flora_config::load_flora_config_from_env(&labor_config.forage.capacity_by_biome);
+    // (`FloraConfig::validate_against_forage`) — and against the materials table beside it. Both
+    // tables are passed in rather than re-read so each keeps exactly one copy.
+    let (flora_config, flora_metadata) = flora_config::load_flora_config_from_env(
+        &labor_config.forage.capacity_by_biome,
+        &materials_config,
+    );
     let flora_handle = flora_config::FloraConfigHandle::new(flora_config);
     let labor_handle = labor_config::LaborConfigHandle::new(labor_config);
     let (ladder_config, ladder_metadata) = intensification::load_intensification_ladder_from_env();
@@ -497,7 +521,21 @@ pub fn build_headless_app() -> App {
     let (creatures_config, creatures_metadata) = creatures_config::load_creatures_config_from_env();
     let creatures_handle = creatures_config::CreaturesConfigHandle::new(creatures_config);
     let (equipment_config, equipment_metadata) = equipment_config::load_equipment_config_from_env();
-    let equipment_handle = equipment_config::EquipmentConfigHandle::new(equipment_config);
+    // **The item table's `bounds_material` is reconciled against the materials table**, the same
+    // `UnknownItem` debt the two food webs' yield edges pay: a tool bounding `hyde` would parse,
+    // validate, and then be the bench tool for nothing.
+    if let Err(err) = equipment_config.validate_against_materials(&materials_config) {
+        panic!("equipment config does not reconcile with the materials table: {err}");
+    }
+    let equipment_handle = equipment_config::EquipmentConfigHandle::new(equipment_config.clone());
+    // **The recipe book is reconciled against BOTH tables**, here and only here, because this is the
+    // one place all three configs are in scope at once — a recipe naming a material or an item that
+    // does not exist would otherwise parse, validate, and make nothing forever.
+    let (recipes_config, recipes_metadata) = recipes_config::load_recipes_config_from_env();
+    if let Err(err) = recipes_config.validate_against(&materials_config, &equipment_config) {
+        panic!("recipes config does not reconcile with the materials and equipment tables: {err}");
+    }
+    let recipes_handle = recipes_config::RecipesConfigHandle::new(recipes_config);
     let (demographics_config, demographics_metadata) =
         demographics_config::load_demographics_config_from_env();
     let demographics_handle =
@@ -565,6 +603,10 @@ pub fn build_headless_app() -> App {
         .insert_resource(CrisisOverlayCache::default())
         .insert_resource(visibility_handle)
         .insert_resource(visibility_metadata)
+        .insert_resource(materials_handle)
+        .insert_resource(materials_metadata)
+        .insert_resource(recipes_handle)
+        .insert_resource(recipes_metadata)
         .insert_resource(fauna_handle)
         .insert_resource(fauna_metadata)
         .insert_resource(flora_handle)
@@ -853,6 +895,10 @@ pub fn build_headless_app() -> App {
                     // `discover_sites` picks up any site on the newly-flushed Discovered tiles.
                     systems::advance_expeditions,
                     systems::advance_labor_allocation,
+                    // The bench runs right after labor, for two reasons that both have to hold: it
+                    // draws on the materials THIS turn's take just delivered, and its crew came out
+                    // of the same worker pool the assignment loop above spends.
+                    systems::advance_crafting,
                     // Predator raids fire right after labor so warrior counts and band positions are
                     // current: a carnivore with `aggression > 0` within `predators.raid_radius` of a band
                     // raids its camp, the band defended by its Warriors (the role's first live consumer).

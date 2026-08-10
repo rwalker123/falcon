@@ -56,6 +56,10 @@ use sim_schema::state::economy::*;
 use sim_schema::state::governance::*;
 use sim_schema::state::map::*;
 use sim_schema::state::population::*;
+use sim_schema::state::subsistence::{
+    CharacteristicBandState, CraftKnowledgeState, MaterialDefState, RecipeDefState,
+    RecipeInputState, RecipeOutputState,
+};
 use sim_schema::world::{SnapshotHeader, WorldDelta, WorldSnapshot};
 use std::error::Error;
 use std::fs;
@@ -951,6 +955,9 @@ fn seed_snapshot() -> WorldSnapshot {
                 } else {
                     90.0 - index as f32 * 7.5
                 },
+                // **Ownership, stated.** The dry row above owns none — `remaining 0` means "owns
+                // none" since the count slice — so the golden carries both readings of a zero.
+                count: if index == 1 { 0 } else { 1 },
             })
             .collect();
         // **The per-band resolved tiers**, one row per shipped kit. Spelled out for the same reason
@@ -961,6 +968,43 @@ fn seed_snapshot() -> WorldSnapshot {
             .iter()
             .map(|kit| BandKitTiersState {
                 kit_id: (*kit).to_string(),
+                ..Default::default()
+            })
+            .collect();
+        // --- CRAFTING & MATERIALS ------------------------------------------------------------
+        // Every one of these is a repeated field inside a repeated field, so both levels need
+        // elements or the guard never exercises the inner ones. Saturation overwrites the values;
+        // what matters here is the SHAPE and the ids, which cannot be `rows()` for the same reason
+        // the item conditions above cannot: a list keyed by id has no duplicate keys.
+        cohort.material_batches = ["hide", "fibre", "bone"]
+            .iter()
+            .map(|material| MaterialBatchState {
+                material_id: (*material).to_string(),
+                readings: vec![CharacteristicReadingState::default(); 2],
+                ..Default::default()
+            })
+            .collect();
+        cohort.bench = BenchState {
+            shortfalls: rows_of(MaterialShortfallState::default()),
+            // The pile already cut for the job in flight — a repeated field inside a repeated field
+            // like the shortfalls above it, so it needs elements or the guard never decodes a row.
+            drawn_inputs: rows_of(DrawnInputState::default()),
+            ..Default::default()
+        };
+        // **One row per recipe, always** — the contract this field exists for, so the fixture
+        // carries a real book's worth rather than one row.
+        cohort.craft_offers = ["sled", "baskets", "spears", "loom"]
+            .iter()
+            .map(|recipe| CraftOfferState {
+                recipe_id: (*recipe).to_string(),
+                shortfalls: rows_of(MaterialShortfallState::default()),
+                ..Default::default()
+            })
+            .collect();
+        cohort.equipment_batches = ["spears", "sled", "baskets", "loom"]
+            .iter()
+            .map(|item| EquipmentBatchState {
+                item_id: (*item).to_string(),
                 ..Default::default()
             })
             .collect();
@@ -1007,6 +1051,34 @@ fn seed_snapshot() -> WorldSnapshot {
         // precisely so a durability readout stops guessing the gear from the tiers.
         option.item_ids = vec![String::new(); ROWS];
     }
+    // The three per-world crafting catalogues and the learned one. `axes` / `requires_knowledge` /
+    // `inputs` / `outputs` are repeated fields inside repeated fields, so each needs elements.
+    s.materials = ["hide", "fibre", "bone"]
+        .iter()
+        .map(|material| MaterialDefState {
+            id: (*material).to_string(),
+            axes: vec![String::new(); 2],
+            ..Default::default()
+        })
+        .collect();
+    s.characteristic_bands = rows_of(CharacteristicBandState::default());
+    s.recipes = ["sled", "baskets", "spears", "loom"]
+        .iter()
+        .map(|recipe| RecipeDefState {
+            id: (*recipe).to_string(),
+            requires_knowledge: vec![String::new(); 2],
+            inputs: vec![RecipeInputState::default(); 2],
+            outputs: vec![RecipeOutputState::default(); 1],
+            ..Default::default()
+        })
+        .collect();
+    s.craft_knowledge = ["tanning", "weaving", "bone_working"]
+        .iter()
+        .map(|craft| CraftKnowledgeState {
+            craft_id: (*craft).to_string(),
+            ..Default::default()
+        })
+        .collect();
     s.sedentarization = rows();
     s.forage_patches = rows();
     for patch in &mut s.forage_patches {

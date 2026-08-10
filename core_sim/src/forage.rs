@@ -819,6 +819,49 @@ fn basket_rate(
     }
 }
 
+/// **The MATERIAL account of the same basket** — what a harvest of this patch is *made of*, per unit
+/// of biomass (`docs/plan_crafting_and_materials.md` §2).
+///
+/// It cannot ride [`basket_rate`]'s closure the way the other three accounts do, and the reason is
+/// the model rather than the plumbing: food, fodder and trade are interchangeable **scalars**, so a
+/// basket averages them into one number, while a material carries a **characteristic vector** and
+/// averaging two species' would invent a plant that is not growing there. So the basket is
+/// *decomposed* instead of summed: one row per species per material, each keeping that species' own
+/// exact reading and carrying its share in the rate. Rows that land in the same band merge in the
+/// store, which is where merging belongs.
+///
+/// Reads the patch's **standing** rung and applies the same favored-crop conversion gain the other
+/// three accounts get — tending is knowing your crop, whichever account it pays into.
+pub fn patch_material_yields(
+    patch: &ForagePatch,
+    tile_composition: &[FloraShare],
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+) -> Vec<crate::materials_config::MaterialYieldDef> {
+    let rung = standing_rung(patch);
+    let composition = composition_for_rung(patch, tile_composition, forage, rung);
+    let favored_gain = favored_conversion_gain(rung, forage);
+    let mut rows = Vec::new();
+    for entry in composition.iter() {
+        let Some(def) = flora.species.get(&entry.species) else {
+            continue;
+        };
+        let gain = if patch.species.as_deref() == Some(entry.species.as_str()) {
+            favored_gain
+        } else {
+            NO_CONVERSION_GAIN
+        };
+        for row in &def.yield_.materials {
+            rows.push(crate::materials_config::MaterialYieldDef {
+                material: row.material.clone(),
+                per_biomass: entry.share * row.per_biomass * gain,
+                characteristics: row.characteristics.clone(),
+            });
+        }
+    }
+    rows
+}
+
 /// **THE conversion seam** — how well one unit of this patch's biomass turns into food
 /// (`docs/plan_flora_roster.md` §4.3): the share-weighted average of the patch's **effective** basket
 /// ([`patch_composition`]), with the tended rung's conversion gain on the favored crop's term.
@@ -1857,6 +1900,29 @@ pub(crate) fn field_provisions(
         * output_multiplier
 }
 
+/// **What a sown Field hands over each turn, stated in BIOMASS** — the managed harvest before it is
+/// routed into any one currency, capped by what the crew can carry.
+///
+/// The three scalar accounts each convert this through their own rate, so none of them ever needs
+/// the biomass itself. The **material** account does: a material's `per_biomass` is a rate on the
+/// crop rather than on the currency it would otherwise have been sold as, and a cash Field's
+/// provisions are `0`, so there is no currency to scale off. Same `min(production, collection)` shape
+/// the other three run — an understaffed Field brings home less of everything, in step.
+///
+/// A Field is never drawn down, so this is a *rate on the standing crop* and `patch.biomass` is
+/// unchanged by it.
+pub(crate) fn field_harvest_biomass(
+    patch: &ForagePatch,
+    forage: &ForageLaborConfig,
+    equipped_gather_rate: f32,
+    workers: u32,
+) -> f32 {
+    let production = patch.biomass * forage.cultivation.field_provisions_per_biomass;
+    let collection =
+        workers as f32 * forage_per_worker_biomass(equipped_gather_rate, MANAGED_HARVEST_SEASON);
+    production.min(collection)
+}
+
 /// The **projected** fodder conversion rate — the projected basket's `yield.fodder_per_biomass`
 /// average once the improvement completes (the fodder twin of `projected_provisions_per_biomass`,
 /// `docs/plan_flora_roster.md` §5). A sown Field's basket is 100% its crop, so this reads `0.0` for a
@@ -1917,11 +1983,12 @@ pub(crate) fn managed_per_worker_fodder(
     patch: &ForagePatch,
     tile_composition: &[FloraShare],
     forage: &ForageLaborConfig,
+    equipped_gather_rate: f32,
     flora: &FloraConfig,
     output_multiplier: f32,
 ) -> f32 {
     forage_provisions(
-        forage_per_worker_biomass(forage.per_worker_biomass_capacity, MANAGED_HARVEST_SEASON),
+        forage_per_worker_biomass(equipped_gather_rate, MANAGED_HARVEST_SEASON),
         field_fodder_per_biomass(patch, tile_composition, flora, forage),
         output_multiplier,
     )
@@ -1989,11 +2056,12 @@ pub(crate) fn managed_per_worker_trade(
     patch: &ForagePatch,
     tile_composition: &[FloraShare],
     forage: &ForageLaborConfig,
+    equipped_gather_rate: f32,
     flora: &FloraConfig,
     output_multiplier: f32,
 ) -> f32 {
     forage_provisions(
-        forage_per_worker_biomass(forage.per_worker_biomass_capacity, MANAGED_HARVEST_SEASON),
+        forage_per_worker_biomass(equipped_gather_rate, MANAGED_HARVEST_SEASON),
         field_trade_per_biomass(patch, tile_composition, flora, forage),
         output_multiplier,
     )
@@ -2202,11 +2270,13 @@ fn plant_food_only(provisions: f32) -> YieldAccounts {
 ///   policy-live path below — the *same* code, differing only in the ecology `patch_ecology` hands
 ///   it. That is the whole rung-2 fix: a tended patch's Sustain/Surplus/Deplete/Eradicate are four
 ///   different numbers again, and it can be over-farmed.
+#[allow(clippy::too_many_arguments)] // the patch, both configs, the ladder and two rates are inputs
 pub(crate) fn forage_forecast(
     patch: &ForagePatch,
     tile_composition: &[FloraShare],
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
+    equipped_gather_rate: f32,
     ladder: &LadderConfig,
     // **The crew's per-gatherer throughput for THIS turn, season already folded in**
     // (`forage_per_worker_biomass(resolved basket tier, seasonal)`). Taken pre-folded rather than as
@@ -2232,6 +2302,7 @@ pub(crate) fn forage_forecast(
                 patch,
                 tile_composition,
                 forage,
+                equipped_gather_rate,
                 flora,
                 output_multiplier,
             )),
@@ -2308,11 +2379,12 @@ pub(crate) fn managed_per_worker_yield(
     patch: &ForagePatch,
     tile_composition: &[FloraShare],
     forage: &ForageLaborConfig,
+    equipped_gather_rate: f32,
     flora: &FloraConfig,
     output_multiplier: f32,
 ) -> f32 {
     forage_provisions(
-        forage_per_worker_biomass(forage.per_worker_biomass_capacity, MANAGED_HARVEST_SEASON),
+        forage_per_worker_biomass(equipped_gather_rate, MANAGED_HARVEST_SEASON),
         rung_provisions_per_biomass(patch, tile_composition, flora, forage, RungKey::PlantField),
         output_multiplier,
     )
@@ -2353,6 +2425,7 @@ pub fn project_realized_forage(
     tile_composition: &[FloraShare],
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
+    equipped_gather_rate: f32,
     ladder: &LadderConfig,
     per_worker_biomass_capacity: f32,
     seasonal: f32,
@@ -2386,6 +2459,7 @@ pub fn project_realized_forage(
                     &sim,
                     tile_composition,
                     forage,
+                    equipped_gather_rate,
                     flora,
                     output_multiplier,
                 );
@@ -2441,6 +2515,7 @@ pub fn project_arrivals_forage(
     tile_composition: &[FloraShare],
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
+    equipped_gather_rate: f32,
     ladder: &LadderConfig,
     per_worker_biomass_capacity: f32,
     seasonal: f32,
@@ -2469,6 +2544,7 @@ pub fn project_arrivals_forage(
                     &sim,
                     tile_composition,
                     forage,
+                    equipped_gather_rate,
                     flora,
                     output_multiplier,
                 );
@@ -2506,6 +2582,7 @@ pub fn forage_source_yield_preview(
     tile_composition: &[FloraShare],
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
+    equipped_gather_rate: f32,
     ladder: &LadderConfig,
     per_worker_biomass_capacity: f32,
     seasonal: f32,
@@ -2525,6 +2602,7 @@ pub fn forage_source_yield_preview(
         tile_composition,
         forage,
         flora,
+        equipped_gather_rate,
         ladder,
         forage_per_worker_biomass(per_worker_biomass_capacity, seasonal),
         output_multiplier,
@@ -2548,6 +2626,7 @@ pub fn forage_source_yield_preview(
         tile_composition,
         forage,
         flora,
+        equipped_gather_rate,
         ladder,
         per_worker_biomass_capacity,
         seasonal,
@@ -2564,6 +2643,7 @@ pub fn forage_source_yield_preview(
         tile_composition,
         forage,
         flora,
+        equipped_gather_rate,
         ladder,
         per_worker_biomass_capacity,
         seasonal,
@@ -2608,6 +2688,18 @@ mod stance_probe;
 
 #[cfg(test)]
 mod tests {
+    /// **The shipped EQUIPPED gather rate** — what a kitted crew carries, off the baskets' own
+    /// tier. `labor_config`'s `forage.per_worker_biomass_capacity` is the *bare-handed* baseline
+    /// since quality tiers landed, so a fixture that wants "an ordinary band" asks the item table.
+    fn equipped_gather_rate() -> f32 {
+        crate::equipment_config::EquipmentConfig::builtin().equipped_reference(
+            crate::equipment_config::EquipmentStat::ForageCarry,
+            crate::labor_config::LaborConfig::builtin()
+                .forage
+                .per_worker_biomass_capacity,
+        )
+    }
+
     use super::*;
     use crate::components::NO_IMPROVEMENT_UNDERWAY;
     use crate::labor_config::LaborConfig;
@@ -2711,7 +2803,7 @@ mod tests {
         // is the accumulated stock, not a rate — the crew empties the store the patch built up before
         // anyone worked it, and lands it exactly on its most productive biomass.
         let biomass_before = patch.biomass;
-        let crew_cap = 20.0 * forage_per_worker_biomass(forage.per_worker_biomass_capacity, 1.0);
+        let crew_cap = 20.0 * forage_per_worker_biomass(equipped_gather_rate(), 1.0);
         let expected_first = crew_cap.min(biomass_before - half_cap);
         let provisions = forage_take(
             &mut patch,
@@ -2723,7 +2815,7 @@ mod tests {
             &FloraConfig::builtin(),
             &LadderConfig::builtin(),
             1.0,
-            forage.per_worker_biomass_capacity,
+            equipped_gather_rate(),
             1.0,
         );
         let take = biomass_before - patch.biomass;
@@ -2763,7 +2855,7 @@ mod tests {
                 &FloraConfig::builtin(),
                 &LadderConfig::builtin(),
                 1.0,
-                forage.per_worker_biomass_capacity,
+                equipped_gather_rate(),
                 1.0,
             );
             last_take = before - patch.biomass;
@@ -2818,7 +2910,7 @@ mod tests {
                 &FloraConfig::builtin(),
                 &LadderConfig::builtin(),
                 1.0,
-                forage.per_worker_biomass_capacity,
+                equipped_gather_rate(),
                 1.0,
             );
             regrow_patch(&mut patch, &forage);
@@ -2861,7 +2953,7 @@ mod tests {
                 &FloraConfig::builtin(),
                 &LadderConfig::builtin(),
                 1.0,
-                forage.per_worker_biomass_capacity,
+                equipped_gather_rate(),
                 1.0,
             );
             let take = start - patch.biomass;
@@ -2991,7 +3083,7 @@ mod tests {
                 &FloraConfig::builtin(),
                 &LadderConfig::builtin(),
                 1.0,
-                forage.per_worker_biomass_capacity,
+                equipped_gather_rate(),
                 1.0,
             );
             regrow_patch(&mut patch, &forage);

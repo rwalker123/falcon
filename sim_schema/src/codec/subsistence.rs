@@ -2,8 +2,9 @@
 
 use crate::codec::FbBuilder;
 use crate::state::subsistence::{
-    FloraShareInfo, FoodModuleState, ForagePatchState, HerdTelemetryState,
-    IntensificationKnowledgeState, KitOptionState, SedentarizationState,
+    CharacteristicBandState, CraftKnowledgeState, FloraShareInfo, FoodModuleState,
+    ForagePatchState, HerdTelemetryState, IntensificationKnowledgeState, KitOptionState,
+    MaterialDefState, RecipeDefState, SedentarizationState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -25,6 +26,12 @@ pub(crate) fn serialize_subsistence_section<'a>(
     let default_scout_kit_id = builder.create_string(&snapshot.default_scout_kit_id);
     let default_warrior_kit_id = builder.create_string(&snapshot.default_warrior_kit_id);
     let equipment_config_json = builder.create_string(&snapshot.equipment_config_json);
+    // The crafting catalogues — TYPED, not a second `equipmentConfigJson`: that blob has no gameplay
+    // consumer, and a gameplay readout gets a field of its own rather than reaching into a string.
+    let materials = create_materials(builder, &snapshot.materials);
+    let characteristic_bands = create_characteristic_bands(builder, &snapshot.characteristic_bands);
+    let recipes = create_recipes(builder, &snapshot.recipes);
+    let craft_knowledge = create_craft_knowledge(builder, &snapshot.craft_knowledge);
     fb::SubsistenceSection::create(
         builder,
         &fb::SubsistenceSectionArgs {
@@ -41,6 +48,10 @@ pub(crate) fn serialize_subsistence_section<'a>(
             // The designer surface's read-only catalogue — the whole TOE config as one JSON string.
             // Workbench-only; see the schema comment.
             equipmentConfigJson: Some(equipment_config_json),
+            materials: Some(materials),
+            characteristicBands: Some(characteristic_bands),
+            recipes: Some(recipes),
+            craftKnowledge: Some(craft_knowledge),
         },
     )
 }
@@ -93,6 +104,22 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
         .equipment_config_json
         .as_ref()
         .map(|json| builder.create_string(json));
+    let materials = delta
+        .materials
+        .as_ref()
+        .map(|entries| create_materials(builder, entries));
+    let characteristic_bands = delta
+        .characteristic_bands
+        .as_ref()
+        .map(|entries| create_characteristic_bands(builder, entries));
+    let recipes = delta
+        .recipes
+        .as_ref()
+        .map(|entries| create_recipes(builder, entries));
+    let craft_knowledge = delta
+        .craft_knowledge
+        .as_ref()
+        .map(|entries| create_craft_knowledge(builder, entries));
     fb::SubsistenceSection::create(
         builder,
         &fb::SubsistenceSectionArgs {
@@ -107,8 +134,159 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
             defaultScoutKitId: default_scout_kit_id,
             defaultWarriorKitId: default_warrior_kit_id,
             equipmentConfigJson: equipment_config_json,
+            materials,
+            characteristicBands: characteristic_bands,
+            recipes,
+            craftKnowledge: craft_knowledge,
         },
     )
+}
+
+/// **The materials catalogue**, once per world. `axes` crosses in the material's declared order,
+/// which is what a batch's readings are keyed by — the order is contract, not presentation.
+fn create_materials<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[MaterialDefState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::MaterialDefState<'a>>>> {
+    let mut entries = Vec::with_capacity(states.len());
+    for state in states {
+        let id = builder.create_string(&state.id);
+        let craft = builder.create_string(&state.craft);
+        let axes: Vec<_> = state
+            .axes
+            .iter()
+            .map(|axis| builder.create_string(axis))
+            .collect();
+        let axes = builder.create_vector(&axes);
+        let tool_item_id = builder.create_string(&state.tool_item_id);
+        entries.push(fb::MaterialDefState::create(
+            builder,
+            &fb::MaterialDefStateArgs {
+                id: Some(id),
+                craft: Some(craft),
+                axes: Some(axes),
+                handWorkable: state.hand_workable,
+                handWorkingRate: state.hand_working_rate,
+                handWorkingQualityCeiling: state.hand_working_quality_ceiling,
+                toolItemId: Some(tool_item_id),
+            },
+        ));
+    }
+    builder.create_vector(&entries)
+}
+
+/// **The rating vocabulary, once for the world** — the legend. Every published reading already
+/// carries its own band name, so this is not what a client looks a reading up in.
+fn create_characteristic_bands<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[CharacteristicBandState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::CharacteristicBandState<'a>>>> {
+    let mut entries = Vec::with_capacity(states.len());
+    for state in states {
+        let name = builder.create_string(&state.name);
+        entries.push(fb::CharacteristicBandState::create(
+            builder,
+            &fb::CharacteristicBandStateArgs {
+                name: Some(name),
+                from: state.from,
+            },
+        ));
+    }
+    builder.create_vector(&entries)
+}
+
+/// **The recipe book**, once per world — the static half. Whether a given band can make a given
+/// recipe, and what it would come out at, is that band's own `craftOffers`.
+fn create_recipes<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[RecipeDefState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::RecipeDefState<'a>>>> {
+    let mut entries = Vec::with_capacity(states.len());
+    for state in states {
+        let id = builder.create_string(&state.id);
+        let display_name = builder.create_string(&state.display_name);
+        let craft = builder.create_string(&state.craft);
+        let group = builder.create_string(&state.group);
+        let requires_knowledge: Vec<_> = state
+            .requires_knowledge
+            .iter()
+            .map(|craft| builder.create_string(craft))
+            .collect();
+        let requires_knowledge = builder.create_vector(&requires_knowledge);
+        let inputs: Vec<_> = state
+            .inputs
+            .iter()
+            .map(|input| {
+                let material_id = builder.create_string(&input.material_id);
+                let reads_axis = builder.create_string(&input.reads_axis);
+                fb::RecipeInputState::create(
+                    builder,
+                    &fb::RecipeInputStateArgs {
+                        materialId: Some(material_id),
+                        amount: input.amount,
+                        readsAxis: Some(reads_axis),
+                    },
+                )
+            })
+            .collect();
+        let inputs = builder.create_vector(&inputs);
+        let outputs: Vec<_> = state
+            .outputs
+            .iter()
+            .map(|output| {
+                let equipment_id = builder.create_string(&output.equipment_id);
+                let material_id = builder.create_string(&output.material_id);
+                fb::RecipeOutputState::create(
+                    builder,
+                    &fb::RecipeOutputStateArgs {
+                        equipmentId: Some(equipment_id),
+                        materialId: Some(material_id),
+                        amount: output.amount,
+                    },
+                )
+            })
+            .collect();
+        let outputs = builder.create_vector(&outputs);
+        entries.push(fb::RecipeDefState::create(
+            builder,
+            &fb::RecipeDefStateArgs {
+                id: Some(id),
+                displayName: Some(display_name),
+                craft: Some(craft),
+                group: Some(group),
+                work: state.work,
+                requiresKnowledge: Some(requires_knowledge),
+                inputs: Some(inputs),
+                outputs: Some(outputs),
+            },
+        ));
+    }
+    builder.create_vector(&entries)
+}
+
+/// **Per faction, per craft.** Diffed as a whole vector each frame rather than held as a world
+/// constant, because a craft is *learned* — the meter moves when a bench delivers an item.
+fn create_craft_knowledge<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[CraftKnowledgeState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::CraftKnowledgeState<'a>>>> {
+    let mut entries = Vec::with_capacity(states.len());
+    for state in states {
+        let craft_id = builder.create_string(&state.craft_id);
+        let display_name = builder.create_string(&state.display_name);
+        entries.push(fb::CraftKnowledgeState::create(
+            builder,
+            &fb::CraftKnowledgeStateArgs {
+                faction: state.faction,
+                craftId: Some(craft_id),
+                displayName: Some(display_name),
+                known: state.known,
+                progress: state.progress,
+                completionThreshold: state.completion_threshold,
+            },
+        ));
+    }
+    builder.create_vector(&entries)
 }
 
 /// **The kit roster**, once per world — the picker's list plus the tiers each kit grants, so the

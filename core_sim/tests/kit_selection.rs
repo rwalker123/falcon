@@ -243,7 +243,7 @@ fn spawn_hunting_band(
         .spawn((
             cohort(tile, CREW),
             ResidentBand,
-            BandEquipment::default(),
+            BandEquipment::start_stocked(&EquipmentConfig::builtin()),
             LaborAllocation {
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -281,7 +281,7 @@ fn spawn_party(
         .spawn((
             cohort(tile, CREW),
             LaborAllocation::default(),
-            BandEquipment::default(),
+            BandEquipment::start_stocked(&EquipmentConfig::builtin()),
             StartingUnit::new("expedition".to_string(), Vec::new()),
             Expedition {
                 home_band,
@@ -312,7 +312,11 @@ fn spawn_home_band(app: &mut App, herd_pos: UVec2) -> bevy::prelude::Entity {
     );
     let tile = tile_at(app, far);
     app.world
-        .spawn((cohort(tile, 20), ResidentBand, BandEquipment::default()))
+        .spawn((
+            cohort(tile, 20),
+            ResidentBand,
+            BandEquipment::start_stocked(&EquipmentConfig::builtin()),
+        ))
         .id()
 }
 
@@ -425,7 +429,7 @@ fn a_crew_with_no_kit_takes_less_and_spends_no_durability_on_any_component() {
 
     assert_eq!(
         bare_wear,
-        BandEquipment::default(),
+        BandEquipment::start_stocked(&EquipmentConfig::builtin()),
         "a crew using no component spends no durability on ANY of them — this is the pairing that \
          makes a bare-handed comparison free to run"
     );
@@ -487,7 +491,7 @@ fn a_gather_crew_wears_only_the_baskets_and_a_kitless_one_wears_nothing() {
             .spawn((
                 cohort(tile_entity, CREW),
                 ResidentBand,
-                BandEquipment::default(),
+                BandEquipment::start_stocked(&EquipmentConfig::builtin()),
                 LaborAllocation {
                     assignments: vec![LaborAssignment {
                         target: LaborTarget::Forage {
@@ -525,7 +529,7 @@ fn a_gather_crew_wears_only_the_baskets_and_a_kitless_one_wears_nothing() {
     assert_eq!(kitted_wear.wear_of("sled"), 0.0, "…and drags no sled");
     assert_eq!(
         bare_wear,
-        BandEquipment::default(),
+        BandEquipment::start_stocked(&EquipmentConfig::builtin()),
         "a crew gathering by hand wears nothing at all"
     );
     assert!(
@@ -563,9 +567,9 @@ fn a_partys_kit_survives_the_home_bands_stock_changing_under_it() {
             .world
             .get_mut::<BandEquipment>(home)
             .expect("the home band carries a wear ledger");
-        band_kit.restore_wear("spears", item_durability(&cfg, "spears"));
-        band_kit.restore_wear("sled", item_durability(&cfg, "sled"));
-        band_kit.restore_wear("baskets", item_durability(&cfg, "baskets"));
+        run_dry(&mut band_kit, &cfg, "spears");
+        run_dry(&mut band_kit, &cfg, "sled");
+        run_dry(&mut band_kit, &cfg, "baskets");
     }
     for _ in 0..2 {
         drive_party_turn(&mut app);
@@ -604,20 +608,26 @@ fn a_kitted_partys_own_wear_still_steps_it_down() {
 
     // Run the party's own spears to the cliff and give it another turn.
     {
-        let durability = item_durability(&equipment(&app), "spears");
+        let cfg = equipment(&app);
         let mut wear = app
             .world
             .get_mut::<BandEquipment>(party)
             .expect("the party carries a wear ledger");
-        wear.restore_wear("spears", durability);
+        run_dry(&mut wear, &cfg, "spears");
     }
     let sled_before = wear_of(&app, party).wear_of("sled");
     drive_party_turn(&mut app);
     let after = wear_of(&app, party);
     assert_eq!(
+        after.count_of("spears"),
+        0,
+        "the party's spears are gone — a batch that runs out is removed, not kept at zero"
+    );
+    assert_eq!(
         after.wear_of("spears"),
-        item_durability(&equipment(&app), "spears"),
-        "spent spears are not charged again — the predicate that chose the tier gates the charge"
+        0.0,
+        "spent spears are not charged again — the predicate that chose the tier gates the charge, \
+         and there is no ledger left to run past its own durability"
     );
     assert!(
         after.wear_of("sled") >= sled_before,
@@ -753,7 +763,7 @@ fn a_bands_published_tiers_step_down_per_kit_by_which_item_that_kit_actually_use
         let spears = cfg
             .item("spears")
             .expect("the shipped roster carries spears");
-        let kills_to_expiry = spears.starting_durability / spears.wear.amount;
+        let kills_to_expiry = spears.default_tier().starting_durability / spears.wear.amount;
         let mut equipment_ledger = app
             .world
             .get_mut::<core_sim::BandEquipment>(band)
@@ -884,7 +894,7 @@ fn wear_to_the_cliff(app: &mut App, band: bevy::prelude::Entity, item_id: &str) 
     let item = cfg
         .item(item_id)
         .unwrap_or_else(|| panic!("the shipped roster carries '{item_id}'"));
-    let uses_to_expiry = item.starting_durability / item.wear.amount;
+    let uses_to_expiry = item.default_tier().starting_durability / item.wear.amount;
     let mut ledger = app
         .world
         .get_mut::<BandEquipment>(band)
@@ -1111,7 +1121,7 @@ fn a_narrow_win_keeps_the_job_default_until_the_margin_lets_it_through() {
     let person = core_sim::CreaturesConfig::builtin().person();
     let shipped = EquipmentConfig::builtin();
     let job_default = shipped.default_kit(KitJob::Hunt);
-    let fresh = BandEquipment::default();
+    let fresh = BandEquipment::start_stocked(&EquipmentConfig::builtin());
 
     // The narrowest win on the shipped roster: the species where some hunt kit beats the job
     // default by the *smallest* positive factor. Found rather than named, so this test cannot go
@@ -1195,22 +1205,19 @@ fn a_herds_default_kit_does_not_move_when_the_band_wears_its_kit_to_dry() {
         .spawn((
             cohort(tile, CREW),
             ResidentBand,
-            BandEquipment::default(),
+            BandEquipment::start_stocked(&EquipmentConfig::builtin()),
             LaborAllocation::default(),
         ))
         .id();
     {
         let cfg = equipment(&app);
-        let items: Vec<(String, f32)> = cfg
-            .items()
-            .map(|(id, item)| (id.to_string(), item.starting_durability))
-            .collect();
+        let items: Vec<String> = cfg.items().map(|(id, _)| id.to_string()).collect();
         let mut wear = app
             .world
             .get_mut::<BandEquipment>(band)
             .expect("the band carries a wear ledger");
-        for (id, durability) in items {
-            wear.restore_wear(&id, durability);
+        for id in items {
+            run_dry(&mut wear, &cfg, &id);
         }
     }
     recapture_snapshot_in_place(&mut app.world);
@@ -1332,7 +1339,7 @@ fn every_labor_row_publishes_the_kit_it_is_priced_at() {
         .spawn((
             cohort(tile, CREW * 2),
             ResidentBand,
-            BandEquipment::default(),
+            BandEquipment::start_stocked(&EquipmentConfig::builtin()),
             LaborAllocation {
                 assignments: vec![
                     LaborAssignment {
@@ -1414,7 +1421,11 @@ fn a_resident_bands_published_kit_answers_for_the_hunt_tiers_only() {
     let tile = tile_at(&app, pos);
     let band = app
         .world
-        .spawn((cohort(tile, CREW), ResidentBand, BandEquipment::default()))
+        .spawn((
+            cohort(tile, CREW),
+            ResidentBand,
+            BandEquipment::start_stocked(&EquipmentConfig::builtin()),
+        ))
         .id();
     recapture_snapshot_in_place(&mut app.world);
 
@@ -1481,7 +1492,11 @@ fn a_resident_bands_appended_tiers_each_answer_for_their_own_jobs_default() {
     let tile = tile_at(&app, pos);
     let band = app
         .world
-        .spawn((cohort(tile, CREW), ResidentBand, BandEquipment::default()))
+        .spawn((
+            cohort(tile, CREW),
+            ResidentBand,
+            BandEquipment::start_stocked(&EquipmentConfig::builtin()),
+        ))
         .id();
     recapture_snapshot_in_place(&mut app.world);
 
@@ -1628,7 +1643,23 @@ fn an_in_flight_partys_appended_tiers_are_all_quoted_at_the_kit_it_was_sent_with
 fn item_durability(cfg: &EquipmentConfig, id: &str) -> f32 {
     cfg.item(id)
         .unwrap_or_else(|| panic!("the shipped roster must carry '{id}'"))
+        .default_tier()
         .starting_durability
+}
+
+/// **Run an item out, by USING it** — the only way the sim reduces condition, so a fixture that
+/// wants a dry item spends it rather than writing a number into the ledger. Charges the item's own
+/// quantum a batch at a time until nothing of it is left.
+fn run_dry(ledger: &mut BandEquipment, cfg: &EquipmentConfig, id: &str) {
+    let uses = item_durability(cfg, id)
+        / cfg
+            .item(id)
+            .unwrap_or_else(|| panic!("the shipped roster must carry '{id}'"))
+            .wear
+            .amount;
+    while ledger.remaining(id, cfg) > 0.0 {
+        ledger.wear_item(cfg, id, uses);
+    }
 }
 
 /// The **unequipped** carry rate a carry item declares — the tier a party without it falls back to.
@@ -1638,18 +1669,26 @@ fn unequipped_carry(cfg: &EquipmentConfig, id: &str) -> f32 {
     } else {
         EquipmentStat::ForageCarry
     };
-    match cfg.item(id).and_then(|item| item.effect(stat)) {
-        Some(EffectTier::Unequipped(value)) => value,
-        other => panic!("'{id}' must declare an unequipped {stat:?}, got {other:?}"),
+    // The bare-handed side of a carry lives in `labor_config.json` since quality tiers landed —
+    // the item's own tier declares the *equipped* value, which is what a fixture must not read here.
+    let _ = (cfg, stat);
+    let labor = core_sim::LaborConfig::builtin();
+    if id == "sled" {
+        labor.hunt.per_worker_biomass_capacity
+    } else {
+        labor.forage.per_worker_biomass_capacity
     }
 }
 
 /// The **equipped** `attack` a speared party fights at.
 fn equipped_attack(cfg: &EquipmentConfig) -> f32 {
-    match cfg
-        .item("spears")
-        .and_then(|item| item.effect(EquipmentStat::Attack))
-    {
+    match cfg.item("spears").and_then(|item| {
+        item.default_tier()
+            .effects
+            .iter()
+            .find(|effect| effect.stat == EquipmentStat::Attack)
+            .map(|effect| effect.tier)
+    }) {
         Some(EffectTier::Equipped(value)) => value,
         other => panic!("spears must declare an equipped attack, got {other:?}"),
     }

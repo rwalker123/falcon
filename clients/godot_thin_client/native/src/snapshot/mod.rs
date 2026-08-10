@@ -32,8 +32,9 @@ use crate::dict::knowledge::{
 use crate::dict::map::{terrain_label_from_id, tiles_to_array, TERRAIN_TAG_LABELS};
 use crate::dict::population::{demographics_to_array, generations_to_array, populations_to_array};
 use crate::dict::subsistence::{
-    food_modules_to_array, forage_patches_to_array, herds_to_array,
-    intensification_knowledge_to_array, kits_to_array, sedentarization_to_array,
+    characteristic_bands_to_array, craft_knowledge_to_array, food_modules_to_array,
+    forage_patches_to_array, herds_to_array, intensification_knowledge_to_array, kits_to_array,
+    materials_to_array, recipes_to_array, sedentarization_to_array,
 };
 use crate::snapshot::cache::RasterCache;
 use crate::snapshot::delta::CrisisAnnotationRecord;
@@ -1456,6 +1457,27 @@ pub(crate) fn snapshot_to_dict(
     // above, so it is decoded on BOTH paths.
     if let Some(equipment_config) = snapshot.subsistence().and_then(|s| s.equipmentConfigJson()) {
         let _ = dict.insert("equipment_config_json", equipment_config);
+    }
+
+    // **THE CRAFTING CATALOGUES** (`docs/plan_crafting_and_materials.md` §7) — the materials, the
+    // shared rating vocabulary, the recipe book and the per-faction craft knowledge. Decoded on BOTH
+    // paths, like the kit roster above and for the same reason. They are TYPED fields rather than a
+    // second `equipmentConfigJson`: that blob is the Workbench's designer catalogue with no gameplay
+    // consumer, and a gameplay readout gets a field of its own instead of reaching into a string.
+    if let Some(materials) = snapshot.subsistence().and_then(|s| s.materials()) {
+        let _ = dict.insert("materials", &materials_to_array(materials));
+    }
+    if let Some(bands) = snapshot.subsistence().and_then(|s| s.characteristicBands()) {
+        let _ = dict.insert(
+            "characteristic_bands",
+            &characteristic_bands_to_array(bands),
+        );
+    }
+    if let Some(recipes) = snapshot.subsistence().and_then(|s| s.recipes()) {
+        let _ = dict.insert("recipes", &recipes_to_array(recipes));
+    }
+    if let Some(knowledge) = snapshot.subsistence().and_then(|s| s.craftKnowledge()) {
+        let _ = dict.insert("craft_knowledge", &craft_knowledge_to_array(knowledge));
     }
 
     if let Some(intensification) = snapshot
