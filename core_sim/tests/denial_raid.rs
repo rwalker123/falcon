@@ -332,15 +332,25 @@ fn spawn_party(
         .id()
 }
 
+/// The target species the mission builders below stamp on a fixture. **A NAMED CONSTANT RATHER THAN A
+/// REGISTRY LOOKUP**, unlike the sibling suites: `deny`/`hunt` are also called from closures
+/// (`|id| hunt(id, STRIP_IT_BARE)`) that have no world to resolve against, and threading an `&App`
+/// through sixteen call sites would buy nothing — the field is display-only, every raid mechanic
+/// resolving its herd through `fauna_id`. What production actually stamps is asserted in
+/// `expedition_hunt.rs`.
+const FIXTURE_TARGET_SPECIES: &str = "Red Deer";
+
 fn deny(fauna_id: &str) -> ExpeditionMission {
     ExpeditionMission::Deny {
         fauna_id: fauna_id.to_string(),
+        target_species: FIXTURE_TARGET_SPECIES.to_string(),
     }
 }
 
 fn hunt(fauna_id: &str, floor: f32) -> ExpeditionMission {
     ExpeditionMission::Hunt {
         fauna_id: fauna_id.to_string(),
+        target_species: FIXTURE_TARGET_SPECIES.to_string(),
         floor,
     }
 }

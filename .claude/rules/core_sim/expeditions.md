@@ -608,6 +608,31 @@ readout, `expedition_hunt::exported_snapshot_fields_reproduce_band_hunt_take` do
 policies × a unit and a discontent-reduced output multiplier). If either readout ever drifts from the
 sim, those tests fail.
 
+### A raiding party carries its quarry's NAME, not just its key
+
+`ExpeditionMission::Hunt`/`Deny` carry **`target_species`** — the herd's species display name
+(`"Red Deer"`) — beside the `fauna_id` that keys it. Published as `expeditionTargetSpecies`, and it is
+what the client renders; `expeditionTargetHerd` remains the key every command addresses the herd by,
+and a player never sees it.
+
+**The two are not redundant, because the party outlives the herd list.** Herd telemetry is fog-gated
+to hexes with `Active` visibility and pruned at local extinction, and a detached expedition is
+deliberately **not** a vision source (`calculate_visibility`, `Without<Expedition>` — comm-range gating
+means a party must not light up the faction map from wherever it stands). So a hunting party's own
+target routinely leaves the published list *while the party is still bound to it*, and a client joining
+the id against that list had nothing left to render but the raw id (issue #378).
+
+**Resolved at launch, in `outfit_raiding_party`** — the shared gate that already refuses a raid whose
+herd the registry cannot resolve, so a successful launch always has a name and both raiding verbs get
+it from one place. That is also the only moment the name is reliable: a capture-time registry lookup
+would survive fog and still go blank on extinction, which prunes the registry itself.
+
+It rides `ExpeditionRecord` like the rest of the mission, so a rollback restores it — necessarily,
+since it cannot be re-derived once the herd is gone
+(`harvest_floor_rollback::a_rollback_rewinds_the_floor`). `expedition_hunt::a_party_names_its_quarry_when_the_herd_has_left_the_snapshot`
+pins the whole chain on the encoded wire, with a positive control: the party's target is absent from
+the published herds while its hex is only `Discovered`, and present once the hex is `Active`.
+
 ## Denial is a MISSION, not a floor — and it changes ONE line
 
 `ExpeditionMission::Deny { fauna_id }`, wire key `"deny"`, launched by

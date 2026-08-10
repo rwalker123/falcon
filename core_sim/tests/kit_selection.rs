@@ -269,6 +269,14 @@ fn spawn_party(
     kit: KitChoice,
 ) -> bevy::prelude::Entity {
     let tile = tile_at(app, pos);
+    // The name a launched party would carry, resolved off the registry as `outfit_raiding_party` does.
+    // Display-only — every mechanic here resolves the herd through `fauna_id`.
+    let target_species = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(fauna_id)
+        .map(|herd| herd.species.clone())
+        .unwrap_or_default();
     app.world
         .spawn((
             cohort(tile, CREW),
@@ -279,6 +287,7 @@ fn spawn_party(
                 home_band,
                 mission: ExpeditionMission::Hunt {
                     fauna_id: fauna_id.to_string(),
+                    target_species,
                     floor: DEFAULT_ESCAPEMENT_FLOOR,
                 },
                 phase: ExpeditionPhase::Hunting,

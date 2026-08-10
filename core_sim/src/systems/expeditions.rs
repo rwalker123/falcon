@@ -2377,7 +2377,10 @@ pub fn expedition_delivery(
     grid_width: u32,
     wrap_horizontal: bool,
 ) -> Option<ExpeditionDelivery> {
-    let ExpeditionMission::Hunt { fauna_id, floor } = &expedition.mission else {
+    let ExpeditionMission::Hunt {
+        fauna_id, floor, ..
+    } = &expedition.mission
+    else {
         // Scouts deliver map data, not food; a denial raid delivers a rounding error and is read by
         // its collapse verdict instead.
         return None;

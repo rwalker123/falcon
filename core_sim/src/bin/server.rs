@@ -3023,6 +3023,12 @@ struct OutfittedParty {
     band: SelectedBand,
     /// The herd's live tile, captured as the party's initial travel target.
     herd_pos: UVec2,
+    /// **The herd's species display name**, captured in the same lookup that proved the herd live and
+    /// carried onto the mission (`ExpeditionMission::target_species`). This is the only moment the
+    /// name is guaranteed available — the gate below refuses a launch the registry cannot resolve, and
+    /// the herd may be gone from both the registry and the published telemetry long before the party
+    /// stops being bound to it (issue #378).
+    herd_species: String,
     /// The home band's cohort, cloned as the detached party's template.
     cohort: PopulationCohort,
     unit_kind: String,
@@ -3060,12 +3066,15 @@ fn outfit_raiding_party(
         return None;
     }
 
-    // The target must resolve to a live herd; capture its current tile as the initial travel target.
-    let herd_pos = {
+    // The target must resolve to a live herd; capture its current tile as the initial travel target
+    // and its species as the name the party will be known by for the rest of its life.
+    let target = {
         let registry = app.world.resource::<HerdRegistry>();
-        registry.find(fauna_id).map(|herd| herd.position())
+        registry
+            .find(fauna_id)
+            .map(|herd| (herd.position(), herd.species.clone()))
     };
-    let Some(herd_pos) = herd_pos else {
+    let Some((herd_pos, herd_species)) = target else {
         emit_command_failure(
             app,
             CommandEventKind::ExpeditionSent,
@@ -3114,6 +3123,7 @@ fn outfit_raiding_party(
     Some(OutfittedParty {
         band,
         herd_pos,
+        herd_species,
         cohort,
         unit_kind,
         unit_tags,
@@ -3312,6 +3322,9 @@ fn launch_detached_party(
     let OutfittedParty {
         band,
         herd_pos,
+        // Not read here: the caller has already spent it composing the `mission` argument, which is
+        // where the name lives for the party's life.
+        herd_species: _,
         mut cohort,
         unit_kind,
         unit_tags,
@@ -3529,6 +3542,8 @@ fn handle_send_hunt_expedition(
     };
 
     let band_label = outfit.band.label.clone();
+    // Read off the outfit BEFORE it is moved into the launch, for the same reason `band_label` is.
+    let target_species = outfit.herd_species.clone();
     // **A launch that did not happen publishes a FAILURE, never an `applied` line** — see
     // `launch_detached_party`, which answers `None` rather than a placeholder entity.
     let Some(expedition_entity) = launch_detached_party(
@@ -3537,6 +3552,7 @@ fn handle_send_hunt_expedition(
         party_workers,
         ExpeditionMission::Hunt {
             fauna_id: fauna_id.clone(),
+            target_species: target_species.clone(),
             floor,
         },
         kit.clone(),
@@ -3712,6 +3728,8 @@ fn handle_send_denial_raid(
     };
 
     let band_label = outfit.band.label.clone();
+    // Read off the outfit BEFORE it is moved into the launch, for the same reason `band_label` is.
+    let target_species = outfit.herd_species.clone();
     // **A launch that did not happen publishes a FAILURE, never an `applied` line** — see
     // `launch_detached_party`, which answers `None` rather than a placeholder entity.
     let Some(expedition_entity) = launch_detached_party(
@@ -3720,6 +3738,7 @@ fn handle_send_denial_raid(
         party_workers,
         ExpeditionMission::Deny {
             fauna_id: fauna_id.clone(),
+            target_species: target_species.clone(),
         },
         kit.clone(),
     ) else {
