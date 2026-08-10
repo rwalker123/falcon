@@ -1205,6 +1205,26 @@ impl ExpeditionMission {
         }
     }
 
+    /// **The string a player is shown for this mission's quarry** — [`Self::target_species`] when it
+    /// resolved, else [`Self::target_herd`]. Every player-facing line about the target goes through
+    /// here (the sim's own event-feed prose included), so no call site re-implements the fallback and
+    /// none of them can reach for the raw id by accident.
+    ///
+    /// **The id tier is a last resort, not a normal path.** A launch resolves the species name from
+    /// [`crate::fauna::HerdRegistry`] before it builds the mission (`outfit_raiding_party`), so every
+    /// real party carries one; what falls through to the key is a mission hand-built without it — a
+    /// test fixture, or a snapshot restored from a frame that carried no species. That mirrors the
+    /// client's own last tier, which renders the id when neither the mission's name nor its herd-list
+    /// join has anything to show.
+    pub fn target_display(&self) -> &str {
+        let species = self.target_species();
+        if species.is_empty() {
+            self.target_herd()
+        } else {
+            species
+        }
+    }
+
     /// The raid's escapement floor for a `Hunt` mission — the snapshot `expeditionFloor`. A `Scout`
     /// party harvests nothing, so it reports the floor that takes nothing.
     ///

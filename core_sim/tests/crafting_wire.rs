@@ -429,9 +429,8 @@ struct PublishedItem {
 }
 
 /// Recapture and decode. **Encoded from the ring entry's snapshot** rather than through
-/// `StoredSnapshot::encode_flat`, for the reason `kit_selection.rs` states: the cached bytes are the
-/// ones published when the entry was first written, so a fixture that banks material and recaptures
-/// would otherwise be decoding the frame from before it banked anything.
+/// `StoredSnapshot::encode_flat`, for the reason `kit_selection.rs` states: this file asserts on
+/// frame content, and `encode_flat` is a read of stored bytes carrying a stored sequence number.
 fn publish(app: &mut App, band: Entity) -> Published {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 

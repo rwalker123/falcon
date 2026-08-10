@@ -1496,10 +1496,10 @@ impl PublishState {
     ///
     /// It matters most on the **resync** path, because resync is the *recovery* path: a resync answer
     /// carrying a stale number opens the very sequence gap it was sent to close, and the client can
-    /// only heal once some later publication refreshes the ring entry. The entry's stored numbers go
-    /// stale in two ways — a mid-tick recapture refreshes `history.back().snapshot` but **not** its
-    /// cached `encoded_snapshot_flat`, and an auxiliary delta (`update_axis_bias` and friends) claims
-    /// a sequence number without touching the ring at all.
+    /// only heal once some later publication refreshes the ring entry. Any publication at all dates
+    /// the number stored on an entry: a mid-tick recapture claims one on every world-mutating command,
+    /// and an auxiliary delta (`update_axis_bias` and friends) claims one without touching the ring
+    /// at all.
     ///
     /// `base_frame_seq` stays `0`: a full snapshot names no base, matching the baseline path.
     ///

@@ -310,16 +310,21 @@ ring entry paying for the few ever asked for.
 
 **Both of those re-encode rather than broadcasting the ring entry's stored bytes, because a full
 frame must claim a FRESH publication sequence number** — `SnapshotHistory::publish_full_frame` is the
-one seam for it, and `StoredSnapshot::encode_flat()` (which returns *stored* bytes) is consequently
-test-only now. The counter is never rewound: it numbers publications, not ticks, and `reset_to_entry`
+one seam for it, and `StoredSnapshot::encode_flat()` (which returns the entry's *stored* bytes when it
+has them, else encodes its stored `.snapshot` on demand — never claiming a live number either way) is
+consequently test-only now. The counter is never rewound: it numbers publications, not ticks, and `reset_to_entry`
 rewinds the baselines but deliberately not the sequence. A frame carrying a stale number leaves the
 client baselined behind the server, so the next delta's `base_frame_seq` names a frame the client
 never applied and the client drops it.
 
 The stale numbers are easy to reach. Rollback's ring entry was stamped when that tick was
-*originally* published. A **recapture** refreshes `history.back().snapshot` but **not** its cached
-`encoded_snapshot_flat`, and an **auxiliary delta** (`update_axis_bias` and friends) claims a number
-without touching the ring at all — so `latest_entry()`'s bytes can lag by either route. On rollback
+*originally* published, and an **auxiliary delta** (`update_axis_bias` and friends) claims a number
+without touching the ring at all — so `latest_entry()`'s bytes can lag by that route. **A RECAPTURE
+IS NO LONGER ONE OF THEM**: `publish` stamps `snapshot.header.frame_seq` on the shared path *before*
+the Recapture arm re-baselines the entry, and that arm now clears the entry's cached encoding, so
+`encode_flat` re-encodes from a snapshot carrying the recapture's own number (see "A RECAPTURE MUST
+DROP THE RING ENTRY'S CACHED ENCODING" below — that is the same change read from the sequence's side
+rather than the bytes'). On rollback
 that costs one wasted round trip, because resync heals it. **On resync it is worse: resync *is* the
 recovery path**, so a stale answer reopens the gap it was sent to close and the client cannot
 converge until some later publication refreshes the entry. Guarded by

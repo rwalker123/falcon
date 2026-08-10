@@ -118,7 +118,7 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 233 `assert OK` lines, 313 `: PASS` ones and ZERO `FAIL` ones, over
+**A clean run exits 0 and prints 234 `assert OK` lines, 313 `: PASS` ones and ZERO `FAIL` ones, over
 91 frames.** **The three figures are MEASURED from a run, never summed** — band fission retired one
 family of frames here and added another in the same merge this arc landed in, so two arcs' deltas
 added by hand is exactly how a tally stops matching its harness. (The retired **"start a life

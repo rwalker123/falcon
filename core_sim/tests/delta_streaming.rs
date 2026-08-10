@@ -549,11 +549,12 @@ fn a_rollback_frame_is_the_base_the_next_delta_names() {
 /// delta is rejected, and it resyncs again — the mechanism meant to close a sequence gap opens one.
 ///
 /// The window pinned here is a **mid-tick recapture**, which fires on every world-mutating command.
-/// A recapture claims a sequence number and refreshes `history.back().snapshot`, but **not** that
-/// entry's cached `encoded_snapshot_flat` — so the world's first ring entry still holds bytes
-/// stamped with the pre-recapture number, and republishing them as stored is exactly the bug. (An
-/// auxiliary delta — `update_axis_bias` and friends — opens the same window without touching the
-/// ring at all.)
+/// A recapture claims a sequence number and re-baselines `history.back()` in place, so the number
+/// stored on that entry is one publication behind the counter — and republishing a frame under it,
+/// rather than claiming a live one, is exactly the bug. (An auxiliary delta — `update_axis_bias` and
+/// friends — opens the same window without touching the ring at all.) What the refreshed entry
+/// *encodes* is a separate claim, pinned by
+/// [`a_recaptured_entry_encodes_the_world_it_was_refreshed_with`].
 #[test]
 fn a_resync_frame_is_the_base_the_next_delta_names_after_a_recapture() {
     let mut history = SnapshotHistory::with_capacity(64);
