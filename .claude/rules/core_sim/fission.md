@@ -61,7 +61,7 @@ different slice of children than of workers.
 conserved with no rounding rule and no leftover to reconcile. **The parent is debited by subtraction,
 never by a second multiply**, so the halves sum to what the band held however the fixed point rounds.
 
-The client renders whole bodies through `HudFormat.apportion_people`, and both halves are apportioned
+The client renders whole bodies through `HudFormat.apportion_people_to`, and both halves are apportioned
 in **one pass** — separate passes let both round the same way and show 31 people leaving a band of 30.
 See `.claude/rules/client/band-city-panel.md`.
 

@@ -524,35 +524,29 @@ static func _party_detail_lines(party: Dictionary) -> Array:
 # ---- band zone blocks -------------------------------------------------------
 
 ## The faction's PEOPLE bar: the same children/working/elders stack a band's own zone draws, summed
-## across every band and apportioned ONCE at the end.
+## across every band.
 ##
-## **THE BRACKETS ARE SUMMED FRACTIONAL AND APPORTIONED ONCE, never apportioned per band and added.**
-## Rounding each band to whole people first and summing the results reproduces the very off-by-one
-## `HudFormat.apportion_people` exists to remove, one band at a time: four bands each carrying a `.5`
-## remainder lose two people between the bar and the total beside it. Summing first leaves one
-## remainder to distribute, which is the case that function was written for.
+## **THE BRACKETS ARE WHOLE PEOPLE ON THE WIRE, so this is a plain sum of integers.** It used to sum
+## the raw fixed-point Scalars and apportion the total once at the end, because rounding each band
+## first and adding the results lost a person per `.5` remainder. That whole problem left with the
+## fractions: the sim rounds once and guarantees `children + working_age + elders == size` per band,
+## so adding whole numbers is exact and the faction total is just the sum of the bands' head counts.
 ##
 ## Returns null when no band carries an age structure at all, so the block is OMITTED rather than
 ## rendered from a fabricated split — the band zone's own rule.
 static func _build_people_block(bands: Array) -> VBoxContainer:
-    var raw: Array[float] = [0.0, 0.0, 0.0]
+    var children := 0
+    var working_whole := 0
+    var elders := 0
+    var total := 0
     for band_variant in bands:
         if not (band_variant is Dictionary):
             continue
         var band: Dictionary = band_variant
-        raw[0] += float(band.get("age_children", 0.0))
-        # `age_working` is the age COHORT and `working_age` the count of ASSIGNABLE workers — two
-        # quantities that track each other. The band zone falls back to the latter when the cohort
-        # field is absent, and this sum must fall back the same way or a mixed roster would drop a
-        # whole band's middle bracket out of the faction total.
-        var working := float(band.get("age_working", 0.0))
-        raw[1] += working if working > 0.0 else float(band.get("working_age", 0))
-        raw[2] += float(band.get("age_elders", 0.0))
-    var whole := HudFormat.apportion_people(raw)
-    var children: int = whole[0]
-    var working_whole: int = whole[1]
-    var elders: int = whole[2]
-    var total := children + working_whole + elders
+        children += int(band.get("children", 0))
+        working_whole += int(band.get("working_age", 0))
+        elders += int(band.get("elders", 0))
+        total += int(band.get("size", 0))
     if total <= 0:
         return null
     var segments: Array = []
@@ -711,7 +705,9 @@ static func _build_workforce_block(labor: HudBandLaborState) -> VBoxContainer:
         [HudWorkVocab.WORKFORCE_KEY_FORAGE, forage_workers, HudStyle.HEALTHY],
         [HudWorkVocab.WORKFORCE_KEY_HUNT, hunt_workers, HudStyle.SIGNAL],
         [HudWorkVocab.WORKFORCE_KEY_ROLES, role_workers, HudStyle.VOICE_INK],
-        [HudWorkVocab.WORKFORCE_KEY_PARTIES, party_workers, HudStyle.WARN],
+        # Party crews are NOT a segment here either — the sim removes them from the parent band's
+        # `working_age` on launch, so they sit outside the denominator these segments partition.
+        # They read as the header's "away" clause (`WORKFORCE_AWAY_FORMAT`).
         # The bench's crew, for the reason the band zone's own bar carries one: `effective_idle` nets
         # it out, so a faction total without this segment loses those hands off a bar that is supposed
         # to partition the same `working_age` the header sums.
@@ -721,10 +717,13 @@ static func _build_workforce_block(labor: HudBandLaborState) -> VBoxContainer:
         if int(spec[1]) > 0:
             segments.append({"key": String(spec[0]), "count": int(spec[1]), "color": spec[2],
                 "tooltip": "%s: %d" % [String(spec[0]), int(spec[1])]})
+    var readout := HudWorkVocab.WORKFORCE_IDLE_FORMAT % [idle, working_age]
+    if party_workers > 0:
+        readout += HudWorkVocab.WORKFORCE_AWAY_FORMAT % party_workers
     var block := HudWidgets.make_zone_block()
-    block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_WORKFORCE,
-        HudWorkVocab.WORKFORCE_IDLE_FORMAT % [idle, working_age],
-        null, HudStyle.SIGNAL if idle > 0 else HudStyle.INK_DIM))
+    block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_WORKFORCE, readout,
+        null, HudStyle.SIGNAL if idle > 0 else HudStyle.INK_DIM,
+        HudWorkVocab.WORKFORCE_AWAY_TOOLTIP if party_workers > 0 else ""))
     if not segments.is_empty():
         block.add_child(HudWidgets.build_composition_bar(segments))
         block.add_child(HudWidgets.build_composition_key(segments))

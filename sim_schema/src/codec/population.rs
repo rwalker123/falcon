@@ -536,9 +536,8 @@ fn create_populations<'a>(
                     harvestTask: harvest,
                     scoutTask: scout,
                     accessibleStockpile: accessible_stockpile_fb,
-                    children: cohort.children,
-                    working: cohort.working,
-                    elders: cohort.elders,
+                    // The raw fixed-point brackets are gone from here on purpose — see
+                    // `childrenCount` / `eldersCount` at the end of these args.
                     stores,
                     ageTurns: cohort.age_turns,
                     turnsOfFood: cohort.turns_of_food,
@@ -628,6 +627,13 @@ fn create_populations<'a>(
                     bench: Some(bench),
                     craftOffers: Some(craft_offers),
                     equipmentBatches: Some(equipment_batches),
+                    // **The age brackets in WHOLE PEOPLE** — appended last, and the only reading of
+                    // them that crosses. The raw fixed-point `children`/`working`/`elders` slots are
+                    // `(deprecated)` in the schema and are not written: the fraction is an internal
+                    // growth accumulator, so a client rounding it invented a second answer beside
+                    // `workingAge`. `childrenCount + workingAge + eldersCount == size`.
+                    childrenCount: cohort.children_count,
+                    eldersCount: cohort.elders_count,
                 },
             )
         })

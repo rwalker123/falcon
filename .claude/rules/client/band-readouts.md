@@ -83,9 +83,9 @@ which is a property of the tier and not of the merge.
   block — **`Hud.update_demographics`, the `FactionReadouts` ingest and `Main`'s dispatch are all
   gone**, so the section joins `accessibleStockpile` as a wire table the client no longer reads.
   **The faction page's PEOPLE bar is what replaced it, and it is a better answer to the same
-  question**: it sums the BANDS and apportions the fractional brackets ONCE across the roster
-  (`FactionRollup._build_people_block`), so the head count cannot disagree with the bands it is made
-  of — where a per-faction total beside it would have been a second source of truth.
+  question**: it sums the BANDS' own whole brackets (`FactionRollup._build_people_block`), so the
+  head count cannot disagree with the bands it is made of — where a per-faction total beside it
+  would have been a second source of truth.
   The **dependency ratio** had already left this line before that (a faction average hides the band
   that is in trouble — see the PEOPLE block in `band-city-panel.md`), which left it stating a
   composition the bar draws. See `core_sim` Campaign Loop — Population & Demographics.

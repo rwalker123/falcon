@@ -141,6 +141,25 @@ inline divide — and a new `Scalar` **cohort** field belongs in `CohortScalars`
 (`dict/population.rs`), which is the one part of this crate `cargo test` can reach
 (`VarDictionary` cannot be built outside a live engine).
 
+## THE AGE BRACKETS ARE WHOLE PEOPLE, AND THERE ARE ONLY THREE OF THEM
+
+`population_to_dict` publishes `children` ← `cohort.childrenCount()`, `working_age` ←
+`cohort.workingAge()` and `elders` ← `cohort.eldersCount()`, all plain `uint` counts cast to `i64`.
+**None of them is a `CohortScalars` member** — they are not fixed-point and take no divide.
+
+**`working_age` IS the working bracket.** There is deliberately no fourth `age_working`-style key
+beside it. This decoder used to carry both: `working_age` (the assignable workers) and an `age_*`
+trio decoded from `PopulationCohortState.children/working/elders`, which were raw `Scalar`s. The
+`age_*` prefix existed to keep the two apart, and the naming trap it guarded is gone with the second
+number — the deprecated Scalar slots are no longer written and their accessors are gone from the
+generated bindings. Two names for one number is how a band came to render "17" in the panel's PEOPLE
+bar beside "0 idle of 16" in the WORKFORCE header on the same frame.
+
+The fraction the sim keeps internally is a growth accumulator, not a fact about people. It rounds
+once, writes `size` as `childrenCount + workingAge + eldersCount`, and nothing here re-decides it.
+The neighbouring `PopulationDemographicsState` `children`/`working`/`elders` (the faction-wide
+figures) were always plain `uint` counts and are unaffected.
+
 `command_events_to_array` (`dict/campaign.rs`) carries **`seq`**, and the campaign section carries
 **`command_events_retention_turns`** — the two fields the event dock needs (issue #272,
 `.claude/rules/client/event-dock.md`). Two decode rules ride them, and both are about a FlatBuffers
