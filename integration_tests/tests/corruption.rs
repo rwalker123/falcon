@@ -1,8 +1,8 @@
 mod common;
 
 use core_sim::{
-    build_headless_app, CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage, LogisticsLink,
-    PowerNode, Scalar, SentimentAxisBias, SimulationConfig, SimulationConfigMetadata, TradeLink,
+    build_headless_app, CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage, PowerNode,
+    Scalar, SentimentAxisBias, SimulationConfig, SimulationConfigMetadata,
 };
 use sim_runtime::{CorruptionEntry, CorruptionSubsystem};
 
@@ -116,48 +116,11 @@ fn corruption_modifiers_reduce_outputs() {
         corrupt.update();
     }
 
-    let flow_clean = {
-        let mut query = clean.world.query::<&LogisticsLink>();
-        query
-            .iter(&clean.world)
-            .next()
-            .expect("logistics link in clean app")
-            .flow
-            .to_f32()
-            .abs()
-    };
-    let flow_corrupt = {
-        let mut query = corrupt.world.query::<&LogisticsLink>();
-        query
-            .iter(&corrupt.world)
-            .next()
-            .expect("logistics link in corrupt app")
-            .flow
-            .to_f32()
-            .abs()
-    };
-    assert!(
-        flow_corrupt <= flow_clean,
-        "logistics corruption should not improve throughput"
-    );
-
-    // TradeLinks are now only created when trade routes are established between
-    // settlements, not at world spawn. Skip tariff check if no TradeLinks exist.
-    let tariff_clean = {
-        let mut query = clean.world.query::<&TradeLink>();
-        query.iter(&clean.world).next().map(|t| t.tariff.to_f32())
-    };
-    let tariff_corrupt = {
-        let mut query = corrupt.world.query::<&TradeLink>();
-        query.iter(&corrupt.world).next().map(|t| t.tariff.to_f32())
-    };
-    if let (Some(clean_tariff), Some(corrupt_tariff)) = (tariff_clean, tariff_corrupt) {
-        assert!(
-            corrupt_tariff <= clean_tariff,
-            "trade corruption should reduce tariff yield"
-        );
-    }
-
+    // The Logistics and Trade incidents above are still registered — the ledger carries all four
+    // subsystems and the corruption overlay still reads them — but neither has an OUTPUT to
+    // dampen any more: their networks were demolished with the dead trade slice
+    // (`docs/plan_contact_and_logistics.md` §As-built). Military is the one subsystem whose
+    // multiplier still reaches a live number, so it is the one this asserts on.
     let power_clean = {
         let mut query = clean.world.query::<&PowerNode>();
         query

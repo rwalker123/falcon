@@ -24,9 +24,9 @@ use crate::{
         raid_is_recurring, BandEquipment, BandId, BandTravel, DeathCause,
         DemographicFlowAccumulator, ElementKind, Expedition, ExpeditionMission, ExpeditionPhase,
         Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
-        LogisticsLink, MoraleCause, MoraleContributions, MountainMetadata, PendingMigration,
-        PopulationCohort, PowerNode, ResidentBand, SourceYield, StartingUnit, Tile, TradeLink,
-        YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
+        MoraleCause, MoraleContributions, MountainMetadata, PendingMigration, PopulationCohort,
+        PowerNode, ResidentBand, SourceYield, StartingUnit, Tile, YieldRange,
+        DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
         TRADE_GOODS,
     },
     creatures_config::CreaturesConfigHandle,
@@ -41,7 +41,7 @@ use crate::{
     expedition_config::ExpeditionConfig,
     fauna::{
         self, herd_capacity, herd_ecology, herd_hunt_yield, pen_upkeep, sustainable_yield, Herd,
-        HerdDensityMap, HerdRegistry, FODDERING_DISCOVERY_ID,
+        HerdRegistry, FODDERING_DISCOVERY_ID,
     },
     fauna_config::{Diet, FaunaConfig, FaunaConfigHandle, HuntYield},
     flora_config::FloraConfigHandle,
@@ -88,12 +88,8 @@ use crate::{
     turn_pipeline_config::TurnPipelineConfigHandle,
     wellbeing_config::{ProductivityConfig, WellbeingConfig, WellbeingConfigHandle},
 };
-use sim_runtime::{
-    apply_openness_decay, merge_fragment_payload, scale_migration_fragments, CorruptionSubsystem,
-    TradeLeakCurve,
-};
+use sim_runtime::{merge_fragment_payload, scale_migration_fragments, CorruptionSubsystem};
 
-const HERD_TRADE_DIFFUSION_BONUS: f32 = 0.25;
 const PLAYER_FACTION: FactionId = FactionId(0);
 const BUCKET_COLS: u32 = 6;
 const BUCKET_ROWS: u32 = 6;

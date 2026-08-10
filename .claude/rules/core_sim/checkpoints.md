@@ -114,8 +114,8 @@ not an export.
 
 **No `Entity` crosses a checkpoint.** Restoring despawns and respawns everything, so bevy hands back
 fresh generations and `Entity::to_bits()` names a different thing before and after. Every reference
-is a stable sim id: tiles and settlements by `(x, y)`, logistics links by their endpoint pair, power
-nodes by `y * width + x`, bands by `BandId`. Cloned components have their `Entity` fields set to
+is a stable sim id: tiles and settlements by `(x, y)`, power nodes by `y * width + x`, bands by
+`BandId`. Cloned components have their `Entity` fields set to
 `Entity::PLACEHOLDER` at capture, so a stale one cannot be read by accident rather than merely
 should not be.
 
@@ -148,23 +148,26 @@ yields a number that is close, well-formed, and different. Only a bit-exact orac
 
 ## Capture records component presence, not only values
 
-A component's *existence* is state. Worldgen spawns `LogisticsLink` bare, and `capture_snapshot`'s
-query asks for `(&LogisticsLink, &TradeLink)` — so a link without a `TradeLink` is invisible to the
-published `logistics` section entirely. A restore that helpfully inserted a default `TradeLink` made
-**728 links appear on the wire that the original world never published**. `LinkRecord::trade` and
-`BandRecord::labor` are `Option` for that reason.
+A component's *existence* is state. The worked example was `TradeLink`: `capture_snapshot`'s query
+asked for `(&LogisticsLink, &TradeLink)`, so a bare link was invisible to the published `logistics`
+section entirely, and a restore that helpfully inserted a default `TradeLink` made **728 links
+appear on the wire that the original world never published**. Both components were demolished with
+the dead trade slice (`docs/plan_contact_and_logistics.md` §As-built) and the `LinkRecord` that
+carried them is gone, but the rule outlives them: `BandRecord::labor` is an `Option` for exactly
+this reason, and so is every future record whose component a system attaches conditionally.
 
 ## Ordering a simulation by entity allocation order is a bug
 
-`simulate_logistics` sorted its links by `Entity::to_bits()` and then moved mass along them in that
-order — a chain, where a later link moves what an earlier one already moved. Entity ids are stable
-*within one process run*, which is why the forward-determinism tests never saw it, and are
-renumbered by every restore. It sorts on endpoint positions now, the same natural key the checkpoint
-stores links under.
+The since-deleted `simulate_logistics` sorted its links by `Entity::to_bits()` and then moved mass
+along them in that order — a chain, where a later link moves what an earlier one already moved.
+Entity ids are stable *within one process run*, which is why the forward-determinism tests never saw
+it, and are renumbered by every restore. The fix was to sort on the endpoint positions, the same
+natural key the checkpoint stored the links under.
 
-The change moved **no** world: worldgen spawns links in `(y, x)` order against sequential entity
-allocation, so the two orderings coincide until a renumber. The orders differ only in the case that
-was already broken.
+The system itself is gone (§As-built above), and the change had moved **no** world when it landed:
+worldgen spawned links in `(y, x)` order against sequential entity allocation, so the two orderings
+coincided until a renumber. **The rule is what to keep** — any order-dependent walk over entities
+sorts on a natural key the checkpoint also stores, never on allocation order.
 
 ## A ring of 256 full worlds was the shape of the thing all along
 
@@ -367,8 +370,8 @@ The component half is not optional. `PowerNode.base_generation` / `.base_demand`
 omission that had already happened — restore set `base = current`, so the next turn re-applied
 modifiers to an already-modified base — and a resource-only guard would have missed the very bug
 that motivated the guard. Registered components are walked rather than live ones, because
-`Expedition` and `TradeLink` have no instances in a fresh world and an archetype walk would miss
-exactly the state a rollback is most likely to drop.
+`Expedition` has no instances in a fresh world and an archetype walk would miss exactly the state a
+rollback is most likely to drop.
 
 The world-static bucket's reason carries an expiry: those resources survive a rollback only because
 a restore rebuilds into the same live `World`, which still holds the map worldgen built. That stops

@@ -22,25 +22,23 @@ use sim_runtime::{
     GreatDiscoveryDefinitionState, GreatDiscoveryProgressState, GreatDiscoveryState,
     GreatDiscoveryTelemetryState, HerdTelemetryState, InfluentialIndividualState,
     IntensificationKnowledgeState, KitOptionState, KnowledgeLedgerEntryState,
-    KnowledgeMetricsState, KnowledgeTimelineEventState, LaborAssignmentState, LogisticsLinkState,
-    MaterialDefState, MountainKind, PendingForkState, PendingForksState, PendingMigrationState,
+    KnowledgeMetricsState, KnowledgeTimelineEventState, LaborAssignmentState, MaterialDefState,
+    MountainKind, PendingForkState, PendingForksState, PendingMigrationState,
     PopulationCohortState, PopulationDemographicsState as SchemaPopulationDemographicsState,
     PowerIncidentSeverity, PowerIncidentState, PowerNodeState, PowerTelemetryState, RecipeDefState,
     ScalarRasterState, SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
     SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
     SettlementStageViewState, SnapshotHeader, StanceAxisState, StanceState, StartMarkerState,
-    TerrainOverlayState, TerrainSample, TileState, TradeLinkKnowledge, TradeLinkState,
-    VictoryModeSnapshotState, VictoryResultState, VictorySnapshotState, VoiceLineState,
-    VoiceMediumState, WorldDelta, WorldSnapshot, GRAZE_PHASE_COLLAPSING, GRAZE_PHASE_NONE,
-    GRAZE_PHASE_STRESSED, GRAZE_PHASE_THRIVING,
+    TerrainOverlayState, TerrainSample, TileState, VictoryModeSnapshotState, VictoryResultState,
+    VictorySnapshotState, VoiceLineState, VoiceMediumState, WorldDelta, WorldSnapshot,
+    GRAZE_PHASE_COLLAPSING, GRAZE_PHASE_NONE, GRAZE_PHASE_STRESSED, GRAZE_PHASE_THRIVING,
 };
 
 use crate::{
     components::{
         available_workers, fragments_to_contract, BandEquipment, BandId, BandTravel, Expedition,
-        ExpeditionMission, LaborAllocation, LaborAssignment, LaborTarget, LogisticsLink,
-        PendingMigration, PopulationCohort, PowerNode, SourceYield, Tile, TradeLink, FODDER, FOOD,
-        NO_RAID_FLOOR,
+        ExpeditionMission, LaborAllocation, LaborAssignment, LaborTarget, PendingMigration,
+        PopulationCohort, PowerNode, SourceYield, Tile, FODDER, FOOD, NO_RAID_FLOOR,
     },
     culture::{
         CultureLayer, CultureLayerScope as SimCultureLayerScope, CultureManager, CultureOwner,
@@ -601,7 +599,6 @@ mod indexed_diff_tests {
             x: 0,
             y: 0,
             element: 0,
-            mass: 0,
             temperature: 0,
             terrain: TerrainType::AlluvialPlain,
             terrain_tags: TerrainTags::empty(),
@@ -919,7 +916,7 @@ mod tests {
     use bevy::math::UVec2;
     use sim_runtime::{
         CorruptionEntry, CorruptionSubsystem, GreatDiscoveryProgressState, GreatDiscoveryState,
-        GreatDiscoveryTelemetryState, KnowledgeField, TerrainTags, TerrainType, TradeLinkKnowledge,
+        GreatDiscoveryTelemetryState, KnowledgeField, TerrainTags, TerrainType,
     };
 
     /// The viewer every herd-export fixture below captures for.
@@ -996,7 +993,6 @@ mod tests {
             x,
             y,
             element: 0,
-            mass: 0,
             temperature: 0,
             terrain: TerrainType::AlluvialPlain,
             terrain_tags: TerrainTags::empty(),
@@ -1033,7 +1029,6 @@ mod tests {
         let at = |terrain: TerrainType| Tile {
             position: UVec2::new(1, 1),
             element: ElementKind::Arborite,
-            mass: Scalar::zero(),
             temperature: Scalar::zero(),
             terrain,
             terrain_tags: TerrainTags::empty(),
@@ -1078,7 +1073,7 @@ mod tests {
         overlay: TerrainOverlayState,
     ) -> WorldSnapshot {
         let tiles = vec![tile];
-        let header = SnapshotHeader::new(tick, tiles.len(), 0, 0, 0, 0, 0);
+        let header = SnapshotHeader::new(tick, tiles.len(), 0, 0, 0);
         WorldSnapshot {
             header,
             kits: Vec::new(),
@@ -1092,8 +1087,6 @@ mod tests {
             default_warrior_kit_id: String::new(),
             equipment_config_json: String::new(),
             tiles,
-            logistics: Vec::new(),
-            trade_links: Vec::new(),
             populations: Vec::new(),
             power: Vec::new(),
             power_metrics: PowerTelemetryState::default(),
@@ -1127,7 +1120,6 @@ mod tests {
             elevation_overlay: ElevationOverlayState::default(),
             climate_bands: ClimateBandsState::default(),
             start_marker: None,
-            logistics_raster: ScalarRasterState::default(),
             sentiment_raster: ScalarRasterState::default(),
             corruption_raster: ScalarRasterState::default(),
             culture_raster: ScalarRasterState::default(),
@@ -1151,7 +1143,7 @@ mod tests {
         great_discovery_progress: Vec<GreatDiscoveryProgressState>,
         great_discovery_telemetry: GreatDiscoveryTelemetryState,
     ) -> WorldSnapshot {
-        let header = SnapshotHeader::new(tick, 0, 0, 0, 0, 0, 0);
+        let header = SnapshotHeader::new(tick, 0, 0, 0, 0);
         WorldSnapshot {
             header,
             kits: Vec::new(),
@@ -1165,8 +1157,6 @@ mod tests {
             default_warrior_kit_id: String::new(),
             equipment_config_json: String::new(),
             tiles: Vec::new(),
-            logistics: Vec::new(),
-            trade_links: Vec::new(),
             populations: Vec::new(),
             power: Vec::new(),
             power_metrics: PowerTelemetryState::default(),
@@ -1200,7 +1190,6 @@ mod tests {
             climate_bands: ClimateBandsState::default(),
             start_marker: None,
             terrain: TerrainOverlayState::default(),
-            logistics_raster: ScalarRasterState::default(),
             sentiment_raster: ScalarRasterState::default(),
             corruption_raster: ScalarRasterState::default(),
             culture_raster: ScalarRasterState::default(),
@@ -1219,7 +1208,7 @@ mod tests {
     }
 
     fn snapshot_with_power_metrics(tick: u64, power_metrics: PowerTelemetryState) -> WorldSnapshot {
-        let header = SnapshotHeader::new(tick, 0, 0, 0, 0, 0, 0);
+        let header = SnapshotHeader::new(tick, 0, 0, 0, 0);
         WorldSnapshot {
             header,
             kits: Vec::new(),
@@ -1233,8 +1222,6 @@ mod tests {
             default_warrior_kit_id: String::new(),
             equipment_config_json: String::new(),
             tiles: Vec::new(),
-            logistics: Vec::new(),
-            trade_links: Vec::new(),
             populations: Vec::new(),
             power: Vec::new(),
             power_metrics,
@@ -1268,7 +1255,6 @@ mod tests {
             climate_bands: ClimateBandsState::default(),
             start_marker: None,
             terrain: TerrainOverlayState::default(),
-            logistics_raster: ScalarRasterState::default(),
             sentiment_raster: ScalarRasterState::default(),
             corruption_raster: ScalarRasterState::default(),
             culture_raster: ScalarRasterState::default(),
@@ -1749,7 +1735,6 @@ mod tests {
             x: 0,
             y: 0,
             element: 0,
-            mass: 0,
             temperature: 0,
             terrain: TerrainType::AlluvialPlain,
             terrain_tags: TerrainTags::FERTILE,
@@ -1928,27 +1913,14 @@ mod tests {
         assert_eq!(latest.great_discovery_telemetry, telemetry);
     }
 
+    /// The logistics and trade subsystems have no spatial weights any more (their networks were
+    /// demolished — `docs/plan_contact_and_logistics.md` §As-built), so their intensity spreads
+    /// FLAT. The tile ordering asserted here therefore comes from the two subsystems that still
+    /// have a spatial signal — population (governance) and power (military) — which is exactly what
+    /// the baseline pass is for.
     #[test]
     fn corruption_raster_allocates_intensity_and_baseline() {
         let tiles = vec![tile(1, 0, 0), tile(2, 1, 0)];
-
-        let logistics_raster = ScalarRasterState {
-            width: 2,
-            height: 1,
-            samples: vec![Scalar::from_f32(1.2).raw(), Scalar::from_f32(0.2).raw()],
-        };
-
-        let trade_links = vec![TradeLinkState {
-            entity: 10,
-            from_faction: 0,
-            to_faction: 1,
-            throughput: Scalar::from_f32(0.6).raw(),
-            tariff: 0,
-            knowledge: TradeLinkKnowledge::default(),
-            from_tile: 2,
-            to_tile: 2,
-            pending_fragments: Vec::new(),
-        }];
 
         let populations = vec![
             PopulationCohortState {
@@ -2053,10 +2025,8 @@ mod tests {
         let overlays_config = SnapshotOverlaysConfig::default();
         let raster = corruption_raster_from_simulation(CorruptionRasterInputs {
             tiles: &tiles,
-            trade_links: &trade_links,
             populations: &populations,
             power_nodes: &power_nodes,
-            logistics_raster: &logistics_raster,
             corruption_signals: CorruptionSignals {
                 ledger: &ledger,
                 telemetry: &telemetry,

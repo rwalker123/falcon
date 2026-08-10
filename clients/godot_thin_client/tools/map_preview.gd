@@ -367,38 +367,12 @@ const RIVERINE_FISH_X := 6             # column of the open-water (fish) site
 const RIVERINE_REED_X := 10            # column of the dry-floodplain (reed) site
 const RIVERINE_SITE_Y := 6            # shared row so both markers sit at the same height, easy to compare
 
-# --- The ANNOTATION states (trade / crisis / terrain highlight / routes) -------------------------
-# These four cover the `AnnotationRenderer` family, which had NO fixture at all before. They were
+# --- The ANNOTATION states (crisis / terrain highlight / routes) ---------------------------------
+# These three cover the `AnnotationRenderer` family, which had NO fixture at all before. They were
 # written AFTER the code they cover, so they encode CURRENT BEHAVIOUR — bugs included. They prove
 # "this refactor changed nothing", NOT "this rendering is correct"; do not read a passing byte-diff
 # as a correctness result.
 #
-# State "trade overlay". Trade links address their endpoints by TILE ENTITY id, which MapView resolves
-# through `tile_lookup` (built from `tiles[].entity`) — so this is the one flat-backdrop fixture that
-# has to publish a `tiles` array at all. The three link entities exist to fan the draw's branches out
-# across one frame: the SELECTED one (green + widened), a busy open one, and a thin closed one whose
-# leak is imminent (a red midpoint dot).
-const TRADE_SELECTED_ENTITY := 4201    # the caravan TradePanel reports as selected → the selection branch
-const TRADE_BUSY_ENTITY := 4202        # high throughput + openness → the widest, most opaque amber line
-const TRADE_LEAKING_ENTITY := 4203     # low throughput + openness → thin/faint, and its leak fires
-# `leak_timer <= 1` is the draw's own test for "this link leaks knowledge NOW" (the red midpoint dot).
-const TRADE_LEAK_QUIET := 5            # above the test → no dot
-const TRADE_LEAK_IMMINENT := 0         # at/below it → dot
-# A link whose endpoints are NOT in `tile_lookup` — the draw skips it. Present so the guard is
-# EXERCISED by the reference frame; a refactor that dropped it would start drawing a line here.
-const TRADE_UNRESOLVED_TILE := -1
-# Link endpoints (col, row) on the flat GRID_W×GRID_H backdrop, spread so no two lines overlap.
-const TRADE_SELECTED_FROM := Vector2i(2, 2)
-const TRADE_SELECTED_TO := Vector2i(13, 3)
-const TRADE_BUSY_FROM := Vector2i(3, 9)
-const TRADE_BUSY_TO := Vector2i(12, 8)
-const TRADE_LEAKING_FROM := Vector2i(7, 1)
-const TRADE_LEAKING_TO := Vector2i(6, 10)
-const TRADE_BUSY_THROUGHPUT := 8.0     # ≫ the draw's 2.5 intensity clamp → full width
-const TRADE_BUSY_OPENNESS := 0.9       # → the opacity clamp's top end
-const TRADE_QUIET_THROUGHPUT := 1.0    # → a barely-thickened line
-const TRADE_QUIET_OPENNESS := 0.05     # → the opacity clamp's floor
-
 # State "crisis annotations". The draw is gated on the `crisis` overlay channel being ACTIVE, so the
 # fixture publishes that channel (a west→east pressure ramp, so the backdrop isn't a flat wash) and
 # selects it after the snapshot lands — `display_snapshot` clears the active overlay every time.
@@ -432,8 +406,8 @@ const ROUTE_UNKNOWN_FACTION := "Wayfarers"  # absent from faction_colors → the
 const ROUTE_PLAYER_PATH := [[1, 2], [3, 3], [5, 3], [7, 4], [9, 4], [11, 5]]
 const ROUTE_RIVAL_PATH := [[2, 10], [4, 9], [6, 9], [8, 8], [10, 8]]
 const ROUTE_UNKNOWN_PATH := [[1, 5], [3, 6], [2, 8]]   # left of the other two, and inside the cover-fit crop
-# A one-waypoint order — the draw bails at `points.size() < 2`. Present for the same reason as
-# TRADE_UNRESOLVED_TILE: a guard only guards the reference frame if the frame exercises it.
+# A one-waypoint order — the draw bails at `points.size() < 2`. Present because a guard only guards
+# the reference frame if the frame exercises it.
 const ROUTE_DEGENERATE_PATH := [[5, 11]]
 
 # State "max zoom". How far the achieved hex radius may sit from `base_hex_radius × MAX_ZOOM_FACTOR`
@@ -1283,41 +1257,19 @@ func _ready() -> void:
 	await _save_crop_rect("map_rivers_web", RIVER_WEB_CROP)
 
 	# === THE ANNOTATION STATES ===================================================================
-	# Trade overlay / crisis annotations / terrain highlight / routes — the four overlays that had no
-	# fixture at all, so no refactor of them could be pixel-checked. They run LAST and each CLEARS its
-	# own state afterwards, so a leak here can only ever show up in the annotation frames themselves.
+	# Crisis annotations / terrain highlight / routes — the three overlays that had no fixture at all,
+	# so no refactor of them could be pixel-checked. They run LAST and each CLEARS its own state
+	# afterwards, so a leak here can only ever show up in the annotation frames themselves.
 	# They restore the default canvas (the river states above left the pasture aspect pinned) because
 	# their fixtures are authored against the GRID_W×GRID_H grid the earlier states use.
-	# **They prove UNCHANGED, not CORRECT** — see the comment on TRADE_SELECTED_ENTITY.
+	# **They prove UNCHANGED, not CORRECT.**
+	#
+	# There was a FOURTH, `map_trade_overlay`, and it went with the trade-link substrate itself: the
+	# sim publishes no link network, so the overlay it drove drew the empty set on every frame
+	# (`docs/plan_contact_and_logistics.md`). Issue #232's route-network overlay is what earns a
+	# frame back here.
 	await _set_canvas(DEFAULT_CANVAS_SIZE)
 	await _settle()
-
-	# State "trade overlay" — the diffusion overlay, pushed through the same three seams the live
-	# client uses (update_trade_overlay → set_trade_overlay_enabled → set_trade_overlay_selection, all
-	# three reached BY NAME through has_method/call). In the client the link array comes from the
-	# snapshot's `trade_links` section; the Map tab's toggle only pushes the enabled flag. Three links
-	# fan the draw's branches across one frame: the SELECTED caravan (green, widened — the branch an unselected-only fixture would leave
-	# unproven), a busy open link (widest amber), and a thin closed one whose leak is imminent (the red
-	# midpoint dot). A fourth link addresses tiles that don't exist, so the skip guard is exercised too.
-	_map.set_fow_enabled(false)
-	_map.set_labor_pending({})
-	_map.enable_terrain_textures(false)
-	_map._map_cache_enabled = false
-	_map.selected_unit_id = -1
-	_map.selected_herd_id = ""
-	_map.selected_tile = Vector2i(-1, -1)
-	_map.display_snapshot(_snapshot_trade_overlay())
-	_map.update_trade_overlay(_trade_links(), true)
-	_map.set_trade_overlay_enabled(true)
-	_map.set_trade_overlay_selection(TRADE_SELECTED_ENTITY)
-	_map._fit_map_to_view()
-	await _settle()
-	await _save("map_trade_overlay")
-	# Clear it: the overlay is only re-ingested by a snapshot that CARRIES `trade_links`, so without
-	# this the links would persist into every following state.
-	_map.set_trade_overlay_selection(-1)
-	_map.update_trade_overlay([], false)
-	_map.set_trade_overlay_enabled(false)
 
 	# State "crisis annotations" — the Crisis overlay's map annotations, which draw ONLY while the
 	# `crisis` channel is the active one. All four shapes the draw can produce in one frame: a
@@ -3143,65 +3095,9 @@ func _snapshot_sites_fogged() -> Dictionary:
 	}
 	return snap
 
-# --- The ANNOTATION fixtures (see the TRADE_* / CRISIS_* / ROUTE_* consts) -----------------------
+# --- The ANNOTATION fixtures (see the CRISIS_* / ROUTE_* consts) ---------------------------------
 # Written AFTER the code they cover: they encode CURRENT behaviour, so they prove "unchanged", not
 # "correct".
-
-## Row-major tile ENTITY id on the flat GRID_W×GRID_H backdrop. Trade links address their endpoints by
-## entity and MapView resolves them through `tile_lookup`, which is built from `tiles[].entity` — so
-## the trade fixture is the one flat-backdrop state that has to publish a `tiles` array.
-func _tile_entity(x: int, y: int) -> int:
-	return y * GRID_W + x
-
-func _entity_tiles() -> Array:
-	var tiles: Array = []
-	for y in GRID_H:
-		for x in GRID_W:
-			tiles.append({"entity": _tile_entity(x, y), "x": x, "y": y, "terrain": TERRAIN_ID})
-	return tiles
-
-## One trade link in the shape the snapshot's `trade_links` section hands to `update_trade_overlay`:
-## endpoints as tile entities, a throughput (drives line width) and a knowledge sub-dict (openness drives opacity,
-## leak_timer arms the red midpoint dot).
-func _trade_link(entity: int, from_tile: Vector2i, to_tile: Vector2i,
-		throughput: float, openness: float, leak_timer: int) -> Dictionary:
-	return {
-		"entity": entity,
-		"from_tile": _tile_entity(from_tile.x, from_tile.y),
-		"to_tile": _tile_entity(to_tile.x, to_tile.y),
-		"throughput": throughput,
-		"knowledge": {"openness": openness, "leak_timer": leak_timer},
-	}
-
-func _trade_links() -> Array:
-	return [
-		_trade_link(TRADE_SELECTED_ENTITY, TRADE_SELECTED_FROM, TRADE_SELECTED_TO,
-			TRADE_BUSY_THROUGHPUT, TRADE_BUSY_OPENNESS, TRADE_LEAK_QUIET),
-		_trade_link(TRADE_BUSY_ENTITY, TRADE_BUSY_FROM, TRADE_BUSY_TO,
-			TRADE_BUSY_THROUGHPUT, TRADE_BUSY_OPENNESS, TRADE_LEAK_QUIET),
-		_trade_link(TRADE_LEAKING_ENTITY, TRADE_LEAKING_FROM, TRADE_LEAKING_TO,
-			TRADE_QUIET_THROUGHPUT, TRADE_QUIET_OPENNESS, TRADE_LEAK_IMMINENT),
-		# Endpoints that are not in `tile_lookup` — the draw skips this link. Kept so the guard is
-		# exercised by the reference frame rather than merely present in the source.
-		{
-			"entity": TRADE_SELECTED_ENTITY,
-			"from_tile": TRADE_UNRESOLVED_TILE,
-			"to_tile": TRADE_UNRESOLVED_TILE,
-			"throughput": TRADE_BUSY_THROUGHPUT,
-			"knowledge": {"openness": TRADE_BUSY_OPENNESS, "leak_timer": TRADE_LEAK_IMMINENT},
-		},
-	]
-
-## The trade backdrop: the flat terrain every band state uses, PLUS the per-tile entity table the link
-## endpoints resolve through. No units or herds — the frame is about the links.
-func _snapshot_trade_overlay() -> Dictionary:
-	return {
-		"grid": {"width": GRID_W, "height": GRID_H, "wrap_horizontal": false},
-		"overlays": {"terrain": _terrain_array()},
-		"tiles": _entity_tiles(),
-		"populations": [],
-		"herds": [],
-	}
 
 ## The four annotation SHAPES the crisis draw can produce, in the order it walks them:
 ##   1. a multi-hop path in the PackedInt32Array (flattened col,row) form → polyline + head/tail discs

@@ -108,11 +108,10 @@ pub use components::{
     BandEquipment, BandId, BandTravel, BandWorkforce, BatchGrade, DeathCause,
     DemographicFlowAccumulator, DrawnInputs, DrawnMaterial, ElementKind, EquipmentBatch,
     Expedition, ExpeditionMission, ExpeditionPhase, Improvement, KnowledgeFragment,
-    LaborAllocation, LaborAssignment, LaborTarget, LocalStore, LogisticsLink, MaterialBatch,
-    MaterialDraw, MoraleCause, PendingMigration, PopulationCohort, PowerNode, ResidentBand,
-    Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink, YieldRange,
-    DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE,
-    TRADE_GOODS,
+    LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch, MaterialDraw,
+    MoraleCause, PendingMigration, PopulationCohort, PowerNode, ResidentBand, Settlement,
+    SourceYield, StartingUnit, Tile, TownCenter, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER,
+    FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE, TRADE_GOODS,
 };
 pub use config_load::ConfigLoadError;
 pub use config_override::{
@@ -286,9 +285,9 @@ pub use supply_network_config::{
     SupplyNetworkConfigMetadata,
 };
 pub use turn_pipeline_config::{
-    load_turn_pipeline_config_from_env, LogisticsPhaseConfig, PopulationPhaseConfig,
-    PowerPhaseConfig, TradePhaseConfig, TurnPipelineConfig, TurnPipelineConfigHandle,
-    TurnPipelineConfigMetadata, BUILTIN_TURN_PIPELINE_CONFIG,
+    load_turn_pipeline_config_from_env, PopulationPhaseConfig, PowerPhaseConfig,
+    TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata,
+    BUILTIN_TURN_PIPELINE_CONFIG,
 };
 pub use victory::{
     load_victory_config_from_env, VictoryConfigHandle, VictoryModeId, VictoryModeKind,
@@ -805,7 +804,6 @@ pub fn build_headless_app() -> App {
                 // so the executor could not overlap them even if they were left unordered.
                 (
                     systems::simulate_materials,
-                    systems::simulate_logistics,
                     advance_herds,
                     advance_herd_grazing,
                     advance_predation,
@@ -816,7 +814,7 @@ pub fn build_headless_app() -> App {
                 // The flora/pasture half touches `ForageRegistry`/`GrazeRegistry`, which the fauna
                 // backbone above does not, so it runs alongside it. Each declares the one edge it
                 // actually has rather than inheriting the whole chain.
-                advance_forage_regrowth.after(systems::simulate_logistics),
+                advance_forage_regrowth.after(systems::simulate_materials),
                 // The second edge is the feed line: `advance_cultivation` announces a lost plant
                 // rung and `advance_husbandry` a lost pen / an under-herded flock, so the two now
                 // share `CommandEventLog` and the order they append in is observable. The plant
@@ -827,7 +825,6 @@ pub fn build_headless_app() -> App {
                     .before(advance_husbandry),
                 advance_graze_regrowth.after(advance_herd_grazing),
                 supply::balance_supply_networks.after(advance_herds),
-                systems::trade_knowledge_diffusion.after(repopulate_fauna),
             )
                 .in_set(TurnStage::Logistics)
                 .run_if(capability_enabled(
@@ -929,7 +926,6 @@ pub fn build_headless_app() -> App {
                 (
                     visibility_systems::clear_active_visibility,
                     visibility_systems::calculate_visibility,
-                    visibility_systems::apply_trade_route_visibility,
                     visibility_systems::apply_visibility_decay,
                     sites::discover_sites,
                 )

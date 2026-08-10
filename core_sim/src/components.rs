@@ -14,7 +14,7 @@ use crate::{
     mapgen::MountainType,
     orders::FactionId,
     power::PowerNodeId,
-    scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar},
+    scalar::{scalar_from_f32, scalar_zero, Scalar},
 };
 
 /// Represents a discrete tile in the simulation grid.
@@ -22,7 +22,6 @@ use crate::{
 pub struct Tile {
     pub position: UVec2,
     pub element: ElementKind,
-    pub mass: Scalar,
     pub temperature: Scalar,
     pub terrain: TerrainType,
     pub terrain_tags: TerrainTags,
@@ -192,15 +191,6 @@ impl ElementKind {
         }
     }
 
-    pub fn mass_flux(self) -> Scalar {
-        match self {
-            ElementKind::Ferrite => scalar_from_f32(0.8),
-            ElementKind::Arborite => scalar_from_f32(0.4),
-            ElementKind::Zephyrite => scalar_from_f32(0.6),
-            ElementKind::Lumina => scalar_from_f32(0.5),
-        }
-    }
-
     pub fn power_profile(self) -> (Scalar, Scalar, Scalar) {
         match self {
             ElementKind::Ferrite => (
@@ -252,15 +242,6 @@ impl From<ElementKind> for u8 {
     }
 }
 
-/// Directed link representing logistics throughput between two tiles.
-#[derive(Component, Debug, Clone)]
-pub struct LogisticsLink {
-    pub from: Entity,
-    pub to: Entity,
-    pub capacity: Scalar,
-    pub flow: Scalar,
-}
-
 /// Commodity key for a band's food larder. `"provisions"` is the reward name foraging, hunt, and
 /// husbandry income deposit into the band's local `stores` — provisions left `FactionInventory`
 /// entirely; kept as a stable constant.
@@ -281,9 +262,9 @@ pub const FODDER: &str = "fodder";
 /// **derived sum over bands**, never a stored number.
 ///
 /// `FactionInventory` still carries a `trade_goods` stockpile, but only on the **start-profile** path:
-/// `seed_starting_inventory` writes a profile's grant into it and the Startup-only
-/// `apply_trade_goods_bonus` drains it into the opening trade-link openness bonus. Nothing ongoing
-/// credits or reads it.
+/// `seed_starting_inventory` writes a profile's grant into it and nothing spends it. The one consumer
+/// it ever had was the trade-link openness bonus, which went with the dead trade subsystem
+/// (`docs/plan_contact_and_logistics.md` §As-built).
 ///
 /// Named for the same reason the other two are: every producer (band hunt, pen, gather, expedition)
 /// and every consumer must agree on one string.
@@ -2799,37 +2780,7 @@ impl Default for PowerNode {
     }
 }
 
-/// Trade link metadata attached to logistics edges.
-#[derive(Component, Debug, Clone)]
-pub struct TradeLink {
-    pub from_faction: FactionId,
-    pub to_faction: FactionId,
-    pub throughput: Scalar,
-    pub tariff: Scalar,
-    pub openness: Scalar,
-    pub decay: Scalar,
-    pub leak_timer: u32,
-    pub last_discovery: Option<u32>,
-    pub pending_fragments: Vec<KnowledgeFragment>,
-}
-
-impl Default for TradeLink {
-    fn default() -> Self {
-        Self {
-            from_faction: FactionId(0),
-            to_faction: FactionId(0),
-            throughput: scalar_zero(),
-            tariff: scalar_zero(),
-            openness: scalar_from_f32(0.25),
-            decay: scalar_from_f32(0.01),
-            leak_timer: 0,
-            last_discovery: None,
-            pending_fragments: Vec::new(),
-        }
-    }
-}
-
-/// Knowledge fragment payload carried by trade leaks or migrations.
+/// Knowledge fragment payload carried between factions by migration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct KnowledgeFragment {
     pub discovery_id: u32,
@@ -2890,7 +2841,6 @@ impl Default for Tile {
         Self {
             position: UVec2::ZERO,
             element: ElementKind::Ferrite,
-            mass: scalar_one(),
             temperature: scalar_zero(),
             terrain: TerrainType::AlluvialPlain,
             terrain_tags: TerrainTags::empty(),

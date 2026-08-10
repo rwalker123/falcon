@@ -65,7 +65,6 @@ fn deterministic_snapshots_match() {
         snapshot_b.header.campaign_label
     );
     assert_eq!(snapshot_a.tiles, snapshot_b.tiles);
-    assert_eq!(snapshot_a.logistics, snapshot_b.logistics);
     assert_eq!(snapshot_a.populations, snapshot_b.populations);
     assert_eq!(snapshot_a.power, snapshot_b.power);
     assert_eq!(snapshot_a.axis_bias, snapshot_b.axis_bias);
@@ -75,7 +74,6 @@ fn deterministic_snapshots_match() {
     assert_eq!(snapshot_a.influencers, snapshot_b.influencers);
     assert_eq!(snapshot_a.generations, snapshot_b.generations);
     assert_eq!(snapshot_a.corruption, snapshot_b.corruption);
-    assert_eq!(snapshot_a.trade_links, snapshot_b.trade_links);
     assert_eq!(snapshot_a.power_metrics, snapshot_b.power_metrics);
     assert_eq!(
         snapshot_a.great_discovery_definitions,
@@ -112,5 +110,4 @@ fn deterministic_snapshots_match() {
     assert_eq!(snapshot_a.elevation_overlay, snapshot_b.elevation_overlay);
     assert_eq!(snapshot_a.start_marker, snapshot_b.start_marker);
     assert_eq!(snapshot_a.terrain, snapshot_b.terrain);
-    assert_eq!(snapshot_a.logistics_raster, snapshot_b.logistics_raster);
 }

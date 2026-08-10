@@ -10,7 +10,6 @@
 
 use godot::prelude::*;
 use shadow_scale_flatbuffers::shadow_scale::sim as fb;
-use std::collections::HashMap;
 
 use crate::dict::fixed64_to_f32;
 use crate::snapshot::cache::RasterCache;
@@ -36,14 +35,10 @@ pub(crate) struct DeltaAggregator {
     /// `Option` (like `climate_bands`) so "never seen one" stays distinct from "seen, and it is
     /// false" — an absent section falls back to `FOG_ENABLED_WHEN_ABSENT`, not to `bool::default()`.
     fog_enabled: Option<bool>,
-    tile_updates: HashMap<(u32, u32), f32>,
     terrain_width: u32,
     terrain_height: u32,
     terrain_types: Vec<u16>,
     terrain_tags: Vec<u16>,
-    logistics_width: u32,
-    logistics_height: u32,
-    logistics_samples: Vec<f32>,
     sentiment_width: u32,
     sentiment_height: u32,
     sentiment_samples: Vec<f32>,
@@ -96,9 +91,6 @@ impl DeltaAggregator {
             terrain_height: cache.height,
             terrain_types: cache.terrain.clone(),
             terrain_tags: cache.terrain_tags.clone(),
-            logistics_width: cache.width,
-            logistics_height: cache.height,
-            logistics_samples: cache.logistics.clone(),
             sentiment_width: cache.width,
             sentiment_height: cache.height,
             sentiment_samples: cache.sentiment.clone(),
@@ -141,18 +133,14 @@ impl DeltaAggregator {
     /// `x`/`y` and `idx` tests below are belt-and-braces rather than a live path: a differently
     /// sized grid means the world was rebuilt, and `WorldCache::accepts` rejects a delta from a
     /// different world epoch before this is reached. Were one to arrive anyway, its capacities
-    /// are dropped rather than written at a stride that no longer matches the buffers; the
-    /// temperature still lands in `tile_updates`, which is keyed by coordinate, not strided.
+    /// are dropped rather than written at a stride that no longer matches the buffers.
     pub(crate) fn update_tile(
         &mut self,
         x: u32,
         y: u32,
-        temperature: i64,
         graze_capacity: f32,
         forage_capacity: f32,
     ) {
-        self.tile_updates
-            .insert((x, y), fixed64_to_f32(temperature));
         if x < self.width && y < self.height {
             let idx = (y as usize) * (self.width as usize) + (x as usize);
             if idx < self.pasture_capacity.len() {
@@ -179,23 +167,6 @@ impl DeltaAggregator {
                 }
                 self.terrain_types[idx] = sample.terrain().0;
                 self.terrain_tags[idx] = sample.tags();
-            }
-        }
-    }
-
-    pub(crate) fn apply_logistics_raster(&mut self, raster: fb::ScalarRaster<'_>) {
-        self.logistics_width = raster.width();
-        self.logistics_height = raster.height();
-        let count = (self.logistics_width as usize)
-            .saturating_mul(self.logistics_height as usize)
-            .max(1);
-        self.logistics_samples.resize(count, 0.0);
-        if let Some(samples) = raster.samples() {
-            for (idx, value) in samples.iter().enumerate() {
-                if idx >= count {
-                    break;
-                }
-                self.logistics_samples[idx] = fixed64_to_f32(value);
             }
         }
     }
@@ -381,7 +352,6 @@ impl DeltaAggregator {
             width: self.width.max(self.terrain_width),
             height: self.height.max(self.terrain_height),
             wrap_horizontal: self.wrap_horizontal,
-            logistics: self.logistics_samples.clone(),
             sentiment: self.sentiment_samples.clone(),
             corruption: self.corruption_samples.clone(),
             culture: self.culture_samples.clone(),
@@ -408,14 +378,10 @@ impl DeltaAggregator {
             wrap_horizontal,
             server_build,
             world_epoch,
-            tile_updates,
             terrain_width,
             terrain_height,
             terrain_types,
             terrain_tags,
-            logistics_width,
-            logistics_height,
-            logistics_samples,
             sentiment_width,
             sentiment_height,
             sentiment_samples,
@@ -450,7 +416,6 @@ impl DeltaAggregator {
 
         let mut final_width = terrain_width
             .max(width)
-            .max(logistics_width)
             .max(sentiment_width)
             .max(corruption_width)
             .max(visibility_width)
@@ -461,7 +426,6 @@ impl DeltaAggregator {
             .max(moisture_width);
         let mut final_height = terrain_height
             .max(height)
-            .max(logistics_height)
             .max(sentiment_height)
             .max(corruption_height)
             .max(visibility_height)
@@ -477,31 +441,6 @@ impl DeltaAggregator {
         let total = (final_width as usize)
             .saturating_mul(final_height as usize)
             .max(1);
-
-        let mut logistics = vec![0.0f32; total];
-        if logistics_width > 0 && logistics_height > 0 && !logistics_samples.is_empty() {
-            for y in 0..logistics_height {
-                for x in 0..logistics_width {
-                    let src_idx = (y as usize) * (logistics_width as usize) + x as usize;
-                    if src_idx >= logistics_samples.len() {
-                        break;
-                    }
-                    if x >= final_width || y >= final_height {
-                        continue;
-                    }
-                    let dst_idx = (y as usize) * (final_width as usize) + x as usize;
-                    logistics[dst_idx] = logistics_samples[src_idx];
-                }
-            }
-        } else {
-            for ((x, y), value) in tile_updates {
-                if x >= final_width || y >= final_height {
-                    continue;
-                }
-                let idx = (y as usize) * (final_width as usize) + x as usize;
-                logistics[idx] = value;
-            }
-        }
 
         let mut sentiment = vec![0.0f32; total];
         if sentiment_width > 0 && sentiment_height > 0 && !sentiment_samples.is_empty() {
@@ -658,7 +597,6 @@ impl DeltaAggregator {
                 wrap_horizontal,
             },
             OverlaySlices {
-                logistics: &logistics,
                 sentiment: &sentiment,
                 corruption: &corruption,
                 culture: &culture,

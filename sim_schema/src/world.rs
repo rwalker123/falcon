@@ -13,7 +13,7 @@ use crate::state::culture::{
     AxisBiasState, CultureLayerState, CultureTensionState, InfluentialIndividualState,
     SentimentTelemetryState,
 };
-use crate::state::economy::{FactionInventoryState, LogisticsLinkState, TradeLinkState};
+use crate::state::economy::FactionInventoryState;
 use crate::state::governance::{
     CorruptionLedger, CrisisOverlayState, CrisisTelemetryState, PowerNodeState, PowerTelemetryState,
 };
@@ -42,8 +42,6 @@ use std::hash::{BuildHasher, Hasher};
 pub struct SnapshotHeader {
     pub tick: u64,
     pub tile_count: u32,
-    pub logistics_count: u32,
-    pub trade_link_count: u32,
     pub population_count: u32,
     pub power_count: u32,
     pub influencer_count: u32,
@@ -91,8 +89,6 @@ impl SnapshotHeader {
     pub fn new(
         tick: u64,
         tile_count: usize,
-        logistics_count: usize,
-        trade_link_count: usize,
         population_count: usize,
         power_count: usize,
         influencer_count: usize,
@@ -100,8 +96,6 @@ impl SnapshotHeader {
         Self {
             tick,
             tile_count: tile_count as u32,
-            logistics_count: logistics_count as u32,
-            trade_link_count: trade_link_count as u32,
             population_count: population_count as u32,
             power_count: power_count as u32,
             influencer_count: influencer_count as u32,
@@ -141,8 +135,6 @@ fn default_fog_enabled() -> bool {
 pub struct WorldSnapshot {
     pub header: SnapshotHeader,
     pub tiles: Vec<TileState>,
-    pub logistics: Vec<LogisticsLinkState>,
-    pub trade_links: Vec<TradeLinkState>,
     pub populations: Vec<PopulationCohortState>,
     pub power: Vec<PowerNodeState>,
     pub power_metrics: PowerTelemetryState,
@@ -238,7 +230,6 @@ pub struct WorldSnapshot {
     pub climate_bands: ClimateBandsState,
     pub start_marker: Option<StartMarkerState>,
     pub terrain: TerrainOverlayState,
-    pub logistics_raster: ScalarRasterState,
     pub sentiment_raster: ScalarRasterState,
     pub corruption_raster: ScalarRasterState,
     pub culture_raster: ScalarRasterState,
@@ -267,10 +258,6 @@ pub struct WorldDelta {
     pub header: SnapshotHeader,
     pub tiles: Vec<TileState>,
     pub removed_tiles: Vec<u64>,
-    pub logistics: Vec<LogisticsLinkState>,
-    pub removed_logistics: Vec<u64>,
-    pub trade_links: Vec<TradeLinkState>,
-    pub removed_trade_links: Vec<u64>,
     pub populations: Vec<PopulationCohortState>,
     pub removed_populations: Vec<u64>,
     pub power: Vec<PowerNodeState>,
@@ -355,7 +342,6 @@ pub struct WorldDelta {
     pub start_marker: Option<StartMarkerState>,
     pub axis_bias: Option<AxisBiasState>,
     pub sentiment: Option<SentimentTelemetryState>,
-    pub logistics_raster: Option<ScalarRasterState>,
     pub sentiment_raster: Option<ScalarRasterState>,
     pub corruption_raster: Option<ScalarRasterState>,
     pub culture_raster: Option<ScalarRasterState>,

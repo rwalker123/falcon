@@ -41,7 +41,7 @@ fn compare_food_site(a: &FoodSiteCandidate, b: &FoodSiteCandidate) -> Ordering {
         .then_with(|| b.preferred.cmp(&a.preferred))
 }
 
-/// Spawn initial grid of tiles, logistics links, power nodes, and population cohorts.
+/// Spawn initial grid of tiles, power nodes, and population cohorts.
 ///
 /// **Idempotent**, mirroring its three Startup siblings (`spawn_initial_herds`,
 /// `spawn_initial_forage`, `spawn_initial_graze`): a second pass over an already-built world
@@ -380,8 +380,6 @@ pub fn spawn_initial_world(
     let mut province_region_layers: HashMap<ProvinceId, CultureLayerId> = HashMap::new();
     for (idx, proto) in prototypes.iter().enumerate() {
         let (generation, demand, efficiency) = proto.element.power_profile();
-        let sum = proto.position.x as usize + proto.position.y as usize;
-        let base_mass = scalar_from_f32(1.0 + (sum % 5) as f32 * 0.35);
         let node_id = PowerNodeId(proto.position.y * config.grid_size.x + proto.position.x);
         let storage_capacity = (generation * scalar_from_f32(0.6) + scalar_from_f32(2.0))
             .clamp(scalar_from_f32(1.0), scalar_from_f32(40.0));
@@ -390,7 +388,6 @@ pub fn spawn_initial_world(
         let tile_component = Tile {
             position: proto.position,
             element: proto.element,
-            mass: base_mass,
             // The very temperature the biome gate read in the prototype loop — one climate
             // per tile, decided once (`docs/plan_climate_authority.md` §4).
             temperature: proto.temperature,
@@ -453,31 +450,6 @@ pub fn spawn_initial_world(
         culture.attach_local(proto.position, parent_region);
         let modifiers = seeded_modifiers_for_position(proto.position);
         culture.apply_initial_modifiers(proto.position, modifiers);
-    }
-
-    for y in 0..height {
-        for x in 0..width {
-            let idx = y * width + x;
-            let from_entity = tiles[idx];
-            if x + 1 < width {
-                let to_entity = tiles[y * width + (x + 1)];
-                commands.spawn(LogisticsLink {
-                    from: from_entity,
-                    to: to_entity,
-                    capacity: config.base_link_capacity,
-                    flow: scalar_zero(),
-                });
-            }
-            if y + 1 < height {
-                let to_entity = tiles[(y + 1) * width + x];
-                commands.spawn(LogisticsLink {
-                    from: from_entity,
-                    to: to_entity,
-                    capacity: config.base_link_capacity,
-                    flow: scalar_zero(),
-                });
-            }
-        }
     }
 
     // Pass all candidates to the spatial distribution system
@@ -901,19 +873,21 @@ pub fn spawn_initial_world(
     let _ = culture.take_tension_events();
 }
 
-/// Seed each freshly spawned cohort's demographics (age brackets + a carried food larder) and
-/// apply the starting trade-goods bonus. Food is band-local from day one — every band opens the
-/// game carrying its own reserve, so there is no faction provisions pool to distribute.
+/// Seed each freshly spawned cohort's demographics — age brackets + a carried food larder. Food is
+/// band-local from day one — every band opens the game carrying its own reserve, so there is no
+/// faction provisions pool to distribute.
+///
+/// This also used to drain a start profile's `trade_goods` grant into an opening trade-link openness
+/// bonus. That bonus applied to a component nothing ever spawned, so the grant was being deleted at
+/// startup for no effect; it now simply sits in [`FactionInventory`] until something spends it
+/// (`docs/plan_contact_and_logistics.md` §As-built).
 pub fn apply_starting_inventory_effects(
-    mut inventory: ResMut<FactionInventory>,
     demographics: Res<DemographicsConfigHandle>,
     // `With<ResidentBand>`: only real bands are seeded with startup demographics + food reserves; an
     // expedition is seeded explicitly at launch from the home band's larder.
     mut cohorts: Query<&mut PopulationCohort, With<ResidentBand>>,
-    mut trade_links: Query<&mut TradeLink>,
 ) {
     seed_cohort_demographics(&demographics.get(), &mut cohorts);
-    apply_trade_goods_bonus(&mut inventory, &mut trade_links);
 }
 
 /// Split each cohort's head-count into the three age brackets, seed its larder with
@@ -937,38 +911,6 @@ fn seed_cohort_demographics(
         cohort.stores.set(FOOD, demand * reserve_days);
         cohort.morale = (cohort.morale + morale_bonus).clamp(scalar_zero(), scalar_one());
     }
-}
-
-fn apply_trade_goods_bonus(
-    inventory: &mut FactionInventory,
-    trade_links: &mut Query<&mut TradeLink>,
-) {
-    const TRADE_GOODS_TO_OPENNESS: f32 = 1.0 / 5000.0;
-    const OPENNESS_CAP: f32 = 0.12;
-    let trade_goods = inventory.take_stockpile(PLAYER_FACTION, TRADE_GOODS, i64::MAX);
-    if trade_goods <= 0 {
-        return;
-    }
-    let openness_delta =
-        Scalar::from_f32((trade_goods as f32 * TRADE_GOODS_TO_OPENNESS).clamp(0.0, OPENNESS_CAP));
-    if openness_delta <= Scalar::zero() {
-        return;
-    }
-    let mut affected = 0u32;
-    for mut link in trade_links.iter_mut() {
-        if link.from_faction != PLAYER_FACTION {
-            continue;
-        }
-        link.openness = (link.openness + openness_delta).clamp(scalar_zero(), scalar_one());
-        affected = affected.saturating_add(1);
-    }
-    info!(
-        target: "shadow_scale::campaign",
-        "start_profile.inventory.trade_goods_applied trade_goods={} openness_delta={} links={}",
-        trade_goods,
-        openness_delta.to_f32(),
-        affected
-    );
 }
 
 fn tile_hash(position: UVec2) -> u32 {
@@ -3512,7 +3454,6 @@ mod terrain_tag_tests {
                 .spawn(Tile {
                     position,
                     element,
-                    mass: scalar_from_f32(1.0),
                     temperature: scalar_from_f32(0.5),
                     terrain,
                     terrain_tags: tags,
@@ -3631,7 +3572,6 @@ mod terrain_tag_tests {
                     .spawn(Tile {
                         position,
                         element,
-                        mass: scalar_from_f32(1.0),
                         temperature,
                         terrain,
                         terrain_tags: def.tags,
@@ -3981,37 +3921,5 @@ mod inventory_effect_tests {
             provisions, 0,
             "provisions should not sit in the faction pool"
         );
-    }
-
-    #[test]
-    #[ignore = "TradeLinks are now only created when trade routes are established, not at world spawn"]
-    fn trade_goods_raise_openness() {
-        // TODO: Rewrite this test to establish trade routes first, then verify
-        // that trade goods boost openness on those routes.
-        let mut world = configured_world(0, 200);
-        world.run_system_once(crate::systems::spawn_initial_world);
-        let mut base_openness = Vec::new();
-        {
-            let mut query = world.query::<&TradeLink>();
-            for link in query.iter(&world) {
-                if link.from_faction == PLAYER_FACTION {
-                    base_openness.push(link.openness);
-                }
-            }
-        }
-        world.run_system_once(crate::systems::apply_starting_inventory_effects);
-        let mut query = world.query::<&TradeLink>();
-        let mut increased = false;
-        for (idx, link) in query
-            .iter(&world)
-            .filter(|link| link.from_faction == PLAYER_FACTION)
-            .enumerate()
-        {
-            if idx < base_openness.len() && link.openness > base_openness[idx] {
-                increased = true;
-                break;
-            }
-        }
-        assert!(increased, "expected trade goods to boost openness");
     }
 }

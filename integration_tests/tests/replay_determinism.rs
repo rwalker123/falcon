@@ -481,11 +481,13 @@ fn checkpoint_restore_is_lossless() {
 /// `core_sim/src/bin/server.rs` — the rollback path replays a **command log**, and commands live
 /// there.
 ///
-/// The last thing it caught was not a checkpoint bug at all: `simulate_logistics` ordered its mass
-/// transfers by `Entity::to_bits()`, so a restore — which renumbers every entity — moved mass in a
-/// different order and every tile landed on a different value. Entity ids are stable within one
-/// process run, which is why the forward-determinism tests never saw it. That system now sorts on
-/// the links' endpoint positions, the same natural key this checkpoint stores them under.
+/// The last thing it caught was not a checkpoint bug at all: the since-demolished
+/// `simulate_logistics` ordered its mass transfers by `Entity::to_bits()`, so a restore — which
+/// renumbers every entity — moved mass in a different order and every tile landed on a different
+/// value. Entity ids are stable within one process run, which is why the forward-determinism tests
+/// never saw it. **The lesson outlives the system** (which went with the dead trade slice,
+/// `docs/plan_contact_and_logistics.md` §As-built): any order-dependent walk over entities must
+/// sort on a natural key the checkpoint also stores, never on allocation order.
 #[test]
 fn a_restored_world_simulates_forward_identically() {
     let mut app = new_app();

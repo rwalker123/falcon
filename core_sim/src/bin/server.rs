@@ -5496,15 +5496,15 @@ fn handle_reload_turn_pipeline_config(app: &mut bevy::prelude::App, path: Option
         watcher_state.restart_turn_pipeline(watch_path, command_sender);
     }
 
-    let logistics = new_config.logistics();
+    let population = new_config.population();
     info!(
         target: "shadow_scale::config",
         path = applied_path
             .as_ref()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "builtin".to_string()),
-        flow_gain_min = logistics.flow_gain_min().to_f32(),
-        flow_gain_max = logistics.flow_gain_max().to_f32(),
+        attrition_penalty_scale = population.attrition_penalty_scale().to_f32(),
+        hardness_penalty_scale = population.hardness_penalty_scale().to_f32(),
         "turn_pipeline_config.reloaded"
     );
 }
@@ -7370,7 +7370,6 @@ fn resolve_ready_turn(app: &mut bevy::prelude::App) {
         turn = metrics.turn,
         grid_width = metrics.grid_size.0,
         grid_height = metrics.grid_size.1,
-        total_mass = metrics.total_mass,
         avg_temp = metrics.avg_temperature,
         duration_ms,
         "turn.completed"

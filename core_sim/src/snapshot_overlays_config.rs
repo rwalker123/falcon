@@ -193,7 +193,6 @@ pub struct MilitaryOverlayConfig {
     presence_clamp_max: f32,
     heavy_size_threshold: u32,
     heavy_size_bonus: f32,
-    support_clamp_max: f32,
     power_margin_max: f32,
     presence_weight: f32,
     support_weight: f32,
@@ -215,10 +214,6 @@ impl MilitaryOverlayConfig {
 
     pub fn heavy_size_bonus(&self) -> Scalar {
         scalar_from_f32(self.heavy_size_bonus)
-    }
-
-    pub fn support_clamp_max(&self) -> Scalar {
-        scalar_from_f32(self.support_clamp_max)
     }
 
     pub fn power_margin_max(&self) -> Scalar {
@@ -245,7 +240,6 @@ impl Default for MilitaryOverlayConfig {
             presence_clamp_max: 5.0,
             heavy_size_threshold: 2_500,
             heavy_size_bonus: 0.1,
-            support_clamp_max: 5.0,
             power_margin_max: 5.0,
             presence_weight: 0.6,
             support_weight: 0.4,

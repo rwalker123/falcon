@@ -37,7 +37,7 @@ environment overrides. A new config's row goes in its arc's rule, not here.
 | `expeditions.md` | Wondrous sites, scouting & hunting expeditions | `sites.rs`, `expedition_config.rs` |
 | `fission.md` | Band fission — a band splits in two where it stands, the worker share, the two floors | `systems/fission.rs`, `tests/band_fission.rs` |
 | `campaign.md` | Start flow, population & demographics, supply network, sedentarization, wellbeing, victory | `supply.rs`, `demographics_config.rs`, `sedentarization*.rs` |
-| `ecs-systems.md` | Power, crisis, culture, knowledge & espionage, great discovery, fog of war, trade diffusion | `power.rs`, `crisis.rs`, `culture.rs`, `visibility*.rs` |
+| `ecs-systems.md` | Power, crisis, culture, knowledge & espionage, great discovery, fog of war, knowledge diffusion | `power.rs`, `crisis.rs`, `culture.rs`, `visibility*.rs` |
 | `turn-profiling.md` | Where a turn's time goes (the sim is ~5%, publishing is ~94%), the `turn.profile` event, which snapshot encodes are load-bearing | `turn_profile.rs`, `snapshot/capture.rs`, `network.rs`, `sim_schema/world.rs` |
 | `schedule-parallelism.md` | How systems are ordered (declare edges, don't chain), the ambiguity gate, which stages are serial by data, what the multi-threaded executor costs | `lib.rs`, `Cargo.toml`, `tests/schedule_parallelism.rs` |
 | `checkpoints.md` | Why rollback restores `SimState` and not `WorldSnapshot`, the three construction rules (no `Entity`, no config, pure capture), when "derived" is unsafe, how omission is made to fail a test | `sim_state.rs`, `snapshot/capture.rs`, `tests/sim_state_coverage.rs`, `integration_tests/tests/replay_determinism.rs` |

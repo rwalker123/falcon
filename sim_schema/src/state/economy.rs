@@ -1,4 +1,10 @@
-//! Economy-section state: logistics links, trade links, and faction inventories.
+//! Economy-section state: faction inventories, and the knowledge-fragment payload the migration
+//! path carries.
+//!
+//! The logistics- and trade-link states that used to live here went with the dead trade slice
+//! (`docs/plan_contact_and_logistics.md` §As-built). Their `.fbs` tables and the two vector fields
+//! that held them survive as `(deprecated)` slots — a freed field id is how two concurrent branches
+//! collide on one position.
 
 use serde::{Deserialize, Serialize};
 
@@ -12,37 +18,6 @@ pub struct FactionInventoryEntryState {
 pub struct FactionInventoryState {
     pub faction: u32,
     pub inventory: Vec<FactionInventoryEntryState>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct LogisticsLinkState {
-    pub entity: u64,
-    pub from: u64,
-    pub to: u64,
-    pub capacity: i64,
-    pub flow: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct TradeLinkKnowledge {
-    pub openness: i64,
-    pub leak_timer: u32,
-    pub last_discovery: u32,
-    pub decay: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct TradeLinkState {
-    pub entity: u64,
-    pub from_faction: u32,
-    pub to_faction: u32,
-    pub throughput: i64,
-    pub tariff: i64,
-    pub knowledge: TradeLinkKnowledge,
-    pub from_tile: u64,
-    pub to_tile: u64,
-    #[serde(default)]
-    pub pending_fragments: Vec<KnownTechFragment>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

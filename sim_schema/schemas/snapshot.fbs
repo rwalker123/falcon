@@ -438,9 +438,10 @@ table TileState {
   // open ocean with no life on it — so it alone put all 4160 tiles of an 80x52 map into every
   // delta and pinned per-turn cost to tile count, which is the property delta streaming exists to
   // remove. Its only consumer in the whole client was the Inspector's Terrain tab, rendering it as
-  // "Mass: %.1f". The serde `TileState.mass` beside this slot is still populated by
-  // `snapshot/map.rs`, but nothing reads it back: rollback restores from `SimState`, which clones
-  // the whole ECS `Tile`. Deprecated rather than deleted because slots are positional.
+  // "Mass: %.1f". The serde `TileState.mass` beside this slot is gone too, and so is `Tile.mass`
+  // itself: the whole mass economy was demolished with the dead logistics slice (arc #527,
+  // docs/plan_contact_and_logistics.md §As-built). Deprecated rather than deleted because slots
+  // are positional.
   mass:long (deprecated);
   temperature:long;
   terrain:TerrainType;
@@ -501,6 +502,13 @@ table TileState {
   underlyingTerrain:TerrainType;
 }
 
+// RETIRED (arc #527, docs/plan_contact_and_logistics.md §As-built). `TradeLink` was never inserted
+// by any system, so this vector was empty for the whole life of the band game; `LogisticsLink` was
+// one entity per adjacent tile pair moving a `Tile.mass` nothing gameplay-facing read. The sim no
+// longer builds either. The TABLES below are kept — a client may still decode an old capture, and
+// the contact/logistics substrate will want link-shaped rows again — but the two VECTOR SLOTS on
+// EconomySection are deprecated rather than freed: this repo is worked by concurrent sessions that
+// append to these tables, and a reused field id is exactly how two branches collide.
 table LogisticsLinkState {
   entity:ulong;
   from:ulong;
@@ -2617,8 +2625,9 @@ table VictoryState {
 table SnapshotHeader {
   tick:ulong;
   tileCount:uint;
-  logisticsCount:uint;
-  tradeLinkCount:uint;
+  // Retired with the link sections themselves (arc #527) — deprecated, not freed.
+  logisticsCount:uint (deprecated);
+  tradeLinkCount:uint (deprecated);
   populationCount:uint;
   powerCount:uint;
   influencerCount:uint;
@@ -2725,12 +2734,17 @@ table MapSection {
 }
 
 table EconomySection {
-  logistics:[LogisticsLinkState];
-  tradeLinks:[TradeLinkState];
+  // Four retired slots (arc #527) — see the note above `LogisticsLinkState`. Deprecated, never
+  // freed: field ids are positional and reusing one silently mis-decodes an old capture.
+  logistics:[LogisticsLinkState] (deprecated);
+  tradeLinks:[TradeLinkState] (deprecated);
+  // No longer published: the raster averaged `LogisticsLink.flow`, which went with the mass
+  // economy. Left UNdeprecated (the client still decodes the field, and simply falls back when it
+  // is absent) so a future logistics network can refill this exact slot.
   logisticsRaster:ScalarRaster;
   factionInventory:[FactionInventoryState];
-  removedLogistics:[ulong];    // delta-only
-  removedTradeLinks:[ulong];   // delta-only
+  removedLogistics:[ulong] (deprecated);    // delta-only
+  removedTradeLinks:[ulong] (deprecated);   // delta-only
 }
 
 table PopulationSection {

@@ -86,7 +86,7 @@ status would break the fix on exactly the setup it exists for. It is skipped onc
 
 **The fixture is SYNTHETIC, not a server capture, and that is the design**
 (`xtask/src/decode_fixture.rs`): a capture is *sparse* — an early-game world carries no crisis
-gauges, great discoveries, trade links or influencers, so most `dict/*` builders would go
+gauges, great discoveries or influencers, so most `dict/*` builders would go
 unexercised — and *unstable*, since worldgen is retuned constantly here and a capture-derived golden
 would churn on every tuning pass until its readers accepted the diff blind. The synthetic snapshot
 instead makes **every section non-empty**, with two rows apiece so a builder that returns row 0 for

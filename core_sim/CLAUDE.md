@@ -63,7 +63,7 @@ environment overrides. A new config's row goes in its arc's rule, not here.
 | `expeditions.md` | Wondrous sites, scouting & hunting expeditions | `sites.rs`, `expedition_config.rs` |
 | `fission.md` | Band fission — a band splits in two where it stands, the worker share, the two floors | `systems/fission.rs`, `tests/band_fission.rs` |
 | `campaign.md` | Start flow, population & demographics, supply network, sedentarization, wellbeing, victory | `supply.rs`, `demographics_config.rs`, `sedentarization*.rs` |
-| `ecs-systems.md` | Power, crisis, culture, knowledge & espionage, great discovery, fog of war, trade diffusion | `power.rs`, `crisis.rs`, `culture.rs`, `visibility*.rs` |
+| `ecs-systems.md` | Power, crisis, culture, knowledge & espionage, great discovery, fog of war, knowledge diffusion | `power.rs`, `crisis.rs`, `culture.rs`, `visibility*.rs` |
 | `turn-profiling.md` | Where a turn's time goes (the sim is ~5%, publishing is ~94%), the `turn.profile` event, which snapshot encodes are load-bearing | `turn_profile.rs`, `snapshot/capture.rs`, `network.rs`, `sim_schema/world.rs` |
 | `schedule-parallelism.md` | How systems are ordered (declare edges, don't chain), the ambiguity gate, which stages are serial by data, what the multi-threaded executor costs | `lib.rs`, `Cargo.toml`, `tests/schedule_parallelism.rs` |
 | `checkpoints.md` | Why rollback restores `SimState` and not `WorldSnapshot`, the three construction rules (no `Entity`, no config, pure capture), when "derived" is unsafe, how omission is made to fail a test | `sim_state.rs`, `snapshot/capture.rs`, `tests/sim_state_coverage.rs`, `integration_tests/tests/replay_determinism.rs` |
@@ -86,11 +86,11 @@ the top of this file for the test.
 
 | File | Purpose |
 |------|---------|
-| `src/data/simulation_config.json` | Grid size, environmental tuning, trade/power/corruption multipliers, TCP bind addresses (see `SIM_PORT_BASE` under Environment Overrides for per-checkout port shifting) |
+| `src/data/simulation_config.json` | Grid size, environmental tuning, power/corruption multipliers, TCP bind addresses (see `SIM_PORT_BASE` under Environment Overrides for per-checkout port shifting) |
 | `src/data/map_presets.json` | World generation tuning parameters |
 | `src/data/start_profiles.json` | Campaign initialization (units, inventory, knowledge tags) |
 | `src/data/victory_config.json` | Victory mode thresholds and `continue_after_win` flag |
-| `src/data/turn_pipeline_config.json` | Per-phase clamps for logistics, trade, population, power |
+| `src/data/turn_pipeline_config.json` | Per-phase clamps for population and power |
 | `src/data/knowledge_ledger_config.json` | Leak timers, suspicion decay, countermeasure scaling |
 | `src/data/espionage_agents.json` | Agent archetypes and generator templates |
 | `src/data/espionage_missions.json` | Mission templates with success/fidelity bands |

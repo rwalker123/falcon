@@ -52,7 +52,6 @@ use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 use sim_schema::codec::{encode_delta_flatbuffer, encode_snapshot_flatbuffer};
 use sim_schema::state::campaign::*;
 use sim_schema::state::culture::*;
-use sim_schema::state::economy::*;
 use sim_schema::state::governance::*;
 use sim_schema::state::map::*;
 use sim_schema::state::population::*;
@@ -737,7 +736,6 @@ fn blank_tile() -> TileState {
         x: 0,
         y: 0,
         element: 0,
-        mass: 0,
         temperature: 0,
         terrain: TerrainType::AlluvialPlain,
         terrain_tags: TerrainTags::empty(),
@@ -753,16 +751,6 @@ fn blank_tile() -> TileState {
         graze_ecology_phase: 0,
         forage_capacity: 0.0,
         underlying_terrain: TerrainType::AlluvialPlain,
-    }
-}
-
-fn blank_logistics_link() -> LogisticsLinkState {
-    LogisticsLinkState {
-        entity: 0,
-        from: 0,
-        to: 0,
-        capacity: 0,
-        flow: 0,
     }
 }
 
@@ -914,7 +902,6 @@ fn seed_snapshot() -> WorldSnapshot {
 
     // --- vision / scalar rasters -----------------------------------------
     for raster in [
-        &mut s.logistics_raster,
         &mut s.sentiment_raster,
         &mut s.corruption_raster,
         &mut s.culture_raster,
@@ -925,11 +912,6 @@ fn seed_snapshot() -> WorldSnapshot {
     }
 
     // --- economy ---------------------------------------------------------
-    s.logistics = rows_of(blank_logistics_link());
-    s.trade_links = rows();
-    for link in &mut s.trade_links {
-        link.pending_fragments = rows();
-    }
     s.faction_inventory = rows();
     for inv in &mut s.faction_inventory {
         inv.inventory = rows();
@@ -1340,7 +1322,6 @@ fn apply_structural_fixups(s: &mut WorldSnapshot) {
     s.moisture_raster.height = GRID_H;
 
     for raster in [
-        &mut s.logistics_raster,
         &mut s.sentiment_raster,
         &mut s.corruption_raster,
         &mut s.culture_raster,

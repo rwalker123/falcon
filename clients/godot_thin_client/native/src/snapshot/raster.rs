@@ -56,7 +56,6 @@ pub(crate) struct GridSize {
 }
 
 pub(crate) struct OverlaySlices<'a> {
-    pub(crate) logistics: &'a [f32],
     pub(crate) sentiment: &'a [f32],
     pub(crate) corruption: &'a [f32],
     pub(crate) culture: &'a [f32],
@@ -83,7 +82,7 @@ pub(crate) struct OverlaySlices<'a> {
     /// The GRAZE (pasture) layer's per-tile CAPACITY — how much pasture this tile's biome can
     /// carry, in graze-biomass units (`0` = this biome carries no pasture at all). Unlike every
     /// other slice here it is not a wire raster: graze rides `TileState`, so this is assembled
-    /// from the tiles (the same shape the logistics fallback already builds from them). Empty
+    /// from the tiles rather than read off a `ScalarRaster`. Empty
     /// when the snapshot carries no graze — the channel is then omitted rather than published as
     /// a map-wide field of zeros, which would read as "nowhere has any pasture".
     pub(crate) pasture_capacity: &'a [f32],

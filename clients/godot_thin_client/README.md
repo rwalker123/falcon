@@ -66,8 +66,9 @@ godot4 --version
 
 ## What the Scene Demonstrates
 
-- **Layered map overlays:** each tile blends logistics throughput (blue) and sentiment pressure (red)
-  sourced from the mock snapshot values.
+- **Layered map overlays:** each tile is tinted by the selected overlay channel (elevation by
+  default, then sentiment, corruption, culture, pasture, forage, …) sourced from the snapshot's
+  raster planes.
 - **Unit markers & paths:** units are color-coded per faction and show their active command path as a
   polyline, matching anticipated order previews.
 - **Turn HUD:** top-left panel surfaces key metrics (turn, unit count, overlay averages) to validate HUD

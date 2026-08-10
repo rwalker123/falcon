@@ -31,10 +31,6 @@ const MAP_SIZE_DEFAULT_DIMENSIONS := Vector2i(80, 52)
 @onready var scenario_apply_button: Button = $MapVBox/ScenarioSection/ScenarioActions/ApplyScenarioButton
 @onready var scenario_regen_toggle: CheckButton = $MapVBox/ScenarioSection/ScenarioActions/RegenerateToggle
 @onready var highlight_rivers_toggle: CheckButton = $MapVBox/HydrologySection/HighlightRiversToggle
-## The trade-overlay toggle. It has always lived PHYSICALLY under the Map tab; the retired Trade tab
-## merely owned it because it also drove the overlay (issue #381). Ownership now matches the scene,
-## which is what let `TradePanel` go. Resolved scene-wide via `%` exactly as it was there.
-@onready var logistics_overlay_toggle: CheckButton = %LogisticsOverlayToggle
 
 var _faction_inventory_state: Array = []
 var _map_size_key: String = MAP_SIZE_DEFAULT_KEY
@@ -58,8 +54,6 @@ func _ready() -> void:
 	_initialize_scenario_controls()
 	if highlight_rivers_toggle != null:
 		highlight_rivers_toggle.toggled.connect(_on_highlight_rivers_toggled)
-	if logistics_overlay_toggle != null:
-		logistics_overlay_toggle.toggled.connect(_on_logistics_overlay_toggled)
 	_apply_enabled()
 
 ## Coordinator contract: consume the map/scenario snapshot keys.
@@ -119,12 +113,11 @@ func set_command_connected(connected: bool) -> void:
 	_connected = connected
 	_apply_enabled()
 
-## Coordinator collaborator: the map view the rivers + trade-overlay toggles are pushed to.
+## Coordinator collaborator: the map view the rivers toggle is pushed to.
 func set_map_view(view: Node) -> void:
 	_map_view = view
 	if highlight_rivers_toggle != null and _map_view != null and _map_view.has_method("set_highlight_rivers"):
 		_map_view.call("set_highlight_rivers", highlight_rivers_toggle.button_pressed)
-	_sync_trade_overlay()
 
 ## Coordinator contract: (re)apply typography to this panel's styled widgets.
 func apply_typography() -> void:
@@ -139,7 +132,7 @@ func apply_typography() -> void:
 	for control in [
 		map_size_dropdown, map_generate_button,
 		scenario_dropdown, scenario_apply_button, scenario_regen_toggle,
-		highlight_rivers_toggle, logistics_overlay_toggle
+		highlight_rivers_toggle
 	]:
 		if control != null:
 			Typography.apply(control, Typography.STYLE_CONTROL)
@@ -158,25 +151,6 @@ func _apply_enabled() -> void:
 func _on_highlight_rivers_toggled(pressed: bool) -> void:
 	if _map_view != null and _map_view.has_method("set_highlight_rivers"):
 		_map_view.call("set_highlight_rivers", pressed)
-
-func _on_logistics_overlay_toggled(_pressed: bool) -> void:
-	_sync_trade_overlay()
-
-## Push the trade overlay's on/off state to the map, through the same `has_method` guard the retired
-## Trade tab used (`MapView` may not implement the seam; the name is documented as movable there).
-##
-## **THE ENABLED FLAG IS THE WHOLE OF WHAT THIS TOGGLE DECIDES.** The links themselves come from the
-## snapshot: `MapView.display_snapshot` feeds `update_trade_overlay(trade_variant, …)` from the
-## `trade_links` section, and the renderer REBUILDS its link list from whatever array it is handed —
-## so a panel that also pushed links would be a second, competing source of truth (and pushing an
-## empty one would blank the overlay until the next snapshot that happens to carry the section).
-## The per-link selection highlight went with the Trade tab, which owned the `ItemList` that chose one.
-func _sync_trade_overlay() -> void:
-	if _map_view == null:
-		return
-	var enabled: bool = logistics_overlay_toggle != null and logistics_overlay_toggle.button_pressed
-	if _map_view.has_method("set_trade_overlay_enabled"):
-		_map_view.call("set_trade_overlay_enabled", enabled)
 
 func _initialize_map_controls() -> void:
 	if map_size_dropdown != null:

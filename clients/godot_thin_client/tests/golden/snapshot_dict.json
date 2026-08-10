@@ -1023,11 +1023,11 @@
   ],
   "orders": [],
   "overlays": {
-    "channel_order": {"__packed": "PackedStringArray", "len": 13, "items": ["logistics", "crisis", "sentiment", "corruption", "visibility", "culture", "military", "moisture", "elevation", "pasture", "forage", "hunt_danger", "threat"]},
+    "channel_order": {"__packed": "PackedStringArray", "len": 12, "items": ["crisis", "sentiment", "corruption", "visibility", "culture", "military", "moisture", "elevation", "pasture", "forage", "hunt_danger", "threat"]},
     "channels": {
       "corruption": {
         "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.959184, 0.92517, 1.0, 0.802721, 0.442177, 0.29932, 0.37415, 0.938775, 0.034014, 0.0, 0.639456, 0.183673]},
-        "description": "Composite pressure mixing active incidents with logistics, trade, military, and governance risk at each tile.",
+        "description": "Composite pressure mixing active incidents with military and governance risk at each tile.",
         "label": "Corruption Pressure",
         "normalized": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.959184, 0.92517, 1.0, 0.802721, 0.442177, 0.29932, 0.37415, 0.938775, 0.034014, 0.0, 0.639456, 0.183673]},
         "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000186, 0.000181, 0.000192, 0.000163, 0.00011, 0.000089, 0.0001, 0.000183, 0.00005, 0.000045, 0.000139, 0.000072]}
@@ -1066,13 +1066,6 @@
         "label": "Hunt danger",
         "normalized": {"__packed": "PackedFloat32Array", "len": 12, "items": [1.0, 0.0, 0.0, 0.0, 0.0, 0.603622, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]},
         "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [2999.576172, 0.0, 0.0, 0.0, 0.0, 1810.611572, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]}
-      },
-      "logistics": {
-        "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.102071, 0.0, 0.093497, 0.0, 0.248913, 0.010868, 0.249517, 0.241275, 0.118494, 0.14491, 0.194179, 0.232611]},
-        "description": "Sum of supply flow touching the tile after current corruption multipliers.",
-        "label": "Logistics Throughput",
-        "normalized": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.115385, 0.0, 0.104396, 1.0, 0.532967, 0.989011, 0.521978, 0.406593, 0.862637, 0.175824, 0.736264, 0.368132]},
-        "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000038, 0.000017, 0.000036, 0.000199, 0.000114, 0.000197, 0.000112, 0.000091, 0.000174, 0.000049, 0.000151, 0.000084]}
       },
       "military": {
         "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.050279, 0.284916, 0.027933, 0.083799, 0.977654, 0.564246, 1.0, 0.307263, 0.675978, 1.0, 0.184358, 0.653631]},
@@ -1120,7 +1113,6 @@
     "climate_boreal_max_temp": 91.300003,
     "climate_polar_max_temp": 67.209999,
     "climate_temperate_max_temp": 50.5,
-    "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.102071, 0.0, 0.093497, 0.0, 0.248913, 0.010868, 0.249517, 0.241275, 0.118494, 0.14491, 0.194179, 0.232611]},
     "corruption": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.959184, 0.92517, 1.0, 0.802721, 0.442177, 0.29932, 0.37415, 0.938775, 0.034014, 0.0, 0.639456, 0.183673]},
     "corruption_contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.959184, 0.92517, 1.0, 0.802721, 0.442177, 0.29932, 0.37415, 0.938775, 0.034014, 0.0, 0.639456, 0.183673]},
     "corruption_raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000186, 0.000181, 0.000192, 0.000163, 0.00011, 0.000089, 0.0001, 0.000183, 0.00005, 0.000045, 0.000139, 0.000072]},
@@ -1142,14 +1134,11 @@
     "culture": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.2, 0.237037, 0.777778, 0.281482, 1.0, 0.385185, 0.214815, 0.37037, 0.674074, 0.0, 0.977778, 0.111111]},
     "culture_contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.2, 0.237037, 0.777778, 0.281482, 1.0, 0.385185, 0.214815, 0.37037, 0.674074, 0.0, 0.977778, 0.111111]},
     "culture_raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000037, 0.000042, 0.000115, 0.000048, 0.000145, 0.000062, 0.000039, 0.00006, 0.000101, 0.00001, 0.000142, 0.000025]},
-    "default_channel": "logistics",
+    "default_channel": "elevation",
     "elevation": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.0, 0.67284, 0.530864, 0.018519, 0.469136, 0.598765, 1.0, 0.58642, 0.839506, 0.87037, 0.993827, 0.962963]},
     "elevation_contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.0, 0.67284, 0.530864, 0.018519, 0.469136, 0.598765, 1.0, 0.58642, 0.839506, 0.87037, 0.993827, 0.962963]},
     "elevation_raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000259, 0.001923, 0.001572, 0.000305, 0.001419, 0.00174, 0.002731, 0.001709, 0.002335, 0.002411, 0.002716, 0.00264]},
     "elevation_sea_level": 22.42,
-    "logistics": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.115385, 0.0, 0.104396, 1.0, 0.532967, 0.989011, 0.521978, 0.406593, 0.862637, 0.175824, 0.736264, 0.368132]},
-    "logistics_contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.102071, 0.0, 0.093497, 0.0, 0.248913, 0.010868, 0.249517, 0.241275, 0.118494, 0.14491, 0.194179, 0.232611]},
-    "logistics_raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000038, 0.000017, 0.000036, 0.000199, 0.000114, 0.000197, 0.000112, 0.000091, 0.000174, 0.000049, 0.000151, 0.000084]},
     "military": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.47486, 0.357542, 0.486033, 0.458101, 0.988827, 0.782123, 1.0, 0.346369, 0.162011, 0.0, 0.592179, 0.173184]},
     "military_contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.050279, 0.284916, 0.027933, 0.083799, 0.977654, 0.564246, 1.0, 0.307263, 0.675978, 1.0, 0.184358, 0.653631]},
     "military_raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000092, 0.000071, 0.000094, 0.000089, 0.000184, 0.000147, 0.000186, 0.000069, 0.000036, 0.000007, 0.000113, 0.000038]},
@@ -2972,70 +2961,6 @@
       "underlying_terrain": 12,
       "x": 3,
       "y": 2
-    }
-  ],
-  "trade_links": [
-    {
-      "entity": 181,
-      "from_faction": 121,
-      "from_tile": 165,
-      "knowledge": {
-        "decay": 0.000118,
-        "decay_raw": 118,
-        "last_discovery": 157,
-        "leak_timer": 81,
-        "openness": 0.000143,
-        "openness_raw": 143
-      },
-      "pending_fragments": [
-        {
-          "discovery": 195,
-          "fidelity": 0.000031,
-          "progress": 0.000004,
-          "progress_raw": 4
-        },
-        {
-          "discovery": 134,
-          "fidelity": 0.000154,
-          "progress": 0.000177,
-          "progress_raw": 177
-        }
-      ],
-      "tariff": 0.000186,
-      "throughput": 0.000114,
-      "to_faction": 46,
-      "to_tile": 16
-    },
-    {
-      "entity": 24,
-      "from_faction": 168,
-      "from_tile": 198,
-      "knowledge": {
-        "decay": 0.000121,
-        "decay_raw": 121,
-        "last_discovery": 68,
-        "leak_timer": 192,
-        "openness": 0.000002,
-        "openness_raw": 2
-      },
-      "pending_fragments": [
-        {
-          "discovery": 176,
-          "fidelity": 0.000168,
-          "progress": 0.000043,
-          "progress_raw": 43
-        },
-        {
-          "discovery": 117,
-          "fidelity": 0.000101,
-          "progress": 0.000094,
-          "progress_raw": 94
-        }
-      ],
-      "tariff": 0.000043,
-      "throughput": 0.000015,
-      "to_faction": 3,
-      "to_tile": 75
     }
   ],
   "turn": 41,

@@ -133,9 +133,10 @@ new mechanic to build or teach — it is the fauna memory model applied to peopl
 already understands it because they have already been surprised by a herd that wasn't where they
 left it.
 
-**It decides the question the old FOW spec left open.** `docs/plan_trade_fow_integration.md` planned
-to mark trade-route tiles `Active`; its own "Future Enhancements" list floated `Discovered` as a
-possible balance tweak. It is not a tweak, it is the rule — with one carve-out below.
+**It decides the question the old FOW spec left open.** `plan_trade_fow_integration.md` (deleted with
+the demolition — `git log -- docs/plan_trade_fow_integration.md`) planned to mark trade-route tiles
+`Active`; its own "Future Enhancements" list floated `Discovered` as a possible balance tweak. It is
+not a tweak, it is the rule — with one carve-out below.
 
 **The carve-out is honest.** A *maintained logistics route* does keep its tiles `Seen`, for exactly
 as long as it is held (§Q4). That is not an exception to the keystone so much as an instance of it:
@@ -292,9 +293,19 @@ without anyone deleting it.
 
 - **The per-terrain cost table** (`terrain.rs`), all five columns — see §Q4.
 - **The knowledge leak model** — a timer that fires more slowly the more closed you are, delivering a
-  partial `KnowledgeFragment` with a fidelity. A real mechanism, mounted on the wrong object.
-- **The client's link-drawing plumbing** — the cache section, delta handling, and the map overlay
-  that can already draw a line between two places. That is exactly the surface a connection wants.
+  partial `KnowledgeFragment` with a fidelity. A real mechanism, mounted on the wrong object. The
+  `KnowledgeFragment` type itself stays live regardless: migration already carries fragments between
+  bands (`systems/population.rs`), which is the one knowledge-diffusion path that was never dead.
+- **`TradeTelemetry` / `TradeDiffusionRecord` / `TradeDiffusionEvent`** — misleadingly named, but
+  **not** dead: the migration path writes them with `via_migration: true`. Only the link-driven
+  producer dies.
+
+> **The client's link-drawing code is deleted, not kept.** An earlier draft proposed keeping it —
+> the cache section, delta handling and the map overlay can already draw a line between two places,
+> which is the surface a connection eventually wants. But it is fed by a wire section that will be
+> empty for several slices yet, and dead client code is still dead code. What is worth keeping is the
+> knowledge that the client *has* drawn links and can again; #232 rebuilds it against a network that
+> exists.
 
 ### What is deleted
 
@@ -310,7 +321,12 @@ without anyone deleting it.
 ### Not touched
 
 `simulate_materials` (`systems/trade.rs:44`) shares the module and owns `tile.temperature`, which
-population cold-morale, sites and power genuinely read. It stays.
+population cold-morale, sites and power genuinely read. **Its temperature half stays; its mass half
+goes with the rest of the mass economy** — `Tile.mass` is written by that system and by
+`simulate_logistics`, and read by nothing but the metrics total. Its wire slot
+(`snapshot.fbs` `TileState.mass`) was already retired from the client stream in #386 and stays
+`(deprecated)` rather than being freed: this repo is worked by concurrent sessions that append to
+these tables, and a freed field id is exactly how two branches collide.
 
 ---
 
@@ -324,10 +340,15 @@ population cold-morale, sites and power genuinely read. It stays.
 4. **Logistics + cargo (#517)** — logistics links on connections, the supply network re-founded on
    them, and goods moving between a splinter and its parent across distance. This is the slice that
    proves the substrate by consuming it.
-5. **The route ladder** — the `route` branch, its standing-upkeep term, and #215's game trails.
+5. **The route ladder (#532)** — the `route` branch, its standing-upkeep term, and #215's game trails.
 6. **The overlay (#232)** — the logistics network drawn on the map.
-7. **Blocked on #513, then:** the cross-faction riders — #458 (proximity trade), #512 (defection).
+7. **The remaining riders** — #530 (culture), #531 (knowledge).
+8. **Blocked on #513, then:** the cross-faction riders — #458 (proximity trade), #512 (defection).
    By construction these should be small.
+
+**#231 (Early Diplomacy)** was narrowed to match: the route-network half moved here, and what remains
+there — treaties (#233) and cultural-reach victory metrics (#234) — is a *policy* layer that governs
+connections this arc owns.
 
 ## Cross-cutting touchpoints
 
@@ -343,17 +364,16 @@ population cold-morale, sites and power genuinely read. It stays.
 
 ## Open items
 
-- **How culture uses a connection.** Named as a rider, unspecified. The question is not whether
-  culture gates a connection — it does not, connections have no vocabulary about culture — but what
-  culture *does* with one it has: rate, direction, what it changes, and whether it needs the tie to
-  be mutual.
-- **How knowledge uses a connection**, beyond keeping the leak-timer model.
+- **How culture uses a connection** — #530. The question is not whether culture gates a connection;
+  it does not, connections have no vocabulary about culture. It is what culture *does* with one it
+  has: rate, direction, what it changes, and whether it needs the tie to be mutual.
+- **How knowledge uses a connection** — #531, beyond the decision to keep the leak-timer model.
+- **Standing upkeep on the route ladder** — #532, which owns the `route` branch and the standing-cost
+  term the intensification engine does not yet have.
+- **Whether a large group is detectable beyond anyone's range** — #533 (§Q1).
 - **The exact behaviour of connection strength** — what raises it, what the curve is, and what
-  reading zero means for each rider.
-- **Standing upkeep on the route ladder** — the term the intensification engine does not yet have.
-- **Whether a large group is detectable beyond anyone's range** (§Q1).
-- **#231 "Early Diplomacy & Route Network"** overlaps this arc and its spec is one of the two
-  documents being deleted. Its disposition is unresolved — see the arc issue.
+  reading zero means for each rider. Not filed separately: it is decided by the slice that builds the
+  primitive (#517).
 
 ## See Also
 

@@ -20,7 +20,6 @@
     "presence_clamp_max": 5.0,
     "heavy_size_threshold": 2500,
     "heavy_size_bonus": 0.1,
-    "support_clamp_max": 5.0,
     "power_margin_max": 5.0,
     "presence_weight": 0.6,
     "support_weight": 0.4,

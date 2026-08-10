@@ -16,8 +16,6 @@ pub const BUILTIN_TURN_PIPELINE_CONFIG: &str = include_str!("data/turn_pipeline_
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct TurnPipelineConfig {
-    logistics: LogisticsPhaseConfig,
-    trade: TradePhaseConfig,
     population: PopulationPhaseConfig,
     power: PowerPhaseConfig,
 }
@@ -42,14 +40,6 @@ impl TurnPipelineConfig {
             })?;
         let config = TurnPipelineConfig::from_json_str(&contents)?;
         Ok(config)
-    }
-
-    pub fn logistics(&self) -> &LogisticsPhaseConfig {
-        &self.logistics
-    }
-
-    pub fn trade(&self) -> &TradePhaseConfig {
-        &self.trade
     }
 
     pub fn population(&self) -> &PopulationPhaseConfig {
@@ -78,88 +68,6 @@ impl ConfigLoadError for TurnPipelineConfigError {
     /// there and wrong, which the boot loader refuses to paper over with the builtin.
     fn is_not_found(&self) -> bool {
         matches!(self, Self::ReadFailed { source, .. } if source.kind() == io::ErrorKind::NotFound)
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct LogisticsPhaseConfig {
-    flow_gain_min: f32,
-    flow_gain_max: f32,
-    effective_gain_min: f32,
-    penalty_min: f32,
-    penalty_scalar_min: f32,
-    capacity_min: f32,
-    attrition_max: f32,
-}
-
-impl LogisticsPhaseConfig {
-    pub fn flow_gain_min(&self) -> Scalar {
-        scalar_from_f32(self.flow_gain_min)
-    }
-
-    pub fn flow_gain_max(&self) -> Scalar {
-        scalar_from_f32(self.flow_gain_max)
-    }
-
-    pub fn effective_gain_min(&self) -> Scalar {
-        scalar_from_f32(self.effective_gain_min)
-    }
-
-    pub fn penalty_min(&self) -> f32 {
-        self.penalty_min
-    }
-
-    pub fn penalty_scalar_min(&self) -> f32 {
-        self.penalty_scalar_min
-    }
-
-    pub fn capacity_min(&self) -> Scalar {
-        scalar_from_f32(self.capacity_min)
-    }
-
-    pub fn attrition_max(&self) -> f32 {
-        self.attrition_max
-    }
-}
-
-impl Default for LogisticsPhaseConfig {
-    fn default() -> Self {
-        Self {
-            flow_gain_min: 0.02,
-            flow_gain_max: 0.5,
-            effective_gain_min: 0.005,
-            penalty_min: 0.05,
-            penalty_scalar_min: 0.1,
-            capacity_min: 0.05,
-            attrition_max: 0.95,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct TradePhaseConfig {
-    tariff_min: f32,
-    tariff_max_scalar: f32,
-}
-
-impl TradePhaseConfig {
-    pub fn tariff_min(&self) -> Scalar {
-        scalar_from_f32(self.tariff_min)
-    }
-
-    pub fn tariff_max_scalar(&self) -> Scalar {
-        scalar_from_f32(self.tariff_max_scalar)
-    }
-}
-
-impl Default for TradePhaseConfig {
-    fn default() -> Self {
-        Self {
-            tariff_min: 0.0,
-            tariff_max_scalar: 1.0,
-        }
     }
 }
 

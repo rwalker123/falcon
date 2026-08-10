@@ -49,7 +49,7 @@ touch different tables and never collide on slot order.
 | Section table | Fields (from `WorldSnapshot`) | Delta `removed*` lists |
 |---|---|---|
 | `MapSection` | tiles, terrainOverlay, elevationOverlay, moistureRaster | removedTiles |
-| `EconomySection` | logistics, tradeLinks, logisticsRaster, factionInventory | removedLogistics, removedTradeLinks |
+| `EconomySection` | factionInventory (`logistics` / `tradeLinks` / `removedLogistics` / `removedTradeLinks` are retired `(deprecated)` slots, and `logisticsRaster` is no longer published — arc #527, `docs/plan_contact_and_logistics.md` §As-built) | — |
 | `PopulationSection` | populations, demographics, generations | removedPopulations, removedGenerations |
 | `SubsistenceSection` | herds, foragePatches, sedentarization, intensificationKnowledge, foodModules | — |
 | `KnowledgeSection` | greatDiscoveryDefinitions, greatDiscoveries, greatDiscoveryProgress, greatDiscoveryTelemetry, knowledgeLedger, knowledgeTimeline, knowledgeMetrics, discoveredSites, discoveryProgress | removedKnowledgeLedger |
@@ -130,7 +130,7 @@ submodules, grouped by the clusters already present in the file:
 | Submodule | Contents (approx. current line ranges) |
 |---|---|
 | `systems/worldgen.rs` | spawn_initial_world, tag-budget solver, biome palette clamp, coastal shelf, population cluster/profile spawn, starting knowledge/inventory (191–2960) |
-| `systems/trade.rs` | simulate_materials, simulate_logistics, trade_knowledge_diffusion, publish_trade_telemetry (3000–3200) |
+| `systems/trade.rs` | simulate_materials, publish_trade_telemetry (`simulate_logistics` and `trade_knowledge_diffusion` were demolished in arc #527) |
 | `systems/population.rs` | demographics, morale pressure, discontent, output/migration fractions, simulate_population (3200–3650) |
 | `systems/expeditions.rs` | advance_band_movement, advance_expeditions, hunt_* , simulate_hunt_trip, HuntTripForecast (3648–4640) |
 | `systems/labor.rs` | advance_labor_allocation, advance_population_migration, step_toward (4641–5300) |

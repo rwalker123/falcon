@@ -50,8 +50,9 @@ under the `*_updates` key and the BASE key kept the baseline snapshot's array **
 world**. Measured on `tiles`: `graze_biomass` summed over `tiles` was byte-identical across nine
 consecutive turns while `tile_updates` carried 400–600 moved tiles per turn. It was **nine sections,
 not one** — `Main`'s band alerts read `populations` (so food warnings, idle workers and
-predator-nearby were frozen — a player-visible gameplay bug), and `MapView` reads `populations`,
-`culture_layers` and `trade_links`.
+predator-nearby were frozen — a player-visible gameplay bug), and `MapView` reads `populations`
+and `culture_layers` (it read `trade_links` too, until that section and the overlay it fed were
+retired — `.claude/rules/client/overlay-channels.md`).
 
 `SectionCache` fixes the whole class with one mechanism: an identity → slot index built when a full
 snapshot establishes the baseline, then per delta a shallow duplicate of the cached array (**pointer
@@ -65,8 +66,8 @@ are normalised to `i64` for the index while `RemovedIds` still publishes each at
 Removals rebuild the index from scratch rather than repairing shifted slots — removals are
 structurally rare, and a shifted-index repair is wrong exactly once and then silently forever. The
 `*_updates` keys still ride the frame unchanged, because `TerrainPanel` and the inspector panels
-branch on them. `WorldDelta` also diffs `logistics` and `knowledge_ledger`; they are absent from the
-registry because the client decoder never converts either, so there is no base key to keep honest.
+branch on them. `WorldDelta` also diffs `knowledge_ledger`; it is absent from the registry because
+the client decoder never converts it, so there is no base key to keep honest.
 
 **Two whole-section fields were never read on the delta path at all**, which is the same staleness
 reached a different way: `decode_delta_against` passed `None` for `food_modules` and
@@ -91,7 +92,7 @@ name is the dictionary KEY the frame carried the section under, so a consumer lo
 already reads — and for a keyed section that is the COMPLETE key (`populations`), never the sparse
 `*_updates` twin. The exceptions are the channels with no key of their own:
 `overlays.{terrain, elevation, moisture, visibility, culture, sentiment, corruption, military,
-logistics, crisis}` and `climate_bands`, which `DeltaAggregator` re-derives from cache and therefore
+crisis}` and `climate_bands`, which `DeltaAggregator` re-derives from cache and therefore
 publishes on every merged frame (presence cannot be the signal, so the name is pushed at the
 `apply_*` call site), plus `tiles.rivers` / `tiles.culture_layer` — `WatchGroup`s, derived by
 comparing each changed tile against the entry it replaced so a turn that only moved graze biomass
@@ -101,6 +102,24 @@ costs no splatmap rebuild.
 sections' vectors unconditionally — empty when nothing changed — so presence is no signal at all;
 every keyed section is named from its diff being non-empty. A steady-state delta on the decode
 fixture names five things, not thirteen.
+
+**THE `logistics` CHANNEL IS GONE, AND SO IS ITS DIMENSION SIDE EFFECT.** `OverlaySlices.logistics`
+/ `RasterCache.logistics` / `DeltaAggregator::apply_logistics_raster` / the `overlays.logistics`
+manifest name and the top-level `contrast` alias were all removed when the sim stopped publishing a
+`logisticsRaster` (`docs/plan_contact_and_logistics.md`). Two things about the removal are worth
+knowing before touching `snapshot_to_dict`:
+
+- **The logistics grid was the GRID-EXTENT source for every other channel.** Its absent-raster
+  fallback walked `MapSection.tiles` for `max(x + 1, y + 1)` — filling the plane with tile
+  TEMPERATURE on the way, which is what made the channel meaningless long before the raster went —
+  and every other channel's fallback dimensions plus `final_width`/`final_height` were taken over
+  `logistics_dims`. That measurement survives as **`tile_dims`**, read straight off the tiles with
+  no plane behind it. Delete it and a snapshot whose only grid-shaped evidence is its tile list
+  renders at 1×1.
+- **`DeltaAggregator::tile_updates` went with it.** That `HashMap<(u32, u32), f32>` of tile
+  temperature existed solely to feed the delta path's copy of the same fallback, so `update_tile`
+  no longer takes a `temperature` at all. Tile temperature still reaches the client the ordinary
+  way, on the tile row (`dict/map.rs`).
 
 ## Each delta merges into the frame BEFORE it, not into the baseline
 

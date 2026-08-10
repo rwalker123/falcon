@@ -424,9 +424,13 @@ the per-source `perWorkerYield` + policy ceilings the client uses to show an exp
 worker stepper *before* the player commits — is the "Pre-commit Yield Forecast" section below, which
 shares the take path's yield helpers so forecast == actual.
 
-This is the general mechanism the arc scales: raise reach/throughput for settlements/cities, and a
-future **trade policy** adds a consent gate + a priced return flow on *cross-faction* edges (see the
-Trade note below). *v1:* population is the universal balancing weight, so a zero-population storage
+This is the general mechanism the arc scales: raise reach/throughput for settlements/cities. The
+cross-faction half is no longer a "trade policy on the supply network" — that framing died with the
+`TradeLink` slice it assumed. `docs/plan_contact_and_logistics.md` §Q4 **re-founds this network on a
+primitive instead**: proximity produces a *connection*, a logistics link is a *rider* on one, and
+over a short distance it is cheap enough to hold itself — so two bands standing near each other
+behave exactly as they do today, by construction. A cross-faction edge then differs only in whose
+endpoints it joins, never in a branch in the code. *v1:* population is the universal balancing weight, so a zero-population storage
 node would compute a 0 fair share — revisit (→ capacity weight) when storage-pits land. The
 connected-components pass is also what Phase 4 will use to derive settlement clusters.
 

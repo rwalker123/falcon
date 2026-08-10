@@ -86,14 +86,17 @@ painted from the human-food table under the `forage` channel, so it compares til
 on pasture; the shelf column glows on forage where it is barren on pasture) without a server:
 `scripts/preview.sh res://tools/map_preview.tscn`. Also the four **ANNOTATION states**, added by the
 `AnnotationRenderer` extraction because that family had **no fixture at all** and so no refactor of
-it could be pixel-checked:
+it could be pixel-checked. **Three remain; there were four.**
 
-**`map_trade_overlay`** (the Trade tab's diffusion links, pushed exactly the way `TradePanel` pushes
-them — `update_trade_overlay` → `set_trade_overlay_enabled` → `set_trade_overlay_selection` — with a
-SELECTED link, a busy open one, a thin closed one whose leak fires the red midpoint pip, and a
-fourth whose endpoints are not in `tile_lookup` so the skip guard is exercised; it is the one
-flat-backdrop state that publishes a `tiles` array, since links address their endpoints by tile
-ENTITY); **`map_crisis_annotations`** (all four shapes the draw can produce in one frame: a
+`map_trade_overlay` and its whole fixture (`_trade_link` / `_trade_links` / `_snapshot_trade_overlay`
+/ `_tile_entity` / `_entity_tiles` and the `TRADE_*` consts) went with the trade-link overlay itself:
+the sim publishes no link network, so the frame covered a draw that is handed the empty set on every
+live frame (`overlay-channels.md` → "RETIRED", `docs/plan_contact_and_logistics.md`). Issue #232's
+route-network overlay is what earns a frame back here, and it will need its own fixture rather than
+this one restored — the retired one addressed endpoints by tile ENTITY through `tile_lookup`, which
+is why it was the only flat-backdrop state publishing a `tiles` array.
+
+**`map_crisis_annotations`** (all four shapes the draw can produce in one frame: a
 multi-hop path in the `PackedInt32Array` wire form, a multi-hop path in the Array-of-`[col,row]`
 form, a single-tile halo+core marker, and a single-tile marker with an unknown severity — the
 `CRISIS_COLOR` fallback — and no label; the `crisis` channel is selected AFTER the snapshot, because

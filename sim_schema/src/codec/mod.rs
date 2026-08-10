@@ -77,8 +77,6 @@ fn build_snapshot_flatbuffer<'a>(
         &fb::SnapshotHeaderArgs {
             tick: snapshot.header.tick,
             tileCount: snapshot.header.tile_count,
-            logisticsCount: snapshot.header.logistics_count,
-            tradeLinkCount: snapshot.header.trade_link_count,
             populationCount: snapshot.header.population_count,
             powerCount: snapshot.header.power_count,
             influencerCount: snapshot.header.influencer_count,
@@ -153,8 +151,6 @@ fn build_delta_flatbuffer<'a>(
         &fb::SnapshotHeaderArgs {
             tick: delta.header.tick,
             tileCount: delta.header.tile_count,
-            logisticsCount: delta.header.logistics_count,
-            tradeLinkCount: delta.header.trade_link_count,
             populationCount: delta.header.population_count,
             powerCount: delta.header.power_count,
             influencerCount: delta.header.influencer_count,

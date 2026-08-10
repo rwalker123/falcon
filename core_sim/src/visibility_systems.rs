@@ -4,8 +4,7 @@
 //! 1. `clear_active_visibility` - Reset Active tiles to Discovered
 //! 2. `prune_sweep_tracker` - Forget sweep positions of despawned cohorts
 //! 3. `calculate_visibility` - Compute visibility from all sources
-//! 4. `apply_trade_route_visibility` - Mark trade route tiles as Active
-//! 5. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored
+//! 4. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored
 
 use bevy::prelude::*;
 
@@ -41,8 +40,8 @@ use sim_runtime::TerrainTags;
 
 use crate::{
     components::{
-        BandEquipment, Expedition, LaborAllocation, LaborTarget, LogisticsLink, PopulationCohort,
-        Settlement, StartingUnit, Tile, TownCenter, TradeLink,
+        BandEquipment, Expedition, LaborAllocation, LaborTarget, PopulationCohort, Settlement,
+        StartingUnit, Tile, TownCenter,
     },
     equipment_config::EquipmentConfigHandle,
     fauna::HerdRegistry,
@@ -889,52 +888,7 @@ fn has_line_of_sight_wrapped(
     true
 }
 
-/// Step 3: Mark tiles along trade routes as Active for visibility.
-///
-/// Trade routes provide visibility because merchants travel the path, reporting
-/// what they see. Both endpoint factions of a trade link gain visibility of
-/// all tiles along the route.
-///
-/// TradeLink components are only attached to LogisticsLinks that are part of
-/// an active trade route, so this query only matches actual trade routes.
-pub fn apply_trade_route_visibility(
-    mut ledger: ResMut<VisibilityLedger>,
-    tick: Res<SimulationTick>,
-    trade_links: Query<(&LogisticsLink, &TradeLink)>,
-    tiles: Query<&Tile>,
-) {
-    let current_turn = tick.0;
-
-    for (logistics, trade) in trade_links.iter() {
-        // Get tile positions from logistics link endpoints
-        let from_pos = tiles.get(logistics.from).ok().map(|t| t.position);
-        let to_pos = tiles.get(logistics.to).ok().map(|t| t.position);
-
-        // Mark tiles visible for the "from" faction
-        if let Some(map) = ledger.get_faction_mut(trade.from_faction) {
-            if let Some(pos) = from_pos {
-                map.mark_active(pos.x, pos.y, current_turn);
-            }
-            if let Some(pos) = to_pos {
-                map.mark_active(pos.x, pos.y, current_turn);
-            }
-        }
-
-        // Mark tiles visible for the "to" faction (they see the route too)
-        if trade.to_faction != trade.from_faction {
-            if let Some(map) = ledger.get_faction_mut(trade.to_faction) {
-                if let Some(pos) = from_pos {
-                    map.mark_active(pos.x, pos.y, current_turn);
-                }
-                if let Some(pos) = to_pos {
-                    map.mark_active(pos.x, pos.y, current_turn);
-                }
-            }
-        }
-    }
-}
-
-/// Step 4: Apply visibility decay - tiles not seen for too long revert to unexplored.
+/// Step 3: Apply visibility decay - tiles not seen for too long revert to unexplored.
 pub fn apply_visibility_decay(
     mut ledger: ResMut<VisibilityLedger>,
     config: Res<VisibilityConfigHandle>,

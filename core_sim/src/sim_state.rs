@@ -13,8 +13,8 @@
 //!
 //! **1. No `Entity` crosses a checkpoint.** Restoring despawns and respawns everything, so bevy
 //! hands back fresh generations. Every reference here is a *stable sim id*: tiles and settlements
-//! by `(x, y)`, logistics links by their endpoint pair, power nodes by the tile they ride on, bands
-//! by [`BandId`]. The `Entity` fields inside cloned components are overwritten on restore and are
+//! by `(x, y)`, power nodes by the tile they ride on, bands by [`BandId`]. The `Entity` fields
+//! inside cloned components are overwritten on restore and are
 //! set to [`Entity::PLACEHOLDER`] at capture so nothing can read a stale one by accident.
 //!
 //! **2. No config.** Three sim-state types hold configuration —
@@ -50,8 +50,8 @@ use bevy::utils::HashMap;
 use crate::{
     components::{
         BandBench, BandEquipment, BandId, BandTravel, DemographicFlowAccumulator, Expedition,
-        LaborAllocation, LogisticsLink, PopulationCohort, PowerNode, ResidentBand, Settlement,
-        StartingUnit, Tile, TownCenter, TradeLink,
+        LaborAllocation, PopulationCohort, PowerNode, ResidentBand, Settlement, StartingUnit, Tile,
+        TownCenter,
     },
     crisis::{ActiveCrisisLedger, CrisisTelemetry},
     culture::{CultureManager, CultureManagerCheckpoint},
@@ -91,21 +91,6 @@ pub struct TileRecord {
     pub site: Option<SiteTag>,
 }
 
-/// One logistics link, keyed by its endpoint tiles.
-#[derive(Debug, Clone)]
-pub struct LinkRecord {
-    pub from: UVec2,
-    pub to: UVec2,
-    pub link: LogisticsLink,
-    /// `None` when the link carries no [`TradeLink`].
-    ///
-    /// **Presence is state.** Worldgen spawns links bare, and `capture_snapshot`'s query asks for
-    /// `(&LogisticsLink, &TradeLink)` — so a link without one is invisible to the published
-    /// `logistics` section entirely. A restore that helpfully inserted a default `TradeLink` would
-    /// make 728 links appear on the wire that the original world never published.
-    pub trade: Option<TradeLink>,
-}
-
 /// An in-flight expedition, with its home band named by id rather than by entity.
 #[derive(Debug, Clone)]
 pub struct ExpeditionRecord {
@@ -122,8 +107,9 @@ pub struct BandRecord {
     pub cohort: PopulationCohort,
     pub home: UVec2,
     pub current: UVec2,
-    /// `None` when the band carries no [`LaborAllocation`]. Presence is state here too, for the
-    /// same reason as [`LinkRecord::trade`].
+    /// `None` when the band carries no [`LaborAllocation`]. **Presence is state**: a restore that
+    /// helpfully inserted a default allocation would give a band labor orders the original world
+    /// never had.
     pub labor: Option<LaborAllocation>,
     /// **How worn this band's TOE is** (the minimal TOE — see [`BandEquipment`]). Carried
     /// unconditionally, like [`Self::flow_accumulator`]: a checkpoint that forgot how worn your
@@ -162,7 +148,6 @@ pub struct SettlementRecord {
 pub struct SimState {
     pub tick: SimulationTick,
     pub tiles: Vec<TileRecord>,
-    pub links: Vec<LinkRecord>,
     pub bands: Vec<BandRecord>,
     pub settlements: Vec<SettlementRecord>,
 
@@ -239,30 +224,11 @@ pub fn capture_sim_state(world: &World) -> SimState {
         .collect();
     tiles.sort_by_key(|record| (record.tile.position.y, record.tile.position.x));
 
-    // Tile entity -> position, so links can name their endpoints by coordinate.
+    // Tile entity -> position, so a band can name its home/current tile by coordinate.
     let tile_positions: HashMap<Entity, UVec2> = world
         .iter_entities()
         .filter_map(|entity| Some((entity.id(), entity.get::<Tile>()?.position)))
         .collect();
-
-    let mut links: Vec<LinkRecord> = world
-        .iter_entities()
-        .filter_map(|entity| {
-            let link = entity.get::<LogisticsLink>()?;
-            let from = *tile_positions.get(&link.from)?;
-            let to = *tile_positions.get(&link.to)?;
-            let mut stored = link.clone();
-            stored.from = Entity::PLACEHOLDER;
-            stored.to = Entity::PLACEHOLDER;
-            Some(LinkRecord {
-                from,
-                to,
-                link: stored,
-                trade: entity.get::<TradeLink>().cloned(),
-            })
-        })
-        .collect();
-    links.sort_by_key(|record| (record.from.y, record.from.x, record.to.y, record.to.x));
 
     // Band entity -> id, so an expedition's `home_band` and the sweep tracker can name bands.
     let band_ids_by_entity: HashMap<Entity, BandId> = world
@@ -360,7 +326,6 @@ pub fn capture_sim_state(world: &World) -> SimState {
     SimState {
         tick: *world.resource::<SimulationTick>(),
         tiles,
-        links,
         bands,
         settlements,
         band_ids: *world.resource::<BandIdAllocator>(),
@@ -411,7 +376,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
 /// The passes below are ordered by *reference*, not by convenience, and the order is forced:
 ///
 /// 1. tiles — everything else names a tile by position,
-/// 2. links and bands — both resolve tile positions to the entities pass 1 created,
+/// 2. bands — they resolve tile positions to the entities pass 1 created,
 /// 3. expeditions and the visibility sweep — both name a **band** by [`BandId`], so they need the
 ///    map pass 2 built,
 /// 4. resources, then the derived structures a system would otherwise rebuild a turn late.
@@ -441,30 +406,7 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
         tile_entities.insert(record.tile.position, entity.id());
     }
 
-    // --- pass 2a: logistics links -------------------------------------------------------------
-    for record in &state.links {
-        let (Some(&from), Some(&to)) = (
-            tile_entities.get(&record.from),
-            tile_entities.get(&record.to),
-        ) else {
-            warn!(
-                target: "shadow_scale::sim_state",
-                from = ?record.from,
-                to = ?record.to,
-                "checkpoint.restore.link_endpoint_missing"
-            );
-            continue;
-        };
-        let mut link = record.link.clone();
-        link.from = from;
-        link.to = to;
-        let mut entity = world.spawn(link);
-        if let Some(trade) = &record.trade {
-            entity.insert(trade.clone());
-        }
-    }
-
-    // --- pass 2b: bands -----------------------------------------------------------------------
+    // --- pass 2: bands ------------------------------------------------------------------------
     let mut band_entities: HashMap<BandId, Entity> = HashMap::with_capacity(state.bands.len());
     for record in &state.bands {
         let Some(&home) = tile_entities.get(&record.home) else {
@@ -624,8 +566,6 @@ fn owned_entities(world: &mut World) -> Vec<Entity> {
     let mut owned: Vec<Entity> = Vec::new();
     let mut tiles = world.query_filtered::<Entity, With<Tile>>();
     owned.extend(tiles.iter(world));
-    let mut links = world.query_filtered::<Entity, With<LogisticsLink>>();
-    owned.extend(links.iter(world));
     let mut cohorts = world.query_filtered::<Entity, With<PopulationCohort>>();
     owned.extend(cohorts.iter(world));
     let mut settlements = world.query_filtered::<Entity, With<Settlement>>();

@@ -49,6 +49,12 @@ pub fn fixed_mul(lhs: i64, rhs: i64) -> i64 {
 }
 
 /// Represents the tuning curve that maps openness to leak timers in ticks.
+///
+/// **Currently unmounted.** Its one consumer was the link-driven trade diffusion demolished in
+/// `docs/plan_contact_and_logistics.md` §As-built; the *model* — a timer that fires more slowly the
+/// more closed you are — is explicitly kept there as the shape a connection's knowledge rider will
+/// take (§Q5). It lives here, in the pure-function runtime, so re-mounting it is a call site rather
+/// than a rewrite.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TradeLeakCurve {
     pub min_ticks: u32,
@@ -390,8 +396,6 @@ pub mod knowledge {
             WorldSnapshot {
                 header: SnapshotHeader::default(),
                 tiles: Vec::new(),
-                logistics: Vec::new(),
-                trade_links: Vec::new(),
                 populations: Vec::new(),
                 power: Vec::new(),
                 power_metrics: PowerTelemetryState::default(),
@@ -432,7 +436,6 @@ pub mod knowledge {
                 intensification_knowledge: Vec::new(),
                 moisture_raster: FloatRasterState::default(),
                 terrain: TerrainOverlayState::default(),
-                logistics_raster: ScalarRasterState::default(),
                 sentiment_raster: ScalarRasterState::default(),
                 corruption_raster: ScalarRasterState::default(),
                 culture_raster: ScalarRasterState::default(),
