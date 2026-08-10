@@ -418,7 +418,16 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // those hands as free, and every "n idle of m" readout in the game over-reported in the
     // reassuring direction — a compose sheet sized against it could not be staffed.
     let workforce = crate::components::BandWorkforce::resolve(Some(cohort), allocation, bench);
-    let working_age = workforce.pool;
+    // **The published age triple, in whole people** — the workers are the pool above (already
+    // floored; never re-floored here), the dependents are what the head-count has left over. See
+    // [`whole_age_brackets`]: the fractional brackets are a growth accumulator and are not published.
+    let age_brackets = whole_age_brackets(
+        cohort.size,
+        workforce.pool,
+        i128::from(cohort.children.raw()),
+        i128::from(cohort.elders.raw()),
+    );
+    let working_age = age_brackets.working;
     let idle_workers = workforce.idle();
     // Zip each assignment with its retained per-source yield telemetry (same index order). An
     // assignment with no telemetry row yet → default 0 yields rather than a panic.
@@ -569,7 +578,13 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         current_x: current_position.map(|p| p.x).unwrap_or(0),
         current_y: current_position.map(|p| p.y).unwrap_or(0),
         is_traveling,
-        size: cohort.size,
+        // **The head-count is the sum of the parts published beneath it** — the client sees no other
+        // one, so it must not come from a second rounding of its own (`cohort.size` caches
+        // `round(children + working + elders)`, which can exceed the whole people that exist).
+        size: age_brackets.head_count(),
+        // The raw fixed-point brackets stay on the struct — `food_demand`, the fission split and the
+        // JSON map export all read masses — but their FlatBuffers slots are `(deprecated)`: what the
+        // wire carries is `children_count` / `working_age` / `elders_count`.
         children: cohort.children.raw(),
         working: cohort.working.raw(),
         elders: cohort.elders.raw(),
@@ -718,6 +733,9 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         bench: bench_state,
         craft_offers,
         equipment_batches,
+        // The two derived halves of the published triple; `working_age` above is the third.
+        children_count: age_brackets.children,
+        elders_count: age_brackets.elders,
     }
 }
 
@@ -733,52 +751,114 @@ pub(crate) fn generation_state(profile: &GenerationProfile) -> GenerationState {
     }
 }
 
-/// Aggregate the per-cohort age brackets into a per-faction age structure for the HUD readout,
-/// reconciled so the three emitted head-counts agree with the per-band selection panel.
+/// **A cohort's age brackets as WHOLE PEOPLE** — the only reading of them that crosses the wire.
 ///
-/// `working` is the sum of each cohort's floored `available_workers` (the exact assignable-worker
-/// count the band panel shows), and the total head-count is the sum of each cohort's authoritative
-/// `size`. Dependents (`total − working`, clamped ≥ 0) are split into `children` + `elders` in
-/// proportion to the summed fixed-point child/elder masses, rounded so they sum *exactly* to the
-/// dependents (round-half on children, elders takes the remainder). This guarantees
-/// `children + working + elders == Σ size` and `working == Σ available_workers`, so the client's
-/// `Pop = children + working + elders` matches the summed band sizes with no independent-rounding
-/// overshoot.
+/// The sim keeps the brackets in fixed point because the fraction is a *growth accumulator*: a slow
+/// birth rate has to be able to add a tenth of a person a turn without rounding to nothing. That
+/// fraction is not a fact about people, and it has exactly one correct resolution into people —
+/// this one. Publishing the raw Scalars let a client invent a second: a band of 16.6 working-age
+/// people rendered "17" in the PEOPLE bar beside "0 idle of 16" in the WORKFORCE header, the same
+/// frame, off the same band.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct WholeAgeBrackets {
+    pub(crate) children: u32,
+    /// The floored assignable pool — the *same* number `idle of N` counts against, never a
+    /// separately rounded twin of it.
+    pub(crate) working: u32,
+    pub(crate) elders: u32,
+}
+
+impl WholeAgeBrackets {
+    /// **The head-count the triple sits under, and the published `size`.** A total that is anything
+    /// but the sum of its parts is the bug this whole derivation exists to prevent.
+    pub(crate) fn head_count(self) -> u32 {
+        self.children + self.working + self.elders
+    }
+
+    /// Add another cohort's triple in — the faction roll-up is a sum of *band* answers, so the
+    /// faction page cannot disagree with the bands it aggregates.
+    fn add(&mut self, other: Self) {
+        self.children = self.children.saturating_add(other.children);
+        self.working = self.working.saturating_add(other.working);
+        self.elders = self.elders.saturating_add(other.elders);
+    }
+}
+
+/// Round-half bias for an integer division: adding half the divisor to the numerator before
+/// dividing rounds to nearest instead of truncating.
+const ROUND_HALF_DIVISOR: i128 = 2;
+
+/// **Resolve one cohort's fractional brackets into whole people** — the one arithmetic the band
+/// panel and the faction roll-up both go through.
+///
+/// - `working_whole` is the *floored* `available_workers` (`BandWorkforce::pool`), the exact count
+///   every command clamps against, so the published workers and the staffable workers are one
+///   number. It is clamped to `head_count` belt-and-braces: `floor(working) ≤ round(total)` holds
+///   for any brackets, so the clamp is inert today and only stops a future skew going negative.
+/// - Dependents are what is left of the head-count, split between children and elders in proportion
+///   to their fixed-point masses — round-half on children, elders taking the remainder, so the two
+///   sum to the dependents *exactly* rather than each rounding on its own.
+/// - **No dependent mass means no dependents.** With `children == elders == 0` and `working == 16.6`
+///   the cached `size` is 17 while the workers floor to 16, and the leftover person is a rounding
+///   artefact of the accumulator, not a person: putting them in `elders` invented an elder the sim
+///   has no record of. The triple therefore reports `working` alone, and [`Self::head_count`] makes
+///   the published size agree.
+pub(crate) fn whole_age_brackets(
+    head_count: u32,
+    working_whole: u32,
+    children_mass: i128,
+    elders_mass: i128,
+) -> WholeAgeBrackets {
+    let working = working_whole.min(head_count);
+    let dependents = i128::from(head_count - working);
+    let children_mass = children_mass.max(0);
+    let elders_mass = elders_mass.max(0);
+    let dependent_mass = children_mass + elders_mass;
+    if dependent_mass == 0 {
+        return WholeAgeBrackets {
+            children: 0,
+            working,
+            elders: 0,
+        };
+    }
+    // i128 keeps the mass × head-count product overflow-free.
+    let children =
+        (dependents * children_mass + dependent_mass / ROUND_HALF_DIVISOR) / dependent_mass;
+    WholeAgeBrackets {
+        children: children as u32,
+        working,
+        elders: (dependents - children) as u32,
+    }
+}
+
+/// Aggregate the per-cohort age brackets into a per-faction age structure for the HUD readout.
+///
+/// **It sums the bands' own published whole people** ([`whole_age_brackets`], resolved once per band
+/// in [`population_state`]) rather than re-deriving anything from the fixed-point masses. One
+/// derivation, so the faction page and the sum of the band panels agree by construction instead of
+/// by two roundings happening to land together.
 pub(crate) fn snapshot_demographics(
     cohorts: &[PopulationCohortState],
 ) -> Vec<SchemaPopulationDemographicsState> {
-    // Per faction: (Σ size, Σ available_workers, Σ children mass, Σ elders mass).
-    let mut by_faction: std::collections::BTreeMap<u32, (u64, u64, i128, i128)> =
+    let mut by_faction: std::collections::BTreeMap<u32, WholeAgeBrackets> =
         std::collections::BTreeMap::new();
     for cohort in cohorts {
-        let entry = by_faction.entry(cohort.faction).or_insert((0, 0, 0, 0));
-        entry.0 += u64::from(cohort.size);
-        entry.1 += u64::from(available_workers(Scalar::from_raw(cohort.working)));
-        entry.2 += i128::from(cohort.children.max(0));
-        entry.3 += i128::from(cohort.elders.max(0));
+        by_faction
+            .entry(cohort.faction)
+            .or_default()
+            .add(WholeAgeBrackets {
+                children: cohort.children_count,
+                working: cohort.working_age,
+                elders: cohort.elders_count,
+            });
     }
     by_faction
         .into_iter()
-        .map(|(faction, (total, workers, children_mass, elders_mass))| {
-            // Clamp workers to the head-count so dependents never go negative.
-            let working = workers.min(total);
-            let dependents = total - working;
-            let dependent_mass = children_mass + elders_mass;
-            // Split dependents ∝ child:elder mass, round-half on children so the two brackets
-            // sum exactly to `dependents`. i128 keeps the product overflow-free.
-            let children = if dependent_mass == 0 {
-                0
-            } else {
-                let dep = dependents as i128;
-                ((dep * children_mass + dependent_mass / 2) / dependent_mass) as u64
-            };
-            let elders = dependents - children;
-            SchemaPopulationDemographicsState {
-                faction,
-                children: children as u32,
-                working: working as u32,
-                elders: elders as u32,
-            }
+        .map(|(faction, brackets)| SchemaPopulationDemographicsState {
+            faction,
+            children: brackets.children,
+            working: brackets.working,
+            elders: brackets.elders,
         })
         .collect()
 }
@@ -1079,5 +1159,68 @@ mod tests {
         empty.working = scalar_zero();
         empty.size = 0;
         assert_eq!(captured_runway(&empty, None, None), NOT_FOOD_LIMITED_TURNS);
+    }
+
+    /// **The bug this arc exists to end.** A band of 16.6 working-age people has *sixteen* people
+    /// who can be staffed; the cached `size` rounds their fixed-point sum to 17. Published raw, the
+    /// client rendered "17" in the PEOPLE bar beside "0 idle of 16" in the WORKFORCE header — the
+    /// same band, the same frame. The head count on the wire is now the sum of the whole brackets,
+    /// and the 17th person — a rounding artefact of the growth accumulator — never appears.
+    #[test]
+    fn a_fractional_working_bracket_publishes_only_whole_people() {
+        let mut cohort = cohort(TEST_LARDER);
+        cohort.working = scalar_from_f32(16.6);
+        cohort.sync_size();
+        assert_eq!(
+            cohort.size, 17,
+            "the cached head count still rounds the masses"
+        );
+
+        let state = captured(&cohort, None, None);
+        assert_eq!(
+            state.working_age, 16,
+            "the staffable pool is the floored bracket"
+        );
+        assert_eq!(
+            state.size, 16,
+            "the published head count is the whole people"
+        );
+        assert_eq!(
+            state.children_count + state.working_age + state.elders_count,
+            state.size,
+            "the triple must sum to the head count it sits under"
+        );
+    }
+
+    /// **No dependent mass means no dependents.** The leftover person of the case above is a
+    /// remainder of the accumulator, not an elder: banking it in `elders` invented a person the sim
+    /// has no record of, who ate nothing, worked nothing and could never die.
+    #[test]
+    fn a_cohort_with_no_dependent_mass_invents_no_elder() {
+        let brackets = whole_age_brackets(17, 16, 0, 0);
+        assert_eq!(brackets.children, 0);
+        assert_eq!(brackets.working, 16);
+        assert_eq!(brackets.elders, 0, "a phantom elder is not a person");
+        assert_eq!(brackets.head_count(), 16);
+    }
+
+    /// The ordinary case: dependents split ∝ their masses, round-half on children, and the three
+    /// sum **exactly** to the band's head count rather than each rounding independently.
+    #[test]
+    fn the_dependents_split_by_mass_and_sum_to_the_head_count() {
+        let mut cohort = cohort(TEST_LARDER);
+        cohort.children = scalar_from_f32(8.9);
+        cohort.working = scalar_from_f32(16.5);
+        cohort.elders = scalar_from_f32(4.6);
+        cohort.sync_size();
+        assert_eq!(cohort.size, 30);
+
+        let state = captured(&cohort, None, None);
+        // Dependents 30 − 16 = 14, split ∝ 8.9 : 4.6 → children round(9.23) = 9, elders the rest.
+        assert_eq!(
+            (state.children_count, state.working_age, state.elders_count),
+            (9, 16, 5)
+        );
+        assert_eq!(state.size, 30);
     }
 }

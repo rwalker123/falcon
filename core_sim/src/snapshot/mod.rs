@@ -2073,6 +2073,9 @@ mod tests {
         assert!(raster.samples[0] > raster.samples[1]);
     }
 
+    /// A published band row, built the way `population_state` builds one: the fractional brackets
+    /// resolved into whole people **once**, through the shared derivation. Building it any other way
+    /// would be testing a rounding the capture does not do.
     fn demographics_cohort(
         faction: u32,
         size: u32,
@@ -2080,12 +2083,21 @@ mod tests {
         working: f32,
         elders: f32,
     ) -> PopulationCohortState {
+        let brackets = whole_age_brackets(
+            size,
+            available_workers(Scalar::from_f32(working)),
+            i128::from(Scalar::from_f32(children).raw()),
+            i128::from(Scalar::from_f32(elders).raw()),
+        );
         PopulationCohortState {
             faction,
-            size,
+            size: brackets.head_count(),
             children: Scalar::from_f32(children).raw(),
             working: Scalar::from_f32(working).raw(),
             elders: Scalar::from_f32(elders).raw(),
+            children_count: brackets.children,
+            working_age: brackets.working,
+            elders_count: brackets.elders,
             ..Default::default()
         }
     }
@@ -2130,6 +2142,25 @@ mod tests {
         let f7 = demographics.iter().find(|d| d.faction == 7).unwrap();
         assert_eq!(f7.working, 6);
         assert_eq!(f7.children + f7.working + f7.elders, 10);
+    }
+
+    /// **The faction page is the sum of the bands it aggregates, per bracket** — not merely on the
+    /// total. One derivation per band and a plain sum over them is what makes this true by
+    /// construction; re-deriving the faction figures from the summed masses is what let the two
+    /// disagree.
+    #[test]
+    fn snapshot_demographics_equals_the_sum_of_the_published_bands() {
+        let cohorts = vec![
+            demographics_cohort(3, 30, 8.9, 16.5, 4.6),
+            demographics_cohort(3, 20, 5.4, 10.5, 4.1),
+            demographics_cohort(3, 17, 0.0, 16.6, 0.0),
+        ];
+        let d = &snapshot_demographics(&cohorts)[0];
+        let sum = |pick: fn(&PopulationCohortState) -> u32| cohorts.iter().map(pick).sum::<u32>();
+        assert_eq!(d.children, sum(|c| c.children_count));
+        assert_eq!(d.working, sum(|c| c.working_age));
+        assert_eq!(d.elders, sum(|c| c.elders_count));
+        assert_eq!(d.children + d.working + d.elders, sum(|c| c.size));
     }
 
     #[test]

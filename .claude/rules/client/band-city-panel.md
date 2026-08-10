@@ -93,7 +93,7 @@ command center**: shown whenever ≥1 player band exists, always displaying a
     cohort had. Neither test may become a `> 0` — `0` durability means DRY and must render in DANGER
     ink, and a defaulted `attack 0` would refuse every hunt in the game.
   - **No coercions ride the copy.** The literal wrapped every field in `int()`/`float()`/`String()`,
-    which is where the `age_children` narrowing bug lived; a duplicate carries the decoder's own types.
+    which is where the age-bracket narrowing bug lived; a duplicate carries the decoder's own types.
     The surviving coercions are on the STAMPS, and they defend against a hand-built FIXTURE rather than
     the decoder: `pos` from the resolved `current_x`/`current_y` ints, and `dest_x`/`dest_y`/
     `travel_task_kind` out of the `harvest`/`scout` sub-dicts.
@@ -459,7 +459,7 @@ stretch, and widening it into that gap would put it over a live HUD column.
   it is specified in `band-readouts.md`; the `Population … Workers … (Idle …)` LINE is
   **gone** — the two bars below state the same facts as charts, and a text restatement above them was
   the third telling of one fact. **PEOPLE** is the new one: a stacked children/working/elders bar
-  (`age_children`/`age_working`/`age_elders`, falling back to `working_age` for the middle) plus its
+  (`children`/`working_age`/`elders`) plus its
   key and the **dependent count** — `14 dependents`, WARN-tinted once the ratio
   `(children+elders)/working × 100` passes `PEOPLE_DEPENDENCY_HEAVY`. **THE RATIO IS NOT SHOWN
   ANYWHERE** — it only decides that tint. `dep 88/100` read as a score out of 100, the game's own
@@ -476,24 +476,37 @@ stretch, and widening it into that gap would put it over a live HUD column.
   labels across this HUD (the dependency chip, the discoveries strip, both detail-row builders, the
   zone-head readout, the work total) shipped tooltips that had never once been seen. Every Label
   tooltip now goes through **`HudWidgets.set_label_tooltip`**, which sets the filter with the text; use it.
-  **The brackets arrive FRACTIONAL** (`Scalar` — see the decoder note) and are apportioned to whole
-  people by LARGEST REMAINDER (`HudFormat.apportion_people`), never rounded one at a time: 9.29 + 16.54 + 4.64
-  rounds independently to 9 + 17 + 5 = **31** for a band of 30, and a panel that disagrees with the
-  top bar about how many people are in the band reads as a bug in both.
-  **Absent age data OMITS the whole block** — never a fabricated split.
+  **THE WIRE CARRIES WHOLE PEOPLE, AND THIS PANEL RENDERS THEM.** `children` + `working_age` +
+  `elders == size`, guaranteed by the sim, and `working_age` IS the working bracket — there is no
+  second worker number on the dict for a reader to disagree with. The panel rounds nothing. It used
+  to: the brackets shipped as raw fixed-point `Scalar`s (the fraction is a GROWTH ACCUMULATOR
+  internal to the sim, not a fact about people) and the client apportioned them by largest remainder
+  for itself, which could round a 16.6-worker cohort UP to **17** in this bar while the WORKFORCE
+  header directly below counted the sim's floored **16** — one band, one frame, two answers. The
+  decision moved to the sim, which is the only place it can be made once.
+  **Absent age data OMITS the whole block** — never a fabricated split; the header total is the
+  band's own `size`, so the two bars cannot disagree about how many people are in it.
   Its palette is deliberately MUTED (`VOICE_PIGMENT` / `INK_DIM` / `VOICE_INK`) against
   **WORKFORCE**'s saturated one (`HEALTHY` / `SIGNAL` / `VOICE_INK` / `WARN` / `VOICE_PIGMENT` /
   `INK_FAINT`): two bars,
   same shape, different question — *who they are* vs *what they do* — and they must not read as the
   same chart twice.
   **THE WORKFORCE SEGMENTS PARTITION `working_age`, WHICH IS WHY THE BENCH HAS ONE.** Forage · Hunt ·
-  Roles · Parties · **Bench** · Idle, and the head states `n idle of m` off the same
+  Roles · **Bench** · Idle, and the head states `n idle of m` off the same
   `HudBandLaborState.effective_idle` — which nets the crafting bench's crew out, a worker at the bench
   being assigned labor (`crafting-panel.md` → "The stepper's ceiling"). Without a segment of its own
   that crew would leave idle and appear nowhere, so the bar would quietly stop adding up to the head
   beside it. `FactionRollup._build_workforce_block` carries the identical segment for the identical
   reason — the two bars are one chart at two scales, and a faction total missing a segment the band
-  bar has is the same hole one level up. Scout + Warrior are **CARDS** now (bordered, name · the `−/+` stepper and its
+  bar has is the same hole one level up.
+  **PARTIES ARE A HEADER CLAUSE, NOT A SEGMENT** — `3 idle of 16 · 10 away`
+  (`HudWorkVocab.WORKFORCE_AWAY_FORMAT`, shown only when the count is non-zero, tooltipped with what
+  "away" means). The sim removes a party's members from the parent band's working-age cohort the turn
+  it launches (`band_cohort.working -= party_scalar`), so those hands are not inside `working_age` at
+  all; a Parties SEGMENT therefore made the segments sum PAST their own denominator — a bar totalling
+  22 above a head reading "4 idle of 16". The fact still has to be reachable, so it moved to the head
+  rather than being deleted. `FactionRollup`'s bar takes the same clause off the same
+  `HudBandLaborState.band_party_workers` sum. Scout + Warrior are **CARDS** now (bordered, name · the `−/+` stepper and its
   `assign_labor` emit · **the kit picker and its gear line** · the role's description LAST), not rows
   in a list — the fix for a standing role being indistinguishable from a worked source. See "The role
   cards carry the band's OTHER two kits" below for the picker half and for why the prose trails.
@@ -704,13 +717,16 @@ stretch, and widening it into that gap would put it over a live HUD column.
   (`scripts/preview.sh res://tools/band_panel_preview.tscn` → `ui_preview_out/
   band_panel_{left,right,top,bottom,collapsed}.png`). **The ZONE states are the Part-2 frames:**
   `band_panel_people` (both bars, the dependency ratio, the two role cards) ·
+  **`band_panel_workforce_away`** (the reference band with its TWO parties in the field — the only
+  configuration in which the Parties defect is visible: the header reads `3 idle of 16 · 10 away`
+  over a bar of Forage 5 · Hunt 4 · Roles 4 · Idle 3, summing to 16 rather than to the 26 a Parties
+  segment made of it) ·
   **`band_panel_people_map_path`** (the SAME block reached the OTHER way — by clicking the band ON THE
   MAP, through the real `MapView._rebuild_unit_markers` → `refresh_selection_payload` →
   `show_unit_selection` → `BandPanelController.render_band`. `band_panel_people` drives the SNAPSHOT path,
-  which re-resolves the brackets from the raw `populations` floats and therefore SELF-HEALS a
-  truncating marker copy — so it structurally could not catch the `int()`-narrowed age brackets. This
-  state ASSERTS the three PEOPLE brackets sum to the band's own `size`, and was verified to FAIL —
-  `sum to 29 but the band holds 30 (raw [9.0, 16.0, 4.0])` — with the narrowing put back. **It also
+  which re-resolves the brackets from the `populations` entry and therefore SELF-HEALS a lossy marker
+  copy — so it structurally could not catch the dropped age brackets. This
+  state ASSERTS the three PEOPLE brackets sum to the band's own `size`. **It also
   carries the Minimal TOE's Kit claims** (`_assert_map_path_states_kit`): the PAYLOAD holds all six kit
   keys — named from `DetailFormat`'s and `SourceForecast`'s OWN constants, since the structural copy
   leaves no key list on MapView to borrow and borrowing one would assert that the copy copies what the
@@ -1251,12 +1267,12 @@ band.
 
 ### The three arithmetic rules
 
-- **THE PEOPLE BRACKETS ARE SUMMED FRACTIONAL AND APPORTIONED ONCE**, never apportioned per band and
-  added. `HudFormat.apportion_people` apportions to `roundi(Σ parts)`, so summing first leaves ONE
-  remainder to distribute — apportioning each band and adding the results reproduces the very
-  off-by-one that function exists to remove, once per band. On the harness's two-band roster the two
-  compositions differ by a whole person (61 against 60), which is what makes the assertion a
-  discriminator rather than an identity.
+- **THE PEOPLE BRACKETS ARE WHOLE PEOPLE, SO THE ROLLUP IS A PLAIN SUM OF INTEGERS** and the faction
+  total is the sum of the bands' own `size`. It used to sum the raw fixed-point brackets and
+  apportion once at the end, because rounding each band first and adding the results lost a person
+  per `.5` remainder; that whole problem left with the fractions. The harness's roster is
+  deliberately two bands of DIFFERENT size (30 and 12), so a page that had stopped summing renders a
+  number distinguishable from either band's own.
 - **THE NET IS SUMMED FROM EACH BAND'S OWN `band_net_food`**, never recomposed from the three totals
   above it. `raid_forfeit` is a fourth, EPISODIC term of that identity and belongs in the net without
   earning a standing row, so a recomposed net would quietly disagree with the band pages.
@@ -2604,9 +2620,10 @@ GONE** — a scouting party is composed for scouting, so it can no longer found 
 
 **IT IS GATED ON WORKERS, NOT ON IDLE WORKERS**, unlike its three neighbours. A split divides the
 band; an assignment held by someone who leaves lapses with them, so a band whose every hand is busy
-may still split. `_split_worker_pool` is `floor()` of the cohort's `age_working`, which is the same
-quantity the sim bounds the command by (`available_workers`), so the stepper's ceiling and the
-server's refusal cannot disagree. The footer's `SEND_PARTY_NO_IDLE_REASON` line is therefore scoped
+may still split. `_split_worker_pool` is the cohort's `working_age` straight off the dict, which is
+the same quantity the sim bounds the command by (`available_workers`) — it used to `floor()` a
+fractional cohort, and now there is no fraction to floor, so the stepper's ceiling and the server's
+refusal cannot disagree. The footer's `SEND_PARTY_NO_IDLE_REASON` line is therefore scoped
 to the three expedition missions — it used to render unconditionally on `idle <= 0`, which put "No
 idle workers to spare" directly under a live `⌂ Split`.
 
@@ -2618,9 +2635,13 @@ band beside its now → the verdict. Everything divides on that one share.
 >
 > `HudFormat.apportion_people_to` exists for this: the sheet apportions the new band's dependants and
 > the parent's remainder in a single largest-remainder pass against `band people − chosen workers`.
-> Running `apportion_people` separately over each half lets both round the same way and show **31
-> people leaving a band of 30** — precisely the bug the PEOPLE block's apportionment was written to
-> prevent, reintroduced on a new surface. The chosen worker count is **pinned** to the integer the
+> Running it separately over each half lets both round the same way and show **31 people leaving a
+> band of 30**.
+>
+> **This is the ONE place the client rounds people, and it is its own arithmetic rather than a second
+> opinion on the sim's.** The brackets arrive whole; 9 whole children divided by a 40% share the
+> player chose is 3.6 children, and somebody has to decide. That is unlike the PEOPLE block, which
+> stopped rounding entirely when the wire started carrying whole people. The chosen worker count is **pinned** to the integer the
 > player picked and held out of the apportionment entirely, so the stepper can never disagree with
 > the readout.
 >

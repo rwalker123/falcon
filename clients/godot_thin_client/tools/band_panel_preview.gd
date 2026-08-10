@@ -1132,15 +1132,17 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
+	# The two bars cross-checked on a band with NO party out — the negative arm of the away clause,
+	# which is what stops the fix growing a permanent "0 away" on every band in the game.
+	_assert_people_matches_workforce("band_panel_people")
 
 	# band_panel_people_map_path — THE SAME PEOPLE BLOCK, reached the OTHER way: by clicking the band
 	# ON THE MAP. `band_panel_people` above drives the SNAPSHOT path (`update_band_alerts` re-resolves
-	# the band from the raw `populations` floats), which is exactly the path that SELF-HEALS the marker
-	# truncation bug — so it could never have caught it. The map path feeds the panel MapView's unit
+	# the band from the raw `populations` entry), which is exactly the path that SELF-HEALS a marker
+	# copy bug — so it could never have caught it. The map path feeds the panel MapView's unit
 	# MARKER instead (`_rebuild_unit_markers` → `refresh_selection_payload` → `show_unit_selection` →
-	# `_render_band_into_panel`), and a marker that narrowed the fractional age brackets with `int()`
-	# zeroes every remainder, leaving `HudFormat.apportion_people` nothing to redistribute: 9 + 16 + 4 = 29 in
-	# the PEOPLE header against a band of 30. Driven through the REAL MapView, never a hand-built dict.
+	# `_render_band_into_panel`), and a marker that drops one of the whole age brackets leaves the
+	# PEOPLE header short of the band's own 30. Driven through the REAL MapView, never a hand-built dict.
 	var map_path_view: Node2D = MAP_VIEW_SCRIPT.new()
 	map_path_view.visible = false   # data only — a visible map would render behind every later frame
 	add_child(map_path_view)
@@ -1179,6 +1181,19 @@ func _ready() -> void:
 	# Scout card with an amber title in every band frame from here down.
 	_hud._bandpanel._role_kit_ids.clear()
 	_hud._band_labor._pending_labor.clear()
+	_push_bands([_band_fixture()])
+	await _settle()
+	# **THE TWO BARS, CROSS-CHECKED AGAINST EACH OTHER** — with the reference band's TWO PARTIES in the
+	# field, since a party crew outside `working_age` is the only configuration in which the Parties
+	# defect is visible at all. No frame of its own: this is arithmetic across two blocks, which an
+	# equality states and a thumbnail does not.
+	_push_bands([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
+	_panel.set_active_tab(&"band")
+	await _settle()
+	await _save("band_panel_workforce_away")
+	_assert_people_matches_workforce("the reference band with two parties out")
+	# PUT THE ROSTER BACK — `update_band_alerts` diffs against the LAST roster pushed, so a lingering
+	# pair of expeditions would follow every band state below this one.
 	_push_bands([_band_fixture()])
 	await _settle()
 
@@ -4686,26 +4701,74 @@ func _assert_shell_is_wide(expected: bool, state_name: String) -> void:
 	else:
 		print("band_panel_preview: assert OK — %s shell wide=%s" % [state_name, actual])
 
-## GUARD: the PEOPLE block's three brackets must account for EVERY person in the band. They arrive
-## fractional (Scalar), so `HudFormat.apportion_people` distributes the remainders by largest remainder —
-## which only works if the remainders survive the trip. A marker that narrowed them with `int()`
-## truncates every one to zero, and the header then undercounts against the band's own size.
+## GUARD: the PEOPLE block's three brackets must account for EVERY person in the band. They are whole
+## people on the wire and the sim writes `size` as their sum, so this is an exact equality — a marker
+## copy that dropped a bracket, or a payload path that lost one, leaves the header disagreeing with
+## the band's own head count.
 func _assert_people_sum_matches_size(band: Dictionary, state_name: String) -> void:
-	var raw: Array[float] = [
-		float(band.get("age_children", 0.0)),
-		float(band.get("age_working", 0.0)),
-		float(band.get("age_elders", 0.0)),
+	var brackets := [
+		int(band.get("children", 0)),
+		int(band.get("working_age", 0)),
+		int(band.get("elders", 0)),
 	]
-	var whole := HudFormat.apportion_people(raw)
 	var total := 0
-	for part in whole:
-		total += part
+	for part in brackets:
+		total += int(part)
 	var size := int(band.get("size", 0))
 	if total != size:
-		_fail("%s PEOPLE brackets sum to %d but the band holds %d (raw %s — narrowed?)" % [
-			state_name, total, size, str(raw)])
+		_fail("%s PEOPLE brackets sum to %d but the band holds %d (brackets %s — dropped?)" % [
+			state_name, total, size, str(brackets)])
 	else:
 		print("band_panel_preview: assert OK — %s PEOPLE brackets sum to the band's %d people" % [state_name, size])
+
+## GUARD: **the PEOPLE bar and the WORKFORCE bar are ONE band counted two ways**, and the number they
+## share must be one number. Asserted on the RENDERED chips rather than on the fixture, because both
+## defects it guards were in the rendering and neither is visible in a thumbnail.
+##
+## 1. **The worker bracket is the join.** `working_age` IS the working bracket, so PEOPLE's 🛠 chip
+##    must equal the denominator in WORKFORCE's "N idle of M". The client used to apportion the raw
+##    fixed-point brackets for itself and could round a 16.6-worker band UP: "17" in the PEOPLE bar,
+##    directly above "0 idle of 16", the same band on the same frame.
+## 2. **WORKFORCE's segments PARTITION that denominator.** Party crews are the trap — the sim removes
+##    them from the parent cohort the turn a party launches, so they are not in `working_age` at all,
+##    and a Parties SEGMENT made the bar sum to 26 over a band of 16. They read as the header's
+##    "away" clause instead, which is asserted too so the fact cannot quietly vanish in the fix.
+func _assert_people_matches_workforce(state_name: String) -> void:
+	var band: Dictionary = _hud._band_labor._panel_band
+	var band_zone: Node = _panel._zones.get(BandCityPanel.ZONE_BAND)
+	if band_zone == null:
+		_fail("%s has no band zone to read the PEOPLE and WORKFORCE bars from" % state_name)
+		return
+	var working_age := int(band.get("working_age", 0))
+	var people := _composition_counts(band_zone, HudWorkVocab.ZONE_HEADER_PEOPLE)
+	var workforce := _composition_counts(band_zone, HudWorkVocab.ZONE_HEADER_WORKFORCE)
+	_assert_band_panel(
+		"%s: PEOPLE's worker chip (%d) IS the WORKFORCE denominator (%d)" % [
+			state_name, int(people.get(HudWorkVocab.PEOPLE_GLYPH_WORKING, -1)), working_age],
+		int(people.get(HudWorkVocab.PEOPLE_GLYPH_WORKING, -1)) == working_age)
+	var people_total := 0
+	for key in people:
+		people_total += int(people[key])
+	_assert_band_panel(
+		"%s: the PEOPLE chips account for the band's whole %d people (read %d)" % [
+			state_name, int(band.get("size", 0)), people_total],
+		people_total == int(band.get("size", 0)))
+	var segment_total := 0
+	for key in workforce:
+		segment_total += int(workforce[key])
+	_assert_band_panel(
+		"%s: the WORKFORCE segments partition its %d workers (read %d — a party crew leaking in?)" % [
+			state_name, working_age, segment_total],
+		segment_total == working_age)
+	# The away clause is the ONLY place a party crew is stated on this zone now, so a band with one in
+	# the field must carry it — and a band with none must not grow a "0 away".
+	var away := _hud._band_labor.band_party_workers(band)
+	var readout := _zone_head_readout(band_zone, HudWorkVocab.ZONE_HEADER_WORKFORCE)
+	var away_clause := HudWorkVocab.WORKFORCE_AWAY_FORMAT % away
+	_assert_band_panel(
+		"%s: the WORKFORCE header states its %d away ('%s')" % [state_name, away, readout],
+		readout.ends_with(away_clause) if away > 0 else not readout.contains(
+			HudWorkVocab.WORKFORCE_AWAY_FORMAT % 0))
 
 ## **THE MAP-CLICK PATH CARRIES THE KIT, and it is this harness's THIRD instance of one bug class.**
 ## The marker copy is a hand-listed allowlist, so a field the decoder ships and the panel reads goes
@@ -5998,10 +6061,12 @@ func _faction_roster() -> Array:
 	second["morale"] = FACTION_SECOND_BAND_MORALE
 	# The age brackets are scaled with it. They are a SECOND counting of the same band, and
 	# `band_panel_people`'s own rule is that the two must agree — a band of 12 carrying a 30-person age
-	# structure is a fixture no server can produce, and the PEOPLE assertion reads these floats.
-	for bracket in ["age_children", "age_working", "age_elders"]:
-		second[bracket] = float(second[bracket]) * FACTION_SECOND_BAND_SCALE
-	second["working_age"] = int(round(float(second["working_age"]) * FACTION_SECOND_BAND_SCALE))
+	# structure is a fixture no server can produce. **The workers take the REMAINDER**, so the three
+	# whole brackets still partition `size` exactly however the two dependent ones round, which is the
+	# invariant the sim guarantees on the wire and this fixture must not be the one to break.
+	second["children"] = int(round(float(second["children"]) * FACTION_SECOND_BAND_SCALE))
+	second["elders"] = int(round(float(second["elders"]) * FACTION_SECOND_BAND_SCALE))
+	second["working_age"] = FACTION_SECOND_BAND_SIZE - int(second["children"]) - int(second["elders"])
 	return [_band_fixture(), second, _hunt_expedition_fixture()]
 
 ## The faction page's rendered claims: the total really is the faction's, the header names the right
@@ -6011,24 +6076,23 @@ func _assert_faction_page() -> void:
 	for entry in _faction_roster():
 		if not bool((entry as Dictionary).get("is_expedition", false)):
 			bands.append(entry)
-	# **A CROSS-CHECK, composed here out of the fixtures' OWN floats rather than by asking the client
-	# to sum them again.** `HudFormat.apportion_people` apportions to `roundi(Σ parts)`, so the page —
-	# which sums the raw brackets across bands and apportions ONCE — must read `roundi(Σ)` = 61 on this
-	# roster, where a page that apportioned each band first and added the results would read 30 + 30 =
-	# 60, and a page still showing ONE band's people would read 30. Three distinguishable answers, which
-	# is what makes this assertion worth making.
-	var raw := 0.0
+	# **A CROSS-CHECK, composed here out of the fixtures' OWN numbers rather than by asking the client
+	# to sum them again.** The bands differ in size on purpose (30 and 12), so the faction's 42 is
+	# distinguishable from either band's own head count — a page still showing ONE band would read 30.
+	# The brackets are whole people, so this is a plain sum with nothing to round.
+	var expected := 0
+	var largest_band := 0
 	for band_variant in bands:
 		var band: Dictionary = band_variant
-		raw += float(band.get("age_children", 0.0)) + float(band.get("age_working", 0.0)) \
-			+ float(band.get("age_elders", 0.0))
-	var expected := roundi(raw)
+		var band_size := int(band.get("size", 0))
+		expected += band_size
+		largest_band = maxi(largest_band, band_size)
 	var band_zone: Node = _panel._zones.get(BandCityPanel.ZONE_BAND)
 	var work_zone: Node = _panel._zones.get(BandCityPanel.ZONE_WORK)
 	var people := _zone_head_readout(band_zone, HudWorkVocab.ZONE_HEADER_PEOPLE) if band_zone != null else ""
 	_assert_band_panel(
-		"faction page: PEOPLE reads the whole faction (%d) — not one band's (%d), not the per-band sum (%d)" % [
-			expected, roundi(raw / float(maxi(bands.size(), 1))), bands.size() * 30],
+		"faction page: PEOPLE reads the whole faction (%d) — not one band's (%d)" % [
+			expected, largest_band],
 		people == str(expected))
 
 	# **THE VITALS ARE THE BAND PAGE'S FIVE ROWS, ONE SCALE UP.** Asserted on the rendered BBCode rather
@@ -6637,6 +6701,44 @@ func _zone_head_readout(node: Node, title: String) -> String:
 		if found != "":
 			return found
 	return ""
+
+## The `▪ <key> <count>` chips under ONE zone block's stacked bar, as `{key: count}` — the rendered
+## twin of the `segments` array `HudWidgets.build_composition_bar` was handed. Structural, like
+## `_zone_head_readout`: the block is a VBox whose head names it and whose `HFlowContainer` carries
+## one `HBoxContainer` chip per segment, so nothing here matches on a number that is under test.
+## Empty means "no such block", which every caller treats as a failure rather than as zero.
+func _composition_counts(node: Node, title: String) -> Dictionary:
+	if node is VBoxContainer and _zone_block_head_matches(node, title):
+		for child in node.get_children():
+			if child is HFlowContainer:
+				var counts: Dictionary = {}
+				for chip in child.get_children():
+					for label in chip.get_children():
+						if not (label is Label):
+							continue
+						var parts := (label as Label).text.rsplit(" ", true, 1)
+						if parts.size() == 2 and String(parts[1]).is_valid_int():
+							counts[String(parts[0])] = String(parts[1]).to_int()
+				return counts
+	for child in node.get_children():
+		var found := _composition_counts(child, title)
+		if not found.is_empty():
+			return found
+	return {}
+
+## Is this zone block's OWN head the named one? Its direct children only — a nested block's head must
+## not claim its parent's chips, which is the one way the walk above could read the wrong bar.
+func _zone_block_head_matches(node: Node, title: String) -> bool:
+	for child in node.get_children():
+		if not (child is HBoxContainer):
+			continue
+		var labels: Array = []
+		for grandchild in child.get_children():
+			if grandchild is Label:
+				labels.append(grandchild)
+		if labels.size() >= 2 and (labels[0] as Label).text == title.to_upper():
+			return true
+	return false
 
 ## Pass/fail reporting for this harness's assertions — the rung-ready ones among them — through
 ## `_fail`, the run's ONE sink, so a regression fails loudly in the run log AND is counted against the
@@ -7589,14 +7691,13 @@ func _many_sources_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["working_age"] = MANY_SOURCE_COUNT * 2
 	band["idle_workers"] = MANY_SOURCE_COUNT
-	# Keep the age split in step with the enlarged workforce — `age_working` IS `working_age`, and the
-	# three sum to `size` (see `_band_fixture`). Derived, not retyped, so raising MANY_SOURCE_COUNT
-	# cannot silently desync the PEOPLE bar from the WORKFORCE bar beneath it.
+	# Keep the age split in step with the enlarged workforce — `working_age` IS the working bracket,
+	# and the three sum to `size` (see `_band_fixture`). Derived, not retyped, so raising
+	# MANY_SOURCE_COUNT cannot silently desync the PEOPLE bar from the WORKFORCE bar beneath it.
 	var workers: int = int(band["working_age"])
-	band["age_working"] = workers
-	band["age_children"] = int(round(workers * MANY_SOURCE_CHILD_RATIO))
-	band["age_elders"] = int(round(workers * MANY_SOURCE_ELDER_RATIO))
-	band["size"] = workers + int(band["age_children"]) + int(band["age_elders"])
+	band["children"] = int(round(workers * MANY_SOURCE_CHILD_RATIO))
+	band["elders"] = int(round(workers * MANY_SOURCE_ELDER_RATIO))
+	band["size"] = workers + int(band["children"]) + int(band["elders"])
 	var assignments: Array = []
 	for i in range(MANY_SOURCE_COUNT):
 		assignments.append({
@@ -7625,17 +7726,15 @@ func _deep_party_band_fixture() -> Dictionary:
 		assigned += int((assignment_variant as Dictionary).get("workers", 0))
 	var workers := assigned + DENIAL_DEEP_PARTY_IDLE
 	# Keep the age split in step with the enlarged workforce, `_many_sources_band_fixture`'s rule:
-	# `age_working` IS `working_age` and the three sum to `size`, or the PEOPLE bar renders as a bug on
-	# the very frame the parties zone is being judged on. SCALED off the reference band's own brackets
-	# rather than retyped, so the dependency ratio the bar is tinted by does not move either.
-	var scale := float(workers) / float(band["age_working"])
+	# `working_age` IS the working bracket and the three sum to `size`, or the PEOPLE bar renders as a
+	# bug on the very frame the parties zone is being judged on. SCALED off the reference band's own
+	# brackets rather than retyped, so the dependency ratio the bar is tinted by does not move either.
+	var scale := float(workers) / float(band["working_age"])
 	band["working_age"] = workers
 	band["idle_workers"] = DENIAL_DEEP_PARTY_IDLE
-	band["age_working"] = float(workers)
-	band["age_children"] = float(band["age_children"]) * scale
-	band["age_elders"] = float(band["age_elders"]) * scale
-	band["size"] = int(round(
-		float(workers) + float(band["age_children"]) + float(band["age_elders"])))
+	band["children"] = int(round(float(band["children"]) * scale))
+	band["elders"] = int(round(float(band["elders"]) * scale))
+	band["size"] = workers + int(band["children"]) + int(band["elders"])
 	return band
 
 ## Every worker committed: the parties footer must still SHOW its button, disabled, with the reason.
@@ -9385,18 +9484,14 @@ func _band_fixture() -> Dictionary:
 		"stores": {"provisions": 84.0, "trade_goods": 12.0},
 		"working_age": 16,
 		"idle_workers": 3,
-		# Age structure (PopulationCohortState children/working/elders) — the band zone's PEOPLE bar.
-		# **`age_working` MUST equal `working_age`, and the three MUST sum to `size`.** They are one
-		# band counted two ways, and the sim keeps them in step; a fixture that disagrees renders a
-		# PEOPLE bar of 99 working-age adults above a WORKFORCE bar of 16 workers, which reads as a
-		# bug in the very frame the two-bar design is judged on. These are the live game's own
+		# Age structure — the band zone's PEOPLE bar, in WHOLE PEOPLE as the wire carries it.
+		# **THERE IS NO SECOND WORKER NUMBER**: `working_age` above IS the working bracket, so only
+		# the two dependent brackets are stated here and `children + working_age + elders` MUST sum
+		# to `size` — the sim guarantees exactly that, and a fixture that disagrees renders a PEOPLE
+		# bar whose total contradicts the band's own head count. These are the live game's own
 		# numbers (`Pop 30 👶9 🛠16 🧓5`), so dep = round((9 + 5) / 16 * 100) = 88 per 100 workers.
-		# FRACTIONAL, as the wire actually carries them (Scalar) — the panel apportions them to whole
-		# people. Rounding each on its own gives 9 + 17 + 5 = 31 for a band of 30, which is the
-		# off-by-one this fixture now guards: the frame must read 9 · 16 · 5.
-		"age_children": 9.2925,
-		"age_working": 16.5375,
-		"age_elders": 4.6425,
+		"children": 9,
+		"elders": 5,
 		"max_expedition_party_size": 8,
 		# **THE TWO SPLIT FLOORS, ON THE SHARED FIXTURE BECAUSE EVERY LIVE COHORT CARRIES THEM**
 		# (`docs/plan_band_fission.md` §Config levers). The split sheet composes its refusals from
@@ -9595,16 +9690,14 @@ func _awaiting_scout_expedition_fixture() -> Dictionary:
 
 ## A band squeezed small enough that ONE composition trips BOTH split floors — the shared fixture's
 ## 16 workers cannot, since a split small enough to fail the new band's floor leaves 14 at home.
-## Its brackets stay in step (`age_working` == `working_age`, all three summing to `size`), the rule
-## `_band_fixture` states at length.
+## Its brackets stay in step (all three summing to `size`), the rule `_band_fixture` states at length.
 func _split_squeezed_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["size"] = 13
 	band["working_age"] = SPLIT_SQUEEZED_WORKERS
 	band["idle_workers"] = 2
-	band["age_working"] = float(SPLIT_SQUEEZED_WORKERS)
-	band["age_children"] = 4.0
-	band["age_elders"] = 2.0
+	band["children"] = 4
+	band["elders"] = 2
 	return band
 
 ## One expedition per PHASE, all homed on band 904 — the fixture set behind `band_panel_status_glyphs`:
