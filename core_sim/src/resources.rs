@@ -1268,6 +1268,13 @@ pub enum CommandEventKind {
     /// different rungs the player chooses between (the animal side's `Tame` set the precedent).
     Sow,
     Corral,
+    /// **The crafting bench** (`docs/plan_crafting_and_materials.md` §5) — a recipe put on it, taken
+    /// off it, or re-crewed. One kind for the bench's whole life, the way [`Self::Corral`] is one
+    /// kind for the pen's: the player is looking at one bench, not at three verbs.
+    ///
+    /// The wire field is already a string, so the feed renders it generically — no schema or client
+    /// change (see [`Self::NarrativeBeat`]).
+    Craft,
     /// A **dangerous hunt** produced band casualties (Predators Phase 0, `docs/plan_predators.md`). The
     /// hunt-danger combat resolution pushes this whenever hunting an animal that fights back
     /// (`attack × ferocity > 0` — mammoth, ox) costs the party casualties (killed and/or wounded; the
@@ -1363,6 +1370,7 @@ impl CommandEventKind {
             CommandEventKind::Cultivate => "cultivate",
             CommandEventKind::Sow => "sow",
             CommandEventKind::Corral => "corral",
+            CommandEventKind::Craft => "craft",
             CommandEventKind::HuntDanger => "hunt_danger",
             CommandEventKind::HuntReport => "hunt_report",
             CommandEventKind::PredatorRaid => "predator_raid",

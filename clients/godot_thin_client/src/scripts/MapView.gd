@@ -1807,6 +1807,12 @@ func _compute_explored_bounds_world(grid_bounds: Rect2i, radius: float) -> Rect2
 func _unhandled_input(event: InputEvent) -> void:
 	if grid_width == 0 or grid_height == 0:
 		return
+	# A wheel or trackpad gesture over a card the player is scrolling must move THAT card and not the
+	# map underneath it. The GUI pass stops a LEFT press for us and stops none of these three, so the
+	# map declines them itself. It only DECLINES — the event is left unhandled, so whatever the pointer
+	# is really over stays free to answer it. See `_pointer_claimed_by_ui`.
+	if _is_pointer_navigation_input(event) and _pointer_claimed_by_ui():
+		return
 	# While a command is targeting, Esc / right-click back out of it (instead of
 	# panning), matching the targeting-mode contract.
 	if _annotations.is_targeting_active():
@@ -4311,6 +4317,46 @@ func _mark_input_handled() -> void:
 	var viewport := get_viewport()
 	if viewport != null:
 		viewport.set_input_as_handled()
+
+## **THE POINTER-DRIVEN NAVIGATION INPUTS — the three the GUI pass does NOT stop for us.** A wheel
+## button, a trackpad pan gesture and a pinch gesture all reach `_unhandled_input` over a UI card that
+## a LEFT press cannot get past, which is why they need `_pointer_claimed_by_ui` and the other buttons
+## do not. Measured in Godot 4.7 over a `MOUSE_FILTER_STOP` card, pushing each through
+## `Viewport.push_input`: LEFT is consumed by the GUI pass; wheel, pan and magnify all survive it.
+func _is_pointer_navigation_input(event: InputEvent) -> bool:
+	if event is InputEventPanGesture or event is InputEventMagnifyGesture:
+		return true
+	if event is InputEventMouseButton:
+		var button: InputEventMouseButton = event
+		return button.button_index == MOUSE_BUTTON_WHEEL_UP or button.button_index == MOUSE_BUTTON_WHEEL_DOWN
+	return false
+
+## **DOES A CONTROL CLAIM THE PIXEL UNDER THE POINTER?** The claim is `MOUSE_FILTER_STOP` — the
+## contract this client already states for presses (`band-city-panel.md`, the `PanelRoot` autopsy:
+## every pixel a STOP control claims is a pixel of dead map). A **PASS** control does not claim its
+## pixel and must not block the map, because several HUD containers are PASS over visually empty
+## space and blocking on those would kill map navigation across large dead regions.
+##
+## **IT WALKS THE ANCESTORS, and that is what makes the test agree with Godot's own routing.**
+## `gui_get_hovered_control` answers the INNERMOST pickable control, which inside a card is routinely a
+## PASS row rather than the STOP card around it — measured: a PASS child of a STOP panel is reported as
+## hovered, and a LEFT press there is still eaten by the STOP ancestor. So a leaf-only reading would
+## declare most of a card's own surface unclaimed. The walk mirrors `Viewport::_gui_call_input`: up the
+## Control chain, stopping at the first STOP, at a `top_level` node, or where the chain leaves Controls
+## (a `CanvasLayer` parent), which is what keeps a full-screen `MOUSE_FILTER_IGNORE` root — `PanelRoot`
+## is one — from ever appearing in it.
+func _pointer_claimed_by_ui() -> bool:
+	var viewport := get_viewport()
+	if viewport == null:
+		return false
+	var control: Control = viewport.gui_get_hovered_control()
+	while control != null:
+		if control.mouse_filter == Control.MOUSE_FILTER_STOP:
+			return true
+		if control.is_set_as_top_level():
+			return false
+		control = control.get_parent() as Control
+	return false
 
 func _ensure_input_actions() -> void:
 	var action_keys := {

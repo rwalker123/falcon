@@ -26,6 +26,18 @@
 //! of `[0, ∞]` contains everything, a dead retreat makes every draw identical so containment is
 //! trivial, and "both takes were zero" satisfies any ordering.
 
+/// **The shipped EQUIPPED haul rate** — what a kitted band drags, off the sled's own tier.
+/// `labor_config`'s `hunt.per_worker_biomass_capacity` is the *bare-handed* baseline since quality
+/// tiers landed, so a fixture that wants "an ordinary band" asks the item table.
+fn equipped_haul_rate() -> f32 {
+    core_sim::EquipmentConfig::builtin().equipped_reference(
+        core_sim::EquipmentStat::HuntCarry,
+        core_sim::LaborConfig::builtin()
+            .hunt
+            .per_worker_biomass_capacity,
+    )
+}
+
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
@@ -304,7 +316,7 @@ fn seed_the_forecast(app: &mut App, band: bevy::prelude::Entity, fauna_id: &str,
             herd,
             &fauna,
             &ladder,
-            labor.hunt.per_worker_biomass_capacity,
+            equipped_haul_rate(),
             &party_at(&combat),
             CONTENT_BAND_OUTPUT_MULTIPLIER,
             CREW,
@@ -358,7 +370,7 @@ fn exported_row(app: &App, band: bevy::prelude::Entity) -> sim_runtime::LaborAss
 fn take_at(app: &App, herd: &Herd, seed: u64) -> core_sim::HuntOutcome {
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
     let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let labor = app.world.resource::<LaborConfigHandle>().get();
+
     let combat = app.world.resource::<CombatConfigHandle>().get();
     let mut quarry = herd.clone();
     hunt_take(
@@ -366,7 +378,7 @@ fn take_at(app: &App, herd: &Herd, seed: u64) -> core_sim::HuntOutcome {
         CREW,
         FOOD_PEAK,
         NO_IMPROVEMENT_UNDERWAY,
-        labor.hunt.per_worker_biomass_capacity,
+        equipped_haul_rate(),
         &party_at(&combat),
         &fauna,
         &ladder,
@@ -517,7 +529,7 @@ fn a_wary_herd_costs_hunter_turns_and_never_herd_biomass() {
     let run = |app: &App, turns: u64| {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         let ladder = app.world.resource::<LadderConfigHandle>().get();
-        let labor = app.world.resource::<LaborConfigHandle>().get();
+
         let combat = app.world.resource::<CombatConfigHandle>().get();
         let mut herd = herd_of(app, &id);
         let herd_id = herd.id.clone();
@@ -529,7 +541,7 @@ fn a_wary_herd_costs_hunter_turns_and_never_herd_biomass() {
                 CREW,
                 FOOD_PEAK,
                 NO_IMPROVEMENT_UNDERWAY,
-                labor.hunt.per_worker_biomass_capacity,
+                equipped_haul_rate(),
                 &party_at(&combat),
                 &fauna,
                 &ladder,

@@ -819,11 +819,24 @@ impl Default for HuntConfig {
 /// byte-identical on its FOOD component. An explicit **`0.0` is a real, meaningful value** — it is
 /// how a wolf says *"you do not eat me"*. That distinction is why the fields are `Option`, not bare
 /// floats with a `0` sentinel.
-#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct HuntYieldDef {
     pub provisions_per_biomass: Option<f32>,
     pub trade_goods_per_biomass: Option<f32>,
+    /// **What the carcass is MADE OF** — hide, bone, sinew — per unit of biomass carried home
+    /// (`docs/plan_crafting_and_materials.md` §2). Authored per row and tunable, and **the same
+    /// shape the flora roster's `yield.materials` carries**: nothing in the materials model is
+    /// fauna-shaped, so a plant and a deposit state their yield the same way.
+    ///
+    /// An empty list is the ordinary case for a species nothing is made out of. Unlike the two rate
+    /// components above there is **no global to fall back to**: a material is a *thing*, and there
+    /// is no species-blind statement of which thing an animal gives.
+    ///
+    /// Validated against the materials table at load
+    /// ([`crate::materials_config::MaterialsConfig::validate_yield`]) — the material must exist and
+    /// the reading must name **exactly** the axes it declares.
+    pub materials: Vec<crate::materials_config::MaterialYieldDef>,
 }
 
 /// **The per-species hunt-yield vector, RESOLVED** — the configured [`HuntYieldDef`] with its `None`
@@ -2010,18 +2023,47 @@ impl FaunaConfig {
     /// default. So an unresolvable name falls back to the globals (a release build still pays something
     /// rather than silently zeroing a herd's yield) and is **not** a panic.
     pub fn hunt_yield_for(&self, display: &str) -> HuntYield {
-        let configured = self
-            .species_by_display(display)
-            .map(|def| def.hunt_yield)
-            .unwrap_or_default();
+        let configured = self.species_by_display(display).map(|def| &def.hunt_yield);
         HuntYield {
             provisions_per_biomass: configured
-                .provisions_per_biomass
+                .and_then(|def| def.provisions_per_biomass)
                 .unwrap_or(self.hunt.provisions_per_biomass),
             trade_goods_per_biomass: configured
-                .trade_goods_per_biomass
+                .and_then(|def| def.trade_goods_per_biomass)
                 .unwrap_or(self.hunt.trade_goods_per_biomass),
         }
+    }
+
+    /// **The species' MATERIAL yield rows** ([`HuntYieldDef::materials`]) — what the carcass is made
+    /// of, per unit of biomass carried home.
+    ///
+    /// A separate seam from [`Self::hunt_yield_for`] because there is no global to resolve against:
+    /// the two rate components fall back to `hunt.*`, and a material list has nothing to fall back
+    /// **to** — an unlisted species yields no material, which is a real answer rather than a gap. An
+    /// unresolvable name yields none, matching the sibling resolvers' fixture-tolerant behaviour.
+    pub fn hunt_materials_for(
+        &self,
+        display: &str,
+    ) -> &[crate::materials_config::MaterialYieldDef] {
+        self.species_by_display(display)
+            .map(|def| def.hunt_yield.materials.as_slice())
+            .unwrap_or_default()
+    }
+
+    /// Reconcile every species' material yield with the materials table — the cross-config half of
+    /// `validate`, run by [`load_fauna_config_from_env`] with the loaded table passed in so it has
+    /// exactly one copy. See [`crate::materials_config::MaterialsConfig::validate_yield`].
+    pub fn validate_against_materials(
+        &self,
+        materials: &crate::materials_config::MaterialsConfig,
+    ) -> Result<(), crate::materials_config::MaterialYieldError> {
+        for (key, def) in &self.species {
+            materials.validate_yield(
+                &format!("species.{key}.hunt_yield"),
+                &def.hunt_yield.materials,
+            )?;
+        }
+        Ok(())
     }
 
     /// **The species' pastoral density gain** ([`SpeciesDef::pastoral_density`]), resolved by the
@@ -2392,6 +2434,9 @@ pub enum FaunaConfigError {
         constraint: String,
         value: String,
     },
+    /// The cross-config half: a species' `hunt_yield.materials` row that the materials table refuses.
+    #[error("invalid fauna config: {0}")]
+    MaterialYield(#[from] crate::materials_config::MaterialYieldError),
 }
 
 impl ConfigLoadError for FaunaConfigError {
@@ -2461,17 +2506,44 @@ impl FaunaConfigMetadata {
 /// is as fatal as a parse error — it looks live, which is exactly why it must not be swapped out
 /// quietly.
 ///
+/// The roster's **material** yield edge is reconciled against the materials table at the same time
+/// ([`FaunaConfig::validate_against_materials`]), so a species naming a material that does not
+/// exist — or stating a reading on an axis it does not have — is a boot panic rather than a herd
+/// that silently yields nothing. The table is passed in rather than re-read so it keeps one copy,
+/// exactly as [`crate::flora_config::load_flora_config_from_env`] takes the forage capacities.
+///
 /// Only an absent *default* path falls back to the builtin; a present-but-broken file, or a
 /// `FAUNA_CONFIG_PATH` that names a missing or broken file, is a boot panic — see
 /// [`crate::config_load::resolve_config`].
-pub fn load_fauna_config_from_env() -> (Arc<FaunaConfig>, FaunaConfigMetadata) {
+pub fn load_fauna_config_from_env(
+    materials: &crate::materials_config::MaterialsConfig,
+) -> (Arc<FaunaConfig>, FaunaConfigMetadata) {
     let (config, source) = load_config_from_env(
         "FAUNA_CONFIG_PATH",
         "fauna_config",
         "src/data/fauna_config.json",
         FaunaConfig::builtin,
-        FaunaConfig::from_file,
+        |path| -> Result<FaunaConfig, FaunaConfigError> {
+            let config = FaunaConfig::from_file(path)?;
+            config.validate_against_materials(materials)?;
+            Ok(config)
+        },
     );
+
+    if source.is_none() {
+        // The builtin is checked too: it is the fallback, so a materials table that drifted out from
+        // under the roster leaves the same hole here and it must be loud. Deliberately not fatal —
+        // unlike a file the operator edited, there is no alternative roster to point at, and
+        // `builtin_config_parses` already pins the shipped pair.
+        if let Err(err) = config.validate_against_materials(materials) {
+            tracing::error!(
+                target: "shadow_scale::config",
+                error = %err,
+                "fauna_config.builtin_material_yield_broken"
+            );
+        }
+    }
+
     (config, FaunaConfigMetadata::new(source))
 }
 

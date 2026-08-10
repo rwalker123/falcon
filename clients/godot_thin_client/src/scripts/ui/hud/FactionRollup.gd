@@ -685,6 +685,7 @@ static func _build_workforce_block(labor: HudBandLaborState) -> VBoxContainer:
     var hunt_workers := 0
     var role_workers := 0
     var party_workers := 0
+    var bench_workers := 0
     var working_age := 0
     for band_variant in labor.player_bands():
         if not (band_variant is Dictionary):
@@ -704,12 +705,17 @@ static func _build_workforce_block(labor: HudBandLaborState) -> VBoxContainer:
         role_workers += int(labor.effective_role_workers(band, HudConst.LABOR_KIND_SCOUT).get("workers", 0)) \
             + int(labor.effective_role_workers(band, HudConst.LABOR_KIND_WARRIOR).get("workers", 0))
         party_workers += labor.band_party_workers(band)
+        bench_workers += labor.bench_workers(band)
     var segments: Array = []
     for spec in [
         [HudWorkVocab.WORKFORCE_KEY_FORAGE, forage_workers, HudStyle.HEALTHY],
         [HudWorkVocab.WORKFORCE_KEY_HUNT, hunt_workers, HudStyle.SIGNAL],
         [HudWorkVocab.WORKFORCE_KEY_ROLES, role_workers, HudStyle.VOICE_INK],
         [HudWorkVocab.WORKFORCE_KEY_PARTIES, party_workers, HudStyle.WARN],
+        # The bench's crew, for the reason the band zone's own bar carries one: `effective_idle` nets
+        # it out, so a faction total without this segment loses those hands off a bar that is supposed
+        # to partition the same `working_age` the header sums.
+        [HudWorkVocab.WORKFORCE_KEY_BENCH, bench_workers, HudStyle.VOICE_PIGMENT],
         [HudWorkVocab.WORKFORCE_KEY_IDLE, idle, HudStyle.INK_FAINT],
     ]:
         if int(spec[1]) > 0:

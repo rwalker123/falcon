@@ -201,12 +201,12 @@ pub(crate) struct BandKitLevers<'a> {
     /// a warrior alike**: `attack` is one stat and `creatures.json`'s `person` row is its one home,
     /// so both roles step up from this same number (`equipment_config::warrior_profile`).
     pub(crate) person_intrinsic: crate::combat::CombatStats,
-    /// `labor_config.hunt.per_worker_biomass_capacity` — the *equipped* HUNT haul tier (the sled's),
-    /// and also the *equipped* PEN collection tier: a pen harvest has always been capped by this
-    /// same rate, and it keeps its one home rather than gaining a husbandry twin.
-    pub(crate) equipped_haul_rate: f32,
-    /// `labor_config.forage.per_worker_biomass_capacity` — the *equipped* GATHER tier (the basket's).
-    pub(crate) equipped_gather_rate: f32,
+    /// `labor_config.hunt.per_worker_biomass_capacity` — the **no-equipment** HUNT haul baseline,
+    /// and the pen collection baseline with it. The *equipped* side of both lives on the sled's own
+    /// tier now and is resolved through the item table, so a pen still shares the haul's one home.
+    pub(crate) baseline_haul_rate: f32,
+    /// `labor_config.forage.per_worker_biomass_capacity` — the **no-equipment** GATHER baseline.
+    pub(crate) baseline_gather_rate: f32,
     /// `labor_config.scout.vantage_range` — the *equipped* vantage sight range (the wayfinding
     /// gear's). Carried as `f32` because the effects axis is continuous; the reveal path rounds.
     pub(crate) equipped_vantage_range: f32,
@@ -235,10 +235,19 @@ pub(crate) struct PopulationStateInputs<'a> {
     pub(crate) travel_target: Option<UVec2>,
     pub(crate) hunt_reach: u32,
     pub(crate) expedition_delivery: Option<crate::systems::ExpeditionDelivery>,
-    /// The band's kit **wear** (the minimal TOE). `None` = no wear has been recorded, which reads as
-    /// a **full kit** — the component is the wear ledger, not the kit's existence.
+    /// The band's kit ledger (the minimal TOE). `None` = the ledger was never built (a hand-rolled
+    /// fixture), which reads as a **start-stocked** band — the state every spawn path inserts.
+    /// **Not `Default`**, which is an empty ledger owning nothing; an absent *entry inside* a ledger
+    /// is what "not owned" looks like. See [`BandEquipment`].
     pub(crate) equipment: Option<&'a BandEquipment>,
     pub(crate) kit_levers: &'a BandKitLevers<'a>,
+    /// **What is on this band's bench.** `None` = no component at all (a hand-rolled fixture), which
+    /// reads as an idle bench — the same fallback `equipment` takes.
+    pub(crate) bench: Option<&'a crate::components::BandBench>,
+    /// The crafting readout's levers, bundled exactly as [`BandKitLevers`] is: the two configs, the
+    /// per-recipe plan resolved once for the whole capture, and this faction's known crafts. See
+    /// `snapshot::crafting` for why the recipe-only half is hoisted out of the per-band pass.
+    pub(crate) craft_inputs: &'a crate::snapshot::crafting::BandCraftInputs<'a>,
 }
 
 pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationCohortState {
@@ -263,14 +272,21 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_delivery,
         equipment,
         kit_levers,
+        bench,
+        craft_inputs,
     } = inputs;
-    // **The minimal TOE, resolved for the wire.** The component records *wear*, so an absent one
-    // reads as no wear — a full kit — exactly as the labor pass reads it. Durability and performance
-    // stay ORTHOGONAL: the tiers below are read off each kit's equipped/dry *predicate*, never scaled
-    // by the remaining condition. **Three kits, three independent readouts** (§4.8): the sled's tier
+    // **The minimal TOE, resolved for the wire.** An absent component means the ledger was never
+    // built, which reads as **start-stocked** — the same fallback `advance_labor_allocation`,
+    // `advance_expeditions` and the party-wear site in `capture.rs` take, and it has to be, or this
+    // band would be published owning nothing while the labor pass pays it an equipped rate.
+    // `Default` is the *empty* ledger and would say exactly that. Durability and performance stay
+    // ORTHOGONAL: the tiers below are read off each kit's equipped/dry *predicate*, never scaled by
+    // the remaining condition. **Three kits, three independent readouts** (§4.8): the sled's tier
     // says nothing about the basket's, so they are published as separate fields rather than one
     // "carry" number the client would have to guess the job of.
-    let kit = equipment.cloned().unwrap_or_default();
+    let kit = equipment
+        .cloned()
+        .unwrap_or_else(|| BandEquipment::start_stocked(kit_levers.config));
     // **WHICH kit these tiers are quoted for.** A detached party has one, decided at launch, so its
     // row states the tier it will actually fight and haul at. A **resident band** has one per
     // assignment, and this row is per *cohort* — so it is quoted at the job's **default** kit, the
@@ -293,15 +309,21 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     let forage_choice = job_choice(crate::equipment_config::KitJob::Forage);
     let scout_choice = job_choice(crate::equipment_config::KitJob::Scout);
     let warrior_choice = job_choice(crate::equipment_config::KitJob::Warrior);
-    // **One row per ITEM the config carries, not three named floats.** The band's ledger is sparse
-    // (an absent entry is zero wear), so the list is driven by the *config* — otherwise an item the
-    // band has never used would simply be missing from the readout rather than showing as full.
+    // **One row per ITEM the config carries, not three named floats.** The list is driven by the
+    // *config* rather than by the band's sparse ledger, so an item the band has never held still has
+    // a row — it reads `count 0` rather than going missing.
+    //
+    // **`count` is what stops a client inferring ownership from a condition of zero.** Since the
+    // count slice an absent entry is NOT OWNED, so `remaining` is `0` for an item the band has none
+    // of — the same `0` a reader used to take for *"dry"*. Which of the two it is now rides beside
+    // it, and *worn out* versus *never made* rides on `equipment_batches`.
     let kit_item_conditions = kit_levers
         .config
         .items()
         .map(|(id, _)| sim_schema::state::KitItemConditionState {
             item_id: id.to_string(),
             remaining: kit.remaining(id, kit_levers.config),
+            count: kit.count_of(id),
         })
         .collect();
     let hunter_attack = kit_levers
@@ -309,12 +331,12 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         .hunter_profile_unbounded(kit_levers.person_intrinsic, &hunt_choice, &kit)
         .attack;
     let hunt_carry_per_worker_biomass = kit_levers.config.hunt_per_worker_biomass_capacity(
-        kit_levers.equipped_haul_rate,
+        kit_levers.baseline_haul_rate,
         &hunt_choice,
         &kit,
     );
     let forage_carry_per_worker_biomass = kit_levers.config.forage_per_worker_biomass_capacity(
-        kit_levers.equipped_gather_rate,
+        kit_levers.baseline_gather_rate,
         &forage_choice,
         &kit,
     );
@@ -322,7 +344,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // has always capped a pen harvest by — but through the `PenCarry` stat, so a Hunt row on the
     // stalking kit works the pen bare-handed rather than at the sled's tier.
     let pen_carry_per_worker_biomass = kit_levers.config.pen_per_worker_biomass_capacity(
-        kit_levers.equipped_haul_rate,
+        kit_levers.baseline_haul_rate,
         &hunt_choice,
         &kit,
     );
@@ -357,8 +379,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             let choice = kit_levers.config.kit(&definition.id)?;
             let tiers = kit_levers.config.resolve_kit_tiers(
                 kit_levers.person_intrinsic,
-                kit_levers.equipped_haul_rate,
-                kit_levers.equipped_gather_rate,
+                kit_levers.baseline_haul_rate,
+                kit_levers.baseline_gather_rate,
                 kit_levers.equipped_vantage_range,
                 &choice,
                 &kit,
@@ -390,9 +412,14 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         &demographics.consumption,
     );
     let activity = allocation_summary(allocation);
-    let working_age = available_workers(cohort.working);
-    let assigned = allocation.map(|a| a.assigned_total()).unwrap_or(0);
-    let idle_workers = working_age.saturating_sub(assigned);
+    // **The head-count, through the one seam the COMMANDS clamp against**
+    // ([`crate::components::BandWorkforce`]). The bench's crew is spent labor that is not a
+    // `LaborTarget`, so it is nowhere in `assigned`; publishing `working_age − assigned` counted
+    // those hands as free, and every "n idle of m" readout in the game over-reported in the
+    // reassuring direction — a compose sheet sized against it could not be staffed.
+    let workforce = crate::components::BandWorkforce::resolve(Some(cohort), allocation, bench);
+    let working_age = workforce.pool;
+    let idle_workers = workforce.idle();
     // Zip each assignment with its retained per-source yield telemetry (same index order). An
     // assignment with no telemetry row yet → default 0 yields rather than a panic.
     const NO_YIELD: SourceYield = SourceYield::ZERO;
@@ -525,6 +552,16 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         }
         _ => 0.0,
     };
+    // **The crafting half of the row, resolved together** — the four readouts share this band's
+    // store, its ledger and its bench tiers, so resolving them apart would walk the same three
+    // structures four times. See `snapshot::crafting`: the refusal is turned into words *here*, not
+    // on the client.
+    let crate::snapshot::crafting::BandCraftState {
+        material_batches,
+        bench: bench_state,
+        craft_offers,
+        equipment_batches,
+    } = crate::snapshot::crafting::band_craft_state(&cohort.stores, bench, &kit, craft_inputs);
     PopulationCohortState {
         entity: entity.to_bits(),
         band_id: band_id.map(|id| id.0).unwrap_or_default(),
@@ -677,6 +714,10 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // cross), and `systems::fission::split_refusals` is the one rule set the command runs.
         founding_min_workers: expedition_levers.settle_min_founding_workers,
         founding_parent_min_workers: expedition_levers.settle_parent_min_workers,
+        material_batches,
+        bench: bench_state,
+        craft_offers,
+        equipment_batches,
     }
 }
 
@@ -767,10 +808,10 @@ mod tests {
         BandKitLevers {
             config,
             person_intrinsic: crate::creatures_config::CreaturesConfig::builtin().person(),
-            equipped_haul_rate: crate::labor_config::LaborConfig::builtin()
+            baseline_haul_rate: crate::labor_config::LaborConfig::builtin()
                 .hunt
                 .per_worker_biomass_capacity,
-            equipped_gather_rate: crate::labor_config::LaborConfig::builtin()
+            baseline_gather_rate: crate::labor_config::LaborConfig::builtin()
                 .forage
                 .per_worker_biomass_capacity,
             equipped_vantage_range: crate::labor_config::LaborConfig::builtin()
@@ -861,6 +902,9 @@ mod tests {
             // These fixtures assert on the food ledger, not the TOE.
             equipment: None,
             kit_levers: &kit_levers(),
+            // These fixtures assert on the food ledger, not the bench.
+            bench: None,
+            craft_inputs: crate::snapshot::crafting::builtin_craft_inputs(),
         })
     }
 

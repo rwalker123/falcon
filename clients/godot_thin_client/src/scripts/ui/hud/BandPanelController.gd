@@ -62,6 +62,9 @@ signal split_band_requested(payload: Dictionary)
 signal alert_focus_requested(x: int, y: int)
 # Pin an exact occupant on the map after that recenter — relayed to HudLayer.roster_occupant_selected.
 signal roster_occupant_selected(kind: String, id: Variant)
+# The header's `⚒` was pressed — open Materials & Crafting on this band. Relayed to HudLayer, which
+# hands it to `CraftingPanelController`; the two controllers never talk to each other directly.
+signal crafting_requested(band: Dictionary)
 
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
 var _band_labor: HudBandLaborState = null
@@ -801,6 +804,10 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
         [HudWorkVocab.WORKFORCE_KEY_HUNT, hunt_workers, HudStyle.SIGNAL],
         [HudWorkVocab.WORKFORCE_KEY_ROLES, role_workers, HudStyle.VOICE_INK],
         [HudWorkVocab.WORKFORCE_KEY_PARTIES, party_workers, HudStyle.WARN],
+        # The bench's crew, between the work and the residual: `effective_idle` nets it out (a worker
+        # at the bench is assigned labor), so without a segment of its own it would vanish from a bar
+        # whose segments are supposed to partition the same `working_age` the header counts against.
+        [HudWorkVocab.WORKFORCE_KEY_BENCH, _band_labor.bench_workers(band), HudStyle.VOICE_PIGMENT],
         [HudWorkVocab.WORKFORCE_KEY_IDLE, idle, HudStyle.INK_FAINT],
     ]:
         if int(spec[1]) > 0:
@@ -3708,10 +3715,26 @@ func set_panel(panel: BandCityPanel) -> void:
     # Re-PAGE the work board on it — the other two zones are unaffected by a box change.
     if panel != null and not panel.zones_resized.is_connected(_on_zones_resized):
         panel.zones_resized.connect(_on_zones_resized)
+    # The header's `⚒` carries no subject — the header is subject-independent chrome — so WHICH band
+    # it opens on is answered here: the panel band. **`render_faction` never touches `_panel_band`**,
+    # which is what makes "the last band loaded" already sitting there rather than state this had to
+    # add, and `refresh_snapshot` hides the panel outright at zero bands, so a visible header always
+    # has a band behind it.
+    if panel != null and not panel.crafting_requested.is_connected(_on_crafting_requested):
+        panel.crafting_requested.connect(_on_crafting_requested)
     # A faction drill-down row is a link to a BAND, and making that band the panel's subject is this
     # controller's job — the disclosure controller must not know the band panel exists.
     if _disclosures != null:
         _disclosures.set_faction_band_jump(jump_to_band_entity)
+
+## The header's `⚒`. From a band page this is that band; from the FACTION page it is the last band
+## loaded, which is sitting on the model already because `render_faction` deliberately leaves
+## `_panel_band` alone. An empty subject emits nothing rather than opening an empty panel.
+func _on_crafting_requested() -> void:
+    var band := _band_labor.panel_band()
+    if band.is_empty():
+        return
+    emit_signal("crafting_requested", band)
 
 ## Is the panel showing the FACTION page? Asked by the drawer, which otherwise re-asserts the selected
 ## band as the panel's subject on every render and would steal the page out from under a caret click.

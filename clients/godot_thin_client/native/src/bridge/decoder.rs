@@ -26,8 +26,9 @@ use crate::dict::knowledge::{
 use crate::dict::map::tiles_to_array;
 use crate::dict::population::{demographics_to_array, generations_to_array, populations_to_array};
 use crate::dict::subsistence::{
-    food_modules_to_array, forage_patches_to_array, herds_to_array,
-    intensification_knowledge_to_array, kits_to_array, sedentarization_to_array,
+    characteristic_bands_to_array, craft_knowledge_to_array, food_modules_to_array,
+    forage_patches_to_array, herds_to_array, intensification_knowledge_to_array, kits_to_array,
+    materials_to_array, recipes_to_array, sedentarization_to_array,
 };
 use crate::dict::{
     u16_vector_to_packed_int32, u32_vector_to_packed_int32, u64_vector_to_packed_int64,
@@ -685,6 +686,26 @@ fn decode_delta_against(
     // signal, even though it is not one on the merged frame the client finally reads.
     if let Some(equipment_config) = delta.subsistence().and_then(|s| s.equipmentConfigJson()) {
         frame.insert_changed("equipment_config_json", equipment_config);
+    }
+
+    // The CRAFTING CATALOGUES, decoded here as well as in `snapshot_to_dict` for the reason the kit
+    // roster is: a whole-section field read only on the full path republishes the BASELINE's value
+    // for the life of the world. `craft_knowledge` is the one of the four that genuinely moves in
+    // play (a craft is learned), so it is also the one whose staleness would be visible.
+    if let Some(materials) = delta.subsistence().and_then(|s| s.materials()) {
+        frame.insert_changed("materials", &materials_to_array(materials));
+    }
+    if let Some(bands) = delta.subsistence().and_then(|s| s.characteristicBands()) {
+        frame.insert_changed(
+            "characteristic_bands",
+            &characteristic_bands_to_array(bands),
+        );
+    }
+    if let Some(recipes) = delta.subsistence().and_then(|s| s.recipes()) {
+        frame.insert_changed("recipes", &recipes_to_array(recipes));
+    }
+    if let Some(knowledge) = delta.subsistence().and_then(|s| s.craftKnowledge()) {
+        frame.insert_changed("craft_knowledge", &craft_knowledge_to_array(knowledge));
     }
 
     // These two were decoded on the full-snapshot path only — `decode_delta_against` passed `None`

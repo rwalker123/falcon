@@ -1,5 +1,5 @@
 use std::cmp::min;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 
 use bevy::{math::UVec2, prelude::*};
@@ -289,14 +289,61 @@ pub const FODDER: &str = "fodder";
 /// and every consumer must agree on one string.
 pub const TRADE_GOODS: &str = "trade_goods";
 
+/// **One pile of a material at one rating** — a quantity plus the exact reading it stands for.
+///
+/// The reading is the batch's **amount-weighted average** per axis, in the material's declared axis
+/// order, and it is what crafting reads. **Never the band alone**: the band is what decides whether
+/// two arrivals merge, and it is derived for display; storing only the band would make two `good`
+/// hides interchangeable, which is the whole thing the characteristic vector exists to prevent.
+///
+/// See `docs/plan_crafting_and_materials.md` §1 → "Bands: categories on screen, exact numbers
+/// underneath".
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MaterialBatch {
+    /// How much of the material this batch holds. Fixed-point, so a fractional per-turn arrival
+    /// accumulates toward a whole unit instead of rounding away.
+    pub amount: Scalar,
+    /// The batch's **exact** amount-weighted-average reading per axis. See the type doc.
+    pub characteristics: BTreeMap<String, f32>,
+}
+
+/// One batch's contribution to a withdrawal — what came out, and the reading it came out at.
+///
+/// A partial take leaves the source batch's readings untouched (an average does not move when a
+/// uniform part of it is removed), so this reports the batch's reading verbatim.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MaterialDraw {
+    /// Which batch it came from.
+    pub band: crate::materials_config::BandKey,
+    /// How much came out of that batch.
+    pub amount: Scalar,
+    /// That batch's exact reading per axis.
+    pub characteristics: BTreeMap<String, f32>,
+}
+
 /// A location-local store of goods held by a band (and, later, a populated tile or storage pit).
 /// Keyed by commodity so the supply network can balance *any* good; a `BTreeMap` keeps iteration
 /// deterministic for balancing and snapshotting. Quantities are fixed-point (`Scalar`) so small
 /// per-turn flows accumulate without rounding to zero. An absent key reads as zero, and setting a
 /// key to zero prunes it, so two stores with the same goods always compare equal.
+///
+/// # Materials are a SECOND map, and `goods` is untouched
+///
+/// Provisions, fodder and trade goods are interchangeable scalars: two units of grain are two units
+/// of grain. **A material is not** — a mammoth hide and a hare pelt are both `hide` and are not the
+/// same thing — so materials are held as [`MaterialBatch`]es keyed by their per-axis
+/// [`crate::materials_config::BandKey`], and a single pooled average would silently drag the one
+/// down to the other the moment they met.
+///
+/// **This store stores; it does not interpret.** Deriving a band from a reading needs the material's
+/// axis list, so that lives on [`crate::materials_config::MaterialsConfig`] and the key arrives here
+/// already resolved.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LocalStore {
     goods: BTreeMap<String, Scalar>,
+    /// `material id → band key → batch`. `BTreeMap` on both levels so the checkpoint and any
+    /// published readout iterate in a stable order — the same reason `BandEquipment` is one.
+    materials: BTreeMap<String, BTreeMap<crate::materials_config::BandKey, MaterialBatch>>,
 }
 
 impl LocalStore {
@@ -335,6 +382,253 @@ impl LocalStore {
     pub fn iter(&self) -> impl Iterator<Item = (&str, Scalar)> {
         self.goods.iter().map(|(k, v)| (k.as_str(), *v))
     }
+
+    /// **THE MERGE RULE.** Add `amount` of `material` at `band`, merging into the batch already
+    /// standing at that key: the amounts add, and **each axis's reading becomes the amount-weighted
+    /// average of the two**.
+    ///
+    /// Without the merge a band hunting deer for two hundred turns would hold two hundred piles of
+    /// hide; without the *weighted average* the merged pile would claim one of the two arrivals'
+    /// readings and quietly re-grade the other. A non-positive amount is a no-op, so a degenerate
+    /// take cannot invent a batch with no material in it.
+    pub fn deposit_material(
+        &mut self,
+        material: &str,
+        band: crate::materials_config::BandKey,
+        amount: Scalar,
+        characteristics: &BTreeMap<String, f32>,
+    ) {
+        if amount <= scalar_zero() {
+            return;
+        }
+        let batch = self
+            .materials
+            .entry(material.to_string())
+            .or_default()
+            .entry(band)
+            .or_default();
+        let existing = batch.amount;
+        let total = existing + amount;
+        // The blend weights, taken once: `total > 0` because `amount > 0` and `existing >= 0`.
+        let (existing_share, arriving_share) = (
+            existing.to_f32() / total.to_f32(),
+            amount.to_f32() / total.to_f32(),
+        );
+        // Every axis EITHER side names, so an arrival can neither drop an axis the batch carries nor
+        // silently ignore one it brings.
+        let axes: BTreeSet<&String> = batch
+            .characteristics
+            .keys()
+            .chain(characteristics.keys())
+            .collect();
+        let blended: BTreeMap<String, f32> = axes
+            .into_iter()
+            .map(|axis| {
+                let held = batch.characteristics.get(axis).copied().unwrap_or_default();
+                let arriving = characteristics.get(axis).copied().unwrap_or_default();
+                (
+                    axis.clone(),
+                    held * existing_share + arriving * arriving_share,
+                )
+            })
+            .collect();
+        batch.amount = total;
+        batch.characteristics = blended;
+    }
+
+    /// Every batch of `material`, in band-key order. Empty for a material the store holds none of.
+    pub fn material_batches(
+        &self,
+        material: &str,
+    ) -> impl Iterator<Item = (&crate::materials_config::BandKey, &MaterialBatch)> {
+        self.materials
+            .get(material)
+            .into_iter()
+            .flat_map(|batches| batches.iter())
+    }
+
+    /// **How much of `material` the store holds in total** — the sum over its batches, which is the
+    /// shortfall readout's number. Never stored beside the batches: a cached total is a second
+    /// statement of one fact.
+    pub fn material_total(&self, material: &str) -> Scalar {
+        self.material_batches(material)
+            .fold(scalar_zero(), |total, (_, batch)| total + batch.amount)
+    }
+
+    /// Every material the store holds, in id order.
+    pub fn materials(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            &str,
+            &BTreeMap<crate::materials_config::BandKey, MaterialBatch>,
+        ),
+    > {
+        self.materials
+            .iter()
+            .map(|(id, batches)| (id.as_str(), batches))
+    }
+
+    /// **Withdraw up to `amount` of `material`, WORST-FIRST on `axis`** — you spend the poor hide
+    /// before the excellent one, which is the only ordering that does not silently burn the player's
+    /// best stock on the first thing they make.
+    ///
+    /// Returns what came out of each batch, so the caller can resolve the drawn reading (the
+    /// amount-weighted average of the draws) without the store having to know what a recipe is. A
+    /// partial take leaves the batch's readings untouched; an emptied batch is pruned, so two stores
+    /// holding the same materials always compare equal.
+    ///
+    /// A batch that does not carry `axis` sorts **last** — it cannot occur (a source's yield row is
+    /// validated to name exactly the material's axes), and spending it last means a mis-named axis
+    /// burns the cheap stock rather than the good.
+    pub fn take_material(
+        &mut self,
+        material: &str,
+        axis: &str,
+        amount: Scalar,
+    ) -> Vec<MaterialDraw> {
+        let mut remaining = amount.max(scalar_zero());
+        let mut drawn = Vec::new();
+        if remaining <= scalar_zero() {
+            return drawn;
+        }
+        let Some(batches) = self.materials.get_mut(material) else {
+            return drawn;
+        };
+        let order = spend_order(batches, axis);
+        for key in order {
+            if remaining <= scalar_zero() {
+                break;
+            }
+            let batch = batches.get_mut(&key).expect("key came from this map");
+            let taken = min(remaining, batch.amount);
+            if taken <= scalar_zero() {
+                continue;
+            }
+            batch.amount -= taken;
+            remaining -= taken;
+            drawn.push(MaterialDraw {
+                band: key.clone(),
+                amount: taken,
+                characteristics: batch.characteristics.clone(),
+            });
+            if batch.amount <= scalar_zero() {
+                batches.remove(&key);
+            }
+        }
+        if batches.is_empty() {
+            self.materials.remove(material);
+        }
+        drawn
+    }
+
+    /// **Move every material batch out of this store and into `into`**, keeping each batch's exact
+    /// readings — an expedition's homecoming, the material twin of the leftover pack.
+    ///
+    /// **Batch by batch rather than pooled**, for the same reason the supply network balances per
+    /// rating: one averaged arrival would drag a mammoth hide down to a hare pelt on the walk home.
+    /// The destination's ordinary merge rule then runs per batch, which is where merging belongs.
+    pub fn drain_materials_into(&mut self, into: &mut LocalStore) {
+        let moving = std::mem::take(&mut self.materials);
+        for (material, batches) in moving {
+            for (band, batch) in batches {
+                into.deposit_material(&material, band, batch.amount, &batch.characteristics);
+            }
+        }
+    }
+
+    /// **Withdraw from ONE named batch** — the supply network's move, which knows exactly which
+    /// rating it is shipping and must not re-sort by anything. Returns what was actually taken.
+    pub fn take_material_batch(
+        &mut self,
+        material: &str,
+        band: &crate::materials_config::BandKey,
+        amount: Scalar,
+    ) -> Scalar {
+        let Some(batches) = self.materials.get_mut(material) else {
+            return scalar_zero();
+        };
+        let Some(batch) = batches.get_mut(band) else {
+            return scalar_zero();
+        };
+        let taken = min(amount.max(scalar_zero()), batch.amount);
+        batch.amount -= taken;
+        if batch.amount <= scalar_zero() {
+            batches.remove(band);
+        }
+        if batches.is_empty() {
+            self.materials.remove(material);
+        }
+        taken
+    }
+
+    /// **What [`Self::take_material`] WOULD draw, without drawing it** — the readout's twin.
+    ///
+    /// The published craft offer has to state the grade a pass would come out at, and the grade is a
+    /// function of *which piles the draw would spend*: worst-first on the read axis, so a band with
+    /// one poor hide and one excellent one makes the poor sled first. Re-deriving that client-side is
+    /// impossible (the ordering is the store's) and re-deriving it here with a second walk is how the
+    /// preview and the draw come to disagree — so both run [`spend_order`].
+    ///
+    /// A short store previews what it *has*; the availability test is a separate question the caller
+    /// asks with [`Self::material_total`].
+    pub fn preview_take_material(
+        &self,
+        material: &str,
+        axis: &str,
+        amount: Scalar,
+    ) -> Vec<MaterialDraw> {
+        let mut remaining = amount.max(scalar_zero());
+        let mut drawn = Vec::new();
+        let Some(batches) = self.materials.get(material) else {
+            return drawn;
+        };
+        for key in spend_order(batches, axis) {
+            if remaining <= scalar_zero() {
+                break;
+            }
+            let batch = &batches[&key];
+            let taken = min(remaining, batch.amount);
+            if taken <= scalar_zero() {
+                continue;
+            }
+            remaining -= taken;
+            drawn.push(MaterialDraw {
+                band: key,
+                amount: taken,
+                characteristics: batch.characteristics.clone(),
+            });
+        }
+        drawn
+    }
+}
+
+/// **Worst-first on `axis`, ties broken by the band key** — the one spend order, shared by
+/// [`LocalStore::take_material`] and [`LocalStore::preview_take_material`] so a published grade
+/// cannot disagree with the grade the bench then fixes.
+///
+/// A batch that does not carry `axis` sorts **last**: it cannot occur (a yield row is validated to
+/// name exactly the material's axes), and spending it last means a mis-named axis burns the cheap
+/// stock rather than the good.
+fn spend_order(
+    batches: &BTreeMap<crate::materials_config::BandKey, MaterialBatch>,
+    axis: &str,
+) -> Vec<crate::materials_config::BandKey> {
+    let mut order: Vec<crate::materials_config::BandKey> = batches.keys().cloned().collect();
+    order.sort_by(|a, b| {
+        let reading = |key: &crate::materials_config::BandKey| {
+            batches[key]
+                .characteristics
+                .get(axis)
+                .copied()
+                .unwrap_or(f32::INFINITY)
+        };
+        reading(a)
+            .partial_cmp(&reading(b))
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.cmp(b))
+    });
+    order
 }
 
 /// Population representation bound to a home tile.
@@ -1380,20 +1674,68 @@ impl SourceYield {
     };
 }
 
-/// **A band's TOE, as WEAR** — how much of each consumable item it has used up (the TOE,
-/// `docs/plan_early_game_labor.md` → "Equipment / TOE", `docs/plan_hunt_through_combat.md` §4.8).
-/// What each item does, how long it lasts and what wears it are config
-/// ([`crate::equipment_config::EquipmentConfig`]); what a band owns is only *how worn* its items are.
+/// **The craft quality one batch came out at** — the grade the bench selected, and the absolutes it
+/// declared.
 ///
-/// **Wear, not stock, and that is what makes the band START KITTED for free**: `Default` is an empty
-/// ledger, so every spawn site inserts a full kit without reading config, and "start-stocked, not
-/// craftable" needs no seeding pass. An item is **equipped while its wear is strictly below its
-/// `starting_durability`**; past that the role steps down to its unequipped tier and **stays there**
-/// — nothing in this slice ever reduces wear.
+/// **The effects are resolved at CRAFT TIME and carried, not looked up later**, which is what makes
+/// *"the grade is fixed at craft time and never moves"* structural rather than remembered: a recipe
+/// retuned under a running world cannot re-grade a sled already in the band's hands, and neither can
+/// the recipe being swapped off the bench. It is the same reason [`DrawnInputs`] carries its reading.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BatchGrade {
+    /// The grade id the draw selected — a `characteristic_bands` name (`poor` / `fair` / `good` /
+    /// `excellent`), because there is **one quality ladder for the whole game**: the same four words
+    /// rate the hide and the sled made out of it. The readout's word.
+    pub id: String,
+    /// The absolutes this grade declares, copied from the recipe at the moment of the craft.
+    pub effects: Vec<crate::equipment_config::EquipmentEffect>,
+}
+
+/// **One batch of an item a band owns** — a count of interchangeable units, what they were made at,
+/// and the condition spent on the one currently in hand.
 ///
-/// **An ABSENT entry reads as zero wear, not as "no such item".** That is the same reading the
-/// three named fields this replaced had by construction, and it is what keeps a band spawned before
-/// a config gained an item from being born with it already spent.
+/// **Ten spears made together wear together**: the batch carries **one** wear number, and it is the
+/// unit in use that is spending it. A batch of `count` therefore holds `count ×
+/// starting_durability` of life, spent one unit at a time — crossing the durability retires a unit
+/// and starts the next, exactly as a fractional flow becomes an event on a whole-unit crossing.
+///
+/// **Idle stock does not rot.** Nothing charges a batch that did not go out, and nothing decays one
+/// over turns, so stockpiling ahead of a hard season is a real strategy rather than a slow loss.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EquipmentBatch {
+    /// Whole units left in this batch, the one in hand included. A batch that reaches `0` is
+    /// removed rather than kept at zero, so *"does the band own one"* is a question about presence.
+    pub count: u32,
+    /// The [`crate::equipment_config::EquipmentTier`] id these units were made at.
+    pub tier: String,
+    /// The craft grade, or `None` for a **start-stocked** unit: a shipped kit has a tier but was
+    /// never on anyone's bench, so it has no grade to carry.
+    pub grade: Option<BatchGrade>,
+    /// Condition spent on the unit currently in hand, on the config's 0–100 scale. Kept strictly
+    /// below the tier's `starting_durability` while `count > 0`.
+    pub wear: f32,
+}
+
+/// **A band's TOE, as BATCHES** — what it owns of each consumable item and how worn the unit in hand
+/// is (the TOE, `docs/plan_early_game_labor.md` → "Equipment / TOE",
+/// `docs/plan_hunt_through_combat.md` §4.8). What each item does, how long each tier lasts and what
+/// wears it are config ([`crate::equipment_config::EquipmentConfig`]).
+///
+/// > **AN ABSENT ENTRY IS *NOT OWNED*.** It used to read as a *full* item, which was correct for
+/// > exactly as long as nothing could make a second spear: crafting can introduce an item a band has
+/// > never had, and the old reading made that state unrepresentable. Every spawn and restore path
+/// > therefore **inserts explicitly** — `spawn_profile_population`, both expedition-outfitting paths
+/// > in `bin/server.rs`, and `sim_state.rs` — and
+/// > [`crate::equipment_config::EquipmentConfig::start_stocked_items`] is what they stock.
+///
+/// **A spawn inserts `count: 1` per item, at the tier that ships known, and that is what preserves
+/// the shipped opening exactly**: one unit is one item's `starting_durability`, which is the life
+/// the game has always had. A count above 1 is something crafting bought — counts do **not**
+/// multiply the shipped kit's life.
+///
+/// An item is **equipped while some batch's wear is strictly below its tier's
+/// `starting_durability`**; with none left the role steps down to its unequipped tier and stays
+/// there until a bench makes another.
 ///
 /// **Wear is charged for USE, never for turns elapsed** (`docs/plan_denial_raid.md` §1.2) — a turn
 /// clock would charge an idle march the same as a slaughter and make denial free. **Each item has its
@@ -1406,67 +1748,248 @@ impl SourceYield {
 /// spears were would silently re-stock them on rollback.
 #[derive(Component, Debug, Clone, Default, PartialEq)]
 pub struct BandEquipment {
-    /// Condition spent per item id, on the config's 0–100 scale. A `BTreeMap` rather than a `HashMap`
-    /// so the checkpoint and the wire serialize in a stable order — a rollback that reordered this
-    /// would diff as a change every frame.
-    wear: std::collections::BTreeMap<String, f32>,
+    /// Batches per item id. A `BTreeMap` rather than a `HashMap` so the checkpoint and the wire
+    /// serialize in a stable order — a rollback that reordered this would diff as a change every
+    /// frame — and a `Vec` inside it because batch order is insertion order, which is what makes
+    /// *"the most worn first, earliest batch on a tie"* a deterministic rule.
+    batches: std::collections::BTreeMap<String, Vec<EquipmentBatch>>,
+    /// **Whole units this band has WORN OUT, per item and PER TIER**, ever. Monotonic; only
+    /// [`Self::wear_item`] raises it, and that seam already holds the tier of the unit it is
+    /// destroying, so the key costs nothing to record.
+    ///
+    /// **It exists because a batch that runs out of units is REMOVED**, so *"the sled broke"* and
+    /// *"we have never had a sled"* are the same empty ledger — and they are not the same sentence to
+    /// a player. Without this the panel's `Worn out` wording is unrepresentable and every count of
+    /// zero has to read as *never made*, which is wrong for exactly the item the player just lost.
+    ///
+    /// **The TIER is part of the key because the readout names it out loud.** *"last flint set wore
+    /// out"* is a claim about which tier was lost, and an item-wide tally could only *infer* one —
+    /// the day iron ships beside bronze and flint, inferring *"the tier below what I can now make"*
+    /// names bronze for a flint set that actually wore out. A published string asserting the wrong
+    /// tier is worse than saying nothing.
+    ///
+    /// An item with no entry has retired none. **Not gameplay**: nothing in the sim branches on it,
+    /// and it must not become a repair discount or a durability bonus — it is the readout's memory.
+    retired: std::collections::BTreeMap<String, std::collections::BTreeMap<String, u32>>,
 }
 
 impl BandEquipment {
-    /// Condition spent on `item` so far. **Absent reads as `0.0`** — see the type's docs.
-    pub fn wear_of(&self, item: &str) -> f32 {
-        self.wear.get(item).copied().unwrap_or(0.0)
+    /// **A fully start-stocked band** — one unit of every item some kit carries, at that item's
+    /// default tier and unworn.
+    ///
+    /// It is what a spawn inserts, and it is also the **fresh reference ledger** every
+    /// quarry-scoring and roster-quoting surface resolves against (`kit_supplying`,
+    /// `quarry_default_hunt_kit`, the published kit roster, a launch forecast): *which* kit supplies
+    /// a stat is a property of quarry × roster and must not move as one band wears its gear down.
+    ///
+    /// **`Default` is an EMPTY ledger and now means "owns nothing"**, so a site that wants the fresh
+    /// tier has to say so with this — which is precisely the flip, made impossible to miss.
+    ///
+    /// **A SPAWN wants [`Self::start_stocked_owned`]** — this one leaves every batch *ungraded*,
+    /// which is right for a reference (a scoring pass reads stats, and a grade name is a label) and
+    /// wrong for gear a band actually owns and a ledger names out loud.
+    pub fn start_stocked(config: &crate::equipment_config::EquipmentConfig) -> Self {
+        let mut stocked = Self::default();
+        for (id, item) in config.start_stocked_items() {
+            stocked.stock(id, ONE_UNIT, &item.default_tier().id, None);
+        }
+        stocked
     }
 
-    /// Every item this band has spent condition on, in id order — the checkpoint's and the wire's
+    /// **What a band or a detached party actually OWNS at spawn** — [`Self::start_stocked`] with
+    /// every batch stamped with the grade a bare-handed craft of that item comes out at
+    /// ([`crate::recipes_config::RecipesConfig::anchor_grade_for_item`]).
+    ///
+    /// **A start-stocked unit IS an anchor-grade craft, so it says so.** A spawn stocks the item's
+    /// default tier (`equipment.md` → *"flint is today's spear, verbatim"*) and `validate` requires
+    /// the anchor grade to agree with that tier for every stat it declares — the two perform
+    /// identically, and the ledger simply was not saying which. An unstamped batch published a bare
+    /// `×1` beside rows reading `×3 good`, which is indistinguishable from a panel that failed to
+    /// draw something.
+    ///
+    /// **The NAME only; the effects payload stays empty.** A start-stocked unit's stats come from
+    /// the tier and must keep coming from there — the grade name is a label `validate` already ties
+    /// to those numbers, not a second home for them. An empty grade payload resolves through
+    /// [`crate::equipment_config::LiveItem::effect_entry`] exactly as `None` does, so the shipped
+    /// opening is unchanged by construction.
+    ///
+    /// An item no recipe makes keeps `None`: there is no crafted equivalent to claim. Every shipped
+    /// start-stocked item has a recipe, so that is unreachable today.
+    pub fn start_stocked_owned(
+        equipment: &crate::equipment_config::EquipmentConfig,
+        recipes: &crate::recipes_config::RecipesConfig,
+        materials: &crate::materials_config::MaterialsConfig,
+    ) -> Self {
+        let mut stocked = Self::default();
+        for (id, item) in equipment.start_stocked_items() {
+            let grade = recipes
+                .anchor_grade_for_item(id, materials)
+                .map(|band| BatchGrade {
+                    id: band.to_string(),
+                    effects: Vec::new(),
+                });
+            stocked.stock(id, ONE_UNIT, &item.default_tier().id, grade);
+        }
+        stocked
+    }
+
+    /// **Add a batch of `count` units** — a spawn's start kit, or the bench delivering a finished
+    /// craft. Unworn, because nothing has used it yet.
+    ///
+    /// This is the **one** seam in the sim that adds condition, and it is what ends *"start-stocked
+    /// and NOT craftable"*: running dry stopped being a one-way door the moment a bench could
+    /// replace the thing. It never touches an existing batch — *"the next ten are their own batch"*
+    /// is what keeps a fresh craft from averaging into a half-spent pile.
+    pub fn stock(&mut self, item: &str, count: u32, tier: &str, grade: Option<BatchGrade>) {
+        if count == 0 {
+            return;
+        }
+        self.batches
+            .entry(item.to_string())
+            .or_default()
+            .push(EquipmentBatch {
+                count,
+                tier: tier.to_string(),
+                grade,
+                wear: 0.0,
+            });
+    }
+
+    /// Every batch this band holds, item by item in id order — the checkpoint's and the wire's
     /// iteration.
-    pub fn worn_items(&self) -> impl Iterator<Item = (&str, f32)> {
-        self.wear.iter().map(|(id, wear)| (id.as_str(), *wear))
+    pub fn batches(&self) -> impl Iterator<Item = (&str, &[EquipmentBatch])> {
+        self.batches
+            .iter()
+            .map(|(id, batches)| (id.as_str(), batches.as_slice()))
     }
 
-    /// Restore a ledger entry verbatim — the checkpoint's setter. Not for gameplay: the only
-    /// gameplay-side mutation is [`Self::wear_item`], which can never *reduce* wear.
-    pub fn restore_wear(&mut self, item: &str, wear: f32) {
-        self.wear.insert(item.to_string(), wear);
+    /// **This item's batches**, in insertion order — empty for one the band does not own. The
+    /// direct lookup beside [`Self::batches`]'s full walk, so a per-item readout does not scan the
+    /// whole ledger once per item.
+    pub fn batches_of(&self, item: &str) -> &[EquipmentBatch] {
+        self.batches
+            .get(item)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
+    /// Restore an item's batches verbatim — the checkpoint's setter. Not for gameplay: the only
+    /// gameplay-side mutations are [`Self::wear_item`], which can never *reduce* wear, and
+    /// [`Self::stock`], which is a spawn or the bench delivering a finished item.
+    pub fn restore_batches(&mut self, item: &str, batches: Vec<EquipmentBatch>) {
+        if batches.is_empty() {
+            self.batches.remove(item);
+        } else {
+            self.batches.insert(item.to_string(), batches);
+        }
+    }
+
+    /// **Condition spent on the units the band still holds** — the sum of every batch's `wear`.
+    ///
+    /// **A retired unit is not counted**, because a batch that ran out of units is gone: this reads
+    /// what is *in hand*, which is what a wear-charge assertion over a single unbroken batch wants
+    /// and what the *"how much of this quantum was charged"* arithmetic divides.
+    pub fn wear_of(&self, item: &str) -> f32 {
+        self.batches
+            .get(item)
+            .map(|batches| batches.iter().map(|batch| batch.wear).sum())
+            .unwrap_or(0.0)
+    }
+
+    /// **Whole units of `item` the band owns**, across every batch — the count a *"turns left"*
+    /// readout and a stockpiling decision both need.
+    pub fn count_of(&self, item: &str) -> u32 {
+        self.batches
+            .get(item)
+            .map(|batches| batches.iter().map(|batch| batch.count).sum())
+            .unwrap_or(0)
+    }
+
+    /// **The batch actually in use** — the **most worn** one that still has condition, earliest on a
+    /// tie.
+    ///
+    /// Worst-first is what makes the stock run out **one batch at a time** rather than all at once,
+    /// which is what makes *"turns left"* a real readout; and because the same batch answers for the
+    /// party's tier ([`crate::equipment_config::EquipmentConfig::live_item`]), what the party is
+    /// priced at is always what the party is spending.
+    ///
+    /// **An item the config does not carry has no serving batch**, rather than an immortal one: a
+    /// kit cannot reference one (validate rejects it), so this arm is reachable only by a band
+    /// restored from a checkpoint written against a config that has since dropped the item.
+    pub(crate) fn serving_batch(
+        &self,
+        item: &str,
+        config: &crate::equipment_config::EquipmentConfig,
+    ) -> Option<&EquipmentBatch> {
+        let def = config.item(item)?;
+        self.serving_index(item, def)
+            .map(|index| &self.batches[item][index])
+    }
+
+    /// The index of [`Self::serving_batch`] within the item's own `Vec`.
+    fn serving_index(
+        &self,
+        item: &str,
+        def: &crate::equipment_config::ItemDefinition,
+    ) -> Option<usize> {
+        let batches = self.batches.get(item)?;
+        batches
+            .iter()
+            .enumerate()
+            .filter(|(_, batch)| {
+                batch.count > 0 && batch.wear < def.tier_or_default(&batch.tier).starting_durability
+            })
+            // The greatest wear wins; `>` rather than `>=` keeps the earliest batch on a tie, the
+            // same tie-break the kit roster's file order uses.
+            .max_by(|(_, a), (_, b)| {
+                a.wear
+                    .partial_cmp(&b.wear)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(index, _)| index)
     }
 
     /// **Does the band still have condition in this item?** — half of the effective predicate, never
-    /// the whole of it. **Strictly below** `starting_durability`, so an item worn exactly to its limit
-    /// is spent: the cliff lands on the turn the last charge is used, not one turn later.
+    /// the whole of it. **Strictly below** the tier's `starting_durability`, so a unit worn exactly
+    /// to its limit is spent: the cliff lands on the turn the last charge is used, not one turn
+    /// later.
     ///
     /// **Crate-private on purpose.** Whether that condition is *serving* also depends on whether the
     /// party's chosen kit reaches for the item at all, and
     /// [`crate::equipment_config::KitChoice::item_live`] is the one place the two halves are joined. A
     /// caller that could ask this directly would be a second way to ask the question — and the one
     /// that silently re-arms a party sent out with no kit.
-    ///
-    /// **An item the config does not carry has no condition**, rather than infinite condition: a kit
-    /// cannot reference one (validate rejects it), so this arm is reachable only by a band restored
-    /// from a checkpoint written against a config that has since dropped the item.
     pub(crate) fn has_condition(
         &self,
         item: &str,
         config: &crate::equipment_config::EquipmentConfig,
     ) -> bool {
-        config
-            .item(item)
-            .is_some_and(|def| self.wear_of(item) < def.starting_durability)
+        self.serving_batch(item, config).is_some()
     }
 
-    /// Remaining condition on an item, clamped at `0` — the wire readout, and the number a player
-    /// watches run down. `0` for an item the config does not carry.
+    /// Remaining condition on the unit in hand, clamped at `0` — the wire readout, and the number a
+    /// player watches run down. **`0` for an item the band does not own**, which is the flip: an
+    /// absent entry is not a fresh item.
     pub fn remaining(&self, item: &str, config: &crate::equipment_config::EquipmentConfig) -> f32 {
-        config.item(item).map_or(0.0, |def| {
-            (def.starting_durability - self.wear_of(item)).max(0.0)
+        let Some(def) = config.item(item) else {
+            return 0.0;
+        };
+        self.serving_batch(item, config).map_or(0.0, |batch| {
+            (def.tier_or_default(&batch.tier).starting_durability - batch.wear).max(0.0)
         })
     }
 
-    /// **Charge `item` for `uses` of its own quantum.** One entry point for every item, so no item can
-    /// grow a private flooring rule: a non-finite or negative `uses` reads as **no use**, because a
-    /// degenerate take must never *restore* a kit and nothing in this slice replenishes one.
+    /// **Charge `item` for `uses` of its own quantum**, against the batch in hand. One entry point
+    /// for every item, so no item can grow a private flooring rule: a non-finite or negative `uses`
+    /// reads as **no use**, because a degenerate take must never *restore* a kit.
     ///
-    /// A no-op for an item the config does not carry — there is no rate to bill at, and inventing one
-    /// would be a silent second source for a number that lives in the config.
+    /// **A crossing retires a unit rather than the batch.** Wear past the tier's durability consumes
+    /// the unit in hand and carries the remainder onto the next one, so ten spears really are ten
+    /// spears' worth of life; a batch that runs out of units is dropped, and the charge stops there
+    /// rather than spilling onto stock that never went out.
+    ///
+    /// A no-op for an item the band does not own or the config does not carry — there is no rate to
+    /// bill at, and inventing one would be a silent second source for a number that lives in config.
     pub fn wear_item(
         &mut self,
         config: &crate::equipment_config::EquipmentConfig,
@@ -1477,10 +2000,73 @@ impl BandEquipment {
             return self;
         };
         let charged = usable_uses(uses) * def.wear.amount;
-        if charged > 0.0 {
-            *self.wear.entry(item.to_string()).or_insert(0.0) += charged;
+        if charged <= 0.0 {
+            return self;
+        }
+        let Some(index) = self.serving_index(item, def) else {
+            return self;
+        };
+        let Some(batches) = self.batches.get_mut(item) else {
+            return self;
+        };
+        let batch = &mut batches[index];
+        let durability = def.tier_or_default(&batch.tier).starting_durability;
+        batch.wear += charged;
+        let mut retired = 0u32;
+        while batch.count > 0 && batch.wear >= durability {
+            batch.count -= 1;
+            batch.wear -= durability;
+            retired += 1;
+        }
+        // **The tier is read off the batch being spent**, before it can be dropped — this seam knows
+        // which tier it is destroying, so the readout never has to guess one later.
+        let tier = batch.tier.clone();
+        let emptied = batch.count == 0;
+        if emptied {
+            batches.remove(index);
+            if batches.is_empty() {
+                self.batches.remove(item);
+            }
+        }
+        // **The readout's memory, written on the one seam that destroys a unit.** See the field's
+        // docs: an emptied batch is removed, so without this the panel could not say *"worn out"*.
+        if retired > 0 {
+            *self
+                .retired
+                .entry(item.to_string())
+                .or_default()
+                .entry(tier)
+                .or_default() += retired;
         }
         self
+    }
+
+    /// **Whole units of `item` this band has worn out**, ever, across every tier. `0` for an item it
+    /// has never retired — including one it has never owned.
+    ///
+    /// Paired with [`Self::count_of`] it separates the two states a count of zero collapses:
+    /// `count 0, retired > 0` is **worn out**, `count 0, retired 0` is **never made**.
+    ///
+    /// **The checkpoint carries it for free**: `SimState`'s `BandRecord::equipment` clones the whole
+    /// [`BandEquipment`], so there is no restore setter beside [`Self::restore_batches`] to forget.
+    pub fn retired_of(&self, item: &str) -> u32 {
+        self.retired
+            .get(item)
+            .map(|tiers| tiers.values().sum())
+            .unwrap_or(0)
+    }
+
+    /// **Which TIERS of `item` this band has worn out, and how many of each** — in tier-id order,
+    /// empty for an item it has never retired.
+    ///
+    /// The readout's join: *"last flint set wore out"* names a tier, and this is the only record of
+    /// which one it was. [`Self::retired_of`] is the same tally summed for a caller that only asks
+    /// *whether* anything broke.
+    pub fn retired_tiers_of(&self, item: &str) -> impl Iterator<Item = (&str, u32)> {
+        self.retired
+            .get(item)
+            .into_iter()
+            .flat_map(|tiers| tiers.iter().map(|(tier, count)| (tier.as_str(), *count)))
     }
 
     /// **Charge every item in `kit` whose quantum is `quantum`.** The seam every wear site calls, and
@@ -1524,6 +2110,11 @@ impl BandEquipment {
     }
 }
 
+/// **What a spawn stocks of each start-kit item: one.** One unit is one item's
+/// `starting_durability`, which is the life the shipped game has always had — so the opening is
+/// preserved exactly and a count above `1` is something crafting bought.
+const ONE_UNIT: u32 = 1;
+
 /// The uses a wear charge may actually bill for: non-finite or negative input reads as **no use**.
 /// One helper for every item and every quantum, so none can grow its own flooring rule — a negative
 /// take must never *restore* a kit, because nothing in this slice replenishes one.
@@ -1532,6 +2123,164 @@ fn usable_uses(uses: f32) -> f32 {
         uses.max(0.0)
     } else {
         0.0
+    }
+}
+
+/// **What one draw of a recipe's inputs came out at** — fixed when the materials leave the store and
+/// never touched again.
+///
+/// **The grade is resolved HERE, at draw time, and never moves.** It is not a taper: an item made
+/// from the last good hide in the pile is that good however poor the pile gets while it is being
+/// made, and a tool that runs dry mid-craft does not retroactively coarsen the thing on the bench.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DrawnInputs {
+    /// The amount-weighted average reading of everything drawn on the recipe's `reads` axis.
+    /// `None` for a recipe that reads nothing (an alloy).
+    pub reading: Option<f32>,
+    /// The grade that reading selected, **after** the tool's quality ceiling. `None` for a recipe
+    /// that declares no grades.
+    pub grade: Option<String>,
+    /// **What actually came out of the store**, one row per input material in the recipe's own input
+    /// order — the pile a clear or a swap destroys.
+    ///
+    /// It is the **withdrawn** amount rather than the recipe's stated one, because a bench tool's
+    /// `craft_material_efficiency` sits between them, and the readout that names what will be lost
+    /// has to name what was really taken.
+    pub withdrawn: Vec<DrawnMaterial>,
+}
+
+/// **One material's share of a draw** — a row of [`DrawnInputs::withdrawn`].
+///
+/// Distinct from [`MaterialDraw`], which is one *batch* of one material: a draw walks the store
+/// worst-first and may take from several batches, and what the bench holds afterwards is the total.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DrawnMaterial {
+    /// The `materials.json` id — **generic**, `hide` and never `deer_hide`.
+    pub material: String,
+    /// What the store actually lost on this row, summed over every batch the draw touched.
+    pub amount: Scalar,
+}
+
+/// **A band's crafting bench — ONE job at a time.**
+///
+/// Design: `docs/plan_crafting_and_materials.md` §5/§7. **Make IS the assignment**: putting a recipe
+/// on the bench draws idle workers onto it, so there is no Crafter role card and no
+/// [`LaborTarget`] variant. Crafting always has a subject, so it is staffed like a worked source
+/// rather than like a standing role.
+///
+/// **The crew is its own number and it comes out of the same pool `assign_labor` spends**
+/// ([`crate::components::available_workers`] minus what the bench holds), so a band cannot staff the
+/// bench and the range with the same people. Clearing the job returns them.
+///
+/// **Persisted** (`SimState`'s `BandRecord::bench`) — a checkpoint that forgot a half-finished craft
+/// would silently hand back the materials it had already drawn.
+#[derive(Component, Debug, Clone, Default, PartialEq)]
+pub struct BandBench {
+    /// The recipe on the bench, or `None` for an idle bench. An id from `recipes.json`, resolved at
+    /// the command boundary so an unknown one is a command failure rather than a bench that quietly
+    /// does nothing.
+    pub recipe_id: Option<String>,
+    /// How many of the band's workers are on it.
+    pub workers: u32,
+    /// Progress toward this pass's `work`. Fixed-point, so a slow bench accumulates instead of
+    /// rounding to nothing each turn.
+    pub progress: Scalar,
+    /// The materials already withdrawn for the pass in flight, and the grade they fixed. `None`
+    /// before the draw — a **short draw withdraws nothing at all**, so this stays `None` and the
+    /// turn is a no-op rather than a half-spent pile.
+    pub drawn: Option<DrawnInputs>,
+    /// **How many items this bench has finished on the current job** — the same count the wear and
+    /// the lesson were charged, so a readout of one is a readout of the others.
+    pub items_completed: u32,
+    /// The grade of the last item this bench finished, for the readout. Cleared with the job.
+    pub last_output_grade: Option<String>,
+}
+
+impl BandBench {
+    /// **Put a recipe on the bench**, discarding whatever was there. Progress and the drawn pile go
+    /// with it: a job swapped out mid-pass has to draw again, because the materials it drew were for
+    /// the thing it is no longer making.
+    pub fn set_job(&mut self, recipe_id: &str, workers: u32) {
+        self.recipe_id = Some(recipe_id.to_string());
+        self.workers = workers;
+        self.progress = scalar_zero();
+        self.drawn = None;
+        self.items_completed = 0;
+        self.last_output_grade = None;
+    }
+
+    /// Take the job off the bench and hand the crew back.
+    pub fn clear_job(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Whether anything is on the bench at all.
+    pub fn is_running(&self) -> bool {
+        self.recipe_id.is_some()
+    }
+}
+
+/// **A band's head-count, resolved in ONE place for every reader of it.**
+///
+/// A band's working-age people are spent on exactly two things — the [`LaborAllocation`]'s
+/// assignments and the [`BandBench`]'s crew — and every question anyone asks about staffing is one
+/// of the three differences below. They live together because they are the same arithmetic read
+/// three ways: the command clamps, the published `idleWorkers`, and the client readouts that size a
+/// stepper must agree by construction.
+///
+/// **The bench is netted out exactly once, here.** It used to be subtracted at each command site
+/// and *not* at the publish site, so a band with four hands at the bench published them as idle —
+/// and it over-reported in the reassuring direction, telling the player it had hands free that were
+/// already busy. Two authorities over one number is how they drift; this is the one authority.
+pub struct BandWorkforce {
+    /// Every whole working-age person the band has, before anything is staffed
+    /// ([`available_workers`] of the cohort's `working` bracket).
+    pub pool: u32,
+    /// What the labor allocation already staffs across all its sources and roles.
+    pub assigned: u32,
+    /// What is standing at the bench. Not a [`LaborTarget`] — a bench is not an in-range source, and
+    /// giving it one would put a fictitious row on every yield readout in the game — so it is never
+    /// part of `assigned` and has to be subtracted on its own.
+    pub benched: u32,
+}
+
+impl BandWorkforce {
+    /// Read the three numbers off a band's components. Each is optional because a hand-rolled
+    /// fixture (and a band spawned before a component existed) may carry none of them; an absent
+    /// component reads as zero, which is the same fallback the rest of the band pass takes.
+    pub fn resolve(
+        cohort: Option<&PopulationCohort>,
+        allocation: Option<&LaborAllocation>,
+        bench: Option<&BandBench>,
+    ) -> Self {
+        Self {
+            pool: cohort.map(|c| available_workers(c.working)).unwrap_or(0),
+            assigned: allocation.map(|a| a.assigned_total()).unwrap_or(0),
+            benched: bench.map(|b| b.workers).unwrap_or(0),
+        }
+    }
+
+    /// **Free hands: staffed on neither the range nor the bench.** The published
+    /// `PopulationCohortState.idleWorkers`, and the number every "n idle of m" readout in the game
+    /// shows.
+    pub fn idle(&self) -> u32 {
+        self.pool
+            .saturating_sub(self.assigned)
+            .saturating_sub(self.benched)
+    }
+
+    /// **The ceiling an `assign_labor` clamps against** — the pool the *range* may spend, which the
+    /// bench's crew has already left. Passed to [`LaborAllocation::set_assignment`], which nets out
+    /// the other assignments itself (and lets a re-staffed source reuse its own crew), so this must
+    /// NOT have `assigned` taken off it.
+    pub fn assignable(&self) -> u32 {
+        self.pool.saturating_sub(self.benched)
+    }
+
+    /// **The ceiling a bench command clamps against** — `idle` plus the crew already at the bench,
+    /// because a band's own crew stays put while its job is swapped and must not be counted twice.
+    pub fn benchable(&self) -> u32 {
+        self.pool.saturating_sub(self.assigned)
     }
 }
 
@@ -2413,5 +3162,181 @@ mod tests {
         reported += DemographicFlowAccumulator::accrue(&mut carry, flow);
         reported += DemographicFlowAccumulator::accrue(&mut carry, flow);
         assert_eq!(reported, 3, "5 × 0.6 = 3.0 people");
+    }
+
+    // ---- The material batch map (`docs/plan_crafting_and_materials.md` §1) ----
+
+    /// A fixture material with two axes and two bands, so a reading either side of `0.5` lands in a
+    /// different band and the merge rule has something to refuse to merge.
+    const AXIS_TOUGH: &str = "toughness";
+    const AXIS_SUPPLE: &str = "suppleness";
+    const HIDE: &str = "hide";
+
+    fn readings(tough: f32, supple: f32) -> BTreeMap<String, f32> {
+        BTreeMap::from([
+            (AXIS_TOUGH.to_string(), tough),
+            (AXIS_SUPPLE.to_string(), supple),
+        ])
+    }
+
+    fn reading_of(batch: &MaterialBatch, axis: &str) -> f32 {
+        batch.characteristics.get(axis).copied().expect("axis")
+    }
+
+    /// **THE MERGE RULE, both halves.** Two arrivals in the same band become **one** batch, and the
+    /// surviving reading is the amount-weighted average — *not* either input's.
+    ///
+    /// The liveness half is the value assertion: a store that simply kept the first arrival, or the
+    /// last, would also report one batch, so counting batches alone cannot tell the merge from a
+    /// silent overwrite.
+    #[test]
+    fn two_arrivals_in_one_band_become_one_batch_at_the_weighted_average() {
+        let band = crate::materials_config::BandKey(vec![1, 1]);
+        let mut store = LocalStore::new();
+        store.deposit_material(
+            HIDE,
+            band.clone(),
+            Scalar::from_f32(10.0),
+            &readings(0.60, 0.70),
+        );
+        store.deposit_material(
+            HIDE,
+            band.clone(),
+            Scalar::from_f32(30.0),
+            &readings(0.80, 0.50),
+        );
+
+        let batches: Vec<_> = store.material_batches(HIDE).collect();
+        assert_eq!(batches.len(), 1, "one band, one batch");
+        let (_, batch) = batches[0];
+        assert_eq!(batch.amount, Scalar::from_f32(40.0));
+        // 10 × 0.60 + 30 × 0.80 over 40 = 0.75, which is NEITHER input.
+        assert!(
+            (reading_of(batch, AXIS_TOUGH) - 0.75).abs() < 1e-5,
+            "the batch must read the weighted average, got {}",
+            reading_of(batch, AXIS_TOUGH)
+        );
+        assert!(
+            (reading_of(batch, AXIS_SUPPLE) - 0.55).abs() < 1e-5,
+            "every axis blends, not just the first"
+        );
+        assert_eq!(store.material_total(HIDE), Scalar::from_f32(40.0));
+    }
+
+    /// The other half of the rule: **different bands never merge**, however close the readings. This
+    /// is what stops a mammoth hide being averaged into a hare pelt.
+    #[test]
+    fn two_arrivals_in_different_bands_stay_two_batches() {
+        let mut store = LocalStore::new();
+        store.deposit_material(
+            HIDE,
+            crate::materials_config::BandKey(vec![0, 1]),
+            Scalar::from_f32(10.0),
+            &readings(0.10, 0.90),
+        );
+        store.deposit_material(
+            HIDE,
+            crate::materials_config::BandKey(vec![1, 0]),
+            Scalar::from_f32(10.0),
+            &readings(0.90, 0.10),
+        );
+        assert_eq!(store.material_batches(HIDE).count(), 2);
+        assert_eq!(store.material_total(HIDE), Scalar::from_f32(20.0));
+    }
+
+    /// **Worst-first on the named axis** — the poor hide is spent before the excellent one, and the
+    /// axis the caller names is the one that decides. Both halves are asserted against each other:
+    /// drawing on `toughness` and drawing on `suppleness` must empty *opposite* batches, so an
+    /// implementation that ignored the axis (or sorted by band key) fails one of them.
+    #[test]
+    fn a_withdrawal_spends_the_worst_batch_on_the_named_axis_first() {
+        let tough = crate::materials_config::BandKey(vec![1, 0]);
+        let supple = crate::materials_config::BandKey(vec![0, 1]);
+        let stocked = || {
+            let mut store = LocalStore::new();
+            store.deposit_material(
+                HIDE,
+                tough.clone(),
+                Scalar::from_f32(10.0),
+                &readings(0.9, 0.1),
+            );
+            store.deposit_material(
+                HIDE,
+                supple.clone(),
+                Scalar::from_f32(10.0),
+                &readings(0.1, 0.9),
+            );
+            store
+        };
+
+        let mut store = stocked();
+        let drawn = store.take_material(HIDE, AXIS_TOUGH, Scalar::from_f32(10.0));
+        assert_eq!(drawn.len(), 1, "one batch covered the whole draw");
+        assert_eq!(drawn[0].band, supple, "the poorest TOUGHNESS goes first");
+        assert_eq!(
+            store
+                .material_batches(HIDE)
+                .map(|(band, _)| band.clone())
+                .collect::<Vec<_>>(),
+            vec![tough.clone()],
+            "the tough batch is untouched and the emptied one is pruned"
+        );
+
+        let mut store = stocked();
+        let drawn = store.take_material(HIDE, AXIS_SUPPLE, Scalar::from_f32(10.0));
+        assert_eq!(
+            drawn[0].band, tough,
+            "on the other axis the ordering must reverse, or the axis is being ignored"
+        );
+    }
+
+    /// A partial take leaves the batch's readings alone — an average does not move when a uniform
+    /// part of it is removed — and reports what it actually took.
+    #[test]
+    fn a_partial_withdrawal_leaves_the_batchs_reading_untouched() {
+        let band = crate::materials_config::BandKey(vec![1, 1]);
+        let mut store = LocalStore::new();
+        store.deposit_material(
+            HIDE,
+            band.clone(),
+            Scalar::from_f32(10.0),
+            &readings(0.62, 0.71),
+        );
+
+        let drawn = store.take_material(HIDE, AXIS_TOUGH, Scalar::from_f32(4.0));
+        assert_eq!(drawn.len(), 1);
+        assert_eq!(drawn[0].amount, Scalar::from_f32(4.0));
+        assert!((drawn[0].characteristics[AXIS_TOUGH] - 0.62).abs() < 1e-6);
+
+        let batches: Vec<_> = store.material_batches(HIDE).collect();
+        assert_eq!(batches[0].1.amount, Scalar::from_f32(6.0));
+        assert!(
+            (reading_of(batches[0].1, AXIS_TOUGH) - 0.62).abs() < 1e-6,
+            "removing a uniform part of a batch must not move its average"
+        );
+    }
+
+    /// A draw for more than the store holds takes everything and says so — the shortfall is the
+    /// caller's to report, and there is no partial-batch residue left behind.
+    #[test]
+    fn a_short_withdrawal_empties_the_store_and_reports_what_it_took() {
+        let mut store = LocalStore::new();
+        store.deposit_material(
+            HIDE,
+            crate::materials_config::BandKey(vec![0, 0]),
+            Scalar::from_f32(3.0),
+            &readings(0.2, 0.2),
+        );
+        let drawn = store.take_material(HIDE, AXIS_TOUGH, Scalar::from_f32(8.0));
+        let taken = drawn
+            .iter()
+            .fold(Scalar::zero(), |total, draw| total + draw.amount);
+        assert_eq!(taken, Scalar::from_f32(3.0));
+        assert_eq!(store.material_total(HIDE), Scalar::zero());
+        assert_eq!(
+            store.material_batches(HIDE).count(),
+            0,
+            "an emptied material leaves no husk, so two equal stores compare equal"
+        );
     }
 }

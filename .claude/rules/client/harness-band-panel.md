@@ -25,8 +25,8 @@ The Band/City dockable-panel PNG harness, and the arcs whose frames ride it.
 
 Dev-only preview harness for the **Band/City dockable panel**: instances the real `BandCityPanel` +
 `HudLayer`, injects the panel into the HUD, pushes a seeded player band through
-`update_band_alerts`, and dumps the panel docked left/right/top/bottom + collapsed
-(`band_panel_*.png`) so the chrome + the relocated band detail + the HUD reflow can be eyeballed
+`update_band_alerts`, and dumps the panel docked left/right/top/bottom + collapsed on one dock of each
+ORIENTATION (`band_panel_*.png`) so the chrome + the relocated band detail + the HUD reflow can be eyeballed
 without a server: `scripts/preview.sh res://tools/band_panel_preview.tscn`.
 
 **It isolates BOTH prefs files** — `NarrativeForkPanel.config_path_override` *and*
@@ -118,16 +118,20 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 233 `assert OK` lines, 264 `PASS` ones and ZERO `FAIL` ones.** (It
-was 235/293 while the retired **"start a life here"** arrival verb had coverage here — five frames
-(`band_panel_settle_offered` / `_withheld` / `_confirm` / `_too_small` / `_blocked_both`) and the
-`_assert_settle_*` family. Issue #511 replaced the verb with **band fission**, so those went and
-three took their place: `band_panel_split_ready` / `band_panel_split_too_few` /
-`band_panel_split_blocked_both`. **The `blocked_both` state is the one that earns its keep**, exactly
-as its settle predecessor did — it is the only frame where BOTH worker floors hold at once, so
-truncating `split_blocked_reason` to the first sentence fails there and nowhere else. Its band is
-squeezed to 7 workers on purpose: on the shared 16-worker fixture a split small enough to fail the
-new band's floor still leaves 14 at home, so one composition cannot trip both.) (**A new frame costs
+**A clean run exits 0 and prints 233 `assert OK` lines, 313 `: PASS` ones and ZERO `FAIL` ones, over
+91 frames.** **The three figures are MEASURED from a run, never summed** — band fission retired one
+family of frames here and added another in the same merge this arc landed in, so two arcs' deltas
+added by hand is exactly how a tally stops matching its harness. (The retired **"start a life
+here"** arrival verb had five frames here — `band_panel_settle_offered` / `_withheld` / `_confirm` /
+`_too_small` / `_blocked_both` — and the `_assert_settle_*` family. Issue #511 replaced the verb with
+**band fission**, so those went and three took their place: `band_panel_split_ready` /
+`band_panel_split_too_few` / `band_panel_split_blocked_both`. **The `blocked_both` state is the one
+that earns its keep**, exactly as its settle predecessor did — it is the only frame where BOTH worker
+floors hold at once, so truncating `split_blocked_reason` to the first sentence fails there and
+nowhere else. Its band is squeezed to 7 workers on purpose: on the shared 16-worker fixture a split
+small enough to fail the new band's floor still leaves 14 at home, so one composition cannot trip
+both.) (The ACTION REGISTRY's own block is worth sixteen `PASS` and the COLLAPSED RAIL thirty-three —
+see "`_assert_action_registry`" and "The collapsed rail's two frames" below.) (**A new frame costs
 TWO `assert OK`s, not one** — `_assert_zones_within_bounds` and `_assert_zone_content_fits`, one of
 each per state; the content-fits line names its state and the zone-rect line does not, which is what
 makes the second easy to miss when counting a log by eye.) (**The split sheet is opened by PRESSING
@@ -307,6 +311,93 @@ plus `event_dock_narrow_band` (1 frame / 3 assertions) from the review of #497.
 either** — 229 + 16 and 619 + 6, which is how that merge was checked: a tally that is exactly the
 sum of the two sides is evidence no claim was dropped resolving it, and a tally that is not is the
 first sign one was.
+
+## `_assert_action_registry` — one registry, three mount points, PNG-less
+
+**Sixteen `PASS`, no frame** for the two expanded mounts (259 -> 275 here; `ui_preview` untouched at
+713), plus **thirteen** for the COLLAPSED one (`_assert_collapse_re_home`, below). Nothing in it is
+visible in a picture: a panel one button wider is a plausible panel, a bar that reserved a row for
+nothing renders as a slightly taller card, and a glyph drawn on either row looks deliberate. The
+behaviour it guards is specified in `band-city-panel.md` -> "The action registry is ONE list with TWO
+mount points".
+
+It runs **LAST and PNG-less**, for the tier probes' own reason — it registers and retires actions and
+re-docks the panel, so anything rendered after it would render against a panel the run never chose. It
+restores the shipped `⚒` registration and the LEFT dock on the way out.
+
+- **EVERY MOUNT CLAIM IS A PAIRING** (`_assert_action_mount_pairing`, two `PASS` per call): the `⚒` on
+  the mount the orientation calls for AND absent from the other, plus the bar measuring a row only
+  where it carries them. A one-sided form — "the glyph is on the bar" — passes on a panel that lost
+  the button entirely, and a glyph-only form passes on one that mounted it twice. It is asked four
+  times by this block: on the LEFT dock, across the runtime **re-home** LEFT -> TOP, and across the
+  re-home back — and four more by `_assert_collapse_re_home`. **It asks all THREE mounts every time**,
+  so a rail that kept a copy of the expanded chrome's buttons fails rather than reading as "the glyph
+  is there".
+- **The WIDTH claims** (LEFT dock) register a second action through the REAL `register_action` and
+  assert the subject row's minimum width and the docked card's are unmoved (302.0 / 326.0, against the
+  380px the dock reserves), with the **vacuity** that the action ROW's own minimum did grow (30 ->
+  71px) — otherwise both hold because nothing was added.
+- **The HORIZONTAL claims** assert the body sits **flush** under the subject row with actions
+  registered (gap 0.0px, against 44.0 on the vertical dock — the paired positive), and that retiring
+  every action does not move the TOP dock's strip by a pixel (395 -> 395), with the vacuity that the
+  glyph really did leave the row. The registry costs a horizontal dock nothing in either state.
+- **The EMPTY-BAR claims** are back on the vertical dock, which is the only place the bar is ever
+  live: hidden and measuring 0, the body flush under the subject row, and the band zone getting the
+  bar's **44px back** (759 -> 803) — a vertical dock has no strip to grow, so the zone is what pays.
+
+Sabotage-verified on three mutations. Pinning the mount to the BAR (the layout this replaced) fails
+**three** — the LEFT -> TOP pairing pair and the horizontal flush claim; dropping `_refresh_action_mount()`
+from `set_dock` fails **the same three**, the re-home being what both mutations break (the walk back
+to LEFT then finds the mount already where it wants it, so that pairing stays green). Pinning the
+mount to the SUBJECT ROW fails a DISJOINT **nine** — both vertical pairings, the bar vacuity, both
+width claims naming the pre-change **340.0 / 364.0**, both flush claims and the return-leg pairing.
+
+### The collapsed rail's two frames, and `_assert_collapse_re_home`
+
+**One frame added (`band_panel_collapsed_bottom`, beside the existing `band_panel_collapsed`) and
+thirty-three `PASS`** — twenty on the two frames, thirteen in `_assert_collapse_re_home`. The
+behaviour is specified in `band-city-panel.md` -> "The collapsed rail runs along the dock's plentiful
+axis".
+
+**The two frames are a PAIR and neither is worth rendering alone**: the arrangement that is right on a
+tall left rail (stacked) is the one that pushes the restore toggle off a 46px horizontal one, and a
+rail showing its glyph looks like a rail in either thumbnail. `_assert_collapsed_rail(where,
+expect_stacked)` therefore asserts the axis BOTH ways round — stacked on the orientation that wants
+it, on one line on the other — over the glyph, the `⚒` and the restore toggle, and pairs it with the
+justification claim (trailing-end on a horizontal rail, centred in the strip on a vertical one).
+
+Three supporting claims, each covering a way the geometry passes while being wrong: the controls are
+inside the RESERVED STRIP rather than merely inside the card (a card grown past its own reservation
+puts them off-screen while still "containing" them); each is a full `ICON_BUTTON_SIZE` square, since a
+button clamped to nothing is inside every rect; and the strip the panel LAYS OUT equals the size it
+REPORTS reserving. That last one caught a real defect during the change — a bottom dock laid out at
+128px, the LEFT rail's stacked minimum, because the anchors ran before the rail was re-pointed.
+
+`_report_collapsed_rail_headroom` PRINTS rather than asserts, on both frames: what the rail spends of
+its cross axis (where `COLLAPSED_SIZE` is a floor) and of the long axis the verbs accumulate on —
+**108 of 1128px on a LEFT dock and 103 of 1550 on a BOTTOM one, i.e. ~31 and ~45 more verbs**.
+
+**`_assert_collapse_re_home` runs at the end of `_assert_action_registry`, PNG-less**, and walks
+collapse/expand on both orientations: the mount pairing on each of the four legs, a PRESS on the rail
+driven through the button's own `pressed` (found by walking the RAIL, never by id off
+`_action_buttons` — that dictionary holds whichever mount built it, so an id lookup would drive the
+BAR's copy and report the invoke as proof the rail works), and the gate travelling with the verb — a
+predicate answering false renders disabled on the expanded mount AND still disabled once the rail
+rebuilds the button, with an ungated action on that same rail as the vacuity.
+
+Sabotage-verified on four DISJOINT mutations. Pinning `_header_rail.vertical` true (the stacked rail
+both ways, i.e. the reported defect) fails **exactly two** — the horizontal frame's axis pairing and
+its justification claim, naming `right 974.0 vs rail 1733.0`. Making the rail not a mount fails
+**ten**: four mount pairings, both rail presses (`no probe button on the collapsed rail to press`),
+the LEFT frame's axis claim and its card-fits-strip claim. Returning the flat `COLLAPSED_SIZE` from
+the cross-axis size fails **exactly the two** card-fits-strip claims, one per orientation, naming
+`54.0 within 46.0` and `56.0 within 46.0`. And a mount that ignores the `enabled` predicate fails
+**exactly the two** gate claims. **The pairing is what makes the first of those two-sided**: a
+one-sided "they share a line" passes on a rail that lost the glyph.
+
+**`_assert_band_columns` compares the RAW strip again** (360 / 335 against the two consts), which is
+itself a registry claim: a horizontal dock mounts its actions on the subject row, so a bar leaking a
+row there fails those two before any mount assertion runs.
 
 **(1) COUNT FRAMES FROM A RUN INTO AN EMPTIED `ui_preview_out/`.** It is gitignored and never
 cleaned, so PNGs written by an experiment that was measured, rejected and REVERTED sat on disk and

@@ -23,5 +23,14 @@
   },
   "foddering": {
     "discovery_id": 2007
+  },
+  "tanning": {
+    "discovery_id": 2008
+  },
+  "weaving": {
+    "discovery_id": 2009
+  },
+  "bone_working": {
+    "discovery_id": 2010
   }
 }

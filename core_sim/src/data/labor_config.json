@@ -49,7 +49,8 @@
       "AquiferCeiling": 95.0,
       "NavigableRiver": 130.0
     },
-    "per_worker_biomass_capacity": 8.0,
+    "_comment_per_worker_biomass_capacity": "THE NO-EQUIPMENT BASELINE, NOT THE EQUIPPED RATE - THE NUMBER MOVED, THE KEY DID NOT. This was 8.0, the BASKETED gather rate, for as long as the basket's only home for its own payload was an `unequipped` line in equipment.json. Quality tiers ended that: what the MATERIAL buys sits on the item's TIER, so the baskets' `flint` tier now declares `forage_carry equipped 8.0` and THIS key is what a bare-handed gatherer carries - 1.6, the value the item used to declare. Its ROLE changed and its name did not, deliberately: every caller passes it into EquipmentConfig::forage_per_worker_biomass_capacity, whose argument is the fallback either way, so a rename would churn ~40 call sites to say the same thing. WHAT MUST NOT HAPPEN is a readout quoting THIS number as 'what a gatherer collects': a surface with no band to resolve a tier against wants EquipmentConfig::equipped_reference(ForageCarry), which answers 8.0 off the item table. See .claude/rules/core_sim/equipment.md.",
+    "per_worker_biomass_capacity": 1.6,
     "provisions_per_biomass": 0.05,
     "ecology": {
       "regrowth_rate": 0.25,
@@ -72,7 +73,8 @@
     "navigable_river_forage_bonus": 80.0
   },
   "hunt": {
-    "per_worker_biomass_capacity": 40.0
+    "_comment_per_worker_biomass_capacity": "THE NO-EQUIPMENT BASELINE, NOT THE EQUIPPED RATE - THE NUMBER MOVED, THE KEY DID NOT. This was 40.0, the SLEDDED haul rate, for as long as the sled's only home for its own payload was an `unequipped` line in equipment.json. Quality tiers ended that: the sled's `flint` tier now declares `hunt_carry equipped 40.0` and THIS key is what a sledless party drags - 12.0, the value the item used to declare. Its ROLE changed and its name did not, deliberately: every caller passes it into EquipmentConfig::hunt_per_worker_biomass_capacity (or ::pen_per_worker_biomass_capacity), whose argument is the fallback either way. WHAT MUST NOT HAPPEN is a readout quoting THIS number as 'what a hunter hauls': a herd row, a patch row or a Field's managed collection cap has no band to resolve a tier against and wants EquipmentConfig::equipped_reference(HuntCarry), which answers 40.0 off the item table. A PEN STILL SHARES THE HUNT HAUL'S RATE - `pen_carry`'s equipped side is resolved off the sled's tier through EquipmentStat::shares_equipped_rate_with, so that number still has exactly one home. See .claude/rules/core_sim/equipment.md.",
+    "per_worker_biomass_capacity": 12.0
   },
   "scout": {
     "vantage_distance_base": 2,

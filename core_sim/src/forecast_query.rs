@@ -678,7 +678,7 @@ mod tests {
                     knowledge: Vec::new(),
                     migration: None,
                 },
-                BandEquipment::default(),
+                BandEquipment::start_stocked(&EquipmentConfig::builtin()),
             ))
             .id()
     }
@@ -890,7 +890,7 @@ mod tests {
         let kit = equipment
             .resolve_kit_for_job(Some(DEFAULT_HUNT_KIT), KitJob::Hunt)
             .expect("the shipped default hunt kit resolves");
-        let fresh = BandEquipment::default();
+        let fresh = BandEquipment::start_stocked(&EquipmentConfig::builtin());
         let party = query_hunting_party(&world, &equipment, &kit, &fresh, herd.body_mass);
         let per_worker_haul = query_per_worker_haul(&world, &equipment, &kit, &fresh);
         let resolved = ResolvedAsk {
@@ -968,7 +968,7 @@ mod tests {
             &world,
             &equipment,
             &kit,
-            &BandEquipment::default(),
+            &BandEquipment::start_stocked(&EquipmentConfig::builtin()),
             test_herd().body_mass,
         );
 
@@ -1044,7 +1044,7 @@ mod tests {
         let kit = equipment
             .resolve_kit_for_job(Some(DEFAULT_HUNT_KIT), KitJob::Hunt)
             .expect("the shipped default hunt kit resolves");
-        let fresh = BandEquipment::default();
+        let fresh = BandEquipment::start_stocked(&EquipmentConfig::builtin());
         let party = query_hunting_party(&world, &equipment, &kit, &fresh, herd.body_mass);
         let per_worker_haul = query_per_worker_haul(&world, &equipment, &kit, &fresh);
         let range_sigmas = combat.forecast_range_sigmas;
@@ -1107,7 +1107,7 @@ mod tests {
         let kit = equipment
             .resolve_kit_for_job(Some(DEFAULT_HUNT_KIT), KitJob::Hunt)
             .expect("the shipped default hunt kit resolves");
-        let fresh = BandEquipment::default();
+        let fresh = BandEquipment::start_stocked(&EquipmentConfig::builtin());
         let party = query_hunting_party(&world, &equipment, &kit, &fresh, herd.body_mass);
         let per_worker_haul = query_per_worker_haul(&world, &equipment, &kit, &fresh);
 
@@ -1160,7 +1160,7 @@ mod tests {
         let kit = equipment
             .resolve_kit_for_job(Some(DEFAULT_HUNT_KIT), KitJob::Hunt)
             .expect("the shipped default hunt kit resolves");
-        let fresh = BandEquipment::default();
+        let fresh = BandEquipment::start_stocked(&EquipmentConfig::builtin());
         let resolved = ResolvedAsk {
             herd: herd.clone(),
             party: query_hunting_party(&world, &equipment, &kit, &fresh, herd.body_mass),
@@ -1216,7 +1216,7 @@ mod tests {
         let kit = equipment
             .resolve_kit_for_job(Some(DEFAULT_HUNT_KIT), KitJob::Hunt)
             .expect("the shipped default hunt kit resolves");
-        let fresh = BandEquipment::default();
+        let fresh = BandEquipment::start_stocked(&EquipmentConfig::builtin());
         let resolved = ResolvedAsk {
             herd: herd.clone(),
             party: query_hunting_party(&world, &equipment, &kit, &fresh, herd.body_mass),

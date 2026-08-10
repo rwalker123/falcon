@@ -30,8 +30,9 @@ use crate::state::population::{
     GenerationState, PopulationCohortState, PopulationDemographicsState,
 };
 use crate::state::subsistence::{
-    FoodModuleState, ForagePatchState, HerdTelemetryState, IntensificationKnowledgeState,
-    KitOptionState, SedentarizationState,
+    CharacteristicBandState, CraftKnowledgeState, FoodModuleState, ForagePatchState,
+    HerdTelemetryState, IntensificationKnowledgeState, KitOptionState, MaterialDefState,
+    RecipeDefState, SedentarizationState,
 };
 use ahash::RandomState;
 use serde::{Deserialize, Serialize};
@@ -215,6 +216,21 @@ pub struct WorldSnapshot {
     /// See `snapshot.fbs` → `SubsistenceSection.equipmentConfigJson`.
     #[serde(default)]
     pub equipment_config_json: String,
+    /// **The materials catalogue** (`materials.json`) — a per-world constant, published so the panel
+    /// can name a material's craft and axes without a second copy of the table.
+    #[serde(default)]
+    pub materials: Vec<MaterialDefState>,
+    /// **The shared rating vocabulary, once** — not per material. See [`CharacteristicBandState`].
+    #[serde(default)]
+    pub characteristic_bands: Vec<CharacteristicBandState>,
+    /// **The recipe book** (`recipes.json`) — a per-world constant. The band-relative half is each
+    /// cohort's own `craft_offers`.
+    #[serde(default)]
+    pub recipes: Vec<RecipeDefState>,
+    /// **Per faction, per craft.** Not a per-world constant — a craft is *learned* — so it is diffed
+    /// as a whole vector each frame.
+    #[serde(default)]
+    pub craft_knowledge: Vec<CraftKnowledgeState>,
     pub moisture_raster: FloatRasterState,
     pub elevation_overlay: ElevationOverlayState,
     /// Climate-band cut points (`docs/plan_climate_authority.md` §8.3), a per-map constant.
@@ -318,6 +334,18 @@ pub struct WorldDelta {
     /// is rebuilt. `None` means unchanged.
     #[serde(default)]
     pub equipment_config_json: Option<String>,
+    /// The crafting catalogues; per-world constants, so a delta re-sends them only on a world
+    /// rebuild. `None` means unchanged.
+    #[serde(default)]
+    pub materials: Option<Vec<MaterialDefState>>,
+    #[serde(default)]
+    pub characteristic_bands: Option<Vec<CharacteristicBandState>>,
+    #[serde(default)]
+    pub recipes: Option<Vec<RecipeDefState>>,
+    /// Per-faction craft progress — diffed whole like the ladder's own knowledge rows, not held as a
+    /// world constant. `None` means unchanged.
+    #[serde(default)]
+    pub craft_knowledge: Option<Vec<CraftKnowledgeState>>,
     pub moisture_raster: Option<FloatRasterState>,
     pub elevation_overlay: Option<ElevationOverlayState>,
     /// Climate-band cut points; a per-map constant, so a delta re-sends it only when the map is

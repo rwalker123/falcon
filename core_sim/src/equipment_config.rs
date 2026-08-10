@@ -87,11 +87,13 @@ pub enum EquipmentStat {
     /// A hunter's per-unit `attack` — the left side of §4.2's gate `max(0, attack − defense)`.
     /// Declared **equipped**; the bare hand's `1.0` is the `person` roster row.
     Attack,
-    /// The per-hunter **hunt** haul rate. Declared **unequipped**; the sledded `40.0` is
-    /// `labor_config.json`'s `hunt.per_worker_biomass_capacity`.
+    /// The per-hunter **hunt** haul rate. Declared **equipped, on the item's TIER** — the sledded
+    /// `40.0` is what a flint-age sled buys; `labor_config.json`'s
+    /// `hunt.per_worker_biomass_capacity` is the **no-equipment baseline** a sledless party drags at.
     HuntCarry,
-    /// The per-gatherer throughput before the tile's seasonal weight. Declared **unequipped**; the
-    /// basketed `8.0` is `labor_config.json`'s `forage.per_worker_biomass_capacity`.
+    /// The per-gatherer throughput before the tile's seasonal weight. Declared **equipped, on the
+    /// item's TIER**; `labor_config.json`'s `forage.per_worker_biomass_capacity` is the
+    /// **no-equipment baseline** a bare-handed gatherer carries.
     ForageCarry,
     /// **Multiplies the quarry's own `wariness`** — `effective_wariness = clamp(wariness × dispersion,
     /// 0, 1)`. Neutral at `1.0`; a trap ships `0.0`. A multiplier rather than a subtraction so the
@@ -101,9 +103,10 @@ pub enum EquipmentStat {
     /// **Multiplies the hunt's baseline injury hazard** (`fauna::hunt_injuries`). Neutral at `1.0`; a
     /// stand-off instrument ships `0.0` and wears out instead of its users getting hurt.
     Exposure,
-    /// **The per-keeper rate a PEN is collected at.** Declared **unequipped**; the equipped `40.0` is
-    /// `labor_config.json`'s `hunt.per_worker_biomass_capacity` — the number the pen harvest has
-    /// always run on, so a keeper carrying husbandry gear collects exactly what it always did.
+    /// **The per-keeper rate a PEN is collected at.** Declared **unequipped**; the equipped side is
+    /// **shared with [`Self::HuntCarry`]** ([`Self::shares_equipped_rate_with`]) — the number the pen
+    /// harvest has always run on, so a keeper carrying husbandry gear collects exactly what it
+    /// always did, and that number keeps its single home on the sled's tier.
     ///
     /// **A separate stat from [`Self::HuntCarry`], and that is the physical claim `one item, one
     /// job` already makes twice.** A sled drags a carcass in off the range; a pen stands at the
@@ -119,6 +122,21 @@ pub enum EquipmentStat {
     /// one of them would be a fourth authority over the same line. What wayfinding gear buys is what
     /// an observer can make out once they are there.
     ScoutVantageRange,
+    /// **The rate a bench works at with this tool in hand** — the value
+    /// `workers × progress_per_worker_turn ×` is multiplied by. Declared **equipped only**; the
+    /// unequipped side is the MATERIAL's own [`crate::materials_config::HandWorking::rate`], which
+    /// is `0` for a material that cannot be worked bare-handed. See [`Self::CRAFT_ONLY`].
+    CraftSpeed,
+    /// **The best reading a craft on this tool can realize** — the output grade is selected by
+    /// `min(material reading, ceiling)`, so excellent flax with no loom still makes a fair basket.
+    /// Declared **equipped only**; the bare-handed ceiling is the material's
+    /// [`crate::materials_config::HandWorking::quality_ceiling`].
+    CraftQualityCeiling,
+    /// **The fraction of a recipe's stated input amounts a draw on this tool actually consumes.**
+    /// Declared **equipped only**; the bare-handed side is the identity
+    /// ([`crate::crafting::HAND_WORKING_MATERIAL_EFFICIENCY`]) — a bench with nothing on it saves
+    /// nothing.
+    CraftMaterialEfficiency,
 }
 
 impl EquipmentStat {
@@ -132,21 +150,66 @@ impl EquipmentStat {
             | EquipmentStat::HuntCarry
             | EquipmentStat::ForageCarry
             | EquipmentStat::PenCarry
-            | EquipmentStat::ScoutVantageRange => None,
+            | EquipmentStat::ScoutVantageRange
+            | EquipmentStat::CraftSpeed
+            | EquipmentStat::CraftQualityCeiling
+            | EquipmentStat::CraftMaterialEfficiency => None,
         }
     }
 
-    /// **The stats resolved through [`EquipmentConfig::two_tier`]** — the ones whose *unequipped*
-    /// side is declared here and whose equipped side lives in `labor_config.json`. `two_tier`'s
-    /// fallback searches the **whole item table** and takes the first match, so each of these may be
-    /// declared by at most one item or the answer would resolve by `BTreeMap` order (i.e.
-    /// alphabetically). Named once, here, so `validate` cannot fall behind a new stat.
+    /// **The stats resolved through [`EquipmentConfig::rate_tier`]** — the two-sided rates, whose
+    /// *other* side is found by searching the **whole item table** and taking the first match. Each
+    /// of these may therefore be declared by at most one item (on the item or on any of its tiers)
+    /// or the answer would resolve by `BTreeMap` order, i.e. alphabetically. Named once, here, so
+    /// `validate` cannot fall behind a new stat.
+    ///
+    /// **They do not all declare the same SIDE, and that is one-home-per-fact rather than an
+    /// inconsistency.** The two carries declare the **equipped** side on the item's tier (that is
+    /// what the material buys) and fall back to `labor_config.json`'s no-equipment baseline; the pen
+    /// and the vantage declare the **unequipped** side on the item, because their equipped value
+    /// already has a home elsewhere — the hunt haul's tier for the pen
+    /// ([`Self::shares_equipped_rate_with`]), `labor_config.scout.vantage_range` for the vantage.
     pub const TWO_TIER: [EquipmentStat; 4] = [
         EquipmentStat::HuntCarry,
         EquipmentStat::ForageCarry,
         EquipmentStat::PenCarry,
         EquipmentStat::ScoutVantageRange,
     ];
+
+    /// **The stat whose EQUIPPED rate this one borrows**, when its equipped side is deliberately not
+    /// its own number.
+    ///
+    /// A pen has always been collected at the hunt haul's equipped rate, and it keeps sharing it:
+    /// the number lives once, on the sled's tier, and both the range and the camp read it there. It
+    /// is a link rather than a copy because a copy is a second home to drift from — which is the
+    /// whole reason this stat pair was authored the way it was
+    /// (`.claude/rules/core_sim/equipment.md` → "A pen is collected on `pen_carry`").
+    pub fn shares_equipped_rate_with(self) -> Option<EquipmentStat> {
+        match self {
+            EquipmentStat::PenCarry => Some(EquipmentStat::HuntCarry),
+            _ => None,
+        }
+    }
+
+    /// **The stats only a bench TOOL may declare** — a tool bounds one material and grants nothing
+    /// outside it, the shape `max_body_mass` already runs on.
+    ///
+    /// **Deliberately NOT in [`Self::TWO_TIER`]**, though each has an unequipped reading: that
+    /// fallback searches the whole item table and takes the first match, so it would answer the
+    /// *loom's* speed for a band scraping a hide bare-handed. Every one of these three falls back to
+    /// a property of the **material** instead ([`crate::materials_config::HandWorking`]), which is
+    /// the only thing that knows which material is being worked. One home per fact, and the home is
+    /// the material.
+    pub const CRAFT_ONLY: [EquipmentStat; 3] = [
+        EquipmentStat::CraftSpeed,
+        EquipmentStat::CraftQualityCeiling,
+        EquipmentStat::CraftMaterialEfficiency,
+    ];
+
+    /// Whether this stat is one of [`Self::CRAFT_ONLY`].
+    pub fn is_craft_stat(self) -> bool {
+        Self::CRAFT_ONLY.contains(&self)
+    }
 }
 
 /// **Which tier of a stat an effect declares** — exactly one, never both, because the other tier
@@ -259,6 +322,73 @@ pub enum WearQuantum {
     /// nobody raided pays nothing, and a band three packs turned on pays three — a use count, not a
     /// clock.
     Fight,
+    /// Per **item completed on the bench**. Bench tools.
+    ///
+    /// **The lesson the craft teaches is charged on this SAME quantum**
+    /// ([`crate::systems::advance_crafting`]) — one wear and one lesson per item — so the thing that
+    /// consumes the tool and the thing that teaches the craft cannot drift apart. It is a use count
+    /// like the six above it, not a clock: a bench standing idle wears nothing, and one that
+    /// finished nothing this turn pays nothing.
+    ItemCrafted,
+}
+
+impl WearQuantum {
+    /// **The plural noun a life readout counts this quantum in** — `48 raids left`, `120 kills left`.
+    ///
+    /// **Resolved sim-side, deliberately.** The life meter is a fuel gauge and reads in the item's
+    /// own use quanta, never in percent, so *something* has to turn the enum into English — and a
+    /// client that did it would be a second, silent copy of this table that a new quantum would not
+    /// update. It is `wear.per` that decides the word: a club that wears per fight reads **raids**,
+    /// a sled per biomass hauled reads **biomass hauled**.
+    ///
+    /// A *count* quantum gets a count noun; a *continuous* one keeps its own unit, because a
+    /// "biomass" is not a countable event and inventing a per-turn conversion here would need a
+    /// forecast of what the band is about to do.
+    pub fn noun(self) -> &'static str {
+        match self {
+            Self::Kill => "kills",
+            Self::BiomassHauled => "biomass hauled",
+            Self::BiomassGathered => "biomass gathered",
+            Self::BiomassCollected => "biomass butchered",
+            Self::TileRevealed => "new tiles",
+            Self::Fight => "raids",
+            Self::ItemCrafted => "crafts",
+        }
+    }
+
+    /// The singular of [`Self::noun`], for the `~1 raid left` rung — the one place a readout says
+    /// *one*. A quantum whose noun is a mass term (`biomass hauled`) has no singular and reads the
+    /// same either way.
+    pub fn singular_noun(self) -> &'static str {
+        match self {
+            Self::Kill => "kill",
+            Self::BiomassHauled => "biomass hauled",
+            Self::BiomassGathered => "biomass gathered",
+            Self::BiomassCollected => "biomass butchered",
+            Self::TileRevealed => "new tile",
+            Self::Fight => "raid",
+            Self::ItemCrafted => "craft",
+        }
+    }
+}
+
+/// **When a life readout stops being green** — the two seams of the fuel gauge's colour, as
+/// fractions of **one fresh unit's** worth of quanta.
+///
+/// A *fraction* rather than an absolute count because the quanta are not comparable across items: a
+/// spear's life is 250 kills and a sled's is 5000 biomass, so one number would colour one of them
+/// permanently red. It is only the **colour**; the wording itself is always the count
+/// ([`WearQuantum::noun`]), because a percentage bar would draw a taper this model does not have.
+///
+/// A band holding several units reads above `1.0` and is therefore healthy, which is right: stock is
+/// life.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LifeReadoutConfig {
+    /// Below this fraction of a fresh unit the row is `warn`.
+    pub warn_fraction: f32,
+    /// Below this fraction it is `danger`. Must be `< warn_fraction`.
+    pub danger_fraction: f32,
 }
 
 /// An item's use quantum and what one use costs it.
@@ -270,33 +400,199 @@ pub struct WearConfig {
     pub amount: f32,
 }
 
-/// **One piece of equipment.** It owns what it does (`effects`), how long it lasts
-/// (`starting_durability`) and what wears it (`wear`) — the three axes the design keeps orthogonal.
+/// **One QUALITY TIER of an item** — a flint spear against a bronze one.
 ///
-/// Quality tiers (flint vs bronze spears) are deliberately **absent**: nothing can craft one, so a
-/// tier here would be a data model with no gameplay behind it. They ride the crafting slice.
+/// **A tier is an AGE, and the vocabulary is shared across items**: every shipped item's one tier is
+/// `flint`, and the day metal lands each gains a `bronze` beside it. That is what makes the upgrade
+/// axis legible and gates it once (*"bronze needs Smithing"*) rather than per item.
+///
+/// **What the MATERIAL buys sits here; what is SHARED stays on the item.** A spear is a thrown
+/// weapon whatever it is tipped with (`dispersion` and `exposure` on [`ItemDefinition::effects`]),
+/// while `attack`, `starting_durability` and the carry rates are what the material changes.
+///
+/// **A mass bound rides with the effect it bounds**, so `traps`' `max_body_mass` sits on the tier's
+/// `attack` rather than on the item: the bound is a property of *that effect*, and an effect with a
+/// bound but no value is not representable — an effect names the value a stat takes. A second tier
+/// of the passive device therefore restates its bound, which `validate_mass_bounds` still checks.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EquipmentTier {
+    /// Stable id, unique within the item — the age this tier belongs to (`flint`).
+    pub id: String,
+    /// Condition a fresh unit of this tier carries, on the shared 0–100 scale. A batch is equipped
+    /// while its accumulated wear is **strictly below** this.
+    pub starting_durability: f32,
+    /// **The craft a faction must know before a bench can make this tier.** Absent on the first tier
+    /// of every item — that one ships known, so nothing is locked at the start and the gate has a
+    /// real job the day bronze exists. Validated against the crafts the materials table declares.
+    #[serde(default)]
+    pub requires_knowledge: Option<String>,
+    /// What a unit of this tier sets while it is intact — overriding anything the item declares for
+    /// the same stat.
+    #[serde(default)]
+    pub effects: Vec<EquipmentEffect>,
+}
+
+/// **One piece of equipment.** It owns what it does (`effects`), what wears it (`wear`) and the
+/// **tiers** it can be made at — how long it lasts and what the material buys sit on those.
 ///
 /// **`PartialEq` is what lets the designer catalogue's round-trip test compare the whole item table
 /// at once** rather than field by field — a hand-listed comparison goes stale the moment an item
 /// gains an axis, which is the failure `equipmentConfigJson` exists to make impossible.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ItemDefinition {
-    /// Condition a fresh item carries, on the shared 0–100 scale. A band is equipped while its
-    /// accumulated wear is **strictly below** this.
-    pub starting_durability: f32,
-    /// The use quantum and its cost.
+    /// The use quantum and its cost. **Shared across tiers** — how fast a thing is used up is a
+    /// property of the job, not of what it is made from; how long it survives that use is the tier's
+    /// `starting_durability`.
     pub wear: WearConfig,
-    /// What this item sets while it is intact.
+    /// **The effects every tier of this item SHARES** — the multipliers, and the *unequipped* side
+    /// of a rate whose equipped side lives elsewhere. Empty on an item whose whole payload is what
+    /// the material buys.
+    #[serde(default)]
     pub effects: Vec<EquipmentEffect>,
+    /// **The quality tiers this item can be made at, worst first.** Non-empty; `tiers[0]` is the
+    /// **default tier** — what a spawn stocks, what every reference rate resolves through, and the
+    /// one tier that may not be knowledge-gated.
+    ///
+    /// A `Vec` rather than a map because the **order is the model**: a bench makes the best tier the
+    /// faction knows, and a map has no order to ask.
+    pub tiers: Vec<EquipmentTier>,
+    /// **The ONE material this item is a bench tool for.** Absent on everything a party carries.
+    ///
+    /// A tool bounds one material and grants nothing outside it — the shape `max_body_mass` already
+    /// runs on. It is what makes a loom useless on a hide with no *"this tool does not apply"*
+    /// branch: the bench asks for the tool bounding the material it is working, and a loom is not
+    /// that tool.
+    ///
+    /// **A tool serves the BENCH, not a party**: `validate` rejects a kit that names one, and its
+    /// live predicate is ownership + condition rather than a kit mask.
+    #[serde(default)]
+    pub bounds_material: Option<String>,
 }
 
 impl ItemDefinition {
-    /// The tier this item declares for `stat`, or `None` if it does not touch it.
-    pub fn effect(&self, stat: EquipmentStat) -> Option<EffectTier> {
+    /// **The tier a spawn stocks and every reference rate resolves through** — the first, which
+    /// `validate` guarantees exists and requires no knowledge.
+    pub fn default_tier(&self) -> &EquipmentTier {
+        self.tiers
+            .first()
+            .expect("validate guarantees every item declares at least one tier")
+    }
+
+    /// The tier with this id, or `None`.
+    pub fn tier(&self, id: &str) -> Option<&EquipmentTier> {
+        self.tiers.iter().find(|tier| tier.id == id)
+    }
+
+    /// **The tier this item is made at, or the default** — a batch naming a tier the config has
+    /// since dropped falls back rather than vanishing, the same reading `has_condition` gives an
+    /// item the table no longer carries.
+    pub fn tier_or_default(&self, id: &str) -> &EquipmentTier {
+        self.tier(id).unwrap_or_else(|| self.default_tier())
+    }
+
+    /// **The best tier this item can be made at by a faction that knows `known`** — the last in file
+    /// order whose gate is satisfied, so the order is the upgrade ladder. The default tier requires
+    /// nothing, so there is always an answer.
+    pub fn craftable_tier(&self, known: impl Fn(&str) -> bool) -> &EquipmentTier {
+        self.tiers
+            .iter()
+            .rev()
+            .find(|tier| tier.requires_knowledge.as_deref().is_none_or(&known))
+            .unwrap_or_else(|| self.default_tier())
+    }
+
+    /// **What one TIER of this item declares for a craft stat** — the tier's own entry if it has
+    /// one, else the item's shared one, resolved the same way [`LiveItem::effect_entry`] does minus
+    /// the grade layer.
+    ///
+    /// It exists for the caller that has **no serving batch to resolve against**: a readout about a
+    /// bench tool the band does not own yet cannot ask what its live unit says, and quoting a
+    /// different tool's number — or the top of the quality ladder — would advertise a ceiling this
+    /// one does not reach.
+    pub fn tier_craft_stat(&self, tier: &EquipmentTier, stat: EquipmentStat) -> Option<f32> {
+        let find = |effects: &[EquipmentEffect]| {
+            effects
+                .iter()
+                .find(|effect| effect.stat == stat)
+                .map(|effect| effect.tier)
+        };
+        match find(&tier.effects).or_else(|| find(&self.effects)) {
+            Some(EffectTier::Equipped(value)) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// The material this item is a bench tool for, or `None` for ordinary party gear.
+    pub fn bounds_material(&self) -> Option<&str> {
+        self.bounds_material.as_deref()
+    }
+
+    /// Every effect this item can declare anywhere — its shared list plus every tier's. For
+    /// `validate` and for the whole-table searches, neither of which has a batch to resolve against.
+    fn every_effect(&self) -> impl Iterator<Item = &EquipmentEffect> {
+        self.effects
+            .iter()
+            .chain(self.tiers.iter().flat_map(|tier| tier.effects.iter()))
+    }
+
+    /// The **shared** tier this item declares for `stat` — the unequipped side of a rate whose
+    /// equipped side lives elsewhere. Tier-declared stats are not here; see [`LiveItem::effect`].
+    fn shared_effect(&self, stat: EquipmentStat) -> Option<EffectTier> {
         self.effects
             .iter()
             .find(|effect| effect.stat == stat)
             .map(|effect| effect.tier)
+    }
+}
+
+/// **What one live unit of an item grants** — the item's shared effects with the serving batch's
+/// **tier** and **grade** layered over them, in that order.
+///
+/// **Three layers, one answer per stat, and the precedence is the specificity.** The item states
+/// what is true of every one of these ever made; the tier states what the material bought; the grade
+/// states what *this batch's* craft came out at. A grade may only declare a stat its tiers declare
+/// (`validate_against`), so a grade always **replaces** a number rather than adding one.
+#[derive(Debug, Clone, Copy)]
+pub struct LiveItem<'a> {
+    /// The item's own definition — its wear quantum, its shared effects.
+    pub item: &'a ItemDefinition,
+    /// The tier the serving batch was made at.
+    pub tier: &'a EquipmentTier,
+    /// The absolutes the serving batch's craft grade declares. **A start-stocked batch carries the
+    /// anchor grade's NAME with an empty payload**
+    /// ([`crate::components::BandEquipment::start_stocked_owned`]), which resolves here exactly as
+    /// `None` does — its stats come from the tier, and that is what keeps the shipped opening
+    /// unchanged by the stamp.
+    pub grade: Option<&'a [EquipmentEffect]>,
+}
+
+impl<'a> LiveItem<'a> {
+    /// **The one effect entry that answers for `stat`** — the grade's if it declares one, else the
+    /// tier's, else the item's shared one. `validate` rejects a stat declared twice within a layer,
+    /// so each layer has at most one entry to find.
+    pub fn effect_entry(&self, stat: EquipmentStat) -> Option<&'a EquipmentEffect> {
+        let find =
+            |effects: &'a [EquipmentEffect]| effects.iter().find(|effect| effect.stat == stat);
+        self.grade
+            .and_then(find)
+            .or_else(|| find(&self.tier.effects))
+            .or_else(|| find(&self.item.effects))
+    }
+
+    /// The tier `stat` takes for this unit, or `None` if nothing in the three layers touches it.
+    pub fn effect(&self, stat: EquipmentStat) -> Option<EffectTier> {
+        self.effect_entry(stat).map(|effect| effect.tier)
+    }
+
+    /// **The equipped value this unit declares for a craft stat.** `None` when it says nothing about
+    /// it — *present effects apply, absent ones do not*, the same "only declared values participate"
+    /// clause [`KitChoice::multiplier`] runs on. A speed-only tool therefore leaves the ceiling and
+    /// the efficiency exactly where the bare hand had them.
+    pub fn craft_stat(&self, stat: EquipmentStat) -> Option<f32> {
+        match self.effect(stat) {
+            Some(EffectTier::Equipped(value)) => Some(value),
+            _ => None,
+        }
     }
 }
 
@@ -441,20 +737,21 @@ impl KitChoice {
         self.uses.iter().any(|used| used.as_ref() == item) && wear.has_condition(item, config)
     }
 
-    /// The kit's items that are **still serving**, paired with their definitions — the one iteration
-    /// every stat resolution runs over.
+    /// The kit's items that are **still serving**, resolved against the batch actually in hand — the
+    /// one iteration every stat resolution runs over.
+    ///
+    /// **A party resolves UNIFORMLY**, so one batch answers for the whole crew: the **serving**
+    /// batch, which is the most-worn live one — the same batch [`crate::components::BandEquipment::wear_item`]
+    /// charges, so what the party is priced at is what the party is spending. The partly-equipped
+    /// party is issue #520 and is deliberately not this.
     fn live_items<'a>(
         &'a self,
         wear: &'a crate::components::BandEquipment,
         config: &'a EquipmentConfig,
-    ) -> impl Iterator<Item = &'a ItemDefinition> {
-        self.uses.iter().filter_map(move |item| {
-            if wear.has_condition(item, config) {
-                config.item(item)
-            } else {
-                None
-            }
-        })
+    ) -> impl Iterator<Item = LiveItem<'a>> {
+        self.uses
+            .iter()
+            .filter_map(move |item| config.live_item(item, wear))
     }
 
     /// **Resolve a MULTIPLIER stat across the kit — the maximum of what its live items DECLARE.**
@@ -503,10 +800,9 @@ impl KitChoice {
     ) -> Option<f32> {
         self.live_items(wear, config)
             .filter_map(|item| {
-                item.effects
-                    .iter()
-                    .filter(|effect| effect.stat == stat && quarry.within(effect))
-                    .find_map(|effect| match effect.tier {
+                item.effect_entry(stat)
+                    .filter(|effect| quarry.within(effect))
+                    .and_then(|effect| match effect.tier {
                         EffectTier::Equipped(value) => Some(value),
                         EffectTier::Unequipped(_) => None,
                     })
@@ -516,8 +812,8 @@ impl KitChoice {
             })
     }
 
-    /// **Is a live item in this kit supplying `stat` at all?** — for the two carries, whose items
-    /// declare the *unequipped* side, so "supplied" means the equipped rate applies.
+    /// **Is a live item in this kit supplying `stat` at all?** — the predicate the two-sided rates
+    /// resolve on, whichever side the item happens to declare.
     fn supplies(
         &self,
         stat: EquipmentStat,
@@ -526,6 +822,23 @@ impl KitChoice {
     ) -> bool {
         self.live_items(wear, config)
             .any(|item| item.effect(stat).is_some())
+    }
+
+    /// **The tier a live item in this kit declares for `stat`** — the best of them, so a kit
+    /// carrying two things that both lift a rate is priced at the better one. `None` when nothing
+    /// live touches the stat at all, which is the *"only declared values participate"* clause again.
+    fn declared_by_live_item(
+        &self,
+        stat: EquipmentStat,
+        wear: &crate::components::BandEquipment,
+        config: &EquipmentConfig,
+    ) -> Option<EffectTier> {
+        self.live_items(wear, config)
+            .filter_map(|item| item.effect(stat))
+            .fold(None::<EffectTier>, |best, tier| match best {
+                Some(best) if best.value() >= tier.value() => Some(best),
+                _ => Some(tier),
+            })
     }
 }
 
@@ -572,6 +885,9 @@ pub struct EquipmentConfig {
     /// exactly the flapping the lever exists to prevent, and a silently-defaulted lever is
     /// `config-loading.md`'s "looks live but isn't".
     pub quarry_default_kit_margin: f32,
+    /// **The life readout's two colour seams.** See [`LifeReadoutConfig`] — presentation tuning for
+    /// the published `lifeSeverity`, and the only thing in this file the sim itself never reads.
+    pub life_readout: LifeReadoutConfig,
 }
 
 impl EquipmentConfig {
@@ -630,7 +946,7 @@ impl EquipmentConfig {
     /// **Fresh, like every other default resolution**: a kit's *identity* as the one that supplies
     /// a stat is a property of quarry × roster and must not move as a band wears its gear down.
     pub fn kit_supplying(&self, job: KitJob, stat: EquipmentStat) -> Option<KitChoice> {
-        let fresh = crate::components::BandEquipment::default();
+        let fresh = crate::components::BandEquipment::start_stocked(self);
         self.kits_for_job(job)
             .find(|kit| kit.supplies(stat, &fresh, self))
     }
@@ -681,12 +997,80 @@ impl EquipmentConfig {
         self.items.get(id)
     }
 
-    /// **The item that declares `stat`, whatever kit is in play** — how a two-tier stat finds its
-    /// *unequipped* value even when the kit carrying it is absent or spent. Deliberately searches the
-    /// whole table rather than the kit: a party with no sled still needs to know what a sledless haul
-    /// rate is, and that number lives on the sled.
+    /// **The bench tool for a material, whether or not this band has one** — the item whose
+    /// `bounds_material` names it. Unique by `validate`, so there is one answer.
+    ///
+    /// Used for the *refusal* readout (*"No loom"*) and for nothing that resolves a rate; a rate
+    /// goes through [`Self::live_bench_tool`], which also asks whether the band owns it.
+    pub fn bench_tool_for(&self, material: &str) -> Option<(&str, &ItemDefinition)> {
+        self.items()
+            .find(|(_, item)| item.bounds_material() == Some(material))
+    }
+
+    /// **The tool a band actually has at the bench for `material`** — owned *and* with condition
+    /// left. `None` is the ordinary opening state and it is not an error: the band works the
+    /// material bare-handed, at the rate and ceiling the **material** declares.
+    ///
+    /// **Ownership is the ordinary question now.** It was the tool's alone while an absent ledger
+    /// entry still read as a full item for everything a spawn stocks; the count slice flipped that
+    /// invariant for every item, so *"does the band have one"* and *"has it any condition left"* are
+    /// one reading — [`crate::components::BandEquipment::has_condition`] — and this joins it to the
+    /// material lookup rather than to a second ownership test.
+    ///
+    /// **Nothing resolves a stat by naming an item**: the caller passes the *material*, so a roster
+    /// that renames the loom moves the bench with it and the id is spelled only in config.
+    pub fn live_bench_tool<'a>(
+        &'a self,
+        material: &str,
+        wear: &'a crate::components::BandEquipment,
+    ) -> Option<LiveItem<'a>> {
+        let (id, _) = self.bench_tool_for(material)?;
+        self.live_item(id, wear)
+    }
+
+    /// **The item that declares `stat` as a SHARED effect, whatever kit is in play** — how a
+    /// two-sided rate finds its *unequipped* value even when the kit carrying it is absent or spent.
+    /// Deliberately searches the whole table rather than the kit: a party with no handling gear
+    /// still needs to know what a bare-handed pen collects, and that number lives on the gear.
+    ///
+    /// **Shared effects only, never a tier's.** An unequipped side is true of every tier of an item
+    /// by construction — it is what you get when the item is *not there* — so a tier declaring one
+    /// is rejected at validate rather than reachable here.
     fn declared_tier(&self, stat: EquipmentStat) -> Option<EffectTier> {
-        self.items.values().find_map(|item| item.effect(stat))
+        self.items
+            .values()
+            .find_map(|item| item.shared_effect(stat))
+    }
+
+    /// **The batch of `item` this band is actually using, resolved to what it grants** — `None` when
+    /// the band owns none with condition left, which is the same reading a band that never had one
+    /// gets. See [`crate::components::BandEquipment`]: **an absent entry is NOT OWNED**.
+    pub fn live_item<'a>(
+        &'a self,
+        item: &str,
+        wear: &'a crate::components::BandEquipment,
+    ) -> Option<LiveItem<'a>> {
+        let def = self.item(item)?;
+        let batch = wear.serving_batch(item, self)?;
+        Some(LiveItem {
+            item: def,
+            tier: def.tier_or_default(&batch.tier),
+            grade: batch.grade.as_ref().map(|grade| grade.effects.as_slice()),
+        })
+    }
+
+    /// **Every item a spawn stocks** — the ids some kit `uses`, in id order.
+    ///
+    /// *"The band's start kits"* stated as the roster states it: an item no kit carries is not
+    /// something a party was ever sent out with, and a **bench tool** can never appear here because
+    /// `validate` rejects a kit that names one — which is what keeps *"tools are earned, never a
+    /// prerequisite"* true without a second rule.
+    pub fn start_stocked_items(&self) -> impl Iterator<Item = (&str, &ItemDefinition)> {
+        self.items().filter(|(id, _)| {
+            self.kits
+                .iter()
+                .any(|kit| kit.uses.iter().any(|used| used == id))
+        })
     }
 
     /// The id this verb's default kit carries.
@@ -825,40 +1209,41 @@ impl EquipmentConfig {
         }
     }
 
-    /// **A band's per-worker HUNT haul rate** — resolved against the equipped rate the caller already
-    /// holds (`labor_config.hunt.per_worker_biomass_capacity`). The single seam every hunt-take,
-    /// crew-size and hunt-forecast site reads, so the assign-time seed and the resolved row can never
-    /// disagree about which tier a band is on.
+    /// **A band's per-worker HUNT haul rate** — resolved against the **no-equipment baseline** the
+    /// caller already holds (`labor_config.hunt.per_worker_biomass_capacity`), with the sled's own
+    /// tier supplying the sledded rate. The single seam every hunt-take, crew-size and hunt-forecast
+    /// site reads, so the assign-time seed and the resolved row can never disagree about which tier
+    /// a band is on.
     ///
     /// **Baskets cannot reach this by construction** — they declare [`EquipmentStat::ForageCarry`],
     /// a different stat, so dragging a carcass stays unrelated to how much you can hold (§4.8).
     pub fn hunt_per_worker_biomass_capacity(
         &self,
-        equipped_rate: f32,
+        baseline_rate: f32,
         kit: &KitChoice,
         wear: &crate::components::BandEquipment,
     ) -> f32 {
-        self.two_tier(EquipmentStat::HuntCarry, equipped_rate, kit, wear)
+        self.rate_tier(EquipmentStat::HuntCarry, baseline_rate, kit, wear)
     }
 
-    /// **A band's per-worker GATHER throughput** — resolved against the equipped rate the caller
-    /// already holds (`labor_config.forage.per_worker_biomass_capacity`), before the tile's seasonal
-    /// weight is folded in ([`crate::forage::forage_per_worker_biomass`]).
+    /// **A band's per-worker GATHER throughput** — resolved against the **no-equipment baseline** the
+    /// caller already holds (`labor_config.forage.per_worker_biomass_capacity`), before the tile's
+    /// seasonal weight is folded in ([`crate::forage::forage_per_worker_biomass`]).
     ///
     /// **The sled cannot reach this by construction** — it declares [`EquipmentStat::HuntCarry`].
     pub fn forage_per_worker_biomass_capacity(
         &self,
-        equipped_rate: f32,
+        baseline_rate: f32,
         kit: &KitChoice,
         wear: &crate::components::BandEquipment,
     ) -> f32 {
-        self.two_tier(EquipmentStat::ForageCarry, equipped_rate, kit, wear)
+        self.rate_tier(EquipmentStat::ForageCarry, baseline_rate, kit, wear)
     }
 
-    /// **A band's per-keeper PEN collection rate** — resolved against the equipped rate the caller
-    /// already holds, which is the same `labor_config.hunt.per_worker_biomass_capacity` the pen
-    /// harvest has always been capped by. A keeper carrying husbandry gear therefore collects
-    /// **exactly what a pen always collected**; what is new is the state below the cliff.
+    /// **A band's per-keeper PEN collection rate** — resolved against the **no-equipment baseline**
+    /// the caller already holds. Its equipped side is the **hunt haul's**, resolved through
+    /// [`Self::equipped_reference`] rather than declared again here, so a keeper carrying husbandry
+    /// gear collects **exactly what a pen always collected** and that number keeps its one home.
     ///
     /// **The sled cannot reach this by construction**, and that is the deliberate consequence: a
     /// hunting party that has corralled a herd and left its assignment on the big-game kit is
@@ -866,11 +1251,11 @@ impl EquipmentConfig {
     /// is the same shape as bringing baskets to a deer — see [`EquipmentStat::PenCarry`].
     pub fn pen_per_worker_biomass_capacity(
         &self,
-        equipped_rate: f32,
+        baseline_rate: f32,
         kit: &KitChoice,
         wear: &crate::components::BandEquipment,
     ) -> f32 {
-        self.two_tier(EquipmentStat::PenCarry, equipped_rate, kit, wear)
+        self.rate_tier(EquipmentStat::PenCarry, baseline_rate, kit, wear)
     }
 
     /// **The sight range a band's posted scout vantages reveal at** — resolved against the equipped
@@ -885,7 +1270,7 @@ impl EquipmentConfig {
         kit: &KitChoice,
         wear: &crate::components::BandEquipment,
     ) -> f32 {
-        self.two_tier(EquipmentStat::ScoutVantageRange, equipped_range, kit, wear)
+        self.rate_tier(EquipmentStat::ScoutVantageRange, equipped_range, kit, wear)
     }
 
     /// **A warrior's per-head combat profile, kit composed in** — the defending contingent's side of
@@ -909,29 +1294,62 @@ impl EquipmentConfig {
         self.hunter_profile_for(intrinsic, kit, wear, Quarry::Any)
     }
 
-    /// **The two carries' shared resolution**, and the asymmetry with `attack` is one-home-per-fact,
-    /// not an inconsistency: a carry item declares the **unequipped** side (the equipped rate is
-    /// `labor_config`'s and stays there), so a live item means *the caller's equipped rate applies*
-    /// and its absence means *fall back to what the item declared*.
+    /// **The four two-sided rates' shared resolution.** `baseline` is the **no-equipment** rate the
+    /// caller already holds (`labor_config.json`'s), and the gear's own declaration is what lifts it.
     ///
-    /// The fallback reads [`Self::declared_tier`] over the **whole item table**, not the kit — a party
-    /// with no sled still has to know what a sledless haul rate is, and that number lives on the sled
-    /// it is not carrying. With nothing in the table declaring the stat at all there is no second tier
-    /// to step down to, so the equipped rate stands.
-    fn two_tier(
+    /// Three arms, and which one runs is one-home-per-fact rather than free choice:
+    ///
+    /// - a live item declaring the **equipped** side (the two carries, on their tier) *is* the
+    ///   answer — that is what the material bought;
+    /// - a live item declaring the **unequipped** side (the pen, the vantage) means the *equipped*
+    ///   rate applies, and that rate is looked up through [`Self::equipped_reference`] because it
+    ///   lives somewhere else;
+    /// - nothing live ⇒ [`Self::declared_tier`] over the **whole item table**, because a party with
+    ///   no handling gear still has to know what a bare-handed pen collects and that number lives on
+    ///   the gear it is not carrying. With nothing declaring an unequipped side either, the
+    ///   `baseline` stands.
+    fn rate_tier(
         &self,
         stat: EquipmentStat,
-        equipped_rate: f32,
+        baseline: f32,
         kit: &KitChoice,
         wear: &crate::components::BandEquipment,
     ) -> f32 {
-        if kit.supplies(stat, wear, self) {
-            return equipped_rate;
+        match kit.declared_by_live_item(stat, wear, self) {
+            Some(EffectTier::Equipped(value)) => value,
+            Some(EffectTier::Unequipped(_)) => self.equipped_reference(stat, baseline),
+            None => match self.declared_tier(stat) {
+                Some(EffectTier::Unequipped(value)) => value,
+                _ => baseline,
+            },
         }
-        match self.declared_tier(stat) {
-            Some(EffectTier::Unequipped(value)) => value,
-            _ => equipped_rate,
-        }
+    }
+
+    /// **The shipped EQUIPPED rate for a stat — what a fully-stocked band resolves**, and the one
+    /// seam every readout with no band to resolve against reads.
+    ///
+    /// It is the item table's **default tier** declaration, because that is where the equipped side
+    /// of a carry now lives; `baseline` (the caller's `labor_config.json` no-equipment rate) is the
+    /// honest answer when nothing in the table lifts the stat at all, since then there is no
+    /// equipped tier to be at.
+    ///
+    /// **A stat may BORROW another's equipped rate rather than own one**
+    /// ([`EquipmentStat::shares_equipped_rate_with`]): a pen is collected at the hunt haul's rate and
+    /// keeps being, so the number stays on the sled's tier and both readers resolve it here.
+    pub fn equipped_reference(&self, stat: EquipmentStat, baseline: f32) -> f32 {
+        let source = stat.shares_equipped_rate_with().unwrap_or(stat);
+        self.items
+            .values()
+            .find_map(|item| {
+                item.default_tier()
+                    .effects
+                    .iter()
+                    .find(|effect| {
+                        effect.stat == source && matches!(effect.tier, EffectTier::Equipped(_))
+                    })
+                    .map(|effect| effect.tier.value())
+            })
+            .unwrap_or(baseline)
     }
 
     /// **How much the quarry's own `wariness` is multiplied by** for a party carrying this kit — see
@@ -957,11 +1375,7 @@ impl EquipmentConfig {
     ) -> (Option<f32>, Option<f32>) {
         let mut window: Option<(Option<f32>, Option<f32>)> = None;
         for item in kit.live_items(wear, self) {
-            for effect in item
-                .effects
-                .iter()
-                .filter(|e| e.stat == EquipmentStat::Attack)
-            {
+            if let Some(effect) = item.effect_entry(EquipmentStat::Attack) {
                 // **An unbounded weapon widens the window to everything and ends the search** — a
                 // kit carrying one bounded and one unbounded attack reaches every quarry.
                 if !effect.is_mass_bounded() {
@@ -1025,8 +1439,8 @@ impl EquipmentConfig {
     pub fn resolve_kit_tiers(
         &self,
         hunter_intrinsic: CombatStats,
-        equipped_haul_rate: f32,
-        equipped_gather_rate: f32,
+        baseline_haul_rate: f32,
+        baseline_gather_rate: f32,
         equipped_vantage_range: f32,
         kit: &KitChoice,
         wear: &crate::components::BandEquipment,
@@ -1037,21 +1451,22 @@ impl EquipmentConfig {
                 .hunter_profile_unbounded(hunter_intrinsic, kit, wear)
                 .attack,
             hunt_carry_per_worker_biomass: self.hunt_per_worker_biomass_capacity(
-                equipped_haul_rate,
+                baseline_haul_rate,
                 kit,
                 wear,
             ),
             forage_carry_per_worker_biomass: self.forage_per_worker_biomass_capacity(
-                equipped_gather_rate,
+                baseline_gather_rate,
                 kit,
                 wear,
             ),
-            // **The pen shares the HUNT haul's equipped rate** — `labor_config`'s
-            // `hunt.per_worker_biomass_capacity` is the number a pen harvest has always been capped
-            // by and it keeps its one home — but resolves through `EquipmentStat::PenCarry`, so a kit
-            // with a sled and no handling gear reads the bare rate here beside the sledded rate above.
+            // **The pen shares the HUNT haul's equipped rate**, resolved off the sled's own tier
+            // through `EquipmentStat::shares_equipped_rate_with` so that number keeps its one home —
+            // but it resolves through `EquipmentStat::PenCarry`, so a kit with a sled and no handling
+            // gear reads the bare rate here beside the sledded rate above. Both sides fall back to
+            // the same `labor_config.hunt.per_worker_biomass_capacity` baseline.
             pen_carry_per_worker_biomass: self.pen_per_worker_biomass_capacity(
-                equipped_haul_rate,
+                baseline_haul_rate,
                 kit,
                 wear,
             ),
@@ -1080,56 +1495,34 @@ impl EquipmentConfig {
             });
         }
         for (id, item) in &self.items {
-            Self::require_positive(
-                format!("items.{id}.starting_durability"),
-                item.starting_durability,
-            )?;
             Self::require_positive(format!("items.{id}.wear.amount"), item.wear.amount)?;
-            if item.effects.is_empty() {
+            Self::validate_effect_layer(&format!("items.{id}.effects"), id, &item.effects)?;
+            Self::validate_tiers(id, item)?;
+            if item.every_effect().next().is_none() {
                 return Err(EquipmentConfigError::InvalidRoster {
                     reason: format!(
-                        "item '{id}' declares no effects - it would wear out doing nothing"
+                        "item '{id}' declares no effects on itself or any of its tiers - it would \
+                         wear out doing nothing"
                     ),
                 });
             }
-            for (index, effect) in item.effects.iter().enumerate() {
-                let value = effect.tier.value();
-                if !value.is_finite() || value < 0.0 {
-                    return Err(EquipmentConfigError::Invalid {
-                        field: format!("items.{id}.effects[{index}]"),
-                        constraint: "be finite and not negative".to_string(),
-                        value: value.to_string(),
-                    });
-                }
-                // **A second declaration of the same stat is rejected, not merged.** `effect()` takes
-                // the first match, so a duplicate would be a silently dead line - and the two entries
-                // would disagree about a number the fight reads.
-                if item.effects[..index]
-                    .iter()
-                    .any(|prior| prior.stat == effect.stat)
-                {
-                    return Err(EquipmentConfigError::InvalidRoster {
-                        reason: format!("item '{id}' declares the same stat twice"),
-                    });
-                }
-                Self::validate_mass_bounds(id, index, effect)?;
-            }
         }
-        // **The two-tier stats must be declared by at most ONE item each**, because `declared_tier`
-        // searches the whole table for the unequipped fallback and takes the FIRST match: two items
+        // **The two-sided rates must be declared by at most ONE item each**, because `declared_tier`
+        // and `equipped_reference` both search the whole table and take the FIRST match: two items
         // disagreeing about the sledless haul rate would resolve by `BTreeMap` order, which is
-        // alphabetical and therefore arbitrary.
+        // alphabetical and therefore arbitrary. Counted over the item's **whole** declaration
+        // surface — shared effects and every tier's — because either home answers that search.
         for stat in EquipmentStat::TWO_TIER {
             let declared: Vec<&str> = self
                 .items
                 .iter()
-                .filter(|(_, item)| item.effect(stat).is_some())
+                .filter(|(_, item)| item.every_effect().any(|effect| effect.stat == stat))
                 .map(|(id, _)| id.as_str())
                 .collect();
             if declared.len() > 1 {
                 return Err(EquipmentConfigError::InvalidRoster {
                     reason: format!(
-                        "items {} all declare the same two-tier stat {stat:?} - the unequipped fallback would resolve by name order",
+                        "items {} all declare the same two-sided rate {stat:?} - the whole-table fallback would resolve by name order",
                         declared.join(", ")
                     ),
                 });
@@ -1146,9 +1539,290 @@ impl EquipmentConfig {
                 value: self.quarry_default_kit_margin.to_string(),
             });
         }
+        // **The life readout's two seams**: both fractions of one fresh unit, both in `0..=1`, and
+        // `danger` strictly below `warn` — a danger seam at or above the warn seam would make the
+        // warn band unreachable, so one colour would simply never appear.
+        let life = self.life_readout;
+        for (field, value) in [
+            ("life_readout.warn_fraction", life.warn_fraction),
+            ("life_readout.danger_fraction", life.danger_fraction),
+        ] {
+            if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+                return Err(EquipmentConfigError::Invalid {
+                    field: field.to_string(),
+                    constraint: "be finite and within 0..=1".to_string(),
+                    value: value.to_string(),
+                });
+            }
+        }
+        if life.danger_fraction >= life.warn_fraction {
+            return Err(EquipmentConfigError::Invalid {
+                field: "life_readout.danger_fraction".to_string(),
+                constraint: "be strictly below warn_fraction".to_string(),
+                value: format!("{} vs warn {}", life.danger_fraction, life.warn_fraction),
+            });
+        }
+        self.validate_bench_tools()?;
         self.validate_roster()?;
         self.validate_default_hunt_kit_is_quarry_blind()?;
         self.validate_warrior_kits_have_no_quarry()
+    }
+
+    /// **One layer of an item's effects** — its shared list, or one tier's. Each layer is validated
+    /// on its own because each is searched on its own: [`LiveItem::effect_entry`] takes the first
+    /// match *within* a layer, so a stat declared twice in one is a silently dead line and two
+    /// entries disagreeing about a number the fight reads.
+    fn validate_effect_layer(
+        field: &str,
+        id: &str,
+        effects: &[EquipmentEffect],
+    ) -> Result<(), EquipmentConfigError> {
+        for (index, effect) in effects.iter().enumerate() {
+            let value = effect.tier.value();
+            if !value.is_finite() || value < 0.0 {
+                return Err(EquipmentConfigError::Invalid {
+                    field: format!("{field}[{index}]"),
+                    constraint: "be finite and not negative".to_string(),
+                    value: value.to_string(),
+                });
+            }
+            if effects[..index]
+                .iter()
+                .any(|prior| prior.stat == effect.stat)
+            {
+                return Err(EquipmentConfigError::InvalidRoster {
+                    reason: format!("{field} declares the same stat twice"),
+                });
+            }
+            Self::validate_mass_bounds(id, index, effect)?;
+        }
+        Ok(())
+    }
+
+    /// **AN ITEM'S QUALITY TIERS.** A tier is what the material bought, and every check here closes
+    /// a way for that to be silently untrue:
+    ///
+    /// - **at least one tier**, or the item has no durability and is born dry;
+    /// - **unique ids**, or [`ItemDefinition::tier`] answers the first of two and a batch's recorded
+    ///   tier picks one by file order;
+    /// - **the first tier is knowledge-free** — it is what a spawn stocks and what every reference
+    ///   rate resolves through, so a gate on it would lock the shipped opening behind a craft nobody
+    ///   knows on turn 1;
+    /// - **a tier may not restate a stat the item shares**, because the tier would silently win
+    ///   ([`LiveItem::effect_entry`]) and the shared line would be dead config — the "declares the
+    ///   same stat twice" rule one level up;
+    /// - **a tier may not declare an `unequipped` side.** An unequipped value is what you get when
+    ///   the item is *not there*, which is true of every tier at once, so it belongs on the item.
+    fn validate_tiers(id: &str, item: &ItemDefinition) -> Result<(), EquipmentConfigError> {
+        if item.tiers.is_empty() {
+            return Err(EquipmentConfigError::InvalidRoster {
+                reason: format!(
+                    "item '{id}' declares no tiers - it would have no durability and be born dry"
+                ),
+            });
+        }
+        for (index, tier) in item.tiers.iter().enumerate() {
+            Self::require_positive(
+                format!("items.{id}.tiers.{}.starting_durability", tier.id),
+                tier.starting_durability,
+            )?;
+            if item.tiers[..index].iter().any(|prior| prior.id == tier.id) {
+                return Err(EquipmentConfigError::InvalidRoster {
+                    reason: format!("item '{id}' declares the tier '{}' twice", tier.id),
+                });
+            }
+            Self::validate_effect_layer(
+                &format!("items.{id}.tiers.{}.effects", tier.id),
+                id,
+                &tier.effects,
+            )?;
+            for effect in &tier.effects {
+                if item.effects.iter().any(|shared| shared.stat == effect.stat) {
+                    return Err(EquipmentConfigError::InvalidRoster {
+                        reason: format!(
+                            "item '{id}' declares {:?} on both itself and its tier '{}' - the tier \
+                             wins, so the shared line would be dead config",
+                            effect.stat, tier.id
+                        ),
+                    });
+                }
+                if let EffectTier::Unequipped(_) = effect.tier {
+                    return Err(EquipmentConfigError::InvalidRoster {
+                        reason: format!(
+                            "item '{id}' declares {:?} `unequipped` on its tier '{}' - an unequipped \
+                             value is what you get when the item is NOT there, which is true of every \
+                             tier at once, so it belongs on the item",
+                            effect.stat, tier.id
+                        ),
+                    });
+                }
+            }
+        }
+        if item.default_tier().requires_knowledge.is_some() {
+            return Err(EquipmentConfigError::InvalidRoster {
+                reason: format!(
+                    "item '{id}' gates its first tier '{}' on knowledge - that tier is what a spawn \
+                     stocks and what every reference rate resolves through, so it must ship known",
+                    item.default_tier().id
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    /// **A BENCH TOOL'S OWN INVARIANTS.** Each failure below is silent at runtime — the item parses,
+    /// validates, and then either stretches nothing or is never worn — which is exactly
+    /// `config-loading.md`'s "looks live but isn't".
+    ///
+    /// - **A craft stat needs a `bounds_material`.** The three craft stats fall back to a property
+    ///   of the *material*, so a craft stat on an item that names no material has nothing to be the
+    ///   equipped side *of*.
+    /// - **A craft stat is EQUIPPED-only.** Its unequipped side is the material's `hand_working`,
+    ///   and an `unequipped` here would be a second, wrong home for it — read by nothing, since the
+    ///   bench falls back to the material rather than to the table.
+    /// - **One tool per material.** [`Self::bench_tool_for`] answers the first match, so two would
+    ///   resolve by `BTreeMap` order, i.e. alphabetically.
+    /// - **A tool wears on `item_crafted`, and only a tool does.** The bench is the only site that
+    ///   charges that quantum, so a tool on any other quantum would be immortal and a spear on this
+    ///   one would never wear at all.
+    /// - **A tool declares at least one craft stat**, or it is gear that costs material, wears out
+    ///   at a bench, and buys nothing.
+    fn validate_bench_tools(&self) -> Result<(), EquipmentConfigError> {
+        for (id, item) in &self.items {
+            let is_tool = item.bounds_material().is_some();
+            for effect in item.every_effect() {
+                if !effect.stat.is_craft_stat() {
+                    continue;
+                }
+                if !is_tool {
+                    return Err(EquipmentConfigError::InvalidRoster {
+                        reason: format!(
+                            "item '{id}' declares the craft stat {:?} but bounds no material - a \
+                             craft stat's unequipped side is a property of the MATERIAL, so there \
+                             is nothing for this to be the equipped side of",
+                            effect.stat
+                        ),
+                    });
+                }
+                if let EffectTier::Unequipped(_) = effect.tier {
+                    return Err(EquipmentConfigError::InvalidRoster {
+                        reason: format!(
+                            "item '{id}' declares {:?} `unequipped` - the unequipped side of every \
+                             craft stat is the material's own `hand_working`, and this would be a \
+                             second home read by nothing",
+                            effect.stat
+                        ),
+                    });
+                }
+            }
+            let charges_bench_wear = item.wear.per == WearQuantum::ItemCrafted;
+            if is_tool != charges_bench_wear {
+                return Err(EquipmentConfigError::InvalidRoster {
+                    reason: format!(
+                        "item '{id}' bounds a material: {is_tool}, but wears per {:?} - the bench \
+                         is the only site that charges `item_crafted`, so a tool on another \
+                         quantum is immortal and anything else on this one never wears at all",
+                        item.wear.per
+                    ),
+                });
+            }
+            if is_tool
+                && !item
+                    .every_effect()
+                    .any(|effect| effect.stat.is_craft_stat())
+            {
+                return Err(EquipmentConfigError::InvalidRoster {
+                    reason: format!(
+                        "item '{id}' is a bench tool but declares no craft stat - it would cost \
+                         material, wear out, and buy nothing"
+                    ),
+                });
+            }
+            if let Some(material) = item.bounds_material() {
+                let others: Vec<&str> = self
+                    .items
+                    .iter()
+                    .filter(|(other, def)| {
+                        other.as_str() != id.as_str() && def.bounds_material() == Some(material)
+                    })
+                    .map(|(other, _)| other.as_str())
+                    .collect();
+                if !others.is_empty() {
+                    return Err(EquipmentConfigError::InvalidRoster {
+                        reason: format!(
+                            "items {id}, {} all bound '{material}' - the bench resolves the first \
+                             match, so the tool would be picked by name order",
+                            others.join(", ")
+                        ),
+                    });
+                }
+            }
+        }
+        // **A TOOL SERVES THE BENCH, NOT A PARTY.** A kit naming one would carry it onto the range,
+        // where it grants nothing (no take path reads a craft stat) and is never worn (no take site
+        // charges `item_crafted`) — a kit slot spent on nothing.
+        for kit in &self.kits {
+            for item in &kit.uses {
+                if self
+                    .item(item)
+                    .and_then(ItemDefinition::bounds_material)
+                    .is_some()
+                {
+                    return Err(EquipmentConfigError::InvalidRoster {
+                        reason: format!(
+                            "kit '{}' uses '{item}', which is a bench tool - a tool serves the \
+                             bench and grants nothing to a party",
+                            kit.id
+                        ),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// **Every `bounds_material` reconciled against the materials table** — the cross-config half,
+    /// run at the composition seam in `build_headless_app` where both configs are in scope. Same
+    /// `UnknownItem` debt the two food webs' yield edges pay: a tool bounding `hyde` would parse,
+    /// validate, and then be the tool for nothing.
+    pub fn validate_against_materials(
+        &self,
+        materials: &crate::materials_config::MaterialsConfig,
+    ) -> Result<(), EquipmentConfigError> {
+        let crafts = crate::crafting::crafts_declared_by(materials);
+        for (id, item) in &self.items {
+            // **A TIER'S GATE MUST NAME A REAL CRAFT.** A craft id is a `String`, so a tier gated on
+            // `smithng` would parse, validate, and then be unreachable forever — the `UnknownItem`
+            // debt again, and in its most expensive direction: the content is authored and cannot be
+            // earned. Asked of the materials table rather than of a coded list, so a craft arrives
+            // with the material that teaches it.
+            for tier in &item.tiers {
+                let Some(craft) = tier.requires_knowledge.as_deref() else {
+                    continue;
+                };
+                if !crafts.contains(&craft) {
+                    return Err(EquipmentConfigError::InvalidRoster {
+                        reason: format!(
+                            "item '{id}' gates its tier '{}' on '{craft}', which no material \
+                             declares as a craft - the tier could never be reached",
+                            tier.id
+                        ),
+                    });
+                }
+            }
+            let Some(material) = item.bounds_material() else {
+                continue;
+            };
+            if materials.material(material).is_none() {
+                return Err(EquipmentConfigError::InvalidRoster {
+                    reason: format!(
+                        "item '{id}' bounds '{material}', which is not a material - it would be the \
+                         bench tool for nothing"
+                    ),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// **A WARRIOR KIT'S ATTACK MUST NOT BE BOUNDED BY BODY MASS**, because there is nothing on the
@@ -1167,7 +1841,7 @@ impl EquipmentConfig {
         }) {
             for item in &kit.uses {
                 let Some(def) = self.item(item) else { continue };
-                for effect in &def.effects {
+                for effect in def.every_effect() {
                     if effect.stat == EquipmentStat::Attack && effect.is_mass_bounded() {
                         return Err(EquipmentConfigError::InvalidRoster {
                             reason: format!(
@@ -1202,7 +1876,7 @@ impl EquipmentConfig {
         let default = self.default_kit(KitJob::Hunt);
         for item in default.uses() {
             let Some(def) = self.item(item) else { continue };
-            for effect in &def.effects {
+            for effect in def.every_effect() {
                 if effect.stat == EquipmentStat::Attack && effect.is_mass_bounded() {
                     return Err(EquipmentConfigError::InvalidRoster {
                         reason: format!(
@@ -1512,18 +2186,21 @@ mod tests {
             .unwrap_or_else(|| panic!("the shipped roster must carry '{id}'"))
     }
 
-    /// The **equipped** value an item declares for a stat — panics if it declares the other tier, so
-    /// a test cannot silently assert against the wrong side of a cliff.
+    /// The **equipped** value an item's DEFAULT TIER declares for a stat — panics if it declares
+    /// the other side, so a test cannot silently assert against the wrong side of a cliff.
     fn equipped_of(config: &EquipmentConfig, id: &str, stat: EquipmentStat) -> f32 {
-        match item(config, id).effect(stat) {
+        let tier = item(config, id).default_tier();
+        match tier.effects.iter().find(|e| e.stat == stat).map(|e| e.tier) {
             Some(EffectTier::Equipped(value)) => value,
             other => panic!("'{id}' declares {other:?} for {stat:?}, not an equipped tier"),
         }
     }
 
-    /// The **unequipped** value an item declares for a stat. Same strictness, other side.
+    /// The **unequipped** value an item declares for a stat, on its SHARED effects. Same strictness,
+    /// other side — and the other home, because an unequipped value is true of every tier at once.
+    #[allow(dead_code)] // the shipped roster's only unequipped sides are read by the pen/vantage tests
     fn unequipped_of(config: &EquipmentConfig, id: &str, stat: EquipmentStat) -> f32 {
-        match item(config, id).effect(stat) {
+        match item(config, id).shared_effect(stat) {
             Some(EffectTier::Unequipped(value)) => value,
             other => panic!("'{id}' declares {other:?} for {stat:?}, not an unequipped tier"),
         }
@@ -1538,9 +2215,10 @@ mod tests {
         }
     }
 
-    /// A band that has used nothing.
+    /// A band that owns one unworn unit of everything a kit carries — the reference ledger, and
+    /// **not** `Default`, which since the count slice means *owns nothing*.
     fn fresh() -> BandEquipment {
-        BandEquipment::default()
+        BandEquipment::start_stocked(&EquipmentConfig::builtin())
     }
 
     /// **THE TRAPPING KIT'S WHOLE CLAIM, IN ONE PLACE.**
@@ -1616,18 +2294,18 @@ mod tests {
         );
     }
 
-    /// The shipped equipped **hunt** haul rate — `labor_config.json`'s
+    /// The shipped **no-equipment** haul baseline — `labor_config.json`'s
     /// `hunt.per_worker_biomass_capacity`, named here so this module's unit tests do not restate a
     /// number that lives elsewhere.
-    fn equipped_haul_rate() -> f32 {
+    fn baseline_haul_rate() -> f32 {
         crate::labor_config::LaborConfig::builtin()
             .hunt
             .per_worker_biomass_capacity
     }
 
-    /// The shipped equipped **gather** throughput — `labor_config.json`'s
+    /// The shipped **no-equipment** gather baseline — `labor_config.json`'s
     /// `forage.per_worker_biomass_capacity`, for the same reason.
-    fn equipped_gather_rate() -> f32 {
+    fn baseline_gather_rate() -> f32 {
         crate::labor_config::LaborConfig::builtin()
             .forage
             .per_worker_biomass_capacity
@@ -1637,11 +2315,11 @@ mod tests {
     fn builtin_config_ships_all_three_kits() {
         let config = EquipmentConfig::builtin();
         assert_eq!(equipped_of(&config, SPEARS, EquipmentStat::Attack), 20.0);
-        assert!(item(&config, SPEARS).starting_durability > 0.0);
+        assert!(item(&config, SPEARS).default_tier().starting_durability > 0.0);
         assert!(item(&config, SPEARS).wear.amount > 0.0);
-        assert!(unequipped_of(&config, SLED, EquipmentStat::HuntCarry) > 0.0);
+        assert!(equipped_of(&config, SLED, EquipmentStat::HuntCarry) > 0.0);
         assert!(item(&config, SLED).wear.amount > 0.0);
-        assert!(unequipped_of(&config, BASKETS, EquipmentStat::ForageCarry) > 0.0);
+        assert!(equipped_of(&config, BASKETS, EquipmentStat::ForageCarry) > 0.0);
         assert!(item(&config, BASKETS).wear.amount > 0.0);
     }
 
@@ -1657,11 +2335,11 @@ mod tests {
             "the hunting kit must raise attack above the bare-handed {bare_attack}"
         );
         assert!(
-            equipped_haul_rate() > unequipped_of(&equipment, SLED, EquipmentStat::HuntCarry),
+            equipped_of(&equipment, SLED, EquipmentStat::HuntCarry) > baseline_haul_rate(),
             "the sled must raise the hunt's haul rate above the bare-armed tier"
         );
         assert!(
-            equipped_gather_rate() > unequipped_of(&equipment, BASKETS, EquipmentStat::ForageCarry),
+            equipped_of(&equipment, BASKETS, EquipmentStat::ForageCarry) > baseline_gather_rate(),
             "baskets must raise the gather rate above the bare-handed tier"
         );
     }
@@ -1675,9 +2353,9 @@ mod tests {
     fn losing_your_baskets_costs_proportionally_more_than_losing_your_sled() {
         let equipment = EquipmentConfig::builtin();
         let sled_ratio =
-            equipped_haul_rate() / unequipped_of(&equipment, SLED, EquipmentStat::HuntCarry);
+            equipped_of(&equipment, SLED, EquipmentStat::HuntCarry) / baseline_haul_rate();
         let basket_ratio =
-            equipped_gather_rate() / unequipped_of(&equipment, BASKETS, EquipmentStat::ForageCarry);
+            equipped_of(&equipment, BASKETS, EquipmentStat::ForageCarry) / baseline_gather_rate();
         assert!(
             sled_ratio > 1.0,
             "the sled must be live at all: ratio {sled_ratio}"
@@ -1715,23 +2393,23 @@ mod tests {
     #[test]
     fn each_carry_tier_resolves_to_one_of_exactly_two_rates() {
         let equipment = EquipmentConfig::builtin();
-        let hunt = equipped_haul_rate();
-        let gather = equipped_gather_rate();
+        let hunt = baseline_haul_rate();
+        let gather = baseline_gather_rate();
         assert_eq!(
             equipment.hunt_per_worker_biomass_capacity(hunt, &kit_of(&[SLED]), &fresh()),
-            hunt
+            equipped_of(&equipment, SLED, EquipmentStat::HuntCarry)
         );
         assert_eq!(
             equipment.hunt_per_worker_biomass_capacity(hunt, &kit_of(&[]), &fresh()),
-            unequipped_of(&equipment, SLED, EquipmentStat::HuntCarry)
+            hunt
         );
         assert_eq!(
             equipment.forage_per_worker_biomass_capacity(gather, &kit_of(&[BASKETS]), &fresh()),
-            gather
+            equipped_of(&equipment, BASKETS, EquipmentStat::ForageCarry)
         );
         assert_eq!(
             equipment.forage_per_worker_biomass_capacity(gather, &kit_of(&[]), &fresh()),
-            unequipped_of(&equipment, BASKETS, EquipmentStat::ForageCarry)
+            gather
         );
     }
 
@@ -1742,8 +2420,8 @@ mod tests {
     #[test]
     fn a_dry_basket_does_not_touch_the_hunt_and_a_dry_sled_does_not_touch_the_gather() {
         let equipment = EquipmentConfig::builtin();
-        let hunt = equipped_haul_rate();
-        let gather = equipped_gather_rate();
+        let hunt = baseline_haul_rate();
+        let gather = baseline_gather_rate();
         // Liveness on both sides: each kit really does move its own number...
         assert_ne!(
             equipment.hunt_per_worker_biomass_capacity(hunt, &kit_of(&[SLED]), &fresh()),
@@ -1761,12 +2439,12 @@ mod tests {
         // answer falls to its declared unequipped tier — never to the other web's number.
         assert_eq!(
             equipment.hunt_per_worker_biomass_capacity(hunt, &kit_of(&[SLED]), &fresh()),
-            hunt,
+            equipped_of(&equipment, SLED, EquipmentStat::HuntCarry),
             "an equipped sled hauls at the shipped rate whatever the baskets are doing"
         );
         assert_eq!(
             equipment.forage_per_worker_biomass_capacity(gather, &kit_of(&[BASKETS]), &fresh()),
-            gather,
+            equipped_of(&equipment, BASKETS, EquipmentStat::ForageCarry),
             "equipped baskets gather at the shipped rate whatever the sled is doing"
         );
     }
@@ -1788,7 +2466,7 @@ mod tests {
         let err = EquipmentConfig::from_json_str(&kit_json("2.0", "0.02", "0.0"))
             .expect_err("zero durability is invalid");
         assert!(
-            matches!(&err, EquipmentConfigError::Invalid { field, .. } if field == "items.baskets.starting_durability"),
+            matches!(&err, EquipmentConfigError::Invalid { field, .. } if field == "items.baskets.tiers.flint.starting_durability"),
             "unexpected error: {err}"
         );
     }
@@ -1806,8 +2484,8 @@ mod tests {
         let json = format!(
             r#"{{
             "items": {{
-                "spears": {{ "starting_durability": 100.0, "wear": {{ "per": "kill", "amount": 0.4 }}, "effects": [{{ "stat": "attack", "equipped": 20.0 }}] }},
-                "sled": {{ "starting_durability": 100.0, "wear": {{ "per": "biomass_hauled", "amount": 0.02 }}, "effects": [{{ "stat": "hunt_carry", "unequipped": 12.0 }}] }}
+                "spears": {{ "wear": {{ "per": "kill", "amount": 0.4 }}, "effects": [], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": [{{ "stat": "attack", "equipped": 20.0 }}]}}] }},
+                "sled": {{ "wear": {{ "per": "biomass_hauled", "amount": 0.02 }}, "effects": [{{ "stat": "hunt_carry", "unequipped": 12.0 }}], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": []}}] }}
             }},
             {ROSTER_JSON}
         }}"#
@@ -1826,9 +2504,9 @@ mod tests {
         format!(
             r#"{{
             "items": {{
-                "spears": {{ "starting_durability": 100.0, "wear": {{ "per": "kill", "amount": {spear_wear} }}, "effects": [{{ "stat": "attack", "equipped": 20.0 }}] }},
-                "sled": {{ "starting_durability": 100.0, "wear": {{ "per": "biomass_hauled", "amount": {sled_wear} }}, "effects": [{{ "stat": "hunt_carry", "unequipped": 12.0 }}] }},
-                "baskets": {{ "starting_durability": {basket_durability}, "wear": {{ "per": "biomass_gathered", "amount": 0.04 }}, "effects": [{{ "stat": "forage_carry", "unequipped": 1.6 }}] }}
+                "spears": {{ "wear": {{ "per": "kill", "amount": {spear_wear} }}, "tiers": [{{ "id": "flint", "starting_durability": 100.0, "effects": [{{ "stat": "attack", "equipped": 20.0 }}] }}] }},
+                "sled": {{ "wear": {{ "per": "biomass_hauled", "amount": {sled_wear} }}, "effects": [{{ "stat": "hunt_carry", "unequipped": 12.0 }}], "tiers": [{{ "id": "flint", "starting_durability": 100.0, "effects": [] }}] }},
+                "baskets": {{ "wear": {{ "per": "biomass_gathered", "amount": 0.04 }}, "effects": [{{ "stat": "forage_carry", "unequipped": 1.6 }}], "tiers": [{{"id": "flint", "starting_durability": {basket_durability}, "effects": []}}] }}
             }},
             {ROSTER_JSON}
         }}"#
@@ -1846,7 +2524,7 @@ mod tests {
     #[test]
     fn the_two_shipped_kits_reproduce_the_pre_roster_predicates() {
         let equipment = EquipmentConfig::builtin();
-        let fresh = crate::components::BandEquipment::default();
+        let fresh = fresh();
         let big_game = equipment
             .kit("big_game")
             .expect("the roster ships big_game");
@@ -1881,7 +2559,8 @@ mod tests {
                 &big_game,
                 &fresh
             ),
-            labor.hunt.per_worker_biomass_capacity
+            equipped_of(&equipment, SLED, EquipmentStat::HuntCarry),
+            "the stalking kit hauls at the sled's own tier"
         );
         assert_eq!(
             equipment.forage_per_worker_biomass_capacity(
@@ -1889,7 +2568,8 @@ mod tests {
                 &gathering,
                 &fresh
             ),
-            labor.forage.per_worker_biomass_capacity
+            equipped_of(&equipment, BASKETS, EquipmentStat::ForageCarry),
+            "the gathering kit carries at the baskets' own tier"
         );
     }
 
@@ -1899,7 +2579,7 @@ mod tests {
     #[test]
     fn a_kit_that_uses_nothing_runs_at_every_unequipped_tier() {
         let equipment = EquipmentConfig::builtin();
-        let fresh = crate::components::BandEquipment::default();
+        let fresh = fresh();
         let none = equipment.kit("none").expect("the roster ships none");
         assert!(!none.item_live(SPEARS, &fresh, &equipment));
         assert!(!none.item_live(SLED, &fresh, &equipment));
@@ -1920,7 +2600,8 @@ mod tests {
                 &none,
                 &fresh
             ),
-            unequipped_of(&equipment, SLED, EquipmentStat::HuntCarry)
+            labor.hunt.per_worker_biomass_capacity,
+            "a party with no sled drags at the no-equipment baseline"
         );
         assert_eq!(
             equipment.forage_per_worker_biomass_capacity(
@@ -1928,7 +2609,8 @@ mod tests {
                 &none,
                 &fresh
             ),
-            unequipped_of(&equipment, BASKETS, EquipmentStat::ForageCarry)
+            labor.forage.per_worker_biomass_capacity,
+            "a party with no baskets gathers at the no-equipment baseline"
         );
     }
 
@@ -1981,7 +2663,8 @@ mod tests {
                     { "id": "big_game", "display_name": "B", "jobs": ["hunt"], "uses": [] }
                 ],
                 "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game" },
-                "quarry_default_kit_margin": 0.25"#,
+                "quarry_default_kit_margin": 0.25,
+            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
             ),
             (
                 "a kit that can be sent on nothing",
@@ -1989,7 +2672,8 @@ mod tests {
                     { "id": "big_game", "display_name": "A", "jobs": [], "uses": [] }
                 ],
                 "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game" },
-                "quarry_default_kit_margin": 0.25"#,
+                "quarry_default_kit_margin": 0.25,
+            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
             ),
             (
                 "a default naming no roster entry",
@@ -1997,7 +2681,8 @@ mod tests {
                     { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": [] }
                 ],
                 "default_kits": { "hunt": "ghost", "forage": "big_game", "scout": "big_game", "warrior": "big_game" },
-                "quarry_default_kit_margin": 0.25"#,
+                "quarry_default_kit_margin": 0.25,
+            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
             ),
             (
                 "a default whose jobs do not cover its own job",
@@ -2006,7 +2691,8 @@ mod tests {
                     { "id": "gathering", "display_name": "B", "jobs": ["forage"], "uses": [] }
                 ],
                 "default_kits": { "hunt": "gathering", "forage": "gathering", "scout": "gathering", "warrior": "gathering" },
-                "quarry_default_kit_margin": 0.25"#,
+                "quarry_default_kit_margin": 0.25,
+            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
             ),
         ];
         for (what, roster) in cases {
@@ -2034,7 +2720,8 @@ mod tests {
                 { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": ["net_kit"] }
             ],
             "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game" },
-                "quarry_default_kit_margin": 0.25"#,
+                "quarry_default_kit_margin": 0.25,
+            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
         ))
         .expect_err("an item that does not exist is invalid");
         assert!(
@@ -2050,9 +2737,9 @@ mod tests {
         format!(
             r#"{{
             "items": {{
-                "spears": {{ "starting_durability": 100.0, "wear": {{ "per": "kill", "amount": 0.4 }}, "effects": [{{ "stat": "attack", "equipped": 20.0 }}] }},
-                "sled": {{ "starting_durability": 100.0, "wear": {{ "per": "biomass_hauled", "amount": 0.02 }}, "effects": [{{ "stat": "hunt_carry", "unequipped": 12.0 }}] }},
-                "baskets": {{ "starting_durability": 100.0, "wear": {{ "per": "biomass_gathered", "amount": 0.04 }}, "effects": [{{ "stat": "forage_carry", "unequipped": 1.6 }}] }}
+                "spears": {{ "wear": {{ "per": "kill", "amount": 0.4 }}, "effects": [], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": [{{ "stat": "attack", "equipped": 20.0 }}]}}] }},
+                "sled": {{ "wear": {{ "per": "biomass_hauled", "amount": 0.02 }}, "effects": [{{ "stat": "hunt_carry", "unequipped": 12.0 }}], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": []}}] }},
+                "baskets": {{ "wear": {{ "per": "biomass_gathered", "amount": 0.04 }}, "effects": [{{ "stat": "forage_carry", "unequipped": 1.6 }}], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": []}}] }}
             }},
             {roster}
         }}"#
@@ -2076,15 +2763,16 @@ mod tests {
         // first, which is a different check.
         let json = r#"{
             "items": {
-                "spears": { "starting_durability": 100.0, "wear": { "per": "kill", "amount": 0.4 }, "effects": [{ "stat": "attack", "equipped": 20.0 }] },
-                "snares": { "starting_durability": 100.0, "wear": { "per": "kill", "amount": 0.2 }, "effects": [{ "stat": "attack", "equipped": 20.0, "max_body_mass": 1.0 }] }
+                "spears": { "wear": { "per": "kill", "amount": 0.4 }, "effects": [], "tiers": [{"id": "flint", "starting_durability": 100.0, "effects": [{ "stat": "attack", "equipped": 20.0 }]}] },
+                "snares": { "wear": { "per": "kill", "amount": 0.2 }, "effects": [], "tiers": [{"id": "flint", "starting_durability": 100.0, "effects": [{ "stat": "attack", "equipped": 20.0, "max_body_mass": 1.0 }]}] }
             },
             "kits": [
                 { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": ["spears"] },
                 { "id": "warrior", "display_name": "W", "jobs": ["warrior", "scout"], "uses": ["snares"] }
             ],
             "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "warrior", "warrior": "warrior" },
-            "quarry_default_kit_margin": 0.25
+            "quarry_default_kit_margin": 0.25,
+            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }
         }"#;
         let err = EquipmentConfig::from_json_str(json)
             .expect_err("a warrior kit carrying a mass-bounded weapon is invalid");
@@ -2104,5 +2792,6 @@ mod tests {
                 { "id": "none", "display_name": "No kit", "jobs": ["hunt", "forage", "scout", "warrior"], "uses": [] }
             ],
             "default_kits": { "hunt": "big_game", "forage": "gathering", "scout": "none", "warrior": "none" },
-            "quarry_default_kit_margin": 0.25"#;
+            "quarry_default_kit_margin": 0.25,
+            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#;
 }

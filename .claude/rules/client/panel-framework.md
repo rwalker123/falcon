@@ -53,6 +53,110 @@ own content, which is the same lie as a card fitted too short, upside down.
 width every pass, and re-asserting `target_width` there would silently undo `fit_width` on
 the next height fit.
 
+### "AGAINST THE VIEWPORT" MEANS AGAINST THE ROOM — `room_bounds`
+
+The reserved-edge registry below insets `MapView` and the HUD's `LayoutRoot` by every docked
+panel's strip, so once anything is docked the raw viewport is a rectangle **nothing else in
+the client is using**. A free-floating card measured against it grows over the dock and over
+whatever overlays the edge it just claimed — reported in play on the Materials & Crafting
+panel, which ran the full height of the window and covered the top of the screen.
+
+**`room_bounds` is the seam, and it is one rect for both jobs.** Set it to the Control the
+registry has already inset (the HUD's `LayoutRoot`) and `available_room(margin)` gives the
+caller its placement rect while `fit_to_content` takes its ceiling from the same rect, so the
+placement and the height fit cannot disagree about how much room there is.
+
+**WHICH PART of that rect is the ceiling is decided by where the card will SIT, and the caller
+declares it with `centred_in_room`.** A card pinned where it is and growing downward (the
+compose sheets, the fork card) may use only what lies below its own top edge — a fit that took
+the whole room would run it off the bottom with its internal scroll left disabled. A card the
+caller CENTRES once the fit is done is nowhere in particular at fit time, so it may use the
+room's whole height, and it is measured **without being moved**: the ceiling comes off the room
+rect, never off `global_position.y`. The constraint is the same either way — a centred card
+measured against the room beneath it throws away everything above it, which is the measured
+clamp `crafting-panel.md` records — but satisfying it by parking the card at the top of the
+room, measuring, and centring it again puts the card there for a whole RENDERED frame, because
+a measurement can only be taken a frame after its content was mounted. That is a visible jump on
+both axes every re-render.
+
+It is **opt-in, and `null` is the correct answer for a card that IS a reserver** — the
+Inspector reserves its own edge, so it must be measured against the whole window. A card
+handed a room it cannot fit does not overflow: `fit_to_content` turns its internal scroll on
+exactly when the content did not fit.
+
+### AN OVERLAY IS A SECOND KIND OF NEIGHBOUR — `Hud.set_overlay_inset`
+
+The event dock reserves nothing by design (it overlays the map — `event-dock.md`), so it is
+not in the reservation registry and a card bounded by `LayoutRoot` shares a band with it: the
+Materials & Crafting header was reported drawn *underneath* a top-docked event bar.
+
+**A docked panel is drawn under the bar by its container; a free-floating card is drawn
+through it**, because it places itself by arithmetic against a rect. So the fix is a rect and
+not a reservation — making the bar a reserver would push the whole map layout down and undo a
+decision that has nothing to do with whoever is colliding with it.
+
+`Hud.set_overlay_inset(id, edge, size)` is the registry for it, the same `{edge, size}` shape
+keyed by the same StringName id, and it writes a SECOND node: **`FloatingRoom`**, which is
+`LayoutRoot`'s rect pulled further off every overlay. `LayoutRoot` is untouched, so the HUD's
+own layout does not move; free-floating cards take `FloatingRoom` as their `room_bounds` and
+get both bounds from one rect.
+
+Three properties it is easy to get wrong:
+
+- **`size` is ABSOLUTE — the depth covered measured from the screen edge**, already including
+  whatever displacement pushed the surface inboard. The per-edge totals are therefore a
+  **maximum**, where reservations are a **sum**: a reserved strip and an overlay drawn inboard
+  of it overlap rather than stack.
+
+  **On a SHARED edge the maximum rests on that absoluteness and on nothing else**, so it is worth
+  knowing what makes it true. With the band panel and the event bar both on `SIDE_BOTTOM`, the bar
+  publishes `_edge_offset + _cross_axis_size()` and `_edge_offset` is
+  `Main._update_event_dock_edge_offset`'s sum over every reserver on that edge — the band panel
+  included, since it keeps its `_reservations` entry whether or not the HUD yields. So the deeper
+  term **contains** the shallower and the maximum drops nothing. Take the offset out of
+  `occupied_extent()` and it stops being true immediately: the panel's 335 outranks the bar's 66,
+  the room's bottom becomes 335, and the card is drawn straight through the bar
+  (`crafting_panel_co_edge_bottom` fails on exactly that, at `card bottom 805 vs bar top 751`).
+  **An overlay whose `size` is its own height rather than its depth from the edge cannot be
+  registered here** — it must publish the absolute figure or the max will lose it.
+- **`size <= 0` releases it, which is what a hidden surface publishes.** The event dock's
+  `occupied_extent()` answers 0 while suppressed; it does NOT shrink when empty, because its
+  height is content-independent by design.
+- **The room must re-fit when EITHER registry moves, not only when a card opens.** The bar is
+  toggleable (`R`), flips edge, and grows a row on a preference change; a docked panel arrives,
+  changes edge, collapses and is released — all under an already-open card, and none of them is a
+  snapshot. So `set_reserved_inset` and `set_overlay_inset` both end in `Hud._refit_floating_cards`
+  → `CraftingPanelController.refit_room()`, which re-fits (never re-renders — the payload is
+  unchanged and a rebuild would lose the player's scroll position). **The reserved half is the one
+  that reads as optional and is not**: a card open while the Band/City panel docked stayed fitted to
+  a room that no longer existed and was sliced mid-row by the panel. `EventDockPanel` publishes
+  `occupancy_changed(edge, extent)` from `_apply_dock_layout`, the one choke point every input to
+  its geometry already runs through, and `Main` relays it; the initial value is seeded by hand in
+  `_connect_event_dock`, the dock's own `_ready` having emitted before the parent could connect.
+
+### THE TWO REGISTRIES ARE COMPLEMENTS — `Main.push_hud_strip`
+
+A reserver the HUD does **not** yield to is not a reserver that has gone away; it is a surface that
+covers pixels without taking space, which is the paragraph above reached from the opposite
+direction. `Main._reserver_overlays_hud` withholds a horizontal band dock's strip from the HUD
+(see "Reserved-edge docking" and `band-city-panel.md` for what that buys), and that exemption is
+about the HUD's own **containers**: they go on laying out through the strip and the band card is
+simply drawn over them. A free-floating card is the one surface that is not — it places itself by
+arithmetic against `FloatingRoom` — so with neither registry naming the strip it is drawn *through*
+the panel.
+
+**`Main.push_hud_strip(hud, id, edge, size, overlays)` is therefore the one publisher, and it
+charges exactly one of the two.** `overlays` is `band_dock_overlays_hud`'s verdict; this is what the
+verdict MEANS to the HUD. Both are `static` and node-free because the offline harnesses fan a
+reservation out by hand, and a harness publishing half of it renders a card the live client bounds —
+which is also the reason to call it rather than restate it (`band_panel_preview`, `crafting_bench`
+and `tile_panel` all do).
+
+The depth published to the overlay registry is absolute from the screen edge, as that registry
+requires: only a HORIZONTAL band dock reaches the overlay branch, and the only reservers that could
+displace one inboard (`RESERVER_PRIORITY`) are the two LEFT-edge dev surfaces, so a horizontal
+dock's own `_edge_offset` is 0 whenever a size is published this way.
+
 **A card pinned narrower than its content does not fail; it lies.** The inner
 `PanelContainer` — a real Container — grows out of the card and draws the background at the
 content's width, so the card *looks* right while its own rect, and every placement decision
@@ -70,7 +174,7 @@ assertions that pin it are in `labor-ui.md` → "THE HEIGHT CHROME IS THE HEADER
 
 | Script | Purpose |
 |--------|---------|
-| `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content — `fit_to_content` (height, ceiling `max_height`) and `fit_width` (width, ceiling `max_width`), both against the viewport. Callers: the Inspector and `ui/hud/BandComposeFloat.gd` |
+| `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content — `fit_to_content` (height, ceiling `max_height`) and `fit_width` (width, ceiling `max_width`), plus `available_room(margin)`, all measured against `room_bounds` where one was set and against the raw viewport where it was not. **`centred_in_room`** picks which half of the room the height ceiling is (see above) and **`has_fitted_width()`** answers whether a width has ever been applied, which is how a caller applies its nominal before the measuring frame on the FIRST mount only. Callers: the Inspector, `ui/hud/BandComposeFloat.gd` and `ui/hud/CraftingPanel.gd` (the one that sets `room_bounds`, to the HUD's `FloatingRoom`) |
 ## HUD Panel Framework (Docked PanelCards)
 
 The HUD (`HudLayer.tscn`) owns the screen regions with one layout authority — a

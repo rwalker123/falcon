@@ -248,7 +248,7 @@ options and your options' options; splitting spends people to hold two places at
 ## Config levers
 
 A `settle` block in `expedition_config.json`. **Two dials, both floors on workers, both saying what
-they do in their own name.** Opening values are sized against the ~30-person / ~16-worker starting
+they do in their own name.** Opening values are sized against the ~30-person / ~17-worker starting
 band (`plan_early_game_labor.md` §Starting state) and want playtest. The failure columns say which
 way each one breaks, because that is what tells you which direction to move it.
 

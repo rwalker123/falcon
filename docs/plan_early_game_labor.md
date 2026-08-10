@@ -46,8 +46,8 @@ fighting with/without weapons. Build it once.
 ### The band is a labor pool
 The allocatable labor **supply** is the **working-age** bracket only (children and elders are
 dependents that eat but do not work — the existing `demographics_config.json` brackets). Of a
-~30-person band (~55% working) that is ~16 workers to split across roles. Labor is the scarce
-currency; *how you divide those ~16 people is the core turn-to-turn decision.*
+~30-person band (~59% working) that is ~17 workers to split across roles. Labor is the scarce
+currency; *how you divide those ~17 people is the core turn-to-turn decision.*
 
 ### Roles (the labor demands)
 Milestone 1 ships four roles. Each is a demand the player staffs from the labor pool:
@@ -75,7 +75,7 @@ effectively a **city working its surrounding tiles**:
 - **Assignable sources in range** — tiles with a food module (→ **Forage** work) and herds
   (→ **Hunt** work). The player **assigns workers from the labor pool to a specific source**
   (this herd, that patch), with the invariant **Σ assignments ≤ working-age**. A small band
-  (~16 workers, `R`=2) has only a handful of in-range sources, so this is placing 2–5 assignments,
+  (~17 workers, `R`=2) has only a handful of in-range sources, so this is placing 2–5 assignments,
   not micromanaging tiles.
 - **Yield scales with assigned headcount.** This is the core fix: today no yield reads the
   `working` bracket (it is an inert demographic number) while consumption is fully headcount-scaled
@@ -182,7 +182,7 @@ between Warrior and threats is the thing that is cheaper to get right now than t
 | 9 | **Fractional food** | Non-negotiable at sub-1-per-source scale; the literal Issue-2 fix. |
 | 10 | **Minimal predator threat in M1** | Warrior needs a consumer to be designed right; cheaper now than retrofitting combat onto an untested role. |
 | 11 | **Spoilage deferred** | Carry-cap gives storage its purpose without spoilage; spoilage matters only once storage lets food *sit* (M2), combined with time-in-storage. |
-| 12 | **Source-centric allocation** (assign workers to a specific in-range source), not abstract sliders | Matches the player's mental model ("assign workers to *that* herd/patch"); tractable at ~16 workers × `R`=2; picking *which* source is more interesting than a slider. |
+| 12 | **Source-centric allocation** (assign workers to a specific in-range source), not abstract sliders | Matches the player's mental model ("assign workers to *that* herd/patch"); tractable at ~17 workers × `R`=2; picking *which* source is more interesting than a slider. |
 | 13 | **Band work range `R`** (config, default 2) | Once a band stops it *is* a city working its surrounding tiles; `R` + the density overlay is how the player reads a parking spot. Repositioning is a move-band command. |
 | 14 | Migratory game = **leashed follow** (bounded reuse of `FaunaPursuit`); **breakaway-to-new-band deferred** | Keeps migratory hunting without whole-band chase or unbounded detachments; genuinely-distant game is a band *split* (its own slice). |
 
@@ -191,7 +191,7 @@ between Warrior and threats is the thing that is cheaper to get right now than t
 Replace the hardcoded `900` in `spawn_profile_population` with a **config lever** (start
 profile / demographics config). Target opening values (dials, to be tuned live):
 
-- **1 band, ~30 people**, split by the existing `initial_distribution` (≈30/55/15).
+- **1 band, ~30 people**, split by the existing `initial_distribution` (≈33/59/7).
 - **Carry capacity with headroom** — cap ≳ starting population (e.g. start 30, cap ~40) so there
   is *visible room to grow* before the first plateau; otherwise the loop never demonstrates
   itself.
