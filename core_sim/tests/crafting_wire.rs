@@ -938,20 +938,26 @@ fn the_life_wording_is_in_the_items_own_use_quanta_and_the_noun_comes_from_its_q
 
     let spears = rows_for(&published, SPEARS_ITEM);
     let clubs = rows_for(&published, "clubs");
+    let sled = rows_for(&published, SLED_ITEM);
     assert_eq!(
-        spears[0].quantum_noun, "kills",
-        "spears wear per animal killed"
+        spears[0].quantum_noun, "blows",
+        "spears wear per landed strike"
     );
     assert_eq!(
-        clubs[0].quantum_noun, "raids",
-        "clubs wear per fight resolved"
+        clubs[0].quantum_noun, "blows",
+        "and so does a club — a weapon is charged for what it SWINGS, whichever role swings it, \
+         which is why `Kill` and `Fight` collapsed into one quantum"
+    );
+    assert_eq!(
+        sled[0].quantum_noun, "biomass hauled",
+        "the sled is not swung, so it keeps its own quantum"
     );
     assert_ne!(
-        spears[0].quantum_noun, clubs[0].quantum_noun,
+        spears[0].quantum_noun, sled[0].quantum_noun,
         "the noun is the ITEM's, not one word for every row — that is what the client must not \
          re-derive"
     );
-    for row in [&spears[0], &clubs[0]] {
+    for row in [&spears[0], &clubs[0], &sled[0]] {
         assert!(
             row.life.ends_with(&format!(" {} left", row.quantum_noun)) || row.life.starts_with('~'),
             "a worn row reads in its own quanta — got {:?}",

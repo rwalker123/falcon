@@ -12,7 +12,7 @@
   "items": {
     "spears": {
       "wear": {
-        "per": "kill",
+        "per": "strike",
         "amount": 0.4
       },
       "effects": [
@@ -78,7 +78,7 @@
     },
     "traps": {
       "wear": {
-        "per": "kill",
+        "per": "strike",
         "amount": 0.2
       },
       "effects": [
@@ -145,7 +145,7 @@
     },
     "clubs": {
       "wear": {
-        "per": "fight",
+        "per": "strike",
         "amount": 2.0
       },
       "effects": [],

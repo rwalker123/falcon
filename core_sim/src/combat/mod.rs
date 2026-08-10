@@ -229,6 +229,18 @@ pub struct ContingentResult {
     /// ([`DamageLedger`]), and only the resolver knows how much that was: `killed + wounded` has
     /// already been through the division **and** the clamp to `count`, so it cannot be inverted.
     pub damage_dealt: f32,
+    /// **How many strikes this contingent LANDED on the enemy** — the count
+    /// [`landed_strikes`] already drew, handed back instead of discarded.
+    ///
+    /// > **It faces the other way from every field above it, and that is deliberate.** `killed`,
+    /// > `wounded` and `damage_dealt` are what happened *to* this contingent; this is what it
+    /// > *did*. Equipment wears on the swing, so the count a wear charge needs has to be attributed
+    /// > to the **striker**, and the striker is the only one who can be charged for it — a row that
+    /// > reported strikes *received* would make a bare-handed run pay for the spears beside it.
+    ///
+    /// Zero for a contingent whose `attack` never cleared its target's `defense`: the gate skips the
+    /// pairing before a strike is drawn, so a run that could not hurt the quarry did not swing at it.
+    pub strikes_landed: f32,
 }
 
 /// The result of one fight: per-contingent casualties, who won, and whether the loser withdrew.
@@ -506,6 +518,30 @@ fn killed_share(incoming_per_defender: f32, defense: f32) -> f32 {
     }
 }
 
+/// **How much of `damage` the bodies standing there can actually take** — `min(damage, standing ×
+/// durability)`, the one home of the clamp [`DamageLedger::strike`] applies and the raid adapter
+/// needs without a ledger.
+///
+/// A blow struck at bodies that are not there falls on the ground. Stated once because **wear is
+/// scaled by it**: the fraction of a party's damage a quarry could absorb is the fraction of the
+/// party's swing that did work, and two call sites computing that clamp differently would charge two
+/// different numbers of spears for the same fight.
+pub fn damage_absorbed(damage: f32, profile: &CombatStats, standing: f32) -> f32 {
+    damage
+        .max(0.0)
+        .min(standing.max(0.0) * profile.durability.max(DURABILITY_EPS))
+}
+
+/// **One blow banked** — [`DamageLedger::strike_blow`]'s pair of answers.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StruckBlow {
+    /// Whole units this blow finished, the remainder kept on the ledger.
+    pub units_down: f32,
+    /// How much of the blow the standing bodies could take ([`damage_absorbed`]) — what a wear
+    /// charge is scaled by.
+    pub absorbed: f32,
+}
+
 /// The relative slop [`DamageLedger::strike`] allows when asking whether banked damage has completed
 /// a whole body. Named because it guards a `floor()` on a quotient built by repeated addition: the
 /// blow that exactly finishes a unit must count as finishing it, not land one ulp short and leave a
@@ -591,16 +627,31 @@ impl DamageLedger {
     /// made every such projection report a raid that kills nothing, for ever — a
     /// `DenialOutcome::Repelled` on a herd a real party erases in two turns.
     pub fn strike(&mut self, damage: f32, profile: &CombatStats, standing: f32) -> f32 {
+        self.strike_blow(damage, profile, standing).units_down
+    }
+
+    /// [`Self::strike`] **and how much of the blow the bodies could take** — the same call, reporting
+    /// the clamp instead of swallowing it.
+    ///
+    /// The absorbed half is what a **wear** charge is scaled by
+    /// (`.claude/rules/core_sim/equipment.md` → "Wear follows the work actually done"): ten hunters
+    /// who deal enough damage for five deer while two are standing did two deer's worth of work, and
+    /// only that much of their gear was used. It is reported rather than re-derived because the
+    /// clamp lives here and a caller recomputing it would be a second authority over `standing`.
+    pub fn strike_blow(&mut self, damage: f32, profile: &CombatStats, standing: f32) -> StruckBlow {
         let damage = damage.max(0.0);
         if damage > 0.0 {
             self.in_contact = true;
         }
         let durability = profile.durability.max(DURABILITY_EPS);
-        let soakable = standing.max(0.0) * durability;
-        let total = self.pending + damage.min(soakable);
+        let absorbed = damage_absorbed(damage, profile, standing);
+        let total = self.pending + absorbed;
         let down = (total / durability * (1.0 + WHOLE_UNIT_EPSILON)).floor();
         self.pending = (total - down * durability).max(0.0);
-        down
+        StruckBlow {
+            units_down: down,
+            absorbed,
+        }
     }
 
     /// **One turn's healing** — a body left alone knits back `recovery_rate × durability`
@@ -693,6 +744,18 @@ pub fn resolve_fight(payload: &FightPayload, tuning: &CombatTuning) -> FightOutc
     let mut rng = SmallRng::seed_from_u64(payload.seed);
 
     let mut results = Vec::new();
+    // **Where each result row came from**, parallel to `results` — the (side, contingent) index of
+    // the row pushed at that position. A contingent's own `strikes_landed` is only known once every
+    // *other* side has been walked (it swings during their passes), so the rows are filled in with a
+    // placeholder and completed below. One row per contingent, exactly once, is what makes the
+    // second pass a lookup rather than a search.
+    let mut row_origin: Vec<(usize, usize)> = Vec::new();
+    // Strikes each contingent LANDED, by (side, contingent) — see [`ContingentResult::strikes_landed`].
+    let mut strikes_thrown: Vec<Vec<f32>> = payload
+        .sides
+        .iter()
+        .map(|side| vec![0.0_f32; side.contingents.len()])
+        .collect();
     let mut loss_totals = vec![0.0_f32; payload.sides.len()];
     for (i, side) in payload.sides.iter().enumerate() {
         let power_self = powers[i];
@@ -710,7 +773,7 @@ pub fn resolve_fight(payload: &FightPayload, tuning: &CombatTuning) -> FightOutc
             0.0
         };
         let mut losses_total = 0.0_f32;
-        for contingent in &side.contingents {
+        for (c, contingent) in side.contingents.iter().enumerate() {
             // The enemy's units are split across this side's contingents ∝ their counts, and each
             // pairing is gated by THIS contingent's defense.
             let share = if count_self > 0.0 {
@@ -723,7 +786,7 @@ pub fn resolve_fight(payload: &FightPayload, tuning: &CombatTuning) -> FightOutc
                 if j == i {
                     continue;
                 }
-                for attacker in &enemy.contingents {
+                for (k, attacker) in enemy.contingents.iter().enumerate() {
                     // **THE GATE.** Below the target's defense a strike does nothing at all — not a
                     // small amount, nothing — so no headcount clears it, and no draw is even made.
                     let per_strike =
@@ -733,6 +796,7 @@ pub fn resolve_fight(payload: &FightPayload, tuning: &CombatTuning) -> FightOutc
                     }
                     let landed = landed_strikes(attacker.count * share, tuning, &mut rng);
                     damage += landed * per_strike;
+                    strikes_thrown[j][k] += landed;
                 }
             }
             let damage_dealt = damage * tuning.lethality;
@@ -740,15 +804,24 @@ pub fn resolve_fight(payload: &FightPayload, tuning: &CombatTuning) -> FightOutc
             losses_total += down;
             let killed = down * killed_share(incoming_per_defender, contingent.profile.defense);
             let wounded = down - killed;
+            row_origin.push((i, c));
             results.push(ContingentResult {
                 force: side.id,
                 kind: contingent.kind.clone(),
                 killed,
                 wounded,
                 damage_dealt,
+                // Filled below, once every side has swung — see `row_origin`.
+                strikes_landed: 0.0,
             });
         }
         loss_totals[i] = losses_total;
+    }
+
+    // **Second pass: attribute the strikes to whoever threw them.** Every contingent has exactly one
+    // row, so this is a lookup.
+    for (row, (side, contingent)) in results.iter_mut().zip(&row_origin) {
+        row.strikes_landed = strikes_thrown[*side][*contingent];
     }
 
     // The loser withdrew rather than being annihilated iff its losses cleared the disengage share.

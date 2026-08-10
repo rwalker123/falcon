@@ -1876,11 +1876,17 @@ fn seed_source_yield(
                 .get::<BandEquipment>(band)
                 .cloned()
                 .unwrap_or_default();
-            let per_worker_biomass = equipment_cfg.forage_per_worker_biomass_capacity(
-                labor.forage.per_worker_biomass_capacity,
-                &crew_kit,
-                &band_wear,
-            );
+            // **Through the same coverage the turn resolves** (`equipment.md` → "the
+            // partly-equipped party"): baskets cover gatherers one unit at a time, so a seed priced
+            // at the whole crew's best tier would promise a basketful to people holding nothing.
+            let crew_coverage = equipment_cfg.coverage(&crew_kit, workers as f32, &band_wear);
+            let per_worker_biomass = crew_coverage.weighted_rate(|kit| {
+                equipment_cfg.forage_per_worker_biomass_capacity(
+                    labor.forage.per_worker_biomass_capacity,
+                    kit,
+                    &band_wear,
+                )
+            });
             forage_source_yield_preview(
                 patch,
                 &tile_composition,
@@ -1939,11 +1945,13 @@ fn seed_source_yield(
             // armed half can make.
             let hunt_coverage = equipment_cfg.coverage(&crew_kit, workers as f32, &band_wear);
             let per_worker_biomass = if herd.is_corralled() {
-                equipment_cfg.pen_per_worker_biomass_capacity(
-                    labor.hunt.per_worker_biomass_capacity,
-                    &crew_kit,
-                    &band_wear,
-                )
+                hunt_coverage.weighted_rate(|kit| {
+                    equipment_cfg.pen_per_worker_biomass_capacity(
+                        labor.hunt.per_worker_biomass_capacity,
+                        kit,
+                        &band_wear,
+                    )
+                })
             } else {
                 hunt_coverage.weighted_rate(|kit| {
                     equipment_cfg.hunt_per_worker_biomass_capacity(
@@ -7576,9 +7584,9 @@ mod tests {
                 PopulationCohort {
                     home,
                     current_tile: home,
-                    size: 30,
+                    size: BAND_WORKING_AGE,
                     children: core_sim::scalar_zero(),
-                    working: scalar_from_f32(30.0),
+                    working: scalar_from_f32(BAND_WORKING_AGE as f32),
                     elders: core_sim::scalar_zero(),
                     stores: LocalStore::new(),
                     morale: core_sim::scalar_one(),
@@ -7607,8 +7615,14 @@ mod tests {
                     ..Default::default()
                 },
                 // A spawned band is KITTED, exactly as `spawn_profile_population` spawns one —
-                // **stated**, because an absent ledger entry means NOT OWNED since the count slice.
-                BandEquipment::start_stocked(&core_sim::EquipmentConfig::builtin()),
+                // **stated**, because an absent ledger entry means NOT OWNED since the count slice,
+                // and **sized to the band's workers**, because a spawn stocks a party's worth: one
+                // unit each would arm one of these thirty and leave the rest bare-handed
+                // (`equipment.md` → "the partly-equipped party").
+                BandEquipment::start_stocked_for(
+                    &core_sim::EquipmentConfig::builtin(),
+                    BAND_WORKING_AGE as f32,
+                ),
             ))
             .id()
     }
@@ -7635,6 +7649,9 @@ mod tests {
 
     /// Workers each test band staffs on its source.
     const BAND_WORKERS: u32 = 5;
+    /// Every fixture band's working-age head count — also what its start stock is sized against, so
+    /// the two cannot drift and leave a fixture band partly equipped for reasons no test is about.
+    const BAND_WORKING_AGE: u32 = 30;
 
     /// The biomass a **stocked patch** fixture is seeded at, as a fraction of `K` — deliberately
     /// **above** Sustain's escapement floor (`fauna::MSY_BIOMASS_FRACTION`, `0.5`), so a Sustain

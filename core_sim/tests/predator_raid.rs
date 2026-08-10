@@ -601,6 +601,53 @@ fn a_band_short_of_clubs_stands_up_an_armed_line_and_a_bare_one() {
     );
 }
 
+/// **A CLUB IS CHARGED FOR THE BLOWS IT LANDED, NOT FOR THE RAID IT ATTENDED** (the strike quantum).
+///
+/// `WearQuantum::Fight` charged the whole warrior line one use per engagement, which billed a band
+/// for weapons most of its warriors may never have swung. The club now shares `Strike` with the
+/// spear: a line that clears the pack's `defense` is charged per blow, a line that cannot is charged
+/// nothing, and **a band nobody raided still pays zero** — `docs/plan_denial_raid.md` §1.2 intact.
+///
+/// The three arms are compared against **each other** rather than against literals, because the
+/// number moves with `combat_config` and with the pack's own `durability`.
+#[test]
+fn clubs_wear_per_blow_landed_and_an_unraided_band_pays_nothing() {
+    const WARRIORS: u32 = 8;
+    const FEW_CLUBS: u32 = 3;
+
+    let club_wear_after_a_raid = |clubs: u32, seat_a_pack: bool| -> f32 {
+        let (mut app, pos, tile) = arena();
+        if seat_a_pack {
+            seat(&mut app, "pred_wolf", WOLF, pos);
+        }
+        let band = resident_band(&mut app, tile, 30, WARRIORS);
+        arm_with_clubs(&mut app, band, clubs);
+        app.world.run_system_once(advance_predator_raids);
+        app.world
+            .get::<core_sim::BandEquipment>(band)
+            .expect("the band was armed")
+            .wear_of(CLUBS)
+    };
+
+    let fully_clubbed = club_wear_after_a_raid(WARRIORS, true);
+    let partly_clubbed = club_wear_after_a_raid(FEW_CLUBS, true);
+    let unraided = club_wear_after_a_raid(WARRIORS, false);
+
+    assert_eq!(
+        unraided, 0.0,
+        "a band nobody raided swung nothing — wear is charged for USE, never for turns elapsed"
+    );
+    assert!(
+        partly_clubbed > 0.0,
+        "the clubbed line really landed blows: {partly_clubbed}"
+    );
+    assert!(
+        partly_clubbed < fully_clubbed,
+        "three clubs land fewer blows than eight, so they wear less: {partly_clubbed} vs \
+         {fully_clubbed} — a per-ENGAGEMENT charge would read the same for both"
+    );
+}
+
 /// **Determinism.** Two identical raid setups leave bit-identical casualties (the resolver is pure and
 /// the seed is derived, not random).
 #[test]

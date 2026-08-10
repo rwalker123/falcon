@@ -5303,10 +5303,18 @@ pub struct HuntingParty {
 /// [`HuntingParty`] scale-free exactly as the single-profile struct was: every caller still passes
 /// its own `hunters` count, and a sub-party that engages (`hunt_engage_workers` returning fewer than
 /// were assigned) carries the same mix rather than an arbitrary prefix of it.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct HuntCrew {
     /// This run's share of the party, in `0..=1`. The crews sum to `1`.
     pub share: f32,
+    /// **What this run is holding** — the party's kit narrowed to this crew
+    /// ([`crate::equipment_config::Crew::kit`]), so the fight can charge the weapon that swung
+    /// without a wear site having to pair the outcome back up with the coverage that produced it.
+    ///
+    /// **`None` for a party built through [`HuntingParty::uniform`]** — a fixture, a reference quote
+    /// or a launch forecast, none of which owns a ledger to charge. It is an absent *charge*, not an
+    /// empty kit: an empty kit would be a claim that the crew holds nothing.
+    pub kit: Option<crate::equipment_config::KitChoice>,
     /// One hunter's combat profile in this run — intrinsic ⊕ what *this* run is holding. `attack 1`
     /// bare-handed, `20` speared.
     pub hunter: CombatStats,
@@ -5365,6 +5373,7 @@ impl PartyResolution<'_> {
             .iter()
             .map(|crew| HuntCrew {
                 share: crew.workers / self.total_workers(),
+                kit: Some(crew.kit.clone()),
                 hunter: match quarry {
                     crate::equipment_config::Quarry::Mass(body_mass) => self
                         .equipment
@@ -5441,6 +5450,7 @@ impl HuntingParty {
         Self {
             crews: vec![HuntCrew {
                 share: 1.0,
+                kit: None,
                 hunter,
                 injury_damage_per_animal,
             }],
@@ -5682,8 +5692,23 @@ impl FightCasualties {
     }
 }
 
+/// **What one crew's gear did work for, this fight** — the crew's own narrowed kit and the strikes
+/// it is charged for ([`crate::equipment_config::WearQuantum::Strike`]).
+///
+/// **The kit rides with the number**, so a wear site charges what actually swung without holding the
+/// party beside the outcome and zipping two lists by index — the alignment that would silently
+/// mis-bill a crew the day a party's crews and its charges were built in different orders.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StrikeCharge {
+    /// The crew's kit, narrowed to what it holds — so an item the crew does not carry is never
+    /// charged, which is what makes a bare-handed run free.
+    pub kit: crate::equipment_config::KitChoice,
+    /// Strikes landed, scaled by the share of the party's damage the bodies could absorb.
+    pub strikes: f32,
+}
+
 /// **One turn's fight** — how many animals the party brought down, and what it cost.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct HuntFight {
     /// **Whole animals brought down** — the bound [`quantise_animal_take`] takes as its fight arm.
     /// [`f32::INFINITY`] for a source with no fight stage at all (a pen).
@@ -5703,6 +5728,35 @@ pub struct HuntFight {
     /// function of its inputs, exactly as [`crate::combat::resolve_fight`] is: a forecast can resolve
     /// the same fight the take will and simply drop the ledger.
     pub wounds: DamageLedger,
+    /// **What the party's weapons are charged for** — one entry per crew that was holding something,
+    /// in crew order. Empty for a pen (no fight), for a fixture party built through
+    /// [`HuntingParty::uniform`] (no kit to charge), and for a forecast, which resolves the fight and
+    /// drops the charge exactly as it drops the ledger.
+    pub strike_charges: Vec<StrikeCharge>,
+}
+
+impl HuntFight {
+    /// **Charge every crew's own kit for the blows it landed** — the one seam every take path's
+    /// weapon wear goes through.
+    ///
+    /// A site says *"this party just fought"* and each crew pays for its own swing: the run that
+    /// could not clear the quarry's defence landed nothing and is charged nothing, and a run holding
+    /// no weapon has nothing in its kit to charge either. The **carry** kits are charged separately
+    /// on their own quanta — this is only what was swung.
+    pub fn charge_strike_wear(
+        &self,
+        wear: &mut crate::components::BandEquipment,
+        config: &crate::equipment_config::EquipmentConfig,
+    ) {
+        for charge in &self.strike_charges {
+            wear.wear_kit(
+                config,
+                &charge.kit,
+                crate::equipment_config::WearQuantum::Strike,
+                charge.strikes,
+            );
+        }
+    }
 }
 
 /// **The fight stage** (`docs/plan_hunt_through_combat.md` §4) — the party engages `stayed` animals
@@ -5793,6 +5847,10 @@ pub fn resolve_hunt_fight(
             casualties: FightCasualties::default(),
             fought: false,
             wounds: quarry.wounds,
+            // **Nobody swung.** A pen, an empty engagement or a party of nobody wears no weapon —
+            // this is `docs/plan_denial_raid.md` §1.2's "never for turns elapsed", as a `Vec` that
+            // is simply empty.
+            strike_charges: Vec::new(),
         };
     }
     // **What the activity costs whoever shows up** (§4.6) — resolved before the quarry is even asked
@@ -5807,20 +5865,37 @@ pub fn resolve_hunt_fight(
         // attack the quarry's defense swallows contributes a hard zero here for the same reason it
         // does there ([`combat::strike_damage`]), so the short-circuit stays a short-circuit and
         // not a second model.
-        let damage: f32 = party
+        let landed_per_crew: Vec<f32> = party
             .crews
             .iter()
             .map(|crew| {
-                let landed =
-                    combat::landed_strikes_seeded(hunters * crew.share, &tuning, draw.seed());
+                // A crew whose attack the quarry's defence swallows lands nothing, exactly as the
+                // resolver's gate would have it — so it is charged nothing below.
+                if combat::strike_damage(crew.hunter.attack, quarry.profile.defense) <= 0.0 {
+                    return 0.0;
+                }
+                combat::landed_strikes_seeded(hunters * crew.share, &tuning, draw.seed())
+            })
+            .collect();
+        let damage: f32 = party
+            .crews
+            .iter()
+            .zip(&landed_per_crew)
+            .map(|(crew, landed)| {
                 landed * combat::strike_damage(crew.hunter.attack, quarry.profile.defense)
             })
             .sum();
+        let blow = wounds.strike_blow(damage * tuning.lethality, &quarry.profile, stayed);
         return HuntFight {
-            brought_down: wounds.strike(damage * tuning.lethality, &quarry.profile, stayed),
+            brought_down: blow.units_down,
             casualties: injuries,
             fought: false,
             wounds,
+            strike_charges: strike_charges(
+                party,
+                &landed_per_crew,
+                absorbed_share(blow.absorbed, damage * tuning.lethality),
+            ),
         };
     }
     let payload = FightPayload {
@@ -5862,6 +5937,9 @@ pub fn resolve_hunt_fight(
     let outcome = combat::resolve_fight(&payload, &tuning);
     let mut quarry_damage = 0.0_f32;
     let mut casualties = injuries;
+    // **What each crew landed**, in crew order — the party force's rows come back in the order its
+    // contingents were built, which is the crew order.
+    let mut landed_per_crew: Vec<f32> = Vec::with_capacity(party.crews.len());
     for result in &outcome.results {
         if result.force == QUARRY_FORCE {
             // **The DAMAGE, not the bodies.** The resolver's own `killed + wounded` has already been
@@ -5875,17 +5953,66 @@ pub fn resolve_hunt_fight(
             // party's however its gear divided it.
             casualties.killed += result.killed;
             casualties.wounded += result.wounded;
+            landed_per_crew.push(result.strikes_landed);
         }
     }
+    let blow = wounds.strike_blow(quarry_damage, &quarry.profile, stayed);
     HuntFight {
         // **Whole animals** — the same rule `quantise_animal_take` exists for. A fractional kill left
         // un-floored would let `killed_biomass` and the reported `killed` count disagree, so the
         // ledger hands back only completed bodies and keeps the remainder.
-        brought_down: wounds.strike(quarry_damage, &quarry.profile, stayed),
+        brought_down: blow.units_down,
         casualties,
         fought: true,
         wounds,
+        strike_charges: strike_charges(
+            party,
+            &landed_per_crew,
+            absorbed_share(blow.absorbed, quarry_damage),
+        ),
     }
+}
+
+/// **How much of a party's blow the bodies could take, as a fraction** — the scale a strike charge
+/// is billed at (`.claude/rules/core_sim/equipment.md` → "Wear follows the work actually done").
+///
+/// Ten hunters deal enough damage for five deer with two standing: two-fifths of the swing went into
+/// a body, so two-fifths of the party's spears did work. **`1.0` when nothing was dealt** — there is
+/// nothing to scale, and the strike count it multiplies is zero anyway; answering `0/0` as `0` would
+/// read the same but hides which of the two is the reason.
+fn absorbed_share(absorbed: f32, dealt: f32) -> f32 {
+    if dealt > 0.0 {
+        (absorbed / dealt).clamp(0.0, 1.0)
+    } else {
+        WHOLE_BLOW_LANDED
+    }
+}
+
+/// The absorbed share of a blow that dealt nothing — see [`absorbed_share`].
+const WHOLE_BLOW_LANDED: f32 = 1.0;
+
+/// **One [`StrikeCharge`] per crew that is holding something** — its landed strikes, scaled by the
+/// share of the party's damage the bodies could absorb.
+///
+/// A crew with **no kit** ([`HuntCrew::kit`] `None`) is skipped rather than charged zero: a fixture
+/// or reference party has no ledger behind it, which is a different statement from *"this crew swung
+/// and wore nothing out"*.
+fn strike_charges(
+    party: &HuntingParty,
+    landed_per_crew: &[f32],
+    absorbed_share: f32,
+) -> Vec<StrikeCharge> {
+    party
+        .crews
+        .iter()
+        .zip(landed_per_crew)
+        .filter_map(|(crew, landed)| {
+            crew.kit.as_ref().map(|kit| StrikeCharge {
+                kit: kit.clone(),
+                strikes: landed * absorbed_share,
+            })
+        })
+        .collect()
 }
 
 /// **The hunt's own hazard, resolved into people** (`docs/plan_hunt_through_combat.md` §4.6) —

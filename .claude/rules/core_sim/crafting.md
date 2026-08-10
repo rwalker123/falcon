@@ -724,13 +724,14 @@ change the moment the player pressed Make.
 
 `life` reads in the item's **own use quanta** and never in percent: a spear at 34% is exactly as
 deadly as one at 100%, so a single percentage bar would draw a taper the model does not have. The
-quantum's noun is `WearQuantum::noun` — a club that wears per `fight` reads *raids*, a spear per
-`kill` reads *kills* — resolved **sim-side**, because a client mapping the enum to English would be a
-second copy of that table that a new quantum would not update. A *count* quantum gets a count noun; a
+quantum's noun is `WearQuantum::noun` — a sled that wears per `biomass_hauled` reads *biomass
+hauled*, a spear (and a club, which shares the quantum) per `strike` reads *blows* — resolved
+**sim-side**, because a client mapping the enum to English would be a second copy of that table that
+a new quantum would not update. A *count* quantum gets a count noun; a
 *continuous* one keeps its own unit (`biomass hauled`), because a "biomass" is not a countable event
 and a turns conversion would need a forecast of what the band is about to do.
 
-Five wordings: `Untouched` · `48 kills left` · `~1 kill left` · **`Worn out`** · **`Never made`**.
+Five wordings: `Untouched` · `48 blows left` · `~1 blow left` · **`Worn out`** · **`Never made`**.
 
 > ### `Worn out` and `Never made` both read `count 0`, and telling them apart needed STATE
 >
@@ -748,7 +749,7 @@ Five wordings: `Untouched` · `48 kills left` · `~1 kill left` · **`Worn out`*
 > a bench introduces.
 
 `lifeSeverity` (`healthy`/`warn`/`danger`) comes off `equipment.json`'s **`life_readout`** seams,
-which are fractions of *one fresh unit's* quanta rather than absolutes — a spear's life is 250 kills
+which are fractions of *one fresh unit's* quanta rather than absolutes — a spear's life is 250 blows
 and a sled's is 5000 biomass, so any single absolute count would colour one of them permanently red.
 
 **`KitItemCondition` gained `count`, and `remaining == 0` no longer means "dry".** Since the count

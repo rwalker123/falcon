@@ -587,7 +587,7 @@ const FIXTURE_RECIPES: &str = r#"{
 const FIXTURE_EQUIPMENT: &str = r#"{
   "items": {
     "spears": {
-      "wear": { "per": "kill", "amount": 0.4 },
+      "wear": { "per": "strike", "amount": 0.4 },
       "tiers": [
         {
           "id": "flint",

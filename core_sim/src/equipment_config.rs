@@ -288,8 +288,26 @@ impl EquipmentEffect {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WearQuantum {
-    /// Per animal brought down. Spears and traps.
-    Kill,
+    /// Per **landed strike that went into a body**. Spears, traps and clubs.
+    ///
+    /// # It replaced `Kill` AND `Fight`, and both for the same reason
+    ///
+    /// A kill charged the whole party for a body one part of it brought down, and a fight charged
+    /// the whole warrior line for an engagement most of it may never have swung in. Both pretended
+    /// every piece of gear present did the work. **A strike is what a weapon actually does**, so it
+    /// is the honest quantum for anything swung — and it is attributed to the *crew that threw it*
+    /// ([`crate::combat::ContingentResult::strikes_landed`]), which is what lets a bare-handed run
+    /// inside a speared party pay nothing.
+    ///
+    /// **It is scaled by what the bodies could absorb.** Ten hunters deal enough damage for five
+    /// deer with two standing, so two-fifths of the swing did work and `10 × 0.4 = 4` spears are
+    /// charged (`crate::combat::damage_absorbed`). Overkill against a thin herd is not free, but
+    /// neither is it billed as if every blow found a body.
+    ///
+    /// **Still not a clock.** A party that marches all turn, waits out a herd it cannot afford to
+    /// touch, or is never raided lands no strikes and pays nothing —
+    /// `docs/plan_denial_raid.md` §1.2 intact.
+    Strike,
     /// Per unit of biomass hauled home from a hunt. The sled.
     BiomassHauled,
     /// Per unit of biomass gathered. Baskets.
@@ -315,13 +333,6 @@ pub enum WearQuantum {
     /// exactly what `docs/plan_denial_raid.md` §1.2 forbids. What wears wayfinding gear is going
     /// somewhere new.
     TileRevealed,
-    /// Per **fight resolved**. Warrior weapons.
-    ///
-    /// **Per engagement, not per casualty inflicted.** A defence that killed nothing was still
-    /// fought, and pricing the kit on its results would make a band that is losing pay less. A band
-    /// nobody raided pays nothing, and a band three packs turned on pays three — a use count, not a
-    /// clock.
-    Fight,
     /// Per **item completed on the bench**. Bench tools.
     ///
     /// **The lesson the craft teaches is charged on this SAME quantum**
@@ -346,12 +357,11 @@ impl WearQuantum {
     /// forecast of what the band is about to do.
     pub fn noun(self) -> &'static str {
         match self {
-            Self::Kill => "kills",
+            Self::Strike => "blows",
             Self::BiomassHauled => "biomass hauled",
             Self::BiomassGathered => "biomass gathered",
             Self::BiomassCollected => "biomass butchered",
             Self::TileRevealed => "new tiles",
-            Self::Fight => "raids",
             Self::ItemCrafted => "crafts",
         }
     }
@@ -361,12 +371,11 @@ impl WearQuantum {
     /// same either way.
     pub fn singular_noun(self) -> &'static str {
         match self {
-            Self::Kill => "kill",
+            Self::Strike => "blow",
             Self::BiomassHauled => "biomass hauled",
             Self::BiomassGathered => "biomass gathered",
             Self::BiomassCollected => "biomass butchered",
             Self::TileRevealed => "new tile",
-            Self::Fight => "raid",
             Self::ItemCrafted => "craft",
         }
     }
@@ -2874,7 +2883,7 @@ mod tests {
         let json = format!(
             r#"{{
             "items": {{
-                "spears": {{ "wear": {{ "per": "kill", "amount": 0.4 }}, "effects": [], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": [{{ "stat": "attack", "equipped": 20.0 }}]}}] }},
+                "spears": {{ "wear": {{ "per": "strike", "amount": 0.4 }}, "effects": [], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": [{{ "stat": "attack", "equipped": 20.0 }}]}}] }},
                 "sled": {{ "wear": {{ "per": "biomass_hauled", "amount": 0.02 }}, "effects": [{{ "stat": "hunt_carry", "unequipped": 12.0 }}], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": []}}] }}
             }},
             {ROSTER_JSON}
@@ -2894,7 +2903,7 @@ mod tests {
         format!(
             r#"{{
             "items": {{
-                "spears": {{ "wear": {{ "per": "kill", "amount": {spear_wear} }}, "tiers": [{{ "id": "flint", "starting_durability": 100.0, "effects": [{{ "stat": "attack", "equipped": 20.0 }}] }}] }},
+                "spears": {{ "wear": {{ "per": "strike", "amount": {spear_wear} }}, "tiers": [{{ "id": "flint", "starting_durability": 100.0, "effects": [{{ "stat": "attack", "equipped": 20.0 }}] }}] }},
                 "sled": {{ "wear": {{ "per": "biomass_hauled", "amount": {sled_wear} }}, "effects": [{{ "stat": "hunt_carry", "unequipped": 12.0 }}], "tiers": [{{ "id": "flint", "starting_durability": 100.0, "effects": [] }}] }},
                 "baskets": {{ "wear": {{ "per": "biomass_gathered", "amount": 0.04 }}, "effects": [{{ "stat": "forage_carry", "unequipped": 1.6 }}], "tiers": [{{"id": "flint", "starting_durability": {basket_durability}, "effects": []}}] }}
             }},
@@ -3132,7 +3141,7 @@ mod tests {
         format!(
             r#"{{
             "items": {{
-                "spears": {{ "wear": {{ "per": "kill", "amount": 0.4 }}, "effects": [], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": [{{ "stat": "attack", "equipped": 20.0 }}]}}] }},
+                "spears": {{ "wear": {{ "per": "strike", "amount": 0.4 }}, "effects": [], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": [{{ "stat": "attack", "equipped": 20.0 }}]}}] }},
                 "sled": {{ "wear": {{ "per": "biomass_hauled", "amount": 0.02 }}, "effects": [{{ "stat": "hunt_carry", "unequipped": 12.0 }}], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": []}}] }},
                 "baskets": {{ "wear": {{ "per": "biomass_gathered", "amount": 0.04 }}, "effects": [{{ "stat": "forage_carry", "unequipped": 1.6 }}], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": []}}] }}
             }},
@@ -3158,8 +3167,8 @@ mod tests {
         // first, which is a different check.
         let json = r#"{
             "items": {
-                "spears": { "wear": { "per": "kill", "amount": 0.4 }, "effects": [], "tiers": [{"id": "flint", "starting_durability": 100.0, "effects": [{ "stat": "attack", "equipped": 20.0 }]}] },
-                "snares": { "wear": { "per": "kill", "amount": 0.2 }, "effects": [], "tiers": [{"id": "flint", "starting_durability": 100.0, "effects": [{ "stat": "attack", "equipped": 20.0, "max_body_mass": 1.0 }]}] }
+                "spears": { "wear": { "per": "strike", "amount": 0.4 }, "effects": [], "tiers": [{"id": "flint", "starting_durability": 100.0, "effects": [{ "stat": "attack", "equipped": 20.0 }]}] },
+                "snares": { "wear": { "per": "strike", "amount": 0.2 }, "effects": [], "tiers": [{"id": "flint", "starting_durability": 100.0, "effects": [{ "stat": "attack", "equipped": 20.0, "max_body_mass": 1.0 }]}] }
             },
             "kits": [
                 { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": ["spears"] },
