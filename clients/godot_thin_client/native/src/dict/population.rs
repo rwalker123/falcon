@@ -38,13 +38,13 @@ pub(crate) fn audience_generations_to_array(
 
 /// EVERY fixed-point (`Scalar`, 1e6) field on a `PopulationCohortState`, converted to real units in
 /// ONE place — the sim stores these as `Scalar`, the wire carries them as a raw `long`, and reading
-/// one raw renders a 30-person band as "9292500 children" or a morale of 820000%.
+/// one raw renders a morale of 820000% or a fertility bonus of 250000x.
 ///
 /// It exists to be TESTABLE: `population_to_dict` returns a Godot `Dictionary`, which cannot be
 /// constructed outside a running engine, so the dict itself is unreachable from `cargo test`. This
 /// struct is plain Rust over a real FlatBuffer, so `cohort_scalars_decode_fixed_point` can pin the
 /// scale of each field. **A new Scalar cohort field belongs here, not inlined at its insert site** —
-/// inlined is exactly how the age cohorts shipped un-divided.
+/// inlined is how the retired fixed-point age cohorts once shipped un-divided.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct CohortScalars {
     morale: f64,
@@ -56,9 +56,6 @@ struct CohortScalars {
     morale_terrain: f64,
     morale_climate: f64,
     morale_unrest: f64,
-    age_children: f64,
-    age_working: f64,
-    age_elders: f64,
     fertility_hunger: f64,
     fertility_reserve: f64,
     fertility_trend: f64,
@@ -75,9 +72,6 @@ fn cohort_scalars(cohort: fb::PopulationCohortState<'_>) -> CohortScalars {
         morale_terrain: fixed64_to_f64(cohort.moraleTerrain()),
         morale_climate: fixed64_to_f64(cohort.moraleClimate()),
         morale_unrest: fixed64_to_f64(cohort.moraleUnrest()),
-        age_children: fixed64_to_f64(cohort.children()),
-        age_working: fixed64_to_f64(cohort.working()),
-        age_elders: fixed64_to_f64(cohort.elders()),
         fertility_hunger: fixed64_to_f64(cohort.fertilityHunger()),
         fertility_reserve: fixed64_to_f64(cohort.fertilityReserve()),
         fertility_trend: fixed64_to_f64(cohort.fertilityTrend()),
@@ -480,20 +474,18 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     }
     let _ = dict.insert("labor_assignments", &array);
     let _ = dict.insert("idle_workers", cohort.idleWorkers() as i64);
-    let _ = dict.insert("working_age", cohort.workingAge() as i64);
-    // Age cohorts (children / working / elders head-counts). Deliberately prefixed `age_*` and NOT
-    // named `working`/`working_age`: `workingAge` above is the count of ASSIGNABLE workers, a
-    // different quantity, and a key collision between the two would be silent and awful.
+    // **THE AGE BRACKETS ARE WHOLE PEOPLE, AND THERE ARE ONLY THREE NUMBERS HERE.**
+    // `working_age` IS the working bracket — the count of assignable workers — so `children` +
+    // `working_age` + `elders` == `size`, guaranteed by the sim (it writes `size` as that sum).
+    // There is deliberately no fourth `age_working`-style twin: two names for one number is how a
+    // band came to render "17" in the PEOPLE bar beside "0 idle of 16" in the WORKFORCE header.
     //
-    // **These are SCALAR fixed-point (`PopulationCohort.children: Scalar`), not raw counts** — the
-    // population is fractional in the sim — so they take `fixed64_to_f64` like `morale` above.
-    // Reading the `long` raw renders a 30-person band as "9292500 children"; the ×1e6 is big enough
-    // that it can only ever be a wire-scale mistake, never a plausible head-count.
-    // NOTE the neighbouring `PopulationDemographicsState` children/working/elders are `uint` PLAIN
-    // COUNTS (the faction-wide top-bar strip) — same three words, two different wire encodings.
-    let _ = dict.insert("age_children", scalars.age_children);
-    let _ = dict.insert("age_working", scalars.age_working);
-    let _ = dict.insert("age_elders", scalars.age_elders);
+    // The fraction the sim keeps internally is a GROWTH ACCUMULATOR, not a fact about people, and
+    // the deprecated `children`/`working`/`elders` Scalar slots that once published it are gone
+    // from the bindings. Nothing here rounds; the rounding happened once, in the sim.
+    let _ = dict.insert("children", cohort.childrenCount() as i64);
+    let _ = dict.insert("working_age", cohort.workingAge() as i64);
+    let _ = dict.insert("elders", cohort.eldersCount() as i64);
     // Forage work radius (Chebyshev tiles) drives the MapView band-selection work-range ring.
     // scout_reveal_radius is now the band's effective sight-range bonus (extra tiles beyond
     // base, 0 when no scouts) — its effect shows directly in the fog, NOT as a drawn disc.
@@ -940,10 +932,11 @@ mod cohort_decode_tests {
         let cohort = fb::PopulationCohortState::create(
             builder,
             &fb::PopulationCohortStateArgs {
+                // The age brackets are WHOLE PEOPLE and sum to `size` by the sim's construction.
                 size: 30,
-                children: 9_292_500,
-                working: 16_537_500,
-                elders: 4_642_500,
+                childrenCount: 9,
+                workingAge: 17,
+                eldersCount: 4,
                 morale: 820_000,
                 // == the four Layer-1 contributions below, which the test asserts.
                 moraleDelta: -11_000,
@@ -974,14 +967,12 @@ mod cohort_decode_tests {
         let cohort = flatbuffers::root::<fb::PopulationCohortState>(&bytes).expect("valid cohort");
         let scalars = cohort_scalars(cohort);
 
-        // The age brackets are Scalar, NOT head-counts: 9_292_500 is 9.2925 people.
-        assert!((scalars.age_children - 9.2925).abs() < 1e-9);
-        assert!((scalars.age_working - 16.5375).abs() < 1e-9);
-        assert!((scalars.age_elders - 4.6425).abs() < 1e-9);
-        // ... and they describe the SAME band the cohort's own `size` reports.
-        let people = scalars.age_children + scalars.age_working + scalars.age_elders;
-        assert!(
-            (people - f64::from(cohort.size())).abs() < 1.0,
+        // The age brackets are NOT here: they are whole `uint` people on the wire, read straight
+        // off the cohort with no divide, and they partition `size` exactly.
+        let people = cohort.childrenCount() + cohort.workingAge() + cohort.eldersCount();
+        assert_eq!(
+            people,
+            cohort.size(),
             "age brackets sum to {people}, cohort size is {}",
             cohort.size()
         );
@@ -1025,10 +1016,8 @@ mod cohort_decode_tests {
         let cohort = flatbuffers::root::<fb::PopulationCohortState>(&bytes).expect("valid cohort");
         let scalars = cohort_scalars(cohort);
         for (name, value) in [
-            ("age_children", scalars.age_children),
-            ("age_working", scalars.age_working),
-            ("age_elders", scalars.age_elders),
             ("morale", scalars.morale),
+            ("morale_delta", scalars.morale_delta),
             ("output_multiplier", scalars.output_multiplier),
             ("discontent_fraction", scalars.discontent_fraction),
             ("grievance", scalars.grievance),

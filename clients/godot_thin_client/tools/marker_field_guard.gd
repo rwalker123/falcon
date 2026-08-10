@@ -66,21 +66,19 @@ const MARKER_OMITTED_KEYS := {}
 # marker copy silently NARROWS with `int(...)`. Presence-only / integral-fixture checks cannot see
 # it — the key is there, the value is merely truncated — yet it is live-visible: the marker IS the
 # selection payload for a band clicked ON THE MAP (MapView.refresh_selection_payload →
-# Hud.show_unit_selection → _selected_unit), so e.g. truncated age brackets made a 30-person band's
-# PEOPLE block read 9+16+4 = 29 until the next snapshot re-resolved it from the raw floats.
+# Hud.show_unit_selection → _selected_unit), so e.g. a truncated morale reads a settled band as
+# mutinous until the next snapshot re-resolves it from the raw floats.
 #
 # Every key below is fed a deliberately NON-INTEGER value and must come back within
 # FRACTIONAL_EPSILON. Membership rule: the field must be continuous end to end (fixed-point Scalar
-# or `float` in snapshot.fbs). Integer counts (`size`, `working_age`, `idle_workers`), entity ids,
-# and coordinates are deliberately EXCLUDED — asserting a fraction on them would be a false claim.
+# or `float` in snapshot.fbs). Integer counts (`size`, `working_age`, `children`, `elders`,
+# `idle_workers`), entity ids, and coordinates are deliberately EXCLUDED — asserting a fraction on
+# them would be a false claim. **The age brackets left this list when they became whole people on the
+# wire**: they were the original narrowing regression here, and they are now counts like `size`,
+# covered by the `_expect_int` round-trips below instead.
 # These values are also the fixture's values for these keys (merged over FIXTURE_ENTRY), so the
 # fixture cannot drift away from what the round-trip asserts.
 const FRACTIONAL_ROUND_TRIP_KEYS := {
-	# Age structure — fixed-point Scalars (cohort.children/working/elders → fixed64_to_f64).
-	# THE regression: these three were copied with int(...). Values mirror the decoder test.
-	"age_children": 9.2925,
-	"age_working": 16.5375,
-	"age_elders": 4.6425,
 	# Morale + its four signed Layer-1 contributions — all fixed-point Scalars.
 	"morale": 0.4137,
 	"morale_delta": -0.0325,
@@ -147,6 +145,10 @@ const FIXTURE_ENTRY := {
 	"travel_target_x": 11,
 	"travel_target_y": 9,
 	"working_age": 16,
+	# The age brackets, in WHOLE PEOPLE — `working_age` IS the working one, and the three sum to
+	# `size` (9 + 16 + 5 = 30) exactly as the sim guarantees.
+	"children": 9,
+	"elders": 5,
 	"idle_workers": 7,
 	"labor_assignments": [
 		{"kind": "forage", "workers": 5, "target_x": 7, "target_y": 6, "actual_yield": 0.42, "sustainable_yield": 0.42},
@@ -231,6 +233,11 @@ func _ready() -> void:
 	# 2. Round-trip guard: the fields most prone to silent-default drops must preserve
 	#    the input value, not fall back to a default.
 	_expect_int(marker, "working_age", 16)
+	# The age brackets round-trip as COUNTS now. A marker that dropped one renders a PEOPLE bar
+	# short of the band's own `size` on the map-click path, which is where this guard's original
+	# narrowing bug was visible.
+	_expect_int(marker, "children", 9)
+	_expect_int(marker, "elders", 5)
 	_expect_int(marker, "idle_workers", 7)
 	_expect_int(marker, "work_range", 2)
 	_expect_int(marker, "hunt_reach", 7)

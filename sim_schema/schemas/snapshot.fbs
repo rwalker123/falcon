@@ -535,9 +535,14 @@ table PopulationCohortState {
   harvestTask:HarvestTask;
   scoutTask:ScoutTask;
   accessibleStockpile:AccessibleStockpile;
-  children:long = 0;
-  working:long = 0;
-  elders:long = 0;
+  // RETIRED: the age brackets as RAW fixed-point Scalars (1e6 = one person). The fraction is an
+  // internal growth accumulator, not a fact about people, and a client that rounded them for itself
+  // disagreed with the sim's own rounding. Replaced by the whole-people `childrenCount` /
+  // `workingAge` / `eldersCount` at the end of this table. Stopped being written; the slots stay
+  // (append-only discipline).
+  children:long (deprecated);
+  working:long (deprecated);
+  elders:long (deprecated);
   stores:[CohortStore];
   ageTurns:uint = 0;
   // TURNS until the larder is empty, INCOME INCLUDED: larder / (consumption + pen feed − income),
@@ -947,6 +952,27 @@ table PopulationCohortState {
   bench:BenchState;
   craftOffers:[CraftOffer];
   equipmentBatches:[EquipmentBatchState];
+  // --- THE AGE BRACKETS, IN WHOLE PEOPLE (appended last) ----------------------------------------
+  //
+  // *** THE WIRE CARRIES WHOLE PEOPLE. *** A band's brackets are fixed-point inside the sim because
+  // the fraction is a GROWTH ACCUMULATOR — it exists so a slow birth rate does not round to zero
+  // every turn — and it has exactly ONE correct reading, which is the sim's. Publishing the raw
+  // Scalars let the client invent a second one: a band of 16.6 working-age people rendered "17" in
+  // the PEOPLE bar beside "0 idle of 16" in the WORKFORCE header, the same frame, off the same band.
+  // So `children`/`working`/`elders` above are deprecated slots and these are what a reader uses.
+  //
+  // INVARIANT: childrenCount + workingAge + eldersCount == size, always, by construction — `size`
+  // is written as that sum. `workingAge` (the whole assignable workers, already shipped) IS the
+  // working bracket; there is deliberately no `workingCount` twin, because two names for one
+  // number is how the two start disagreeing.
+  //
+  // Derivation (core_sim::snapshot::population::whole_age_brackets): workers are the floored
+  // `available_workers` the commands clamp against, dependents are `size − workers` split between
+  // children and elders in proportion to their fixed-point masses, round-half on children with
+  // elders taking the remainder. A cohort with NO dependent mass has no dependents at all, and its
+  // published head count is its workers — a rounded-up phantom is not a person.
+  childrenCount:uint = 0;
+  eldersCount:uint = 0;
   // THE TARGET HERD'S SPECIES DISPLAY NAME ("Red Deer") for a hunt/deny party -- what the client
   // RENDERS for the quarry. "" for a scout or a normal band. Appended last (append-only discipline).
   //

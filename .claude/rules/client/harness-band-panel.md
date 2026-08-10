@@ -273,6 +273,23 @@ to `ui_preview`** — `band_panel_role_kits` (the LEFT dock, both cards) with it
 pair, `_assert_role_card_gear`'s six, `_assert_role_cards_are_level`'s two and
 `_assert_role_kit_command_carries_the_pick`'s five. The figures before it were **86 / 225 / 265**.
 
+**The PEOPLE↔WORKFORCE cross-check contributes ONE frame and EIGHT `PASS` to `band_panel_preview`
+and nothing to `ui_preview`** — `band_panel_workforce_away` plus `_assert_people_matches_workforce`,
+run twice on deliberately opposite bands: at `band_panel_people` on a band with NO party out (the
+negative arm — the away clause must not grow a permanent `· 0 away`), and on the reference band with
+its two parties in the field, the only configuration in which a party crew counted as a workforce
+segment is visible at all. The figures before it were **91 / 233 / 313**.
+
+Its four claims are read off the RENDERED chips (`_composition_counts`, the structural twin of
+`_zone_head_readout`: a zone block is a VBox whose head names it and whose `HFlowContainer` carries
+one `▪ key count` chip per segment), because both defects it guards were in the rendering and
+neither is legible in a thumbnail. PEOPLE's 🛠 chip must EQUAL the denominator in WORKFORCE's
+`n idle of m` — the two blocks are one band counted two ways, and a client that rounded the age
+brackets for itself put **17** directly above **"0 idle of 16"**. The PEOPLE chips must account for
+the band's whole `size`. WORKFORCE's segments must sum to `working_age` — with 10 workers away, a
+Parties segment made that bar total 26. And the header must carry `· 10 away` exactly when there is
+someone away, so the fact stays reachable rather than being deleted along with the segment.
+
 **The gear breakdown contributes ONE frame, ONE `assert OK` and EIGHT `PASS` to `band_panel_preview`
 and nothing to `ui_preview`** — `band_panel_kit_expanded` (the dock's own Kit popover, opened on the
 reference band) and `_assert_gear_breakdown_states_every_kit`, which asks each of the three new rows

@@ -329,6 +329,11 @@ pub struct PopulationCohortState {
     pub size: u32,
     /// Age brackets (fixed-point raw, `Scalar::SCALE` = 1.0) — persisted so a rollback restores
     /// the exact demographic structure. `children + working + elders` rounds to `size`.
+    ///
+    /// **Sim-internal: these three do NOT cross the wire.** Their FlatBuffers slots are
+    /// `(deprecated)`; what a client reads is the whole-people triple
+    /// [`Self::children_count`] / [`Self::working_age`] / [`Self::elders_count`]. The fraction is a
+    /// growth accumulator, and a client rounding it for itself disagreed with the sim's rounding.
     #[serde(default)]
     pub children: i64,
     #[serde(default)]
@@ -818,6 +823,21 @@ pub struct PopulationCohortState {
     /// row. See [`EquipmentBatchState`] for why the life wording is in use quanta and not percent.
     #[serde(default)]
     pub equipment_batches: Vec<EquipmentBatchState>,
+    /// **Whole children**, the derived half of the published age triple.
+    ///
+    /// **The wire carries whole people.** The fractional brackets above are an internal *growth
+    /// accumulator* — they exist so a slow birth rate does not round to zero every turn — with
+    /// exactly one correct reading, which is the sim's; they are no longer serialized. Together with
+    /// [`Self::working_age`] (the whole workers, already shipped) and [`Self::elders_count`] this
+    /// satisfies `children_count + working_age + elders_count == size`, by construction: `size` is
+    /// written as that sum. Derived by `core_sim::snapshot::population::whole_age_brackets`.
+    #[serde(default)]
+    pub children_count: u32,
+    /// **Whole elders** — the remainder of the dependents after [`Self::children_count`] takes its
+    /// round-half share, so the triple sums exactly. A cohort with no dependent *mass* has no
+    /// dependents at all: an elder rounded into existence is not a person.
+    #[serde(default)]
+    pub elders_count: u32,
 }
 
 /// **One axis of one batch — the exact reading AND the band it falls in.**

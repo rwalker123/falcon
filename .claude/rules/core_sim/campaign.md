@@ -4,6 +4,7 @@ paths:
   - "core_sim/src/{sedentarization,sedentarization_config,settlement_stage_config}.rs"
   - "core_sim/src/{wellbeing_config,victory,provinces,start_profile}.rs"
   - "core_sim/src/systems/{population,trade}.rs"
+  - "core_sim/src/snapshot/population.rs"
   - "core_sim/src/data/{demographics_config,supply_network_config,sedentarization_config}.json"
   - "core_sim/tests/{supply_network,sedentarization}.rs"
 ---
@@ -201,6 +202,35 @@ good. Brackets + store ride the client wire as `PopulationCohortState.stores` so
 the exact larder. A per-faction age-structure + dependency-ratio HUD readout ships as
 `PopulationDemographicsState` (new `.fbs` table aggregated at capture, wired through
 sim_schema/snapshot/native/`Hud.gd` exactly like `SedentarizationState`).
+
+> #### THE WIRE CARRIES WHOLE PEOPLE — the fraction is an accumulator, and it stays sim-side
+>
+> A bracket is fixed-point because it is a **growth accumulator**: `births = working × fertility` is
+> a fraction of a person per turn on a thirty-person band, and a bracket that rounded every turn
+> would either invent a birth or never record one (the same reasoning as
+> `DemographicFlowAccumulator` in `event-feed.md`). That fraction is not a fact about people, and it
+> has exactly **one** correct resolution into people — so the resolution belongs to the sim and the
+> raw Scalars do not cross.
+>
+> `PopulationCohortState.children` / `working` / `elders` are therefore `(deprecated)` FlatBuffers
+> slots (the `i64`s survive on the Rust struct — `food_demand`, the fission split and the JSON map
+> export all read masses). What a client reads is the whole triple **`childrenCount` / `workingAge`
+> / `eldersCount`**, with `childrenCount + workingAge + eldersCount == size` guaranteed because
+> `size` is *written* as that sum.
+>
+> **One derivation, `snapshot::population::whole_age_brackets`, used per band and summed for the
+> faction.** Workers are the floored `available_workers` every command already clamps against
+> (`BandWorkforce::pool`); dependents are `size − workers`, split between children and elders in
+> proportion to their masses, round-half on children with elders taking the remainder so the two sum
+> exactly. `snapshot_demographics` adds up the **bands' own published triples**, so the faction page
+> cannot disagree with the panels it aggregates.
+>
+> **A cohort with no dependent mass has no dependents**, and the published head count is its workers.
+> With `children == elders == 0` and `working == 16.6` the cached `size` is 17 while 16 people can be
+> staffed; splitting that leftover by mass has no basis to split by, and banking it in `elders`
+> invented an elder who ate nothing and could never die. The symptom that made this visible was the
+> other half of the same rounding: the PEOPLE bar read "17" beside "0 idle of 16" in the WORKFORCE
+> header of the same panel, because the client rounded the raws for itself.
 
 ### Supply Network (logistics from turn 0)
 Bands are small logistics nodes: `balance_supply_networks` (`supply.rs`, `TurnStage::Logistics`,
