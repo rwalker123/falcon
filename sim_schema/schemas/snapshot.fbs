@@ -2941,6 +2941,20 @@ table BenchState {
   // THE PILE ALREADY CUT FOR THE JOB IN FLIGHT, so a clear/swap can name what it destroys. Empty
   // when nothing is drawn. One row per input material, in the recipe's own input order.
   drawnInputs:[DrawnInput];
+  // --- IS THE BLOCK A FAULT OR A PROMPT? (appended last) ----------------------------------------
+  // HOW `blockedReason` SHOULD READ, in the SAME vocabulary as CraftOffer.severity - "danger" |
+  // "neutral" | "good" - and "" whenever nothing is blocking.
+  //
+  // *** A BENCH AWAITING ITS CREW IS THE NORMAL STATE ONE CLICK AFTER "MAKE". ***
+  //
+  // The player staffs the bench, so "No one at the bench" is what the panel says while it waits for
+  // the stepper - an instruction, `neutral`. A material shortage, an unknown craft or a zero craft
+  // rate are problems, `danger`; joined reasons take `danger` if any component is. Without this
+  // field a client renders every reason in one alarm colour and the expected state reads as an
+  // error, which is the exact distinction `reason`/`severity` already draw on CraftOffer.
+  //
+  // THE CLIENT MUST NOT RE-DERIVE IT from the reason string - same rule as `reason` itself.
+  blockedSeverity:string;
 }
 
 // ONE ROW PER RECIPE, ALWAYS — a row of PopulationCohortState.craftOffers.

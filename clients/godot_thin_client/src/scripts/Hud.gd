@@ -59,9 +59,11 @@ signal extend_pen_requested(payload: Dictionary)
 ## (`cultivate` / `sow` / `tame` / `corral`). RELAYED from `DrawerComposeController`, which is its
 ## only emitter, exactly as `extend_pen_requested` is.
 signal improvement_requested(payload: Dictionary)
-## Emitted when the player presses **Make** in Materials & Crafting — the recipe goes on the band's
-## bench and the sim draws idle workers onto it. **Make IS the assignment**, which is why there is no
-## crew argument here and no Crafter role card anywhere. Payload keys: { faction, band_id, recipe_id }.
+## Emitted when the player presses **Make** in Materials & Crafting — the recipe is STAGED on the
+## band's bench and nobody is recruited onto it. **The player staffs the bench and the sim never
+## does**, so there is no crew argument here: the `− n +` stepper is the one thing that picks the
+## number, and the bench is staffed like a worked source rather than through a standing role, which is
+## why there is no Crafter role card anywhere. Payload keys: { faction, band_id, recipe_id }.
 ## Main formats `set_bench <faction> <band> recipe <id>`. RELAYED from `CraftingPanelController`.
 signal set_bench_requested(payload: Dictionary)
 ## Emitted when the bench's `− n +` stepper moves — the job and its progress are left alone. Payload

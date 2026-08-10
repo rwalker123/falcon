@@ -34,13 +34,14 @@ class_name CraftingPanel
 ## a step-down. Owning units reads **one line per GRADE**, because a band may hold one item at two and
 ## `×5 · excellent` would be a lie.
 ##
-## **MAKE IS THE ASSIGNMENT.** Pressing Make emits `make_requested` (→ `set_bench`), the running row's
-## button reads *On the bench* and is spent, the crew stepper emits `crew_changed` (→ `bench_crew`),
-## and the well's ✕ emits `clear_bench_requested` (→ `clear_bench`) — the only way off a bench that is
-## not "make something else", which spends the drawn pile without saying so. One job at a time, so
-## this panel never has to explain a queue — and that is also why
-## there is no Crafter role card on the Band panel: crafting always has a subject, so it is staffed at
-## the bench like a worked source.
+## **MAKE STAGES THE JOB; THE PLAYER STAFFS IT.** Pressing Make emits `make_requested` (→
+## `set_bench`) and recruits nobody, so *"No one at the bench"* is the ordinary state one click later
+## and the `− n +` stepper (`crew_changed` → `bench_crew`) is the only thing that picks the number. The
+## running row's button reads *On the bench* and is spent, and the well's ✕ emits
+## `clear_bench_requested` (→ `clear_bench`) — the only way off a bench that is not "make something
+## else", which spends the drawn pile without saying so. One job at a time, so this panel never has to
+## explain a queue — and there is no Crafter role card on the Band panel: crafting always has a
+## subject, so it is staffed at the bench like a worked source rather than through a standing role.
 ##
 ## **THIS IS THE FREE-FLOATING CASE, hence `AutoSizingPanel`** (`.claude/rules/client/panel-framework.md`):
 ## the card is measured against the ROOM — the viewport MINUS every reserved edge strip, which is the
@@ -517,6 +518,7 @@ func _build_bench(payload: Dictionary) -> void:
 	sub.add_theme_font_size_override("font_size", HudCraftingVocab.BENCH_SUB_FONT_SIZE)
 	sub.add_theme_color_override("font_color", HudStyle.INK_DIM)
 	var blocked := ""
+	var blocked_severity := ""
 	if recipe_id == "":
 		title.text = HudCraftingVocab.BENCH_IDLE_TITLE
 		sub.text = HudCraftingVocab.BENCH_IDLE_SUB
@@ -527,6 +529,7 @@ func _build_bench(payload: Dictionary) -> void:
 		title.text = (HudCraftingVocab.BENCH_TITLE_FORMAT % [craft_name, made]).strip_edges()
 		sub.text = _bench_sub_line(bench)
 		blocked = String(bench.get(HudCraftingVocab.BENCH_BLOCKED_REASON_KEY, ""))
+		blocked_severity = String(bench.get(HudCraftingVocab.BENCH_BLOCKED_SEVERITY_KEY, ""))
 	words.add_child(title)
 	words.add_child(sub)
 	# **HOW FAR ALONG AND WHY STOPPED ARE TWO FACTS, AND NEITHER MAY EAT THE OTHER.** The refusal is
@@ -535,11 +538,19 @@ func _build_bench(payload: Dictionary) -> void:
 	# than replacing it: the banked work is what says whether clearing the block recovers a
 	# nearly-finished item or a barely-started one, which is the question a stopped bench raises. A
 	# bench that is running adds no label at all, so nothing about its card moves.
+	#
+	# **AND WHICH REFUSALS ARE SERIOUS IS THE SIM'S ANSWER, NOT THIS PANEL'S.** A bench waiting for
+	# its crew is the NORMAL state one click after Make — the player staffs the bench — so it arrives
+	# `neutral` and reads in the quiet ink, while a shortage or an unknown craft arrives `danger` and
+	# keeps the alarm. Resolved through the SAME `REASON_COLORS` table the ledger's offer rows use, the
+	# published `blocked_severity` being that same vocabulary; tinting every reason alike is what made
+	# the expected state read as a fault.
 	if blocked != "":
 		var reason := Label.new()
 		reason.text = blocked
 		reason.add_theme_font_size_override("font_size", HudCraftingVocab.BENCH_BLOCKED_FONT_SIZE)
-		reason.add_theme_color_override("font_color", HudStyle.DANGER)
+		reason.add_theme_color_override("font_color", HudCraftingVocab.REASON_COLORS.get(
+			blocked_severity, HudCraftingVocab.REASON_COLOR_QUIET))
 		# Found by IDENTITY rather than by its face — the reason is a sim string this panel cannot
 		# predict, so a claim about the blocked line can only be scoped to the node that carries it.
 		reason.set_meta(HudCraftingVocab.BENCH_BLOCKED_META, true)
@@ -1109,8 +1120,9 @@ func _build_cost_cell(offer: Dictionary, payload: Dictionary) -> Control:
 		flow.add_child(clause)
 	return flow
 
-## **MAKE IS THE ASSIGNMENT, AND A REFUSAL NAMES ITS NUMBER.** The button puts the recipe on the
-## bench; the running row's button is spent and reads *On the bench*. Under it, `CraftOffer.reason`
+## **MAKE STAGES THE JOB, AND A REFUSAL NAMES ITS NUMBER.** The button puts the recipe on the bench
+## and leaves the crew to the stepper; the running row's button is spent and reads *On the bench*.
+## Under it, `CraftOffer.reason`
 ## VERBATIM in the tint its published `severity` picked — *"Short 4.9 bone"*, never *"cannot craft"*,
 ## and never a sentence composed here.
 func _build_action_cell(offer: Dictionary) -> Control:
@@ -1135,7 +1147,8 @@ func _build_action_cell(offer: Dictionary) -> Control:
 		why.text = reason
 		why.add_theme_font_size_override("font_size", HudCraftingVocab.REASON_FONT_SIZE)
 		why.add_theme_color_override("font_color", HudCraftingVocab.REASON_COLORS.get(
-			String(offer.get(HudCraftingVocab.OFFER_SEVERITY_KEY, "")), HudStyle.INK_FAINT))
+			String(offer.get(HudCraftingVocab.OFFER_SEVERITY_KEY, "")),
+			HudCraftingVocab.REASON_COLOR_QUIET))
 		why.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		why.custom_minimum_size = Vector2(HudCraftingVocab.COLUMN_ACTION_WIDTH, 0.0)
 		column.add_child(why)

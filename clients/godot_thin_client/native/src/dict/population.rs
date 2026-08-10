@@ -729,6 +729,20 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "blocked_reason",
         cohort.bench().and_then(|b| b.blockedReason()).unwrap_or(""),
     );
+    // WHETHER THAT REASON IS A FAULT OR A PROMPT, in the same `danger`/`neutral`/`good` vocabulary as
+    // `CraftOffer.severity`, `""` when nothing is blocking. **A bench waiting for its crew is the
+    // NORMAL state one click after Make** — the player staffs the bench — so it resolves `neutral`
+    // while a shortage, an unknown craft or a zero craft rate resolve `danger`. Resolved sim-side
+    // beside the reason for the reason the reason itself is: a client tinting every refusal one
+    // colour renders the expected state as an alarm, and one re-deriving the severity from the
+    // wording is parsing a string it may only render.
+    let _ = bench_dict.insert(
+        "blocked_severity",
+        cohort
+            .bench()
+            .and_then(|b| b.blockedSeverity())
+            .unwrap_or(""),
+    );
     let _ = bench_dict.insert(
         "shortfalls",
         &shortfalls_to_array(cohort.bench().and_then(|b| b.shortfalls())),

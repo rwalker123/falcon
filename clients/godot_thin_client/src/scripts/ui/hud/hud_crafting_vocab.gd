@@ -45,6 +45,15 @@ const BENCH_PROGRESS_KEY := "progress"
 const BENCH_WORK_KEY := "work"
 const BENCH_TEACHES_KEY := "teaches"
 const BENCH_BLOCKED_REASON_KEY := "blocked_reason"
+## **HOW THAT REFUSAL SHOULD READ, in the OFFER's own severity vocabulary** — `danger` / `neutral` /
+## `good`, `""` while nothing is blocking. A bench waiting for its crew is the normal state one click
+## after **Make** — the player staffs the bench — and resolves `neutral`, while a shortage, an unknown
+## craft or a zero craft rate resolve `danger`. It rides beside the reason for the same reason the
+## reason rides at all: **the client does not decide which refusals are serious**, and one tinting them
+## all alike renders the expected state as a fault. Read through `REASON_COLORS`, the SAME table the
+## ledger's offer rows resolve through, so the bench and the ledger cannot disagree about what a
+## published severity looks like.
+const BENCH_BLOCKED_SEVERITY_KEY := "blocked_severity"
 const BENCH_ITEMS_COMPLETED_KEY := "items_completed"
 const BENCH_OUTPUT_GRADE_KEY := "output_grade"
 ## **WHAT ONE TURN ADDS, RESOLVED SIM-SIDE** — `workers × progress_per_worker_turn × craft_speed`,
@@ -278,8 +287,9 @@ const LEDGER_COLUMN_COST := "Rebuild costs"
 const LEDGER_COLUMN_ACTION := ""
 
 const MAKE_LABEL := "Make"
-## The running row's button is SPENT — make IS the assignment, and one job at a time means the row
-## that is running has nothing left to ask for.
+## The running row's button is SPENT — one job at a time, so the row already on the bench has nothing
+## left to ask for. (What it is missing is a CREW, not a second press of Make, and the well's stepper
+## is where that is asked.)
 const ON_BENCH_LABEL := "On the bench"
 ## The empty cell. A recipe with no inputs has no cost to report, and a dash is the honest reading of
 ## that — never a zero.
@@ -311,12 +321,18 @@ const LIFE_SEVERITY_HEALTHY := "healthy"
 const LIFE_SEVERITY_WARN := "warn"
 const LIFE_SEVERITY_DANGER := "danger"
 
-## The tint each published severity renders in. Unknown ⇒ the quiet ink, so an unrecognised severity
-## degrades to a neutral row rather than to an alarm.
+## The tint each published severity renders in — **ONE table, read by every surface that renders a
+## sim-resolved refusal**: the ledger's offer rows and the bench well's blocked line. A second table
+## for the bench would be a second opinion about what `danger` looks like, and the bench's severity is
+## published in this exact vocabulary precisely so it does not need one.
 const REASON_COLORS := {
 	SEVERITY_DANGER: HudStyle.DANGER,
 	SEVERITY_GOOD: HudStyle.SIGNAL,
 }
+## What an unrecognised severity renders in — and `neutral`'s own tint, which is the same answer: a
+## refusal the sim did not mark as a problem reads QUIET rather than as an alarm. Named so both
+## readers of `REASON_COLORS` fall back to one ink instead of each spelling the default itself.
+const REASON_COLOR_QUIET := HudStyle.INK_FAINT
 ## How the urgency sort ranks a row: worn first, untouched last. Read off the PUBLISHED life
 ## severity, so the order the player sees is the sim's own reading of what is running out.
 const LIFE_SEVERITY_RANK := {

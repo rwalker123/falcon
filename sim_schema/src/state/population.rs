@@ -898,6 +898,19 @@ pub struct BenchState {
     /// order. Appended last (append-only).
     #[serde(default)]
     pub drawn_inputs: Vec<DrawnInputState>,
+    /// **How [`Self::blocked_reason`] should read** — the same vocabulary as
+    /// [`CraftOfferState::severity`] (`danger` / `neutral` / `good`), `""` whenever nothing is
+    /// blocking.
+    ///
+    /// **A bench waiting for its crew is a prompt, not a fault.** The player staffs the bench, so
+    /// *"No one at the bench"* is the normal state one click after **Make** — an instruction,
+    /// `neutral`. A material shortage, an unknown craft or a zero craft rate are problems, `danger`;
+    /// joined reasons take `danger` if any component does. Without the field a client renders every
+    /// reason in one alarm colour and the expected state reads as an error — the same distinction
+    /// `reason`/`severity` already draw on an offer row, and **a client must not re-derive it**.
+    /// Appended last (append-only).
+    #[serde(default)]
+    pub blocked_severity: String,
 }
 
 /// **One material of the pile a bench has already withdrawn** for the item in flight — a row of

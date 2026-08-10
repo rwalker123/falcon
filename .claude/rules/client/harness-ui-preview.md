@@ -551,7 +551,7 @@ built from the code under test can only agree with itself. **They are the SIM's 
 from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
 payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-**A clean run is 296 frames / 823 `PASS`, exit 0.** **Twelve** of those frames are the Materials &
+**A clean run is 296 frames / 827 `PASS`, exit 0.** **Twelve** of those frames are the Materials &
 Crafting chapter's: the ledger's own frame, its reserved-edge / event-bar / band-dock / co-edge /
 collapsed variants, the two-tier and folded group heads, and the two stopped benches — the crew that
 walked off and the store that cannot cover the next draw. **The figure is
@@ -561,14 +561,23 @@ two arcs' deltas added by hand is how a tally stops matching its harness.
 **The running totals are recorded as deltas, not as a chain**, because band fission both retired the
 settle chapter's `PASS`es and added its own, so the old absolutes no longer add up to the current
 one: the map-gesture state below is worth **nineteen** `PASS` and **no frame**; the crafting chapter
-twelve frames and one hundred `PASS`es (counted on the `: PASS` delimiter, one of its own assertions
-carrying the bare word in its prose); the band-compose arc three frames and twelve `PASS`es (the
+twelve frames and one hundred and four `PASS`es (counted on the `: PASS` delimiter, one of its own
+assertions carrying the bare word in its prose); the band-compose arc three frames and twelve `PASS`es (the
 drawer pair's three, the dock frame's three, and the two-band compose pair below).
 
-**The bench's rate / finish / clear block is worth fifteen of that hundred and one frame**, and the
-frame is the pair's second half: a bench short of material publishes a REAL rate and is stopped
+**The bench's rate / finish / tint / clear block is worth sixteen of that hundred and four and one
+frame** — measured on the `: PASS` delimiter over the contiguous run from the crew-of-zero frame's
+first claim to the ✕-verb pair, the running bench's own five claims sitting up in state 1's block
+instead. The frame is the pair's second half: a bench short of material publishes a REAL rate and is
+stopped
 anyway, which is the only shape that can say whether the estimate is withheld by the rate or by the
-refusal. Sabotage-verified six ways, each failing a DISJOINT subset — dropping the `blockedReason`
+refusal. **It is also the pair the TINT is judged on** — the crewless bench's reason reads in the
+quiet ink and the short bench's in `DANGER`, because whether a refusal is a fault or a prompt is the
+sim's `blockedSeverity` and not the panel's reading of the wording; a third, PNG-less fixture stamps
+`neutral` on a shortfall SENTENCE, which no sim resolves and which only a panel re-deriving the tint
+from the words gets wrong. Restoring the always-`DANGER` tint fails the crewless claim and the
+mismatch claim and leaves the shortage claim green. Sabotage-verified six further ways, each failing
+a DISJOINT subset — dropping the `blockedReason`
 half of the gate fails the short bench's two line claims ALONE, the crew-of-zero frame staying green
 because its rate is zero; re-deriving the rate off the crew fails the five rate/estimate claims and
 nothing else; a floor in place of the ceiling fails only the non-dividing remainder; drawing the ✕

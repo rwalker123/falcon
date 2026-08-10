@@ -113,6 +113,10 @@ const BLOCKED_BENCH_REASON := "No one at the bench"
 ## A bench with nobody on it accrues nothing, so the sim publishes a rate of ZERO beside that reason —
 ## the "there is nothing to compute" half of the estimate's gate.
 const BLOCKED_BENCH_RATE := 0.0
+## **AND THE SIM CALLS IT A PROMPT RATHER THAN A FAULT**, which is the severity a crewless bench really
+## resolves to: the player staffs the bench, so this is the ordinary state one click after **Make** and
+## not an error the player has to undo.
+const BLOCKED_BENCH_SEVERITY := HudCraftingVocab.SEVERITY_NEUTRAL
 
 ## **THE OTHER STOPPED BENCH, AND IT IS STOPPED FOR A COMPLETELY DIFFERENT REASON.** A bench short of
 ## material publishes its REAL, non-zero rate: the crew is standing there and the tool is fine, it
@@ -124,6 +128,18 @@ const SHORT_BENCH_CREW := 2
 const SHORT_BENCH_RATE := 1.0
 const SHORT_BENCH_PROGRESS := 1.0
 const SHORT_BENCH_PROGRESS_LINE := "1.0 of 6 work"
+## **AND THE SIM CALLS THIS ONE A FAULT.** The band cannot cover the next draw and nothing but the
+## player finding more fibre will move it, so it keeps the alarm the crewless bench gives up — which is
+## the whole reason the severity rides beside the reason rather than being read off the wording.
+const SHORT_BENCH_SEVERITY := HudCraftingVocab.SEVERITY_DANGER
+
+## **THE WIRE'S ANSWER, DELIBERATELY DISAGREEING WITH THE WORDING** — a shortfall sentence published at
+## `neutral`. No sim resolves this; it exists so the tint can be shown to come from the published field
+## rather than from a client re-reading the string. A panel that inferred severity from the words would
+## render it in the alarm ink, and this is the only fixture that can tell those two implementations
+## apart.
+const MISMATCHED_BENCH_REASON := "Short 2.5 hide"
+const MISMATCHED_BENCH_SEVERITY := HudCraftingVocab.SEVERITY_NEUTRAL
 
 ## **THE TWO CASES THE ROUND NUMBERS ABOVE CANNOT SHOW**, asserted with no frame of their own: a
 ## remainder that does not divide (`4.5 / 1.3` is 3.46, and only a CEILING answers 4 — a floor or a
@@ -665,6 +681,7 @@ func _crafting_states() -> void:
 	await _two_tier_states()
 	await _blocked_bench_state()
 	await _short_bench_state()
+	await _severity_follows_the_wire_state()
 	await _estimate_arithmetic_states()
 	await _clear_bench_command_state()
 	await _map_gesture_state()
@@ -818,6 +835,27 @@ func _short_bench_state() -> void:
 	await h._settle()
 	_assert_a_bench_short_of_material_quotes_no_finish()
 	await h._save("crafting_bench_short")
+
+## **WHICH OF THE TWO IMPLEMENTATIONS THE PANEL HAS, and no picture can show it.** States 14 and 15
+## pair a prompt against a fault, but both of their severities agree with their wording, so a panel
+## that had re-derived the tint from the string would render both frames correctly. This bench
+## publishes a shortfall SENTENCE at `neutral` — a payload no sim produces — and the well must follow
+## the wire. No frame, because the claim is about where a colour came from and the picture is the same
+## either way.
+func _severity_follows_the_wire_state() -> void:
+	h._hud.update_band_alerts([_mismatched_severity_bench_band()])
+	h._hud.open_crafting_panel(_mismatched_severity_bench_band())
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	var reason := _blocked_line(panel) if panel != null else null
+	h._assert_hud("crafting — precondition: the wording reads like the shortage state 15 tinted DANGER (%s)"
+			% [reason.text if reason != null else "no line at all"],
+		reason != null and reason.text == MISMATCHED_BENCH_REASON
+			and MISMATCHED_BENCH_SEVERITY != SHORT_BENCH_SEVERITY)
+	h._assert_hud("crafting — …and the tint is the PUBLISHED severity's, not the wording's (%s)"
+			% [reason.get_theme_color(FONT_COLOR_THEME_ITEM) if reason != null else "no line at all"],
+		reason != null
+			and reason.get_theme_color(FONT_COLOR_THEME_ITEM) == HudCraftingVocab.REASON_COLOR_QUIET)
 
 ## **THE TWO ESTIMATE READINGS THE FRAMES ABOVE CANNOT STAGE**, and neither is worth a frame: a
 ## remainder that only a ceiling rounds up, and the singular wording. Rendered through the real panel
@@ -981,10 +1019,19 @@ func _assert_a_blocked_bench_still_says_how_far_along_it_is() -> void:
 		h._assert_hud("crafting — the blocked-bench panel is open", false)
 		return
 	var reason := _blocked_line(panel)
-	h._assert_hud("crafting — a stopped bench states its reason verbatim, in the danger ink (%s)"
+	h._assert_hud("crafting — a stopped bench states its reason verbatim (%s)"
 		% [reason.text if reason != null else "no line at all"],
-		reason != null and reason.text == BLOCKED_BENCH_REASON
-			and reason.get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.DANGER)
+		reason != null and reason.text == BLOCKED_BENCH_REASON)
+	# **THE CREWLESS HALF OF THE TINT PAIR.** This is the state one click after Make — the player is
+	# who staffs the bench — so the sim marks it `neutral` and the well reads it in the QUIET ink. The
+	# `not DANGER` clause is what makes the claim bite: a panel with one tint for every refusal renders
+	# an ordinary prompt as a fault, which is what shipped. State 15's shortage is the other half, and
+	# a panel that had simply gone quiet everywhere fails there.
+	h._assert_hud("crafting — …and a bench merely waiting for its crew reads as a PROMPT, not a fault (%s)"
+		% [reason.get_theme_color(FONT_COLOR_THEME_ITEM) if reason != null else "no line at all"],
+		reason != null
+			and reason.get_theme_color(FONT_COLOR_THEME_ITEM) == HudCraftingVocab.REASON_COLOR_QUIET
+			and reason.get_theme_color(FONT_COLOR_THEME_ITEM) != HudStyle.DANGER)
 	var progress := _label_with_text(panel, BENCH_STOPPED_PROGRESS_LINE)
 	h._assert_hud("crafting — …AND still says how much of the job is banked (%s)"
 		% BENCH_STOPPED_PROGRESS_LINE,
@@ -1016,6 +1063,13 @@ func _assert_a_bench_short_of_material_quotes_no_finish() -> void:
 	h._assert_hud("crafting — …and states the shortfall verbatim (%s)"
 			% [reason.text if reason != null else "no line at all"],
 		reason != null and reason.text == SHORT_BENCH_REASON)
+	# **THE OTHER HALF OF THE TINT PAIR.** Nothing the player does at the bench moves this one, so the
+	# sim marks it `danger` and the alarm stays. Asserted beside state 14's quiet prompt because either
+	# claim alone passes on a panel that tints every refusal one colour — which is the defect the
+	# published severity exists to end, in whichever of the two directions it is made.
+	h._assert_hud("crafting — …in the DANGER ink, because a shortage really is a fault (%s)"
+			% [reason.get_theme_color(FONT_COLOR_THEME_ITEM) if reason != null else "no line at all"],
+		reason != null and reason.get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.DANGER)
 	h._assert_hud("crafting — …while quoting neither a rate nor a finish (%s)"
 			% [progress.text if progress != null else "no line at all"],
 		progress != null and progress.text == SHORT_BENCH_PROGRESS_LINE)
@@ -1491,6 +1545,9 @@ func _blocked_bench_band() -> Dictionary:
 	var bench: Dictionary = _bench()
 	bench["workers"] = BLOCKED_BENCH_CREW
 	bench["blocked_reason"] = BLOCKED_BENCH_REASON
+	# …and the sim's own reading of that reason: a bench waiting for its crew is a PROMPT, because the
+	# player is who staffs it.
+	bench["blocked_severity"] = BLOCKED_BENCH_SEVERITY
 	# Nobody on it accrues nothing, and the sim says so as a rate rather than leaving it to be
 	# inferred from the crew — the "nothing to compute" half of the estimate's gate.
 	bench["rate_per_turn"] = BLOCKED_BENCH_RATE
@@ -1509,11 +1566,24 @@ func _short_bench_band() -> Dictionary:
 	bench["progress"] = SHORT_BENCH_PROGRESS
 	bench["rate_per_turn"] = SHORT_BENCH_RATE
 	bench["blocked_reason"] = SHORT_BENCH_REASON
+	bench["blocked_severity"] = SHORT_BENCH_SEVERITY
 	bench["shortfalls"] = [{"material_id": "fibre", "required": 4.0, "held": 3.4, "short": 0.6}]
 	bench["items_completed"] = 0
 	bench["drawn"] = false
 	bench["output_grade"] = ""
 	bench["drawn_inputs"] = []
+	band["bench"] = bench
+	return band
+
+## **THE BENCH WHOSE WIRE AND WORDING DISAGREE.** The short bench's shape with a shortfall sentence
+## stamped `neutral` — a payload no sim produces, which is exactly its value: the tint has to come from
+## the field beside the reason, and nothing else in this chapter can tell a panel reading the field
+## from one reading the string.
+func _mismatched_severity_bench_band() -> Dictionary:
+	var band := _short_bench_band()
+	var bench: Dictionary = band["bench"]
+	bench["blocked_reason"] = MISMATCHED_BENCH_REASON
+	bench["blocked_severity"] = MISMATCHED_BENCH_SEVERITY
 	band["bench"] = bench
 	return band
 

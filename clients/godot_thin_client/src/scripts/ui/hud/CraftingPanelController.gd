@@ -22,9 +22,10 @@ extends RefCounted
 ## keeps the dock one. A band that leaves the roster closes the panel rather than stranding it on a
 ## band that no longer exists.
 
-## Put a recipe on the band's bench — `set_bench <faction> <band> recipe <id>`. **Make IS the
-## assignment**: the sim draws idle workers onto it, which is why there is no crew argument here and
-## no Crafter role card anywhere.
+## Stage a recipe on the band's bench — `set_bench <faction> <band> recipe <id>`. **The player staffs
+## the bench**: no crew rides here, so an idle bench stages at zero and waits for the `− n +` stepper
+## (a swap keeps the crew already standing there). The bench is staffed like a worked source rather
+## than through a standing role, which is why there is no Crafter role card anywhere.
 signal set_bench_requested(payload: Dictionary)
 ## Re-crew the running bench, leaving the job and its progress alone — `bench_crew <faction> <band>
 ## workers <n>`.

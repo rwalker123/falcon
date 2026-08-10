@@ -355,6 +355,9 @@ fn create_populations<'a>(
                 let display_name = builder.create_string(&cohort.bench.display_name);
                 let teaches = builder.create_string(&cohort.bench.teaches);
                 let blocked_reason = builder.create_string(&cohort.bench.blocked_reason);
+                // **Whether that reason is a fault or a prompt**, resolved sim-side beside it — a
+                // crewless bench is the normal state after a Make and must not render as an alarm.
+                let blocked_severity = builder.create_string(&cohort.bench.blocked_severity);
                 let output_grade = builder.create_string(&cohort.bench.output_grade);
                 let shortfalls = create_shortfalls(builder, &cohort.bench.shortfalls);
                 // **The pile already withdrawn**, in the recipe's own input order — what a clear or
@@ -391,6 +394,7 @@ fn create_populations<'a>(
                         outputGrade: Some(output_grade),
                         ratePerTurn: cohort.bench.rate_per_turn,
                         drawnInputs: Some(drawn_inputs),
+                        blockedSeverity: Some(blocked_severity),
                     },
                 )
             };

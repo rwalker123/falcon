@@ -306,11 +306,21 @@ per-turn rate, no catalogue of materials the world does not yet contain.
 stepper and what it is teaching. The ledger is one table in three groups: the band's kit, bench tools,
 and recipes that make stock.
 
-### Make IS the assignment
+### The bench IS the assignment — and you staff it
 
-Pressing **Make** puts that recipe on the bench and draws idle workers onto it; the bench's `− 2 +`
-stepper changes the crew; the running row reads *On the bench* with its button spent. **One job at a
+Pressing **Make** puts that recipe on the bench **with nobody on it**; the bench's `− 2 +` stepper is
+how the crew is set; the running row reads *On the bench* with its button spent. **One job at a
 time**, so the panel never has to explain a queue.
+
+**The sim never picks the crew.** A crafter is a hunter who is not hunting — the bench spends from
+the same pool the labor allocation does — and dividing the band is the decision this game is made of
+(`docs/plan_early_game_labor.md`). There is also no correct number to guess: taking every idle hand
+wastes them, because a pass finishes **one** item and the overflow above its `work` is dropped, and
+any smaller number is the sim inventing an intent the player did not state. So a staged bench reads
+*"No one at the bench"* until the stepper moves, and that line is a **prompt, not an error** — the
+wire says which (`blockedSeverity`, `neutral` here against `danger` for a shortage), so the panel
+colours it as an instruction. Swapping the job on a bench that already has a crew **keeps that crew**:
+naming no number is not an order to send anyone home.
 
 **So there is no Crafter role card.** Scout and Warrior are standing roles with nothing to point at;
 crafting always has a subject, so it is staffed like a worked source. That also sidesteps a measured

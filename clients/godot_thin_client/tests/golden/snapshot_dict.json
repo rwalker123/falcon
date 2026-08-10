@@ -1445,6 +1445,7 @@
       "band_move_tiles_per_turn": 65.150002,
       "bench": {
         "blocked_reason": "populations[0].bench.blocked_reason",
+        "blocked_severity": "populations[0].bench.blocked_severity",
         "display_name": "populations[0].bench.display_name",
         "drawn": true,
         "drawn_inputs": [
@@ -1940,6 +1941,7 @@
       "band_move_tiles_per_turn": 61.23,
       "bench": {
         "blocked_reason": "populations[1].bench.blocked_reason",
+        "blocked_severity": "populations[1].bench.blocked_severity",
         "display_name": "populations[1].bench.display_name",
         "drawn": true,
         "drawn_inputs": [

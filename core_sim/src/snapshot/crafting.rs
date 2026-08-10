@@ -72,6 +72,15 @@ const GROUP_STOCK: &str = "stock";
 /// that saw a shortage's wording here would style a non-problem as a problem.
 const REASON_NOT_NEEDED: &str = "Not needed yet";
 
+/// **The bench has a job and nobody on it.** A contract string like [`REASON_NOT_NEEDED`], and for
+/// the same reason: it is the *normal* state one click after **Make** — the player staffs the bench,
+/// so this reads at [`SEVERITY_NEUTRAL`] while every other bench refusal is a problem.
+const REASON_NO_CREW: &str = "No one at the bench";
+
+/// **Nothing is blocking**, so there is no severity to state either. Spelled once so the empty
+/// `blocked_reason` and the empty `blocked_severity` cannot drift apart.
+const SEVERITY_NONE: &str = "";
+
 /// **The life wording for an item the band has worn out.** Distinct from [`LIFE_NEVER_MADE`]
 /// because both read `count 0` — a batch that runs out of units is removed — and *"your sled broke"*
 /// is not the same sentence as *"you have never had a sled"*.
@@ -300,6 +309,7 @@ fn bench_state(
             recipe_id: recipe_id.to_string(),
             workers: bench.workers,
             blocked_reason: format!("Recipe '{recipe_id}' is not in the book"),
+            blocked_severity: SEVERITY_DANGER.to_string(),
             ..BenchState::default()
         };
     };
@@ -319,8 +329,21 @@ fn bench_state(
         shortfalls.as_slice()
     };
     let mut reasons = refusal_reasons(plan, &tiers, blocking, inputs);
+    // **A fault reads differently from a prompt, and only the sim can tell them apart.** Everything
+    // `refusal_reasons` returns is something gone wrong — a shortage, an unlearned craft, a tool
+    // that cannot work the material — so it carries the alarm. A bench merely waiting for its crew
+    // is the *expected* state after a Make, because the player is the one who staffs it, so it is an
+    // instruction instead. A joined reason takes the alarm if any half of it does.
+    let mut severity = if reasons.is_empty() {
+        SEVERITY_NONE
+    } else {
+        SEVERITY_DANGER
+    };
     if bench.workers == 0 {
-        reasons.push("No one at the bench".to_string());
+        reasons.push(REASON_NO_CREW.to_string());
+        if severity == SEVERITY_NONE {
+            severity = SEVERITY_NEUTRAL;
+        }
     }
     BenchState {
         recipe_id: recipe_id.to_string(),
@@ -330,6 +353,7 @@ fn bench_state(
         work: plan.recipe.work,
         teaches: plan.recipe.craft.clone(),
         blocked_reason: reasons.join(REASON_JOIN),
+        blocked_severity: severity.to_string(),
         shortfalls,
         items_completed: bench.items_completed,
         drawn: bench.drawn.is_some(),

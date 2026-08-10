@@ -131,6 +131,16 @@ fn strip(app: &mut App, band: Entity, material: &str) {
     cohort.stores.take_material(material, &axis, held);
 }
 
+/// Put the sled on the band's bench with `workers` on it, discarding whatever was there — so a
+/// fixture can vary the **crew** alone across successive publishes.
+fn set_bench_crew(app: &mut App, band: Entity, workers: u32) {
+    let mut bench = app
+        .world
+        .get_mut::<BandBench>(band)
+        .expect("a spawned band carries a bench");
+    bench.set_job(SLED_RECIPE, workers);
+}
+
 /// What the band's store holds of one material, summed over its batches.
 fn held(app: &App, band: Entity, material: &str) -> f32 {
     app.world
@@ -360,6 +370,10 @@ struct PublishedBench {
     work: f32,
     teaches: String,
     blocked_reason: String,
+    /// Whether that reason is a fault or a prompt — `danger` / `neutral` / `good`, `""` when
+    /// nothing blocks. Rides beside the reason because the **pairing** of the two is the claim
+    /// [`a_crewless_bench_is_a_prompt_and_a_short_bench_is_a_fault`] makes.
+    blocked_severity: String,
     /// The material ids of the shortfall rows — what the **next** draw is short of.
     shortfalls: Vec<String>,
     /// What one turn at this bench will accrue, tool join and all.
@@ -477,6 +491,7 @@ fn publish(app: &mut App, band: Entity) -> Published {
         work: bench_row.work(),
         teaches: bench_row.teaches().unwrap_or_default().to_string(),
         blocked_reason: bench_row.blockedReason().unwrap_or_default().to_string(),
+        blocked_severity: bench_row.blockedSeverity().unwrap_or_default().to_string(),
         shortfalls: bench_row
             .shortfalls()
             .map(|rows| {
@@ -1149,6 +1164,80 @@ fn a_crewless_bench_publishes_its_own_refusal_while_the_offer_stays_available() 
     assert!(
         offer(&published, SLED_RECIPE).available,
         "the OFFER is still available — staffing is the player's next move, not a refusal"
+    );
+}
+
+/// **A bench waiting for its crew is a PROMPT; a bench short of material is a FAULT** — and the
+/// wire says which, so a client cannot paint the expected state in the alarm colour.
+///
+/// The player staffs the bench and the sim never does, so *"No one at the bench"* is the normal
+/// state one click after **Make**. Asserted as a **pairing** over one band and one recipe, because
+/// a wire that stamped a single severity on every blocked bench passes neither half — the crewless
+/// bench must read `neutral` while the *same* bench, stripped of its hide, reads `danger`. The
+/// joined case rides along: a reason with a fault in it is a fault.
+#[test]
+fn a_crewless_bench_is_a_prompt_and_a_short_bench_is_a_fault() {
+    let (mut app, band) = world();
+    deposit(
+        &mut app,
+        band,
+        HIDE,
+        PLENTY,
+        &[(TOUGHNESS, 0.9), (SUPPLENESS, 0.2)],
+    );
+    deposit(
+        &mut app,
+        band,
+        "fibre",
+        PLENTY,
+        &[("fineness", 0.5), ("strength", 0.5)],
+    );
+
+    // LIVENESS: a stocked bench with a crew is not blocked at all, so it states no severity either.
+    set_bench_crew(&mut app, band, BENCH_CREW);
+    let working = publish(&mut app, band);
+    assert_eq!(working.bench.blocked_reason, "");
+    assert_eq!(
+        working.bench.blocked_severity, "",
+        "nothing is blocking, so there is no severity to state — the two empties go together"
+    );
+
+    // THE PROMPT: the pile is there and nobody is on it, which is what a staged Make looks like.
+    set_bench_crew(&mut app, band, 0);
+    let crewless = publish(&mut app, band);
+    assert_eq!(crewless.bench.blocked_reason, "No one at the bench");
+    assert_eq!(
+        crewless.bench.blocked_severity, "neutral",
+        "the player is being told what to do next, not what went wrong"
+    );
+
+    // THE FAULT: the same bench with a crew and no hide.
+    strip(&mut app, band, HIDE);
+    set_bench_crew(&mut app, band, BENCH_CREW);
+    let short = publish(&mut app, band);
+    assert!(
+        short.bench.blocked_reason.starts_with("Short ")
+            && short.bench.blocked_reason.contains(HIDE),
+        "the fixture's other half must actually be a shortage — got {:?}",
+        short.bench.blocked_reason
+    );
+    assert_eq!(
+        short.bench.blocked_severity, "danger",
+        "a shortage is a problem, and it must not read the same as a bench awaiting its crew"
+    );
+
+    // AND BOTH AT ONCE takes the alarm: a reason with a fault in it is a fault.
+    set_bench_crew(&mut app, band, 0);
+    let both = publish(&mut app, band);
+    assert!(
+        both.bench.blocked_reason.contains("No one at the bench")
+            && both.bench.blocked_reason.starts_with("Short "),
+        "the joined case must carry both halves — got {:?}",
+        both.bench.blocked_reason
+    );
+    assert_eq!(
+        both.bench.blocked_severity, "danger",
+        "joined reasons take danger if any component is"
     );
 }
 

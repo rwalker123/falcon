@@ -329,33 +329,49 @@ the ladder's other two moved there in slice 4.
 `BandBench` is a component on a band: `{ recipe_id, workers, progress, drawn, items_completed,
 last_output_grade }`. **One job at a time**, so no surface ever has to explain a queue.
 
-**MAKE IS THE ASSIGNMENT.** `set_bench` puts the recipe up and draws idle workers onto it; there is
-no Crafter role card and **no `LaborTarget` variant**. Scout and Warrior are standing roles with
-nothing to point at, and crafting always has a subject, so it is staffed like a worked source. A
-`LaborTarget::Craft` would also put a fictitious row on every per-source yield readout in the game.
+**THE BENCH IS THE ASSIGNMENT.** `set_bench` puts the recipe up; there is no Crafter role card and
+**no `LaborTarget` variant**. Scout and Warrior are standing roles with nothing to point at, and
+crafting always has a subject, so it is staffed like a worked source. A `LaborTarget::Craft` would
+also put a fictitious row on every per-source yield readout in the game.
 
-**A CREW OF ZERO MEANS "YOU DECIDE", and `set_bench` then staffs the job with every hand the band
-has off other work** — `BandWorkforce::benchable()`, so the crew already at the bench stays put
-through a job swap and the free hands join them. The command's `workers` rides a proto3 scalar, which
-cannot tell an absent field from an explicit `0`, and the client sends neither number: pressing
-**Make** is the whole gesture. Reading `0` literally is therefore the same as reading it as
-*"unspecified"* on every reachable path, and the literal reading is the one that leaves the panel
-saying *"No one at the bench"* after a Make and dismisses a running bench's crew on a swap.
-`sim_runtime`'s `BENCH_CREW_UNSPECIFIED` is the shared spelling of that `0`, read by the text parser
-and the handler alike.
+**THE PLAYER STAFFS THE BENCH; THE SIM NEVER DOES.** `set_bench` chooses the *job*, never the crew.
+The crew comes out of the same pool `assign_labor` spends — a crafter is a hunter who is not hunting
+— and dividing the band is this game's core turn-to-turn decision (`docs/plan_early_game_labor.md`),
+so this is the one place the sim must not take a labor decision off the player. There is no correct
+number for it to pick either: **all idle** wastes hands, because `advance_crafting` finishes one item
+per pass and zeroes the meter rather than carrying the overflow, so everything accrued above `work`
+in the crossing turn is dropped; **any other number** is the sim guessing at intent.
 
-**`bench_crew` reads the same zero as an ORDER**, and that asymmetry is what keeps the reinterpretation
-free: that verb exists to name a crew, so it is how a player stands the bench down without taking the
-job off it. No intent is lost. Pinned as a pairing by
-`server::tests::a_set_bench_with_no_crew_named_draws_the_bands_idle_workers` (no crew named staffs the
-idle count; a crew named applies exactly that crew — the second half is what stops the draw from
-becoming "the bench always takes everybody") and
+**So a `workers` of zero means "do not change the crew".** `workers` rides a proto3 scalar, which
+cannot tell an absent field from an explicit `0`, and the client sends neither number — pressing
+**Make** stages the job and nothing else. `sim_runtime`'s `BENCH_CREW_UNSPECIFIED` is the shared
+spelling of that `0`, read by the text parser and the handler alike, and it resolves two ways:
+
+| bench state | `set_bench` with no crew named |
+|---|---|
+| idle (no job) | the recipe is staged with **crew 0**; the player sets it on the stepper |
+| already running a job | the new recipe is staged and the **crew already there stays put** |
+
+The second row is not the sim choosing a crew, it is the sim declining to *un*-choose one:
+`BandBench::set_job` overwrites `workers`, so applying the proto's `0` dismissed hands the player had
+placed — the exact case `BandWorkforce::benchable()` (pool − assigned, deliberately *not* netting the
+bench) exists to preserve. **`bench_crew <n>` is the verb that names a crew, zero included**, so it is
+how a bench is stood down without taking the job off it, and no reachable intent is lost.
+
+Pinned as a pairing by `server::tests::a_set_bench_with_no_crew_named_recruits_nobody` (an idle bench
+stages at 0 and the band's idle count is untouched; a crew *named* is applied to the head — the second
+half is what stops "leave the crew alone" from becoming "ignore the crew") and
 `::swapping_the_job_on_a_running_bench_keeps_its_crew`.
 
-**The draw is unbounded by the recipe** — it takes every idle hand, not as many as the job can
-absorb. Over-crewing therefore buys less than proportionally: `progress` accrues at `workers × rate`,
-but a pass finishes **one** item and `advance_crafting` zeroes the meter rather than carrying the
-overflow, so everything above `work` in the turn that crosses it is dropped.
+**A bench awaiting its crew is a PROMPT, not a fault**, and the wire says so:
+`BenchState.blockedSeverity` carries the same `danger` / `neutral` / `good` vocabulary as
+`CraftOffer.severity`, `""` when nothing blocks. *"No one at the bench"* is the normal state one click
+after Make, so it publishes at `neutral`; a shortage, an unlearned craft and a zero craft rate are
+problems and publish at `danger`, as does any joined reason with one of them in it. Without the field
+a client renders every `blockedReason` in one alarm colour and the expected state reads as an error.
+**The client must not re-derive it** — the same rule `reason`/`severity` already follow. Pinned as a
+pairing by `crafting_wire::a_crewless_bench_is_a_prompt_and_a_short_bench_is_a_fault`: one severity
+stamped everywhere passes neither half.
 
 **The crew comes out of the same pool `assign_labor` spends**, and **`BandWorkforce`
 (`components.rs`) is the ONE place that says so.** A band's people are spent on exactly two things —
@@ -540,7 +556,7 @@ number, a grade or a step-down.**
 | Field | Answers |
 |---|---|
 | `materialBatches:[MaterialBatchState]` | *what have I got* — one row per (material, band key) batch: `amount`, plus a `CharacteristicReading` per axis carrying **both** the exact value and its band name, in the material's **declared** axis order |
-| `bench:BenchState` | *what am I making* — `recipeId` (`""` = idle), crew, `progress` against `work`, `teaches` (the recipe's craft), `itemsCompleted`, whether the pile is `drawn` and the grade it fixed, `blockedReason`, the `ratePerTurn` a turn adds, and the `drawnInputs` a clear would destroy |
+| `bench:BenchState` | *what am I making* — `recipeId` (`""` = idle), crew, `progress` against `work`, `teaches` (the recipe's craft), `itemsCompleted`, whether the pile is `drawn` and the grade it fixed, `blockedReason` with its `blockedSeverity`, the `ratePerTurn` a turn adds, and the `drawnInputs` a clear would destroy |
 | `craftOffers:[CraftOffer]` | *what could I make* — **one row per recipe, always**, with `available`, a resolved `reason` + `severity`, the `shortfalls`, the `outputGrade` a draw would select, `group`, `outputItemId`, `onBench`, and the three ledger fields below (`outputTierName` / `outputTierRank` / `ownedNote`) |
 | `equipmentBatches:[EquipmentBatchState]` | *what have I got, and how long will it last* — one row per **batch**, plus one `count: 0` row per config item the band owns none of, so the ledger is never missing a row |
 
@@ -574,7 +590,8 @@ both places (`snapshot::crafting::NOTHING_SHORT_STOPS_A_DRAWN_PILE`).
 
 Two things can stop a job whose pile is already cut, and both survive:
 
-- **`No one at the bench`** (`workers == 0`) — as true of a drawn job as of any other.
+- **`No one at the bench`** (`workers == 0`) — as true of a drawn job as of any other, and the one
+  blocked reason that publishes at `neutral`: the player staffs the bench, so it is an instruction.
 - **A zero craft rate** — the bounding tool wore out mid-craft on a material that cannot be worked
   bare-handed, so progress genuinely cannot accrue. This is the real *"a running job is stopped"*
   case, and it names the tool (`No tanning frame`) rather than saying *"cannot craft"*.

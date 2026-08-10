@@ -1081,9 +1081,10 @@ static func format_improvement(payload: Dictionary) -> Dictionary:
 ## (`docs/plan_crafting_and_materials.md` §7).
 ##
 ## **BOTH TAILS ARE NAMED TOKENS, and this builder sends only the first.** The grammar is
-## `recipe <id> [workers <n>]`, and the crew is deliberately omitted: **Make IS the assignment**, so
-## the sim draws idle workers onto the job itself and a client-chosen crew here would be a second
-## answer to a question the sim already answers. Changing it afterwards is `bench_crew`'s job.
+## `recipe <id> [workers <n>]`, and the crew is deliberately omitted: **the player staffs the bench**,
+## and a client-chosen crew here would be a second answer to the question the `− n +` stepper exists
+## to ask. Naming no crew leaves the crew where it is — nobody on a bench that was idle, and the crew
+## already standing there across a swap — so the number is only ever `bench_crew`'s to set.
 ##
 ## It takes `<faction_id> <band_id>` first, like `assign_labor`, and names the band by its DURABLE
 ## `band_id` — never its ECS entity bits, which a rollback renumbers.
@@ -1220,8 +1221,8 @@ func _on_hud_improvement(payload: Dictionary) -> void:
         return
     _send_formatted_command(format_improvement(payload))
 
-## Put a recipe on the band's bench (Materials & Crafting). Make IS the assignment, so this sends the
-## recipe alone and lets the sim staff it.
+## Stage a recipe on the band's bench (Materials & Crafting). The player staffs the bench, so this
+## sends the recipe alone and the crew stays where it was until the stepper moves it.
 func _on_hud_set_bench(payload: Dictionary) -> void:
     _send_formatted_command(format_set_bench(payload))
 

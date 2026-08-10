@@ -155,18 +155,19 @@ pub enum CommandPayload {
         target_x: u32,
         target_y: u32,
     },
-    /// **Put a recipe on a band's crafting bench and draw idle workers onto it.**
+    /// **Put a recipe on a band's crafting bench.** The crew is the player's to name — see
+    /// [`BENCH_CREW_UNSPECIFIED`].
     ///
-    /// *Make is the assignment* (`docs/plan_crafting_and_materials.md` §7): there is no Crafter role
-    /// and no labor target, because crafting always has a subject and is therefore staffed like a
-    /// worked source rather than like a standing role. **One job at a time**, so this replaces
+    /// *The bench is the assignment* (`docs/plan_crafting_and_materials.md` §7): there is no Crafter
+    /// role and no labor target, because crafting always has a subject and is therefore staffed like
+    /// a worked source rather than like a standing role. **One job at a time**, so this replaces
     /// whatever the bench was making — and the pile that job had already drawn goes with it.
     SetBench {
         faction_id: u32,
         band_id: u64,
         recipe_id: String,
-        /// [`BENCH_CREW_UNSPECIFIED`] hands the staffing decision to the sim, which is the shape
-        /// the client always sends.
+        /// [`BENCH_CREW_UNSPECIFIED`] leaves the crew exactly as it is — which is the shape the
+        /// client always sends, so a staged job starts unstaffed and the player names the number.
         workers: u32,
     },
     /// Take the job off a band's bench and hand its crew back to the idle pool.
@@ -613,13 +614,18 @@ pub enum SecurityPolicyKind {
 /// connection.
 pub const MAX_PROTO_FRAME: usize = 64 * 1024;
 
-/// **A `set_bench` that names no crew: the sim draws the band's idle workers onto the job.**
+/// **A `set_bench` that names no crew: DO NOT CHANGE THE CREW.**
 ///
-/// *Make is the assignment*, so choosing the recipe is the whole gesture — the client sends this and
-/// the server staffs it. The value is `0` and the reading of it is deliberate: `workers` rides a
-/// proto3 scalar, which cannot distinguish an absent field from an explicit zero, so the handler
-/// treats zero as *"you decide"*. No intent is lost by that, because `bench_crew <n>` is how a
-/// player sets an explicit crew — zero included.
+/// Not *"the sim decides"* — the sim never decides this. Labor is the scarce currency and dividing
+/// the band is the game's turn-to-turn decision, so how many hands stop hunting to stand at a bench
+/// is the player's call and only theirs. An idle bench therefore stages the recipe with **nobody**
+/// on it and waits for the stepper; a bench already running a job **keeps the crew standing there**
+/// through the swap, because an absent number is not an order to send anyone home.
+///
+/// The value is `0` because `workers` rides a proto3 scalar, which cannot distinguish an absent
+/// field from an explicit zero. No intent is lost by that reading: `bench_crew <n>` is how a player
+/// sets an explicit crew — zero included, which is how a bench is stood down without taking the job
+/// off it.
 pub const BENCH_CREW_UNSPECIFIED: u32 = 0;
 
 /// Error returned when encoding a command envelope fails.

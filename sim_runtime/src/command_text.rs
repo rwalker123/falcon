@@ -150,7 +150,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "set_bench",
         aliases: &[],
-        summary: "Put a recipe on a band's crafting bench and draw idle workers onto it. MAKE IS THE ASSIGNMENT - there is no Crafter role, because crafting always has a subject and is staffed like a worked source rather than like a standing role. Omit 'workers' (or pass 0) and the sim staffs the job with every hand the band has off other work, keeping any crew already at the bench; name a number and exactly that crew is applied. ONE JOB AT A TIME: this replaces whatever was on the bench, and the materials that job had already drawn go with it. An unknown recipe, or one whose crafts the faction has not learned, is refused with a reason.",
+        summary: "Put a recipe on a band's crafting bench. THE PLAYER STAFFS THE BENCH, NEVER THE SIM - labor is the scarce currency, so how many hands stop hunting to craft is never guessed. There is still no Crafter role: crafting always has a subject and is staffed like a worked source rather than like a standing role. Omit 'workers' (or pass 0) and the crew is left exactly as it is - an idle bench stages the recipe with nobody on it, a running bench keeps the crew already standing there; name a number and exactly that crew is applied. Use 'bench_crew' to set a crew afterwards, zero included. ONE JOB AT A TIME: this replaces whatever was on the bench, and the materials that job had already drawn go with it. An unknown recipe, or one whose crafts the faction has not learned, is refused with a reason.",
         usage: "set_bench <faction_id> <band_id> recipe <recipe_id> [workers <n>]",
     },
     CommandVerbHelp {

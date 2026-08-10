@@ -4878,8 +4878,9 @@ fn band_bench_mut(app: &mut bevy::prelude::App, band: Entity) -> bevy::prelude::
 /// *"no 'you cannot craft that' branch in the sim"*: the panel names the shortfall, the sim just
 /// does not move.
 ///
-/// **The crew is optional and the sim staffs it** — see [`BENCH_CREW_UNSPECIFIED`] at the clamp
-/// below. Choosing the recipe is the player's whole gesture; `bench_crew` is what takes a number.
+/// **The crew is the player's to name, never the sim's to guess** — see [`BENCH_CREW_UNSPECIFIED`]
+/// at the clamp below. Naming no crew leaves the crew where it is; `bench_crew` is what takes a
+/// number.
 fn handle_set_bench(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -4940,14 +4941,16 @@ fn handle_set_bench(
     // against is the free hands PLUS the crew already standing there — [`BandWorkforce::benchable`],
     // which is the one place that decides not to count them twice.
     let benchable = band_workforce(app, band.entity).benchable();
-    // **A crew of zero means "you decide", so draw every hand the bench may have.** The command
-    // arrives over a proto3 scalar, which cannot tell an absent `workers` from an explicit `0`, and
-    // the client deliberately sends neither — `make` is the assignment, so the sim staffs the job.
-    // Reading `0` as an order to stand nobody there is what left the bench with no crew, and it also
-    // dismissed the crew of a *running* bench on a job swap. Nothing reachable is lost by the
-    // reinterpretation: `bench_crew <n>` is how a player sets an explicit crew, zero included.
+    // **A crew of zero changes nothing about the crew.** The command arrives over a proto3 scalar,
+    // which cannot tell an absent `workers` from an explicit `0`, and the client sends neither —
+    // so this verb keeps whoever is already standing at the bench and recruits nobody. An idle
+    // bench therefore stages at zero and the player staffs it, which is the point: labor is the
+    // scarce currency and dividing the band is the decision the game is made of, so the one number
+    // the sim must not pick is how many hands stop hunting. `bench_crew <n>` sets the crew, zero
+    // included, so no reachable intent is lost.
+    let standing = band_bench_mut(app, band.entity).workers;
     let applied = if workers == BENCH_CREW_UNSPECIFIED {
-        benchable
+        standing.min(benchable)
     } else {
         workers.min(benchable)
     };
@@ -12275,15 +12278,15 @@ mod tests {
             .unwrap_or(0)
     }
 
-    /// **Naming no crew staffs the job; naming one is obeyed to the head.**
+    /// **Naming no crew recruits nobody; naming one is obeyed to the head.**
     ///
     /// A pairing, because every other bench fixture passes an explicit crew — which is the one call
-    /// shape the client never makes. *Make is the assignment*, so the panel sends the recipe and
-    /// nothing else, and the sim is what draws the hands; a handler that clamped the proto's `0`
-    /// left the player staring at "No one at the bench" after pressing **Make**. The second half is
-    /// what stops the fix from becoming "the bench always takes everybody".
+    /// shape the client never makes. **The player staffs the bench and the sim never does**: labor
+    /// is the scarce currency and splitting the band is the game's turn-to-turn decision, so an
+    /// idle bench stages at zero and waits for the stepper. The second half is what keeps that from
+    /// meaning *"a named crew is ignored too"*.
     #[test]
-    fn a_set_bench_with_no_crew_named_draws_the_bands_idle_workers() {
+    fn a_set_bench_with_no_crew_named_recruits_nobody() {
         let mut app = build_headless_app();
         app.update();
         let faction = FactionId(0);
@@ -12304,21 +12307,22 @@ mod tests {
         );
         assert_eq!(
             bench_crew(&app, band),
-            idle_before,
-            "a set_bench that names no crew must staff the job with the band's idle workers"
+            0,
+            "a set_bench that names no crew stages the recipe with nobody on it — the sim does not \
+             pick how many hands stop hunting"
         );
         assert_eq!(
             published_idle_workers(&mut app, band),
-            0,
-            "…and those hands are then busy, so nobody is published idle"
+            idle_before,
+            "…so the band's idle count is untouched: every hand is still free to be spent elsewhere"
         );
 
         handle_set_bench(&mut app, faction, None, BENCH_IDLE_RECIPE, BENCH_IDLE_CREW);
         assert_eq!(
             bench_crew(&app, band),
             BENCH_IDLE_CREW,
-            "a set_bench that DOES name a crew applies exactly that crew — the draw is what a \
-             missing number means, not what every set_bench does"
+            "a set_bench that DOES name a crew applies exactly that crew — an absent number means \
+             leave the crew alone, not ignore the one that is there"
         );
     }
 
@@ -12333,7 +12337,6 @@ mod tests {
         app.update();
         let faction = FactionId(0);
         let band = first_resident_band(&mut app);
-        let idle_before = published_idle_workers(&mut app, band);
 
         handle_set_bench(&mut app, faction, None, BENCH_IDLE_RECIPE, BENCH_IDLE_CREW);
         assert_eq!(
@@ -12359,9 +12362,9 @@ mod tests {
         );
         assert_eq!(
             bench_crew(&app, band),
-            idle_before,
-            "the crew already at the bench stays put across the swap, and the band's remaining \
-             free hands join them"
+            BENCH_IDLE_CREW,
+            "the crew already at the bench stays put across the swap — an absent number is not an \
+             order to send them home"
         );
     }
 }
