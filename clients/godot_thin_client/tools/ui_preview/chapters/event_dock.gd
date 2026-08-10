@@ -396,12 +396,13 @@ func _preview_press_reaches_map(window_point: Vector2) -> bool:
 ## Canvas coordinates → WINDOW coordinates, which is what `Input.warp_mouse` takes. `project.godot`
 ## stretches `canvas_items` from a 1920 base with an `expand` aspect, so a control's own rect and the
 ## cursor live in different units and a warp using the raw rect lands somewhere else entirely.
+## The arithmetic itself lives in `InputProbe`, which the crafting chapter's gesture probe reads too —
+## a second copy is a second chance for two harness claims to disagree about where a point is.
 func _canvas_to_window(canvas_point: Vector2) -> Vector2:
-	var canvas = h.get_viewport().get_visible_rect().size
-	if canvas.x <= 0.0 or canvas.y <= 0.0:
-		return canvas_point
-	var window = Vector2(h.get_window().size)
-	return Vector2(canvas_point.x / canvas.x * window.x, canvas_point.y / canvas.y * window.y)
+	return InputProbe.canvas_to_window(h.get_viewport(), h.get_window(), canvas_point)
+
+## The shared pointer-input layer.
+const InputProbe := preload("res://tools/ui_preview/input_probe.gd")
 
 func _preview_dock_labels(dock: EventDockPanel) -> Array[String]:
 	var found: Array[String] = []

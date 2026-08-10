@@ -430,7 +430,7 @@ adding unrelated states therefore conflicted as a matter of course, and one merg
 | `tools/ui_preview.gd` | The harness `Node`: `_settle` / `_save` / `_capture` / `_assert_hud`, the canvas + prefs + tween plumbing, the prologue that stands the HUD up, the icon-probe epilogue, `CHAPTERS` + `_instantiate_chapters`, and the one exit `_finish()` |
 | `tools/ui_preview/chapters/*.gd` | One `RefCounted` per arc (`hunt`, `forage_crop`, `herd_graze_pen`, `event_dock`, `button_faces`, `forecast_seam`, …), each `run(harness)` plus the fixtures only it uses. A chapter need not render a frame — `button_faces` and `forecast_seam` are both PNG-less, and that is a normal shape |
 | `tools/ui_preview/fixtures_*.gd` | Pure `static func` fixtures shared by two or more chapters — `base` (the primitives the other three build on), `band`, `herd`, `forage`, `tile`, `world` |
-| `tools/ui_preview/node_query.gd`, `readouts.gd`, `compose_vocab.gd` | Shared `static` helpers: finding a control by identity, reading values back out of rendered text, the compose spine vocabulary |
+| `tools/ui_preview/node_query.gd`, `readouts.gd`, `compose_vocab.gd`, `input_probe.gd` | Shared `static` helpers: finding a control by identity, reading values back out of rendered text, the compose spine vocabulary, and driving real pointer input through `Viewport.push_input` (the canvas→window conversion, a hover, the two gestures, a wheel notch, a press-and-cancelled-release click) |
 
 **Where a new thing goes.** A state → the chapter that owns its arc. A fixture used by one chapter
 → a method on that chapter. A fixture used by two → a `fixtures_*.gd` `static func`. **`ui_preview.gd`
@@ -540,15 +540,58 @@ machine contract. The rule is in `event-dock.md` → "…but a detail the sim wr
 `SourceForecast`/`HudEventVocab`, the `_assert_horizon_floor_is_the_whole_trip` rule: an expectation
 built from the code under test can only agree with itself.
 
-**A clean run is 295 frames / 791 `PASS`, exit 0.** **Eleven** of those frames are the Materials &
+**A clean run is 295 frames / 810 `PASS`, exit 0.** **Eleven** of those frames are the Materials &
 Crafting chapter's: the ledger's own frame, its reserved-edge / event-bar / band-dock / co-edge /
 collapsed variants, the two-tier and folded group heads, and the blocked bench. **The figure is
 MEASURED, never summed** — the count also moved with the band-fission merge, and two arcs' deltas
 added by hand is how a tally stops matching its harness.
 
-It was 284 / 700 before that chapter, and 281 / 688 before the band-compose arc's three frames and
+It was 295 / 791 before the map-gesture state below, which adds **nineteen** `PASS` and **no frame**;
+284 / 700 before the crafting chapter; and 281 / 688 before the band-compose arc's three frames and
 twelve `PASS`es: the drawer pair's three, the dock frame's three, and the two-band compose pair
 below.
+
+### A scroll over the card must not also drive the map
+
+The last block of `chapters/crafting_bench.gd`, PNG-less. It guards `MapView`'s pointer-navigation
+routing (`map-renderers.md` → "A POINTER-DRIVEN NAVIGATION INPUT IS DECLINED WHERE A CONTROL CLAIMS
+THE PIXEL"), on the crafting card because that is the surface it was reported on — but the rule is
+every floating and docked card's, and the state stands a real `MapView` up rather than owning one.
+
+**Every claim is a PAIRING, because a one-sided one passes on a map that has stopped answering
+gestures at all**: over the card the map must hold still, over open map the same event must still
+move it. It runs all four probes for each of the three event kinds (pan gesture, pinch, wheel):
+
+| probe | what only IT can say |
+|---|---|
+| the card's own CHROME (top-left corner, inside the card and outside the scroll) | the map's guard, with no `ScrollContainer` in the picture |
+| the LEDGER parked at its top | the event reached the RIGHT surface — the scroll offset moved (and, for a pinch, rightly did not) |
+| the LEDGER parked at its FLOOR | the reported case: a container with nothing left to give stops accepting a pan gesture |
+| open map | the vacuity guard for all three above |
+
+**THE LEDGER-AT-TOP PROBE IS THE WEAK ONE AND IT IS NOT THERE FOR THE MAP CLAIM.** A
+`ScrollContainer` with room left accepts a scroll and a wheel itself, so over a scrolling ledger the
+map holds still whatever `MapView` does — measured: the first cut of this state probed only the
+ledger centre, and with the guard removed **only the PINCH failed**, no scroll container taking one.
+That is the whole reason the chrome and floor probes exist.
+
+**The open-map point is SEARCHED, and searched with a LEFT press.** A press is the one pointer input
+the GUI pass really does stop, so "a press here reached `_unhandled_input`" is a reading of "this
+pixel is open map" that is independent of the hover the fix under test is built on. A lattice walk
+rather than a literal point, this frame carrying a left dock, a bottom bar and a centred card; the
+state PRINTS the point it found and fails loudly when the frame offers none.
+
+The `MapView` is `visible = false`, data only, and freed again — the `band_panel_preview` idiom, and
+for its reason: a surviving instance paints a stray minimap thumbnail into every later frame, that
+being its own `CanvasLayer` which `visible = false` does not hide. It is never handed a HUD
+reference, so the minimap is never built at all.
+
+**Sabotage-verified: with the guard removed the run fails exactly SEVEN** — the three chrome claims,
+the three floor claims and the pinch's ledger claim — while all three open-map claims, both
+ledger-took-it claims and the pinch's ledger-ignored-it claim stay green. **Zero frames moved**, in
+this harness (295/295 byte-identical against a run with the block disabled) or in
+`band_panel_preview` (93/93 against a run on the pre-change `MapView`, which also read the identical
+235 `assert OK` / 342 `: PASS`).
 
 ### The compose sheet composes for the PANEL band, not the first one
 

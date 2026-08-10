@@ -118,8 +118,11 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 235 `assert OK` lines, 343 `PASS` ones and ZERO `FAIL` ones, over 93
-frames.** (The `PASS` figure was 259 before the ACTION REGISTRY's own block added sixteen and 275
+**A clean run exits 0 and prints 235 `assert OK` lines, 342 `: PASS` ones and ZERO `FAIL` ones, over
+93 frames.** **Count the `PASS` tally on the `: PASS` delimiter, never on the bare word** — one
+`assert OK` line carries "PASS" inside its own prose ("tooltip + PASS"), so a bare-token count reads
+343. It is the same trap as judging this harness by `grep FAIL`: the tokens appear in the assertions'
+wording as well as in their verdicts. (The `PASS` figure was 259 before the ACTION REGISTRY's own block added sixteen and 275
 before the COLLAPSED RAIL added thirty-three — see "`_assert_action_registry`" and "The collapsed
 rail's two frames" below.) (It
 was 231/265 before the founding affordance learned to REFUSE — `band_panel_settle_too_small` and

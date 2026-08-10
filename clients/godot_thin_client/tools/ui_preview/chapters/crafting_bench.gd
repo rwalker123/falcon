@@ -615,6 +615,7 @@ func _crafting_states() -> void:
 	await _rerender_state()
 	await _two_tier_states()
 	await _blocked_bench_state()
+	await _map_gesture_state()
 
 	# Hand everything back: the panel closed, the roster restored to the reference band.
 	h._hud.close_crafting_panel()
@@ -1447,3 +1448,228 @@ func _batch_row(item_id: String, tier_id: String, grade: String, count: int, rem
 		"remaining": remaining, "quanta_left": remaining, "quantum_noun": "uses",
 		"life": life, "life_severity": life_severity,
 	}
+
+# ---- the last state: A SCROLL OVER THE CARD MUST NOT ALSO DRIVE THE MAP -------------------------
+
+## **THE GUI PASS STOPS A PRESS FOR US AND STOPS A SCROLL FOR NOBODY.** Reported from play: scrolling
+## the Materials & Crafting ledger scrolled the panel *and* panned the map underneath. The panel is not
+## the bug — its root and its card are both `MOUSE_FILTER_STOP` — and neither is anything crafting-
+## specific: **every floating or docked surface in this client has it**, because the three POINTER
+## navigation inputs are routed differently from a press.
+##
+## Measured in Godot 4.7 by pushing each event over a `STOP` card through `Viewport.push_input`:
+##
+## | event | over a STOP card |
+## |---|---|
+## | left press | consumed by the GUI pass |
+## | `InputEventPanGesture` (a macOS two-finger scroll) | **survives** to `_unhandled_input` |
+## | `InputEventMagnifyGesture` (a pinch) | **survives** |
+## | wheel button | **survives** — Godot deliberately propagates a wheel past a `STOP`, so an OUTER
+##   scroll container can still take it, and only a `ScrollContainer` that really MOVED accepts one |
+##
+## So the map declines them itself (`MapView._pointer_claimed_by_ui`), and this is the state that
+## proves it. **It is judged by EFFECT, never off a `mouse_filter`** — the `band_panel_preview` idiom —
+## because a filter read back says only what a node was configured as.
+func _map_gesture_state() -> void:
+	# The SHORT room, so the ledger genuinely overflows: "the card still scrolls" is unfalsifiable on a
+	# table that fits, and that half is where this state's whole value sits.
+	h._hud.set_reserved_inset(RESERVER_LEFT, SIDE_LEFT, RESERVED_LEFT_WIDTH)
+	h._hud.set_reserved_inset(RESERVER_BOTTOM, SIDE_BOTTOM, RESERVED_BOTTOM_HEIGHT)
+	h._hud.update_band_alerts([_crafting_band()])
+	h._hud.open_crafting_panel(_crafting_band())
+	await h._settle()
+	await _assert_a_scroll_over_the_card_leaves_the_map_alone()
+	h._hud.set_reserved_inset(RESERVER_LEFT, SIDE_LEFT, 0.0)
+	h._hud.set_reserved_inset(RESERVER_BOTTOM, SIDE_BOTTOM, 0.0)
+	await h._settle()
+
+## **EVERY CLAIM IS A PAIRING ON THE SAME FRAME**, because a one-sided one passes on a map that has
+## stopped answering gestures altogether: over the card the map must hold still, over open map the same
+## event must still move it. The scroll offset carries the other half of the over-the-card claim — the
+## event was taken by the RIGHT surface rather than dropped on the floor.
+##
+## The map is a REAL `MapView` (`visible = false`, data only — the `band_panel_preview` idiom), stood
+## up for this state and freed again: nothing else in the run may inherit it, and its minimap is its
+## own `CanvasLayer`, which `visible = false` would not hide. It is never handed a HUD reference, so
+## that minimap is never built at all.
+func _assert_a_scroll_over_the_card_leaves_the_map_alone() -> void:
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	var scroll := _ledger_scroll(panel) if panel != null else null
+	if panel == null or scroll == null:
+		h._assert_hud("crafting — the gesture probe opens on a scrolling ledger", false)
+		return
+	h._assert_hud("crafting — precondition: the probed ledger outgrows its room, so it has somewhere to scroll",
+		_scroll_is_live(panel))
+
+	var card := panel.get_global_rect()
+	# Found BEFORE the map exists, and by a LEFT press rather than by asking the hover: a press is the
+	# one pointer input the GUI pass really does stop, so "a press here reached `_unhandled_input`" is
+	# an independent reading of "this pixel is open map" — independent, in particular, of the very
+	# hover the fix under assertion is built on.
+	var open_map := await _find_open_map_point(card)
+	if open_map == NO_OPEN_MAP_POINT:
+		h._assert_hud("crafting — precondition: the frame offers a pixel of open map to probe", false)
+		return
+	# The card's own top-left chrome — inside the card, OUTSIDE the ledger's scroll. That distinction
+	# is the whole reason this point exists: a live `ScrollContainer` accepts a scroll itself, so a
+	# probe aimed at the ledger measures GODOT's routing and says nothing about the map's guard. Over
+	# the chrome nothing but the card claims the pixel, which is exactly the reported surface.
+	var chrome := card.position + Vector2(CARD_CHROME_PROBE_INSET, CARD_CHROME_PROBE_INSET)
+	print("ui_preview: crafting — gesture probe: card chrome %s, ledger %s, open map %s"
+		% [chrome, card.get_center(), open_map])
+
+	var view: Node2D = MAP_VIEW_SCRIPT.new()
+	view.visible = false
+	h.add_child(view)
+	# `_unhandled_input` early-outs on an empty grid, so the map has to believe it has one. Nothing
+	# below reads a tile — every claim is about `pan_offset` / `zoom_factor` — so a bare grid is the
+	# whole world this probe needs.
+	view.grid_width = GESTURE_PROBE_GRID.x
+	view.grid_height = GESTURE_PROBE_GRID.y
+	await h.get_tree().process_frame
+
+	await _assert_gesture_pair(view, scroll, "a two-finger scroll", true, chrome, card.get_center(),
+		open_map,
+		func(point: Vector2) -> void:
+			InputProbe.pan_gesture(h.get_viewport(), point, GESTURE_PROBE_PAN_DELTA))
+	# A PINCH IS NOT A SCROLL REQUEST, so the ledger is asserted to be UNMOVED by it rather than
+	# excused from the claim. That is the same reading as the two beside it — the event went where it
+	# belonged — and it is what stops the flag reading as a licence to skip an inconvenient half.
+	await _assert_gesture_pair(view, scroll, "a pinch", false, chrome, card.get_center(), open_map,
+		func(point: Vector2) -> void:
+			InputProbe.magnify_gesture(h.get_viewport(), point, GESTURE_PROBE_MAGNIFY_FACTOR))
+	await _assert_gesture_pair(view, scroll, "a wheel notch", true, chrome, card.get_center(), open_map,
+		func(point: Vector2) -> void:
+			InputProbe.wheel(h.get_viewport(), point, MOUSE_BUTTON_WHEEL_DOWN))
+
+	view.queue_free()
+	await h.get_tree().process_frame
+
+## One event kind, at the FOUR points that between them tell the map's guard from Godot's own routing.
+##
+## **THE LEDGER PROBES ARE THE WEAK ONES AND THEY ARE HERE FOR THE SCROLL READING, NOT FOR THE MAP'S.**
+## A `ScrollContainer` with room left accepts a scroll and a wheel itself, so over a scrolling ledger
+## the map holds still whatever `MapView` does — measured: with the guard removed, only the PINCH
+## (which no scroll container takes) failed at that point. So the map claim is carried by the card's
+## own chrome and by a ledger PARKED AT ITS FLOOR, where the container has nothing left to accept.
+##
+## `moved` reads pan OR zoom together because `_apply_zoom` pivots on the cursor and therefore moves
+## `pan_offset` too — asking about one axis alone would call a zoom "still", or a pan "moved",
+## depending only on which the event happened to drive.
+func _assert_gesture_pair(view: Node2D, scroll: ScrollContainer, what: String, scrolls_the_ledger: bool,
+		over_chrome: Vector2, over_ledger: Vector2, over_map: Vector2, deliver: Callable) -> void:
+	# 1. THE CARD'S OWN CHROME — nothing under the pointer but the card, so this is the map's guard
+	#    and nothing else, for every one of the three event kinds.
+	var moved_over_chrome := await _map_moves(view, over_chrome, deliver)
+	h._assert_hud("crafting — %s over the card's chrome leaves the map where it was" % what,
+		not moved_over_chrome)
+
+	# 2. THE LEDGER AT ITS TOP — where the event goes when the card has somewhere to put it. Parked
+	#    first because a ledger already at its own floor cannot move, and would read as one that
+	#    dropped the event: measured, a single pan gesture takes this table all the way down.
+	scroll.scroll_vertical = 0
+	await h.get_tree().process_frame
+	var scrolled_before: int = scroll.scroll_vertical
+	var moved_over_ledger := await _map_moves(view, over_ledger, deliver)
+	h._assert_hud("crafting — …%s over the ledger leaves it where it was too" % what, not moved_over_ledger)
+	var scrolled: bool = scroll.scroll_vertical != scrolled_before
+	if scrolls_the_ledger:
+		h._assert_hud("crafting — …and the ledger took it (%d → %d)" % [scrolled_before, scroll.scroll_vertical],
+			scrolled)
+	else:
+		h._assert_hud("crafting — …and the ledger rightly ignored it (%d → %d)"
+				% [scrolled_before, scroll.scroll_vertical],
+			not scrolled)
+
+	# 3. THE LEDGER SCROLLED TO ITS FLOOR — the reported case. A container with nothing left to give
+	#    stops accepting a pan gesture, which is exactly when a player at the bottom of the ledger
+	#    keeps scrolling and the map lurches out from under the card.
+	scroll.scroll_vertical = LEDGER_FLOOR_PARK
+	await h.get_tree().process_frame
+	h._assert_hud("crafting — precondition: the ledger really parks at a floor below its top (%d)"
+			% scroll.scroll_vertical,
+		scroll.scroll_vertical > 0)
+	var moved_at_the_floor := await _map_moves(view, over_ledger, deliver)
+	h._assert_hud("crafting — …and %s with the ledger already at its floor still leaves the map alone" % what,
+		not moved_at_the_floor)
+
+	# 4. OPEN MAP — without which every claim above is satisfied by a map that answers nothing at all.
+	var moved_over_map := await _map_moves(view, over_map, deliver)
+	h._assert_hud("crafting — …while %s over open map still drives the map" % what, moved_over_map)
+
+## Hover the point (a gesture is routed to the HOVERED control, so the hover is part of the event
+## rather than setup around it), deliver, and answer whether the map's own pan or zoom moved.
+func _map_moves(view: Node2D, point: Vector2, deliver: Callable) -> bool:
+	var window_point := InputProbe.canvas_to_window(h.get_viewport(), h.get_window(), point)
+	InputProbe.hover(h.get_viewport(), window_point)
+	await h.get_tree().process_frame
+	var pan_before: Vector2 = view.pan_offset
+	var zoom_before: float = view.zoom_factor
+	deliver.call(window_point)
+	await h.get_tree().process_frame
+	return view.pan_offset != pan_before or view.zoom_factor != zoom_before
+
+## The first lattice point outside the card at which a LEFT press survives the GUI pass — i.e. a pixel
+## the live client would have picked a hex on. SEARCHED rather than hard-coded: this frame carries a
+## left dock, a bottom bar and a centred card, and a literal point becomes a silent lie the day any of
+## them moves. `NO_OPEN_MAP_POINT` when the frame offers none, which fails the state loudly instead of
+## leaving the pairing half-made.
+func _find_open_map_point(card: Rect2) -> Vector2:
+	var canvas: Vector2 = h.get_viewport().get_visible_rect().size
+	var park := InputProbe.canvas_to_window(h.get_viewport(), h.get_window(),
+		canvas * OPEN_MAP_PARK_FRACTION)
+	var y := OPEN_MAP_PROBE_STEP
+	while y < canvas.y:
+		var x := OPEN_MAP_PROBE_STEP
+		while x < canvas.x:
+			var point := Vector2(x, y)
+			if not card.has_point(point):
+				var window_point := InputProbe.canvas_to_window(h.get_viewport(), h.get_window(), point)
+				h._unhandled_press_seen = false
+				InputProbe.left_click(h.get_viewport(), window_point, park)
+				await h.get_tree().process_frame
+				if h._unhandled_press_seen:
+					return point
+			x += OPEN_MAP_PROBE_STEP
+		y += OPEN_MAP_PROBE_STEP
+	return NO_OPEN_MAP_POINT
+
+## The real map, instanced for the one state that needs an input TARGET rather than a picture.
+const MAP_VIEW_SCRIPT := preload("res://src/scripts/MapView.gd")
+
+## The shared pointer-input layer — every event below goes through the engine's real dispatch.
+const InputProbe := preload("res://tools/ui_preview/input_probe.gd")
+
+## A grid for the stand-in map to believe in. `MapView._unhandled_input` returns immediately on a zero
+## grid and nothing here reads a tile, so the two numbers only have to be non-zero; a small square
+## keeps the pan clamp's arithmetic legible if this ever has to be debugged.
+const GESTURE_PROBE_GRID := Vector2i(20, 20)
+
+## One downward two-finger scroll, in the units `InputEventPanGesture.delta` carries. Large enough that
+## a `ScrollContainer` moves by a whole pixel and the map's own clamp cannot absorb it.
+const GESTURE_PROBE_PAN_DELTA := Vector2(0.0, 40.0)
+
+## One pinch-out. `MapView` scales `(factor - 1.0)`, so anything but exactly 1.0 is a real zoom.
+const GESTURE_PROBE_MAGNIFY_FACTOR := 1.25
+
+## How far inside the card's top-left corner the chrome probe sits, in canvas px. Small enough to land
+## in the `PanelContainer`'s own border + content margin, which is the band of the card that belongs to
+## no child at all.
+const CARD_CHROME_PROBE_INSET := 4.0
+
+## Where the ledger is parked for the scroll-exhausted probe. `ScrollContainer` clamps to its own
+## maximum, so any value past it means "as far down as this table goes" without the harness having to
+## restate a height the panel decides.
+const LEDGER_FLOOR_PARK := 1000000
+
+## The lattice `_find_open_map_point` walks, in canvas px. Coarse enough that the search is a handful
+## of probes rather than thousands, fine enough to find the gaps between this frame's HUD furniture.
+const OPEN_MAP_PROBE_STEP := 60.0
+
+## Where the probe's pointer is parked between clicks — the middle of the canvas, which in this state
+## is under the card, so the cancelled release lands on a surface with nothing to fire.
+const OPEN_MAP_PARK_FRACTION := 0.5
+
+## "The frame offered no open map." A real answer is a point inside the canvas, so the sentinel sits
+## outside every canvas this harness renders at.
+const NO_OPEN_MAP_POINT := Vector2(-1.0, -1.0)
