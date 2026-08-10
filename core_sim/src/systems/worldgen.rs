@@ -878,8 +878,12 @@ pub fn spawn_initial_world(
 /// faction provisions pool to distribute.
 ///
 /// This also used to drain a start profile's `trade_goods` grant into an opening trade-link openness
-/// bonus. That bonus applied to a component nothing ever spawned, so the grant was being deleted at
-/// startup for no effect; it now simply sits in [`FactionInventory`] until something spends it
+/// bonus, on a component nothing ever spawned — so the grant was deleted at startup for no effect.
+/// **The shipped profile no longer makes that grant**, because with the drain gone it would sit in
+/// [`FactionInventory`] forever: nothing anywhere reads that resource for a decision, and the
+/// Inspector's Map tab renders it, so the player would see a permanently frozen stockpile of 40.
+/// The `trade_goods` a band actually earns are band-local `stores[TRADE_GOODS]`, credited by cash
+/// Fields, hunt hides and pens — a different thing entirely, and untouched
 /// (`docs/plan_contact_and_logistics.md` §As-built).
 pub fn apply_starting_inventory_effects(
     demographics: Res<DemographicsConfigHandle>,

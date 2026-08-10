@@ -18,9 +18,7 @@
         "nomadic_wayfinding",
         "portable_forge"
       ],
-      "inventory": [
-        { "item": "trade_goods", "quantity": 40 }
-      ],
+      "inventory": [],
       "food_modules": {
         "primary": "savanna_grassland",
         "secondary": "riverine_delta"

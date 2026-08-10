@@ -274,10 +274,10 @@ pub use snapshot_overlays_config::{
     SnapshotOverlaysConfigMetadata, BUILTIN_SNAPSHOT_OVERLAYS_CONFIG,
 };
 pub use start_profile::{
-    resolve_active_profile, snapshot_profiles, ActiveStartProfile, CampaignLabel, StartProfile,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartProfileKnowledgeTagsMetadata,
-    StartProfileLookup, StartProfileOverrides, StartProfilesHandle, StartProfilesMetadata,
-    StartingUnitSpec,
+    resolve_active_profile, snapshot_profiles, ActiveStartProfile, CampaignLabel, InventoryEntry,
+    StartProfile, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
+    StartProfileKnowledgeTagsMetadata, StartProfileLookup, StartProfileOverrides,
+    StartProfilesHandle, StartProfilesMetadata, StartingUnitSpec,
 };
 pub use supply::{balance_supply_networks, SupplyNetworkMembership};
 pub use supply_network_config::{

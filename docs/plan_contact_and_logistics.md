@@ -243,6 +243,28 @@ Two structural properties belong to the rider, not the connection:
 - **What it does to the world beyond moving its payload** — logistics keeps tiles `Seen`; the others
   are open.
 
+### The cargo already exists and has nowhere to go
+
+`TRADE_GOODS` (`components.rs`) is the **third component of every yield vector**, beside food and
+fodder. Every flora and fauna species carries a `trade_goods_per_biomass`; a cash Field credits the
+band's `stores[TRADE_GOODS]`, as do hunt hides, pens and returning expeditions; the client renders
+the total with its own ⇄ glyph across several surfaces.
+
+**Nothing anywhere spends them.** There is no `take(TRADE_GOODS)` in the workspace. Trade goods
+accumulate in a band's store from the first cash harvest to the end of the game.
+
+That is not a defect to fix here — it is this arc's reason for existing, stated in the sim's own
+data. The land already pays a non-food, non-fodder yield whose only conceivable use is exchange, and
+exchange is what has no substrate. **Cargo over a logistics link is the sink that has been missing**,
+and #517 is where it arrives.
+
+> **This is distinct from the retired `FactionInventory` grant.** The shipped start profile used to
+> hand the faction 40 `trade_goods`, which `apply_trade_goods_bonus` then drained into an openness
+> field on a `TradeLink` that never existed — so the grant was deleted at startup, every game, for no
+> effect. With that system gone the grant would have sat visible and frozen in the Inspector's Map
+> tab forever (nothing reads `FactionInventory` for any decision), so **the grant was retired too**.
+> The band-local store above is untouched: they are two different things that share a name.
+
 ---
 
 ## Q6 — Decay: three clocks, not one

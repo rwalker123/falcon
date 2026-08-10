@@ -15,17 +15,19 @@
 //! Two tests, because the doubled state has two different lifetimes:
 //! - the **chain** test drives the real `Startup` schedule twice and reads what survives it (tiles
 //!   and cohorts — state that persists into the game);
-//! - the **stockpile** test runs `spawn_initial_world` alone, because the start profile's inventory
-//!   grant does *not* survive the chain: `apply_trade_goods_bonus`, two systems later, drains
-//!   `trade_goods` to zero on every pass. The double-grant is real but unobservable downstream of
-//!   it, so it is asserted at the seam that produces it.
+//! - the **stockpile** test runs `spawn_initial_world` alone and supplies its OWN inventory grant
+//!   through `start_profile_overrides`. The shipped profile grants nothing (see
+//!   `apply_starting_inventory_effects` — the `trade_goods` grant was retired once the system that
+//!   consumed it turned out to be operating on a component nothing ever spawned), and a test that
+//!   sourced its subject from shipped config would go **vacuous** the moment that config changed
+//!   rather than failing. What is under test is the re-grant seam, not any particular grant.
 
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 
 use core_sim::{
-    build_headless_app, spawn_initial_world, FactionInventory, PopulationCohort, SimulationConfig,
-    Tile, TileRegistry,
+    build_headless_app, spawn_initial_world, FactionInventory, InventoryEntry, PopulationCohort,
+    SimulationConfig, Tile, TileRegistry, TRADE_GOODS,
 };
 
 /// Map dimensions for the runs. Smaller than the shipped standard (80×52) because these tests care
@@ -112,9 +114,19 @@ fn stockpile_total(app: &bevy::prelude::App) -> i64 {
         .sum()
 }
 
+/// The stockpile grant this test double-grants. Supplied by the test rather than read off the
+/// shipped profile, which grants nothing — see the module header.
+const TEST_STOCKPILE: i64 = 40;
+
 #[test]
 fn second_worldgen_pass_does_not_re_grant_starting_inventory() {
     let mut app = app_on_test_map();
+    let mut config = app.world.resource::<SimulationConfig>().clone();
+    config.start_profile_overrides.inventory = vec![InventoryEntry {
+        item: TRADE_GOODS.to_string(),
+        quantity: TEST_STOCKPILE,
+    }];
+    app.world.insert_resource(config);
 
     app.world.run_system_once(spawn_initial_world);
     let first = stockpile_total(&app);
