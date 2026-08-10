@@ -721,7 +721,8 @@ fn hunters_to_bring_one_down(species_key: &str) -> u32 {
         .species
         .get(species_key)
         .expect("probe names a shipped species");
-    let per_hunter = crate::combat::strike_damage(party.hunter.attack, quarry.combat.defense);
+    let per_hunter =
+        crate::combat::strike_damage(party.best_equipped_hunter().attack, quarry.combat.defense);
     if per_hunter <= 0.0 {
         return u32::MAX;
     }

@@ -1933,6 +1933,11 @@ fn seed_source_yield(
             // to arrive at that branch holding the rate the turn will pay it at. Pricing a pen at
             // the sled's tier is `yield-forecast.md`'s invariant broken on the one surface the
             // player commits from.
+            // **The same coverage the turn resolves** (`equipment.md` → "the partly-equipped
+            // party"): `advance_labor_allocation` divides this crew by the gear the band actually
+            // owns, so a seed priced at the whole party's best tier would promise a haul only the
+            // armed half can make.
+            let hunt_coverage = equipment_cfg.coverage(&crew_kit, workers as f32, &band_wear);
             let per_worker_biomass = if herd.is_corralled() {
                 equipment_cfg.pen_per_worker_biomass_capacity(
                     labor.hunt.per_worker_biomass_capacity,
@@ -1940,32 +1945,28 @@ fn seed_source_yield(
                     &band_wear,
                 )
             } else {
-                equipment_cfg.hunt_per_worker_biomass_capacity(
-                    labor.hunt.per_worker_biomass_capacity,
-                    &crew_kit,
-                    &band_wear,
-                )
+                hunt_coverage.weighted_rate(|kit| {
+                    equipment_cfg.hunt_per_worker_biomass_capacity(
+                        labor.hunt.per_worker_biomass_capacity,
+                        kit,
+                        &band_wear,
+                    )
+                })
             };
             // **And at THIS band's FIGHTING tier**, for the same reason and through the same seam
             // (`docs/plan_hunt_through_combat.md` §4): the take now resolves through the combat
             // system, so a band whose spears are gone brings down less — or, past a quarry's
             // `defense`, nothing at all — and the seed has to say so.
-            let hunting_party = HuntingParty {
-                hunter: equipment_cfg.hunter_profile_against(
-                    app.world.resource::<CreaturesConfigHandle>().get().person(),
-                    &crew_kit,
-                    &band_wear,
-                    herd.body_mass,
-                ),
-                tuning: app.world.resource::<CombatConfigHandle>().get().tuning(),
-                injury_damage_per_animal: app
-                    .world
-                    .resource::<CombatConfigHandle>()
-                    .get()
-                    .hunt_injury_damage_per_animal
-                    * equipment_cfg.exposure(&crew_kit, &band_wear),
-                dispersion: equipment_cfg.dispersion(&crew_kit, &band_wear),
-            };
+            let combat_cfg = app.world.resource::<CombatConfigHandle>().get();
+            let hunting_party = core_sim::PartyResolution {
+                equipment: &equipment_cfg,
+                coverage: &hunt_coverage,
+                wear: &band_wear,
+                intrinsic: app.world.resource::<CreaturesConfigHandle>().get().person(),
+                tuning: combat_cfg.tuning(),
+                hunt_injury_damage_per_animal: combat_cfg.hunt_injury_damage_per_animal,
+            }
+            .party_against(core_sim::Quarry::Mass(herd.body_mass));
             hunt_source_yield_preview(
                 herd,
                 &fauna,
@@ -3001,7 +3002,7 @@ fn handle_send_expedition(
             // haul rate — a contradiction on the wire. **Stated rather than defaulted**: an absent
             // ledger entry means NOT OWNED since the count slice, so `Default` would send the party
             // out bare-handed.
-            outfitted_party_equipment(app),
+            outfitted_party_equipment(app, party_workers),
             StartingUnit::new(unit_kind, unit_tags),
             Expedition {
                 home_band: band.entity,
@@ -3157,11 +3158,16 @@ fn outfit_raiding_party(
 /// One helper for both outfitting paths, because *"a party leaves outfitted"* is one fact: two
 /// call sites reaching for the ledger separately is how one of them ends up sending a bare-handed
 /// raid out under a kitted forecast.
-fn outfitted_party_equipment(app: &bevy::prelude::App) -> BandEquipment {
+///
+/// **Sized to the party that leaves**, because a unit arms one person: a raid of ten sent out with
+/// one spear is nine bare hands, which is neither what the launch line quotes nor what "outfitted"
+/// means. Every worker in the party is a hunter, so the head count *is* the worker count here.
+fn outfitted_party_equipment(app: &bevy::prelude::App, party_workers: u32) -> BandEquipment {
     BandEquipment::start_stocked_owned(
         &app.world.resource::<EquipmentConfigHandle>().get(),
         &app.world.resource::<RecipesConfigHandle>().get(),
         &app.world.resource::<MaterialsConfigHandle>().get(),
+        party_workers as f32,
     )
 }
 
@@ -3186,18 +3192,21 @@ fn launch_forecast_party(
     // A fresh ledger: the launch line quotes the KIT the party is being sent with, before it has worn
     // any of it. The party's own wear then moves its tiers turn by turn once it is in flight.
     let fresh = BandEquipment::start_stocked(&equipment_cfg);
-    HuntingParty {
-        hunter: equipment_cfg.hunter_profile_against(
+    // **UNIFORM**: the party leaves *outfitted* — `outfitted_party_equipment` stocks a party's
+    // worth of each item, sized to the head count being sent — so every hunter is holding the kit
+    // the player named. Quoting coverage against the one-unit reference ledger would price a raid
+    // of ten at one armed hunter and nine bare hands, which is not the party that will leave.
+    HuntingParty::uniform(
+        equipment_cfg.hunter_profile_against(
             app.world.resource::<CreaturesConfigHandle>().get().person(),
             kit,
             &fresh,
             quarry_body_mass,
         ),
-        tuning: combat.expedition_tuning(),
-        injury_damage_per_animal: combat.hunt_injury_damage_per_animal
-            * equipment_cfg.exposure(kit, &fresh),
-        dispersion: equipment_cfg.dispersion(kit, &fresh),
-    }
+        combat.expedition_tuning(),
+        combat.hunt_injury_damage_per_animal * equipment_cfg.exposure(kit, &fresh),
+        equipment_cfg.dispersion(kit, &fresh),
+    )
 }
 
 /// **The per-hunter haul rate the same launch forecast is quoted at** — the chosen kit's *sled*
@@ -3391,7 +3400,7 @@ fn launch_detached_party(
             expedition_band_id,
             LaborAllocation::default(),
             // **Outfitted, stated rather than defaulted** — see the scout's spawn above.
-            outfitted_party_equipment(app),
+            outfitted_party_equipment(app, party_workers),
             StartingUnit::new(unit_kind, unit_tags),
             Expedition {
                 home_band: band.entity,

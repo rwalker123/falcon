@@ -2080,13 +2080,16 @@ fn quoted_party_for(
     hunter: crate::combat::CombatStats,
 ) -> QuotedParty {
     QuotedParty {
-        party: crate::fauna::HuntingParty {
+        // **UNIFORM, and deliberately so.** These rows are priced against the fresh *reference*
+        // ledger (`BandEquipment::start_stocked`), which states liveness and not counts — the row
+        // describes what a kit buys against this quarry, not how much of that kit any band owns.
+        // A band's own coverage reaches its take through `advance_labor_allocation`.
+        party: crate::fauna::HuntingParty::uniform(
             hunter,
-            tuning: combat.tuning(),
-            injury_damage_per_animal: combat.hunt_injury_damage_per_animal
-                * equipment.exposure(kit, wear),
-            dispersion: equipment.dispersion(kit, wear),
-        },
+            combat.tuning(),
+            combat.hunt_injury_damage_per_animal * equipment.exposure(kit, wear),
+            equipment.dispersion(kit, wear),
+        ),
         kit_id: kit.id().to_string(),
     }
 }
@@ -2437,9 +2440,12 @@ pub fn capture_snapshot(
                     // its `BandEquipment` wear, through the same seams `advance_expeditions` reads,
                     // so the ETA projects the take the party can actually make: bare-handed if it
                     // left bare-handed, and stepped down once its spears are gone.
-                    let party_wear = equipment
-                        .cloned()
-                        .unwrap_or_else(|| BandEquipment::start_stocked(&equipment_config));
+                    let party_wear = equipment.cloned().unwrap_or_else(|| {
+                        BandEquipment::start_stocked_for(
+                            &equipment_config,
+                            available_workers(cohort.working) as f32,
+                        )
+                    });
                     // **The party's TARGET, so a mass-bounded weapon is judged against the animal it
                     // was actually sent after.** A party whose mission names no herd (a scout) has no
                     // quarry, and its ETA is a travel figure rather than a take — the unbounded
@@ -2451,32 +2457,35 @@ pub fn capture_snapshot(
                         }
                         _ => None,
                     };
-                    let party = crate::fauna::HuntingParty {
-                        hunter: match expedition_quarry_mass {
-                            Some(mass) => equipment_config.hunter_profile_against(
-                                kit_levers.person_intrinsic,
-                                &exp.kit,
-                                &party_wear,
-                                mass,
-                            ),
-                            None => equipment_config.hunter_profile_unbounded(
-                                kit_levers.person_intrinsic,
-                                &exp.kit,
-                                &party_wear,
-                            ),
-                        },
-                        tuning: expedition_combat_tuning,
-                        injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal
-                            * equipment_config.exposure(&exp.kit, &party_wear),
-                        dispersion: equipment_config.dispersion(&exp.kit, &party_wear),
-                    };
-                    // And the same kit's haul tier — the ETA has to project what THIS party can drag
-                    // home, not what a kitted one could.
-                    let party_haul = equipment_config.hunt_per_worker_biomass_capacity(
-                        kit_levers.baseline_haul_rate,
+                    // **How the party's own gear divides it** — the same seam
+                    // `advance_expeditions` resolves the live turn through, so the ETA projects the
+                    // crews the party actually fields rather than a uniformly-armed one.
+                    let coverage = equipment_config.coverage(
                         &exp.kit,
+                        available_workers(cohort.working) as f32,
                         &party_wear,
                     );
+                    let party = crate::fauna::PartyResolution {
+                        equipment: &equipment_config,
+                        coverage: &coverage,
+                        wear: &party_wear,
+                        intrinsic: kit_levers.person_intrinsic,
+                        tuning: expedition_combat_tuning,
+                        hunt_injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal,
+                    }
+                    .party_against(match expedition_quarry_mass {
+                        Some(mass) => crate::equipment_config::Quarry::Mass(mass),
+                        None => crate::equipment_config::Quarry::Any,
+                    });
+                    // And the same kit's haul tier — the ETA has to project what THIS party can drag
+                    // home, not what a kitted one could.
+                    let party_haul = coverage.weighted_rate(|kit| {
+                        equipment_config.hunt_per_worker_biomass_capacity(
+                            kit_levers.baseline_haul_rate,
+                            kit,
+                            &party_wear,
+                        )
+                    });
                     crate::systems::expedition_delivery(
                         exp,
                         cohort.stores.get(FOOD).to_f32(),

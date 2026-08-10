@@ -879,9 +879,10 @@ fn a_never_made_item_is_distinguishable_from_one_worn_dry() {
     // is not simply what every row says.
     let owned = rows_for(&before, SPEARS_ITEM);
     assert_eq!(owned.len(), 1);
-    assert_eq!(
-        owned[0].count, 1,
-        "a spawn stocks one unit of every kit item"
+    assert!(
+        owned[0].count > 0,
+        "a spawn stocks a PARTY'S worth of every kit item — the count is the band's head count \
+         times `start_stock_fraction`, so what this half asserts is ownership, not a literal 1"
     );
     assert_eq!(owned[0].life, "Untouched");
     assert_eq!(owned[0].life_severity, "healthy");
@@ -908,7 +909,7 @@ fn a_never_made_item_is_distinguishable_from_one_worn_dry() {
     // And the ownership statement rides `kitItemConditions` too, so no client infers ownership from
     // a condition of zero.
     let (remaining, count) = before.kit_item_counts[SPEARS_ITEM];
-    assert!(remaining > 0.0 && count == 1, "owned and with life left");
+    assert!(remaining > 0.0 && count > 0, "owned and with life left");
     let (dry_remaining, dry_count) = after.kit_item_counts[SPEARS_ITEM];
     assert_eq!(
         (dry_remaining, dry_count),

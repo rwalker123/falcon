@@ -617,6 +617,7 @@ const FIXTURE_EQUIPMENT: &str = r#"{
   ],
   "default_kits": { "hunt": "big_game", "forage": "none", "scout": "none", "warrior": "none" },
   "quarry_default_kit_margin": 0.25,
+  "start_stock_fraction": 1.5,
   "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }
 }"#;
 

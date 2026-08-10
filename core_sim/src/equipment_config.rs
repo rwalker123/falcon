@@ -467,6 +467,30 @@ pub struct ItemDefinition {
     /// live predicate is ownership + condition rather than a kit mask.
     #[serde(default)]
     pub bounds_material: Option<String>,
+    /// **How many workers one unit of this item takes to use.** A spear is `1` — one worker holds
+    /// one spear, so ten hunters need ten spears and a party holding five sends five of them out
+    /// bare-handed.
+    ///
+    /// **This is the item's OWN fact and may not be inferred from what it does.** The crew and the
+    /// scope are independent axes: a four-worker net still raises carry *per worker crewing it*.
+    /// Every effect shipped today is per-assigned-worker, which is why no scope field rides beside
+    /// this one yet — a per-unit-scoped effect is the first thing to add the axis for, and adding it
+    /// before an item wants it would be a dead axis.
+    ///
+    /// **A unit needs its FULL crew or it is not used** ([`EquipmentConfig::coverage`]): ten workers
+    /// and three four-worker nets crew two nets with eight people and leave two unequipped, never a
+    /// third of a net.
+    ///
+    /// Defaults to `1` so the shipped roster — every item of which is held by one person — says
+    /// nothing, and `validate` rejects a zero.
+    #[serde(default = "one_worker")]
+    pub workers_per_unit: u32,
+}
+
+/// The `workers_per_unit` default — see [`ItemDefinition::workers_per_unit`]. A free function
+/// because `serde(default = …)` names a path, not a literal.
+fn one_worker() -> u32 {
+    1
 }
 
 impl ItemDefinition {
@@ -697,6 +721,91 @@ impl Quarry {
     }
 }
 
+/// **One run of workers holding the SAME items** — a crew, and the thing a
+/// [`crate::combat::Contingent`] is built from.
+///
+/// Its `kit` is the party's own [`KitChoice`] narrowed to the items *these* workers actually hold,
+/// which is what lets every existing per-band resolver — `hunter_profile_against`,
+/// `hunt_per_worker_biomass_capacity`, `multiplier` — answer for a crew with no new arm. **A crew is
+/// not a new kind of kit**; it is the same kit with fewer things in it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Crew {
+    /// How many of the job's workers are in this run. Fractional, because a forecast's headcounts
+    /// are (`hunt_engage_workers`), and a crew that rounded would make the projection disagree with
+    /// the take it is projecting.
+    pub workers: f32,
+    /// The party's kit, narrowed to what this run is holding.
+    pub kit: KitChoice,
+}
+
+/// **How a party's gear divides its people** — the output of [`EquipmentConfig::coverage`], and the
+/// one answer every consumer of an unevenly-equipped party reads.
+///
+/// **Ordered best-equipped first.** The crews partition the job's whole headcount, so
+/// `Σ crews.workers == workers` and a party with gear for nobody is one crew holding nothing rather
+/// than an empty list — a caller must never have to distinguish *"no crews"* from *"one bare crew"*.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KitCoverage {
+    crews: Vec<Crew>,
+    /// The kit the party was **sent out with**, unnarrowed — what a coverage with no crews in it
+    /// still has to be able to answer for. A party of nobody has no crews to average over, and
+    /// every rate below it would otherwise be a division by zero; the chosen kit's own rate is the
+    /// answer every one of those sites gave before coverage existed.
+    kit: KitChoice,
+}
+
+impl KitCoverage {
+    /// The crews, best-equipped first.
+    pub fn crews(&self) -> &[Crew] {
+        &self.crews
+    }
+
+    /// The kit the party was sent out with, before any crew narrowed it.
+    pub fn kit(&self) -> &KitChoice {
+        &self.kit
+    }
+
+    /// **A per-worker rate for an unevenly-equipped party** — `Σ share × rate(crew's kit)`.
+    ///
+    /// Every consumer of a per-worker rate multiplies it by the head count, so the weighted mean is
+    /// exactly the party's total divided by its people: five sledded hunters and five sledless
+    /// haul `5 × 40 + 5 × 12`, quoted as a rate of `26`. **One scalar rather than a per-crew haul**
+    /// because the take paths bound biomass against `workers × rate` and the inversions
+    /// (`hunt_haul_workers`) invert that same product — a per-crew carry would need both to grow a
+    /// crew loop for an answer identical to this one.
+    ///
+    /// A party with **no crews** (nobody assigned) answers at the chosen kit's own rate, which is
+    /// what every one of these sites answered before coverage existed and keeps the inversions from
+    /// dividing by zero.
+    pub fn weighted_rate(&self, rate: impl Fn(&KitChoice) -> f32) -> f32 {
+        let total: f32 = self.crews.iter().map(|crew| crew.workers).sum();
+        // `<=` rather than `!(> 0)` so a NaN total takes the fallback too — a rate divided by one
+        // would poison every consumer downstream.
+        if !total.is_finite() || total <= 0.0 {
+            return rate(&self.kit);
+        }
+        self.crews
+            .iter()
+            .map(|crew| (crew.workers / total) * rate(&crew.kit))
+            .sum()
+    }
+
+    /// **Is every worker holding the same thing?** True for a party fully equipped *and* for one
+    /// fully bare — both are one crew, and neither needs a mixed-force readout.
+    pub fn is_uniform(&self) -> bool {
+        self.crews.len() <= 1
+    }
+
+    /// Workers holding `item`, summed across crews — what a *"10 of 16 armed"* readout counts.
+    pub fn workers_holding(&self, item: &str) -> f32 {
+        self.crews
+            .iter()
+            .filter(|crew| crew.kit.uses().any(|used| used == item))
+            .map(|crew| crew.workers)
+            .sum()
+    }
+}
+
 /// **A chosen kit, resolved once against the roster** — an id plus the set of items it stands for.
 ///
 /// It is the **only** way anything asks "is this gear serving?": [`Self::item_live`] is
@@ -723,6 +832,19 @@ impl KitChoice {
     /// The item ids this kit puts in the party's hands, whatever condition they are in.
     pub fn uses(&self) -> impl Iterator<Item = &str> {
         self.uses.iter().map(|item| item.as_ref())
+    }
+
+    /// **The same kit with only `items` in it** — one crew's share of an unevenly-equipped party
+    /// ([`EquipmentConfig::coverage`]).
+    ///
+    /// **The id is kept.** A crew short of spears is still out on the big-game kit — that is what
+    /// the player chose and what `LaborAssignment.kitId` publishes — and minting a synthetic id per
+    /// crew would put strings on the wire no roster carries.
+    fn restricted_to(&self, items: Vec<Arc<str>>) -> KitChoice {
+        KitChoice {
+            id: Arc::clone(&self.id),
+            uses: Arc::from(items),
+        }
     }
 
     /// **Is this item serving this party?** The mask, and then the band's condition — a kit that does
@@ -885,6 +1007,19 @@ pub struct EquipmentConfig {
     /// exactly the flapping the lever exists to prevent, and a silently-defaulted lever is
     /// `config-loading.md`'s "looks live but isn't".
     pub quarry_default_kit_margin: f32,
+    /// **THE OPENING RESERVE** — how many of each item a spawn stocks, as a multiple of the party's
+    /// own head count ([`crate::components::BandEquipment::start_stocked_owned`]).
+    ///
+    /// A band needs `workers / workers_per_unit` units to arm everybody, so `1.0` would stock
+    /// *exactly* enough and the **first break would disarm someone**: coverage counts units in
+    /// usable condition, so the turn a spear retires the party goes out one hunter short. The
+    /// half-again is what buys the band the turns between the first break and the bench.
+    ///
+    /// **Required, like every other key in this file** — no `serde` default, for the reason
+    /// [`Self::quarry_default_kit_margin`] has none: `Default::default()`'s `0.0` would stock the
+    /// floor of one unit per item and send a shipped band out with sixteen bare hands and one spear,
+    /// which is `config-loading.md`'s "looks live but isn't" at its most expensive.
+    pub start_stock_fraction: f32,
     /// **The life readout's two colour seams.** See [`LifeReadoutConfig`] — presentation tuning for
     /// the published `lifeSeverity`, and the only thing in this file the sim itself never reads.
     pub life_readout: LifeReadoutConfig,
@@ -959,6 +1094,98 @@ impl EquipmentConfig {
     /// Resolve a roster id into the mask it stands for. `None` for an id the roster does not carry.
     pub fn kit(&self, id: &str) -> Option<KitChoice> {
         self.kit_definition(id).map(Self::choice_from)
+    }
+
+    /// **How this kit's gear divides `workers` into crews** — the seam every unevenly-equipped party
+    /// resolves through, whatever it is doing.
+    ///
+    /// A party needs `workers / workers_per_unit` units of each item it carries. Own fewer and the
+    /// shortfall goes out without that item — **per item**, so a party can be short of spears and
+    /// long on sleds and the two shortfalls are different people only insofar as the counts differ.
+    ///
+    /// **The partition is by ITEM SET.** Each item covers a prefix of the party (the same people
+    /// hold the same things — nothing here models *which* individual got the last spear, because
+    /// nothing downstream can tell), so sorting the coverages and cutting at each distinct boundary
+    /// yields runs of workers holding identical gear. Ten hunters with five spears and ten sleds is
+    /// two crews: five on `{spears, sled}` and five on `{sled}`.
+    ///
+    /// **A unit needs its FULL crew.** For a multi-worker item only whole crews count, so ten
+    /// workers and three four-worker nets crew two nets with eight people and leave two unequipped.
+    /// **A one-worker item is exact rather than floored**, which is not an inconsistency: a forecast
+    /// counts hunters in fractions (`hunt_engage_workers`), and flooring the common case would make
+    /// the projection disagree with the take by up to a whole person.
+    ///
+    /// **A dead item covers nobody** — coverage counts units in usable condition
+    /// ([`crate::components::BandEquipment::live_units`]), so the durability cliff arrives one
+    /// person at a time instead of all at once. That graded disarmament is this model falling out,
+    /// not a feature laid on top of it.
+    pub fn coverage(
+        &self,
+        kit: &KitChoice,
+        workers: f32,
+        wear: &crate::components::BandEquipment,
+    ) -> KitCoverage {
+        // A non-finite head count takes the empty arm too — a NaN would otherwise flow into every
+        // crew's `share`.
+        if !workers.is_finite() || workers <= 0.0 {
+            return KitCoverage {
+                crews: Vec::new(),
+                kit: kit.clone(),
+            };
+        }
+        // What each of the kit's items covers, clamped to the party — an item the band has more of
+        // than it can crew still only arms the people who are there.
+        let covered: Vec<(&Arc<str>, f32)> = kit
+            .uses
+            .iter()
+            .filter_map(|item| {
+                let def = self.item(item)?;
+                let per_unit = def.workers_per_unit as f32;
+                let units = wear.live_units(item, self) as f32;
+                // Two independent caps: the gear you hold, and the people you brought. The second is
+                // whole crews only for a multi-worker unit — see the doc comment.
+                let from_units = units * per_unit;
+                let from_people = if def.workers_per_unit == 1 {
+                    workers
+                } else {
+                    (workers / per_unit).floor() * per_unit
+                };
+                let covered = from_units.min(from_people);
+                (covered > 0.0).then_some((item, covered))
+            })
+            .collect();
+
+        // The cut points: every distinct coverage strictly inside the party, then the party's edge.
+        let mut cuts: Vec<f32> = covered
+            .iter()
+            .map(|(_, covered)| *covered)
+            .filter(|covered| *covered < workers)
+            .collect();
+        cuts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        cuts.dedup();
+        cuts.push(workers);
+
+        let mut crews = Vec::with_capacity(cuts.len());
+        let mut floor = 0.0_f32;
+        for cut in cuts {
+            // A worker at position `p` holds an item iff `p < covered`, so a run ending at `cut`
+            // holds exactly the items covering at least that far. The comparison is exact: every
+            // `cut` is either one of these very `covered` values or the clamp they were capped to.
+            let held: Vec<Arc<str>> = covered
+                .iter()
+                .filter(|(_, covered)| *covered >= cut)
+                .map(|(item, _)| Arc::clone(item))
+                .collect();
+            crews.push(Crew {
+                workers: cut - floor,
+                kit: kit.restricted_to(held),
+            });
+            floor = cut;
+        }
+        KitCoverage {
+            crews,
+            kit: kit.clone(),
+        }
     }
 
     fn choice_from(definition: &KitDefinition) -> KitChoice {
@@ -1071,6 +1298,23 @@ impl EquipmentConfig {
                 .iter()
                 .any(|kit| kit.uses.iter().any(|used| used == id))
         })
+    }
+
+    /// **How many units of `item` a spawn stocks for a party of `workers`** —
+    /// `ceil(workers × start_stock_fraction / workers_per_unit)`, never below one unit.
+    ///
+    /// **A whole unit, because a unit is what a person holds.** The fraction is an *opening
+    /// reserve*, not a supply of half-spears: rounding up is what makes the last hunter armed rather
+    /// than nearly armed. The floor of one is for the degenerate party — a fixture with no workers
+    /// still owns the item, which is what keeps *"an absent entry is not owned"* readable.
+    pub fn start_stock_units(&self, item: &ItemDefinition, workers: f32) -> u32 {
+        let workers = if workers.is_finite() {
+            workers.max(0.0)
+        } else {
+            0.0
+        };
+        let wanted = (workers * self.start_stock_fraction) / item.workers_per_unit.max(1) as f32;
+        (wanted.ceil().max(1.0) as u32).max(1)
     }
 
     /// The id this verb's default kit carries.
@@ -1506,6 +1750,19 @@ impl EquipmentConfig {
                     ),
                 });
             }
+            // **A zero-crew unit would cover an unbounded number of workers.** `coverage` divides
+            // the workers on the job by this, so `0` is not "free gear for everybody" by design —
+            // it is a division that has to be given a meaning somewhere, and the honest place to
+            // refuse it is here. An item genuinely serving a whole party regardless of size is a
+            // per-unit-scoped *effect*, which is a different axis and not yet shipped.
+            if item.workers_per_unit == 0 {
+                return Err(EquipmentConfigError::Invalid {
+                    field: format!("items.{id}.workers_per_unit"),
+                    constraint: "be at least 1 - a unit no worker has to hold covers everyone"
+                        .to_string(),
+                    value: "0".to_string(),
+                });
+            }
         }
         // **The two-sided rates must be declared by at most ONE item each**, because `declared_tier`
         // and `equipped_reference` both search the whole table and take the FIRST match: two items
@@ -1537,6 +1794,17 @@ impl EquipmentConfig {
                 field: "quarry_default_kit_margin".to_string(),
                 constraint: "be finite and not negative".to_string(),
                 value: self.quarry_default_kit_margin.to_string(),
+            });
+        }
+        // **The opening reserve is a MULTIPLE of the head count, so it must be strictly positive.**
+        // `0` would stock the one-unit floor whatever the band's size — the pre-coverage behaviour,
+        // which now means one armed hunter and the rest bare — and a negative multiple has no
+        // reading at all.
+        if !self.start_stock_fraction.is_finite() || self.start_stock_fraction <= 0.0 {
+            return Err(EquipmentConfigError::Invalid {
+                field: "start_stock_fraction".to_string(),
+                constraint: "be finite and greater than zero".to_string(),
+                value: self.start_stock_fraction.to_string(),
             });
         }
         // **The life readout's two seams**: both fractions of one fresh unit, both in `0..=1`, and
@@ -2221,6 +2489,128 @@ mod tests {
         BandEquipment::start_stocked(&EquipmentConfig::builtin())
     }
 
+    /// A band owning exactly `count` units of each named item, unworn, at the default tier.
+    fn owning(config: &EquipmentConfig, stock: &[(&str, u32)]) -> BandEquipment {
+        let mut wear = BandEquipment::default();
+        for (item, count) in stock {
+            let tier = config
+                .item(item)
+                .expect("test names a real item")
+                .default_tier()
+                .id
+                .clone();
+            wear.stock(item, *count, &tier, None);
+        }
+        wear
+    }
+
+    /// **The partition is by ITEM SET, and the shortfall is PER ITEM.**
+    ///
+    /// Ten hunters, five spears, ten sleds: five people hold both and five hold only the sled. The
+    /// two shortfalls are independent, which is the whole reason coverage is resolved per item
+    /// rather than as one "how equipped is this party" scalar.
+    #[test]
+    fn gear_partitions_a_party_into_crews_by_what_each_run_holds() {
+        let config = EquipmentConfig::builtin();
+        let kit = kit_of(&[SPEARS, SLED]);
+        let wear = owning(&config, &[(SPEARS, 5), (SLED, 10)]);
+
+        let coverage = config.coverage(&kit, 10.0, &wear);
+        let crews = coverage.crews();
+
+        assert_eq!(crews.len(), 2, "two distinct loadouts, so two crews");
+        assert_eq!(crews[0].workers, 5.0);
+        assert_eq!(
+            crews[0].kit.uses().collect::<Vec<_>>(),
+            vec![SPEARS, SLED],
+            "the best-equipped crew comes first and holds everything"
+        );
+        assert_eq!(crews[1].workers, 5.0);
+        assert_eq!(
+            crews[1].kit.uses().collect::<Vec<_>>(),
+            vec![SLED],
+            "the shortfall is in spears alone - the sleds reach everybody"
+        );
+        assert_eq!(coverage.workers_holding(SPEARS), 5.0);
+        assert_eq!(coverage.workers_holding(SLED), 10.0);
+        assert!(!coverage.is_uniform());
+    }
+
+    /// **A fully-equipped party and a fully-bare one are BOTH one crew**, and a caller must never
+    /// have to tell "no crews" from "one crew holding nothing".
+    ///
+    /// The bare arm is the one that matters: it is what a band whose spears have all broken sends
+    /// out, and it has to be a crew with people in it or the hunt resolves against an empty force.
+    #[test]
+    fn a_uniform_party_is_one_crew_whether_it_is_armed_or_bare() {
+        let config = EquipmentConfig::builtin();
+        let kit = kit_of(&[SPEARS]);
+
+        let armed = config.coverage(&kit, 8.0, &owning(&config, &[(SPEARS, 8)]));
+        assert!(armed.is_uniform());
+        assert_eq!(armed.crews()[0].workers, 8.0);
+        assert_eq!(
+            armed.crews()[0].kit.uses().collect::<Vec<_>>(),
+            vec![SPEARS]
+        );
+
+        let bare = config.coverage(&kit, 8.0, &owning(&config, &[]));
+        assert!(bare.is_uniform());
+        assert_eq!(bare.crews()[0].workers, 8.0, "the unarmed still go");
+        assert!(
+            bare.crews()[0].kit.uses().next().is_none(),
+            "holding nothing, but holding it as a crew"
+        );
+        assert_eq!(
+            bare.crews()[0].kit.id(),
+            kit.id(),
+            "still the kit they chose"
+        );
+    }
+
+    /// **Surplus arms nobody extra.** Twenty spears and eight hunters is eight armed hunters and
+    /// twelve spears in reserve — the reserve is what the *next* break spends, not more attack now.
+    #[test]
+    fn surplus_units_are_reserve_rather_than_extra_coverage() {
+        let config = EquipmentConfig::builtin();
+        let kit = kit_of(&[SPEARS]);
+        let coverage = config.coverage(&kit, 8.0, &owning(&config, &[(SPEARS, 20)]));
+
+        assert!(coverage.is_uniform());
+        assert_eq!(coverage.workers_holding(SPEARS), 8.0);
+    }
+
+    /// **A spent unit arms nobody, so the cliff arrives ONE PERSON AT A TIME.**
+    ///
+    /// This is the graded disarmament falling out of the counts rather than being built: the band
+    /// below owns three spears and has worn one out, so the next hunt goes out two armed and one
+    /// bare-handed instead of flipping the whole party at once.
+    #[test]
+    fn a_worn_out_unit_stops_covering_anyone() {
+        let config = EquipmentConfig::builtin();
+        let kit = kit_of(&[SPEARS]);
+        let mut wear = owning(&config, &[(SPEARS, 3)]);
+        let spears = config.item(SPEARS).expect("spears ship");
+
+        // Exactly one whole unit's worth of USES — the charge is `uses × wear.amount`, so a unit's
+        // life is its durability measured in the item's own quantum, not in condition.
+        wear.wear_item(
+            &config,
+            SPEARS,
+            spears.default_tier().starting_durability / spears.wear.amount,
+        );
+
+        assert_eq!(wear.live_units(SPEARS, &config), 2, "one unit retired");
+        let coverage = config.coverage(&kit, 3.0, &wear);
+        assert_eq!(coverage.crews().len(), 2);
+        assert_eq!(coverage.workers_holding(SPEARS), 2.0);
+        assert_eq!(
+            coverage.crews()[1].workers,
+            1.0,
+            "one hunter dropped to bare hands, not the whole party"
+        );
+    }
+
     /// **THE TRAPPING KIT'S WHOLE CLAIM, IN ONE PLACE.**
     ///
     /// The passive device — snares, nets, weirs, one item, because at this game's abstraction they
@@ -2664,6 +3054,7 @@ mod tests {
                 ],
                 "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game" },
                 "quarry_default_kit_margin": 0.25,
+                "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
             ),
             (
@@ -2673,6 +3064,7 @@ mod tests {
                 ],
                 "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game" },
                 "quarry_default_kit_margin": 0.25,
+                "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
             ),
             (
@@ -2682,6 +3074,7 @@ mod tests {
                 ],
                 "default_kits": { "hunt": "ghost", "forage": "big_game", "scout": "big_game", "warrior": "big_game" },
                 "quarry_default_kit_margin": 0.25,
+                "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
             ),
             (
@@ -2692,6 +3085,7 @@ mod tests {
                 ],
                 "default_kits": { "hunt": "gathering", "forage": "gathering", "scout": "gathering", "warrior": "gathering" },
                 "quarry_default_kit_margin": 0.25,
+                "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
             ),
         ];
@@ -2721,6 +3115,7 @@ mod tests {
             ],
             "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game" },
                 "quarry_default_kit_margin": 0.25,
+                "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
         ))
         .expect_err("an item that does not exist is invalid");
@@ -2772,6 +3167,7 @@ mod tests {
             ],
             "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "warrior", "warrior": "warrior" },
             "quarry_default_kit_margin": 0.25,
+                "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }
         }"#;
         let err = EquipmentConfig::from_json_str(json)
@@ -2793,5 +3189,6 @@ mod tests {
             ],
             "default_kits": { "hunt": "big_game", "forage": "gathering", "scout": "none", "warrior": "none" },
             "quarry_default_kit_margin": 0.25,
+                "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#;
 }

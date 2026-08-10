@@ -3840,7 +3840,9 @@ fn starve_underfed_pen(
 /// ([`hunt_escapement_ceiling`] × the species' `HuntYield`,
 /// `forage::forage_escapement_ceiling`/`forage_provisions`) — never duplicate the formulas, or the UI
 /// will lie.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+// **Clone, not `Copy`** — it carries a [`HuntingParty`], which carries the party's crews. A
+// partly-equipped party is a list, so nothing holding one can be a bit-copy any more.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct SourceYieldForecast {
     /// **Every field is a [`YieldAccounts`] — food AND trade goods per turn, never a food scalar**
     /// (`docs/plan_hunt_yield_model.md`, issue #337).
@@ -4596,14 +4598,14 @@ fn forecast_production_and_take_at(
             //
             // **No fight stage means no retreat stage either** — a pen and the plant web, whose
             // `engage_rate` is already `f32::INFINITY`.
-            let brought_down = match forecast.fight {
+            let brought_down = match &forecast.fight {
                 Some((party, quarry)) => {
                     let stayed = party.stayers(engaged, quarry.profile.wariness, draw);
                     resolve_hunt_fight(
                         stayed,
                         workers as f32 * forecast.build_dips.of(improvement),
-                        &party,
-                        &quarry,
+                        party,
+                        quarry,
                         draw,
                     )
                     .brought_down
@@ -4770,6 +4772,7 @@ pub(crate) fn forecast_source_yield(
                     // never be resolved at two different dispersions.
                     forecast
                         .fight
+                        .as_ref()
                         .map_or(NO_RETREAT_STAGE_STAY, |(party, quarry)| {
                             party.stay_fraction(quarry.profile.wariness)
                         }),
@@ -5261,25 +5264,17 @@ impl QuarryFight {
 /// expedition raid, the arrivals schedule, the steady projection and the pre-commit preview all
 /// resolve the *identical* fight, so `forecast == actual` per component cannot drift into two
 /// answers.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// **A partly-equipped party is SEVERAL parties**, which is why the profile is a list: see
+/// [`HuntCrew`], and [`crate::equipment_config::EquipmentConfig::coverage`] for how the gear divides
+/// the people.
+#[derive(Debug, Clone, PartialEq)]
 pub struct HuntingParty {
-    /// One hunter's combat profile — intrinsic ⊕ hunting kit. `attack 1` bare-handed, `20` speared.
-    pub hunter: CombatStats,
+    /// **The runs of hunters holding the same gear**, best-equipped first, and `Σ share == 1`.
+    /// Never empty for a party that exists — a wholly bare party is one crew at the intrinsic tier.
+    pub crews: Vec<HuntCrew>,
     /// The resolver severity dials this party fights at. An expedition passes the
     /// `expedition_danger_multiplier`-scaled lethality; a resident band the base tuning.
     pub tuning: CombatTuning,
-    /// **The hunt's own hazard, per animal engaged**
-    /// ([`crate::combat_config::CombatConfig::hunt_injury_damage_per_animal`]) — damage the *activity*
-    /// does to the party whatever the quarry swings (§4.6).
-    ///
-    /// Hunters fall, break bones, are trampled in a drive, cut themselves butchering. Without it only
-    /// mammoth, aurochs and wolf could hurt anyone on the shipped roster and a boar cost nothing,
-    /// contradicting §4.2's own *"survives by ferocity alone — frail, still costs you people"*.
-    ///
-    /// It rides the **party** rather than the quarry because the danger is in the activity, not in
-    /// the rabbit; it scales with the *engagement* at the point of use, so more animals worked means
-    /// more chances to get hurt.
-    pub injury_damage_per_animal: f32,
     /// **Multiplies the quarry's own `wariness` at the retreat**
     /// ([`crate::equipment_config::EquipmentStat::Dispersion`]), neutral at `1.0`.
     ///
@@ -5290,10 +5285,182 @@ pub struct HuntingParty {
     ///
     /// `0` (a trap) means **nothing breaks off**, which is the `wariness 0` identity the retreat has
     /// always had rather than a new branch.
+    ///
+    /// # It is PARTY-WIDE, and it is the MAX across the crews
+    ///
+    /// The same clause [`crate::equipment_config::KitChoice::multiplier`] resolves an item's
+    /// multipliers with, one level up: if part of your party is running up and throwing spears, the
+    /// herd is scared — the trap line the other half set does not un-scare it. So a party that could
+    /// only arm half its people with the stand-off device is *loud*, and buying the quiet approach
+    /// means buying enough of it.
     pub dispersion: f32,
 }
 
+/// **One run of hunters holding the same gear** — the party's own
+/// [`crate::equipment_config::Crew`], resolved into the two numbers a fight reads.
+///
+/// **`share` is a FRACTION of the party, never a head count**, which is what keeps
+/// [`HuntingParty`] scale-free exactly as the single-profile struct was: every caller still passes
+/// its own `hunters` count, and a sub-party that engages (`hunt_engage_workers` returning fewer than
+/// were assigned) carries the same mix rather than an arbitrary prefix of it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HuntCrew {
+    /// This run's share of the party, in `0..=1`. The crews sum to `1`.
+    pub share: f32,
+    /// One hunter's combat profile in this run — intrinsic ⊕ what *this* run is holding. `attack 1`
+    /// bare-handed, `20` speared.
+    pub hunter: CombatStats,
+    /// **The hunt's own hazard, per animal engaged**
+    /// ([`crate::combat_config::CombatConfig::hunt_injury_damage_per_animal`]) — damage the *activity*
+    /// does to the party whatever the quarry swings (§4.6).
+    ///
+    /// Hunters fall, break bones, are trampled in a drive, cut themselves butchering. Without it only
+    /// mammoth, aurochs and wolf could hurt anyone on the shipped roster and a boar cost nothing,
+    /// contradicting §4.2's own *"survives by ferocity alone — frail, still costs you people"*.
+    ///
+    /// It rides the **crew** rather than the quarry because the danger is in the activity, not in
+    /// the rabbit; it scales with the *engagement* at the point of use, so more animals worked means
+    /// more chances to get hurt. **Per crew, because `exposure` is a kit's** — the half of the party
+    /// that got the stand-off device is the half that does not get hurt.
+    pub injury_damage_per_animal: f32,
+}
+
+/// **Everything a live party is resolved from, minus the quarry** — bundled because the six travel
+/// together through every take and forecast path, and because the quarry is the one axis that has to
+/// stay a *late* argument: a mass-bounded weapon is only a weapon against animals it can hold, so the
+/// attack tier cannot be resolved before the target is known.
+///
+/// That is the `party_for = |body_mass| …` factory idiom `advance_labor_allocation` and
+/// `advance_expeditions` already used, given a name so the coverage behind it is resolved **once**
+/// per party per turn rather than once per quarry.
+pub struct PartyResolution<'a> {
+    /// The item table every tier is resolved through.
+    pub equipment: &'a crate::equipment_config::EquipmentConfig,
+    /// **How this party's gear divides its people** — resolved once, off the party's own kit, head
+    /// count and ledger ([`crate::equipment_config::EquipmentConfig::coverage`]).
+    pub coverage: &'a crate::equipment_config::KitCoverage,
+    /// The band's live ledger — what each crew's kit is masked against.
+    pub wear: &'a crate::components::BandEquipment,
+    /// The `person` roster row: what a hunter is before any gear.
+    pub intrinsic: CombatStats,
+    /// The resolver severity dials — see [`HuntingParty::tuning`].
+    pub tuning: CombatTuning,
+    /// [`crate::combat_config::CombatConfig::hunt_injury_damage_per_animal`], **before** a crew's own
+    /// `exposure` scales it.
+    pub hunt_injury_damage_per_animal: f32,
+}
+
+impl PartyResolution<'_> {
+    /// **The party as it fights THIS quarry** — one [`HuntCrew`] per covered run.
+    ///
+    /// The `quarry` argument is the two named resolvers' own distinction, kept visible here rather
+    /// than folded away: a **take or forecast** passes [`crate::equipment_config::Quarry::Mass`], a
+    /// **display** surface with no target passes `Quarry::Any`. Handing `Any` to a take would give a
+    /// trapping party its small-game attack against a mammoth, which is the bug the bound exists to
+    /// prevent.
+    pub fn party_against(&self, quarry: crate::equipment_config::Quarry) -> HuntingParty {
+        let crews: Vec<HuntCrew> = self
+            .coverage
+            .crews()
+            .iter()
+            .map(|crew| HuntCrew {
+                share: crew.workers / self.total_workers(),
+                hunter: match quarry {
+                    crate::equipment_config::Quarry::Mass(body_mass) => self
+                        .equipment
+                        .hunter_profile_against(self.intrinsic, &crew.kit, self.wear, body_mass),
+                    crate::equipment_config::Quarry::Any => self
+                        .equipment
+                        .hunter_profile_unbounded(self.intrinsic, &crew.kit, self.wear),
+                },
+                injury_damage_per_animal: self.hunt_injury_damage_per_animal
+                    * self.equipment.exposure(&crew.kit, self.wear),
+            })
+            .collect();
+        // **A party with nobody in it is still ONE crew**, holding the kit it was sent with — the
+        // same answer this seam gave before coverage existed, and what keeps every consumer free of
+        // an "empty party" branch.
+        if crews.is_empty() {
+            return HuntingParty::uniform(
+                match quarry {
+                    crate::equipment_config::Quarry::Mass(body_mass) => {
+                        self.equipment.hunter_profile_against(
+                            self.intrinsic,
+                            self.coverage.kit(),
+                            self.wear,
+                            body_mass,
+                        )
+                    }
+                    crate::equipment_config::Quarry::Any => self
+                        .equipment
+                        .hunter_profile_unbounded(self.intrinsic, self.coverage.kit(), self.wear),
+                },
+                self.tuning,
+                self.hunt_injury_damage_per_animal
+                    * self.equipment.exposure(self.coverage.kit(), self.wear),
+                self.equipment.dispersion(self.coverage.kit(), self.wear),
+            );
+        }
+        HuntingParty {
+            crews,
+            tuning: self.tuning,
+            // **The MAX across the crews** — see [`HuntingParty::dispersion`]. Resolved from each
+            // crew's own kit rather than the party's, so a party that could not arm everybody with
+            // the quiet instrument is priced at the loud one.
+            dispersion: self
+                .coverage
+                .crews()
+                .iter()
+                .map(|crew| self.equipment.dispersion(&crew.kit, self.wear))
+                .fold(f32::NEG_INFINITY, f32::max),
+        }
+    }
+
+    /// The head count the shares are taken against. Positive whenever there is a crew, because
+    /// `coverage` never emits one with no workers in it.
+    fn total_workers(&self) -> f32 {
+        self.coverage
+            .crews()
+            .iter()
+            .map(|crew| crew.workers)
+            .sum::<f32>()
+    }
+}
+
 impl HuntingParty {
+    /// **A party where everybody is holding the same thing** — one crew at `share 1.0`.
+    ///
+    /// The shape every party had before the partly-equipped one existed, and what a fixture, a
+    /// reference quote or a fully-covered band still resolves to.
+    pub fn uniform(
+        hunter: CombatStats,
+        tuning: CombatTuning,
+        injury_damage_per_animal: f32,
+        dispersion: f32,
+    ) -> Self {
+        Self {
+            crews: vec![HuntCrew {
+                share: 1.0,
+                hunter,
+                injury_damage_per_animal,
+            }],
+            tuning,
+            dispersion,
+        }
+    }
+
+    /// **The best-equipped crew's hunter** — what a party *can* do at its best, for a readout with
+    /// no room for a mix and for a test naming the tier it composed.
+    ///
+    /// **Not a take seam.** A take resolves every crew (`resolve_hunt_fight`), because the whole
+    /// point of the mix is that the rest of the party is not this.
+    pub fn best_equipped_hunter(&self) -> CombatStats {
+        self.crews
+            .first()
+            .map(|crew| crew.hunter)
+            .unwrap_or_default()
+    }
+
     /// **How many of the animals it reached stay to be fought** — [`animals_that_stay`] with the
     /// kit's `dispersion` applied to the quarry's own `wariness`.
     ///
@@ -5330,17 +5497,16 @@ impl HuntingParty {
         // through the same seams a live one uses rather than by asserting which items that kit holds.
         let kit = equipment.default_kit(crate::equipment_config::KitJob::Hunt);
         let fresh = crate::components::BandEquipment::start_stocked(&equipment);
-        Self {
-            hunter: equipment.hunter_profile_unbounded(
+        Self::uniform(
+            equipment.hunter_profile_unbounded(
                 crate::creatures_config::CreaturesConfig::builtin().person(),
                 &kit,
                 &fresh,
             ),
-            tuning: combat.tuning(),
-            injury_damage_per_animal: combat.hunt_injury_damage_per_animal
-                * equipment.exposure(&kit, &fresh),
-            dispersion: equipment.dispersion(&kit, &fresh),
-        }
+            combat.tuning(),
+            combat.hunt_injury_damage_per_animal * equipment.exposure(&kit, &fresh),
+            equipment.dispersion(&kit, &fresh),
+        )
     }
 
     /// The same party **with its spears gone** — the unequipped tier, which is the `person` row's
@@ -5353,13 +5519,12 @@ impl HuntingParty {
         let equipment = crate::equipment_config::EquipmentConfig::builtin();
         let kit = equipment.no_kit();
         let fresh = crate::components::BandEquipment::start_stocked(&equipment);
-        Self {
-            hunter: crate::creatures_config::CreaturesConfig::builtin().person(),
-            tuning: combat.tuning(),
-            injury_damage_per_animal: combat.hunt_injury_damage_per_animal
-                * equipment.exposure(&kit, &fresh),
-            dispersion: equipment.dispersion(&kit, &fresh),
-        }
+        Self::uniform(
+            crate::creatures_config::CreaturesConfig::builtin().person(),
+            combat.tuning(),
+            combat.hunt_injury_damage_per_animal * equipment.exposure(&kit, &fresh),
+            equipment.dispersion(&kit, &fresh),
+        )
     }
 }
 
@@ -5637,8 +5802,20 @@ pub fn resolve_hunt_fight(
     if quarry.effective_attack() <= 0.0 {
         // **The one-sided engagement.** The animal cannot hurt anyone, so the fight itself costs
         // nothing and the kill is all the resolver would have computed.
-        let landed = combat::landed_strikes_seeded(hunters, &tuning, draw.seed());
-        let damage = landed * combat::strike_damage(party.hunter.attack, quarry.profile.defense);
+        //
+        // **Summed over the crews, exactly as the resolver sums its contingents** — a crew whose
+        // attack the quarry's defense swallows contributes a hard zero here for the same reason it
+        // does there ([`combat::strike_damage`]), so the short-circuit stays a short-circuit and
+        // not a second model.
+        let damage: f32 = party
+            .crews
+            .iter()
+            .map(|crew| {
+                let landed =
+                    combat::landed_strikes_seeded(hunters * crew.share, &tuning, draw.seed());
+                landed * combat::strike_damage(crew.hunter.attack, quarry.profile.defense)
+            })
+            .sum();
         return HuntFight {
             brought_down: wounds.strike(damage * tuning.lethality, &quarry.profile, stayed),
             casualties: injuries,
@@ -5651,11 +5828,21 @@ pub fn resolve_hunt_fight(
             Force {
                 id: HUNTING_PARTY_FORCE,
                 posture: Posture::Aggressor,
-                contingents: vec![Contingent {
-                    kind: ContingentId::from(HUNTER_CONTINGENT),
-                    count: hunters,
-                    profile: party.hunter,
-                }],
+                // **ONE CONTINGENT PER CREW**, because the resolver gates every attacker/target pair
+                // on that attacker's own `attack` ([`combat::resolve_fight`]): a bare-handed run
+                // inside a speared party lands *exactly zero* on a defence it cannot clear, where
+                // one averaged profile would have let it borrow the spears' attack. Nothing about
+                // the resolver changes — the party is simply described honestly.
+                contingents: party
+                    .crews
+                    .iter()
+                    .enumerate()
+                    .map(|(index, crew)| Contingent {
+                        kind: hunter_contingent_id(index),
+                        count: hunters * crew.share,
+                        profile: crew.hunter,
+                    })
+                    .collect(),
             },
             Force {
                 id: QUARRY_FORCE,
@@ -5683,6 +5870,9 @@ pub fn resolve_hunt_fight(
             // turn's together.
             quarry_damage += result.damage_dealt;
         } else {
+            // **Every non-quarry result**, which is now one per crew rather than one per party —
+            // the loop already summed them and still does, so a party's losses are the whole
+            // party's however its gear divided it.
             casualties.killed += result.killed;
             casualties.wounded += result.wounded;
         }
@@ -5699,7 +5889,7 @@ pub fn resolve_hunt_fight(
 }
 
 /// **The hunt's own hazard, resolved into people** (`docs/plan_hunt_through_combat.md` §4.6) —
-/// [`HuntingParty::injury_damage_per_animal`] × the animals engaged, put through
+/// [`HuntCrew::injury_damage_per_animal`] × the animals engaged, put through
 /// [`crate::combat::units_brought_down`] — the very primitive that turns an enemy's damage into
 /// bodies — and **added into** the fight's own [`FightCasualties`] rather than reported beside them.
 /// The party's `lethality` scales it, so a detached raid's `expedition_danger_multiplier` reaches it
@@ -5717,11 +5907,29 @@ pub fn resolve_hunt_fight(
 /// however fractional, costs a whole worker of throughput on the spot. A four-hunter raid that lost a
 /// quarter of its capacity the first time it engaged a rabbit would be a balance change wearing a
 /// flavour note's clothes.
+///
+/// # PER CREW, because `exposure` is a kit's
+///
+/// Each crew works its own share of the engagement (`stayed × share`) and is hurt at its own
+/// `injury_damage_per_animal`, so the half of a party carrying the stand-off device takes the
+/// stand-off's hazard and the half that closed with the animal takes the full one. Both the hazard
+/// and the crew it is capped against scale by the same `share`, so a **uniformly** exposed party is
+/// arithmetically identical to the single-profile form this replaced.
 fn hunt_injuries(stayed: f32, hunters: f32, party: &HuntingParty) -> FightCasualties {
-    let hazard = party.injury_damage_per_animal.max(0.0) * stayed * party.tuning.lethality;
+    let wounded = party
+        .crews
+        .iter()
+        .map(|crew| {
+            let hazard = crew.injury_damage_per_animal.max(0.0)
+                * stayed
+                * crew.share
+                * party.tuning.lethality;
+            combat::units_brought_down(hazard, &crew.hunter, hunters * crew.share)
+        })
+        .sum();
     FightCasualties {
         killed: NO_FATAL_HUNTING_ACCIDENTS,
-        wounded: combat::units_brought_down(hazard, &party.hunter, hunters),
+        wounded,
     }
 }
 
@@ -5733,7 +5941,19 @@ const NO_FATAL_HUNTING_ACCIDENTS: f32 = 0.0;
 const HUNTING_PARTY_FORCE: ForceId = ForceId(0);
 /// The herd's side of a hunt fight — the defender.
 const QUARRY_FORCE: ForceId = ForceId(1);
-/// The party's one contingent key, matching the `person` row of the creatures roster.
+/// **One crew's contingent key** — the `person` row of the creatures roster, suffixed with the
+/// crew's index so a partly-equipped party's runs are distinct contingents rather than one id
+/// repeated.
+///
+/// Nothing downstream branches on it (`resolve_hunt_fight` sums every non-quarry result), so the
+/// suffix is for legibility in a `FightOutcome` rather than for a consumer — but two contingents
+/// sharing a key is the kind of thing a future report groups by, and it would silently merge two
+/// crews that are deliberately not the same.
+fn hunter_contingent_id(index: usize) -> ContingentId {
+    ContingentId(format!("{HUNTER_CONTINGENT}#{index}"))
+}
+
+/// The party's contingent key stem, matching the `person` row of the creatures roster.
 const HUNTER_CONTINGENT: &str = "person";
 /// The herd's one contingent key. The species name is *not* used: it would make the key vary by
 /// quarry for no consumer, and nothing downstream reads it.
@@ -6321,7 +6541,7 @@ pub(crate) fn hunt_forecast(
         // ...and the fight that decides how many of those actually go down (§4).
         // ...carrying **this herd's** accumulated wounds, so a single-turn preview says "this is the
         // turn it finally goes down" on the turn it does (`herd_quarry_fight`, §4.2).
-        fight: Some((*party, herd_quarry_fight(herd, fauna))),
+        fight: Some((party.clone(), herd_quarry_fight(herd, fauna))),
         // **The TERMS of the take, not a set of answers.** `ceiling_at(floor, improvement)` composes
         // them into exactly what `hunt_take` computes — the herd's own `K` (`herd_capacity`, never
         // the raw field) and its CURRENT biomass, so the forecast and the take read the same stock.

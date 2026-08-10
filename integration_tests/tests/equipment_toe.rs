@@ -269,11 +269,24 @@ const HUSBANDRY_GEAR: &str = "husbandry_gear";
 /// The passive device — snares, nets, weirs, one item.
 const THE_PASSIVE_DEVICE: &str = "traps";
 
-/// A start-stocked ledger with one item **used up** — the first spent state, reached the only way
+/// **How many workers every fixture ledger in this file is outfitted for.**
+///
+/// A spawn stocks a *party's worth* of each item (`equipment.md` → "the partly-equipped party"), and
+/// a fixture that stocked one unit would hand its band one armed hunter and the rest bare hands —
+/// which is a test about running short of units, not about the tier it means to measure. Comfortably
+/// above the largest crew any world here staffs, so coverage always reaches the whole party.
+const OUTFITTED_PARTY_WORKERS: f32 = 64.0;
+
+/// **A fully outfitted ledger** — what "the band is kitted" means in this file.
+fn outfitted() -> BandEquipment {
+    BandEquipment::start_stocked_for(&equipment(), OUTFITTED_PARTY_WORKERS)
+}
+
+/// An outfitted ledger with one item **used up** — the first spent state, reached the only way
 /// the sim reaches it: by charging the item's own quantum until nothing is left.
 fn dry(item: &str) -> BandEquipment {
     let config = equipment();
-    let mut ledger = BandEquipment::start_stocked(&config);
+    let mut ledger = outfitted();
     run_dry(&mut ledger, &config, item);
     ledger
 }
@@ -315,19 +328,24 @@ fn dry_hunting() -> BandEquipment {
 /// by this slice.
 #[test]
 fn a_fresh_band_is_kitted_and_publishes_all_three_equipped_tiers() {
-    let (mut app, band, _, _) = booted_band();
+    let (mut app, band, workers, _) = booted_band();
     // The component is really there — `spawn_profile_population` must insert it, or every band's
     // wear would be silently discarded and the durability model would be inert.
     // **`start_stocked_owned`, not `start_stocked`** — a spawn stamps each batch with the grade a
     // bare-handed craft of that item comes out at, so the ledger names a quality rather than leaving
     // a blank the panel cannot tell from a missing chip. Counts, tiers and wear are the shipped
     // opening's, unchanged; only the label is new.
+    //
+    // **Sized to the band's own workers.** A spawn stocks `ceil(workers × start_stock_fraction)`
+    // units of each item, so the ledger is only reproducible from the head count the band actually
+    // has — which is also what the coverage assertion below turns on.
     assert_eq!(
         app.world.get::<BandEquipment>(band).cloned(),
         Some(BandEquipment::start_stocked_owned(
             &EquipmentConfig::builtin(),
             &RecipesConfig::builtin(),
             &MaterialsConfig::builtin(),
+            workers as f32,
         )),
         "a spawned band starts with an UNWORN kit"
     );
@@ -377,6 +395,50 @@ fn a_fresh_band_is_kitted_and_publishes_all_three_equipped_tiers() {
     );
 }
 
+/// **A SPAWNED BAND IS ARMED TO ITS LAST WORKER, AND HAS A RESERVE BEHIND THEM** (issue #520).
+///
+/// A unit of an item arms `workers_per_unit` people, so a spawn that stocked one unit would send the
+/// shipped band out as **one** armed hunter and sixteen bare hands. The stock is
+/// `ceil(workers × start_stock_fraction)` per item, and this asserts both halves of what that buys:
+/// coverage is **uniform** at the band's full head count (nobody is short), and the surplus over the
+/// head count is the opening reserve — what the first break spends instead of disarming someone.
+#[test]
+fn a_spawned_band_arms_every_worker_and_keeps_a_reserve() {
+    let (app, band, workers, _) = booted_band();
+    let equipment = equipment();
+    let ledger = app
+        .world
+        .get::<BandEquipment>(band)
+        .expect("a spawned band carries an equipment ledger");
+
+    assert!(workers > 1, "the shipped band is a party, not one person");
+    for kit in equipment.kits() {
+        let choice = equipment
+            .kit(&kit.id)
+            .expect("the roster resolves its own entry");
+        let coverage = equipment.coverage(&choice, workers as f32, ledger);
+        assert!(
+            coverage.is_uniform(),
+            "every worker on the `{}` kit holds the same thing at spawn: {coverage:?}",
+            kit.id
+        );
+        for item in choice.uses() {
+            assert_eq!(
+                coverage.workers_holding(item),
+                workers as f32,
+                "`{item}` must reach all {workers} of the band's workers"
+            );
+        }
+    }
+    // The RESERVE — strictly more units than people, which is what `start_stock_fraction`'s
+    // half-again buys: the first retirement comes out of stock rather than out of the line.
+    assert!(
+        ledger.live_units(SPEARS, &equipment) > workers,
+        "a spawn stocks a reserve above the head count ({} units for {workers} workers)",
+        ledger.live_units(SPEARS, &equipment)
+    );
+}
+
 // ---------------------------------------------------------------------------------------------
 // The sled — the HUNT's carry
 // ---------------------------------------------------------------------------------------------
@@ -387,12 +449,7 @@ fn a_fresh_band_is_kitted_and_publishes_all_three_equipped_tiers() {
 /// meaning the model broke.
 #[test]
 fn both_hunt_carry_tiers_are_live_and_a_sledless_party_hauls_less() {
-    let (mut kitted, kitted_band) = hunting_world_of(
-        HORSE,
-        HORSE_BODY_MASS,
-        None,
-        BandEquipment::start_stocked(&EquipmentConfig::builtin()),
-    );
+    let (mut kitted, kitted_band) = hunting_world_of(HORSE, HORSE_BODY_MASS, None, outfitted());
     let (mut dry, dry_band) = hunting_world_of(HORSE, HORSE_BODY_MASS, None, dry_sled());
 
     run_turn(&mut kitted);
@@ -469,12 +526,8 @@ fn both_hunt_carry_tiers_are_live_and_a_sledless_party_hauls_less() {
 /// trivial truth about a party that never engaged.
 #[test]
 fn a_sledless_party_wastes_the_kill_it_cannot_carry() {
-    let (mut kitted, kitted_band) = hunting_world_of(
-        DEER,
-        WASTE_BODY_MASS,
-        Some(WASTE_CREW),
-        BandEquipment::start_stocked(&EquipmentConfig::builtin()),
-    );
+    let (mut kitted, kitted_band) =
+        hunting_world_of(DEER, WASTE_BODY_MASS, Some(WASTE_CREW), outfitted());
     let (mut dry, dry_band) = hunting_world_of(DEER, WASTE_BODY_MASS, Some(WASTE_CREW), dry_sled());
 
     run_turn(&mut kitted);
@@ -514,8 +567,7 @@ fn a_sledless_party_wastes_the_kill_it_cannot_carry() {
 /// raise the hunt's haul while `forage.per_worker_biomass_capacity` sat untouched by any kit.
 #[test]
 fn both_gather_tiers_are_live_and_bare_hands_gather_less() {
-    let (mut kitted, kitted_band) =
-        gathering_world(BandEquipment::start_stocked(&EquipmentConfig::builtin()));
+    let (mut kitted, kitted_band) = gathering_world(outfitted());
     let (mut bare, bare_band) = gathering_world(dry_baskets());
 
     for _ in 0..GATHER_TURNS {
@@ -586,12 +638,7 @@ fn both_gather_tiers_are_live_and_bare_hands_gather_less() {
 /// the basket kit having quietly stopped working altogether.
 #[test]
 fn baskets_do_not_touch_the_hunt() {
-    let (mut kitted, kitted_band) = hunting_world_of(
-        HORSE,
-        HORSE_BODY_MASS,
-        None,
-        BandEquipment::start_stocked(&EquipmentConfig::builtin()),
-    );
+    let (mut kitted, kitted_band) = hunting_world_of(HORSE, HORSE_BODY_MASS, None, outfitted());
     let (mut basketless, basketless_band) =
         hunting_world_of(HORSE, HORSE_BODY_MASS, None, dry_baskets());
 
@@ -630,8 +677,7 @@ fn baskets_do_not_touch_the_hunt() {
 /// exactly as a fully-kitted one, because a drag harness does not help you hold more berries.
 #[test]
 fn the_sled_does_not_touch_foraging() {
-    let (mut kitted, kitted_band) =
-        gathering_world(BandEquipment::start_stocked(&EquipmentConfig::builtin()));
+    let (mut kitted, kitted_band) = gathering_world(outfitted());
     let (mut sledless, sledless_band) = gathering_world(dry_sled());
 
     for _ in 0..GATHER_TURNS {
@@ -673,10 +719,8 @@ fn the_sled_does_not_touch_foraging() {
 /// asserted positive so the untouched one is a real absence rather than a dead system.
 #[test]
 fn the_sled_and_the_baskets_wear_on_different_quanta() {
-    let (mut hunting, hunting_band) =
-        hunting_world(BandEquipment::start_stocked(&EquipmentConfig::builtin()));
-    let (mut gathering, gathering_band) =
-        gathering_world(BandEquipment::start_stocked(&EquipmentConfig::builtin()));
+    let (mut hunting, hunting_band) = hunting_world(outfitted());
+    let (mut gathering, gathering_band) = gathering_world(outfitted());
     for _ in 0..GATHER_TURNS {
         run_turn(&mut hunting);
         run_turn(&mut gathering);
@@ -824,10 +868,8 @@ fn the_durability_cliff_is_a_step_not_a_taper() {
 /// would make denial free. Same world, same turn count, different *work*.
 #[test]
 fn wear_is_charged_for_kills_not_for_turns_elapsed() {
-    let (mut hunting, hunting_band) =
-        hunting_world(BandEquipment::start_stocked(&EquipmentConfig::builtin()));
-    let (mut scouting, scouting_band) =
-        scouting_world(BandEquipment::start_stocked(&EquipmentConfig::builtin()));
+    let (mut hunting, hunting_band) = hunting_world(outfitted());
+    let (mut scouting, scouting_band) = scouting_world(outfitted());
     for _ in 0..RUN_TURNS {
         run_turn(&mut hunting);
         run_turn(&mut scouting);
@@ -844,7 +886,7 @@ fn wear_is_charged_for_kills_not_for_turns_elapsed() {
     // The discriminating half: identical turn count, zero kills, zero wear on every item whose
     // quantum is a KILL or a BIOMASS.
     //
-    // **It is no longer `BandEquipment::start_stocked(&EquipmentConfig::builtin())`, and what changed is honest rather than a
+    // **It is no longer `outfitted()`, and what changed is honest rather than a
     // loosening.** A scouting band now carries wayfinding gear, whose quantum is *ground revealed
     // for the first time* — so a band that is out scouting really is using something up, and a
     // ledger that stayed empty would mean the scouting kit was inert. What §1.2 forbids is a TURN
@@ -994,8 +1036,7 @@ fn baskets_run_dry_on_their_own_quantum_and_stay_dry() {
 /// that is real, or the fixture could be measuring a herd nobody hunted.
 #[test]
 fn the_attack_tier_decides_the_take() {
-    let (mut kitted, kitted_band) =
-        hunting_world(BandEquipment::start_stocked(&EquipmentConfig::builtin()));
+    let (mut kitted, kitted_band) = hunting_world(outfitted());
     let (mut bare, bare_band) = hunting_world(dry_hunting());
 
     for _ in 0..RUN_TURNS {
@@ -1158,11 +1199,18 @@ fn published_condition(cohort: &PopulationCohortState, item: &str) -> f32 {
 /// way the sim reaches it: by charging the item's own quantum.
 fn worn(entries: &[(&str, f32)]) -> BandEquipment {
     let config = equipment();
-    let mut ledger = BandEquipment::start_stocked(&config);
+    let mut ledger = outfitted();
     for (item, wear) in entries {
         let def = config
             .item(item)
             .unwrap_or_else(|| panic!("the shipped roster must carry '{item}'"));
+        // **Down to the LAST unit first.** A spawn stocks a party's worth, so a wear figure that
+        // means *"this band is about to lose its sled"* has to spend the reserve before it can say
+        // so — otherwise it names the condition of one unit among two dozen fresh ones.
+        let uses_per_unit = def.default_tier().starting_durability / def.wear.amount;
+        while ledger.count_of(item) > 1 {
+            ledger.wear_item(&config, item, uses_per_unit);
+        }
         ledger.wear_item(&config, item, wear / def.wear.amount);
     }
     ledger
@@ -1187,12 +1235,10 @@ fn worn(entries: &[(&str, f32)]) -> BandEquipment {
 /// does run down, so this is not the trivial truth about a dead feature.
 #[test]
 fn only_a_staffed_scout_wears_the_wayfinding_kit() {
-    let (mut scouting, scouting_band) =
-        scouting_world(BandEquipment::start_stocked(&EquipmentConfig::builtin()));
+    let (mut scouting, scouting_band) = scouting_world(outfitted());
     // The hunting fixture staffs Hunt and nothing else, so its Scout head-count is zero and no
     // vantage is ever posted — while its band centre and its worked herd tile reveal fog every turn.
-    let (mut unscouted, unscouted_band) =
-        hunting_world(BandEquipment::start_stocked(&EquipmentConfig::builtin()));
+    let (mut unscouted, unscouted_band) = hunting_world(outfitted());
     for _ in 0..RUN_TURNS {
         run_turn(&mut scouting);
         run_turn(&mut unscouted);
@@ -1226,11 +1272,7 @@ fn the_wayfinding_tier_steps_down_when_the_kit_runs_dry() {
         .kit("wayfinding")
         .expect("the shipped roster carries the wayfinding kit");
 
-    let fresh = equipment.scout_vantage_range(
-        equipped_range,
-        &kit,
-        &BandEquipment::start_stocked(&EquipmentConfig::builtin()),
-    );
+    let fresh = equipment.scout_vantage_range(equipped_range, &kit, &outfitted());
     let spent = equipment.scout_vantage_range(
         equipped_range,
         &kit,
@@ -1279,7 +1321,7 @@ fn only_the_husbandry_kit_collects_a_pen_at_the_shipped_rate() {
     // haul's own tier, which `pen_per_worker_biomass_capacity` resolves internally so the number
     // keeps its one home.
     let baseline_rate = LaborConfig::builtin().hunt.per_worker_biomass_capacity;
-    let fresh = BandEquipment::start_stocked(&EquipmentConfig::builtin());
+    let fresh = outfitted();
 
     let husbandry = equipment
         .kit("husbandry")
@@ -1324,7 +1366,7 @@ fn only_the_husbandry_kit_collects_a_pen_at_the_shipped_rate() {
 fn the_warrior_kit_swaps_the_defenders_attack_tier() {
     let equipment = equipment();
     let bare = CreaturesConfig::builtin().person();
-    let fresh = BandEquipment::start_stocked(&EquipmentConfig::builtin());
+    let fresh = outfitted();
     let warrior = equipment
         .kit("warrior")
         .expect("the shipped roster carries the warrior kit");
@@ -1481,14 +1523,19 @@ fn a_band_with_no_entry_for_an_item_resolves_the_unequipped_tier() {
     );
 }
 
-/// **A SPAWN STOCKS ONE UNIT, AND THAT IS WHAT PRESERVES THE SHIPPED OPENING.**
+/// **THE REFERENCE LEDGER IS ONE UNIT, AND ONE UNIT IS THE SHIPPED LIFE.**
 ///
-/// One unit is one item's `starting_durability` — the life the game has always had — so a count
-/// above `1` is something crafting bought and never something a band starts with. Asserted against
-/// the literal use counts `equipment.md` records, so a spawn that stocked two would double a kit's
-/// life and fail here rather than in play.
+/// `BandEquipment::start_stocked` is the fresh *reference* ledger every quarry-scoring and
+/// roster-quoting surface prices against, where only liveness is read — so it stocks one unit and
+/// gains no head count. **A SPAWN is the other seam and stocks a party's worth**
+/// (`start_stocked_owned`, sized by `start_stock_fraction`); that half is
+/// `a_spawned_band_arms_every_worker_and_keeps_a_reserve`.
+///
+/// One unit is one item's `starting_durability` — the life the game has always had — asserted
+/// against the literal use counts `equipment.md` records, so a retune of either dial fails here
+/// rather than in play.
 #[test]
-fn a_spawned_bands_kit_life_is_one_items_worth_and_no_more() {
+fn the_reference_ledger_is_one_unit_and_the_shipped_lives_are_unchanged() {
     let equipment = equipment();
     let stocked = BandEquipment::start_stocked(&equipment);
     for item in [
@@ -1503,7 +1550,7 @@ fn a_spawned_bands_kit_life_is_one_items_worth_and_no_more() {
         assert_eq!(
             stocked.count_of(item),
             1,
-            "a spawn stocks exactly one '{item}' — counts above one are crafting's"
+            "the reference ledger holds exactly one '{item}' — it states liveness, not stock"
         );
         let def = equipment
             .item(item)

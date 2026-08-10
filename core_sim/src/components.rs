@@ -1796,6 +1796,37 @@ impl BandEquipment {
         stocked
     }
 
+    /// **What an ABSENT COMPONENT reads as** — [`Self::start_stocked`] sized to a party of
+    /// `workers`, ungraded.
+    ///
+    /// A band with no `BandEquipment` at all has no ledger rather than an empty one, and the four
+    /// readers of that state (`advance_labor_allocation`, `advance_expeditions`,
+    /// `snapshot/capture.rs`, `snapshot/population.rs`) agree it reads as *outfitted* — **what every
+    /// spawn path inserts**. Since [`Self::start_stocked_owned`] began stocking a party's worth,
+    /// one unit each no longer says that: under
+    /// [`crate::equipment_config::EquipmentConfig::coverage`] it arms one person and sends the rest
+    /// of a hand-rolled fixture's band out bare-handed. This keeps the four fallbacks meaning what
+    /// they say.
+    ///
+    /// **The grades are still absent, and that is the split with `start_stocked_owned`**: a band
+    /// that never had a ledger has no craft history to name, so the fallback states the stock and
+    /// nothing about its quality.
+    pub fn start_stocked_for(
+        config: &crate::equipment_config::EquipmentConfig,
+        workers: f32,
+    ) -> Self {
+        let mut stocked = Self::default();
+        for (id, item) in config.start_stocked_items() {
+            stocked.stock(
+                id,
+                config.start_stock_units(item, workers),
+                &item.default_tier().id,
+                None,
+            );
+        }
+        stocked
+    }
+
     /// **What a band or a detached party actually OWNS at spawn** — [`Self::start_stocked`] with
     /// every batch stamped with the grade a bare-handed craft of that item comes out at
     /// ([`crate::recipes_config::RecipesConfig::anchor_grade_for_item`]).
@@ -1815,10 +1846,26 @@ impl BandEquipment {
     ///
     /// An item no recipe makes keeps `None`: there is no crafted equivalent to claim. Every shipped
     /// start-stocked item has a recipe, so that is unreachable today.
+    ///
+    /// # A PARTY'S WORTH, not one unit — and that is why this one takes a head count
+    ///
+    /// A unit arms `workers_per_unit` people
+    /// ([`crate::equipment_config::EquipmentConfig::coverage`]), so one unit of everything is one
+    /// armed hunter and sixteen bare hands on the shipped band. It stocks
+    /// `ceil(workers × start_stock_fraction / workers_per_unit)`
+    /// ([`crate::equipment_config::EquipmentConfig::start_stock_units`]) — a party's worth plus the
+    /// opening reserve that keeps the first break from disarming anyone.
+    ///
+    /// **[`Self::start_stocked`] takes no head count and still stocks one unit each**, deliberately:
+    /// it is the fresh *reference* ledger every quarry-scoring and roster-quoting surface resolves
+    /// against, where only liveness is read and a count would be noise.
     pub fn start_stocked_owned(
         equipment: &crate::equipment_config::EquipmentConfig,
         recipes: &crate::recipes_config::RecipesConfig,
         materials: &crate::materials_config::MaterialsConfig,
+        // **The party's WORKERS, not its head count.** Children and elders hold nothing; the people
+        // a kit has to reach are the ones who go out on a job.
+        workers: f32,
     ) -> Self {
         let mut stocked = Self::default();
         for (id, item) in equipment.start_stocked_items() {
@@ -1828,7 +1875,12 @@ impl BandEquipment {
                     id: band.to_string(),
                     effects: Vec::new(),
                 });
-            stocked.stock(id, ONE_UNIT, &item.default_tier().id, grade);
+            stocked.stock(
+                id,
+                equipment.start_stock_units(item, workers),
+                &item.default_tier().id,
+                grade,
+            );
         }
         stocked
     }
@@ -1902,6 +1954,34 @@ impl BandEquipment {
         self.batches
             .get(item)
             .map(|batches| batches.iter().map(|batch| batch.count).sum())
+            .unwrap_or(0)
+    }
+
+    /// **Whole units of `item` a party could actually be handed** — [`Self::count_of`] restricted to
+    /// batches with condition left.
+    ///
+    /// **This is what COVERAGE counts** ([`crate::equipment_config::EquipmentConfig::coverage`]):
+    /// how many people the band can arm is a question about units in usable condition, not about
+    /// units owned. The two agree for every batch the sim can currently produce — [`Self::wear_item`]
+    /// retires a unit the moment its condition is spent, so a batch with `count > 0` always has wear
+    /// left — and they are still written apart, because the predicate is the claim being made and a
+    /// future repair or salvage state that parked a spent unit in the ledger would silently arm
+    /// somebody with it.
+    pub fn live_units(&self, item: &str, config: &crate::equipment_config::EquipmentConfig) -> u32 {
+        let Some(def) = config.item(item) else {
+            return 0;
+        };
+        self.batches
+            .get(item)
+            .map(|batches| {
+                batches
+                    .iter()
+                    .filter(|batch| {
+                        batch.wear < def.tier_or_default(&batch.tier).starting_durability
+                    })
+                    .map(|batch| batch.count)
+                    .sum()
+            })
             .unwrap_or(0)
     }
 

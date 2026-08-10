@@ -451,7 +451,10 @@ fn hunters_to_bring_one_down(species: &str, fauna: &FaunaConfig) -> u32 {
     let quarry = fauna
         .species_by_display(species)
         .expect("the fixture names a shipped species");
-    let per_hunter = core_sim::strike_damage(hunting_party().hunter.attack, quarry.combat.defense);
+    let per_hunter = core_sim::strike_damage(
+        hunting_party().best_equipped_hunter().attack,
+        quarry.combat.defense,
+    );
     assert!(
         per_hunter > 0.0,
         "{species} cannot be hurt at the shipped spear tier — a party-size sweep is meaningless"

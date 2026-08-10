@@ -759,7 +759,11 @@ fn a_bands_published_tiers_step_down_per_kit_by_which_item_that_kit_actually_use
             .world
             .get_mut::<core_sim::BandEquipment>(band)
             .expect("a spawned band is kitted");
-        equipment_ledger.wear_item(&cfg, "spears", kills_to_expiry);
+        // **Every unit** — a spawn stocks a party's worth, so one unit's kills leave the rest of
+        // the stock standing and the kit would still be live.
+        while equipment_ledger.count_of("spears") > 0 {
+            equipment_ledger.wear_item(&cfg, "spears", kills_to_expiry);
+        }
     }
     recapture_snapshot_in_place(&mut app.world);
 
@@ -875,11 +879,13 @@ fn published_kit_tiers(
         .collect()
 }
 
-/// **Wear one item to its durability cliff**, in the item's own use quantum.
+/// **Wear one item to its durability cliff**, in the item's own use quantum — **every unit of it**,
+/// because a spawn stocks a party's worth and one unit's life leaves the rest of the stock standing.
 ///
-/// `wear_item` charges `uses × the item's own wear amount`, so the count that empties it is
+/// `wear_item` charges `uses × the item's own wear amount`, so the count that empties **one unit** is
 /// `starting_durability / wear.amount` — derived from config rather than written as a number, or a
-/// retune of either dial silently stops a fixture reaching the cliff it is about.
+/// retune of either dial silently stops a fixture reaching the cliff it is about. It serves the most
+/// worn live batch, so charging that count once per unit owned empties the ledger.
 fn wear_to_the_cliff(app: &mut App, band: bevy::prelude::Entity, item_id: &str) {
     let cfg = equipment(app);
     let item = cfg
@@ -890,7 +896,9 @@ fn wear_to_the_cliff(app: &mut App, band: bevy::prelude::Entity, item_id: &str) 
         .world
         .get_mut::<BandEquipment>(band)
         .expect("a spawned band is kitted");
-    ledger.wear_item(&cfg, item_id, uses_to_expiry);
+    while ledger.count_of(item_id) > 0 {
+        ledger.wear_item(&cfg, item_id, uses_to_expiry);
+    }
 }
 
 /// **THE PEN AND THE VANTAGE STEP DOWN PER KIT TOO — the twin of the test above for the two axes
