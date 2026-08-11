@@ -8,9 +8,22 @@
 use core_sim::{Scalar, SnapshotHistory};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 use sim_runtime::{
-    CampaignProfileState, CommandEventState, CultureLayerScope, CultureTensionKind,
-    CultureTensionState, ScalarRasterState, WorldDelta, WorldSnapshot,
+    CampaignProfileState, CommandEventState, ConnectionState, CultureLayerScope,
+    CultureTensionKind, CultureTensionState, ScalarRasterState, WorldDelta, WorldSnapshot,
 };
+
+/// The two band ids and the tie the reconstruction guard plants in `connections`. Arbitrary, but
+/// **named**: the values only have to be recognisable when the section comes back off the delta.
+const GUARD_OBSERVER_BAND: u64 = 7;
+const GUARD_SUBJECT_BAND: u64 = 9;
+/// A half-strength tie — off both `NO_TIE` and `FULL_TIE`, so a section rebuilt from a default row
+/// would not accidentally match.
+const GUARD_TIE_STRENGTH: f32 = 0.5;
+/// Where the guard's subject was last seen, `(x, y)`. Non-zero for the same reason.
+const GUARD_SEEN_TILE: (u32, u32) = (4, 11);
+/// The turn the reconstruction guard's sections change on — partway through the run, so a delta
+/// that carries nothing is distinguishable from a baseline that was right all along.
+const GUARD_MUTATION_TICK: u64 = 3;
 
 /// One retained feed row, at the sequence the log would have stamped on it (**one-based** — a
 /// fresh client cursor is `0`, so a zeroth event could never be delivered).
@@ -84,6 +97,9 @@ fn apply(base: &mut WorldSnapshot, delta: &WorldDelta) {
     if let Some(v) = delta.knowledge_timeline.as_ref() {
         base.knowledge_timeline = v.clone();
     }
+    if let Some(v) = delta.connections.as_ref() {
+        base.connections = v.clone();
+    }
     if !delta.populations.is_empty() || !delta.removed_populations.is_empty() {
         base.populations
             .retain(|p| !delta.removed_populations.contains(&p.entity));
@@ -127,10 +143,27 @@ fn a_baseline_plus_its_deltas_reconstructs_the_world() {
         // MUTATE the section under test partway through, so the assertion below has teeth. With
         // `campaign_profiles` empty on both sides the comparison passes whether or not the delta
         // can carry it — which is exactly the vacuous test that would have missed the original bug.
-        if tick == 3 {
+        if tick == GUARD_MUTATION_TICK {
             next.campaign_profiles = vec![CampaignProfileState {
                 id: Some("delta-guard".to_string()),
                 ..Default::default()
+            }];
+        }
+        // Same idea for `connections`, and for the same reason — a section with no delta twin is
+        // permanently stale on a delta-fed client. **Restated on every later turn rather than set
+        // once**, because the authoritative world here is grown from `reconstructed`: a section the
+        // delta cannot carry would otherwise vanish from *both* sides on the next turn and the
+        // failure would land on the liveness check, blaming the fixture for the delta's gap.
+        if tick >= GUARD_MUTATION_TICK {
+            next.connections = vec![ConnectionState {
+                observer_band_id: GUARD_OBSERVER_BAND,
+                subject_band_id: GUARD_SUBJECT_BAND,
+                strength: GUARD_TIE_STRENGTH,
+                last_seen_x: GUARD_SEEN_TILE.0,
+                last_seen_y: GUARD_SEEN_TILE.1,
+                last_seen_turn: GUARD_MUTATION_TICK,
+                last_contact_turn: GUARD_MUTATION_TICK,
+                first_contact_turn: GUARD_MUTATION_TICK,
             }];
         }
         // The event log grows on two separate turns, so the reconstruction has to have ACCUMULATED
@@ -159,6 +192,15 @@ fn a_baseline_plus_its_deltas_reconstructs_the_world() {
         reconstructed.campaign_profiles, authoritative.campaign_profiles,
         "campaign_profiles must survive delta reconstruction — it had no WorldDelta field at all \
          until #386, and a field the delta cannot carry is permanently stale on the client"
+    );
+    assert!(
+        !authoritative.connections.is_empty(),
+        "the run must actually change connections, or the next assertion proves nothing"
+    );
+    assert_eq!(
+        reconstructed.connections, authoritative.connections,
+        "connections must survive delta reconstruction — a section without a WorldDelta twin is \
+         permanently stale on a delta-fed client, which is what this test exists to catch"
     );
     assert_eq!(
         reconstructed.tiles.len(),

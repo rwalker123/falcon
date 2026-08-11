@@ -5,6 +5,8 @@ paths:
   - "core_sim/src/data/connections_config.json"
   - "core_sim/src/snapshot/connections.rs"
   - "core_sim/src/visibility_systems.rs"
+  - "core_sim/src/systems/expeditions.rs"
+  - "core_sim/src/components.rs"
   - "core_sim/tests/connections.rs"
 ---
 
@@ -87,6 +89,18 @@ drain when the party comes within comm range of home. The connection is credited
 home is one report, and crediting a march's worth of retroactive contact would let a stale sighting
 peg a tie to full.
 
+**A report carries TWO turns, and they are not the same turn.** `record_contact` takes both: the turn
+the subject was *observed* stamps clock 1, and the turn the report *landed* drives clocks 2 and 3. A
+party that saw a band on turn 40 and walked home until turn 60 leaves `last_seen_turn = 40` beside
+`last_contact_turn = 60` — which is why **`last_seen_turn < first_contact_turn` is reachable and
+correct** on a tie a report founded: you learned of them on turn 60, and what you learned was where
+they stood on turn 40.
+
+Collapsing the two into one parameter is how this first shipped, and it made the observation turn a
+dead field at its only consumption point while `lastSeenTurn` published the flush turn on the wire.
+For a live sighting the two turns are equal, so direct sight is unaffected either way — which is
+exactly why the expedition path is the one that has to be tested for it.
+
 The field rides the existing checkpoint path unchanged — `capture_sim_state` clones the whole
 `Expedition` into `ExpeditionRecord` and restore clones it back.
 
@@ -106,6 +120,14 @@ duplicate of the second — delete on zero and `forget_turns` would have nothing
 
 **Clock 1 is untouched by decay, and its being untouched is the whole feature.** `decay_all` moves
 `strength` and nothing else, so where they were survives a tie bleeding out entirely.
+
+**Clock 1 also never moves BACKWARDS.** `record_contact` advances `last_seen_position` /
+`last_seen_turn` only when the incoming `observed_turn >= last_seen_turn`; a contact that loses that
+test still raises strength and refreshes `last_contact_turn`, it simply does not rewrite the memory.
+The guard is not decoration: `ContactsThisTurn`'s fresher-wins rule resolves collisions *within* one
+turn and never compares an incoming report against the ledger, so without it a party flushing an old
+sighting would drag a band's remembered position back to where it used to be **and stamp it as the
+more recent reading** — clock 1 regressing while claiming to be fresh.
 
 **Clock 3 measures from the last CONTACT, not from the strength.** A parked edge is still a memory,
 and only time erases it.

@@ -260,6 +260,7 @@ pub(crate) fn create_float_raster<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::connections::ConnectionState;
     use crate::state::culture::{CultureLayerScope, CultureTensionKind, CultureTensionState};
     use crate::state::knowledge::{KnowledgeTimelineEventKind, KnowledgeTimelineEventState};
 
@@ -271,6 +272,19 @@ mod tests {
             severity: 1,
             timer: 1,
             kind: CultureTensionKind::DriftWarning,
+        }
+    }
+
+    fn connection() -> ConnectionState {
+        ConnectionState {
+            observer_band_id: 1,
+            subject_band_id: 2,
+            strength: 1.0,
+            last_seen_x: 1,
+            last_seen_y: 1,
+            last_seen_turn: 1,
+            last_contact_turn: 1,
+            first_contact_turn: 1,
         }
     }
 
@@ -313,6 +327,14 @@ mod tests {
                 .is_none(),
             "an unchanged knowledge timeline must not be written at all"
         );
+        assert!(
+            delta
+                .connections()
+                .expect("a connection section")
+                .connections()
+                .is_none(),
+            "an unchanged connection ledger must not be written at all"
+        );
     }
 
     /// …and PRESENT, empty, when the section really did empty out — the case a receiver has to be
@@ -322,6 +344,7 @@ mod tests {
         let emptied = WorldDelta {
             culture_tensions: Some(Vec::new()),
             knowledge_timeline: Some(Vec::new()),
+            connections: Some(Vec::new()),
             ..Default::default()
         };
         let bytes = encode_delta_flatbuffer(&emptied);
@@ -341,6 +364,13 @@ mod tests {
             .knowledgeTimeline()
             .expect("an emptied knowledge timeline must still be written");
         assert_eq!(timeline.len(), 0);
+
+        let connections = delta
+            .connections()
+            .expect("a connection section")
+            .connections()
+            .expect("an emptied connection ledger must still be written");
+        assert_eq!(connections.len(), 0);
     }
 
     /// A populated section rides through unchanged — the guard above must not be satisfiable by
@@ -350,6 +380,7 @@ mod tests {
         let changed = WorldDelta {
             culture_tensions: Some(vec![tension()]),
             knowledge_timeline: Some(vec![timeline_event()]),
+            connections: Some(vec![connection()]),
             ..Default::default()
         };
         let bytes = encode_delta_flatbuffer(&changed);
@@ -371,6 +402,15 @@ mod tests {
                 .expect("a knowledge section")
                 .knowledgeTimeline()
                 .expect("a changed knowledge timeline is written")
+                .len(),
+            1
+        );
+        assert_eq!(
+            delta
+                .connections()
+                .expect("a connection section")
+                .connections()
+                .expect("a changed connection ledger is written")
                 .len(),
             1
         );

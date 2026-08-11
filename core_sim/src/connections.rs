@@ -99,8 +99,13 @@ pub struct Connection {
     pub last_seen_position: UVec2,
     /// …and on which turn. Neither is touched by a turn without contact: that is the whole of
     /// "you know where they *were*".
+    ///
+    /// This is when the subject was **observed**, not when the report arrived, so
+    /// `last_seen_turn < first_contact_turn` is reachable and correct: a party saw them on turn 40
+    /// and the tie formed when the report landed home on turn 60.
     pub last_seen_turn: u64,
-    /// The turn the tie was last refreshed by a contact event. Drives clocks 2 and 3.
+    /// The turn the tie was last refreshed by a contact event — when the report *reached* the
+    /// observer, which for a live sighting is the same turn it was observed. Drives clocks 2 and 3.
     pub last_contact_turn: u64,
     /// The turn the tie first formed. Never changes.
     pub first_contact_turn: u64,
@@ -133,7 +138,18 @@ impl ConnectionLedger {
         self.edges.is_empty()
     }
 
-    /// Refresh (or form) the tie `key` from a contact at `position` on `turn`.
+    /// Refresh (or form) the tie `key` from a report that the subject was at `position` on
+    /// `observed_turn`, which reached the observer on `contact_turn`.
+    ///
+    /// **The two turns are separate because a report can be old.** A live sighting is observed and
+    /// received on the same turn, so passing the same value for both is bit-identical to stamping
+    /// one turn everywhere; an expedition's comm flush is what makes them differ, reporting on turn
+    /// 60 what it saw on turn 40.
+    ///
+    /// Clock 1 (`last_seen_position` / `last_seen_turn`) therefore moves **only when this
+    /// observation is at least as fresh as the one already held**. A party flushing a stale sighting
+    /// still refreshes clocks 2 and 3 — the news arrived, so the tie is live — but it cannot drag
+    /// the remembered position backwards to somewhere the subject has since left.
     ///
     /// Returns `true` when the edge did not exist and was formed here — which is what the "edges
     /// formed this turn" counter counts, and what a future first-meeting beat would hang off.
@@ -141,16 +157,19 @@ impl ConnectionLedger {
         &mut self,
         key: ConnectionKey,
         position: UVec2,
-        turn: u64,
+        observed_turn: u64,
+        contact_turn: u64,
         cfg: &ConnectionsConfig,
     ) -> bool {
         let gain = Scalar::from_f32(cfg.strength.gain_per_contact);
         match self.edges.get_mut(&key) {
             Some(connection) => {
                 connection.strength = (connection.strength + gain).min(FULL_TIE);
-                connection.last_seen_position = position;
-                connection.last_seen_turn = turn;
-                connection.last_contact_turn = turn;
+                connection.last_contact_turn = contact_turn;
+                if observed_turn >= connection.last_seen_turn {
+                    connection.last_seen_position = position;
+                    connection.last_seen_turn = observed_turn;
+                }
                 false
             }
             None => {
@@ -159,9 +178,9 @@ impl ConnectionLedger {
                     Connection {
                         strength: gain.min(FULL_TIE),
                         last_seen_position: position,
-                        last_seen_turn: turn,
-                        last_contact_turn: turn,
-                        first_contact_turn: turn,
+                        last_seen_turn: observed_turn,
+                        last_contact_turn: contact_turn,
+                        first_contact_turn: contact_turn,
                     },
                 );
                 true
@@ -262,8 +281,11 @@ pub fn advance_connections(
     let turn = tick.0;
 
     let mut formed = 0u32;
-    for (key, (position, _observed_turn)) in contacts.iter() {
-        if ledger.record_contact(*key, *position, turn, &cfg) {
+    for (key, (position, observed_turn)) in contacts.iter() {
+        // **Observed then, received now.** A sight-sweep contact observed this very turn passes the
+        // same value twice, so direct sight behaves exactly as it did before the two turns split;
+        // an expedition's flush is what makes them differ.
+        if ledger.record_contact(*key, *position, *observed_turn, turn, &cfg) {
             formed += 1;
         }
     }
@@ -299,7 +321,7 @@ mod tests {
         let mut previous = NO_TIE;
         // Four turns at the shipped gain is exactly a full tie; a fifth must not overshoot.
         for turn in 0..5 {
-            ledger.record_contact(edge(), SOMEWHERE, turn, &cfg);
+            ledger.record_contact(edge(), SOMEWHERE, turn, turn, &cfg);
             let strength = ledger.get(&edge()).expect("the edge formed").strength;
             assert!(strength > previous || strength == FULL_TIE);
             assert!(strength <= FULL_TIE, "strength is a 0..=1 fraction");
@@ -312,7 +334,7 @@ mod tests {
     fn losing_sight_drains_the_tie_to_zero_and_parks_it_there() {
         let cfg = config();
         let mut ledger = ConnectionLedger::default();
-        ledger.record_contact(edge(), SOMEWHERE, 0, &cfg);
+        ledger.record_contact(edge(), SOMEWHERE, 0, 0, &cfg);
         // Long enough to drain a full tie several times over, but well inside `forget_turns`.
         for turn in 1..100 {
             ledger.decay_all(turn, &cfg);
@@ -332,7 +354,7 @@ mod tests {
     fn the_fact_of_them_is_forgotten_after_forget_turns() {
         let cfg = config();
         let mut ledger = ConnectionLedger::default();
-        ledger.record_contact(edge(), SOMEWHERE, 0, &cfg);
+        ledger.record_contact(edge(), SOMEWHERE, 0, 0, &cfg);
         assert_eq!(ledger.decay_all(cfg.forget_turns - 1, &cfg), 0);
         assert_eq!(ledger.len(), 1);
         assert_eq!(ledger.decay_all(cfg.forget_turns, &cfg), 1);
@@ -343,8 +365,8 @@ mod tests {
     fn a_contact_moves_the_remembered_position_and_a_quiet_turn_does_not() {
         let cfg = config();
         let mut ledger = ConnectionLedger::default();
-        ledger.record_contact(edge(), SOMEWHERE, 0, &cfg);
-        ledger.record_contact(edge(), ELSEWHERE, 1, &cfg);
+        ledger.record_contact(edge(), SOMEWHERE, 0, 0, &cfg);
+        ledger.record_contact(edge(), ELSEWHERE, 1, 1, &cfg);
         ledger.decay_all(2, &cfg);
         let connection = ledger.get(&edge()).expect("the edge");
         assert_eq!(connection.last_seen_position, ELSEWHERE);
@@ -355,13 +377,69 @@ mod tests {
         );
     }
 
+    /// **A stale report refreshes the tie but cannot drag clock 1 backwards.** A party flushing on
+    /// turn 52 what it saw on turn 40 is real news — the strength climbs and clock 3 restarts — but
+    /// the observer saw them itself on turn 50, and that is still the freshest thing it knows.
+    #[test]
+    fn a_staler_report_refreshes_the_tie_without_moving_the_remembered_position() {
+        const SEEN_TURN: u64 = 50;
+        const MARCH_TURN: u64 = 40;
+        const FLUSH_TURN: u64 = 52;
+
+        let cfg = config();
+        let mut ledger = ConnectionLedger::default();
+        ledger.record_contact(edge(), SOMEWHERE, SEEN_TURN, SEEN_TURN, &cfg);
+        let direct = ledger.get(&edge()).expect("the edge formed").strength;
+
+        ledger.record_contact(edge(), ELSEWHERE, MARCH_TURN, FLUSH_TURN, &cfg);
+
+        let connection = ledger.get(&edge()).expect("the edge");
+        assert_eq!(
+            connection.last_seen_position, SOMEWHERE,
+            "an older sighting cannot overwrite where we saw them ourselves"
+        );
+        assert_eq!(connection.last_seen_turn, SEEN_TURN);
+        assert!(
+            connection.strength > direct,
+            "the report still arrived, so the tie is refreshed: {direct:?} -> {:?}",
+            connection.strength
+        );
+        assert_eq!(
+            connection.last_contact_turn, FLUSH_TURN,
+            "clocks 2 and 3 run off when the news LANDED"
+        );
+    }
+
+    /// **`last_seen_turn` may precede `first_contact_turn`, and that is the correct reading**: the
+    /// party saw them on the march and the tie only existed once the report came home.
+    #[test]
+    fn a_tie_formed_by_an_old_report_remembers_the_turn_it_was_seen() {
+        const MARCH_TURN: u64 = 40;
+        const FLUSH_TURN: u64 = 60;
+
+        let cfg = config();
+        let mut ledger = ConnectionLedger::default();
+        assert!(ledger.record_contact(edge(), SOMEWHERE, MARCH_TURN, FLUSH_TURN, &cfg));
+
+        let connection = ledger.get(&edge()).expect("the edge formed");
+        assert_eq!(connection.last_seen_turn, MARCH_TURN);
+        assert_eq!(connection.last_contact_turn, FLUSH_TURN);
+        assert_eq!(connection.first_contact_turn, FLUSH_TURN);
+    }
+
     #[test]
     fn the_reverse_edge_is_a_separate_entry() {
         let cfg = config();
         let mut ledger = ConnectionLedger::default();
-        assert!(ledger.record_contact(edge(), SOMEWHERE, 0, &cfg));
+        assert!(ledger.record_contact(edge(), SOMEWHERE, 0, 0, &cfg));
         assert_eq!(ledger.len(), 1);
-        assert!(ledger.record_contact(ConnectionKey::new(SUBJECT, OBSERVER), SOMEWHERE, 0, &cfg));
+        assert!(ledger.record_contact(
+            ConnectionKey::new(SUBJECT, OBSERVER),
+            SOMEWHERE,
+            0,
+            0,
+            &cfg
+        ));
         assert_eq!(ledger.len(), 2);
     }
 

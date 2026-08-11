@@ -32,7 +32,6 @@ type ExpeditionParty = (
 /// [`ResidentBand`] marker that makes a band a legal contact *subject* — seeing another people's
 /// scouts is a different beat and is out of scope for the connection primitive.
 type ExpeditionHomeBands = (
-    Entity,
     &'static mut PopulationCohort,
     Option<&'static BandId>,
     Option<&'static ResidentBand>,
@@ -190,7 +189,7 @@ pub fn advance_expeditions(
     // and probed per observed tile below. `HashMap` because it is only ever probed: the order that
     // has to be deterministic is the per-party `pending_contacts` buffer's, which is keyed.
     let mut occupancy: HashMap<UVec2, Vec<BandId>> = HashMap::new();
-    for (_, cohort, band_id, resident) in bands.iter() {
+    for (cohort, band_id, resident) in bands.iter() {
         let (Some(id), Some(_)) = (band_id, resident) else {
             continue;
         };
@@ -253,14 +252,14 @@ pub fn advance_expeditions(
         let home_pos = bands
             .get(expedition.home_band)
             .ok()
-            .and_then(|(_, band, _, _)| tiles.get(band.current_tile).ok())
+            .and_then(|(band, _, _)| tiles.get(band.current_tile).ok())
             .map(|tile| tile.position);
         // **Who a contact report is filed under.** A party's findings belong to the band that
         // outfitted it, never to the party — the party is a detached crew and owns nothing.
         let home_band_id = bands
             .get(expedition.home_band)
             .ok()
-            .and_then(|(_, _, band_id, _)| band_id.copied());
+            .and_then(|(_, band_id, _)| band_id.copied());
         // "Near enough to run home" — the shared proximity for the scout fold-back, hunt delivery,
         // and comm-range flush.
         let near_home = home_pos
@@ -552,7 +551,7 @@ pub fn advance_expeditions(
                     // before the party despawns and its pack goes with it. No home band left to
                     // receive them means the haul is simply lost, exactly as the carried food is.
                     let mut banked_materials = 0.0;
-                    if let Ok((_, mut home, _, _)) = bands.get_mut(expedition.home_band) {
+                    if let Ok((mut home, _, _)) = bands.get_mut(expedition.home_band) {
                         banked_materials = fold_party_into_band(&mut cohort, &mut home);
                     }
                     event_log.push(expedition_returned_event(
@@ -980,7 +979,7 @@ pub fn advance_expeditions(
                     // one band store, so the credit matches the raid forecast this trip was quoted
                     // against.
                     let mut banked_materials = 0.0;
-                    if let Ok((_, mut home, _, _)) = bands.get_mut(expedition.home_band) {
+                    if let Ok((mut home, _, _)) = bands.get_mut(expedition.home_band) {
                         if delivered > scalar_zero() {
                             home.stores.add(FOOD, delivered);
                         }

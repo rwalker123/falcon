@@ -18,8 +18,8 @@ use core_sim::{
     build_headless_app, split_band_from_parent, BandId, Connection, ConnectionKey,
     ConnectionLedger, ConnectionsConfig, ConnectionsConfigHandle, Expedition, ExpeditionMission,
     ExpeditionPhase, FactionId, LaborAllocation, PopulationCohort, ResidentBand, Scalar,
-    SettleConfig, SimulationConfig, SimulationMetrics, SnapshotHistory, StartingUnit, Tile,
-    TileRegistry, ViewerFaction, VisibilityLedger, VisibilityState,
+    SettleConfig, SimulationConfig, SimulationMetrics, SimulationTick, SnapshotHistory,
+    StartingUnit, Tile, TileRegistry, ViewerFaction, VisibilityLedger, VisibilityState,
 };
 
 /// A pinned earthlike world, so the terrain under every fixture is the same one every run.
@@ -404,7 +404,7 @@ fn a_connection_grants_no_active_tile() {
         let subject = BandId(u64::MAX - index as u64);
         // Four turns of contact is a FULL tie, so the seeded edges are as strong as they can get.
         for _ in 0..4 {
-            ties.record_contact(ConnectionKey::new(band_id, subject), *position, 0, &cfg);
+            ties.record_contact(ConnectionKey::new(band_id, subject), *position, 0, 0, &cfg);
         }
     }
     let seeded_len = ties.len();
@@ -524,6 +524,10 @@ fn an_expedition_reports_a_people_only_when_it_comes_within_comm_range() {
         Some(far),
         "the party is holding the finding, with the position it saw it at: {buffered:?}"
     );
+    let observed_turn = buffered
+        .get(&child_id)
+        .map(|(_, turn)| *turn)
+        .expect("the party is holding the finding");
 
     // …and now it walks home.
     {
@@ -538,12 +542,34 @@ fn an_expedition_reports_a_people_only_when_it_comes_within_comm_range() {
             .expect("the party is alive");
         cohort.current_tile = home_tile;
     }
+    // Read BEFORE the update: `advance_tick` bumps the counter at the end of the turn, so the turn
+    // the flush runs on is the tick standing now.
+    let flush_turn = app.world.resource::<SimulationTick>().0;
     app.update();
 
     let reported = edge(&app, parent_id, child_id).expect("the flush credits the HOME band");
     assert_eq!(
         reported.last_seen_position, far,
         "the report names where the party saw them, not where it handed the report in"
+    );
+    // **Seen then, told now.** The two turns are separate fields because the report is old by the
+    // time it lands: clock 1 dates the sighting on the march, clocks 2 and 3 date the telling.
+    assert!(
+        observed_turn < flush_turn,
+        "the fixture must actually report a STALE sighting: seen {observed_turn}, flushed \
+         {flush_turn}"
+    );
+    assert_eq!(
+        reported.last_seen_turn, observed_turn,
+        "clock 1 dates the turn the party SAW them, not the turn it walked the news home"
+    );
+    assert_eq!(
+        reported.last_contact_turn, flush_turn,
+        "clocks 2 and 3 run off the turn the report arrived"
+    );
+    assert_eq!(
+        reported.first_contact_turn, flush_turn,
+        "the tie only exists once the report lands, so it can post-date the sighting"
     );
     assert_eq!(
         reported.strength,
@@ -553,5 +579,97 @@ fn an_expedition_reports_a_people_only_when_it_comes_within_comm_range() {
     assert!(
         edge(&app, child_id, parent_id).is_none(),
         "the watched band saw nothing — the party is not a subject and the home band is far away"
+    );
+}
+
+/// **A stale report refreshes the tie but cannot rewrite where they were.**
+///
+/// The band saw them itself, here, on turn T. A party then walks in with an *older* sighting from
+/// somewhere else — reachable whenever a march is longer than the time the subject stayed put. The
+/// news is real, so clocks 2 and 3 move; clock 1 does not, because the observer's own eyes are the
+/// fresher source.
+#[test]
+fn an_older_report_refreshes_the_tie_without_rewriting_where_they_were() {
+    let mut app = spawn_world();
+    let (parent, parent_id, faction, home) = first_band(&mut app);
+    let (child, child_id) = split_off(&mut app, parent);
+
+    // 1. Direct sight: the parent sees the band standing beside it, here and now.
+    app.update();
+    let seen = edge(&app, parent_id, child_id).expect("the co-located band is seen directly");
+    let seen_at = seen.last_seen_position;
+    let seen_turn = seen.last_seen_turn;
+    assert_eq!(seen_at, home, "they were seen where they stood");
+
+    // 2. They walk out of sight, so nothing the parent can see refreshes clock 1 again.
+    let gone_to = walk_away(&mut app, child, home);
+    assert_ne!(gone_to, home, "the fixture must actually move the band");
+
+    // 3. A party turns up at home carrying an older sighting of that same band, somewhere else.
+    //    Hand-seeded rather than marched, so the staleness is exact rather than incidental.
+    const STALE_OBSERVATION_TURN: u64 = 0;
+    assert!(
+        STALE_OBSERVATION_TURN < seen_turn,
+        "the seeded report must predate what the band saw itself"
+    );
+    let home_tile = app
+        .world
+        .get::<PopulationCohort>(parent)
+        .expect("the home band is alive")
+        .current_tile;
+    {
+        let mut cohort = app
+            .world
+            .get::<PopulationCohort>(parent)
+            .expect("the home band is alive")
+            .clone();
+        cohort.faction = faction;
+        cohort.home = home_tile;
+        cohort.current_tile = home_tile;
+        cohort.working = Scalar::from_f32(3.0);
+        cohort.sync_size();
+        let mut pending_contacts = std::collections::BTreeMap::new();
+        pending_contacts.insert(child_id, (gone_to, STALE_OBSERVATION_TURN));
+        app.world.spawn((
+            cohort,
+            LaborAllocation::default(),
+            StartingUnit::new("expedition".to_string(), Vec::new()),
+            Expedition {
+                home_band: parent,
+                mission: ExpeditionMission::Scout,
+                phase: ExpeditionPhase::AwaitingOrders,
+                announced: true,
+                pending_reveal: Vec::new(),
+                pending_contacts,
+                kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Scout),
+            },
+        ));
+    }
+    let before_flush = edge(&app, parent_id, child_id)
+        .expect("the tie survives losing sight")
+        .strength;
+
+    // Read BEFORE the update, for the reason the sibling test states: the tick advances at the end
+    // of the turn.
+    let flush_turn = app.world.resource::<SimulationTick>().0;
+    app.update();
+
+    let after = edge(&app, parent_id, child_id).expect("the tie survives the report");
+    assert_eq!(
+        after.last_seen_position, seen_at,
+        "an older report cannot drag clock 1 back to a tile they have already left"
+    );
+    assert_eq!(
+        after.last_seen_turn, seen_turn,
+        "and it cannot re-stamp an older sighting as the fresher one"
+    );
+    assert!(
+        after.strength > before_flush,
+        "the news still arrived, so the tie is refreshed: {before_flush:?} -> {:?}",
+        after.strength
+    );
+    assert_eq!(
+        after.last_contact_turn, flush_turn,
+        "clocks 2 and 3 run off the turn the report landed"
     );
 }

@@ -1129,7 +1129,6 @@ mod tests {
             world.insert_resource(VisibilityLedger::default());
             world.insert_resource(VisibilitySweepTracker::default());
             world.insert_resource(ContactsThisTurn::default());
-            world.insert_resource(ContactsThisTurn::default());
             world.insert_resource(HerdRegistry::default());
             world.insert_resource(ElevationField::new(
                 WIDTH,
