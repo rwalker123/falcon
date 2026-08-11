@@ -615,16 +615,26 @@ const WOLF_CAPACITY := 400.0
 const WOLF_MATERIAL_ID := "hide"
 const WOLF_MATERIAL_PER_BIOMASS := 0.02
 const WOLF_MATERIAL_PER_WORKER := 0.11
+## What ONE hauled wolf is worth in hides on a RAID. The trip line rounds its payload to whole units
+## (a trip is not a rate), so this is sized to clear 1.0 at the frame's kill counts — a payload that
+## rounded to `~0` would render a clause the reader could not tell from a suppressed one.
+const WOLF_RAID_HIDE_PER_ANIMAL := 0.55
+
 ## What the frame must read, composed at assertion time from the crew the sheet actually landed on
 ## (see above) times the per-worker rate, at the reference band's full output.
 func _wolf_material_take(crew: int) -> float:
 	return float(crew) * WOLF_MATERIAL_PER_WORKER
 
 ## The wolf's RAID table: `delivers_food = false` on every rung — an INEDIBLE quarry, not a denial
-## POLICY. Since arc #527 retired the `delivers_trade` sibling that made such a raid a real delivery,
-## this is the shape a raid on an inedible quarry now has, and the sheet reads it as a **denial
-## mission**: the party brings nothing home, because the wire states no material payload for it to
-## bring. That is the honest client reading of the sim's current contract, not a client-side loss.
+## POLICY. It read as a DENIAL MISSION for the release between the trade axis's retirement and
+## `delivered_material` reaching the reply, because with no payload on the wire "brings nothing home"
+## was all the client could honestly say. **It is a real delivery now**: the rows carry the hides the
+## party hauls, and the denial branch tests `delivers_food == false` AND no material — a raid that
+## brings something home is a delivery whatever account that something is in.
+##
+## **THE PAYLOAD GROWS WITH THE PARTY, exactly as a food payload does**, so the picker's per-preset
+## metric and the party stepper both move on it; a flat table would let a stepper that reads nothing
+## back pass every claim made here.
 func _pelt_only_wolf_raid_herd() -> Dictionary:
 	var herd := _pelt_only_wolf_herd()
 	var table := {}
@@ -637,6 +647,13 @@ func _pelt_only_wolf_raid_herd() -> Dictionary:
 				"delivers_food": false,
 				"animals_taken": animals,
 				"delivered_food": 0.0, "wasted_food": 0.0,
+				# **THE ENTIRE PAYLOAD**, since `delivered_food` is honestly 0 here — which is exactly
+				# why a wolf is the fixture this half of the arc needs: a missing material row cannot
+				# hide behind a food number. Composed from the kill count so it moves with the party.
+				SourceForecast.TRIP_DELIVERED_MATERIAL_KEY: [
+					{"material_id": WOLF_MATERIAL_ID,
+						"amount": float(animals) * WOLF_RAID_HIDE_PER_ANIMAL},
+				],
 				# **AN INEDIBLE QUARRY NEVER FILLS A *FOOD* PACK**, so the pack is inert on a wolf raid
 				# and the herd's own floor is what ends it — the sim's `raid_load` rule, stated on the
 				# fixture rather than left for the client to infer from `delivers_food`.
@@ -1573,10 +1590,11 @@ func run(harness) -> void:
 			and not String(at_floor.get("text", "")).contains("1075"))
 
 	# 3x — the same wolf as an EXPEDITION target (band 27 tiles off). `delivers_food = false` on every
-	# cell says THE QUARRY IS INEDIBLE, and since arc #527 retired the `delivers_trade` sibling that
-	# used to make such a raid a real delivery, the line reads as a DENIAL MISSION: the party brings
-	# nothing home, because the raid wire states no material payload for it to bring. That is the
-	# client reading the sim's current contract honestly, and the frame is here to make it visible.
+	# cell says THE QUARRY IS INEDIBLE. This frame read as a DENIAL MISSION for the release in which
+	# the trade axis was gone and `delivered_material` had not landed — "brings nothing home" was all
+	# the client could honestly say. **It is a real delivery now**, and the line quotes the hides: the
+	# frame's whole job is that an inedible quarry's raid is legible, and its food readings being
+	# honest zeros is what stops a missing material clause hiding behind a food number.
 	var wolf_raid := _pelt_only_wolf_raid_herd()
 	h._hud._band_labor._player_bands = [_hunt_preview_far_band()]
 	h._hud._band_labor._player_band = h._hud._band_labor._player_bands[0]
@@ -1586,6 +1604,28 @@ func run(harness) -> void:
 	h._compose_herd(wolf_raid, PELT_FRAME_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
 	await h._settle()
 	await h._save("herd_hunt_pelts_raid")
+	# **THE RAID IS NO LONGER A DENIAL MISSION, AND IT QUOTES WHAT IT HAULS.** Driven through the REAL
+	# producer on the fixture's own row — the compose sheet renders the readout BOX rather than the
+	# one-line form, so the sentence is asserted where it is composed (the idiom `herd_hunt_horizon`
+	# uses one state along).
+	#
+	# **THREE claims, and the third is the one a lazy fix fails.** Not a denial mission (the branch that
+	# owned this frame for a release); the line names the hide; and it is not read as a raid that
+	# RETURNS EMPTY — which is where a food-only `delivered_food <= 0` test sends every raid whose
+	# payload is material, printing a refusal at a party that is walking home loaded.
+	var raid_forecast := SourceForecast.hunt_trip_forecast(
+		h._hud._band_labor._player_band, h._hud._selection.herd(),
+		_raid_row_for(h._hud._selection.herd(), SourceForecast.FLOOR_FOOD_PEAK,
+			PELT_FRAME_HUNTERS),
+		h._hud._band_labor.grid_width(), h._hud._band_labor.wrap_horizontal())
+	h._assert_hud("an inedible quarry's raid is not a denial mission once it hauls something",
+		not bool(raid_forecast.get("denial", true)))
+	h._assert_hud("…nor a raid that returns empty, which a food-only test would call it",
+		not bool(raid_forecast.get("empty", true)))
+	var raid_line := SourceForecast.hunt_forecast_line_bbcode(raid_forecast,
+		String(h._hud._selection.herd().get("species", "")))
+	h._assert_hud("…and the raid line names the hide it brings home (got \"%s\")" % raid_line,
+		raid_line.contains(WOLF_MATERIAL_ID))
 
 	# 3y — THE PAYING CONTROL: the same oracle deer, which pays real food. Each picker button's product
 	# line must carry that food (`2.33 food`), which is the half of the rule the wolf frame cannot

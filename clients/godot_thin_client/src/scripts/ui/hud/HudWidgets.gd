@@ -1111,7 +1111,8 @@ static func mount_trip_readout(parent: VBoxContainer, trip: Dictionary, quarry: 
 ## rule keeps one definition. `YIELD_ACCOUNT_NONE` as the zero account means NO row is synthesised
 ## when it is empty; that state cannot arrive here anyway (it is `empty`, and the caller took the
 ## sentence branch), so a fabricated zero would be a reading of nothing. (A trade row rode beside the
-## food one until arc #527 retired that account.)
+## food one until arc #527 retired that account; the MATERIAL rows are what replaced it, and on an
+## inedible quarry they are the only rows under the animal count.)
 ##
 ## No `after` on any row: a trip has no holding state to arrow toward.
 static func _trip_yield_rows(trip: Dictionary, quarry: String) -> Array[Dictionary]:
@@ -1123,7 +1124,8 @@ static func _trip_yield_rows(trip: Dictionary, quarry: String) -> Array[Dictiona
         YIELD_ROW_UNIT: quarry,
     }]
     rows.append_array(SourceForecast.yield_rows(
-        float(trip.get("food", 0.0)), 0.0, SourceForecast.YIELD_ACCOUNT_NONE))
+        float(trip.get("food", 0.0)), 0.0, SourceForecast.YIELD_ACCOUNT_NONE, {},
+        trip.get(SourceForecast.TRIP_DELIVERED_MATERIAL_KEY, [])))
     return rows
 
 ## **THE TWO CREW TARGETS** (`docs/plan_harvest_floor.md` §7.6) — the distinction the rate model never

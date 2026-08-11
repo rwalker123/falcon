@@ -118,9 +118,19 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 225 `assert OK` lines, 315 `: PASS` ones and ZERO `FAIL` ones, over
+**A clean run exits 0 and prints 225 `assert OK` lines, 319 `: PASS` ones and ZERO `FAIL` ones, over
 88 frames.** (The five `PASS`es above 310 are `_assert_work_material_readouts`, the board half of
-closing the inedible quarry's `+0.00`.) (It was 233 / 313 / 91 before arc #527 retired the `trade_goods` yield axis. **Three
+closing the inedible quarry's `+0.00`; the four above 315 are the party PACK's, on
+`band_panel_worst_case_party`.)
+
+**THE WORST-CASE PARTY CARRIES THE PACK CLAUSE, and its fixture holds TWO piles of one material at
+two ratings.** A batch is one pile at ONE RATING, so a fixture with one batch per material would pass
+just as well against a producer that summed them — which is the retired trade scalar rebuilt out of
+its own replacement. The fourth claim is therefore a NEGATIVE: the two amounts' sum must not appear.
+The clause rides the `Carried:` row rather than adding an eighth line, so the strip's measured extent
+is unchanged (`band-city-panel.md` → "The parties strip's SEVEN lines"), and the row is found by its
+own prefix rather than by index — a producer that moved the clause elsewhere then fails instead of
+passing on whichever line happened to sit there. (It was 233 / 313 / 91 before arc #527 retired the `trade_goods` yield axis. **Three
 frames went with the band's Trade vitals row** — `band_panel_trade_expanded_left` /
 `band_panel_trade_zero` / `band_panel_trade_short_tier` — taking their three `assert OK` PAIRS and
 their `_assert_forage_trade_counted` / `_assert_trade_row_reads_zero` /

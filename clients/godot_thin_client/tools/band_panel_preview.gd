@@ -371,6 +371,20 @@ const WORST_CASE_FLOOR := 0.3
 # than restating them.
 const WORST_CASE_TARGET_HERD_ID := "game_deer_79"
 const WORST_CASE_CARRY_CAP := 18
+## ---- ITS PACK'S MATERIALS -----------------------------------------------------------------------
+## `PopulationCohortState.materialBatches` is resolved with no resident-band gate, so a party in
+## flight has carried these the whole trip. **TWO BATCHES OF ONE MATERIAL, deliberately**: a batch is
+## one pile at ONE RATING, so two hides at different readings are two piles, and the `Carried:` row
+## states them as two terms. A fixture with one batch per material would pass just as well against a
+## producer that summed them — which is the retired trade scalar rebuilt out of its own replacement.
+## Sized apart so the two terms are distinguishable in the frame, and both clear the display floor.
+const WORST_CASE_PACK_MATERIAL_ID := "hide"
+const WORST_CASE_PACK_AMOUNTS := [4.5, 1.2]
+## How the strip's pack-bearing row opens. The clause rides `Carried:` on a raiding party and
+## `Provisions:` on a scout, so the assertion finds the row by its own prefix rather than by index —
+## a producer that moved the clause to a different line would then fail rather than pass on whichever
+## line happened to sit there.
+const PARTIES_CARRIED_ROW_PREFIX := "Carried:"
 # How many detail lines that party's strip must render. Stated here rather than counted from the render
 # so the state FAILS on a producer that quietly stops emitting one — a shorter strip fits its box, so
 # the extent report would go green on a fixture that had stopped being the worst case.
@@ -4438,6 +4452,23 @@ func _assert_worst_case_party_lines() -> void:
 		SourceForecast.TRIP_BOUND_CLAUSES[SourceForecast.TRIP_BOUND_PACK_FULL],
 	]:
 		_assert_band_panel("worst-case party — the strip states `%s`" % needle, joined.contains(needle))
+	# **THE PACK'S MATERIALS, AS A CLAUSE AND AS TWO TERMS.** Three claims, and the third is the one
+	# that matters: this party carries TWO piles of one material at two ratings, and they must render
+	# as two terms rather than as their sum. A `5.7` here would be the retired trade scalar rebuilt out
+	# of the very vector that replaced it.
+	var carried_line := ""
+	for line in lines:
+		if line.begins_with(PARTIES_CARRIED_ROW_PREFIX):
+			carried_line = line
+	_assert_band_panel("worst-case party — the pack rides the Carried row, not an eighth line (got" \
+		+ " \"%s\")" % carried_line, carried_line.contains(WORST_CASE_PACK_MATERIAL_ID))
+	for amount in WORST_CASE_PACK_AMOUNTS:
+		var term: String = HudCraftingVocab.BATCH_AMOUNT_FORMAT % float(amount)
+		_assert_band_panel("worst-case party — the pack states its `%s` pile" % term,
+			carried_line.contains(term))
+	_assert_band_panel("worst-case party — two piles of one material are NOT summed into one",
+		not carried_line.contains(HudCraftingVocab.BATCH_AMOUNT_FORMAT % (
+			float(WORST_CASE_PACK_AMOUNTS[0]) + float(WORST_CASE_PACK_AMOUNTS[1]))))
 
 ## The detail-line texts the parties inspector strip is rendering right now, in order.
 ## `_build_parties_inspector` gives the strip ONE `PanelContainer` holding a column of: a head HBox, one
@@ -9753,5 +9784,25 @@ func _worst_case_party_fixture() -> Dictionary:
 		# `pack_full` because this party's pack IS full, and because `fill_target` — the bound this
 		# fixture used to carry — is retired with the lever that named it (issue #491).
 		"expedition_trip_bound": SourceForecast.TRIP_BOUND_PACK_FULL,
+		# The pack's MATERIALS — a CLAUSE on that same `Carried:` row rather than an eighth line, since
+		# this strip's seven are its whole budget. Two piles of one material, at two ratings.
+		HudCraftingVocab.BAND_MATERIAL_BATCHES_KEY: [
+			{
+				HudCraftingVocab.BATCH_MATERIAL_ID_KEY: WORST_CASE_PACK_MATERIAL_ID,
+				HudCraftingVocab.BATCH_AMOUNT_KEY: float(WORST_CASE_PACK_AMOUNTS[0]),
+				HudCraftingVocab.BATCH_READINGS_KEY: [
+					{HudCraftingVocab.READING_AXIS_KEY: "tough",
+						HudCraftingVocab.READING_BAND_NAME_KEY: "excellent"},
+				],
+			},
+			{
+				HudCraftingVocab.BATCH_MATERIAL_ID_KEY: WORST_CASE_PACK_MATERIAL_ID,
+				HudCraftingVocab.BATCH_AMOUNT_KEY: float(WORST_CASE_PACK_AMOUNTS[1]),
+				HudCraftingVocab.BATCH_READINGS_KEY: [
+					{HudCraftingVocab.READING_AXIS_KEY: "tough",
+						HudCraftingVocab.READING_BAND_NAME_KEY: "poor"},
+				],
+			},
+		],
 	}
 

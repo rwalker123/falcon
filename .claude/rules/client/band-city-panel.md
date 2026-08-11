@@ -1369,13 +1369,29 @@ target, no carry cap and no trip bound. A hunt party carrying every optional lin
 | `Target` + the target's live `(x, y)` | `is_raid`, a non-empty `expedition_target_herd`, the herd still in telemetry |
 | `Orders` | `is_hunt` |
 | `Phase` | a non-empty `expedition_phase` |
-| `Carried` (`N / cap` + the `· FULL` badge) | `is_raid`, and a carry cap that is > 0 and met |
+| `Carried` (`N / cap`, the PACK's material clause, then the `· FULL` badge) | `is_raid`, and a carry cap that is > 0 and met |
 | `Next delivery` (`↻` for a recurring party) | `is_hunt` + `has("expedition_projected_delivery")` |
 | the trip-bound clause | a non-empty `expedition_trip_bound` |
 
 That party measured **328px of the 300px box**. A DENIAL party is strictly shorter (five lines), and the
 quoted-party note a between-rungs party earns rides the `Collapse:` ROW as a clause rather than as a
 line — which is this budget's rule already being followed.
+
+**THE PACK'S MATERIALS FOLLOWED THAT RULE RATHER THAN BECOMING AN EIGHTH LINE** (arc #527 follow-up).
+`PopulationCohortState.materialBatches` is resolved with no resident-band gate, so a party in flight
+has carried them the whole trip and nothing rendered them — a scout hauled a wolf home and the UI
+never mentioned the hide. What the party is carrying home IS the `Carried:` sentence, so the clause
+rides that row: `Carried: 18 / 18 (5 turns) · 4.5 hide · 1.2 hide · FULL`. **A scout takes the same
+clause on its `Provisions:` row** — a scouting party that walks over a kill banks materials exactly
+as a raid does, and one spelling is what stops the two hosts wording the pack differently.
+
+**ONE TERM PER BATCH, NEVER MERGED BY MATERIAL.** A batch is one pile of one material AT ONE RATING,
+so two piles of `hide` at different readings are two terms; summing them rebuilds the retired trade
+scalar out of the very vector that replaced it. The per-axis readings stay the Crafting panel's
+register — this row answers *what is coming home and how much*, in a box that cannot afford a
+characteristic vector per pile. `band_panel_worst_case_party` carries the two-pile case and asserts
+that their SUM does not appear; the strip still measures inside its box, because the clause added no
+line.
 
 **`Position` IS IN THE PRODUCER AND CANNOT REACH THIS HOST.** It renders off `pos`, the MAP MARKER's
 own stamp; the parties zone reads the raw cohort dicts `update_band_alerts` pushes, and the decoder

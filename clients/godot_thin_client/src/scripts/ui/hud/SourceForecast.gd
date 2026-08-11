@@ -563,6 +563,12 @@ const FORECAST_PER_WORKER_MATERIAL_KEY := "per_worker_material"
 # `MaterialStore` this turn. Read through `material_rows_of`, never as a forecast: the sim seeds it
 # EMPTY pre-commit by design (see there).
 const ASSIGNMENT_MATERIAL_YIELD_KEY := "material_yield"
+# **WHAT A WHOLE TRIP LANDS, PER MATERIAL** — on each row of the `HuntTripForecast` reply (the
+# composed row and every per-preset one). It is a PAYLOAD, not a rate: no `/turn`, projected off the
+# same carried biomass `delivered_food` is, so the two readouts of one raid cannot disagree. On an
+# INEDIBLE quarry it is the ENTIRE payload, which is what stops such a raid reading as a denial
+# mission with nothing to bring home.
+const TRIP_DELIVERED_MATERIAL_KEY := "delivered_material"
 # **THE CREW'S THROUGHPUT IN BIOMASS** — what ONE worker moves before any account conversion, and the
 # term everything on the crew side of the panel divides by. Published identically by both webs, which
 # is what lets the two worker targets be one expression. It folds the tile's seasonal weight in on the
@@ -873,6 +879,10 @@ const RAID_HUNT_TURNS_FLOOR_KEY := "hunt_turns_floor"
 # The FOOD the delivered animals are worth, appended so the party-size tradeoff reads BOTH ways: a
 # bigger party takes more animals AND more food.
 const HUNT_FORECAST_FOOD_FORMAT := " · ~%d food"
+# Its MATERIAL twin, one clause per material — `· ~3 hide`. The material names itself, so the noun is
+# the row's own id rather than a word baked in here; it is the same shape the food term wears because
+# it answers the same question about the same trip.
+const HUNT_FORECAST_MATERIAL_FORMAT := " · ~%d %s"
 # **ITS TRADE TWIN IS RETIRED** (arc #527): the wire no longer states a raid's non-food payload as a
 # scalar, and materials have no per-raid figure to put in its place.
 # A finite raid past the band's `expedition_viability_warn_turns` — it still delivers, just slowly. A
@@ -3577,15 +3587,26 @@ static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, estimate: Dic
         grid_width: int, wrap_horizontal: bool) -> Dictionary:
     if estimate.is_empty():
         return {"available": false}
+    # **WHAT THE PARTY BRINGS HOME BESIDES MEAT**, read before every branch below because two of them
+    # turn on whether it is empty. `delivered_material` is the trip's whole material payload, and on an
+    # inedible quarry it is the trip's whole payload full stop.
+    var materials := material_payoff_rows(estimate.get(TRIP_DELIVERED_MATERIAL_KEY, []))
+    var lands_material := false
+    for row in materials:
+        if has_component(float(row[MATERIAL_PAYOFF_AMOUNT_KEY])):
+            lands_material = true
+            break
     # A DENIAL mission carries nothing home at all. `delivers_food == false` says the QUARRY IS
     # INEDIBLE (issue #337), and Eradicate on a deer banks a whole-stock windfall like every other rung
     # rather than landing here.
     #
-    # **THE `delivers_trade` HALF OF THIS TEST WENT WITH THE TRADE AXIS** (arc #527). An inedible quarry
-    # used to read `delivers_food false, delivers_trade true` and count as a real delivery; what it
-    # really pays is MATERIALS, and the raid wire states no figure for those, so such a raid reads as a
-    # denial mission until a per-raid material payload exists to quote.
-    if not bool(estimate.get("delivers_food", false)):
+    # **THE TEST IS "BRINGS NOTHING HOME", AND THAT IS WHY THE MATERIAL ARM BELONGS IN IT.** Its
+    # `delivers_trade` half went with the trade axis (arc #527), which left an inedible quarry reading
+    # as a denial mission — false the moment the sim began projecting `delivered_material`, since a
+    # wolf raid lands hides and the party is not going out to deny anything. So an inedible quarry is a
+    # denial mission ONLY when it lands no material either; a raid that hauls something is a real
+    # delivery whatever account that something is in.
+    if not bool(estimate.get("delivers_food", false)) and not lands_material:
         return {"available": true, "denial": true, "empty": false}
     # **WHICH STOP ENDS THIS SAMPLED TRIP**, off the row rather than inferred from the numbers here.
     #
@@ -3602,8 +3623,11 @@ static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, estimate: Dic
     # herd was at its floor, because before the take resolved through the fight that was the only way
     # to land here. It is not any more, so the `bound` travels out and `HUNT_EMPTY_REFUSALS` says which
     # of the herd and the party the player has to fix.
+    # **"NOTHING DELIVERED" MEANS NOTHING IN ANY ACCOUNT.** A wolf's `delivered_food` is honestly `0`
+    # at every party size, so a food-only test would send every material-landing raid down the
+    # returns-empty branch and print a refusal at a party that is coming home loaded.
     var delivered_food := float(estimate.get("delivered_food", 0.0))
-    if delivered_food <= 0.0:
+    if delivered_food <= 0.0 and not lands_material:
         return {"available": true, "denial": false, "empty": true, TRIP_BOUND_KEY: bound}
     var animals := int(estimate.get("animals_taken", 0))
     # `turns_to_fill == RAID_TURNS_UNBOUNDED` = the raid ran the whole horizon still delivering (a long
@@ -3639,6 +3663,9 @@ static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, estimate: Dic
         # straight from the sim's forward-simulated raid, NOT animals × food_per_animal (which counts the
         # whole kill and overstates a partial). It is > 0 here (empty returned above otherwise).
         "food": delivered_food, "waste_pct": waste_pct,
+        # …and the same payload per MATERIAL, never summed into one figure. Empty for the many quarries
+        # made of nothing anyone builds with, which renders no clause rather than a zero.
+        TRIP_DELIVERED_MATERIAL_KEY: materials,
     }
 
 ## Render a `hunt_trip_forecast` result as its one-line BBCode readout — the three states in their
@@ -3709,14 +3736,25 @@ static func hunt_forecast_line_bbcode(forecast: Dictionary, herd_name: String) -
         ]
     return "[color=#%s]%s%s[/color]%s" % [HudStyle.SIGNAL_HEX, text, food, waste]
 
-## The raid's delivered payload as a trailing " · ~20 food" — rendered only when the quarry pays it,
-## so "" when the forecast carries no payload at all. It carried a second, trade-goods component until
-## arc #527 retired that account.
+## The raid's delivered payload as a trailing " · ~20 food · ~3 hide" — each component rendered only
+## when the quarry pays it, so "" when the forecast carries no payload at all. It carried a
+## trade-goods scalar until arc #527 retired that account; what replaced it is the MATERIAL VECTOR,
+## and on an inedible quarry it is the whole of this suffix.
+##
+## **THE MATERIALS ARE A PAYLOAD, SO THEY WEAR THE FOOD TERM'S OWN `~` HEDGE AND ITS WHOLE-UNIT
+## ROUNDING** — this line quotes a trip, not a rate, and a `0.22` beside a `~20 food` would read as a
+## per-turn number smuggled onto a per-trip line. It is the ONE place a material is rounded: every
+## other material readout in the client is a rate at `YIELD_DECIMALS`.
 static func _raid_payload_suffix(forecast: Dictionary) -> String:
     var suffix := ""
     var food := float(forecast.get("food", 0.0))
     if has_component(food):
         suffix += HUNT_FORECAST_FOOD_FORMAT % int(round(food))
+    for row in material_payoff_rows(forecast.get(TRIP_DELIVERED_MATERIAL_KEY, [])):
+        var amount := float(row[MATERIAL_PAYOFF_AMOUNT_KEY])
+        if has_component(amount):
+            suffix += HUNT_FORECAST_MATERIAL_FORMAT % [
+                int(round(amount)), String(row[MATERIAL_PAYOFF_ID_KEY])]
     return suffix
 
 ## The raid returns empty: the sim's estimate for THIS (floor, party size) delivers nothing. The
@@ -4251,8 +4289,19 @@ static func expedition_policy_takes(band: Dictionary, herd: Dictionary, per_pres
         var food := 0.0
         if bool(row.get("delivers_food", false)):
             food = maxf(0.0, float(row.get("delivered_food", 0.0)) / float(trip_turns))
-        if food > 0.0:
-            takes[String(FLOOR_PRESETS[index])] = extractive_take_pair(food, 0.0, zero_account)
+        # **THE MATERIALS ARE A RATE HERE, UNLIKE ON THE TRIP LINE.** This face is a per-turn metric —
+        # the max obtainable over party sizes — so the trip's whole payload divides by the trip, in
+        # exactly the step the food term above takes. The two spellings of one payload are the
+        # register's difference, not the model's: `_raid_payload_suffix` quotes the TRIP.
+        var materials := scaled_material_rows(
+            material_payoff_rows(row.get(TRIP_DELIVERED_MATERIAL_KEY, [])),
+            1.0 / float(trip_turns))
+        # A rung reaches the picker when it pays SOMETHING — food or a material. Gating on food alone
+        # left an inedible quarry's rungs blank, which is the same "worth nothing" reading the whole
+        # arc removes.
+        if food > 0.0 or signed_material_components(materials) != "":
+            takes[String(FLOOR_PRESETS[index])] = extractive_take_pair(
+                food, 0.0, zero_account, materials)
     return takes
 
 ## **THE FLOORS THE PRESET ROW IS ASKED FOR**, in `FLOOR_PRESETS` order — which is the order the reply

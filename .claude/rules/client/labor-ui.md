@@ -2842,9 +2842,9 @@ discard is precisely what this axis split removed.
     see `SourceForecast.hunt_forecast_line_bbcode`'s `total > warn_turns`, so a distant herd is "slow" on travel
     alone) or a **long** raid (`turnsToFill == 0` — ran the whole horizon still
     delivering) is a real tradeoff, so it is WARN-amber `"armed"` + `Send Anyway (≈54 turns)` /
-    `Send Anyway (long raid)` and stays **enabled**. A **denial** mission — a quarry that pays no food
-    (`delivers_food == false`; its `delivers_trade` sibling went with arc #527, so an inedible quarry
-    now falls in here; never the Eradicate rung, which delivers) — likewise stays enabled (`SEND_HUNT_DENIAL_BUTTON`, "Send (brings nothing home)"). The ONE blocked case is **no surplus**
+    `Send Anyway (long raid)` and stays **enabled**. A **denial** mission — a raid that brings NOTHING
+    home (`delivers_food == false` **and** an empty `delivered_material`; never the Eradicate rung,
+    which delivers, and never an inedible quarry whose hides land) — likewise stays enabled (`SEND_HUNT_DENIAL_BUTTON`, "Send (brings nothing home)"). The ONE blocked case is **no surplus**
     (`SourceForecast.hunt_trip_no_surplus`: **`deliveredFood == 0`**) — the herd is at/below the policy's floor, so the raid
     would return empty at every party size: a mistake with no upside, so the button is **DISABLED**
     (`Herd too lean to raid`). This is `deliveredFood == 0`, **NOT `animalsTaken == 0`** — a small party on
@@ -3566,6 +3566,8 @@ the whole of the rule:
 | `material_per_biomass` | a herd | what ONE UNIT of its biomass is MADE OF, per material | the ceiling, composed at the dragged floor |
 | `per_worker_material` | a herd | what ONE HUNTER brings home per turn, per material | the crew term of the preview's `min` |
 | `material_yield` | a labor assignment | what the source actually CREDITED this turn | the board row, the map label, the inspector strip |
+| `delivered_material` | a `HuntTripForecast` row | what a whole TRIP lands, per material | the launch sheet's raid line, its readout box, its preset faces |
+| `material_batches` | a cohort (`PopulationCohortState`) | what is IN THE PACK right now, per pile | the in-flight party's `Carried:` row |
 
 - **THE TWO RATES ARE THE FOOD SIDE'S OWN TERMS, ONE ACCOUNT OUT.** `material_per_biomass` is the
   twin of `provisionsPerBiomass`, so `forecast_inputs` composes `ceiling(floor) = max(0, B − floor·K)
@@ -3603,10 +3605,66 @@ the whole of the rule:
   which printed a bare `0.22` with nothing saying what it was.) **They also answer the ZERO
   question**: a source paying a material pays SOMETHING, so no zero survives beside it, and a wolf
   never reads `0.00 food · 0.22 hide`.
-- **THE RAID IS STILL A DENIAL MISSION.** `delivers_food == false` with no `delivers_trade` sibling,
-  and the wire states no material payload for a RAID — the three fields above are a herd's rates and
-  an assignment's resolved take, neither of which is a trip. A party sent after an inedible quarry
-  really does bring home nothing the sheet can name. **That one is still server-side work.**
+### THE EXPEDITION HALF: what a raid LANDS, and what is in the pack on the way home
+
+A raid on an inedible quarry read as a DENIAL MISSION — "brings nothing home" — for the release in
+which the trade account was gone and no per-trip material figure existed. It was false: the sim banks
+the hides. Two fields close it, at two different registers.
+
+**`delivered_material` — the LAUNCH sheet, and it is a PAYLOAD rather than a rate.** It rides every
+row of the `HuntTripForecast` reply (`at_composed` and each `per_preset`), projected off the same
+carried biomass `delivered_food` is, so the two readouts of one raid cannot disagree.
+
+- **THE DENIAL AND EMPTY TESTS BOTH HAD TO LEARN ABOUT IT, and forgetting the second is the subtle
+  bug.** `hunt_trip_forecast` resolves the payload FIRST, then: *denial* is `delivers_food == false`
+  **and no material** — a raid that hauls something is a real delivery whatever account that
+  something is in — and *empty* is `delivered_food <= 0` **and no material**. A food-only empty test
+  sends every material-landing raid down the returns-empty branch, printing a refusal at a party that
+  is walking home loaded. `herd_hunt_pelts_raid` asserts both negatives, because fixing only the
+  denial branch moves the frame from one wrong sentence to another.
+- **THE ONE-LINE FORM ROUNDS TO WHOLE UNITS, THE READOUT BOX DOES NOT, and that is the register
+  difference rather than a drift.** `_raid_payload_suffix` appends `· ~3 hide` beside `· ~20 food`:
+  this line quotes a TRIP, and a `0.22` beside a `~20 food` would read as a per-turn number smuggled
+  onto a per-trip line. It is the ONE place a material is rounded — every other material readout in
+  the client is a rate at `YIELD_DECIMALS`. The box (`HudWidgets._trip_yield_rows`) states the exact
+  magnitudes under the animal count, through `yield_rows` like every other readout, so an inedible
+  quarry's trip reads `≈5 GREY WOLF` over `2.75 HIDE` and nothing else.
+- **THE PRESET FACES DIVIDE BY THE TRIP** (`expedition_policy_takes`), because that metric is a
+  per-turn rate — the max obtainable over party sizes. Same payload, two spellings, one for each
+  register. A rung reaches the picker when it pays SOMETHING: gating on food alone left an inedible
+  quarry's rungs blank, which is the "worth nothing" reading this whole arc removes.
+
+**`material_batches` — the IN-FLIGHT pack, and it is a different SHAPE from everything else here.**
+`PopulationCohortState.materialBatches` is resolved from `cohort.stores` with **no resident-band
+gate**, so a detached party's carried materials were on the wire the whole time and nothing rendered
+them: a scout hauled a wolf home and the UI never mentioned the hide.
+
+- **A BATCH IS NOT A PAYOFF ROW.** Everything else in this arc is `{material_id, amount}` — one figure
+  per material. A batch is one pile of one material **AT ONE RATING**, carrying a characteristic
+  vector, so two piles of `hide` at different readings are **two terms and must not be merged**. That
+  distinction is the entire reason the trade scalar was retired; summing batches rebuilds it out of
+  its own replacement.
+- **IT IS A CLAUSE ON `Carried:`, NEVER AN EIGHTH LINE.** The parties inspector strip's budget is
+  fully spent at SEVEN lines in a ~300px clipping zone, and that section's own rule for a new fact is
+  the band zone's SHORT-tier idiom: two facts that read as one sentence cost one row. What the party
+  is carrying home IS the `Carried:` sentence. `band-city-panel.md` → "The parties strip's SEVEN
+  lines" owns the budget.
+- **THE PER-AXIS READINGS ARE THE CRAFTING PANEL'S REGISTER, deliberately not restated.** That panel
+  renders every batch's amount beside its `tough: excellent` chips for the band this party folds back
+  into; the strip answers *what is coming home and how much*, in a box that cannot afford a
+  characteristic vector per pile. **If piles of one material become common on a party, the fix is the
+  batch's band NAME inside its term — never a sum.**
+- **THE BATCH KEYS ARE `HudCraftingVocab`'s, read rather than re-declared**, and the amount wears its
+  `BATCH_AMOUNT_FORMAT`, so a pile reads the same to one decimal wherever it is quoted. **A SCOUT
+  CARRIES THE CLAUSE TOO** (on its `Provisions:` row): a scouting party that walks over a kill banks
+  its materials exactly as a raid does, and the mission it was sent on is no reason to hide its pack.
+
+**Frames.** `herd_hunt_pelts_raid` — the wolf as an expedition target, now a real delivery reading
+`≈5 GREY WOLF` over `2.75 HIDE` with an ordinary Send, asserted on three claims (not denial, not
+empty, names the hide). `band_panel_worst_case_party` — the strip's own worst case, whose
+`Carried: 18 / 18 (5 turns) · 4.5 hide · 1.2 hide · FULL` carries TWO piles of one material at two
+ratings; the third assertion there is that their SUM does not appear, which is the claim a fixture
+with one pile per material could not make.
 
 **Frames.** `herd_hunt_pelts_only` — the compose sheet reading `0.11 HIDE` at the crew the stepper
 landed on, with the floor presets quoting hide in their tooltips and `strip` quoting strictly more
@@ -3699,13 +3757,17 @@ all of them live in `hunt_trip_forecast` / `hunt_forecast_line_bbcode` / `expedi
 
 - **Eradicate DELIVERS.** It banks a whole-stock windfall like every other rung, and its raid line
   quotes that payload instead of "denial mission, delivers no food".
-- A **denial** raid is one whose quarry pays no food — a property of the QUARRY, never inferred from
-  the policy string. **Its `delivers_trade` half went with the axis (arc #527)**, so an inedible quarry
-  now falls into this branch: the wire states no material payload for a raid, so a party after one
-  really does bring nothing home that the sheet can name.
-- **"Too lean to raid"** tests `delivered_food <= 0`.
-- `expedition_policy_takes` gates the food component on `delivers_food`, and `expedition_useful_cap`
-  scans the plateau on it — an inedible species delivers 0 at every party size, so the scan finds no
+- A **denial** raid is one that **brings nothing home** — `delivers_food == false` **and** an empty
+  `delivered_material`. Its `delivers_trade` half went with the axis (arc #527), which briefly made
+  every inedible quarry a denial mission; `delivered_material` is what took it back out, because a
+  raid that hauls hides is a real delivery whatever account that something is in. Still a property of
+  the QUARRY and its payload, never inferred from the policy string.
+- **"Too lean to raid"** tests `delivered_food <= 0` **and** an empty `delivered_material` — a
+  food-only test sends every material-landing raid down that branch and prints a refusal at a party
+  walking home loaded.
+- `expedition_policy_takes` gates the food component on `delivers_food` and reaches the picker when a
+  rung pays food **or** a material; `expedition_useful_cap` scans the plateau on food alone — an
+  inedible species delivers 0 food at every party size, so the scan finds no
   plateau, which is the honest reading of a raid with nothing to bring home.
 
 ### The one-slot surfaces show the product the species PAYS
@@ -3759,8 +3821,9 @@ and the attention producers key off `idle_workers` / `turns_of_food` / pen statu
 **Frames.** `ui_preview`: **`herd_hunt_pelts_only`** (the inedible quarry, quoting `0.11 HIDE` — and
 still asserted as a PAIR with `herd_hunt_both_products`, whose deer prints a live FOOD row, because
 "prints nothing" and "is correctly silent" are the same picture and only a frame that still prints
-tells them apart) · **`herd_hunt_pelts_raid`** (the same wolf as an expedition target, still reading
-as a denial mission — a RAID has no material payload on the wire) · `hunt_picker_ascending` · `food_tile` ·
+tells them apart) · **`herd_hunt_pelts_raid`** (the same wolf as an expedition target — a REAL
+delivery now, reading `≈5 GREY WOLF` over `2.75 HIDE`, asserted on three claims: not denial, not
+empty, names the hide) · `hunt_picker_ascending` · `food_tile` ·
 **`forage_three_accounts`** (the PLANT frame the rule is judged on since #426 — a hay meadow whose
 rungs read `0.24 food · 0.40 fodder`, and the frame the picker's three-column ceiling was MEASURED
 against rather than assumed) · **`forage_three_accounts_overdraw`** (the same meadow, three foragers —

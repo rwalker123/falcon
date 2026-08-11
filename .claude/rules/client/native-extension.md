@@ -227,6 +227,16 @@ constructor` raised inside `effective_worker_map`, which surfaces as a work boar
 rather than as a bad number. The vector is copied beside that list, verbatim; normalizing is
 `SourceForecast.material_payoff_rows`' job, beside the readouts that spend it.
 
+**THE EXPEDITION HALF ADDS ONE MORE VECTOR AND NEEDED NO NEW DECODER AT ALL.**
+`HuntTripRow.delivered_material` → `delivered_material` on every row of the `HuntTripForecast` QUERY
+reply (`bridge/query.rs`, not the snapshot path) — the trip's whole payload per material, which is
+what makes an inedible quarry's raid legible. Beside it, **`PopulationCohortState.materialBatches` is
+resolved from `cohort.stores` with NO resident-band gate**, so a detached party's carried materials
+were already decoded onto the cohort dict as `material_batches` and had simply never been rendered
+for a party. **That is the failure worth remembering here**: a field the decoder emits correctly and
+no surface reads is invisible to every guard in the tree — the golden asserts it decoded, and nothing
+asserts anyone looked.
+
 **ONE KIT, ONE JOB, and the two carry tiers are not two readings of one number.** A band can be out of
 baskets with its sled untouched, so `hunt_carry_per_worker_biomass` and
 `forage_carry_per_worker_biomass` must never be rendered on each other's rows — the defect slice 5
