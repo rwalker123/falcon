@@ -1,6 +1,7 @@
 # Plan: Contact, Connections & Logistics
 
-**Arc:** #527 · **First slice:** #517 (band-to-band trade)
+**Arc:** #527 · **Slices:** #537 (clear the ground) → #538 (the connection primitive) → #517 (logistics
+and cargo) → #532 (the route ladder) → #232 (the overlay)
 
 The substrate that two groups of people need before anything can pass between them: knowing the
 other exists, holding a relationship that persists past the meeting, and building something over
@@ -276,6 +277,14 @@ substrate is in better shape for it than the scalar ever was.
 > is the same lesson as the retirement itself: the answer is *"0.29 fibre"*, not a number a market
 > could total. Nothing may sum those rows back into one figure. See
 > `.claude/rules/core_sim/flora.md` → "The crop picker's cash quote is PER MATERIAL".
+>
+> **The animal web had the identical hole, and it closed the same way.** A wolf paid the trade scalar
+> and nothing else, so with it gone its compose sheet quoted no rate at all while the pelts still
+> landed in the band's store. `HerdTelemetryState.materialPerBiomass` / `perWorkerMaterial` are the
+> per-material rates that replaced it, and `LaborAssignment.materialYield` is what a resolved row
+> actually credited — the same `MaterialPayoff` rows, the same three contracts (never summed, empty
+> means no row, key always present). See `.claude/rules/core_sim/fauna.md` → "What a hunt is MADE OF
+> is on the wire, per material".
 
 > **The retired `FactionInventory` grant was a different thing that shared the name.** The shipped
 > start profile used to hand the faction 40 `trade_goods`, which `apply_trade_goods_bonus` then
@@ -373,10 +382,18 @@ these tables, and a freed field id is exactly how two branches collide.
 ## Sequencing
 
 1. **Design doc (this document).**
-2. **Demolition** — remove the dead trade/logistics slice end to end, delete the two stale specs.
-   Separate and first, so the substrate is not built beside its own ruins.
-3. **The primitive** — connections: formation on contact, direction, strength, the three clocks, and
-   the map-exchange grant of `Discovered`.
+2. **Clear the ground (#537)** — remove the dead trade/logistics slice end to end, delete the two
+   stale specs. Separate and first, so the substrate is not built beside its own ruins.
+   **It grew a second half this document did not foresee**: the demolition exposed that the
+   **`trade_goods` yield axis** was in the same condition one layer up — written on every harvest,
+   read by nothing — while the `materials` list beside it already carried the same yield with the
+   quality axes that make a mammoth hide and a hare pelt different things. Retiring it belonged with
+   the demolition rather than after it, for the reason the step exists: a substrate built over a
+   second dead currency would have had to be unbuilt later. See §Q5.
+3. **The primitive (#538)** — connections: formation on contact, direction, strength, the three
+   clocks, and the map-exchange grant of `Discovered`. **Its open item is connection strength** —
+   what raises it, the curve, and what zero means to each rider — which is that slice's to settle
+   rather than a question deferred elsewhere.
 4. **Logistics + cargo (#517)** — logistics links on connections, the supply network re-founded on
    them, and goods moving between a splinter and its parent across distance. This is the slice that
    proves the substrate by consuming it.
@@ -413,7 +430,7 @@ connections this arc owns.
 - **Whether a large group is detectable beyond anyone's range** — #533 (§Q1).
 - **The exact behaviour of connection strength** — what raises it, what the curve is, and what
   reading zero means for each rider. Not filed separately: it is decided by the slice that builds the
-  primitive (#517).
+  primitive (**#538**).
 
 ## See Also
 

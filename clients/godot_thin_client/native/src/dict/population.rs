@@ -403,18 +403,30 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // **The GDScript that reads these keys is a separate pass** — they simply stop appearing
             // in the dict, so a reader falling back to `0` degrades to "no trade line", which is what
             // it already rendered for a source with no trade.
-            // The FEED currency (issue #449) — the third account beside the food and trade pairs
-            // above, exactly the fodder the band's `FODDER` store was credited with. PLANT-ONLY:
-            // no animal pays fodder, so a hunt row's `0` here is a structural zero rather than a
-            // gap, and a sown hay Field (no provisions, no trade) states its whole product through
-            // this key alone instead of reading `+0.00`.
-            // **There is no `realized_fodder_yield` twin, deliberately.** `realized_trade_yield`
-            // exists because the ANIMAL web projects a steady rate; fodder is paid by the PLANT web
-            // alone, whose projection is the documented gap that already leaves `realized_trade_yield`
-            // at 0 on every forage source — so a projected-fodder field would be a constant zero on
-            // the only web that can pay it. This actual IS the honest rate, and the client reads it
-            // with no fallback (`SourceForecast.fodder_rate_of`).
+            // The FEED currency (issue #449) — the second account beside the food one above,
+            // exactly the fodder the band's `FODDER` store was credited with. PLANT-ONLY: no animal
+            // pays fodder, so a hunt row's `0` here is a structural zero rather than a gap, and a
+            // sown hay Field states its whole product through this key alone instead of `+0.00`.
+            //
+            // **There is no `realized_fodder_yield` twin, deliberately** — fodder is paid by the
+            // PLANT web alone, whose forward projection is food-only, so a projected-fodder field
+            // would be a constant zero on the only web that can pay it. This actual IS the honest
+            // rate, and the client reads it with no fallback (`SourceForecast.fodder_rate_of`).
             let _ = entry.insert("fodder_yield", assignment.fodderYield() as f64);
+            // THE MATERIAL ACCOUNT (arc #527) — the third, and the ONLY one a cash Field or an
+            // inedible quarry pays into at all: without it a wolf hunt's row and a cotton Field's
+            // row both publish their whole product as `+0.00`. An ARRAY of `{ material_id, amount }`
+            // dicts, holding what `credit_material_yield` actually deposited.
+            //
+            // **AN EMPTY ARRAY IS "NO ROW", NEVER "ZERO"** — most sources pay no material. A
+            // PRE-COMMIT (seeded) row is empty even where the turn will pay, because the forecast
+            // does not project materials; the compose-sheet number is the herd row's
+            // `material_per_biomass` / `per_worker_material`. **DO NOT SUM**, and never fold into
+            // `food_income`.
+            let _ = entry.insert(
+                "material_yield",
+                &crate::dict::subsistence::material_payoffs_to_array(assignment.materialYield()),
+            );
             // WHEN that steady average actually lands: index i = the food delivered i+1 turns from
             // now, length = arrivals_horizon_turns (20), 0.0 on a turn nothing arrives. A big-game
             // hunt reads lumpy (gaps between hauls); a forage patch is positive in every slot. EMPTY

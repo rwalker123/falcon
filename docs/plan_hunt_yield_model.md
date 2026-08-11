@@ -1,5 +1,13 @@
 # Plan: The Hunt Yield Model — product × intensity
 
+> **The trade component of the product vector is RETIRED** (arc #527,
+> `docs/plan_contact_and_logistics.md`). Product × intensity still holds exactly as specified — only
+> the vector is shorter. Where this document reasons about *"what are Market's trade goods for"*, the
+> answer turned out to be *nothing*: the scalar had no consumer anywhere in the workspace, and a
+> species' pelts were already being banked as **materials** off the same carried biomass. `HuntYield`
+> now carries `yields_materials`, which is what keeps an inedible quarry (a wolf) a real quarry
+> rather than a pure pest.
+
 Status: **Implemented — Phase 0 and Phase 1 both shipped.** Tracked as issue **#337**. The authoritative spec for decoupling *what a hunt yields*
 (the species) from *how hard you hunt* (the policy). It is the answer to the long-deferred **"Hunt
 policy payoffs"** arc (issue **#213**; the open question of "what are Market's trade goods and

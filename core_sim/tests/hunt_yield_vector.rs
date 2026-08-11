@@ -1239,6 +1239,126 @@ fn a_wolves_exported_rate_reads_no_food_and_it_is_still_huntable_at_every_floor(
     );
 }
 
+/// **THE PUBLISHED MATERIAL QUOTE IS THE MATERIAL THE SIM CREDITS** (arc #527) — the fauna mirror of
+/// `flora_f4_cash::the_picker_material_quote_is_the_material_the_sim_credits`, and the guard on the
+/// regression retiring the trade axis caused.
+///
+/// A wolf paid `trade_goods_per_biomass: 0.02`, so its compose sheet had a rate to show. When that
+/// went, nothing per-herd replaced it: the sheet quoted **no rate at all**, the board row and map
+/// label read `+0.00`, and the pelts still landed in the band's store when the hunt resolved. A wolf
+/// is the natural subject precisely because its **entire** yield is material — every food reading it
+/// publishes is an honest zero, so nothing else on its row can cover for a missing material quote.
+///
+/// Four claims, and the third is the one that matters:
+/// 1. the herd row quotes a **rate** where its food rate is `0` — the compose-sheet fix;
+/// 2. the resolved assignment row publishes the materials it credited — the `+0.00` fix;
+/// 3. **that published amount is what `LocalStore::material_total` actually holds**, asserted against
+///    the store rather than a re-derivation of the credit's arithmetic;
+/// 4. the published per-biomass rate is the rate the credit was *paid at* — every material's
+///    `credited ÷ rate` is the **same** positive number (the carried biomass), which a rate published
+///    from a second derivation would not satisfy.
+#[test]
+fn a_wolfs_published_material_quote_is_what_the_hunt_credits() {
+    let (mut app, id, pos) = headless_with_species(INEDIBLE_SPECIES);
+    reveal_herd(&mut app, &id);
+    let band = spawn_resident_hunters(&mut app, pos, &id, STRIP_IT_BARE, UNBOUNDED_CREW);
+    recapture_snapshot_in_place(&mut app.world);
+
+    // 1. THE COMPOSE-SHEET RATE. A wolf's food readings are honestly zero; the material ones are not,
+    //    and they are what a client composes `max(0, B − f·K) × rate` from at any floor.
+    let herd = exported_herd(&app, &id);
+    assert_eq!(
+        herd.provisions_per_biomass, 0.0,
+        "the fixture's premise: a wolf publishes no food rate"
+    );
+    assert_eq!(herd.per_worker_yield, 0.0);
+    assert!(
+        !herd.material_per_biomass.is_empty(),
+        "a wolf must quote WHAT IT IS MADE OF, or its compose sheet quotes nothing at all"
+    );
+    assert!(
+        herd.material_per_biomass.iter().all(|row| row.amount > 0.0),
+        "a quoted rate is a rate that pays: {:?}",
+        herd.material_per_biomass
+    );
+    assert!(
+        !herd.per_worker_material.is_empty()
+            && herd.per_worker_material.iter().all(|row| row.amount > 0.0),
+        "…and one hunter's own throughput, the material twin of perWorkerYield: {:?}",
+        herd.per_worker_material
+    );
+
+    // 2/3. THE RESOLVED ROW IS THE STORE. Run a real turn and read both.
+    app.world.run_system_once(advance_labor_allocation);
+    recapture_snapshot_in_place(&mut app.world);
+    let row = exported_row(&app, band);
+    assert_eq!(
+        row.actual_yield, 0.0,
+        "a wolf hunt still adds nothing to the larder"
+    );
+    assert!(
+        !row.material_yield.is_empty(),
+        "…and the row must state what it DID pay, or the board reads +0.00 for a hunt that banked \
+         hides"
+    );
+
+    let cohort = app
+        .world
+        .get::<PopulationCohort>(band)
+        .expect("the hunting band still exists");
+    for published in &row.material_yield {
+        let held = cohort
+            .stores
+            .material_total(&published.material_id)
+            .to_f32();
+        assert!(
+            (held - published.amount).abs() <= YIELD_EPSILON,
+            "the row published {} of {} and the band's store holds {held}",
+            published.amount,
+            published.material_id
+        );
+        assert!(published.amount > 0.0, "a published row is a row that paid");
+    }
+
+    // 4. THE RATE IS THE RATE THE CREDIT USED. Every material's credited amount over its published
+    //    per-biomass rate is the same number — the biomass the party carried home — which is only
+    //    true if the quote and the payout read one set of rows.
+    let mut carried: Option<f32> = None;
+    for rate in &herd.material_per_biomass {
+        let credited = row
+            .material_yield
+            .iter()
+            .find(|paid| paid.material_id == rate.material_id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "the take paid no {}, which the rate promised",
+                    rate.material_id
+                )
+            })
+            .amount;
+        let implied = credited / rate.amount;
+        match carried {
+            None => carried = Some(implied),
+            Some(first) => assert!(
+                (implied - first).abs() <= first * MATERIAL_RATE_TOLERANCE,
+                "every material must imply the SAME carried biomass — {} implies {implied} against \
+                 {first}",
+                rate.material_id
+            ),
+        }
+    }
+    assert!(
+        carried.is_some_and(|biomass| biomass > 0.0),
+        "the harness must actually carry something home, or claim 4 compared nothing"
+    );
+}
+
+/// The slack claim 4 allows. Both sides are `f32`s that have been through the store's fixed-point
+/// grid on the way out, so two materials at very different rates round differently; a percent is
+/// orders of magnitude below any real disagreement (a rate published from a second derivation would
+/// be off by a factor, not by a rounding).
+const MATERIAL_RATE_TOLERANCE: f32 = 0.01;
+
 /// **9. A composed ceiling carries the windfall at floor `0`.**
 ///
 /// Denial once quoted a zeroed food row, on the premise it carries nothing home — the premise #337

@@ -1188,6 +1188,26 @@ table LaborAssignment {
   // tradeYield on every forage source. No fodder BAND either: every forage row's range is a point
   // (nothing on the plant web is stochastic), so bounds would only restate this.
   fodderYield:float = 0;
+  // --- WHAT THIS SOURCE WAS MADE OF (appended last, arc #527) ---
+  // The MATERIALS this assignment credited to the band this turn, one entry per material id. The
+  // third account beside actualYield and fodderYield, and the ONLY one a cash Field or an inedible
+  // quarry pays into at all - so without it a wolf hunt's row and a cotton Field's row both publish
+  // their whole product as +0.00.
+  //
+  // REPORTED, NEVER RECOMPUTED: it is exactly what credit_material_yield deposited at the take site
+  // (the discipline fodderYield already carries). The credit skips a sub-quantum amount and an
+  // unknown material, and neither skip is visible to a second derivation.
+  //
+  // EMPTY MEANS "NO ROW", NEVER "ZERO" - most sources pay no material, and a published 0 would read
+  // as a source that pays badly rather than one that pays in something else. NEVER summed into one
+  // figure (that is the retired trade axis under a new name), and never into foodIncome, which stays
+  // Sum(actualYield) exactly as fodderYield is excluded from it.
+  //
+  // A PRE-COMMIT (seeded) row publishes an EMPTY list even where the turn will pay: projecting
+  // materials needs the take in biomass, which the forecast does not resolve for an inedible
+  // species. The number a player decides on is the herd row's materialPerBiomass /
+  // perWorkerMaterial, which are rates and need no take.
+  materialYield:[MaterialPayoff];
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -2636,6 +2656,29 @@ table HerdTelemetryState {
   // to dry sees the same default as one that just spawned. Empty only for a herd whose species the
   // roster cannot resolve, which falls back to `SubsistenceSection.defaultHuntKitId`.
   defaultKitId:string;
+  // --- WHAT A HUNT OF THIS HERD IS MADE OF (appended last, arc #527) ---
+  // The replacement for the retired tradePerBiomass/perWorkerTrade, and the reason an INEDIBLE
+  // quarry stops quoting nothing: a wolf's provisionsPerBiomass and perWorkerYield are honestly 0,
+  // and these carry its whole payload. Both are [MaterialPayoff] (see that table above
+  // FloraShareInfo) — one entry per material, NEVER summed into a single figure.
+  //
+  //   materialPerBiomass = what ONE UNIT of this herd's biomass is made of. The material twin of
+  //                        provisionsPerBiomass/fodderPerBiomass, so it composes at ANY floor by the
+  //                        same rule those do: ceiling(floor) = max(0, B - floor*K) x rate.
+  //   perWorkerMaterial  = what ONE HUNTER brings home per turn. The material twin of
+  //                        perWorkerYield, so a band preview clamps
+  //                        min(workers x perWorkerMaterial, ceiling) per material exactly as it does
+  //                        for food.
+  //
+  // Both are the species' OWN `hunt_yield.materials` rows through the same biomass terms every other
+  // field here uses (ONE_UNIT_OF_BIOMASS and hunt.per_worker_biomass_capacity), with the band's
+  // outputMultiplier folded in - so they are the rates credit_material_yield is actually paid off,
+  // not a second derivation.
+  //
+  // EMPTY MEANS "NO ROW", NEVER "ZERO": most species are made of nothing anyone builds with, and a
+  // published 0 would read as a herd that pays badly rather than one that pays in meat alone.
+  materialPerBiomass:[MaterialPayoff];
+  perWorkerMaterial:[MaterialPayoff];
 }
 
 table CommandEventState {

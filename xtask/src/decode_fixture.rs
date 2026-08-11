@@ -993,6 +993,9 @@ fn seed_snapshot() -> WorldSnapshot {
         cohort.labor_assignments = rows();
         for assignment in &mut cohort.labor_assignments {
             assignment.arrival_schedule = vec![0.0f32; 4];
+            // The row's MATERIAL account (arc #527) — a nested repeated field, seeded for the same
+            // reason `arrival_schedule` is: an empty one is a field the decode guard cannot see.
+            assignment.material_yield = rows();
         }
         cohort.pending_reveal_x = vec![0u32; ROWS];
         cohort.pending_reveal_y = vec![0u32; ROWS];
@@ -1021,6 +1024,10 @@ fn seed_snapshot() -> WorldSnapshot {
         // field or the decode guard cannot see it. Saturation overwrites the values; only the LENGTH
         // matters here, and it is the shipped one so the fixture exercises a real-shaped curve.
         herd.regrowth_samples = vec![0.0; REGROWTH_CURVE_SAMPLES];
+        // What a hunt of this herd is MADE OF (arc #527) — two nested repeated fields, seeded for
+        // the same reason the curve above is.
+        herd.material_per_biomass = rows();
+        herd.per_worker_material = rows();
     }
     s.food_modules = rows();
     // **The kit roster**, and each entry's `jobs` / `item_ids` — repeated fields inside a repeated

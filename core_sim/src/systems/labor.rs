@@ -714,7 +714,7 @@ pub fn advance_labor_allocation(
                         // the scalar currencies, because a cash Field's provisions are `0` and there
                         // would be nothing to scale. A Field's basket is 100% its crop, so this
                         // credits exactly that crop's reading and nothing else.
-                        crate::materials_config::credit_material_yield(
+                        let credited_materials = crate::materials_config::credit_material_yield(
                             &mut cohort.stores,
                             &materials_cfg,
                             &crate::forage::patch_material_yields(
@@ -759,6 +759,10 @@ pub fn advance_labor_allocation(
                             // parallel derivation that could drift from it. A grain Field's is `0`
                             // because `field_fodder` is, with no role branch here.
                             fodder: fodder.to_f32(),
+                            // **The credited materials, not a recomputation** — exactly what
+                            // `credit_material_yield` deposited, so the row states the store's own
+                            // movement (the discipline `fodder` above carries).
+                            materials: credited_materials,
                             // A managed harvest never draws the stock down, so it can never overdraw.
                             sustainable: paid,
                             // The forward-projected steady headline (computed pre-take above).
@@ -1007,7 +1011,7 @@ pub fn advance_labor_allocation(
                     // vectors would invent a plant that is not growing there
                     // ([`crate::forage::patch_material_yields`]). Credits that land in the same band
                     // merge in the store, which is where merging belongs.
-                    crate::materials_config::credit_material_yield(
+                    let credited_materials = crate::materials_config::credit_material_yield(
                         &mut cohort.stores,
                         &materials_cfg,
                         &crate::forage::patch_material_yields(
@@ -1099,6 +1103,9 @@ pub fn advance_labor_allocation(
                         // Re-deriving `tended_take_fodder` here would publish a number nobody was
                         // ever paid, which is precisely what this readout exists not to do.
                         fodder: fodder.to_f32(),
+                        // **The credited materials, not a recomputation** — exactly what
+                        // `credit_material_yield` deposited (the discipline `fodder` above carries).
+                        materials: credited_materials,
                         sustainable,
                         // The forward-projected steady headline (computed pre-take above).
                         realized: forage_realized,
@@ -1455,7 +1462,7 @@ pub fn advance_labor_allocation(
                         // **A pen changes the INTENSITY, never the PRODUCT** — so the keeper is paid
                         // this herd's own material rows too, off what was carried home, exactly as
                         // the range take is. Penning an animal does not change what it is made of.
-                        crate::materials_config::credit_material_yield(
+                        let credited_materials = crate::materials_config::credit_material_yield(
                             &mut cohort.stores,
                             &materials_cfg,
                             fauna.hunt_materials_for(&herd.species),
@@ -1514,6 +1521,10 @@ pub fn advance_labor_allocation(
                             // No animal pays fodder, so this arm credits the `FODDER` store nothing
                             // and the row reports the same nothing (see [`SourceYield::fodder`]).
                             fodder: 0.0,
+                            // **The credited materials, not a recomputation** — exactly what
+                            // `credit_material_yield` deposited. On a wolf this is the whole of what
+                            // the hunt paid, which is why the row cannot be food-only.
+                            materials: credited_materials,
                             sustainable: tended,
                             // The forward-projected steady headline (computed pre-take above; a pen
                             // projects its managed yield, already smooth).
@@ -1763,7 +1774,7 @@ pub fn advance_labor_allocation(
                     // §2) — hide, sinew and bone, off the meat **carried home** exactly as the two
                     // accounts above are, so a party that killed a mammoth and hauled a leg of it
                     // brings back a leg's worth of hide. A take that hauls nothing home yields none.
-                    crate::materials_config::credit_material_yield(
+                    let credited_materials = crate::materials_config::credit_material_yield(
                         &mut cohort.stores,
                         &materials_cfg,
                         fauna.hunt_materials_for(&herd.species),
@@ -1870,6 +1881,9 @@ pub fn advance_labor_allocation(
                         // No animal pays fodder, so this arm credits the `FODDER` store nothing and
                         // the row reports the same nothing (see [`SourceYield::fodder`]).
                         fodder: 0.0,
+                        // **The credited materials, not a recomputation** — exactly what
+                        // `credit_material_yield` deposited (the discipline `fodder` above carries).
+                        materials: credited_materials,
                         sustainable,
                         wasted: hunt_yield.apply(take.wasted, mult_f).provisions,
                         workers_needed,

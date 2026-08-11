@@ -83,6 +83,7 @@ use crate::{
         NEGLECT_NONE, RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED, RUNG_UNSTARTED,
     },
     labor_config::{ForageLaborConfig, LaborConfigHandle, NO_FORAGE_CAPACITY},
+    materials_config::MaterialPayoff,
     orders::FactionId,
     resources::{CommandEventEntry, CommandEventKind, CommandEventLog, SimulationTick},
     scalar::{scalar_from_f32, Scalar},
@@ -1249,22 +1250,6 @@ fn rung_fodder_payoff(
 // they quoted. What a cash crop actually pays is **materials** — see `commit_material_payoff`
 // below, which is the replacement rather than a restoration: it answers per material instead of
 // flattening every one of them into a single number, which is the whole reason the scalar went.
-
-/// **How much of ONE material a commitment would pay per turn** — one row of the crop picker's cash
-/// quote, and the shape [`commit_material_payoff`] returns a vector of.
-///
-/// **It names the material and nothing about its quality**, deliberately. A material's *rating* is a
-/// characteristic vector living on the batch the harvest actually creates ([`patch_material_yields`]
-/// carries the readings); a picker row asks the flat question *"how much of what"*, and answering it
-/// with a rating too would put the merge model in a preview. What a player needs here is which crop
-/// pays which stuff and how fast.
-#[derive(Debug, Clone, PartialEq)]
-pub struct MaterialPayoff {
-    /// The `materials.json` id — `fibre`, `tobacco`, `grape`. Resolved client-side for display.
-    pub material: String,
-    /// Units of that material per turn, at this rung, on this ground.
-    pub amount: f32,
-}
 
 /// **The MATERIALS committing this tile to THIS plant would pay per turn, on `rung`** — the
 /// replacement for the retired `commit_trade_payoff` (arc #527), and the number the crop picker's

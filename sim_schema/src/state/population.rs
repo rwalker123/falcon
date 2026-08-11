@@ -1,6 +1,7 @@
 //! Population-section state: cohorts, demographics, labor assignments, and tasks.
 
 use crate::state::economy::KnownTechFragment;
+use crate::state::subsistence::MaterialPayoff;
 use serde::{Deserialize, Serialize};
 
 /// Per-faction age structure aggregated over the faction's population cohorts. The client
@@ -173,6 +174,21 @@ pub struct LaborAssignmentState {
     /// no kit axis — *"no selection to make"*, not *"no kit"*. Appended last.
     #[serde(default)]
     pub kit_id: String,
+    /// **The MATERIALS this assignment credited this turn**, one entry per material id (arc #527) —
+    /// the third account beside [`Self::actual_yield`] and [`Self::fodder_yield`], and the **only**
+    /// one a cash Field or an inedible quarry pays into at all. Without it a wolf hunt's row and a
+    /// cotton Field's row both publish their whole product as `+0.00`.
+    ///
+    /// **Reported, never recomputed** — exactly what `credit_material_yield` deposited at the take
+    /// site, the discipline [`Self::fodder_yield`] already carries.
+    ///
+    /// **Empty is "no row", never zero.** Most sources pay no material. **Never summed** into one
+    /// figure, and never into `food_income`, which stays `Σ actual_yield`.
+    ///
+    /// A **pre-commit** row publishes an empty list even where the turn will pay — see the schema
+    /// comment. Appended (append-only).
+    #[serde(default)]
+    pub material_yield: Vec<MaterialPayoff>,
 }
 
 /// **One item's remaining condition in a band's TOE** — a row of

@@ -4693,6 +4693,14 @@ pub(crate) fn forecast_source_yield(
         // so a pre-commit row quotes no fodder until that projection lands. Reading the component
         // rather than writing a literal means it starts telling the truth the moment it does.
         fodder: actual.fodder,
+        // **A pre-commit row quotes NO material, and that is a stated gap rather than a claim of
+        // zero** (arc #527). Projecting materials needs the take in *biomass* — `credit_material_yield`
+        // is paid off `take.carried`, and this path resolves the take in currency space, where an
+        // inedible species has no positive axis to count on. The **resolved** row does carry it
+        // (`systems::labor` hands over exactly what the credit deposited), and the number a player
+        // decides on rides the herd row's own `material_per_biomass` / `per_worker_material`, which
+        // are rates and need no take at all.
+        materials: Vec::new(),
         // The band `actual` sits in the middle of. Built from the SAME
         // `forecast_production_and_take_at`, three quantiles apart, so `low <= actual <= high` is a
         // property of the arithmetic rather than a clamp.

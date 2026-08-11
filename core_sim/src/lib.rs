@@ -204,8 +204,8 @@ pub use forage::{
     project_arrivals_forage, project_realized_forage, resolve_committed_species, rung_payoff,
     rung_site_refusal, spawn_initial_forage, species_is_legal_here, tended_take_fodder,
     tile_flora_composition, tile_forage_capacity, tile_is_fresh_watered, wild_payoff, ForagePatch,
-    ForageRegistry, MaterialPayoff, SpeciesRefusal, CANNOT_CLIMB_RATIO, CULTIVATION_DISCOVERY_ID,
-    NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET,
+    ForageRegistry, SpeciesRefusal, CANNOT_CLIMB_RATIO, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON,
+    SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use graze::{advance_graze_regrowth, spawn_initial_graze, GrazePatch, GrazeRegistry};
@@ -241,8 +241,9 @@ pub use labor_config::{
 pub use map_preset::{ErosionConfig, MapPreset, MapPresets, MapPresetsHandle, BUILTIN_MAP_PRESETS};
 pub use materials_config::{
     credit_material_yield, load_materials_config_from_env, BandKey, CharacteristicBand,
-    HandWorking, MaterialDef, MaterialYieldDef, MaterialYieldError, MaterialsConfig,
-    MaterialsConfigError, MaterialsConfigHandle, MaterialsConfigMetadata, BUILTIN_MATERIALS_CONFIG,
+    HandWorking, MaterialDef, MaterialPayoff, MaterialYieldDef, MaterialYieldError,
+    MaterialsConfig, MaterialsConfigError, MaterialsConfigHandle, MaterialsConfigMetadata,
+    BUILTIN_MATERIALS_CONFIG,
 };
 pub use recipes_config::{
     load_recipes_config_from_env, CraftingTuning, RecipeDef, RecipeGrade, RecipeInput,

@@ -1534,6 +1534,24 @@ pub struct SourceYield {
     /// [`YieldRange::certain`] — no engagement, no retreat, no fight, nothing stochastic anywhere on
     /// the plant web — so a fodder band would be a point at every source that could ever carry one.
     pub fodder: f32,
+    /// **The MATERIALS this source credited this turn**, one entry per material id (arc #527) — the
+    /// account a cash crop and an inedible quarry are paid *entirely* in, and the third thing a
+    /// harvest of `B` biomass pays.
+    ///
+    /// **Reported, never recomputed.** It is exactly what
+    /// [`crate::materials_config::credit_material_yield`] returned at the credit site, so a readout
+    /// states the deposit rather than re-deriving it — the same discipline [`Self::fodder`] carries,
+    /// and it matters more here: the credit skips a sub-quantum amount and an unknown material, and
+    /// neither skip is visible to a second derivation.
+    ///
+    /// **EMPTY IS "NO ROW", NOT ZERO.** Most sources pay no material at all, and a client renders one
+    /// row per entry — a published `0` would read as a source that pays badly rather than one that
+    /// pays in something else. It is why this is a vector of named amounts and not a scalar.
+    ///
+    /// **Never summed into one number**, on any surface: that is the retired trade-goods axis under a
+    /// new name. And never into `food_income` — a material is not food, exactly as [`Self::fodder`]
+    /// is not.
+    pub materials: Vec<crate::materials_config::MaterialPayoff>,
     /// **The band around [`SourceYield::actual`]** — *"6–11, likely 9"*
     /// (`docs/plan_hunt_through_combat.md` §6.4). See [`YieldRange`].
     pub range: YieldRange,
@@ -1600,6 +1618,10 @@ impl SourceYield {
         realized: 0.0,
         // …nor in the feed currency: nothing was harvested, so nothing was foddered.
         fodder: 0.0,
+        // Nothing was harvested, so nothing was made of anything. An **empty** list, not a row of
+        // zeros — see [`SourceYield::materials`]. `Vec::new` allocates nothing, so this stays a
+        // `const`.
+        materials: Vec::new(),
         // Nothing is coming either. An **empty** schedule, not a run of zeros: a source with no row
         // has not been projected at all, and the client renders "no data" rather than "famine".
         // `Vec::new` allocates nothing, so this stays a `const`.

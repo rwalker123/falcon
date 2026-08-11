@@ -1400,7 +1400,8 @@ mod tests {
             ],
             last_yields: vec![
                 SourceYield {
-                    // A staple gather: no fodder crop in the basket.
+                    // A staple gather: nothing anyone builds with, and no fodder crop in the basket.
+                    materials: Vec::new(),
                     fodder: 0.0,
                     actual: 2.5,
                     sustainable: 2.5,
@@ -1415,7 +1416,8 @@ mod tests {
                     range: YieldRange::certain(2.5),
                 },
                 SourceYield {
-                    // A hunt: no animal pays fodder.
+                    // A hunt: no animal pays fodder, and this fixture's quarry is made of nothing.
+                    materials: Vec::new(),
                     fodder: 0.0,
                     actual: 0.5,
                     sustainable: 0.25,

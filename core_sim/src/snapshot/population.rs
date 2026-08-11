@@ -32,6 +32,18 @@ pub(crate) fn labor_assignment_to_state(
         // The feed currency (#449) — the value the band's `FODDER` store was credited, published
         // verbatim so the compact readout can state a hay Field's whole product.
         fodder_yield: yields.fodder,
+        // The material account (arc #527) — the amounts `credit_material_yield` actually deposited,
+        // published verbatim so a cash Field's and a wolf hunt's rows state their whole product
+        // instead of `+0.00`. Cloned rather than moved for `arrival_schedule`'s reason: the caller's
+        // telemetry row is still read by the band roll-ups below.
+        material_yield: yields
+            .materials
+            .iter()
+            .map(|payoff| sim_runtime::MaterialPayoff {
+                material_id: payoff.material.clone(),
+                amount: payoff.amount,
+            })
+            .collect(),
         // **The band the scalar above sits in the middle of** (§6.4). A seeded row carries the
         // real distribution; a resolved row carries the point it paid.
         actual_yield_low: yields.range.low,

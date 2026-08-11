@@ -1,5 +1,12 @@
 # Denial is a raid, not a harvest rate — the mission that does not clamp to carry
 
+> **The forecast's trade terms are RETIRED** (arc #527, `docs/plan_contact_and_logistics.md`).
+> `DenialForecast::delivered_trade` / `wasted_trade` are gone with the axis, so the launch sheet no
+> longer states what a carcass left on the range takes with it. **Deliberately not replaced**: the
+> waste is already legible as a percentage, and a flat "wasted materials" scalar would be the retired
+> axis under a new name. Everything else here — the engagement stop, the collapse completion,
+> `turns_to_collapse`, `party_needed` — is unchanged.
+
 **Status:** **§4 slice 1 (the sim) has LANDED**; slice 2 (the client) is design. Issue #456.
 
 Landed: `ExpeditionMission::Deny`, the `send_denial_raid` command, `fauna::EngagementStop` and the one

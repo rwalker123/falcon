@@ -118,10 +118,30 @@ pub(crate) fn herds_to_array(
             f64::from(herd.provisionsPerBiomass()),
         );
         let _ = dict.insert("fodder_per_biomass", f64::from(herd.fodderPerBiomass()));
-        // **RETIRED with the trade-goods yield axis** (arc #527): the wire slot is
-        // `(deprecated)` and the sim writes nothing to it. What a source pays beyond food is
-        // MATERIALS, which ride the cohort's `material_batches`. The GDScript that read the
-        // key it used to insert is a separate pass — the key simply stops appearing.
+        // **WHAT A HUNT OF THIS HERD IS MADE OF** (arc #527) — the material twins of the two rates
+        // above, and the reason an INEDIBLE quarry stops quoting nothing: a wolf's
+        // `provisions_per_biomass` and `per_worker_yield` are honestly `0`, and these carry its whole
+        // payload. Each is an ARRAY of `{ material_id, amount }` dicts (see `flora_share`'s cash
+        // quote for the shared contract).
+        //
+        //   material_per_biomass — what ONE UNIT of the herd's biomass is made of. Composes at ANY
+        //                          floor by the same rule the scalar rates do:
+        //                          `ceiling(floor) = max(0, B - floor*K) x rate`.
+        //   per_worker_material  — what ONE HUNTER brings home per turn. Clamp a band preview
+        //                          `min(workers x rate, ceiling)` PER MATERIAL, exactly as for food.
+        //
+        // **AN EMPTY ARRAY IS "NO ROW", NEVER "ZERO"** — most species are made of nothing anyone
+        // builds with. The key is always inserted so a reader can tell "no quote sent" from "this
+        // herd pays no material". **DO NOT SUM** the rows into one figure: that is the retired trade
+        // axis under a new name.
+        let _ = dict.insert(
+            "material_per_biomass",
+            &material_payoffs_to_array(herd.materialPerBiomass()),
+        );
+        let _ = dict.insert(
+            "per_worker_material",
+            &material_payoffs_to_array(herd.perWorkerMaterial()),
+        );
 
         // **WHAT ONE HUNTER MOVES, IN BIOMASS** — the crew term the panel's two worker targets
         // divide by (`clear it now` = room / this, `hold it after` = the regrowth at the floor /
@@ -424,7 +444,7 @@ pub(crate) fn kits_to_array(kits: Vector<'_, ForwardsUOffset<fb::KitOption<'_>>>
 /// **Empty in, empty out** — an absent wire vector and an empty one are the same answer here ("this
 /// plant pays no material at this rung"), which is why this collapses them rather than distinguishing
 /// them. See the insertion site for why the KEY is nonetheless always written.
-fn material_payoffs_to_array(
+pub(crate) fn material_payoffs_to_array(
     payoffs: Option<flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::MaterialPayoff<'_>>>>,
 ) -> VarArray {
     let mut rows = VarArray::new();

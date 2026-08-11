@@ -365,6 +365,28 @@ pub struct HerdTelemetryState {
     /// `SubsistenceSection::default_hunt_kit_id`" reading every other unresolved row gives.
     #[serde(default)]
     pub default_kit_id: String,
+    /// **What ONE UNIT of this herd's biomass is MADE OF** (arc #527) — the material twin of
+    /// [`Self::provisions_per_biomass`], and the replacement for the retired `trade_per_biomass`.
+    ///
+    /// It composes at **any** floor by the same rule the scalar rates do —
+    /// `ceiling(floor) = max(0, B − floor·K) × rate` — which is what lets a client draw an inedible
+    /// quarry's payoff curve at all: a wolf's food rate is honestly `0`, and this is its whole
+    /// payload.
+    ///
+    /// **Empty is "no row", never zero.** Most species are made of nothing anyone builds with.
+    /// **Never summed** into one figure — that is the retired trade axis under a new name. Appended
+    /// (append-only).
+    #[serde(default)]
+    pub material_per_biomass: Vec<MaterialPayoff>,
+    /// **What ONE HUNTER brings home per turn, per material** — the material twin of
+    /// [`Self::per_worker_yield`], so a band preview clamps
+    /// `min(workers × per_worker_material, ceiling)` per material exactly as it does for food.
+    ///
+    /// **THIS is the rate a per-herd preview uses**, not the cohort's species-blind
+    /// `hunt_per_worker_provisions`. Same shape and same caveats as
+    /// [`Self::material_per_biomass`]. Appended (append-only).
+    #[serde(default)]
+    pub per_worker_material: Vec<MaterialPayoff>,
 }
 
 impl Default for HerdTelemetryState {
@@ -431,6 +453,9 @@ impl Default for HerdTelemetryState {
             // A herd nothing has described names no kit — the same "fall back to the hunt job's
             // default" reading the capture publishes for a species the roster cannot resolve.
             default_kit_id: String::new(),
+            // No material — the ordinary case, and an EMPTY list rather than a row of zeros.
+            material_per_biomass: Vec::new(),
+            per_worker_material: Vec::new(),
         }
     }
 }

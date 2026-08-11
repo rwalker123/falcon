@@ -1,7 +1,11 @@
+use std::collections::BTreeMap;
+
+use sim_runtime::MaterialPayoff;
+
 use super::*;
 use crate::fauna::{
     herd_capacity, herd_ecology, net_biomass_delta, reseeding_logistic_regrowth,
-    NO_RETREAT_STAGE_STAY,
+    NO_RETREAT_STAGE_STAY, ONE_UNIT_OF_BIOMASS,
 };
 use crate::forage::{
     field_fodder, forage_per_worker_biomass, patch_ecology, patch_fodder_per_biomass,
@@ -374,6 +378,33 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     .unwrap_or(0.0),
                 // No animal pays fodder; the field is present so both webs publish the same pair.
                 fodder_per_biomass: NO_ANIMAL_PAYS_FODDER,
+                // **WHAT A HUNT OF THIS HERD IS MADE OF** (arc #527) — the material twins of the two
+                // rates around them, and the reason an inedible quarry stops quoting nothing: a
+                // wolf's `provisions_per_biomass` and `per_worker_yield` are honestly `0`, and these
+                // carry its whole payload.
+                //
+                // **The species' OWN `hunt_yield.materials` rows** — the very rows
+                // `credit_material_yield` is handed at the take site — through the same two biomass
+                // terms every other field here uses. Nothing is re-derived, so a retune of a rate
+                // moves the quote and the payout together.
+                material_per_biomass: herd
+                    .map(|herd| {
+                        material_rates(
+                            fauna.hunt_materials_for(&herd.species),
+                            ONE_UNIT_OF_BIOMASS,
+                            FORECAST_OUTPUT_MULTIPLIER,
+                        )
+                    })
+                    .unwrap_or_default(),
+                per_worker_material: herd
+                    .map(|herd| {
+                        material_rates(
+                            fauna.hunt_materials_for(&herd.species),
+                            equipped_haul_rate,
+                            FORECAST_OUTPUT_MULTIPLIER,
+                        )
+                    })
+                    .unwrap_or_default(),
                 // **One hunter's BIOMASS throughput** — the term `systems::hunt_take`'s collection
                 // multiplies by the head-count, with no seasonal factor (the animal web has none).
                 // It is the crew half of the composition: the vector above turns a floor into a
@@ -844,6 +875,39 @@ fn patch_composition_info(
                         ..info.clone()
                     },
                 )
+        })
+        .collect()
+}
+
+/// **A source's material rows scaled onto one basis** — the material twin of
+/// `HuntYield::apply`, which does exactly this for the scalar accounts.
+///
+/// `biomass` is what the rate is being stated *per*: [`ONE_UNIT_OF_BIOMASS`] gives the per-biomass
+/// rate a client composes a ceiling from, one hunter's haul gives the per-worker throughput. The
+/// band's `output_multiplier` folds in here for the same reason it does on every other rate on the
+/// row — a material is another account of one harvest, not a parallel economy.
+///
+/// **Merged per material id, in id order**, the way `credit_material_yield` reports its deposit and
+/// `LocalStore::material_total` sums its store, so a published rate and a credited amount are
+/// comparable numbers. **Empty in, empty out** — "no row", never a zero.
+fn material_rates(
+    rows: &[crate::materials_config::MaterialYieldDef],
+    biomass: f32,
+    output_multiplier: f32,
+) -> Vec<MaterialPayoff> {
+    let mut totals: BTreeMap<&str, f32> = BTreeMap::new();
+    for row in rows {
+        let amount = row.per_biomass * biomass * output_multiplier;
+        if amount <= 0.0 {
+            continue;
+        }
+        *totals.entry(row.material.as_str()).or_insert(0.0) += amount;
+    }
+    totals
+        .into_iter()
+        .map(|(material_id, amount)| MaterialPayoff {
+            material_id: material_id.to_string(),
+            amount,
         })
         .collect()
 }

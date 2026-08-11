@@ -366,6 +366,9 @@ fn create_herds<'a>(
 ) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::HerdTelemetryState<'a>>>> {
     let mut entries = Vec::with_capacity(herds.len());
     for herd in herds {
+        // **Built before the parent table opens**, the ordinary FlatBuffers rule.
+        let material_per_biomass = create_material_payoffs(builder, &herd.material_per_biomass);
+        let per_worker_material = create_material_payoffs(builder, &herd.per_worker_material);
         let id = builder.create_string(herd.id.as_str());
         let label = builder.create_string(herd.label.as_str());
         let species = builder.create_string(herd.species.as_str());
@@ -471,6 +474,11 @@ fn create_herds<'a>(
                 stayFraction: herd.stay_fraction,
                 // The quarry's own default kit — appended last, so the slot stays positional.
                 defaultKitId: Some(default_kit_id),
+                // **What a hunt of this herd is MADE OF** — appended last (append-only wire, arc
+                // #527), the replacement for the retired `tradePerBiomass`/`perWorkerTrade`. An
+                // EMPTY vector is "no row", never "zero".
+                materialPerBiomass: Some(material_per_biomass),
+                perWorkerMaterial: Some(per_worker_material),
             },
         );
         entries.push(entry);
@@ -601,7 +609,7 @@ fn create_flora_shares<'a>(
 
 /// One rung's per-material quote, as a wire vector. Empty in, empty out — the "no row" reading the
 /// field's own contract rests on, so an absent quote never becomes a zero-valued one.
-fn create_material_payoffs<'a>(
+pub(crate) fn create_material_payoffs<'a>(
     builder: &mut FbBuilder<'a>,
     payoffs: &[MaterialPayoff],
 ) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::MaterialPayoff<'a>>>> {
