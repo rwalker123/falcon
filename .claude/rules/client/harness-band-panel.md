@@ -118,12 +118,21 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 226 `assert OK` lines, 327 `: PASS` ones and ZERO `FAIL` ones, over
+**A clean run exits 0 and prints 226 `assert OK` lines, 328 `: PASS` ones and ZERO `FAIL` ones, over
 89 frames.** (Five of those `PASS`es are `_assert_work_material_readouts`, the board half of closing
-the inedible quarry's `+0.00`; four more are the party PACK's, on `band_panel_worst_case_party`.
-**They are named rather than numbered from an offset** — this tally moved twice in one merge, once
-for arc #527 and once for the partly-equipped arc, and a claim of the form *"the five above 310"*
-survives neither.)
+the inedible quarry's `+0.00`; four more are the party PACK's, on `band_panel_worst_case_party`; one
+more is `_assert_denial_pelt_take`. **They are named rather than numbered from an offset** — this
+tally moved twice in one merge, once for arc #527 and once for the partly-equipped arc, and a claim
+of the form *"the five above 310"* survives neither.)
+
+**`_assert_denial_pelt_take` IS PNG-LESS, AND THAT IS FORCED RATHER THAN CHOSEN.** An inedible
+quarry's denial take line is what the claim is about, but re-targeting the deny sheet to the
+shared-tile wolf needs that herd in the world list at THAT point in the walk — and this harness's
+state order is load-bearing, so moving a roster push to suit one claim re-points every frame after
+it. The chain asserted is the real one (`denial_forecast` → `denial_take_bbcode`) against the same
+fixture table the chooser state renders, and **`band_panel_compose_deny`'s edible boar directly above
+is the live control**: its line must still read food and waste, or "state the materials" would be
+satisfied by a producer that replaced the food clause instead of joining it.
 
 **THE WORST-CASE PARTY CARRIES THE PACK CLAUSE, and its fixture holds TWO piles of one material at
 two ratings.** A batch is one pile at ONE RATING, so a fixture with one batch per material would pass

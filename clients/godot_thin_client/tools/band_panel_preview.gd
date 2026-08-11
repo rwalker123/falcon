@@ -382,6 +382,13 @@ const WORST_CASE_CARRY_CAP := 18
 ## states them as two terms. A fixture with one batch per material would pass just as well against a
 ## producer that summed them — which is the retired trade scalar rebuilt out of its own replacement.
 ## Sized apart so the two terms are distinguishable in the frame, and both clear the display floor.
+## What ONE killed wolf yields in hides on a DENIAL raid, and the id it yields them in. `hide` is a
+## real `materials.json` id; the catalogue ships no display name, so the id IS the display word.
+## Sized to clear the readout's two-decimal floor at every party size the table samples — a haul that
+## rounded to `0.00` would render no clause, which is indistinguishable from the defect.
+const DENIAL_PELT_MATERIAL_ID := "hide"
+const DENIAL_PELT_PER_ANIMAL := 0.4
+
 const WORST_CASE_PACK_MATERIAL_ID := "hide"
 const WORST_CASE_PACK_AMOUNTS := [4.5, 1.2]
 ## How the strip's pack-bearing row opens. The clause rides `Carried:` on a raiding party and
@@ -1587,6 +1594,19 @@ func _ready() -> void:
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
 	_assert_denial_viable()
+
+	# **THE INEDIBLE QUARRY'S OWN TAKE LINE**, asserted on the PRODUCER beside the rendered boar. Its
+	# `delivered_food` is honestly `0`, so the line stated its kills and stopped: a mission that
+	# destroys and salvages nothing, which is false — the party hauls every pelt.
+	#
+	# **PNG-LESS, AND THAT IS FORCED RATHER THAN CHOSEN.** Re-targeting this sheet to the shared-tile
+	# wolf would need that herd in the world list at THIS point in the walk, and this harness's state
+	# order is load-bearing — moving a roster push to suit one claim re-points every frame after it.
+	# The chain asserted is the real one (`denial_forecast` → `denial_take_bbcode`), against the same
+	# fixture table the chooser state renders, and the BOAR frame directly above is the live control:
+	# its line must still read food and waste, or "state the materials" would be satisfied by a
+	# producer that replaced the food clause instead of joining it.
+	_assert_denial_pelt_take()
 
 	# ---- THE KIT PICKER, on the sheet the roster was designed against ----------------------------
 	# **CLOSED.** The row sits directly under the party stepper and above the verdict, because a kit
@@ -8225,12 +8245,20 @@ func _shared_tile_raid_table(food_per_animal: float) -> Dictionary:
 ## carries every kill (`take.wasted` is empty). So the party hauls the WHOLE pelt yield and both
 ## waste halves are zero; inheriting the boar's food-bound carry share here would have quoted a wolf
 ## pack losing three quarters of its hides to a pack it cannot fill.
+## **AND WHAT IT DOES BRING HOME IS `delivered_material`.** With the food halves struck out, this
+## table's take line stated its kills and stopped — a mission that destroys and salvages nothing,
+## which is false: the party hauls every pelt. Composed off the row's own kill count so the haul moves
+## with the party, exactly as the food half does on the boar table beside it.
 func _denial_pelt_only_rows() -> Array:
 	var rows: Array = []
 	for row_variant in _denial_viable_rows():
 		var row: Dictionary = (row_variant as Dictionary).duplicate(true)
 		row["delivered_food"] = 0.0
 		row["wasted_food"] = 0.0
+		row[SourceForecast.TRIP_DELIVERED_MATERIAL_KEY] = [
+			{"material_id": DENIAL_PELT_MATERIAL_ID,
+				"amount": float(row.get("animals_killed", 0)) * DENIAL_PELT_PER_ANIMAL},
+		]
 		rows.append(row)
 	return rows
 
@@ -8756,6 +8784,32 @@ func _assert_forecastless_sheet_suppresses_estimates() -> void:
 
 ## The VIABLE denial form. The ABSENCES are half the claims — what this mission does not carry IS its
 ## specification, so a form that grew a floor picker would be as wrong as one that quoted no verdict.
+## **WHAT AN INEDIBLE QUARRY'S DENIAL RAID BRINGS HOME.** Its take line's food clause is correctly
+## absent — the render-only-when-non-zero rule, a wolf paying no meat — which for a release left the
+## line stating kills alone. The material clause is what it salvages, and it is asserted BY EQUALITY
+## over the whole line for `_assert_denial_viable`'s reason: half the claim is what the sentence must
+## not also say, and a `contains` passes on a line that also prints a false `0.00 food` or a
+## fabricated waste. The expectation is composed from the VOCABULARY and this fixture's own
+## arithmetic, never through `denial_take_bbcode`.
+##
+## **A WOLF WASTES NOTHING, and that is a fact about the PRODUCT** — `carry_room_biomass` answers
+## `NO_CARRY_BOUND` for a species paying no provisions, so the pack never fills and the party hauls
+## every kill. The absent waste clause is therefore part of the equality rather than an omission.
+func _assert_denial_pelt_take() -> void:
+	var quarry := SHARED_TILE_PELT_SPECIES
+	var killed: int = DENIAL_KILLS_ROW[DENIAL_PARTY - 1]
+	var row: Dictionary = _denial_pelt_only_rows()[DENIAL_PARTY - 1]
+	var forecast := SourceForecast.denial_forecast({}, row)
+	var got := SourceForecast.denial_take_bbcode(forecast, quarry)
+	var want := SourceForecast.DENIAL_TAKE_KILLS_FORMAT % [killed, quarry]
+	want += SourceForecast.DENIAL_TAKE_MATERIAL_FORMAT % [
+		SourceForecast.format_magnitude(float(killed) * DENIAL_PELT_PER_ANIMAL),
+		DENIAL_PELT_MATERIAL_ID]
+	_assert_band_panel(
+		"an inedible quarry's denial take states the pelts it salvages — want \"%s\", got \"%s\""
+			% [want, got],
+		got.contains(want))
+
 func _assert_denial_viable() -> void:
 	var quarry := "Wild Boar"
 	# Composed from the VOCABULARY, never from `denial_verdict_text` — an expectation re-derived

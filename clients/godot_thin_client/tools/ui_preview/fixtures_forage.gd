@@ -423,6 +423,80 @@ static func cash_basket_tile_fixture() -> Dictionary:
 	]
 	return tile
 
+## ---- THE CASH-CROP TILE THE COMPOSE SHEET IS JUDGED ON ------------------------------------------
+## **THE PATCH-LEVEL MATERIAL RATES, which are a DIFFERENT question from the crop picker's.** The
+## picker's `sow_material_payoff` / `cultivate_material_payoff` are per PLANT and per RUNG — what one
+## species would pay if you built on it. These two are the PATCH's own rates for the wild rung being
+## gathered right now, and they are what the compose sheet's yields row reads.
+##
+##   room at the food-peak floor = 84 − 0.5 × 120 = 24 biomass
+##   fibre ceiling               = 24 × 0.03       = 0.72 /turn
+##   tobacco ceiling             = 24 × 0.02       = 0.48 /turn
+##   three foragers (the cap)    = 3 × 0.09 / 0.06 = 0.27 fibre · 0.18 tobacco   ← the binding terms
+##
+## **THE CREW BINDS, NOT THE CEILING**, for the reason the wolf's does: a ceiling-bound frame renders
+## the same string whether or not the per-worker term is read at all, so the `min` it exists to prove
+## would be decorative.
+##
+## **TWO MATERIALS, NOT ONE, AND THAT IS THE POINT OF THE TILE.** A one-material patch passes just as
+## well against a producer that summed the vector into a single materials/turn figure — the retired
+## trade axis under a new name. Their amounts are deliberately unequal so a sum is visibly not either
+## of them.
+const CASH_PATCH_FIBRE_PER_BIOMASS := 0.03
+const CASH_PATCH_TOBACCO_PER_BIOMASS := 0.02
+const CASH_PATCH_FIBRE_PER_WORKER := 0.09
+const CASH_PATCH_TOBACCO_PER_WORKER := 0.06
+## The two ids are real `materials.json` ids, and the catalogue ships no display name — so the id IS
+## the display word, exactly as it is on the picker's basket rows and on a herd's readout.
+const CASH_PATCH_FIBRE_ID := "fibre"
+const CASH_PATCH_TOBACCO_ID := "tobacco"
+
+## **THE TILE FROM THE SCREENSHOT: 32% cotton, 26% tobacco, and a gather that banks both.** Its
+## compose sheet read `0.24 → 0.18 FOOD · — FODDER` and never mentioned the fibre and tobacco the
+## crew actually brings back, because `_forage_yield_model` passed FOUR arguments to `yield_rows`
+## where its hunt twin passed five. This fixture is what that frame is judged on.
+##
+## The staple share is deliberately kept: the food row must still read exactly as it did, or "quote
+## the materials" would be satisfied by a sheet that had stopped quoting the food.
+static func cash_crop_gather_tile_fixture() -> Dictionary:
+	var tile := sowable_tile_fixture()
+	tile["x"] = 69
+	tile["y"] = 13
+	tile["patch_material_per_biomass"] = [
+		{"material_id": CASH_PATCH_FIBRE_ID, "amount": CASH_PATCH_FIBRE_PER_BIOMASS},
+		{"material_id": CASH_PATCH_TOBACCO_ID, "amount": CASH_PATCH_TOBACCO_PER_BIOMASS},
+	]
+	# **THE SEASONAL WEIGHT IS ALREADY FOLDED INTO THIS TERM** (as it is into `per_worker_biomass`), so
+	# it is honestly EMPTY in a dead season and nothing may divide by it. The fixture states it at full
+	# season, which is what this tile is.
+	tile["patch_per_worker_material"] = [
+		{"material_id": CASH_PATCH_FIBRE_ID, "amount": CASH_PATCH_FIBRE_PER_WORKER},
+		{"material_id": CASH_PATCH_TOBACCO_ID, "amount": CASH_PATCH_TOBACCO_PER_WORKER},
+	]
+	tile["patch_composition"] = [
+		{"species": "wild_emmer", "role": "staple", "display_name": "Wild Emmer", "share": 0.42,
+			"can_cultivate": true, "can_sow": true,
+			"cultivate_yield_ratio": 2.70, "sow_yield_ratio": 3.20,
+			"cultivate_payoff": 1.35, "sow_payoff": 1.60,
+			"cultivate_fodder_payoff": 0.0, "sow_fodder_payoff": 0.0,
+			"cultivate_material_payoff": [], "sow_material_payoff": []},
+		{"species": "cotton", "role": "cash", "display_name": "Cotton", "share": 0.32,
+			"can_cultivate": true, "can_sow": true,
+			"cultivate_yield_ratio": 0.28, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.14, "sow_payoff": 0.0,
+			"cultivate_fodder_payoff": 0.0, "sow_fodder_payoff": 0.0,
+			"cultivate_material_payoff": [{"material_id": CASH_PATCH_FIBRE_ID, "amount": 0.43}],
+			"sow_material_payoff": [{"material_id": CASH_PATCH_FIBRE_ID, "amount": 1.08}]},
+		{"species": "tobacco", "role": "cash", "display_name": "Tobacco", "share": 0.26,
+			"can_cultivate": true, "can_sow": true,
+			"cultivate_yield_ratio": 0.22, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.11, "sow_payoff": 0.0,
+			"cultivate_fodder_payoff": 0.0, "sow_fodder_payoff": 0.0,
+			"cultivate_material_payoff": [{"material_id": CASH_PATCH_TOBACCO_ID, "amount": 0.31}],
+			"sow_material_payoff": [{"material_id": CASH_PATCH_TOBACCO_ID, "amount": 0.78}]},
+	]
+	return tile
+
 ## PER-TILE FLORA REALIZATION (Flora roster F4) — the SECOND Alluvial Plain tile. Same biome as
 ## `cash_basket_tile_fixture` (both "Alluvial Plain"), but a DIFFERENT realized basket: two tiles of
 ## one biome no longer carry the uniform per-biome roster, they carry a seeded per-tile SUBSET. This

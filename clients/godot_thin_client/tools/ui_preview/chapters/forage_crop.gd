@@ -806,6 +806,50 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("forage_crop_picker_cash")
 
+	# **STATE F5 — THE CASH-CROP GATHER SHEET, and the frame this whole pass exists for.** A tile 32%
+	# cotton and 26% tobacco composed a forage sheet reading `0.24 → 0.18 FOOD · — FODDER` and never
+	# mentioned the fibre and tobacco the gather actually banks: `_forage_yield_model` passed FOUR
+	# arguments to `yield_rows` where its hunt twin passed five, so the plant web never got the
+	# material vector the animal web had. Reported from a screenshot.
+	#
+	# **NO IMPROVEMENT COMPOSED** — this is the WILD rung, a plain gather, which is the state a player
+	# is in before they have decided anything. The crop picker's per-plant material rows are a
+	# different question on a different control (`land-readouts.md`); this row is what the crew brings
+	# home from the ground as it stands.
+	h._show_tile(ForageFx.cash_crop_gather_tile_fixture())
+	h._compose_forage(ForageFx.cash_crop_gather_tile_fixture())   # settle the source key first
+	h._hud._compose.set_forage_improvement("")
+	h._hud._compose.set_forage_species("")
+	h._compose_forage(ForageFx.cash_crop_gather_tile_fixture())
+	await h._settle()
+	await h._save("forage_cash_crop_gather")
+	# **THREE CLAIMS AND A CONTROL.** The two materials must both appear — a fixture with one would
+	# pass against a producer that summed the vector — their SUM must not, and the FOOD row must still
+	# read, or "quote the materials" is satisfied by a sheet that stopped quoting the food.
+	var cash_yields := Readout.yields_text(h._hud._drawercompose._compose_sheet)
+	var cash_crew: int = h._hud._compose.forage_count()
+	var fibre := float(cash_crew) * ForageFx.CASH_PATCH_FIBRE_PER_WORKER
+	var tobacco := float(cash_crew) * ForageFx.CASH_PATCH_TOBACCO_PER_WORKER
+	h._assert_hud("the cash-crop gather composes a crew at all", cash_crew > 0)
+	h._assert_hud("the forage sheet quotes the fibre its gather banks (got \"%s\")" % cash_yields,
+		cash_yields.contains(SourceForecast.format_magnitude(fibre))
+			and cash_yields.contains(ForageFx.CASH_PATCH_FIBRE_ID.to_upper()))
+	h._assert_hud("…and the tobacco beside it, as its OWN row",
+		cash_yields.contains(SourceForecast.format_magnitude(tobacco))
+			and cash_yields.contains(ForageFx.CASH_PATCH_TOBACCO_ID.to_upper()))
+	# **THE "NOT SUMMED" CLAIM IS STRUCTURAL, NOT NUMERIC.** A needle for the sum's DIGITS is a
+	# coincidence waiting to happen — this sheet already prints the food row's `after` reading, which
+	# collided with it exactly once — so the claim is that each material has a ROW OF ITS OWN, read
+	# back by account. A producer that summed the vector could only ever answer one row.
+	h._assert_hud("…as two SEPARATE rows, never one summed figure",
+		Readout.yields_account_number(h._hud._drawercompose._compose_sheet,
+			ForageFx.CASH_PATCH_FIBRE_ID) != Readout.YIELDS_ACCOUNT_ABSENT
+		and Readout.yields_account_number(h._hud._drawercompose._compose_sheet,
+			ForageFx.CASH_PATCH_TOBACCO_ID) != Readout.YIELDS_ACCOUNT_ABSENT)
+	h._assert_hud("…while the FOOD row still reads, so the materials did not replace it",
+		cash_yields.contains(SourceForecast.YIELD_ACCOUNT_UNITS[
+			SourceForecast.YIELD_ACCOUNT_FOOD].to_upper()))
+
 	# State F4 per-tile flora realization — the SECOND Alluvial Plain tile. Same biome as the frame
 	# above, but a DIFFERENT realized basket (Cotton 55% + Flax 45% vs Wild Emmer 70% + Flax 30%): two
 	# tiles of one biome now carry a seeded per-tile subset, not the uniform per-biome roster. Rendered

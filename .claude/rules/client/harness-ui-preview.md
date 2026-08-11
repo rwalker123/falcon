@@ -554,7 +554,20 @@ built from the code under test can only agree with itself. **They are the SIM's 
 from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
 payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-**A clean run is 299 frames / 845 `PASS`, exit 0.** The partly-equipped arc (issue #520) is worth
+**A clean run is 300 frames / 853 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
+three times in one arc and once across a merge, and a running total kept by addition would be wrong
+by now.
+
+**`forage_cash_crop_gather` is the newest frame and carries five `PASS`**: the crew composes at all,
+each of the tile's two materials is quoted, **each has a ROW OF ITS OWN**, and the FOOD row still
+reads. That last one is not padding — "quote the materials" is satisfied by a sheet that stopped
+quoting the food, and the frame exists because a cash-crop tile's sheet quoted neither. The
+two-rows claim is deliberately STRUCTURAL (`Readout.yields_account_number` per account) rather than a
+needle for the sum's digits: that needle collided with the food row's own `after` reading the first
+time it was written, which is a coincidence any numeric negative on this sheet is one tuning away
+from.
+
+The partly-equipped arc (issue #520) is worth
 **three frames and fourteen `PASS`** of that, in three groups:
 
 - **`band_kit_short` carries seven** — the row's fraction on the spears' own face, the popover's

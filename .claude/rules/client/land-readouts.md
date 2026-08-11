@@ -286,6 +286,29 @@ paths:
     so a tended cotton patch really does keep paying its volunteers' calories at a rate below gathering
     the tile wild. That surrendered calorie is the cost its material clause is the benefit of — the
     land-use tension, rendered.
+  ### THE PATCH'S OWN MATERIAL RATES ARE A DIFFERENT QUESTION FROM THE PICKER'S
+
+  Two surfaces on this card quote a plant's materials and they answer different questions. Confusing
+  them is the easiest mistake here, because both are `{material_id, amount}` rows.
+
+  | | asks | reads | renders on |
+  |---|---|---|---|
+  | **the CROP PICKER's rows** | what would ONE SPECIES pay if you built on it? | `sow_material_payoff` / `cultivate_material_payoff`, per composition entry, per RUNG | each basket row of the picker |
+  | **the PATCH's rates** | what does THIS GROUND pay the crew standing on it now? | `patch_material_per_biomass` / `patch_per_worker_material` | the compose sheet's yields row |
+
+  **THE COMPOSE SHEET'S ROW WAS MISSING FOR A RELEASE, and the client half was one argument.** A tile
+  32% cotton and 26% tobacco composed a forage sheet reading `0.24 → 0.18 FOOD · — FODDER` and never
+  mentioned the fibre and tobacco the gather actually banks (reported from a screenshot):
+  `_forage_yield_model` passed FOUR arguments to `yield_rows` where its hunt twin passed five. Now it
+  reads `0.32 → 0.15 FOOD · 0.09 FIBRE · 0.06 TOBACCO`, one row per material beside the food and the
+  feed, through the same `forecast_inputs` composition the animal web uses — the keys are
+  prefix-aware, so a patch and a herd are one derivation. `labor-ui.md` → "THE PLANT WEB GOT THE SAME
+  ARGUMENT" owns the mechanism; **`forage_cash_crop_gather` is the frame.**
+
+  **A TILE-LEVEL RUNG FIGURE WOULD BE WRONG, not merely redundant** — it would sum across the basket,
+  and summing is the retired trade axis under a new name. That is why `FORECAST_PAYOFF_MATERIAL_KEYS`
+  has HERD rungs only and the plant web is deliberately absent from it.
+
   ### WHAT A CASH CROP PAYS, PER MATERIAL (arc #527)
 
   The row's non-food clause used to be a single `trade` scalar. **That account is retired** — the sim

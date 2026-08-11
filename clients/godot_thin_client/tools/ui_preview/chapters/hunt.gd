@@ -580,6 +580,24 @@ func _pelt_only_wolf_herd() -> Dictionary:
 		"hunt_policy_ceilings": {
 			"sustain": 0.0, "surplus": 0.0, "deplete": 0.0, "eradicate": 0.0,
 		},
+		# **THE TWO INVESTMENT RUNGS' PAYOFFS, AS VECTORS.** `pastoral_yield` / `corral_yield` are
+		# PROVISIONS, so a wolf's are honestly `0` and both rungs advertised `0.00 food` or nothing —
+		# the two rungs a player would actually take on such a species offering no reason to take
+		# them. Corral above Tame, so the ladder still reads as ascending in the account it pays.
+		"pastoral_yield": 0.0,
+		"corral_yield": 0.0,
+		# The two rungs' BUILD DIPS, without which `improvement_forecast` declines to quote the deal at
+		# all (`fraction <= 0` is the wire saying it does not describe this rung on this source) and
+		# the payoff below would be asserted against a `{}`. Real fractions, so the frame exercises the
+		# quotable path rather than the refusal one.
+		"tame_build_fraction": 0.25,
+		"corral_build_fraction": 0.25,
+		"pastoral_material": [
+			{"material_id": WOLF_MATERIAL_ID, "amount": WOLF_PASTORAL_HIDE},
+		],
+		"corral_material": [
+			{"material_id": WOLF_MATERIAL_ID, "amount": WOLF_CORRAL_HIDE},
+		],
 		"tile_info": HerdFx.plain_herd_tile_info(),
 	}
 
@@ -615,6 +633,10 @@ const WOLF_CAPACITY := 400.0
 const WOLF_MATERIAL_ID := "hide"
 const WOLF_MATERIAL_PER_BIOMASS := 0.02
 const WOLF_MATERIAL_PER_WORKER := 0.11
+## What each INVESTMENT rung pays once it stands, per turn, in hides. Ascending Tame < Corral, in the
+## only account this species has, so the ladder reads as a ladder rather than as two equal offers.
+const WOLF_PASTORAL_HIDE := 0.34
+const WOLF_CORRAL_HIDE := 0.52
 ## What ONE hauled wolf is worth in hides on a RAID. The trip line rounds its payload to whole units
 ## (a trip is not a rate), so this is sized to clear 1.0 at the frame's kill counts — a payload that
 ## rounded to `~0` would render a clause the reader could not tell from a suppressed one.
@@ -1457,6 +1479,32 @@ func run(harness) -> void:
 		peak_cap.contains(WOLF_MATERIAL_ID) and strip_cap.contains(WOLF_MATERIAL_ID))
 	h._assert_hud("…and a deeper floor quotes MORE of it — the ceiling composes at the floor",
 		strip_cap != peak_cap)
+	# **THE TWO INVESTMENT RUNGS QUOTE THEIR PAYOFF NOW, AND THEY QUOTED NOTHING BEFORE.** `Tame` and
+	# `Corral` pay `pastoral_yield` / `corral_yield`, which are PROVISIONS — honestly `0` on a wolf —
+	# so the two rungs a player would take on such a species advertised no reason to take them.
+	#
+	# **DRIVEN THROUGH THE PRODUCER, PNG-LESS, AND THAT IS FORCED RATHER THAN CHOSEN.** This wolf's
+	# `husbandry_ceiling` is `wild`, so the sheet renders NO Tame or Corral rung to read a face off —
+	# which is correct behaviour and is precisely why the claim cannot be made on the render. The
+	# chain asserted is the real one (`improvement_forecast` → `payoff_material` → `_payoff_terms`),
+	# and it is asserted as a PAIR with the ascending claim: a payoff appearing on both rungs at one
+	# number would satisfy "quotes something" and still misread the ladder.
+	var tame_face: String = h._hud._drawercompose._improvement_payoff_terms(
+		wolf, SourceForecast.LABOR_KIND_HUNT, HudComposeVocab.BARE_FORECAST_PREFIX,
+		SourceForecast.IMPROVEMENT_TAME, h._hud._band_labor._player_band)
+	var corral_face: String = h._hud._drawercompose._improvement_payoff_terms(
+		wolf, SourceForecast.LABOR_KIND_HUNT, HudComposeVocab.BARE_FORECAST_PREFIX,
+		SourceForecast.IMPROVEMENT_CORRAL, h._hud._band_labor._player_band)
+	h._assert_hud("the wolf's Tame rung quotes the hides it would pay (got \"%s\")" % tame_face,
+		tame_face.contains(WOLF_MATERIAL_ID)
+			and tame_face.contains(SourceForecast.format_magnitude(WOLF_PASTORAL_HIDE)))
+	h._assert_hud("…and its Corral rung quotes MORE of them, so the ladder still ascends (got \"%s\")"
+			% corral_face,
+		corral_face.contains(WOLF_MATERIAL_ID)
+			and corral_face.contains(SourceForecast.format_magnitude(WOLF_CORRAL_HIDE)))
+	h._assert_hud("…and neither quotes a food figure a wolf does not pay",
+		not tame_face.contains(SourceForecast.YIELD_ACCOUNT_FOOD)
+			and not corral_face.contains(SourceForecast.YIELD_ACCOUNT_FOOD))
 	# **THE CHART ON AN INEDIBLE QUARRY** (the wolf half of the five chart cases). The readout above it
 	# carries no food line at all, and the chart must not care: a floor is a fraction of BIOMASS, and
 	# the crew targets divide by `perWorkerBiomass`, which is positive on a wolf where both the food

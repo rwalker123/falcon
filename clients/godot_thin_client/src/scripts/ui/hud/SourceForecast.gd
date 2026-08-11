@@ -667,9 +667,10 @@ const FORECAST_PAYOFF_KEYS := {
 }
 # **THE TRADE HALF OF THAT PAYOFF IS RETIRED** (`FORECAST_PAYOFF_TRADE_KEYS`, arc #527) along with
 # `tended_trade` / `field_trade` / `pastoral_trade` / `corral_trade` on the wire. A prepared source's
-# non-food product is MATERIALS, which no rung face can state as one per-turn number — and the sim
-# publishes no per-rung material quote for a HERD at all. The crop picker states the plant web's, per
-# material, from the composition entry's own `sow_material_payoff` / `cultivate_material_payoff`.
+# non-food product is MATERIALS, which are a VECTOR and never one per-turn number: the HERD rungs
+# state theirs through `FORECAST_PAYOFF_MATERIAL_KEYS` below, and the crop picker states the plant
+# web's per PLANT from the composition entry's own `sow_material_payoff` /
+# `cultivate_material_payoff`.
 #
 # The FODDER half survives. **PLANT RUNGS ONLY, and that asymmetry is structural rather than pending work:**
 # fodder is feed grown for penned animals, and no animal pays it (`fauna_config::YieldAccounts` fills
@@ -677,6 +678,20 @@ const FORECAST_PAYOFF_KEYS := {
 const FORECAST_PAYOFF_FODDER_KEYS := {
     "cultivate": "tended_fodder",
     "sow": "field_fodder",
+}
+# **AND THE MATERIAL HALF, WHICH IS A VECTOR AND THEREFORE NOT THE TRADE SCALAR RETURNING.** The two
+# HERD rungs quoted nothing at all for an inedible quarry: `corral_yield` / `pastoral_yield` are
+# provisions, a wolf's are honestly `0`, and the face read `0.00 food` or nothing. `corralMaterial` /
+# `pastoralMaterial` are what a prepared herd actually pays, one row per material, so a Tame or a
+# Corral on a wolf finally states a payoff.
+#
+# **THE PLANT WEB IS ABSENT HERE ON PURPOSE.** A patch's material payoff is per PLANT and per rung
+# (`sow_material_payoff` / `cultivate_material_payoff` on each composition entry), which the crop
+# picker states row by row; a single tile-level rung figure would sum across plants, and summing is
+# the retired axis under a new name.
+const FORECAST_PAYOFF_MATERIAL_KEYS := {
+    "corral": "corral_material",
+    "tame": "pastoral_material",
 }
 # The RUNNING COST the payoff is paid against. Only the pen has one: a corralled herd is a managed
 # population that eats from the keeper's larder every turn (`pen_upkeep`), and `corral_yield` is the
@@ -2366,6 +2381,11 @@ const DENIAL_VERDICTS := {
 # figure, so the line states the FOOD left standing dead on the range and nothing else.
 const DENIAL_TAKE_KILLS_FORMAT := "kills ≈%d %s"
 const DENIAL_TAKE_FOOD_FORMAT := " · brings home %s food"
+## Its MATERIAL twin, one clause per material — ` · brings home 3.20 hide`. The verb is repeated
+## rather than the two accounts sharing one "brings home", because the food clause is optional and a
+## shared verb would strand the materials on a quarry that pays no meat — which is precisely the
+## quarry this clause exists for.
+const DENIAL_TAKE_MATERIAL_FORMAT := " · brings home %s %s"
 const DENIAL_TAKE_LEFT_FORMAT := " · leaves %s on the range"
 # §7.2 — WORKERS ABOVE THE HOLD NUMBER ARE STILL NEVER RELEASED. At-the-floor is the most reversible
 # condition in the model (drop the floor, or let the season move the hold number, and they are wanted
@@ -2808,12 +2828,19 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         # **A RUNG-3 MANAGED SOURCE HAS NO BURST TO SPEND.** The sim never draws a Field or a built Pen
         # down, so its payoff IS its every-turn rate: now and after are the same number, and the
         # readout renders one reading rather than an arrow pointing at itself.
+        # **A MANAGED HERD'S MATERIAL PAYOFF IS ITS RUNG'S OWN VECTOR** — a built Pen or a tamed herd
+        # pays `corral_material` / `pastoral_material` every turn, which is the whole of what a
+        # prepared inedible quarry is worth. A managed PATCH has no entry in the table: a plant's
+        # materials are per PLANT, stated row by row on the crop picker, and a tile-level figure would
+        # sum across the basket.
+        if FORECAST_PAYOFF_MATERIAL_KEYS.has(rung):
+            ceiling_material = material_payoff_rows(
+                src.get(prefix + String(FORECAST_PAYOFF_MATERIAL_KEYS[rung]), []))
         hold_ceiling = ceiling
         hold_ceiling_fodder = ceiling_fodder
-        # **A MANAGED RUNG QUOTES NO MATERIAL, and that is the wire's answer rather than a gap this
-        # layer should paper over.** A rung's payoff fields are scalars; the crop picker states a
-        # plant's materials per RUNG from its own `sow_material_payoff` / `cultivate_material_payoff`,
-        # which is a different question asked on a different surface (`land-readouts.md`).
+        # **A RUNG-3 MANAGED SOURCE HAS NO BURST TO SPEND**, in every account: its payoff IS its
+        # every-turn rate, so the hold vector is the room vector.
+        hold_ceiling_material = ceiling_material
     else:
         # ONE composition, both webs — the terms it reads are published identically by
         # `HerdTelemetryState` and `ForagePatchState`, which is what collapsed two branches into none.
@@ -2850,8 +2877,17 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
     per_worker *= dip
     per_worker_fodder *= dip
     # **THE DIP RIDES THE MATERIAL CREW TERM TOO**, for the reason it rides the other two: a crew
-    # preparing a rung is not harvesting at full rate, whatever the account. Herd-side only today —
-    # a patch publishes no per-worker material vector, and reads an empty one.
+    # preparing a rung is not harvesting at full rate, whatever the account.
+    #
+    # **BOTH WEBS PUBLISH IT**, and the plant one arrived second: a cash-crop patch's gather banks
+    # fibre and tobacco, and until this reached the wire the forage compose sheet quoted only the food
+    # and the feed. It reads through the SAME prefixed key as the herd's, which is what let one
+    # composition serve both — see `FORECAST_MATERIAL_PER_BIOMASS_KEY`.
+    #
+    # **THE PATCH'S TERM HAS THE SEASONAL WEIGHT ALREADY FOLDED IN**, exactly as `per_worker_biomass`
+    # does, so it is honestly EMPTY in a dead season and must NOT be divided by anything here. A
+    # client that re-applied the weight would double it; one that recovered a rate by dividing by it
+    # would divide by zero on the very tile the emptiness is describing.
     var per_worker_material := scaled_material_rows(
         src.get(prefix + FORECAST_PER_WORKER_MATERIAL_KEY, []), dip)
     # WHOLE-ANIMAL HUNT: a take of whole animals (`food_per_animal` = one animal's yield in food; 0 or
@@ -2978,6 +3014,12 @@ static func improvement_forecast(src: Dictionary, kind: String, prefix: String, 
     var payoff_fodder := 0.0
     if FORECAST_PAYOFF_FODDER_KEYS.has(improvement):
         payoff_fodder = float(src.get(prefix + String(FORECAST_PAYOFF_FODDER_KEYS[improvement]), 0.0))
+    # …and the MATERIAL half of the payoff, a VECTOR. Herd rungs only (see
+    # `FORECAST_PAYOFF_MATERIAL_KEYS`), so a plant rung resolves empty and its deal row is unchanged.
+    var payoff_material: Array[Dictionary] = []
+    if FORECAST_PAYOFF_MATERIAL_KEYS.has(improvement):
+        payoff_material = material_payoff_rows(
+            src.get(prefix + String(FORECAST_PAYOFF_MATERIAL_KEYS[improvement]), []))
     var feed_rung: bool = FORECAST_FEED_KEYS.has(improvement)
     var feed := 0.0
     if feed_rung:
@@ -2997,6 +3039,7 @@ static func improvement_forecast(src: Dictionary, kind: String, prefix: String, 
         "ceiling_fodder": float(base_forecast["ceiling_fodder"]),
         "payoff": payoff,
         "payoff_fodder": payoff_fodder,
+        "payoff_material": payoff_material,
         "feed_rung": feed_rung,
         "feed": feed,
         # Which account's zero is worth printing on any of the three terms (§7.7).
@@ -4004,9 +4047,14 @@ static func denial_forecast(herd: Dictionary, row: Dictionary, band: Dictionary 
             horizon_cohort if not horizon_cohort.is_empty() else band),
         "animals": int(row.get("animals_killed", 0)),
         "food": float(row.get("delivered_food", 0.0)),
+        # …and the same haul per MATERIAL. A denial raid on an INEDIBLE quarry brings home nothing
+        # else, so without this its take line stated its kills and stopped — the mission's one
+        # consolation, unrendered.
+        TRIP_DELIVERED_MATERIAL_KEY: material_payoff_rows(
+            row.get(TRIP_DELIVERED_MATERIAL_KEY, [])),
         # The FOOD wasted — killed and left standing dead on the range. It carried a trade twin until
-        # arc #527 retired that account; what a kill is worth beyond meat is materials, which this row
-        # states no figure for.
+        # arc #527 retired that account; the sim states no per-material WASTE for a denial row, so the
+        # waste clause is food alone while the haul clause above is a vector.
         "wasted": float(row.get("wasted_food", 0.0)),
     }
 
@@ -4170,6 +4218,14 @@ static func denial_take_bbcode(forecast: Dictionary, herd_name: String) -> Strin
     var food := float(forecast.get("food", 0.0))
     if has_component(food):
         text += DENIAL_TAKE_FOOD_FORMAT % format_magnitude(food)
+    # …and what it brings home in MATERIALS, one clause per material under the same rule. On an
+    # inedible quarry this is the whole of the haul: the raid's kills used to be all its take line
+    # could state, which read as a mission that destroys and salvages nothing.
+    for row in material_payoff_rows(forecast.get(TRIP_DELIVERED_MATERIAL_KEY, [])):
+        var amount := float(row[MATERIAL_PAYOFF_AMOUNT_KEY])
+        if has_component(amount):
+            text += DENIAL_TAKE_MATERIAL_FORMAT % [
+                format_magnitude(amount), String(row[MATERIAL_PAYOFF_ID_KEY])]
     # …and the waste under the same rule, so nothing here can render a fabricated `0.00`.
     var wasted := denial_waste_face(forecast)
     if wasted != "":

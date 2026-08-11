@@ -732,6 +732,18 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
     # leave the engagement arm's key defaulted and the arm drops out.
     var actual_fodder := SourceForecast.expected_yield_account(
         forecast, workers, band, "per_worker_fodder", "ceiling_fodder")
+    # **WHAT THE CREW BANKS IN MATERIALS, AT THIS FLOOR** — `min(workers × per_worker, ceiling(floor))`
+    # per material, the SAME clamp the food and fodder accounts take and the same one the hunt sheet
+    # already applied. **This is the argument the plant web never got**: a tile 32% cotton and 26%
+    # tobacco composed a sheet reading `0.24 → 0.18 FOOD · — FODDER` and never mentioned the fibre and
+    # tobacco the gather actually banks, because this model passed FOUR arguments to `yield_rows`
+    # where its hunt twin passed five.
+    #
+    # `expected_materials` reads the forecast's own two vectors, both of which the patch publishes
+    # under the same prefixed keys the herd does — which is why one composition serves both webs and
+    # this is a call rather than a second derivation.
+    var materials := SourceForecast.scaled_material_rows(
+        SourceForecast.expected_materials(float(workers), forecast, "material_ceiling"), output)
     var zero_account := String(forecast["zero_account"])
     # THE STEADY-STATE TAKE, one `min` against a different ceiling — the SAME `expected_yield_account`,
     # reached by key, so the burst and the hold rate cannot be computed two ways. Composed only when
@@ -747,7 +759,7 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
             SourceForecast.YIELD_ACCOUNT_FODDER: SourceForecast.expected_yield_account(
                 forecast, workers, band, "per_worker_fodder", "hold_ceiling_fodder"),
         }
-    var rows := SourceForecast.yield_rows(actual, actual_fodder, zero_account, after)
+    var rows := SourceForecast.yield_rows(actual, actual_fodder, zero_account, after, materials)
     if rows.is_empty():
         # The patch pays in NO account at all — there is no line to draw rather than a zero to print.
         return {}
@@ -776,7 +788,7 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
         YIELD_MODEL_ROWS: rows,
         # The joined sentence has no room for the reason, so it must not promise the account at all.
         YIELD_MODEL_TEXT: SourceForecast.yield_components(
-            actual, banked_fodder, zero_account),
+            actual, banked_fodder, zero_account, materials),
         # **THE FODDER CEILING COMPARISON STAYS, LOCK OR NO LOCK, and deleting it is the plausible
         # wrong move.** The take draws the same biomass down whether or not the crew banks the hay, so
         # the drawdown is unchanged — and on a hay-only patch this comparison is the only drawdown
@@ -1165,8 +1177,14 @@ func _payoff_terms(deal: Dictionary, band: Dictionary) -> String:
     if deal.is_empty():
         return ""
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
+    # **THE MATERIAL HALF OF THE PAYOFF, and it is the whole payoff on an inedible quarry.** Tame and
+    # Corral quoted `0.00 food` or nothing at all for a wolf, because `pastoral_yield` / `corral_yield`
+    # are provisions and a wolf's are honestly zero — so the two rungs a player would actually take on
+    # such a species advertised no reason to take them. Scaled by the band's output exactly as the two
+    # scalars are: it is the same take through the same crew.
     return SourceForecast.picker_products(float(deal["payoff"]) * output,
-        float(deal["payoff_fodder"]) * output)
+        float(deal["payoff_fodder"]) * output, SourceForecast.YIELD_ACCOUNT_FOOD,
+        SourceForecast.scaled_material_rows(deal.get("payoff_material", []), output))
 
 ## THE overdraw test: a take above the source's renewable-sustainable ceiling (by more than the
 ## epsilon) draws the source down. One definition, shared by the confirmed allocation rows
@@ -2048,9 +2066,16 @@ func _forage_floor_takes(tile_info: Dictionary, band: Dictionary) -> Dictionary:
         var forecast := _forage_forecast(tile_info, band, SourceForecast.floor_for_preset(preset))
         if not bool(forecast["known"]):
             continue
+        # **THE MATERIAL CEILING COMPOSES AT THIS PRESET'S OWN FLOOR**, by the same
+        # `max(0, B − floor·K) × rate` rule the two scalars take — which is the whole reason
+        # `material_per_biomass` is a per-biomass RATE rather than a pre-composed ceiling. **No lock
+        # applies to it**: the wild-fodder gate is Foddering's, a claim about FEED and about the
+        # faction's knowledge of penning, and a gatherer banks a cash crop's fibre whether or not it
+        # has ever kept a pen.
         takes[preset] = SourceForecast.extractive_take_pair(
             float(forecast["ceiling"]),
-            0.0 if locked else float(forecast["ceiling_fodder"]), zero_account)
+            0.0 if locked else float(forecast["ceiling_fodder"]), zero_account,
+            forecast["material_ceiling"])
     return takes
 
 

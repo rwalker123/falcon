@@ -2406,8 +2406,18 @@ cohort carries `expeditionForecastHorizonTurns` the sentence quotes it:
 On a hunt an unhauled kill is an occasional overflow and wears `HUNT_FORECAST_WARN_GLYPH`'s `⚠`; on a
 raid it is essentially the whole take and it is the **point** of the mission. `denial_take_bbcode` is
 therefore a quiet `INK_DIM` line — `kills ≈55 Wild Boar · brings home 6.00 food · leaves 214.00 on the
-range` — with the account rendered only when the quarry pays it (the render-only-when-non-zero rule),
+range` — with each account rendered only when the quarry pays it (the render-only-when-non-zero rule),
 and no alarm glyph anywhere.
+
+**AND IT SALVAGES MATERIALS, which on an inedible quarry is the whole of what it brings home.** The
+line stated its kills and stopped for a wolf pack — a mission that destroys and salvages nothing,
+which is false: `carry_room_biomass` answers `NO_CARRY_BOUND` for a species paying no provisions, so
+the pack never fills and the party hauls every pelt. `DenialRow.delivered_material` is what it lands,
+one ` · brings home 22.00 hide` clause per material, **never summed**. **The verb is repeated rather
+than shared with the food clause**: that clause is optional, and a shared "brings home" would strand
+the materials on a quarry that pays no meat — precisely the quarry this clause exists for. The sim
+states no per-material WASTE for a denial row, so the clause below is food alone while this one is a
+vector.
 
 **RETIRED — the waste PAIR (arc #527).** The sim published `wastedFood` **and `wastedTrade`** out of
 one `HuntYield::apply` over the same wasted biomass, so a kill left on the range took its hides with

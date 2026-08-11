@@ -3631,11 +3631,13 @@ the whole of the rule:
 
 | field | on | what it is | who reads it |
 |---|---|---|---|
-| `material_per_biomass` | a herd | what ONE UNIT of its biomass is MADE OF, per material | the ceiling, composed at the dragged floor |
-| `per_worker_material` | a herd | what ONE HUNTER brings home per turn, per material | the crew term of the preview's `min` |
+| `material_per_biomass` | a herd **and a patch** | what ONE UNIT of its biomass is MADE OF, per material | the ceiling, composed at the dragged floor |
+| `per_worker_material` | a herd **and a patch** | what ONE WORKER brings home per turn, per material | the crew term of the preview's `min` |
+| `corral_material` / `pastoral_material` | a herd | what the built RUNG pays once it stands | the two investment rungs' payoff faces |
 | `material_yield` | a labor assignment | what the source actually CREDITED this turn | the board row, the map label, the inspector strip |
 | `delivered_material` | a `HuntTripForecast` row | what a whole TRIP lands, per material | the launch sheet's raid line, its readout box, its preset faces |
 | `material_batches` | a cohort (`PopulationCohortState`) | what is IN THE PACK right now, per pile | the in-flight party's `Carried:` row |
+| `delivered_material` | a `DenialRow` too | what a DENIAL raid salvages, per material | the denial sheet's take line |
 
 - **THE TWO RATES ARE THE FOOD SIDE'S OWN TERMS, ONE ACCOUNT OUT.** `material_per_biomass` is the
   twin of `provisionsPerBiomass`, so `forecast_inputs` composes `ceiling(floor) = max(0, B − floor·K)
@@ -3673,6 +3675,66 @@ the whole of the rule:
   which printed a bare `0.22` with nothing saying what it was.) **They also answer the ZERO
   question**: a source paying a material pays SOMETHING, so no zero survives beside it, and a wolf
   never reads `0.00 food · 0.22 hide`.
+### THE PLANT WEB GOT THE SAME ARGUMENT, ONE RELEASE LATE (the cash-crop compose sheet)
+
+A tile 32% cotton and 26% tobacco composed a forage sheet reading `0.24 → 0.18 FOOD · — FODDER` and
+never mentioned the fibre and tobacco the gather actually banks. Reported from a screenshot. The
+client half was **one argument**: `_forage_yield_model` ended with
+
+```gdscript
+var rows := SourceForecast.yield_rows(actual, actual_fodder, zero_account, after)
+```
+
+— four arguments, where its hunt twin already passed five. **The bug is worth naming precisely,
+because "the plant web has no materials" was never true and nothing in the code said it was**: the
+composition was shared, the keys were prefix-aware, and the only thing missing was the call.
+
+- **ONE COMPOSITION SERVES BOTH WEBS, which is why this was a call and not a derivation.**
+  `forecast_inputs` reads `prefix + FORECAST_MATERIAL_PER_BIOMASS_KEY` and
+  `prefix + FORECAST_PER_WORKER_MATERIAL_KEY`; a patch spells them `patch_`-prefixed on `tile_info`
+  and bare in `forage_patch_lookup()`, a herd spells them bare. So the patch's ceiling composes at the
+  dragged floor by the same `max(0, B − floor·K) × rate` rule, and `expected_materials` clamps
+  `min(workers × rate, ceiling)` per material exactly as the hunt sheet does.
+- **THE PATCH'S PER-WORKER TERM HAS THE SEASONAL WEIGHT ALREADY FOLDED IN**, as `per_worker_biomass`
+  does — so it is honestly EMPTY in a dead season and **nothing may divide by it**. A client that
+  re-applied the weight would double it; one that recovered a rate by dividing by it would divide by
+  zero on the very tile the emptiness describes.
+- **THE FLOOR PRESETS QUOTE IT TOO, and the wild-fodder LOCK does not reach it.** That gate is
+  Foddering's — a claim about FEED and about whether the faction has learned to keep a pen — and a
+  gatherer banks a cash crop's fibre whether or not it ever has.
+- **THE CROP PICKER IS A DIFFERENT QUESTION AND STAYS ONE.** Its `sow_material_payoff` /
+  `cultivate_material_payoff` are per PLANT and per RUNG — what one species would pay if you built on
+  it. These two are the PATCH's rates for the wild rung being gathered right now. A tile-level rung
+  figure would sum across the basket, and summing is the retired axis under a new name.
+
+**THE TWO INVESTMENT RUNGS ON THE ANIMAL WEB WERE THE OTHER MISS.** `corral_yield` /
+`pastoral_yield` are PROVISIONS, so an inedible quarry's are honestly `0` and both rungs advertised
+`0.00 food` or nothing at all — the two rungs a player would actually take on such a species offering
+no reason to take them. `FORECAST_PAYOFF_MATERIAL_KEYS` (`corral_material` / `pastoral_material`) is
+the material half of that payoff, read by `improvement_forecast` into `payoff_material` and by
+`forecast_inputs`' MANAGED branch into the built rung's ceiling. **The plant web is deliberately
+absent from that table**, for the crop-picker reason above.
+
+**AND THE DENIAL ROW.** A denial raid on an inedible quarry stated its kills and stopped — a mission
+that destroys and salvages nothing, which is false: the party hauls every pelt (`carry_room_biomass`
+answers `NO_CARRY_BOUND` for a species paying no provisions, so the pack never fills). `DenialRow`'s
+own `delivered_material` is what it brings home, one ` · brings home 22.00 hide` clause per material.
+**The verb is repeated rather than shared with the food clause**, because that clause is optional and
+a shared verb would strand the materials on a quarry that pays no meat — precisely the quarry the
+clause exists for. The sim states no per-material WASTE for a denial row, so the waste clause stays
+food alone while the haul clause beside it is a vector.
+
+**Frames.** **`forage_cash_crop_gather`** — the screenshot's tile, on the WILD rung with no
+improvement composed, reading `0.32 → 0.15 FOOD · 0.09 FIBRE · 0.06 TOBACCO`. Five claims: the crew
+composes at all, each material is quoted, **each has a ROW OF ITS OWN** (a structural claim, not a
+needle for the sum's digits — that needle collided with the food row's `after` reading exactly once),
+and the FOOD row still reads, or "quote the materials" would be satisfied by a sheet that stopped
+quoting the food. `herd_hunt_pelts_only` gained the two rung payoffs, asserted PNG-less through
+`improvement_forecast` → `_payoff_terms`: that wolf's `husbandry_ceiling` is `wild`, so the sheet
+renders no Tame or Corral rung to read a face off, which is correct behaviour and exactly why the
+claim cannot be made on the render. `band_panel_compose_deny`'s edible boar is the live control for
+the denial take, whose inedible half is likewise asserted on the producer.
+
 ### THE EXPEDITION HALF: what a raid LANDS, and what is in the pack on the way home
 
 A raid on an inedible quarry read as a DENIAL MISSION — "brings nothing home" — for the release in
