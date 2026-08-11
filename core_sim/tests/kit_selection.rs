@@ -297,6 +297,7 @@ fn spawn_party(
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
                 pending_reveal: Vec::new(),
+                pending_contacts: Default::default(),
                 kit,
             },
         ))

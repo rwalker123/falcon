@@ -3018,6 +3018,7 @@ fn handle_send_expedition(
                 phase: ExpeditionPhase::Outbound,
                 announced: false,
                 pending_reveal: Vec::new(),
+                pending_contacts: Default::default(),
                 // An outfitted party leaves with an empty trade pack — it earns its pelts in the
                 // field (`advance_expeditions`).
                 // **A scout carries the HUNT job's default kit.** `send_expedition` names no kit —
@@ -3444,6 +3445,7 @@ fn launch_detached_party(
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
                 pending_reveal: Vec::new(),
+                pending_contacts: Default::default(),
                 kit,
             },
             BandTravel { target: herd_pos },
@@ -7413,6 +7415,12 @@ fn resolve_ready_turn(app: &mut bevy::prelude::App) {
         grid_width = metrics.grid_size.0,
         grid_height = metrics.grid_size.1,
         avg_temp = metrics.avg_temperature,
+        // The connection subsystem's only observer outside tests until a client reads the
+        // `connections` section (#517/#232): a tie forming or being reaped is otherwise invisible in
+        // a running game, which makes the primitive impossible to play-test.
+        connections_live = metrics.connections_live,
+        connections_formed = metrics.connections_formed,
+        connections_reaped = metrics.connections_reaped,
         duration_ms,
         "turn.completed"
     );
@@ -8507,6 +8515,7 @@ mod tests {
                 phase: ExpeditionPhase::Outbound,
                 announced: false,
                 pending_reveal: Vec::new(),
+                pending_contacts: Default::default(),
                 kit: core_sim::EquipmentConfig::builtin().default_kit(KitJob::Hunt),
             },
         ));

@@ -1,0 +1,7 @@
+{
+  "strength": {
+    "gain_per_contact": 0.25,
+    "decay_per_turn": 0.02
+  },
+  "forget_turns": 200
+}

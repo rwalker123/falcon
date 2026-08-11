@@ -444,9 +444,23 @@ connections this arc owns.
 - **Standing upkeep on the route ladder** — #532, which owns the `route` branch and the standing-cost
   term the intensification engine does not yet have.
 - **Whether a large group is detectable beyond anyone's range** — #533 (§Q1).
-- **The exact behaviour of connection strength** — what raises it, what the curve is, and what
-  reading zero means for each rider. Not filed separately: it is decided by the slice that builds the
-  primitive (**#538**).
+
+### Settled by #538 — connection strength
+
+It was left here for the slice that builds the primitive, and that slice built it. A tie is a single
+`0..=1` scalar per directed edge, raised a fixed step by each **contact turn** and drained a much
+smaller fixed step by each turn without one — linear on both sides, and asymmetric by an order of
+magnitude: fast to gain, slow to lose. One good meeting is worth something, and forgetting takes a
+while. A band living beside another therefore sits pinned at a full tie for free, which is what makes
+§Q4's "near bands behave exactly as they do now" fall out with no special case.
+
+**Reading zero does not delete the edge — it parks it.** A parked tie means *"we know such a people
+exist and have no current tie"*, and it is what keeps the third clock a genuinely separate lever
+instead of a duplicate of the second: delete on zero and `forget_turns` would have nothing left to
+reap. What zero means to a rider is still each rider's to define; the primitive only guarantees that
+nothing flows across it.
+
+The shipped numbers and the as-built are `.claude/rules/core_sim/connections.md`.
 
 ## See Also
 

@@ -26,6 +26,17 @@ type ExpeditionParty = (
     Option<&'static mut BandEquipment>,
 );
 
+/// **The RESIDENT bands [`advance_expeditions`] reaches**, named for the reason [`ExpeditionParty`]
+/// is. Three jobs at once: the home band the party reports to and delivers into (`&mut`), the
+/// [`BandId`] a contact report is filed under (an `Entity` is not an identity), and the
+/// [`ResidentBand`] marker that makes a band a legal contact *subject* — seeing another people's
+/// scouts is a different beat and is out of scope for the connection primitive.
+type ExpeditionHomeBands = (
+    &'static mut PopulationCohort,
+    Option<&'static BandId>,
+    Option<&'static ResidentBand>,
+);
+
 /// The config handles [`advance_expeditions`] reads, bundled into one `SystemParam` so the system
 /// stays under Bevy's 16-parameter ceiling once the combat + creatures handles join it (Predators
 /// Phase 0 — the expedition-hunt danger adapter).
@@ -117,11 +128,14 @@ pub fn advance_expeditions(
     tick: Res<SimulationTick>,
     elevation: Option<Res<ElevationField>>,
     mut ledger: ResMut<crate::visibility::VisibilityLedger>,
+    // **Where a party's findings about PEOPLE land**, comm-gated exactly like the map reveals
+    // beside them. Consumed later the same turn by `connections::advance_connections`.
+    mut contacts: ResMut<crate::connections::ContactsThisTurn>,
     mut event_log: ResMut<CommandEventLog>,
     mut herds: ResMut<HerdRegistry>,
     tiles: Query<&Tile>,
     mut expeditions: Query<ExpeditionParty>,
-    mut bands: Query<&mut PopulationCohort, Without<Expedition>>,
+    mut bands: Query<ExpeditionHomeBands, Without<Expedition>>,
 ) {
     // The common turn has zero expeditions — bail before building the O(w×h) terrain grid so a
     // normal game pays nothing for this system.
@@ -170,6 +184,19 @@ pub fn advance_expeditions(
     let blocking_tags = crate::visibility_systems::parse_blocking_tags(
         &vis_cfg.line_of_sight.blocking_terrain_tags,
     );
+
+    // **Who a party can FIND** — every resident band and where it stands, built once per system run
+    // and probed per observed tile below. `HashMap` because it is only ever probed: the order that
+    // has to be deterministic is the per-party `pending_contacts` buffer's, which is keyed.
+    let mut occupancy: HashMap<UVec2, Vec<BandId>> = HashMap::new();
+    for (cohort, band_id, resident) in bands.iter() {
+        let (Some(id), Some(_)) = (band_id, resident) else {
+            continue;
+        };
+        if let Ok(tile) = tiles.get(cohort.current_tile) {
+            occupancy.entry(tile.position).or_default().push(*id);
+        }
+    }
 
     for (entity, mut cohort, travel, mut expedition, mut party_equipment) in expeditions.iter_mut()
     {
@@ -225,8 +252,14 @@ pub fn advance_expeditions(
         let home_pos = bands
             .get(expedition.home_band)
             .ok()
-            .and_then(|band| tiles.get(band.current_tile).ok())
+            .and_then(|(band, _, _)| tiles.get(band.current_tile).ok())
             .map(|tile| tile.position);
+        // **Who a contact report is filed under.** A party's findings belong to the band that
+        // outfitted it, never to the party — the party is a detached crew and owns nothing.
+        let home_band_id = bands
+            .get(expedition.home_band)
+            .ok()
+            .and_then(|(_, band_id, _)| band_id.copied());
         // "Near enough to run home" — the shared proximity for the scout fold-back, hunt delivery,
         // and comm-range flush.
         let near_home = home_pos
@@ -302,6 +335,20 @@ pub fn advance_expeditions(
             if seen.insert(pos) {
                 expedition.pending_reveal.push(pos);
             }
+            // **Peoples found on the march go into the private buffer beside the tiles.** Not gated
+            // on `seen`: a party that has already mapped a tile can still find somebody standing on
+            // it, and the most recent observation is the one that comes home.
+            if let Some(occupants) = occupancy.get(&pos) {
+                for subject in occupants {
+                    // The party's own home band is not a stranger. Without this a party camped
+                    // beside home would report its own band as a people it had found.
+                    if Some(*subject) != home_band_id {
+                        expedition
+                            .pending_contacts
+                            .insert(*subject, (pos, current_turn));
+                    }
+                }
+            }
         }
 
         // b. Comm check + flush: in range of home → report the buffer as Discovered, then clear.
@@ -312,6 +359,17 @@ pub fn advance_expeditions(
             let map = ledger.ensure_faction(faction, elevation.width, elevation.height);
             for pos in expedition.pending_reveal.drain(..) {
                 map.discover(pos.x, pos.y, current_turn);
+            }
+            // **ONE contact event per subject per flush**, however many turns the party watched
+            // them: what came home is one report, and crediting thirty turns of retroactive contact
+            // would let a stale report peg a tie at full strength. The report is credited to the
+            // HOME BAND — an orphaned party has nobody to report to, so its findings are simply
+            // lost, exactly as its carried food is.
+            let reports = std::mem::take(&mut expedition.pending_contacts);
+            if let Some(observer) = home_band_id {
+                for (subject, (position, observed_turn)) in reports {
+                    contacts.record(observer, subject, position, observed_turn);
+                }
             }
         }
 
@@ -493,7 +551,7 @@ pub fn advance_expeditions(
                     // before the party despawns and its pack goes with it. No home band left to
                     // receive them means the haul is simply lost, exactly as the carried food is.
                     let mut banked_materials = 0.0;
-                    if let Ok(mut home) = bands.get_mut(expedition.home_band) {
+                    if let Ok((mut home, _, _)) = bands.get_mut(expedition.home_band) {
                         banked_materials = fold_party_into_band(&mut cohort, &mut home);
                     }
                     event_log.push(expedition_returned_event(
@@ -921,7 +979,7 @@ pub fn advance_expeditions(
                     // one band store, so the credit matches the raid forecast this trip was quoted
                     // against.
                     let mut banked_materials = 0.0;
-                    if let Ok(mut home) = bands.get_mut(expedition.home_band) {
+                    if let Ok((mut home, _, _)) = bands.get_mut(expedition.home_band) {
                         if delivered > scalar_zero() {
                             home.stores.add(FOOD, delivered);
                         }

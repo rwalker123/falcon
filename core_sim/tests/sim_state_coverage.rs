@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Mutated across turns, and a later turn reads it. A checkpoint that omits any of these produces
 /// a world that diverges from the one it claims to restore.
-const SIM_STATE_RESOURCES: [&str; 37] = [
+const SIM_STATE_RESOURCES: [&str; 38] = [
     "ActiveCrisisLedger",
     // The band-id counter. Restoring the bands without it re-issues a live id after a rollback.
     "BandIdAllocator",
@@ -51,6 +51,9 @@ const SIM_STATE_RESOURCES: [&str; 37] = [
     // Append-only. A restore must TRUNCATE this to the checkpoint's length, not replace it —
     // replacing leaves post-checkpoint events in a rolled-back world.
     "CommandEventLog",
+    // The directed ties contact leaves behind, with their three clocks. Nothing rebuilds them —
+    // a restore that dropped this would hand back a world that had forgotten everyone it had met.
+    "ConnectionLedger",
     "CorruptionLedgers",
     // Splits: `exposures_this_turn` is cleared per turn (derived), `exposures_total` is a
     // cumulative counter (state). Carried whole because the cheap half is small.
@@ -109,7 +112,10 @@ const SIM_STATE_RESOURCES: [&str; 37] = [
 /// The second half is the load-bearing one, and it is why `HerdTelemetry`, `PowerGridState` and
 /// `SimulationMetrics` are not here despite each having a system that rebuilds it: `capture_snapshot`
 /// publishes all three within the same turn. See the comment on them in `SIM_STATE_RESOURCES`.
-const DERIVED_RESOURCES: [(&str, &str); 4] = [
+const DERIVED_RESOURCES: [(&str, &str); 5] = [
+    // Filled by `calculate_visibility` (and the expedition comm flush) and drained + cleared by
+    // `advance_connections` in the SAME stage, so it is empty at the end of every turn.
+    ("ContactsThisTurn", "connections::advance_connections"),
     (
         "CrisisOverlayCache",
         "advance_crisis_system -> rebuild_overlay",
@@ -244,7 +250,9 @@ const CONFIG_RESOURCES: [&str; 42] = [
 
 /// The remaining config handles, split out only because Rust array consts need a fixed length and
 /// one 50-entry literal reads worse than two.
-const CONFIG_RESOURCES_CONT: [&str; 19] = [
+const CONFIG_RESOURCES_CONT: [&str; 21] = [
+    "ConnectionsConfigHandle",
+    "ConnectionsConfigMetadata",
     "EquipmentConfigHandle",
     "EquipmentConfigMetadata",
     "MaterialsConfigHandle",

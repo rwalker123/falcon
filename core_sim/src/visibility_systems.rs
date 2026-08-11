@@ -36,13 +36,16 @@ const MIN_EFFECTIVE_SIGHT_RANGE: i32 = 1;
 /// covers the eight immediate neighbours (orthogonal `dist²=1`, diagonal `dist²=2`).
 const ADJACENT_LOS_SKIP_DIST_SQ: i32 = 2;
 
+use std::collections::HashMap;
+
 use sim_runtime::TerrainTags;
 
 use crate::{
     components::{
-        BandEquipment, Expedition, LaborAllocation, LaborTarget, PopulationCohort, Settlement,
-        StartingUnit, Tile, TownCenter,
+        BandEquipment, BandId, Expedition, LaborAllocation, LaborTarget, PopulationCohort,
+        ResidentBand, Settlement, StartingUnit, Tile, TownCenter,
     },
+    connections::ContactsThisTurn,
     equipment_config::EquipmentConfigHandle,
     fauna::HerdRegistry,
     grid_utils::{hex_neighbor, shortest_delta_x, wrap_x, wrapped_distance_x, HEX_DIRECTION_COUNT},
@@ -100,7 +103,8 @@ pub fn prune_sweep_tracker(
 
 /// The vision-source cohorts [`calculate_visibility`] walks — named because the tuple grew a fifth
 /// member (`BandEquipment`, for the wayfinding kit's wear) and an inline five-tuple query is what
-/// `clippy::type_complexity` exists to stop.
+/// `clippy::type_complexity` exists to stop. The sixth is [`BandId`]: **who is doing the looking**,
+/// which is what turns a reveal into a contact (see [`crate::connections`]).
 type VisionCohorts<'w, 's> = Query<
     'w,
     's,
@@ -110,9 +114,75 @@ type VisionCohorts<'w, 's> = Query<
         &'static StartingUnit,
         Option<&'static LaborAllocation>,
         Option<&'static mut BandEquipment>,
+        Option<&'static BandId>,
     ),
     Without<Expedition>,
 >;
+
+/// One thing that looks at the map this turn — named for the same reason [`VisionCohorts`] is: the
+/// tuple behind it grew a sixth member and a `Vec` of six-tuples says nothing at its call sites.
+struct VisionSource {
+    faction: FactionId,
+    position: UVec2,
+    base_range: u32,
+    elevation_bonus_factor: f32,
+    /// **The band whose SCOUT VANTAGE this source is**, and `None` on every other kind — a band
+    /// centre, a worked source and a settlement all reveal ground too, but none of them is a scout
+    /// doing it, so none of them may wear a scout's gear.
+    scout_band: Option<Entity>,
+    /// **The band whose PEOPLE are standing here.** A settlement is not a band and a cohort without
+    /// a [`BandId`] is not one either: both still reveal fog exactly as before, they simply observe
+    /// nobody. See [`ContactSink`].
+    observer_band: Option<BandId>,
+}
+
+/// Who is looking, and who is standing where — the **contact** half of a reveal
+/// ([`crate::connections`]). Threaded into the per-source reveal so contact is found by the *same*
+/// sight computation that decides what a band can see: a second implementation of effective range
+/// (config base, elevation bonus, terrain modifiers, LOS, the wayfinding kit, posted vantages)
+/// would drift from this one silently.
+struct ContactSink<'a> {
+    observer: BandId,
+    /// Which resident bands stand on which tile. **Probed, never iterated**, so a hash map's order
+    /// is not observable — the deterministic ordering that matters is
+    /// [`crate::connections::ContactsThisTurn`]'s, which is keyed.
+    occupancy: &'a HashMap<UVec2, Vec<BandId>>,
+    contacts: &'a mut ContactsThisTurn,
+    /// The turn the sighting happened on, which for a live reveal is always *now*.
+    turn: u64,
+}
+
+impl ContactSink<'_> {
+    /// Record every occupant of `pos` that is not the observer itself.
+    fn observe(&mut self, pos: UVec2) {
+        let Some(occupants) = self.occupancy.get(&pos) else {
+            return;
+        };
+        for subject in occupants {
+            if *subject != self.observer {
+                self.contacts
+                    .record(self.observer, *subject, pos, self.turn);
+            }
+        }
+    }
+}
+
+/// Which resident bands stand on which tile, built **once** per sweep.
+///
+/// **Subjects are resident bands only.** A detached expedition is not a subject — seeing someone's
+/// scouts is a different beat, and out of scope for the primitive.
+fn resident_band_occupancy(
+    residents: &Query<(&BandId, &PopulationCohort), With<ResidentBand>>,
+    tiles: &Query<&Tile>,
+) -> HashMap<UVec2, Vec<BandId>> {
+    let mut occupancy: HashMap<UVec2, Vec<BandId>> = HashMap::new();
+    for (band, cohort) in residents.iter() {
+        if let Ok(tile) = tiles.get(cohort.current_tile) {
+            occupancy.entry(tile.position).or_default().push(*band);
+        }
+    }
+    occupancy
+}
 
 /// Step 2: Calculate visibility from all visibility sources (units, settlements).
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
@@ -140,6 +210,13 @@ pub fn calculate_visibility(
     mut cohorts: VisionCohorts,
     // Settlements with TownCenter
     settlements: Query<(&Settlement, &TownCenter)>,
+    // **The subjects of contact** — every resident band and where it stands. Read-only and disjoint
+    // from `cohorts`' `&mut BandEquipment`, so the two queries coexist. See `resident_band_occupancy`.
+    residents: Query<(&BandId, &PopulationCohort), With<ResidentBand>>,
+    // Filled here and consumed by `connections::advance_connections`, chained right after this
+    // system. Contact is found INSIDE the sight sweep rather than beside it: one map lookup per
+    // revealed tile, and no new geometry.
+    mut contacts: ResMut<ContactsThisTurn>,
 ) {
     let cfg = config.0.as_ref();
     let labor = labor_config.get();
@@ -182,16 +259,16 @@ pub fn calculate_visibility(
     // Parse blocking terrain tags from config (e.g., HIGHLAND, VOLCANIC)
     let blocking_tags = parse_blocking_tags(&cfg.line_of_sight.blocking_terrain_tags);
 
-    // Collect all visibility sources: (faction, position, base_range, elev_factor, scout_band).
-    // **The fifth field is the band whose SCOUT VANTAGE this source is**, and `None` on every other
-    // kind — a band centre, a worked source and a settlement all reveal ground too, but none of them
-    // is a scout doing it, so none of them may wear a scout's gear.
-    let mut sources: Vec<(FactionId, UVec2, u32, f32, Option<Entity>)> = Vec::new();
+    // Where every resident band stands, built ONCE and probed per revealed tile below.
+    let occupancy = resident_band_occupancy(&residents, &tiles);
+
+    // Collect all visibility sources — see `VisionSource` for what each field is.
+    let mut sources: Vec<VisionSource> = Vec::new();
     let mut cohort_count = 0u32;
     let mut settlement_count = 0u32;
 
     // Units (population cohorts with StartingUnit marker)
-    for (entity, cohort, unit, allocation, band_equipment) in cohorts.iter() {
+    for (entity, cohort, unit, allocation, band_equipment, band_id) in cohorts.iter() {
         cohort_count += 1;
         let range_def = cfg.sight_range_for(&unit.kind);
         // The band's own base-range LOS from its center is unchanged; scouts are additive
@@ -214,14 +291,17 @@ pub fn calculate_visibility(
                 ),
                 _ => vec![current_pos],
             };
+            // Whose people these are, for every source this cohort contributes below.
+            let observer_band = band_id.copied();
             for pos in path {
-                sources.push((
-                    cohort.faction,
-                    pos,
+                sources.push(VisionSource {
+                    faction: cohort.faction,
+                    position: pos,
                     base_range,
-                    range_def.elevation_bonus_factor,
-                    None,
-                ));
+                    elevation_bonus_factor: range_def.elevation_bonus_factor,
+                    scout_band: None,
+                    observer_band,
+                });
             }
             // Local scout (forward observers): with scouts staffed, post vantage tiles out
             // from the band in every hex direction and reveal from each with `vantage_range`,
@@ -255,13 +335,14 @@ pub fn calculate_visibility(
                     height,
                     wrap_horizontal,
                 ) {
-                    sources.push((
-                        cohort.faction,
-                        vantage,
-                        vantage_range,
-                        range_def.elevation_bonus_factor,
-                        Some(entity),
-                    ));
+                    sources.push(VisionSource {
+                        faction: cohort.faction,
+                        position: vantage,
+                        base_range: vantage_range,
+                        elevation_bonus_factor: range_def.elevation_bonus_factor,
+                        scout_band: Some(entity),
+                        observer_band,
+                    });
                 }
             }
             // Worked sources: a band's foragers stand on the forage tile and its hunters are
@@ -285,13 +366,14 @@ pub fn calculate_visibility(
                     // always on-map, but this check is cheap and covers every worked source.
                     if let Some(tile) = worked_tile {
                         if tile.x < width && tile.y < height {
-                            sources.push((
-                                cohort.faction,
-                                tile,
-                                labor.worked_source_sight_range,
-                                range_def.elevation_bonus_factor,
-                                None,
-                            ));
+                            sources.push(VisionSource {
+                                faction: cohort.faction,
+                                position: tile,
+                                base_range: labor.worked_source_sight_range,
+                                elevation_bonus_factor: range_def.elevation_bonus_factor,
+                                scout_band: None,
+                                observer_band,
+                            });
                         }
                     }
                 }
@@ -304,13 +386,15 @@ pub fn calculate_visibility(
     for (settlement, _town_center) in settlements.iter() {
         settlement_count += 1;
         let range_def = cfg.sight_range_for("TownCenter");
-        sources.push((
-            settlement.faction,
-            settlement.position,
-            range_def.base_range,
-            range_def.elevation_bonus_factor,
-            None,
-        ));
+        sources.push(VisionSource {
+            faction: settlement.faction,
+            position: settlement.position,
+            base_range: range_def.base_range,
+            elevation_bonus_factor: range_def.elevation_bonus_factor,
+            scout_band: None,
+            // A settlement is not a band, so it reveals ground and finds nobody.
+            observer_band: None,
+        });
     }
 
     tracing::info!(
@@ -328,17 +412,18 @@ pub fn calculate_visibility(
         std::collections::BTreeMap::new();
 
     // Process each visibility source
-    for (faction, pos, base_range, elev_factor, scout_band) in sources.iter() {
+    for source in sources.iter() {
+        let pos = source.position;
         tracing::debug!(
             target: "shadow_scale::visibility",
-            faction = faction.0,
+            faction = source.faction.0,
             pos_x = pos.x,
             pos_y = pos.y,
-            base_range,
+            base_range = source.base_range,
             "visibility.step2_calculate processing_source"
         );
 
-        let map = ledger.ensure_faction(*faction, width, height);
+        let map = ledger.ensure_faction(source.faction, width, height);
         let source_elevation = elevation.sample(pos.x, pos.y);
 
         // Calculate effective range with elevation bonus
@@ -347,18 +432,18 @@ pub fn calculate_visibility(
             let elevation_m = source_elevation * ELEVATION_RANGE_METERS;
             let bonus = (elevation_m / METERS_PER_ELEVATION_BONUS_STEP) as u32
                 * cfg.elevation.bonus_per_100m;
-            ((bonus as f32) * elev_factor) as u32
+            ((bonus as f32) * source.elevation_bonus_factor) as u32
         } else {
             0
         };
         // Cap elevation bonus before adding to base range
         let capped_bonus = elev_bonus.min(cfg.elevation.max_bonus);
-        let effective_range = base_range + capped_bonus;
+        let effective_range = source.base_range + capped_bonus;
 
         // Reveal tiles in range
         let first_sightings = reveal_tiles_in_range(
             map,
-            *pos,
+            pos,
             effective_range,
             current_turn,
             &elevation,
@@ -367,14 +452,20 @@ pub fn calculate_visibility(
             &cfg.terrain_modifiers,
             blocking_tags,
             wrap_horizontal,
+            source.observer_band.map(|observer| ContactSink {
+                observer,
+                occupancy: &occupancy,
+                contacts: &mut contacts,
+                turn: current_turn,
+            }),
         );
         // **Only a SCOUT VANTAGE's first sightings wear a scout's gear.** The band centre reveals
         // new ground every time the band walks somewhere, and a worked source reveals it around a
         // patch — neither is a scout doing it, and charging them would make wayfinding gear a tax on
         // moving rather than a tool for looking.
-        if let Some(band) = scout_band {
+        if let Some(band) = source.scout_band {
             if first_sightings > 0 {
-                *scout_first_sightings.entry(*band).or_insert(0) += first_sightings;
+                *scout_first_sightings.entry(band).or_insert(0) += first_sightings;
             }
         }
     }
@@ -384,7 +475,7 @@ pub fn calculate_visibility(
     // on the next turn. A band that revealed nothing new pays nothing, which is the whole of why
     // this quantum is *first* sightings and not tiles seen.
     if !scout_first_sightings.is_empty() {
-        for (entity, _, _, allocation, band_equipment) in cohorts.iter_mut() {
+        for (entity, _, _, allocation, band_equipment, _) in cohorts.iter_mut() {
             let Some(revealed) = scout_first_sightings.get(&entity) else {
                 continue;
             };
@@ -577,6 +668,9 @@ fn reveal_tiles_in_range(
     terrain_modifiers: &TerrainModifierConfig,
     blocking_tags: TerrainTags,
     wrap_horizontal: bool,
+    // **Contact rides the reveal.** `None` for a source with no band behind it, which reveals fog
+    // exactly as before and observes nobody.
+    mut contact: Option<ContactSink<'_>>,
 ) -> u32 {
     // Mark each visible tile Active **inline** — this runs for every vision source every turn, so
     // it must not allocate a Vec on the reveal hot path (the shared geometry hands us tiles via the
@@ -598,6 +692,11 @@ fn reveal_tiles_in_range(
         |pos| {
             if map.mark_active(pos.x, pos.y, current_turn) {
                 first_sightings += 1;
+            }
+            // Contact is *presence in a tile you can see*, not first sight of it: a band you have
+            // watched for ten turns is still contacted on the eleventh.
+            if let Some(sink) = contact.as_mut() {
+                sink.observe(pos);
             }
         },
     );
@@ -1029,6 +1128,7 @@ mod tests {
             world.insert_resource(SimulationTick(1));
             world.insert_resource(VisibilityLedger::default());
             world.insert_resource(VisibilitySweepTracker::default());
+            world.insert_resource(ContactsThisTurn::default());
             world.insert_resource(HerdRegistry::default());
             world.insert_resource(ElevationField::new(
                 WIDTH,
@@ -1137,6 +1237,7 @@ mod tests {
         world.insert_resource(SimulationTick(1));
         world.insert_resource(VisibilityLedger::default());
         world.insert_resource(VisibilitySweepTracker::default());
+        world.insert_resource(ContactsThisTurn::default());
         world.insert_resource(HerdRegistry { herds });
         world.insert_resource(ElevationField::new(
             WIDTH,

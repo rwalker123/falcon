@@ -53,6 +53,7 @@ use crate::{
         LaborAllocation, PopulationCohort, PowerNode, ResidentBand, Settlement, StartingUnit, Tile,
         TownCenter,
     },
+    connections::ConnectionLedger,
     crisis::{ActiveCrisisLedger, CrisisTelemetry},
     culture::{CultureManager, CultureManagerCheckpoint},
     espionage::{
@@ -157,6 +158,11 @@ pub struct SimState {
     pub beat_ledger: BeatLedger,
     pub capability_flags: CapabilityFlags,
     pub command_events: CommandEventLog,
+    /// Every directed tie between bands, with its three clocks. **State, not derived**: a
+    /// connection's strength is raised and drained over turns and nothing rebuilds it, so a
+    /// checkpoint that dropped it would restore a world that had forgotten everyone it had met.
+    /// Its `ContactsThisTurn` twin is genuinely derived and is deliberately not here.
+    pub connections: ConnectionLedger,
     pub corruption: CorruptionLedgers,
     pub corruption_telemetry: CorruptionTelemetry,
     pub counter_intel: CounterIntelBudgets,
@@ -333,6 +339,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
         beat_ledger: world.resource::<BeatLedger>().clone(),
         capability_flags: *world.resource::<CapabilityFlags>(),
         command_events: world.resource::<CommandEventLog>().clone(),
+        connections: world.resource::<ConnectionLedger>().clone(),
         corruption: world.resource::<CorruptionLedgers>().clone(),
         corruption_telemetry: world.resource::<CorruptionTelemetry>().clone(),
         counter_intel: world.resource::<CounterIntelBudgets>().clone(),
@@ -506,6 +513,7 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     // Installing the checkpoint's copy IS the truncation: the log is append-only, so the captured
     // copy is a prefix of the live one and everything appended after the checkpoint goes away.
     world.insert_resource(state.command_events.clone());
+    world.insert_resource(state.connections.clone());
     world.insert_resource(state.corruption.clone());
     world.insert_resource(state.corruption_telemetry.clone());
     world.insert_resource(state.counter_intel.clone());
