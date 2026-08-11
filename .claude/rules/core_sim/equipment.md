@@ -28,13 +28,13 @@ cost a whole design conversation to unpick. **"Kit" now means only the roster en
 
 | item | declares | its use quantum |
 |---|---|---|
-| **`spears`** | `attack` **20** (equipped) | per **animal killed** |
+| **`spears`** | `attack` **20** (equipped) | per **landed blow** |
 | **`sled`** — travois, drag harness | `hunt_carry` **40** (equipped, on its **tier**) | per **biomass hauled home from a hunt** |
 | **`baskets`** | `forage_carry` **8** (equipped, on its **tier**) | per **biomass gathered** |
-| **`traps`** — the passive device (snares, nets, weirs) | `attack` **20** bounded to `max_body_mass` **1.0**, `dispersion` **0**, `exposure` **0** | per **animal killed** |
+| **`traps`** — the passive device (snares, nets, weirs) | `attack` **20** bounded to `max_body_mass` **1.0**, `dispersion` **0**, `exposure` **0** | per **landed blow** |
 | **`husbandry_gear`** — hurdles, halters, a butchering stone, vessels | `pen_carry` **12** (unequipped) | per **biomass BUTCHERED off a pen** (what was killed, not what was hauled home) |
 | **`wayfinding`** — tallies, marked staves, a fire-drill | `scout_vantage_range` **1** (unequipped) | per **tile revealed for the FIRST time** |
-| **`clubs`** | `attack` **6** (equipped) | per **fight resolved** |
+| **`clubs`** | `attack` **6** (equipped) | per **landed blow** |
 | **`tanning_frame`** — a BENCH TOOL, bounds `hide` | `craft_speed` **2.0**, `craft_quality_ceiling` **0.90**, `craft_material_efficiency` **0.80**, all equipped | per **item completed at the bench** |
 | **`loom`** — bounds `fibre` | `craft_speed` **2.0**, ceiling **0.95**, efficiency **0.85** | likewise |
 | **`bone_awl`** — bounds `bone` | `craft_speed` **1.6**, ceiling **0.85**, efficiency **0.70** | likewise |
@@ -65,9 +65,11 @@ what a crew resolves to when nothing is named at a site with no assignment to re
 
 ### Each new kit's USE QUANTUM, which is the one genuinely new decision per kit
 
-`WearQuantum` gained `biomass_collected`, `tile_revealed` and `fight`. Still no `turn` variant — that
-is `docs/plan_denial_raid.md` §1.2 enforced by the type — and none of the three collides with the
-three that shipped before, pinned by `each_new_kit_wears_on_its_own_use_quantum`.
+`WearQuantum` gained `biomass_collected` and `tile_revealed` (and, briefly, `fight` — retired into
+`strike`, below). Still no `turn` variant — that is `docs/plan_denial_raid.md` §1.2 enforced by the
+type — and no JOB's gear is charged on another job's use, pinned by
+`each_kit_wears_on_a_use_quantum_of_its_own_job`. **Two weapons DO share `strike`**, and the kit mask
+is what keeps a hunt from blunting the camp's clubs; that test asserts it directly.
 
 - **`tile_revealed` means FIRST-EVER revealed, and only from a SCOUT VANTAGE.** A parked band re-sees
   the same ring every turn and its own centre reveals new ground whenever it walks, so charging per
@@ -75,13 +77,14 @@ three that shipped before, pinned by `each_new_kit_wears_on_its_own_use_quantum`
   costume. `FactionVisibilityMap::mark_active` returns whether it lifted an `Unexplored` tile, because
   that is a **transition**: by the time a caller could look, the tile reads `Active` either way. The
   `sources` vec carries the band a vantage belongs to as a fifth field, `None` on every other kind.
-  Pinned from both ends — `wear_is_charged_for_kills_not_for_turns_elapsed` asserts the gear really
+  Pinned from both ends — `wear_is_charged_for_work_not_for_turns_elapsed` asserts the gear really
   runs down, `only_a_staffed_scout_wears_the_wayfinding_kit` asserts a band with nobody on Scout
   spends none of it over the same span while revealing fog throughout.
-- **`fight` is one ENGAGEMENT, not one casualty inflicted.** A defence that killed nothing was still
-  fought, and pricing gear on its results charges the band that is losing the least. A band nobody
-  raided pays zero; a band three packs turned on pays three. Gated on `warrior_count > 0` — nothing
-  was swung by a band with nobody on the row.
+- ~~**`fight` is one ENGAGEMENT, not one casualty inflicted.**~~ **Retired into `strike`** — see
+  "Wear follows the work actually done". Its reasoning survives one level down: pricing gear on the
+  *casualties* it caused would charge the band that is losing the least, and a blow is not a casualty
+  either. What it got wrong is the other end — one engagement charged the **whole warrior line** for
+  a raid most of it may never have swung in, which is the same pretence `kill` made on the hunt.
 - **`biomass_collected` is the pen's, and a pen charges it and `biomass_hauled` over DIFFERENT
   numbers.** The sled is charged for what it **hauled** (`take.carried`); the handling gear is
   charged for what it **butchered** (`take.killed_biomass()`). Hurdles, halters, a butchering stone
@@ -402,7 +405,7 @@ back" below.
 
 | File | Purpose |
 |---|---|
-| `src/data/equipment.json` | **The TOE** (loader `equipment_config.rs`, env override `EQUIPMENT_CONFIG_PATH`, validated inside `from_json_str` so every load path is covered). Two blocks plus one scalar. **`items`** — a map of id → `{ wear: { per, amount }, effects: [...], bounds_material?, tiers: [...] }`. **What is SHARED sits on the item and what the MATERIAL bought sits on a TIER** — `effects` here carries the multipliers and the *unequipped* side of a rate; each **tier** is `{ id, starting_durability, requires_knowledge?, effects }` and carries `attack` (with its mass bounds), the carry rates and a tool's craft stats. `stat` is one of `attack` / `hunt_carry` / `forage_carry` / `pen_carry` / `scout_vantage_range` / `dispersion` / `exposure` / `craft_speed` / `craft_quality_ceiling` / `craft_material_efficiency`; `per` is `kill` / `biomass_hauled` / `biomass_gathered` / `biomass_collected` / `tile_revealed` / `fight` / `item_crafted` — **there is no `turn` variant, and that is `docs/plan_denial_raid.md` §1.2 enforced by the type**. An item may also carry **`bounds_material`**, which makes it a **bench tool** (`crafting.md`). **Every shipped item ships ONE tier, `flint`** (see "Quality tiers"), at the durabilities the game has always had: `spears` (100, 0.4/kill → 250 kills, `attack 20`), `sled` (100, 0.02/biomass → 5000, `hunt_carry 40`), `baskets` (100, 0.04/biomass → 2500, `forage_carry 8`), `traps` (100, 0.2/kill → 500 — twice the spear's life per kill because a trap is *worked* rather than thrown, and on the **same quantum** so a trapping party cannot hunt for free), `husbandry_gear` (100, 0.04/biomass **butchered** → 2500 — halved from the 0.08 the collected-equals-carried basis shipped with, because `killed_biomass ≥ carried` always), `wayfinding` (100, 0.05/tile first-seen → 2000), `clubs` (100, 2.0/fight → 50 raids), and the three **bench tools** `tanning_frame` / `loom` / `bone_awl` (100, 4.0/item crafted → **25 items** each). **`kits`** — `{ id, display_name, jobs, uses }`, where `uses` names items and `jobs` is `hunt` / `forage` / `scout` / `warrior`; plus `default_kits`, which names one per job, **`quarry_default_kit_margin`** (**0.25**) — how decisively a kit must beat `default_kits.hunt` on a species before it replaces it as that *quarry's* published default. Required, like every other key here. And **`life_readout`** `{ warn_fraction 0.34, danger_fraction 0.10 }` — the two colour seams of the published `lifeSeverity`, as **fractions of one fresh unit's** quanta rather than absolute counts, because a spear's 250 kills and a sled's 5000 biomass are not comparable and one absolute would colour one of them permanently red. **Presentation only**: nothing in the sim branches on it (`crafting.md` → "the life meter is a fuel gauge"). **`validate` rejects**: an empty item table; a non-finite or `<= 0` wear amount or tier durability; an item with **no effects on itself or any tier** (it would wear out doing nothing); **an item with no tiers** (no durability — born dry); a **duplicate tier id**; a **knowledge gate on the first tier** (that one is what a spawn stocks and every reference rate resolves through, so it must ship known); a stat declared **twice within one layer** (`effect_entry` takes the first match, so the second is silently dead); a stat declared on **both the item and one of its tiers** (the tier wins, so the shared line would be dead config); an **`unequipped` side on a tier** (an unequipped value is what you get when the item is *not* there, which is true of every tier at once); a negative or non-finite effect value; a mass bound on any stat but `attack`, or an inverted one; **a mass-bounded `attack` on an item a Scout or Warrior kit uses**; **two items declaring the same two-sided rate** anywhere across their item and tier effects (`declared_tier` and `equipped_reference` both take the first match, so it would resolve alphabetically); a duplicate kit id; a kit listing no jobs; a default naming no roster entry or not covering its own job; a non-finite or negative `quarry_default_kit_margin`; a **`life_readout`** seam outside `0..=1` or a `danger_fraction` not strictly below `warn_fraction` (the warn band would be unreachable, so one colour would simply never appear); and **a `uses` entry naming an item the table does not carry**. That last one is a DEBT, not a nicety — see below. **The bench tool's own rejections** (`validate_bench_tools`, every one of which is otherwise silent at runtime): a craft stat on an item with no `bounds_material`; a craft stat declaring an `unequipped` side; two items bounding one material; a tool that does not wear per `item_crafted`, **or a non-tool that does**; a tool declaring no craft stat at all; and **a kit naming a bench tool**. Plus, at the composition seam, `validate_against_materials` rejects a `bounds_material` the materials table does not carry, **and a tier `requires_knowledge` naming a craft no material declares** — an authored tier that could never be earned is the `UnknownItem` debt in its most expensive direction. |
+| `src/data/equipment.json` | **The TOE** (loader `equipment_config.rs`, env override `EQUIPMENT_CONFIG_PATH`, validated inside `from_json_str` so every load path is covered). Two blocks plus one scalar. **`items`** — a map of id → `{ wear: { per, amount }, effects: [...], bounds_material?, tiers: [...] }`. **What is SHARED sits on the item and what the MATERIAL bought sits on a TIER** — `effects` here carries the multipliers and the *unequipped* side of a rate; each **tier** is `{ id, starting_durability, requires_knowledge?, effects }` and carries `attack` (with its mass bounds), the carry rates and a tool's craft stats. `stat` is one of `attack` / `hunt_carry` / `forage_carry` / `pen_carry` / `scout_vantage_range` / `dispersion` / `exposure` / `craft_speed` / `craft_quality_ceiling` / `craft_material_efficiency`; `per` is `strike` / `biomass_hauled` / `biomass_gathered` / `biomass_collected` / `tile_revealed` / `item_crafted` — **there is no `turn` variant, and that is `docs/plan_denial_raid.md` §1.2 enforced by the type**. An item may also carry **`bounds_material`**, which makes it a **bench tool** (`crafting.md`), and **`workers_per_unit`** (serde default **1**, `validate` rejects `0`) — how many people one unit of it takes to use, the divisor `coverage` arms a party with. **Every shipped item ships ONE tier, `flint`** (see "Quality tiers"), at the durabilities the game has always had: `spears` (100, 0.4/**blow** → 250 blows, `attack 20`), `sled` (100, 0.02/biomass → 5000, `hunt_carry 40`), `baskets` (100, 0.04/biomass → 2500, `forage_carry 8`), `traps` (100, 0.2/**blow** → 500 — twice the spear's life per blow because a trap is *worked* rather than thrown, and on the **same quantum** so a trapping party cannot hunt for free), `husbandry_gear` (100, 0.04/biomass **butchered** → 2500 — halved from the 0.08 the collected-equals-carried basis shipped with, because `killed_biomass ≥ carried` always), `wayfinding` (100, 0.05/tile first-seen → 2000), `clubs` (100, 2.0/**blow** → 50 blows — the number is unretuned from its per-raid days and is the largest of the three gaps issue #495 has to close), and the three **bench tools** `tanning_frame` / `loom` / `bone_awl` (100, 4.0/item crafted → **25 items** each). **`kits`** — `{ id, display_name, jobs, uses }`, where `uses` names items and `jobs` is `hunt` / `forage` / `scout` / `warrior`; plus `default_kits`, which names one per job, **`quarry_default_kit_margin`** (**0.25**) — how decisively a kit must beat `default_kits.hunt` on a species before it replaces it as that *quarry's* published default. Required, like every other key here. **`start_stock_fraction`** (**1.5**) — the multiple of a party's WORKER head count a spawn stocks of each item (`ceil(workers x this / workers_per_unit)`, min 1): `1.0` would arm exactly everybody and let the **first break** disarm someone, so the half-again is the opening reserve (~8 retirements of slack on the shipped 17-worker band, roughly the span the bench needs to make a replacement). Required, no serde default - a defaulted `0` would stock the one-unit floor and send the band out with one spear. And **`life_readout`** `{ warn_fraction 0.34, danger_fraction 0.10 }` — the two colour seams of the published `lifeSeverity`, as **fractions of one fresh unit's** quanta rather than absolute counts, because a spear's 250 blows and a sled's 5000 biomass are not comparable and one absolute would colour one of them permanently red. **Presentation only**: nothing in the sim branches on it (`crafting.md` → "the life meter is a fuel gauge"). **`validate` rejects**: an empty item table; a non-finite or `<= 0` wear amount or tier durability; an item with **no effects on itself or any tier** (it would wear out doing nothing); **an item with no tiers** (no durability — born dry); a **duplicate tier id**; a **knowledge gate on the first tier** (that one is what a spawn stocks and every reference rate resolves through, so it must ship known); a stat declared **twice within one layer** (`effect_entry` takes the first match, so the second is silently dead); a stat declared on **both the item and one of its tiers** (the tier wins, so the shared line would be dead config); an **`unequipped` side on a tier** (an unequipped value is what you get when the item is *not* there, which is true of every tier at once); a negative or non-finite effect value; a mass bound on any stat but `attack`, or an inverted one; **a mass-bounded `attack` on an item a Scout or Warrior kit uses**; **two items declaring the same two-sided rate** anywhere across their item and tier effects (`declared_tier` and `equipped_reference` both take the first match, so it would resolve alphabetically); a duplicate kit id; a kit listing no jobs; a default naming no roster entry or not covering its own job; a non-finite or negative `quarry_default_kit_margin`; a non-finite or non-positive `start_stock_fraction`; a **`workers_per_unit` of `0`** (a unit no worker has to hold covers everyone, which is a division with no meaning); a **`life_readout`** seam outside `0..=1` or a `danger_fraction` not strictly below `warn_fraction` (the warn band would be unreachable, so one colour would simply never appear); and **a `uses` entry naming an item the table does not carry**. That last one is a DEBT, not a nicety — see below. **The bench tool's own rejections** (`validate_bench_tools`, every one of which is otherwise silent at runtime): a craft stat on an item with no `bounds_material`; a craft stat declaring an `unequipped` side; two items bounding one material; a tool that does not wear per `item_crafted`, **or a non-tool that does**; a tool declaring no craft stat at all; and **a kit naming a bench tool**. Plus, at the composition seam, `validate_against_materials` rejects a `bounds_material` the materials table does not carry, **and a tier `requires_knowledge` naming a craft no material declares** — an authored tier that could never be earned is the `UnknownItem` debt in its most expensive direction. |
 | `src/data/creatures.json` | The creatures roster — intrinsic `CombatStats` for non-fauna units. `person.combat.attack` (**1.0**) is the hunting kit's **unequipped** tier. See `combat.md` for the roster's role in the fight. |
 
 ### `UnknownItem` pays back a guarantee the model used to get for free
@@ -444,10 +447,11 @@ hunt arc is still moving; it rides with the hunt-effectiveness tuning on **issue
    tier decides what it grants and its wear decides only *whether* it still does.
 2. **Wear is charged for USE, never for turns elapsed** (`docs/plan_denial_raid.md` §1.2 depends on
    it: a turn clock charges an idle march the same as a slaughter, which makes denial free). **Each
-   kit has its own quantum** (table above), so the three cannot cross-charge. Pinned by
-   `wear_is_charged_for_kills_not_for_turns_elapsed` — same world, same turn count, a scouting band
-   loses exactly zero — and by `the_sled_and_the_baskets_wear_on_different_quanta`: a hunting band
-   finishes with whole baskets, a gathering band with a whole sled and whole spears.
+   JOB has its own quantum** (table above), and the **kit mask** is what keeps two jobs' gear apart
+   where they share one (`strike`). Pinned by `wear_is_charged_for_work_not_for_turns_elapsed` —
+   same world, same turn count, a scouting band loses exactly zero — by
+   `the_sled_and_the_baskets_wear_on_different_quanta`, and by
+   `each_kit_wears_on_a_use_quantum_of_its_own_job`, which asserts no hunt kit can reach the clubs.
 3. **Start-stocked, and craftable since the bench landed.** Running dry was a one-way door for
    exactly as long as nothing could make a second spear; it is now the pull into a replenishment loop
    (`crafting.md`). **`BandEquipment::stock` is the one seam in the sim that ADDS condition**, and it
@@ -495,10 +499,29 @@ every frame — and a `Vec` inside it because batch order is insertion order, wh
 > bare-handed carry tiers, **while `advance_labor_allocation` pays that same band the equipped
 > rate**. The four sites are one fact; a fifth reader must take the same fallback.
 
-**A SPAWN STOCKS `count: 1`, AND THAT IS WHAT PRESERVES THE SHIPPED OPENING.** One unit is one item's
-`starting_durability` — the life the game has always had — so **a count above 1 is something crafting
-bought**, and counts do *not* multiply the shipped kit's life. Pinned against the literal use counts
-this file records by `a_spawned_bands_kit_life_is_one_items_worth_and_no_more`.
+**A SPAWN STOCKS A PARTY'S WORTH — `ceil(workers × start_stock_fraction / workers_per_unit)`, never
+below one unit.** A unit arms `workers_per_unit` people (see "The partly-equipped party" below), so
+the `count: 1` this used to stock would arm exactly **one** hunter of the shipped ~17-worker band and
+send sixteen out bare-handed. **The half-again is the opening reserve**: coverage counts units in
+*usable condition*, so at a flat `1.0` the turn a spear retires the party goes out one hunter short —
+the reserve is what buys the band the turns between its first break and its bench.
+
+**One unit is still one item's `starting_durability`** — the life the game has always had, and
+untouched by this: a batch of `count` holds `count × starting_durability`, so what a party's worth
+buys is *people armed*, not a longer-lived spear. `BandEquipment::start_stocked` — the **fresh
+reference ledger** every quarry-scoring and roster-quoting surface prices against — still stocks one
+unit each and takes no head count, because those surfaces read liveness and a count there would be
+noise. The three seams, and which question each answers:
+
+| seam | stocks | who calls it |
+|---|---|---|
+| `start_stocked(config)` | one unit each, ungraded | the reference ledger: `kit_supplying`, `quarry_default_hunt_kit`, the published kit roster, a launch forecast |
+| `start_stocked_for(config, workers)` | a party's worth, ungraded | **the absent-COMPONENT fallback** — `advance_labor_allocation`, `advance_expeditions`, `snapshot/capture.rs`; "no ledger" means *outfitted*, and one unit no longer says that |
+| `start_stocked_owned(config, recipes, materials, workers)` | a party's worth, stamped with the anchor grade | a **spawn**: `spawn_profile_population` and both expedition-outfitting paths |
+
+Pinned by `the_reference_ledger_is_one_unit_and_the_shipped_lives_are_unchanged` (the lives, against
+the literal use counts this file records) and `a_spawned_band_arms_every_worker_and_keeps_a_reserve`
+(coverage is uniform at the band's own head count, with strictly more units than people behind it).
 
 **Ten spears made together wear together, and the stock runs out ONE BATCH AT A TIME.** A batch
 carries one `wear` number, spending the unit currently in hand; crossing the tier's durability retires
@@ -521,16 +544,119 @@ because `BandRecord::equipment` clones the whole component.
 turns, so stockpiling ahead of a hard season is a real strategy. Both halves pinned by
 `wear_runs_the_stock_out_one_batch_at_a_time_and_idle_stock_does_not_rot`.
 
-**A party still resolves UNIFORMLY**, on the serving batch — the partly-equipped party is **#520** and
-is deliberately not this. `has_condition` keeps its meaning for every existing caller (*the band owns
-at least one unit with condition*), which is what kept #520 out of this slice.
+## The partly-equipped party — ten spears arm ten hunters, and the eleventh goes bare
+
+**A party is no longer priced off the serving batch alone.** `EquipmentConfig::coverage(kit, workers,
+wear)` is the one seam that divides a party's people by the gear it holds, and every unevenly-equipped
+consumer reads it — the hunt, the raid, the haul, the assign-time seed and the in-flight ETA.
+
+- **`ItemDefinition::workers_per_unit`** (serde default `1`, `validate` rejects `0`) is the item's own
+  statement of how many people one unit takes. Every shipped item is `1`; the axis exists because a
+  four-worker net is the first thing that is not, and **a unit needs its FULL crew** — ten workers and
+  three four-worker nets crew two nets with eight people and leave two unequipped, never a third of a
+  net. A **one-worker** item is exact rather than floored, deliberately: a forecast counts hunters in
+  fractions (`hunt_engage_workers`), and flooring the common case would put the projection a whole
+  person away from the take it is projecting.
+- **The partition is by ITEM SET, and the shortfall is PER ITEM.** Each item covers a prefix of the
+  party, so sorting the coverages and cutting at each distinct boundary yields runs holding identical
+  gear: ten hunters with five spears and ten sleds is **two crews**, five on `{spears, sled}` and five
+  on `{sled}`. A `Crew` carries the party's own `KitChoice` **narrowed to what that run holds** — the
+  same kit with fewer things in it — which is what lets `hunter_profile_against`,
+  `hunt_per_worker_biomass_capacity`, `exposure`, `dispersion` and `multiplier` all answer for a crew
+  with **no new arm**.
+- **A dead unit covers nobody** (`BandEquipment::live_units`), so the durability cliff now arrives one
+  person at a time. That graded disarmament falls out of the counts rather than being laid on top.
+- **`KitCoverage` never hands back an empty list for a party that exists** — a wholly bare party is
+  one crew holding nothing — so no consumer needs a "no crews" branch. A party of *nobody* has no
+  crews, and `KitCoverage::weighted_rate` answers such a coverage at the chosen kit's own rate, which
+  is what every rate site answered before coverage existed and what keeps the crew inversions from
+  dividing by zero.
+
+### `HuntingParty` carries its composition, in SHARES
+
+`HuntingParty` is `{ crews: Vec<HuntCrew>, tuning, dispersion }` and is **Clone, not Copy**;
+`HuntCrew` is `{ share, hunter, injury_damage_per_animal }`.
+
+> **`share` is a FRACTION of the party, never a head count** — that is what keeps the struct
+> **scale-free**, exactly as the single-profile form was. Every call site still passes its own
+> `hunters` count, and a sub-party that engages (`hunt_engage_workers` returning fewer than were
+> assigned, or a build dip shrinking the crew) carries the *same mix* rather than an arbitrary prefix
+> of it. Baking a head count in would make the party disagree with every caller that scales it.
+
+- **`HuntingParty::uniform(...)`** is the shape a fully-covered party, a fixture, or a
+  reference quote resolves to — one crew at `share 1.0`.
+- **`PartyResolution::party_against(quarry)`** is the live seam: equipment ⊕ coverage ⊕ ledger ⊕ the
+  intrinsic `person` row ⊕ the resolver dials, with the quarry held back as a **late** argument
+  because a mass-bounded weapon cannot be resolved before the target is known. That is the
+  `party_for = |body_mass| …` factory `advance_labor_allocation` and `advance_expeditions` already
+  used, given a name so the coverage behind it is resolved once per party per turn.
+- **`dispersion` is PARTY-WIDE and is the MAX across the crews.** The same clause
+  `KitChoice::multiplier` resolves an item's multipliers with, one level up: if part of your party is
+  running up and throwing spears, the herd is scared — the trap line the other half set does not
+  un-scare it. So buying the quiet approach means buying **enough** of it. `stayers` / `stay_fraction`
+  are unchanged.
+- **`injury_damage_per_animal` is per CREW**, because `exposure` is a kit's: the half holding the
+  stand-off device takes the stand-off's hazard. `hunt_injuries` gives each crew `stayed × share` of
+  the engagement and caps it at that crew's own people, so a **uniformly** exposed party is
+  arithmetically identical to the single-profile form it replaced.
+
+### The two adapters build one contingent per crew
+
+**`fauna::resolve_hunt_fight`** emits one `Contingent` per crew (`count = hunters × share`, profile =
+that crew's hunter, id `person#<index>`), and **the resolver is untouched**: `combat::resolve_fight`
+already gates every attacker/target pair on the attacker's own `attack`, so a bare-handed run inside a
+speared party lands *exactly zero* on a defence it cannot clear. One averaged profile would have let
+it borrow the spears. The one-sided fast path sums over the crews for the same reason, and the
+casualty loop already summed every non-quarry result.
+
+### EVERY per-worker rate is `Σ share × per-crew rate` — both webs, all three carries
+
+`KitCoverage::weighted_rate` is the one inversion, and **`advance_labor_allocation` resolves ONE
+coverage per assignment and reads all four terms through it** (the hunt haul, the pen collection, the
+gather, and the party itself), because the crew, its kit and the band's ledger are the same three
+things for every stat. The assign-time seed (`seed_source_yield`), the live raid, the forecast query
+and the in-flight ETA each resolve the same coverage for the same reason.
+
+- **The mean is CREW-WEIGHTED, and that is what makes the cap correct.** Five sledded hunters and
+  five sledless haul `5 × 40 + 5 × 12`, quoted as a rate of `26` — so `workers × rate` is the party's
+  real total and the inversions (`hunt_haul_workers`, the gather's `workers_needed`) invert that same
+  product. A per-crew carry would need both to grow a crew loop for an answer identical to this one.
+- **The plant web is not an exception, and it was one for exactly one slice.** *"Gear covers people,
+  not jobs"* is the whole model: a band with five baskets and sixteen gatherers gathers with five
+  baskets. Pinned by
+  `a_band_short_of_baskets_gathers_between_the_bare_and_the_basketed` (strictly between bare hands
+  and a full set, on real turns) and `a_pen_short_of_handling_gear_collects_between_the_bare_and_the_geared`
+  (the same shape on `pen_carry`, plus the weighted-mean identity).
+- **The REFERENCE surfaces stay uniform** — a herd row's quote, the published kit roster, a launch
+  forecast, and `snapshot/population.rs`'s per-cohort tiers. Each describes *what a kit buys*, priced
+  against the one-unit reference ledger; how much of it a band owns is a different question, and the
+  band's own take answers it.
+
+**`hunt_carry`, `forage_carry` and `pen_carry` are therefore all crew-weighted; a fourth rate must
+be too**, or it becomes the one stat a shortfall cannot reach.
+
+**`advance_predator_raids`** builds the warrior line the same way: `coverage(&warrior_kit,
+warrior_count, wear)`, one contingent per crew off `warrior_profile`. The **`exposed` non-combatant
+contingent is untouched**, hand-zeroed `attack` and all — it is the people holding nothing, which is
+the whole reason it is separate.
+
+> **The band's own raid casualties do not move, and that is the placeholder resolver rather than this
+> change.** `resolve_fight` sizes a side's losses from the *enemy's* power over its own **head
+> count**; a defender's `attack` reaches only the enemy's losses (which the raid discards) and
+> `force_power`. So what a partly-clubbed line changes today is what the pack takes, not what the camp
+> loses. `a_band_short_of_clubs_stands_up_an_armed_line_and_a_bare_one` pins the composition and says
+> so.
+
+**`has_condition` keeps its meaning for every existing caller** (*the band owns at least one unit with
+condition*) — coverage asks the *count* question through `live_units` beside it, so the liveness
+predicate did not have to change.
 
 **Every charge goes through `wear_item`**, which floors a non-finite or negative `uses` at zero, so no
 item can grow a private flooring rule: a degenerate take must never *restore* a kit.
 
-**`wear_kit` names the QUANTUM, not the items.** A wear site says *"this party just made N kills"* and
-every item in its kit that wears per kill is charged — so **an item added to a kit is charged with no
-call-site edit**, and an item the kit does not carry is never charged at all. That last clause is what
+**`wear_kit` names the QUANTUM, not the items.** A wear site says *"this party just landed N blows"*
+and every item in its kit that wears per blow is charged — so **an item added to a kit is charged with
+no call-site edit**, and an item the kit does not carry is never charged at all. That last clause is what
 makes the bare-handed comparison free to run: otherwise running the comparison would consume the very
 kit it is being compared against.
 
@@ -604,9 +730,25 @@ party that never engaged.
   remains of the arc is the **panel** (§7). ~~Nothing publishes a batch's count, tier or grade to a
   client yet.~~ **The wire is landed**: `PopulationCohortState.equipmentBatches` carries the count,
   the tier, the grade and the life wording, and `crafting.md` → "On the wire" is its rationale.
-- **The partly-equipped party is #520 and is deliberately still open.** A party resolves uniformly
-  off the serving batch: 16 hunters and 10 spears is 16 speared hunters. Counts were the blocker and
-  are now landed.
+- ~~The partly-equipped party is #520 and is deliberately still open.~~ **Landed** — see "The
+  partly-equipped party" above. What is **not** covered, and is the honest list:
+  - ~~Nothing on the wire says *"10 of 16 armed"*.~~ **Landed** — `huntCrews` and
+    `KitItemCondition.workersHolding`, below. What stays uniform is the per-cohort **carry** tiers
+    (`huntCarryPerWorkerBiomass` / `forageCarryPerWorkerBiomass` / `penCarryPerWorkerBiomass`):
+    those are liveness readouts saying *what the kit buys*, and only the **hunt gate** — the thing
+    that decides whether a species can be taken at all — was worth a per-crew wire shape.
+  - ~~The Godot client does not read either field yet.~~ **Wired** — the decoder maps both, the hunt
+    compose sheets state the split beside the combat gate, and the Gear row and its popover state a
+    shortfall (`.claude/rules/client/labor-ui.md` → "…AND A CLEARED GATE IS THE REASSURING HALF OF A
+    SPLIT PARTY" and `band-readouts.md` → "A partly-armed band must stop reading as a fully-armed
+    one"). ~~**What stays unwired is the non-hunt jobs' coverage**: only the HUNT publishes a head
+    count to divide `workersHolding` by, so a basket's or a club's shortfall is not stated.~~
+    **Closed** — every row carries its own denominator now (`workersOnQuotedJob`, below), so a
+    shortfall on any job is one subtraction with no head count to hunt for, **and the client renders
+    all four through one path**: `DetailFormat.kit_coverage` reads the published pair and the hunt's
+    old `Σ huntCrews.workers` private path is gone (`band-readouts.md`, same section).
+  - **`force_power` / `victor` / the kill-wound split are untouched.** A bare-handed hunter's
+    intrinsic `attack 1` still contributes to `victor`, which is a separate question.
 - ~~The compose sheets offer no kit picker on a Scout or Warrior row.~~ **Wired.** The Band panel's
   WORKFORCE zone mounts the picker on each role CARD, over a line stating what the kit buys and the
   condition of the item behind it, and the card emits `assign_labor … <role> <n> kit <id>` on the
@@ -630,8 +772,8 @@ party that never engaged.
   wears its kit; the bare-handed one takes **exactly zero** and wears nothing.
 - **A detached party resolves and wears its own kit.** `advance_expeditions` queries
   `&mut BandEquipment`, resolves the attack tier via `hunter_profile` and the haul tier via
-  `hunt_per_worker_biomass_capacity`, and charges `wear_hunting` per animal killed + `wear_sled` per
-  biomass hauled — the same use quanta a resident band pays. Before slice 4 a raid ran on free,
+  `hunt_per_worker_biomass_capacity`, and charges the weapon **per blow its crews landed** + the sled
+  per biomass hauled — the same use quanta a resident band pays. Before slice 4 a raid ran on free,
   immortal equipment, which is the cost model `docs/plan_denial_raid.md` §1.2 depends on.
 - **The sled only decides a take where the fight leaves it room.** §4.6's per-hunter-turn ceiling is
   `min(engage_rate, (attack − defense) / durability) × body_mass`; the sled is a lever only where that
@@ -691,6 +833,74 @@ kit whose `uses` list is empty, and every behaviour attributed to it falls out o
 `fishing` kit with an empty `uses` would behave identically, which is the test of whether it has been
 special-cased.
 
+## Wear follows the work actually done — the `strike` quantum
+
+**A weapon is charged for the blows it landed in a body, and for nothing else.** `WearQuantum::Kill`
+and `WearQuantum::Fight` are **both retired into `WearQuantum::Strike`**, because both charged gear
+that did no work:
+
+- **`kill` billed the whole party for a body one part of it brought down.** Ray's case: *ten hunters
+  bring down five deer, two hunters per deer, but only two deer are available — only four hunters'
+  spears should be charged.*
+- **`fight` billed the whole warrior line for an engagement most of it may never have swung in.** A
+  band with three clubs and eight warriors paid one use of its clubs whatever happened.
+
+### The rule
+
+```text
+charged strikes = strikes_landed × (damage_absorbed / damage_dealt)
+```
+
+- **`strikes_landed` is the STRIKER'S**, not the target's — `combat::ContingentResult::strikes_landed`
+  is *"how many blows this contingent landed on the enemy"*, deliberately facing the other way from
+  the `killed` / `wounded` / `damage_dealt` beside it, because wear happens on the swing. The
+  resolver already drew the number (`landed_strikes`); it simply used to discard it.
+- **A gated pairing lands NOTHING.** `combat::resolve_fight` skips an attacker whose `attack` does not
+  clear the target's `defense` before a strike is drawn, so a bare-handed run inside a speared party
+  is charged a hard zero — and holds no weapon to charge anyway. **The two halves are separate
+  guarantees and are asserted separately**
+  (`a_bare_handed_crew_is_charged_no_strikes`).
+- **`damage_absorbed` is `min(dealt, standing × durability)`** — `combat::damage_absorbed`, the one
+  home of the clamp `DamageLedger::strike` was already applying and the raid needs without a ledger.
+  The hunt reads it back off the ledger (`DamageLedger::strike_blow`) rather than recomputing it, so
+  `standing` has one authority.
+- **Charged PER CREW, through each crew's own narrowed kit** — `fauna::StrikeCharge` rides out on
+  `HuntFight::strike_charges` and every take path calls the one seam
+  `HuntFight::charge_strike_wear`, so a wear site says *"this party just fought"* and each crew pays
+  for its own swing. A party built through `HuntingParty::uniform` carries no kit and is charged
+  nothing: a fixture or a launch quote has no ledger behind it, which is a different statement from
+  *"it swung and wore nothing out"*.
+- Ray's arithmetic is the test, not an illustration:
+  `the_strike_charge_is_the_share_of_the_blow_the_bodies_could_absorb` runs ten hunters at ten damage
+  a blow against two standing twenty-durability bodies — `2/5` absorbed, `10 × 0.4 = 4` charged — on
+  **both** the one-sided fast path and the full resolver, because a charge that differed between them
+  would be a second wear model.
+
+> **Where the party OVERKILLS, the charge collapses to a clean identity**: with `absorbed = kills ×
+> durability` and `dealt = strikes × per_strike`, the charge is exactly
+> `kills × (durability / per_strike)` — **the blows it took to put those bodies down**. Where the
+> party *under*-kills (everything it dealt went into a live animal) the ratio is `1` and every strike
+> is charged, which is the honest reading of a party that swung at animals still standing.
+
+### The cost, measured — and NOT retuned
+
+`wear.amount` was authored against kills and is deliberately untouched; the retune is **issue #495**,
+and `report_the_strike_wear_the_shipped_opening_pays` (an `#[ignore]`d, assert-free harness in
+`integration_tests/tests/equipment_toe.rs`, the `fauna_migratory_representation` precedent) is its
+input. Measured on the **shipped** opening — the ~17-worker band, Red Deer at the default `0.50`
+floor, the roster's authored `wariness 0.65`, its own spawn stock of 26 spears:
+
+| | per turn | per spear UNIT |
+|---|---|---|
+| kills (the retired `kill` quantum) | ~6.0 | ~42 turns |
+| **charged blows (`strike`)** | **~7.9** | **~31.7 turns** |
+
+**A ~1.3× faster burn, and the factor is not a coincidence**: it is `durability / per-strike damage`
+= `25 / (20 − 1)` on this quarry, the identity above. It is *not* the naive `strikes = hunters` (17 a
+turn, ~15 turns) — the absorbed clamp is what keeps overkill against a wary, thinned herd from being
+billed as work. A quarry with a lower `durability : damage` ratio burns gear proportionally slower;
+one that soaks many blows per body burns it faster, which is the retune's whole shape.
+
 ### Wear rides the SAME predicate that chose the tier
 
 Every wear site is gated on the effective predicate its own tier came from. **There are eight, and
@@ -701,11 +911,11 @@ assignment loop entirely, which is exactly how a site gets missed:
 |---|---|---|
 | `systems/labor.rs` — the gather | baskets, per biomass gathered | the crew's kit supplies `forage_carry` |
 | `systems/labor.rs` — a pen harvest | the sled per biomass **hauled**, the husbandry gear per biomass **butchered** | each item's own live predicate |
-| `systems/labor.rs` — a wild hunt | spears/traps per kill, the sled per biomass hauled | likewise, and independently |
-| `systems/expeditions.rs` — the raid's take | the hunting kit and the sled | the party's launch-time kit |
+| `systems/labor.rs` — a wild hunt | spears/traps **per blow landed, per crew** (`HuntFight::charge_strike_wear`), the sled per biomass hauled | the crew's own narrowed kit for the weapon; the assignment's kit for the sled |
+| `systems/expeditions.rs` — the raid's take | the weapon per blow landed, per crew; the sled per biomass hauled | the party's launch-time kit, narrowed per crew for the weapon |
 | `systems/expeditions.rs` — the scout's roadside kill | likewise | likewise |
 | `visibility_systems.rs` — `calculate_visibility` | wayfinding, per tile first revealed | only a **scout vantage's** first sightings, and only for the band that posted it |
-| `systems/labor.rs` — `advance_predator_raids` | clubs, per fight resolved | `warrior_count > 0` — nobody swung anything in a band with no warriors |
+| `systems/labor.rs` — `advance_predator_raids` | clubs, **per blow landed, per warrior line** | the line landed something — a bare line cannot clear the pack's `defense`, and a band nobody raided pays zero |
 | `systems/crafting.rs` — `advance_crafting` | the bench tool, per **item completed** | the tool was live for this draw (`live_bench_tool`) — a bare-handed bench wears nothing, and it is the **only** site that charges `item_crafted` |
 
 So a party using no component spends no durability on any of them.
@@ -932,9 +1142,10 @@ one place):
 
 | Field | Meaning |
 |---|---|
-| `kitItemConditions:[KitItemCondition]` | **One row per item the config carries** — `itemId` + `remaining` on the 0–100 scale, `0` = dry. It replaced three fixed floats (`huntingKitDurability` / `sledKitDurability` / `basketKitDurability`), which are **`(deprecated)` in the schema rather than deleted**: FlatBuffers field ids are positional, so removing one renumbers every field after it. **Driven by the CONFIG's item table, not the band's sparse ledger**, so an item is never missing from the list — but since the count slice an item the band does not **own** reads `0`, not full, and `remaining` is the condition left on the **serving batch** (the most-worn live one), which is what makes it a fuel gauge for the unit actually in hand. **`count` rides beside it** since the crafting wire stage, and it is what stops a client inferring ownership from a condition of zero: `remaining == 0` means *owns none*, never *"owns one that is dry"* — a batch with no units left is removed. Which of *worn out* / *never made* a zero is, is `equipmentBatches`' answer (`crafting.md` → "On the wire") |
+| `kitItemConditions:[KitItemCondition]` | **One row per item the config carries** — `itemId` + `remaining` on the 0–100 scale, `0` = dry. It replaced three fixed floats (`huntingKitDurability` / `sledKitDurability` / `basketKitDurability`), which are **`(deprecated)` in the schema rather than deleted**: FlatBuffers field ids are positional, so removing one renumbers every field after it. **Driven by the CONFIG's item table, not the band's sparse ledger**, so an item is never missing from the list — but since the count slice an item the band does not **own** reads `0`, not full, and `remaining` is the condition left on the **serving batch** (the most-worn live one), which is what makes it a fuel gauge for the unit actually in hand. **`count` rides beside it** since the crafting wire stage, and it is what stops a client inferring ownership from a condition of zero: `remaining == 0` means *owns none*, never *"owns one that is dry"* — a batch with no units left is removed. Which of *worn out* / *never made* a zero is, is `equipmentBatches`' answer (`crafting.md` → "On the wire"). **`workersHolding` / `workersOnQuotedJob` ride beside both** since the partly-equipped slice, and they are ONE SENTENCE — *"`workersHolding` of `workersOnQuotedJob`"*. `count` is UNITS owned, the numerator is PEOPLE reached (the two differ whenever the band is short or holds the spawn's reserve), and the denominator is the head count of the job the row is quoted at. Quoted at the job whose kit carries the item — and at `kitId`'s for an item several jobs' kits carry, the same convention `penCarryPerWorkerBiomass` follows |
 | `equipmentBatches:[EquipmentBatchState]` | **One row per BATCH**, plus one `count: 0` row per config item the band owns none of — `itemId`, `tierId`, `grade`, `count`, `remaining`, and the **life wording in use quanta, never percent**. It is the crafting arc's field; the rationale, the `Worn out` / `Never made` split and the `BandEquipment::retired` tally it needed are in `crafting.md` → "On the wire" |
-| `hunterAttack:float` | The band's resolved per-hunter `attack` (1 bare / 20 kitted) — the left side of the fight's gate against a herd's `HerdTelemetryState.defense` |
+| `hunterAttack:float` | The band's resolved per-hunter `attack` (1 bare / 20 kitted) — the left side of the fight's gate against a herd's `HerdTelemetryState.defense`. **It is the BEST-EQUIPPED crew's tier, not the whole band's**, and `huntCrews` is the rest of the party — see below |
+| `huntCrews:[BandKitCrew]` | **How this band's gear divides its HUNT workers** — `workers` + that run's own `hunterAttack` + the `itemIds` it holds, best-equipped first, `Σ workers ==` the hunt head count. **Never empty**: a uniform band is one row |
 | `huntCarryPerWorkerBiomass:float` | The band's resolved per-worker **hunt** haul rate (40 sledded / 12 sledless) |
 | `forageCarryPerWorkerBiomass:float` | The band's resolved per-**gatherer** throughput, *before* the tile's seasonal weight (8 with baskets / 1.6 bare-handed) |
 | `kitTiers:[BandKitTiers]` | **What EVERY offered kit would grant this band, at its live wear** — one row per roster kit (`kitId` + the same **nine** tiers `KitOption` carries: `attack`, the two mass bounds, `huntCarryPerWorkerBiomass`, `forageCarryPerWorkerBiomass`, `penCarryPerWorkerBiomass`, `scoutVantageRange`, `dispersion`, `exposure`). See below: it is the resolved answer, and a client must not re-derive it |
@@ -967,6 +1178,65 @@ schema; they disclaimed the estimate tables, which are gone.
 | `LaborAssignment.kitId:string` | The kit that row's yields are priced at, **resolved** — never "unspecified" and never `""`: a band-wide role publishes its own job's default now |
 | `KitOption.itemIds:[string]` | **Which items the kit carries** — its `equipment.json` `uses` list verbatim, in config order (`big_game` → `["spears", "sled"]`). The tiers beside it are numbers and name no item, so without this a durability readout has to guess which component produced them — and the guess was `attack → "spears"`, which quoted a Trapping party the spears' condition. An **empty** list is a real answer (`none` carries nothing), never "unknown" |
 | `HerdTelemetryState.defaultKitId:string` | **The kit THIS HERD wants** — what the hunt compose sheet opens on, and what `assign_labor … hunt <herd> <n>` **and both raiding verbs** resolve with no `kit` token. Derived at the fresh tier from the take score against the species, *except* for a **corralled** herd, which takes the kit supplying `EquipmentStat::PenCarry` (a pen has no fight to score — see "A PEN is not a scoring question"). Empty only for a species the roster cannot resolve, which falls back to `defaultHuntKitId`. See "Which kit a QUARRY wants is DERIVED" |
+
+### `huntCrews` — the composed party, because ONE tier per band says the reassuring half
+
+`hunterAttack` publishes one resolved number per band, and a client is forbidden from re-deriving a
+step-down for itself (see `kitTiers` below). For a **partly-equipped** band that one number is the
+*best-equipped* answer for everybody — wrong in the reassuring direction, which is the failure #520
+names.
+
+**The player-facing fact that matters is the GATE.** `max(0, hunterAttack − defense)` decides whether
+a species can be taken *at all*, so the honest answer for a mixed party is *"ten of your seventeen
+hunters can take this; seven cannot"*. `huntCrews` is that sentence: one `BandKitCrew` per run, with
+that run's own **flat** tier and the items it holds, best-equipped first, workers summing to the hunt
+head count.
+
+- **`hunterAttack` keeps its meaning and stays**, documented in the schema as the best crew's tier
+  with a pointer to `huntCrews` beside it. It is **read off `hunt_crews[0]`** in
+  `snapshot/population.rs` rather than resolved a second time, so the schema's promise is true by
+  construction and the two cannot drift.
+- **Never empty**, the same rule `KitCoverage` follows sim-side: a client must not have to tell *"no
+  crews"* from *"one crew holding nothing"*. A band with **nobody on the hunt job** publishes one row
+  at `workers 0` carrying the tier one hunter *would* be at — which is the number `hunterAttack`
+  states for that band, so the two agree there too.
+- **Resolved off the band's live ledger through `coverage`**, the same seam the take runs through —
+  not a second path to the same answer.
+- **An in-flight party's head count is its own workers**, because a party carries one kit and works
+  no sources: its `LaborAllocation` is empty, and reading a `0` off that would publish an outfitted
+  raid as holding nothing.
+
+**`KitItemCondition.workersHolding` / `workersOnQuotedJob` are the same fact one level down, and
+they are ONE SENTENCE** — *"spears 87 · **10 of 17**"*, with no client dividing anything (it could
+not: `workers_per_unit` and which job is staffed are both sim-side). `count` is UNITS, the numerator
+is PEOPLE, and the two differ whenever the band is short **or** holds the spawn's reserve.
+
+**The denominator is not optional garnish.** Without it only the hunt is renderable, because
+`Σ huntCrews.workers` is the only job head count on the wire — so a *spears* shortfall could be
+stated and a **basket's, club's or wayfinding's could not**, which is the quiet half of the same
+reassuring-direction failure `huntCrews` exists to remove.
+
+**Both come off the SAME coverage, chosen by which quoted kit carries the item** (ties to `kitId`'s,
+the hunt) — one coverage per job, resolved in the same pass — so `baskets` answers at the forage row
+and `clubs` at the warrior row rather than reading `0` against a hunt kit that carries neither, and
+the pair can never describe two different jobs. The job is picked by *"whose kit carries this"*
+rather than *"whose coverage holds somebody"*, deliberately: the latter leaves the denominator
+undefined in the case that matters most — a **staffed** job whose gear the band owns none of.
+
+> **TWO ZEROS A READER MUST NOT CONFUSE.** `workersOnQuotedJob == 0` is *nobody is staffed on that
+> job* — *"0 of 0"*, nothing was needed, not a warning, and nothing may divide by it. A **positive**
+> denominator with `workersHolding == 0` is the real shortfall: the job is staffed and every worker
+> on it is at the unequipped tier. (A third `0/0` is an item no quoted kit carries — a bench tool —
+> and `count` beside it is what separates that from *"the band owns none"*.)
+
+All of it is pinned **off the encoded envelope**, in pairs, because each claim alone passes on a
+dead field:
+
+| test | pins | its pair |
+|---|---|---|
+| `a_band_short_of_spears_publishes_one_hunt_crew_per_run` | two crews, the workers summing to the head count, the armed row equipped and the bare row intrinsic | `::a_fully_armed_band_publishes_exactly_one_hunt_crew` — *"exactly one row"* alone would pass on a sim that had stopped dividing anything |
+| `a_gear_row_publishes_the_head_count_of_the_job_it_is_quoted_at` | a **gathering** band short of baskets reads *"2 of 4"* at the FORAGE head count, which the hunt's says nothing about | the same band's spear row reads `0 of 0` in the same frame |
+| `a_job_nobody_is_staffed_on_publishes_a_zero_denominator_rather_than_an_absent_row` | `0 of 0` on two unstaffed jobs, with the row still present, and the baskets zero proven to be about the STAFFING (the band owns some) | the hunt row it is staffed on reads `4 of 4` in the same frame — a sim publishing zeros everywhere would pass every other assertion |
 
 ### `kitTiers` — the resolved per-band answer, because the derivation is impossible on the wire
 

@@ -500,6 +500,154 @@ fn the_forfeit_is_capped_at_the_larder() {
 // `assert_rejects_field` JSON harness lives — `FaunaConfig::builtin()` returns an `Arc`, so a bad
 // value can't be assigned onto it here.
 
+// ---------------------------------------------------------------------------------------------
+// #520 — the warrior line is only as armed as the band's club stock
+// ---------------------------------------------------------------------------------------------
+
+/// The warrior TOE. The sim never spells an item; a test standing a band up short of one has to.
+const CLUBS: &str = "clubs";
+
+/// Give `band` exactly `clubs` clubs, unworn, at the tier that ships known.
+fn arm_with_clubs(app: &mut App, band: Entity, clubs: u32) {
+    let equipment = app
+        .world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get();
+    let tier = equipment
+        .item(CLUBS)
+        .expect("the shipped roster carries clubs")
+        .default_tier()
+        .id
+        .clone();
+    let mut ledger = core_sim::BandEquipment::default();
+    ledger.stock(CLUBS, clubs, &tier, None);
+    app.world.entity_mut(band).insert(ledger);
+}
+
+/// **A BAND WITH THREE CLUBS AND EIGHT WARRIORS STANDS THREE ARMED DEFENDERS UP, NOT EIGHT**
+/// (issue #520).
+///
+/// `advance_predator_raids` builds its warrior contingents from
+/// `EquipmentConfig::coverage(&warrior_kit, warrior_count, wear)` — the same seam the hunt divides a
+/// party with — so the clubs reach whoever they reach and the rest defend at the bare hand's `1`.
+/// This asserts the composition through those very seams, then drives a **real raid** on the same
+/// band so the wiring is exercised end to end.
+///
+/// > **The band's own casualties do not move, and that is the placeholder resolver, not this
+/// > change.** `combat::resolve_fight` sizes a side's losses from the *enemy's* power over its own
+/// > **head count**; a defender's `attack` reaches only the enemy's losses (discarded here) and
+/// > `force_power`, which `docs/plan_predators.md` Phase 1b leaves as a placeholder. So what the
+/// > partly-clubbed warrior line changes today is what the pack takes, not what the camp loses.
+#[test]
+fn a_band_short_of_clubs_stands_up_an_armed_line_and_a_bare_one() {
+    const WARRIORS: u32 = 8;
+    const CLUBS_OWNED: u32 = 3;
+
+    let (mut app, pos, tile) = arena();
+    seat(&mut app, "pred_wolf", WOLF, pos);
+    let band = resident_band(&mut app, tile, 30, WARRIORS);
+    arm_with_clubs(&mut app, band, CLUBS_OWNED);
+
+    let equipment = app
+        .world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get();
+    let person = app
+        .world
+        .resource::<core_sim::CreaturesConfigHandle>()
+        .get()
+        .person();
+    let wear = app
+        .world
+        .get::<core_sim::BandEquipment>(band)
+        .expect("the band was just armed")
+        .clone();
+    let warrior_kit = app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("the band has an allocation")
+        .kit_on(&LaborTarget::Warrior, &equipment);
+
+    let coverage = equipment.coverage(&warrior_kit, WARRIORS as f32, &wear);
+    assert_eq!(
+        coverage.crews().len(),
+        2,
+        "three clubs across eight warriors is two lines: {coverage:?}"
+    );
+    assert_eq!(coverage.crews()[0].workers, CLUBS_OWNED as f32);
+    assert_eq!(
+        coverage.crews()[1].workers,
+        (WARRIORS - CLUBS_OWNED) as f32,
+        "the five the clubs did not reach still turn out"
+    );
+    let armed = equipment.warrior_profile(person, &coverage.crews()[0].kit, &wear);
+    let bare = equipment.warrior_profile(person, &coverage.crews()[1].kit, &wear);
+    assert!(
+        armed.attack > bare.attack,
+        "the clubbed line swings the club's tier and the other the bare hand's ({armed:?} vs \
+         {bare:?})"
+    );
+    assert_eq!(
+        bare.attack, person.attack,
+        "and the unarmed line is exactly the `person` roster row — no borrowed club"
+    );
+
+    // ...and the real raid resolves against that band without incident.
+    let before = working_of(&app, band);
+    app.world.run_system_once(advance_predator_raids);
+    assert!(
+        working_of(&app, band) < before,
+        "liveness — the pack really raided this band, so the composition above was the one used"
+    );
+}
+
+/// **A CLUB IS CHARGED FOR THE BLOWS IT LANDED, NOT FOR THE RAID IT ATTENDED** (the strike quantum).
+///
+/// `WearQuantum::Fight` charged the whole warrior line one use per engagement, which billed a band
+/// for weapons most of its warriors may never have swung. The club now shares `Strike` with the
+/// spear: a line that clears the pack's `defense` is charged per blow, a line that cannot is charged
+/// nothing, and **a band nobody raided still pays zero** — `docs/plan_denial_raid.md` §1.2 intact.
+///
+/// The three arms are compared against **each other** rather than against literals, because the
+/// number moves with `combat_config` and with the pack's own `durability`.
+#[test]
+fn clubs_wear_per_blow_landed_and_an_unraided_band_pays_nothing() {
+    const WARRIORS: u32 = 8;
+    const FEW_CLUBS: u32 = 3;
+
+    let club_wear_after_a_raid = |clubs: u32, seat_a_pack: bool| -> f32 {
+        let (mut app, pos, tile) = arena();
+        if seat_a_pack {
+            seat(&mut app, "pred_wolf", WOLF, pos);
+        }
+        let band = resident_band(&mut app, tile, 30, WARRIORS);
+        arm_with_clubs(&mut app, band, clubs);
+        app.world.run_system_once(advance_predator_raids);
+        app.world
+            .get::<core_sim::BandEquipment>(band)
+            .expect("the band was armed")
+            .wear_of(CLUBS)
+    };
+
+    let fully_clubbed = club_wear_after_a_raid(WARRIORS, true);
+    let partly_clubbed = club_wear_after_a_raid(FEW_CLUBS, true);
+    let unraided = club_wear_after_a_raid(WARRIORS, false);
+
+    assert_eq!(
+        unraided, 0.0,
+        "a band nobody raided swung nothing — wear is charged for USE, never for turns elapsed"
+    );
+    assert!(
+        partly_clubbed > 0.0,
+        "the clubbed line really landed blows: {partly_clubbed}"
+    );
+    assert!(
+        partly_clubbed < fully_clubbed,
+        "three clubs land fewer blows than eight, so they wear less: {partly_clubbed} vs \
+         {fully_clubbed} — a per-ENGAGEMENT charge would read the same for both"
+    );
+}
+
 /// **Determinism.** Two identical raid setups leave bit-identical casualties (the resolver is pure and
 /// the seed is derived, not random).
 #[test]

@@ -159,6 +159,53 @@ const KIT_LABEL_BASKETS := "Baskets"
 const KIT_ITEM_CONDITIONS_KEY := "kit_item_conditions"
 const KIT_ITEM_ID_KEY := "item_id"
 const KIT_ITEM_REMAINING_KEY := "remaining"
+
+# **HOW MANY PEOPLE AN ITEM ACTUALLY REACHES** (issue #520) — the sim's own answer, resolved through
+# the same `coverage` seam the take runs through. A unit ARMS A PERSON, so owning one is not arming
+# the band: `count` is UNITS and this is PEOPLE, and the two part company the moment the band is
+# short of an item (or holds the spawn's reserve above its head count).
+#
+# **IT CANNOT BE COMPUTED HERE** and must never be inferred from `count` — `workers_per_unit` is a
+# per-item config number the wire does not carry (a four-worker net is the first item that is not
+# `1`, and a unit needs its FULL crew), and which job is staffed is sim-side too.
+const KIT_ITEM_WORKERS_HOLDING_KEY := "workers_holding"
+
+# **ITS DENOMINATOR, AND THE PAIR IS ONE SENTENCE** — *"`workers_holding` of `workers_on_quoted_job`"*.
+# The head count of the job the row is quoted at, off the SAME coverage the numerator came from, so
+# the two can never describe different jobs. It is what lets a BASKET, a CLUB or a WAYFINDING
+# shortfall be stated at all: before it, `Σ hunt_crews.workers` was the only job head count on the
+# wire and the other three jobs were silent.
+#
+# **A ZERO HERE IS "NOBODY IS STAFFED", NOT A SHORTFALL** — see `kit_coverage`, which is the one place
+# this is read and the one place the guard lives.
+const KIT_ITEM_ON_QUOTED_JOB_KEY := "workers_on_quoted_job"
+
+# **THE HUNT PARTY'S OWN DIVISION** (`PopulationCohortState.huntCrews`) — one row per run of hunters
+# holding identical gear, best-equipped FIRST, `workers` summing to the band's hunt head count.
+#
+# **A UNIFORM BAND PUBLISHES EXACTLY ONE ROW, never an empty list**, so no reader has to tell "no
+# crews" from "one crew holding nothing" — and a band with nobody on the hunt job publishes one row
+# at `workers 0`, which is the state every reader here has to treat as *nothing to say* rather than
+# as a shortfall of zero out of zero.
+#
+# Each row's `hunter_attack` is that run's own FLAT tier — the gate's left-hand side for those
+# workers, and the reason a band-level `hunter_attack` states only the reassuring half.
+const HUNT_CREWS_KEY := "hunt_crews"
+const HUNT_CREW_WORKERS_KEY := "workers"
+const HUNT_CREW_ATTACK_KEY := "hunter_attack"
+const HUNT_CREW_ITEM_IDS_KEY := "item_ids"
+
+# **WHICH KIT THE COHORT'S HUNT ANSWERS ARE QUOTED AT** (`PopulationCohortState.kitId`) — the hunt
+# JOB's default on a resident band, an in-flight party's own kit. It is what `hunt_crews` divides the
+# party against, so a readout quoting the crews under a DIFFERENT kit describes a division that does
+# not exist for that choice. Named here, distinct from `KitRoster.KIT_ID_KEY` (a ROSTER entry's own
+# id), because the two are different questions that happen to share a spelling on the wire.
+const BAND_QUOTED_KIT_ID_KEY := "kit_id"
+
+# Below this many workers a crew (or a coverage) is treated as EMPTY rather than as a fraction of a
+# person. The wire counts workers in fractions because a forecast does, so a band with nobody on the
+# hunt publishes `workers 0` and a rounding artefact must not read as somebody standing there.
+const HUNT_CREW_WORKER_EPSILON := 0.005
 const KIT_DURABILITY_KEY_SPEARS := "spears"
 const KIT_DURABILITY_KEY_SLED := "sled"
 const KIT_DURABILITY_KEY_BASKETS := "baskets"
@@ -264,6 +311,31 @@ const KIT_ROLE_WARRIOR_ATTACK_FORMAT := "attack %s defending the camp"
 # The bare-handed tag on a dry kit's breakdown row — the state worth saying plainly, since there is no
 # replenishment path and the role stays there.
 const KIT_BARE_HANDS_SUFFIX := " — bare hands"
+
+# **THE SHORTFALL, ON THE ROW AND IN THE POPOVER** (issue #520). A band with ten spears among
+# seventeen hunters used to render byte-identically to a fully armed one — the condition says how much
+# life is left, and nothing said how many people the item ever reached.
+#
+# The row's form is a bare fraction because the row is a height-capped summary and already carries the
+# item's name in front of it; the popover has room for the sentence. `only` is doing real work in the
+# long form: `4 of 17` alone reads as a fact, and the shortfall is the point.
+#
+# **THE NOUN IS `workers`, NOT `hunters`, and that is the four-job wording.** Every job's coverage
+# comes through one path now, so a basket's clause is this same string — and it cannot name the job,
+# because the row does not carry one: `workersOnQuotedJob` is a head count and the job behind it is
+# resolved sim-side. `workers` is the one noun true of a gatherer, a keeper, a scout and a warrior.
+const KIT_COVERAGE_ROW_FORMAT := "%s (%d/%d)"
+# **SPELLED STRUCTURALLY, the `RECOVERY_GUIDANCE_TEXT` idiom** — the two clauses below share a tail and
+# a harness needs a needle that finds EITHER, so the tail is written once and both formats are built
+# from it. Two literals would let a reworded clause slip past an assertion still matching the other.
+const KIT_COVERAGE_SHORT_NEEDLE := "workers carry one"
+const KIT_COVERAGE_BREAKDOWN_FORMAT := " · only %d of %d " + KIT_COVERAGE_SHORT_NEEDLE
+
+# **NOBODY AT ALL, ON A STAFFED JOB** — the sharpest reading the pair produces, and it takes its own
+# sentence because `only 0 of 4` is the arithmetic where *"none of your 4"* is the fact. It is
+# reachable with the item LIVE, not just dry: an item needing a full crew (`workers_per_unit > 1`)
+# equips nobody until the job is staffed to it, so a band can own a good net and hold it with no one.
+const KIT_COVERAGE_BREAKDOWN_NONE_FORMAT := " · none of your %d " + KIT_COVERAGE_SHORT_NEEDLE
 
 # One `    ▲ Spears 87 — attack 20`-style breakdown row, and the sentence beneath the whole set.
 const KIT_BREAKDOWN_ROW_FORMAT := "%s%s %s %s — %s"
@@ -1316,6 +1388,76 @@ static func band_kit_is_dry(band: Dictionary) -> bool:
             return true
     return false
 
+## The band's hunt crews, best-equipped first. Empty for a cohort that publishes none (a snapshot
+## predating the field), which every reader below treats as *nothing to say*.
+static func band_hunt_crews(band: Dictionary) -> Array:
+    return band.get(HUNT_CREWS_KEY, []) as Array
+
+## **THE BAND'S HUNT HEAD COUNT** — `Σ` the crews' workers, which is the sim's own denominator and the
+## only one on the wire. Never re-derived from a labor assignment: the crews are what the take was
+## resolved against, so a second count could disagree with the split it is the denominator for.
+static func band_hunt_headcount(band: Dictionary) -> float:
+    var total := 0.0
+    for crew in band_hunt_crews(band):
+        total += maxf(float(crew.get(HUNT_CREW_WORKERS_KEY, 0.0)), 0.0)
+    return total
+
+## How many workers hold this item, `0` when the band publishes no row for it. **A `0` is three
+## different sentences** — nobody staffed on the job, the band owns none, or no quoted kit carries the
+## item — so this number alone never states a shortfall; `kit_coverage` below is what does.
+static func kit_workers_holding(band: Dictionary, item_id: String) -> float:
+    for row in band.get(KIT_ITEM_CONDITIONS_KEY, []):
+        if String(row.get(KIT_ITEM_ID_KEY, "")) == item_id:
+            return maxf(float(row.get(KIT_ITEM_WORKERS_HOLDING_KEY, 0.0)), 0.0)
+    return 0.0
+
+## **HOW FAR AN ITEM REACHES INTO THE JOB THAT USES IT** — `{stated, holding, short, headcount}`, all
+## three counts WHOLE PEOPLE, `stated` false when there is nothing to say.
+##
+## **THE DENOMINATOR IS PUBLISHED, NOT DERIVED — AND ALL FOUR JOBS COME THROUGH HERE.**
+## `workers_on_quoted_job` is the head count of the job the row is quoted at, resolved off the SAME
+## coverage that produced `workers_holding`, so the pair provably describes ONE job and a basket's
+## shortfall is stated exactly the way a spears shortfall is. The hunt had a private path while
+## `Σ hunt_crews.workers` was the only job head count on the wire; it does not any more, and it must
+## not grow one back — a second denominator is a second answer.
+##
+## **THE ZEROS ARE A RENDERING CONTRACT** (`.claude/rules/core_sim/equipment.md`):
+## - `workers_on_quoted_job == 0` → **NOBODY IS STAFFED on that job.** `0 of 0` is not a shortfall —
+##   a band with no gatherers needed no basket and none went unheld — so it must not tint anything,
+##   and **nothing may divide by it**. That is this function's early return, and it is also what an
+##   item NO quoted kit carries (a bench tool) reads.
+## - a POSITIVE denominator with `workers_holding == 0` → the real shortfall, and the sharpest one:
+##   the job is staffed and every worker on it is at the unequipped tier. It renders `0 of 4`.
+##
+## **THE THREE COUNTS ARE APPORTIONED, NOT ROUNDED INDEPENDENTLY.** Both halves are fractional, and
+## rounding each on its own gives a `4 of 17` whose remainder is 13 — the largest-remainder split is
+## the same reason the PEOPLE brackets sum to the band's own size.
+static func kit_coverage(band: Dictionary, item_id: String) -> Dictionary:
+    var blank := {"stated": false, "holding": 0, "short": 0, "headcount": 0}
+    for row in band.get(KIT_ITEM_CONDITIONS_KEY, []):
+        if String(row.get(KIT_ITEM_ID_KEY, "")) != item_id:
+            continue
+        var staffed := maxf(float(row.get(KIT_ITEM_ON_QUOTED_JOB_KEY, 0.0)), 0.0)
+        if staffed <= HUNT_CREW_WORKER_EPSILON:
+            return blank
+        var holding := minf(maxf(float(row.get(KIT_ITEM_WORKERS_HOLDING_KEY, 0.0)), 0.0), staffed)
+        # The two halves partition the job's own head count, so that is the target they must sum to.
+        var parts := HudFormat.apportion_people_to(
+            [holding, staffed - holding], int(round(staffed)))
+        return {"stated": true, "holding": parts[0], "short": parts[1],
+            "headcount": parts[0] + parts[1]}
+    return blank
+
+## **IS ANY ITEM SHORT OF THE PEOPLE WHO NEED IT?** — the shortfall twin of `band_kit_is_dry`, and the
+## other half of what tints the Gear caret WARN. A partly-armed band is not a worn one: the gear works
+## perfectly for whoever holds it, and the loss is that the rest of the party is standing there with
+## nothing.
+static func band_kit_is_short(band: Dictionary) -> bool:
+    for row in band.get(KIT_ITEM_CONDITIONS_KEY, []):
+        if int(kit_coverage(band, String(row.get(KIT_ITEM_ID_KEY, "")))["short"]) > 0:
+            return true
+    return false
+
 ## Is this item still equipped? The schema's own rule and the only test there is (see `KIT_DRY`).
 ##
 ## **An item with no published row reads as DRY, not as equipped.** A missing row means the server
@@ -1338,9 +1480,14 @@ static func kit_condition_face(band: Dictionary, item_id: String) -> String:
     return String.num(kit_condition(band, item_id), KIT_CONDITION_DECIMALS) \
         if kit_is_equipped(band, item_id) else KIT_DRY_FACE
 
-## One `    ▲ Spears 87 — attack 20` breakdown row. Green while the kit is equipped, amber once it is
-## dry — through the SAME ▲/▼ sign glyphs the food and morale breakdowns tint by, so the popover has
-## one two-tone rule rather than a per-family one.
+## One `    ▲ Spears 87 — attack 20` breakdown row. Through the SAME ▲/▼ sign glyphs the food and
+## morale breakdowns tint by, so the popover has one two-tone rule rather than a per-family one.
+##
+## **THE GLYPH ASKS WHETHER THE ITEM IS SOUND, NOT WHETHER IT EXISTS.** It used to be a bare
+## `equipped` test; a partly-armed band's spears are equipped and are *also* the band's biggest
+## problem, so a shortfall takes ▼ (WARN ink over the whole row) exactly as a dry item does. The two
+## states then say WHICH they are in words — `— bare hands` for the cliff, the coverage clause for the
+## shortfall — rather than being told apart by the glyph.
 ##
 ## `role` is composed by the caller from THAT KIT's own tier. It is a parameter rather than a lookup
 ## here on purpose: the wrong pairing (a sled quoting the forage carry) is the defect this arc keeps
@@ -1348,8 +1495,17 @@ static func kit_condition_face(band: Dictionary, item_id: String) -> String:
 static func kit_breakdown_row(band: Dictionary, item_id: String, label: String,
         role: String) -> String:
     var equipped := kit_is_equipped(band, item_id)
-    var glyph := MORALE_CONTRIB_POSITIVE_GLYPH if equipped else MORALE_CONTRIB_NEGATIVE_GLYPH
+    var coverage := kit_coverage(band, item_id)
+    var short := int(coverage["short"]) > 0
+    var glyph := MORALE_CONTRIB_NEGATIVE_GLYPH if (not equipped or short) \
+        else MORALE_CONTRIB_POSITIVE_GLYPH
     var suffix := "" if equipped else KIT_BARE_HANDS_SUFFIX
+    if short:
+        # **NOBODY HOLDING IT GETS ITS OWN SENTENCE.** `only 0 of 4 workers carry one` is arithmetic
+        # where "none of your 4" is the fact, and this is the reading the pair exists to make sayable.
+        suffix += KIT_COVERAGE_BREAKDOWN_NONE_FORMAT % coverage["headcount"] \
+            if int(coverage["holding"]) <= 0 \
+            else KIT_COVERAGE_BREAKDOWN_FORMAT % [coverage["holding"], coverage["headcount"]]
     return KIT_BREAKDOWN_ROW_FORMAT % [MORALE_BREAKDOWN_INDENT, glyph, label,
         kit_condition_face(band, item_id), role + suffix]
 

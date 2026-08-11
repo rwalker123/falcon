@@ -1718,6 +1718,11 @@ func _combat_gate_states() -> void:
 	h._assert_hud("a party above the gate is told nothing about the fight — no line at all",
 		Readout.hunt_gate_blocked(speared_sheet) == Readout.HUNT_GATE_ABSENT
 			and Readout.hunt_gate_line(speared_sheet) == "")
+	# **THE UNIFORM CONTROL for the split line below**, and without it that state's claim passes on a
+	# sheet that states a split for every band. This band publishes ONE crew — the shipped case — so
+	# there is no division to report and the sheet says nothing about who can and who cannot.
+	h._assert_hud("…and a UNIFORMLY equipped party states no split either",
+		Readout.hunt_crew_split_line(speared_sheet) == "")
 
 	# State gate-b — THE SAME MAMMOTH, THE SAME PARTY SIZE, BARE HANDS. `max(0, 1 − 12)` is zero, so
 	# no headcount kills anything and the party takes casualties for nothing. **The only thing that
@@ -1756,11 +1761,65 @@ func _combat_gate_states() -> void:
 	h._assert_hud("a PEN is not stalked and not fought — the refusal does not render on one",
 		Readout.hunt_gate_blocked(pen_sheet) == Readout.HUNT_GATE_ABSENT)
 
+	# State gate-d — **THE SAME MAMMOTH, TEN SPEARS AMONG SEVENTEEN HUNTERS** (issue #520). The gate
+	# clears, because it is asked at ONE tier and that tier is the best-equipped crew's — which is the
+	# reassuring half. Ten of these hunters can take the animal and seven cannot at any headcount, and
+	# until this the sheet said nothing about the seven.
+	await _combat_gate_split_state()
+
 	# Reset for whatever renders next.
 	h._hud._band_labor._player_bands = []
 	h._hud._band_labor._player_band = BandFx.band_fixture()
 	h._hud._compose.reset_hunt_source()
 	h._hud._compose.set_hunt_band(-1)
+
+
+## **THE SENTENCE, SPELLED OUT rather than recomposed through `SourceForecast`'s own format.** An
+## expectation built from the code under test can only agree with itself, and both candidate readings
+## here — the armed count against the barred one, "bare-handed" against "hold too little gear" —
+## differ by a word or a digit, which a `contains` would not separate.
+##
+## **IT COUNTS THE PARTY, NOT THE BAND.** `LOCAL_HUNT_HUNTERS` (6) drawn from an armed run of 4 is
+## `4 of your 6`; the band-level reading of the same rows would be `4 of your 17`, which over a
+## `HUNTERS 6` stepper names more bare hands than the party has people.
+const GATE_SPLIT_LINE := "⚠ 4 of your 6 hunters can take Woolly Mammoth; the other 2 hold too little gear and land nothing on it at any headcount."
+
+## A party that fits INSIDE the armed run — every hunter sent is holding a spear, so this hunt has no
+## split whatever the rest of the band is carrying.
+const GATE_SPLIT_COVERED_HUNTERS := 3
+
+## The partly-equipped party's own frame. Its band is `with_short_spears`, which differs from the
+## speared band of gate-a in NOTHING a condition readout can see — every item is live and at the same
+## wear — so the only thing that can move this line is the crew division itself.
+func _combat_gate_split_state() -> void:
+	var mammoth := _combat_gate_mammoth()
+	var split := BandFx.with_short_spears(BandFx.hunt_preview_local_band())
+	h._hud._band_labor._player_bands = [split]
+	h._hud._band_labor._player_band = split
+	h._hud._compose.reset_hunt_source()
+	h._show_herd(mammoth)
+	h._compose_herd(mammoth, LOCAL_HUNT_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	await h._save("herd_hunt_gate_split")
+	var sheet: Control = h._hud._drawercompose._compose_sheet
+	# **THE GATE AND THE SPLIT ARE COMPLEMENTS, so both halves are asserted.** A refusal here would
+	# mean the sheet had decided nobody can take it, which is the OTHER sentence; the split line only
+	# ever stands where the fight is winnable by somebody.
+	h._assert_hud("a split party clears the gate — the refusal does not render",
+		Readout.hunt_gate_blocked(sheet) == Readout.HUNT_GATE_ABSENT)
+	h._assert_hud("…and the sheet says WHICH of them can take it: %s" % GATE_SPLIT_LINE,
+		Readout.hunt_crew_split_line(sheet) == GATE_SPLIT_LINE)
+	# **THE SAME BAND AND THE SAME QUARRY, A SMALLER PARTY — AND NOW THERE IS NOTHING TO SAY.** The
+	# gear covers a prefix of whoever is sent, so three hunters drawn from four spears are all armed;
+	# a line here would be the band's shortfall reported as this party's, which reads as "2 of my 3
+	# are bare-handed" over a stepper the player just set. PNG-less: the claim is an absence, and the
+	# frame above is the picture.
+	h._hud._compose.reset_hunt_source()
+	h._show_herd(mammoth)
+	h._compose_herd(mammoth, GATE_SPLIT_COVERED_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	h._assert_hud("…and a party that fits inside the armed run states NO split",
+		Readout.hunt_crew_split_line(h._hud._drawercompose._compose_sheet) == "")
 
 
 # =====================================================================================

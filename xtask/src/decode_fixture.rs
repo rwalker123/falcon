@@ -958,6 +958,16 @@ fn seed_snapshot() -> WorldSnapshot {
                 // **Ownership, stated.** The dry row above owns none — `remaining 0` means "owns
                 // none" since the count slice — so the golden carries both readings of a zero.
                 count: if index == 1 { 0 } else { 1 },
+                // **And how many people it reaches** — a unit arms a worker, so a row the band owns
+                // one of still has to say whether anybody is holding it. Distinct from `count` here
+                // deliberately: a golden where the two matched would pass a decoder that read
+                // either field for the other.
+                workers_holding: if index == 1 { 0.0 } else { 3.0 },
+                // **Its denominator** — a third distinct value, so a golden where a decoder read
+                // `count` or `workersHolding` for this field would not pass. The dry row is the
+                // "staffed job, nobody holding it" reading (5 on the job, 0 holding), which is the
+                // one a client must render as a shortfall.
+                workers_on_quoted_job: 5.0,
             })
             .collect();
         // **The per-band resolved tiers**, one row per shipped kit. Spelled out for the same reason
@@ -971,6 +981,23 @@ fn seed_snapshot() -> WorldSnapshot {
                 ..Default::default()
             })
             .collect();
+        // **The partly-equipped party's own division.** TWO rows, and they must not be identical:
+        // a golden with one crew would let a decoder that read only the first row pass, which is
+        // the exact failure `huntCrews` exists to prevent (`hunterAttack` alone is the best crew's
+        // answer). The inner `item_ids` is a repeated field inside a repeated field, so the armed
+        // row carries elements or the guard never decodes one.
+        cohort.hunt_crews = vec![
+            BandKitCrewState {
+                workers: 6.0,
+                hunter_attack: 20.0,
+                item_ids: vec!["spears".to_string(), "sled".to_string()],
+            },
+            BandKitCrewState {
+                workers: 4.0,
+                hunter_attack: 1.0,
+                item_ids: vec!["sled".to_string()],
+            },
+        ];
         // --- CRAFTING & MATERIALS ------------------------------------------------------------
         // Every one of these is a repeated field inside a repeated field, so both levels need
         // elements or the guard never exercises the inner ones. Saturation overwrites the values;

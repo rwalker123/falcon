@@ -1764,6 +1764,17 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                 HudStyle.DANGER_HEX, String(gate["text"])])
             gate_label.set_meta(HudWidgets.HUNT_GATE_META, true)
             target.add_child(gate_label)
+        else:
+            # **THE FIGHT IS WINNABLE — BUT NOT BY EVERYBODY.** The gate above answers at ONE tier,
+            # and on a partly-equipped band that tier is the best-armed crew's, so a cleared gate is
+            # the reassuring half of a split party (issue #520). The complement, never the companion.
+            #
+            # **ASKED ABOUT THE COMPOSED PARTY, NOT THE BAND.** The gear covers a prefix of whoever
+            # is sent, so a party small enough to fit inside the armed run has no split at all — and
+            # a band-level sentence over this stepper would name more bare hands than there are
+            # hunters in the party.
+            HudWidgets.mount_hunt_crew_split(target, band, herd, quarry, kit_id,
+                _compose.hunt_count())
     # WOULD THIS SUBMIT CHANGE ANYTHING? — the forage sheet's rule, on the hunt web, because
     # `workers == 0` means the SAME two different things here (the sim's `assign_labor` skips validation
     # entirely at 0, so the unassign is always legal). `current` is the pending-aware standing crew on

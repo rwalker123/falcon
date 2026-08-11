@@ -190,23 +190,36 @@ static func _trade_line(bands: Array, disclosures: DisclosureController) -> Stri
 ## `Kit: ⚠ 2 bands` / `Kit: all equipped`. **THE DURABILITIES DO NOT AGGREGATE AT ALL** — three per
 ## band, and a mean of them describes no band that exists — so this row is the alert and nothing else.
 ## Which band is bare-handed is the fact to act on, and it is one click away.
+##
+## **A BAND THAT IS SHORT OF A KIT COUNTS TOO, AND "all equipped" MEANS IT** (issue #520). The tally
+## was dry bands alone, so a band holding ten spears for seventeen hunters was reported as equipped —
+## wrong in exactly the reassuring direction the arc exists to remove, and the page is where a player
+## looks to find WHICH band needs gear. The two states share one count deliberately: this row is a
+## count of bands worth opening, not a diagnosis, and the drill-down row's note says which it is.
 static func _kit_line(bands: Array, disclosures: DisclosureController) -> String:
     var rows: Array[String] = []
-    var dry := 0
+    var flagged := 0
     for i in range(bands.size()):
         var band: Dictionary = bands[i]
         if not DetailFormat.band_states_kit(band):
             continue
         var is_dry := DetailFormat.band_kit_is_dry(band)
+        var is_short := DetailFormat.band_kit_is_short(band)
+        if is_dry or is_short:
+            flagged += 1
+        # A DRY kit leads a short one: the step down is permanent and the shortfall is not, so a band
+        # in both states is named by the loss it cannot undo.
+        var note := ""
         if is_dry:
-            dry += 1
-        rows.append(_band_row(band, i, _kit_face(band),
-            HudWorkVocab.FACTION_KIT_DRY_NOTE if is_dry else ""))
+            note = HudWorkVocab.FACTION_KIT_DRY_NOTE
+        elif is_short:
+            note = HudWorkVocab.FACTION_KIT_SHORT_NOTE
+        rows.append(_band_row(band, i, _kit_face(band), note))
     if rows.is_empty():
         return ""
     disclosures.register_faction(HudDisclosureVocab.DETAIL_ROW_KIT,
-        HudDisclosureVocab.BREAKDOWN_KIND_KIT, rows, dry > 0)
-    var value := _alert_text(dry, HudStyle.DANGER_HEX) if dry > 0 \
+        HudDisclosureVocab.BREAKDOWN_KIND_KIT, rows, flagged > 0)
+    var value := _alert_text(flagged, HudStyle.DANGER_HEX) if flagged > 0 \
         else "[color=#%s]%s[/color]" % [HudStyle.INK_DIM_HEX, HudWorkVocab.FACTION_KIT_ALL_EQUIPPED]
     return "%s%s%s" % [HudDisclosureVocab.DETAIL_ROW_KIT, DetailFormat.DETAIL_KV_SEPARATOR, value]
 

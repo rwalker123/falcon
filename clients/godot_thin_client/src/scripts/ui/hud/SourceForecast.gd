@@ -1231,9 +1231,106 @@ static func hunt_gate_model_at(attack: float, herd: Dictionary, quarry: String) 
 # The three wire terms the gate is composed from — the BAND's resolved per-hunter attack (1 bare-
 # handed, 20 speared) and the HERD's two defensive axes. `defense` is whether a hit counts at all,
 # `durability` is how many counting hits it takes; they blur easily and must not.
+#
+# **`hunter_attack` IS THE BEST-EQUIPPED CREW'S TIER, NOT THE BAND'S** (issue #520). It is read off
+# `huntCrews[0]` sim-side, so the gate composed from it answers for the best-armed run alone — which
+# is the reassuring half of a split party. `hunt_crew_split_model` below is the rest of the sentence.
 const BAND_HUNTER_ATTACK_KEY := "hunter_attack"
 const HERD_DEFENSE_KEY := "defense"
 const HERD_DURABILITY_KEY := "durability"
+
+# **TEN SPEARS ARM TEN HUNTERS AND THE ELEVENTH GOES BARE** (issue #520). `max(0, attack − defense)`
+# decides whether a species can be taken AT ALL, so a party the gate clears is not a party that can
+# all take it: the crews below the best-equipped one may sit under the same defence at any headcount.
+#
+# The sentence is in the register the gate already uses — a count, the total it is out of, and what
+# the rest of the party is holding — rather than a new visual language. The two tails are the wire's
+# own answer to "why can't they": a crew holding NOTHING is bare-handed, a crew holding something the
+# defence still shrugs off is merely under-equipped, and `item_ids` is what tells them apart.
+const HUNT_CREW_SPLIT_FORMAT := "%s%d of your %d hunters can take %s; the other %d %s and land nothing on it at any headcount."
+const HUNT_CREW_SPLIT_BARE_CLAUSE := "are bare-handed"
+const HUNT_CREW_SPLIT_UNDER_CLAUSE := "hold too little gear"
+
+# **THE SENTENCE IS ABOUT THE PARTY BEING COMPOSED WHEREVER THERE IS ONE**, and this sentinel is a
+# host saying it has no party — the Band/City page's band-level readouts, which speak for the whole
+# band. A compose sheet passes its own stepper's count and must never take the default: the band's
+# ten spears cover a party of six entirely, and *"7 of your 17 are bare-handed"* over a `HUNTERS 6`
+# stepper reads as seven of six.
+const HUNT_CREW_PARTY_UNSET := -1
+
+## **WHICH OF THESE HUNTERS CAN ACTUALLY TAKE THIS QUARRY** — `{stated, armed, barred, text}`, both
+## counts WHOLE PEOPLE, `text` non-empty only when `stated`.
+##
+## **THE PARTY IS A PREFIX OF THE CREWS, which is the sim's own coverage model** (`equipment.md` →
+## "The partition is by ITEM SET"): each item covers a prefix of the party, and the crews arrive
+## best-equipped first, so the first `party_workers` hunters take the best gear the band holds. This
+## walk is arithmetic over two published counts — it resolves no tier, no step-down and no coverage
+## of its own, which are all the sim's answers already sitting in the rows.
+##
+## It states nothing at all in six cases, each for its own reason:
+## - **ONE CREW.** A uniformly-equipped band publishes exactly one row (never an empty list), so one
+##   row IS the normal case and the band-level gate already answers for everybody.
+## - **THE PARTY FITS INSIDE THE ARMED PREFIX.** Six hunters drawn from ten spears are all armed;
+##   there is no split in THIS party, whatever the rest of the band is holding.
+## - **NOBODY ARMED.** The gate's own refusal is rendering instead, and `0 of 17` beside it adds
+##   nothing — a party that cannot take the quarry at all is one sentence, not two.
+## - **NOBODY ON THE HUNT.** A band with no hunters publishes one crew at `workers 0`; that is not a
+##   shortfall of zero out of zero, it is nothing to say.
+## - **A PARTY LARGER THAN THE PUBLISHED CREWS.** The crews divide the band's CURRENT hunt workers,
+##   and a compose stepper draws on idle ones too — so past that head count the wire's division does
+##   not describe the party, and quoting `10 of 13` out of a 12-strong division would invent a row.
+## - **A KIT THAT IS NOT THE BAND'S QUOTED ONE** (`kit_id`). The crews are resolved against the hunt
+##   job's kit, so quoting them under a kit the player has just picked would describe a division of
+##   the party that does not exist for that choice. No line rather than a wrong one.
+##
+## **THE COUNTS ARE APPORTIONED, NOT ROUNDED APART.** Crew workers are floats (a forecast counts
+## hunters in fractions), so rounding each side alone yields a `10` and a `7` that do not make 17.
+static func hunt_crew_split_model(band: Dictionary, herd: Dictionary, quarry: String,
+        kit_id: String, party_workers: int = HUNT_CREW_PARTY_UNSET) -> Dictionary:
+    var blank := {"stated": false, "armed": 0, "barred": 0, "text": ""}
+    if kit_id != String(band.get(DetailFormat.BAND_QUOTED_KIT_ID_KEY, "")):
+        return blank
+    var crews := DetailFormat.band_hunt_crews(band)
+    if crews.size() <= 1:
+        return blank
+    if float(herd.get(HERD_DURABILITY_KEY, 0.0)) <= 0.0:
+        return blank
+    var headcount := DetailFormat.band_hunt_headcount(band)
+    # The party the sentence is about: the composed one, or the whole hunt roster for a host with no
+    # stepper. A composed party the crews do not cover is not describable from these rows at all.
+    var budget := headcount
+    if party_workers != HUNT_CREW_PARTY_UNSET:
+        if float(party_workers) > headcount:
+            return blank
+        budget = float(party_workers)
+    var defense := float(herd.get(HERD_DEFENSE_KEY, 0.0))
+    var armed := 0.0
+    var barred := 0.0
+    var barred_bare := true
+    var remaining := budget
+    for crew in crews:
+        if remaining <= DetailFormat.HUNT_CREW_WORKER_EPSILON:
+            break
+        var taken := minf(maxf(float(crew.get(DetailFormat.HUNT_CREW_WORKERS_KEY, 0.0)), 0.0),
+            remaining)
+        remaining -= taken
+        if maxf(float(crew.get(DetailFormat.HUNT_CREW_ATTACK_KEY, 0.0)) - defense, 0.0) > 0.0:
+            armed += taken
+            continue
+        barred += taken
+        if taken > DetailFormat.HUNT_CREW_WORKER_EPSILON \
+                and not (crew.get(DetailFormat.HUNT_CREW_ITEM_IDS_KEY, []) as Array).is_empty():
+            barred_bare = false
+    # **The target is the party the two halves partition.** `armed + barred` is what the crews
+    # actually covered of `budget` — the loop stops at whichever runs out first — so that sum, not
+    # `budget`, is the total the displayed pair has to add to.
+    var parts := HudFormat.apportion_people_to([armed, barred], int(round(armed + barred)))
+    if parts[0] <= 0 or parts[1] <= 0:
+        return blank
+    var clause := HUNT_CREW_SPLIT_BARE_CLAUSE if barred_bare else HUNT_CREW_SPLIT_UNDER_CLAUSE
+    return {"stated": true, "armed": parts[0], "barred": parts[1],
+        "text": HUNT_CREW_SPLIT_FORMAT % [
+            HUNT_FORECAST_WARN_GLYPH, parts[0], parts[0] + parts[1], quarry, parts[1], clause]}
 
 ## THE ONE DEFINITION of a worked source's trade rate, read off a labor-assignment / worker-map dict.
 ##

@@ -317,19 +317,96 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // count slice an absent entry is NOT OWNED, so `remaining` is `0` for an item the band has none
     // of — the same `0` a reader used to take for *"dry"*. Which of the two it is now rides beside
     // it, and *worn out* versus *never made* rides on `equipment_batches`.
+    // **HOW EACH JOB'S GEAR DIVIDES ITS PEOPLE** (`equipment.md` → "the partly-equipped party"),
+    // through the same `coverage` seam the take runs through rather than a second path to the same
+    // answer. One per job, because the head count and the quoted kit are both per job.
+    //
+    // **An in-flight PARTY is all on one kit**, so every job's coverage is over the party's whole
+    // head count: its `LaborAllocation` is empty (it works no sources), and reading a `0` off that
+    // would publish an outfitted raid as holding nothing.
+    let job_workers = |job| match expedition {
+        Some(_) => available_workers(cohort.working),
+        None => allocation.map_or(0, |alloc| alloc.workers_on_job(job)),
+    };
+    let coverage_for = |job, choice: &crate::equipment_config::KitChoice| {
+        kit_levers
+            .config
+            .coverage(choice, job_workers(job) as f32, &kit)
+    };
+    let hunt_coverage = coverage_for(crate::equipment_config::KitJob::Hunt, &hunt_choice);
+    // **All four, HUNT FIRST** — an item is quoted at the job whose kit carries it, and at the
+    // hunt's for an item several of them carry (`kit_id`'s tie-break, the same one
+    // `pen_carry_per_worker_biomass` follows).
+    let quoted_coverages = [
+        &hunt_coverage,
+        &coverage_for(crate::equipment_config::KitJob::Forage, &forage_choice),
+        &coverage_for(crate::equipment_config::KitJob::Scout, &scout_choice),
+        &coverage_for(crate::equipment_config::KitJob::Warrior, &warrior_choice),
+    ];
     let kit_item_conditions = kit_levers
         .config
         .items()
-        .map(|(id, _)| sim_schema::state::KitItemConditionState {
-            item_id: id.to_string(),
-            remaining: kit.remaining(id, kit_levers.config),
-            count: kit.count_of(id),
+        .map(|(id, _)| {
+            // **The job is chosen by WHICH QUOTED KIT CARRIES THE ITEM, not by which coverage
+            // happens to hold somebody.** Both published numbers then come from that one coverage,
+            // so the pair is one sentence — *"`workers_holding` of `workers_on_quoted_job`"* — and
+            // cannot describe two different jobs. Picking the first *positive* holding instead
+            // would leave the denominator undefined for the case that matters most: a staffed job
+            // whose gear the band owns none of.
+            let quoted = quoted_coverages
+                .iter()
+                .find(|coverage| coverage.kit().uses().any(|used| used == id));
+            sim_schema::state::KitItemConditionState {
+                item_id: id.to_string(),
+                remaining: kit.remaining(id, kit_levers.config),
+                count: kit.count_of(id),
+                // An item no quoted kit carries — a bench tool, or a basket on a band running the
+                // `none` forage kit — reads `0` on both, and `count` beside it is what tells that
+                // from "the band owns none".
+                workers_holding: quoted.map_or(0.0, |coverage| coverage.workers_holding(id)),
+                // **The denominator, off the same coverage.** `0` here means *nobody is staffed on
+                // that job* — a different sentence from a staffed job holding none of the item, and
+                // a client must not divide by it.
+                workers_on_quoted_job: quoted.map_or(0.0, |coverage| coverage.workers()),
+            }
         })
         .collect();
-    let hunter_attack = kit_levers
-        .config
-        .hunter_profile_unbounded(kit_levers.person_intrinsic, &hunt_choice, &kit)
-        .attack;
+    // **The party's runs, published as the sim resolved them.** Best-equipped first, workers summing
+    // to the hunt head count. **Never empty**: a band with nobody on the hunt job still publishes one
+    // row, at `workers 0` and the tier one hunter *would* be at — which is exactly what
+    // `hunter_attack` below states for that band, so the two cannot disagree.
+    let hunt_crews: Vec<_> = if hunt_coverage.crews().is_empty() {
+        vec![sim_schema::state::BandKitCrewState {
+            workers: 0.0,
+            hunter_attack: kit_levers
+                .config
+                .hunter_profile_unbounded(kit_levers.person_intrinsic, &hunt_choice, &kit)
+                .attack,
+            item_ids: hunt_choice
+                .uses()
+                .filter(|item| hunt_choice.item_live(item, &kit, kit_levers.config))
+                .map(str::to_string)
+                .collect(),
+        }]
+    } else {
+        hunt_coverage
+            .crews()
+            .iter()
+            .map(|crew| sim_schema::state::BandKitCrewState {
+                workers: crew.workers,
+                hunter_attack: kit_levers
+                    .config
+                    .hunter_profile_unbounded(kit_levers.person_intrinsic, &crew.kit, &kit)
+                    .attack,
+                item_ids: crew.kit.uses().map(str::to_string).collect(),
+            })
+            .collect()
+    };
+    // **READ OFF THE BEST-EQUIPPED CREW, so the schema's promise is true by construction.** The
+    // field's meaning is unchanged — it always was the tier the band's best-armed hunters fight at —
+    // but deriving it from the crews is what stops the two rows drifting the day either resolution
+    // moves. `hunt_crews` is never empty, so the index is safe.
+    let hunter_attack = hunt_crews[0].hunter_attack;
     let hunt_carry_per_worker_biomass = kit_levers.config.hunt_per_worker_biomass_capacity(
         kit_levers.baseline_haul_rate,
         &hunt_choice,
@@ -743,6 +820,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // discipline) — the client renders this and joins on `expedition_target_herd` only for the
         // herd's *live position*, which is the one fact that genuinely needs live telemetry.
         expedition_target_species,
+        hunt_crews,
     }
 }
 

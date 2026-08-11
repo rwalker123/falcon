@@ -249,12 +249,15 @@ pub fn advance_labor_allocation(
         // count slice's flip. Resolved *before* the assignment loop so every source this band works
         // is priced on one kit state: a kit that expires part-way through the loop must not pay two
         // different rates to two herds in the same turn.
+        // Normalize each turn: if `working` shrank, trim assignments so Σ ≤ available.
+        let available = available_workers(cohort.working);
+        // **Sized to the band's workers** — a spawn stocks a party's worth, so the absent-component
+        // fallback has to as well or a fixture band would resolve as one armed hand and the rest
+        // bare ([`BandEquipment::start_stocked_for`]).
         let band_kit = band_equipment
             .as_deref()
             .cloned()
-            .unwrap_or_else(|| BandEquipment::start_stocked(&equipment_cfg));
-        // Normalize each turn: if `working` shrank, trim assignments so Σ ≤ available.
-        let available = available_workers(cohort.working);
+            .unwrap_or_else(|| BandEquipment::start_stocked_for(&equipment_cfg, available as f32));
         let faction = cohort.faction;
         // **A trimmed-away assignment is ANNOUNCED.** `normalize` drops from the tail when the band
         // no longer has the hands, and until this it did so in total silence — the one place in the
@@ -328,33 +331,45 @@ pub fn advance_labor_allocation(
             // expires part-way through the loop cannot pay two different rates to two herds in the
             // same turn; only the *mask* varies per assignment.
             let crew_kit = assignment.kit_choice(&equipment_cfg);
+            // **HOW THIS CREW'S GEAR DIVIDES ITS PEOPLE** (`equipment.md` → "the partly-equipped
+            // party"). A band owning five spears and staffing ten hunters sends five out armed and
+            // five bare-handed, so every tier below that a *count* can bind is read through this
+            // one coverage rather than off the crew's kit alone.
+            let crew_coverage = equipment_cfg.coverage(&crew_kit, workers as f32, &band_kit);
             // This crew's HUNT haul tier — the **sled**, if its kit carries one and the band still
-            // has condition in it.
-            let hunt_per_worker_biomass = equipment_cfg.hunt_per_worker_biomass_capacity(
-                baseline_haul_rate,
-                &crew_kit,
-                &band_kit,
-            );
+            // has condition in it — **averaged over the crews**, because a party short of sleds
+            // drags home what its people are actually dragging.
+            let hunt_per_worker_biomass = crew_coverage.weighted_rate(|kit| {
+                equipment_cfg.hunt_per_worker_biomass_capacity(baseline_haul_rate, kit, &band_kit)
+            });
             // **And its PEN collection tier** — the **husbandry gear's**, resolved against the same
             // shipped `baseline_haul_rate` a pen harvest has always been capped by, so a keeper who
             // brought handling gear collects exactly what a pen always collected. A separate stat
             // from the haul above because a sled drags a carcass in off the range and a pen stands
             // at the camp: a crew that corralled its herd and stayed on the big-game kit is working
             // the pen with the wrong tool, and collects at the bare rate.
-            let pen_per_worker_biomass = equipment_cfg.pen_per_worker_biomass_capacity(
-                baseline_haul_rate,
-                &crew_kit,
-                &band_kit,
-            );
+            //
+            // **Averaged over the crews too** — handling gear covers keepers one unit at a time
+            // exactly as a spear covers a hunter, so a pen worked by more keepers than the band has
+            // hurdles for collects at the mix of the two tiers.
+            let pen_per_worker_biomass = crew_coverage.weighted_rate(|kit| {
+                equipment_cfg.pen_per_worker_biomass_capacity(baseline_haul_rate, kit, &band_kit)
+            });
             // **And its GATHER tier** — the forage web's carry, which before §4.8's "one kit, one
             // job" correction had no kit at all. It is the undipped, pre-seasonal per-gatherer
             // throughput every `forage_take`, gather forecast and staffing inversion below is capped
             // by; a hunt item can never reach it, because the two declare different stats.
-            let forage_per_worker_capacity = equipment_cfg.forage_per_worker_biomass_capacity(
-                baseline_gather_rate,
-                &crew_kit,
-                &band_kit,
-            );
+            //
+            // **And it is covered like the other two.** A band with five baskets and sixteen
+            // gatherers gathers with five baskets: the model is *gear covers people*, not *gear
+            // covers jobs*, so the plant web reads the same seam the animal web does.
+            let forage_per_worker_capacity = crew_coverage.weighted_rate(|kit| {
+                equipment_cfg.forage_per_worker_biomass_capacity(
+                    baseline_gather_rate,
+                    kit,
+                    &band_kit,
+                )
+            });
             // **And its FIGHTING tier** (`docs/plan_hunt_through_combat.md` §4). The kit swaps the
             // whole `attack` tier (`1` bare-handed, `20` speared), which is the gate every take
             // resolves through — so a crew sent out with no spears stops being able to hurt anything
@@ -370,17 +385,16 @@ pub fn advance_labor_allocation(
             // mass-bounded weapon (a snare) is only a weapon against animals it can hold, so the
             // profile cannot be resolved before the assignment's target is known. Everything else
             // about the party is quarry-blind and is captured once.
-            let party_for = |body_mass: f32| fauna::HuntingParty {
-                hunter: equipment_cfg.hunter_profile_against(
-                    person_profile,
-                    &crew_kit,
-                    &band_kit,
-                    body_mass,
-                ),
+            let party_resolution = fauna::PartyResolution {
+                equipment: &equipment_cfg,
+                coverage: &crew_coverage,
+                wear: &band_kit,
+                intrinsic: person_profile,
                 tuning: combat_tuning,
-                injury_damage_per_animal: hunt_injury_damage
-                    * equipment_cfg.exposure(&crew_kit, &band_kit),
-                dispersion: equipment_cfg.dispersion(&crew_kit, &band_kit),
+                hunt_injury_damage_per_animal: hunt_injury_damage,
+            };
+            let party_for = |body_mass: f32| {
+                party_resolution.party_against(crate::equipment_config::Quarry::Mass(body_mass))
             };
 
             match &assignment.target {
@@ -1669,20 +1683,16 @@ pub fn advance_labor_allocation(
                     // **Each charge is gated on the predicate that chose its own tier**, and the two
                     // are independent: a kit with spears but no sled blunts spears only.
                     if let Some(kit) = band_equipment.as_mut() {
+                        // **The WEAPON is charged PER CREW, for the blows it landed** — the run
+                        // that could not clear the quarry's defence swung at nothing and pays
+                        // nothing, and the run holding no weapon has nothing in its kit to charge.
+                        outcome.fight.charge_strike_wear(kit, &equipment_cfg);
                         kit.wear_kit(
                             &equipment_cfg,
                             &crew_kit,
-                            crate::equipment_config::WearQuantum::Kill,
-                            take.killed as f32,
+                            crate::equipment_config::WearQuantum::BiomassHauled,
+                            take.carried,
                         );
-                        {
-                            kit.wear_kit(
-                                &equipment_cfg,
-                                &crew_kit,
-                                crate::equipment_config::WearQuantum::BiomassHauled,
-                                take.carried,
-                            );
-                        }
                     }
                     // **THE earn path, rungs 1–2** — the drawn-down half of the split above, and the
                     // heart of the ladder: the same hunt teaches **Herding** on a wild herd and
@@ -2530,6 +2540,23 @@ pub struct RaidConfigs<'w> {
 /// handful of warriors at attack 1 can meaningfully reduce `(power_enemy / power_self)` — with the
 /// whole pack engaged, warriors could never keep up and every raid would be a massacre. Scaling the
 /// engaged count with pack size is a Phase-2+ refinement.
+/// **One warrior crew's contingent key stem**, index-suffixed per crew: a band that could arm only
+/// some of its warriors fields several runs, and two contingents sharing a key would read as one.
+const WARRIOR_CONTINGENT: &str = "warrior";
+/// The unarmed populace's contingent key — the people the raid can kill who are holding nothing.
+const EXPOSED_CONTINGENT: &str = "person";
+
+/// **One warrior line's contingent key**, index-suffixed — spelled once so the payload that names it
+/// and the wear charge that reads its strikes back cannot disagree about the spelling.
+fn warrior_contingent_key(index: usize) -> String {
+    format!("{WARRIOR_CONTINGENT}#{index}")
+}
+
+/// **The raid's aggressor is a single representative of the pack** (Predators Phase 1b) — named
+/// because the absorbed-damage clamp divides by it, and a bare `1.0` beside a `CombatStats` reads
+/// like a multiplier rather than a head count.
+const ONE_PACK_REPRESENTATIVE: f32 = 1.0;
+
 pub fn advance_predator_raids(
     herds: Res<HerdRegistry>,
     configs: RaidConfigs,
@@ -2588,19 +2615,60 @@ pub fn advance_predator_raids(
         // **Only the warrior contingent is armed.** The exposed populace below stays at `attack 0`
         // whatever the band's kit — they are the people who are *not* holding anything, which is the
         // whole reason they are a separate contingent.
+        //
+        // **AND THE CLUBS ONLY GO ROUND SO FAR** (`equipment.md` → "the partly-equipped party"). A
+        // band holding three clubs and standing eight warriors up arms three of them; the other
+        // five defend at the bare hand's `1`. Resolved through the same `coverage` seam the hunt
+        // uses, so the two roles cannot disagree about what "the band owns three of these" means.
         let warrior_kit = alloc.kit_on(&LaborTarget::Warrior, &equipment_cfg);
-        let warrior_profile = band_equipment.as_deref().map_or(person, |wear| {
-            equipment_cfg.warrior_profile(person, &warrior_kit, wear)
-        });
+        let warrior_coverage = band_equipment
+            .as_deref()
+            .map(|wear| equipment_cfg.coverage(&warrior_kit, warrior_count, wear));
+        // One contingent per crew, best-armed first — the resolver gates each attacker/target pair
+        // on that attacker's own `attack`, so an unarmed warrior run contributes exactly what it
+        // would have contributed on its own rather than borrowing the clubs' tier.
+        let warrior_contingents: Vec<Contingent> =
+            match (&warrior_coverage, band_equipment.as_deref()) {
+                (Some(coverage), Some(wear)) => coverage
+                    .crews()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, crew)| Contingent {
+                        kind: ContingentId(warrior_contingent_key(index)),
+                        count: crew.workers,
+                        profile: equipment_cfg.warrior_profile(person, &crew.kit, wear),
+                    })
+                    .collect(),
+                // **No ledger at all is a hand-rolled fixture, not an unarmed band** — the same
+                // fallback every other reader of an absent `BandEquipment` takes, and it keeps the
+                // warriors one contingent at the intrinsic tier.
+                _ => vec![Contingent {
+                    kind: ContingentId(warrior_contingent_key(0)),
+                    count: warrior_count,
+                    profile: person,
+                }],
+            };
+        // **Each line's own narrowed kit**, parallel to the contingents above — what the wear charge
+        // bills, so the clubbed line pays for its blows and the bare one holds nothing to pay with.
+        // Empty when the band has no ledger: a fixture band's fight wears nothing out.
+        let warrior_crew_kits: Vec<crate::equipment_config::KitChoice> = warrior_coverage
+            .as_ref()
+            .map(|coverage| {
+                coverage
+                    .crews()
+                    .iter()
+                    .map(|crew| crew.kit.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        // The blows each line landed this turn, scaled by what the packs could absorb. Summed across
+        // every predator that raided, because a band three packs turned on swung three times.
+        let mut warrior_strikes_by_crew = vec![0.0_f32; warrior_crew_kits.len()];
+        let mut warrior_strikes = 0.0_f32;
 
         // Casualties from every raiding predator this turn are additive and order-independent, so they
         // accumulate into one cohort mutation at the end.
         let mut total_killed = 0.0f32;
-        // **The warrior kit's use quantum: one fight, one use.** Counted rather than inferred from
-        // the casualties, because a defence that killed nothing was still fought — pricing the kit
-        // on its results would charge the band that is losing the least. A band nobody raided ends
-        // the turn at zero, which is the whole difference between this and a turn clock.
-        let mut fights_fought = 0.0f32;
         // Feed lines are DEFERRED: a casualty-causing raid also forfeits food (a band-level debit
         // computed after the loop), which is folded into the line's detail before it is pushed.
         let mut raid_lines: Vec<CommandEventEntry> = Vec::new();
@@ -2656,14 +2724,11 @@ pub fn advance_predator_raids(
                     Force {
                         id: ForceId(1),
                         posture: Posture::Defender,
-                        contingents: vec![
-                            Contingent {
-                                kind: ContingentId::from("warrior"),
-                                count: warrior_count,
-                                profile: warrior_profile,
-                            },
-                            Contingent {
-                                kind: ContingentId::from("person"),
+                        contingents: warrior_contingents
+                            .iter()
+                            .cloned()
+                            .chain(std::iter::once(Contingent {
+                                kind: ContingentId::from(EXPOSED_CONTINGENT),
                                 count: exposed,
                                 profile: CombatStats {
                                     attack: 0.0,
@@ -2677,8 +2742,8 @@ pub fn advance_predator_raids(
                                     // flight roll. Dynamic troop morale is a later arc (§3).
                                     wariness: person.wariness,
                                 },
-                            },
-                        ],
+                            }))
+                            .collect(),
                     },
                 ],
                 terrain: vec![TerrainContext {
@@ -2687,7 +2752,46 @@ pub fn advance_predator_raids(
                 seed,
             };
             let outcome = resolve_fight(&payload, &tuning);
-            fights_fought += 1.0;
+            // **The clubs are charged for the BLOWS THEY LANDED, scaled by what the pack could
+            // absorb** — the same rule the hunt bills its spears on
+            // (`.claude/rules/core_sim/equipment.md` → "Wear follows the work actually done"), and
+            // the reason `WearQuantum::Fight` is gone: a defence charged per *engagement* billed
+            // the whole warrior line for a raid most of it may never have swung in.
+            //
+            // The pack has no [`crate::combat::DamageLedger`] of its own, so its absorbed share is
+            // read from the shared clamp rather than from a bank.
+            let pack_dealt: f32 = outcome
+                .results
+                .iter()
+                .filter(|result| result.force == ForceId(0))
+                .map(|result| result.damage_dealt)
+                .sum();
+            let pack_absorbed = crate::combat::damage_absorbed(
+                pack_dealt,
+                &CombatStats {
+                    attack: effective_attack,
+                    ..def.combat
+                },
+                ONE_PACK_REPRESENTATIVE,
+            );
+            let absorbed_share = if pack_dealt > 0.0 {
+                (pack_absorbed / pack_dealt).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            for (index, charged) in warrior_strikes_by_crew.iter_mut().enumerate() {
+                let landed: f32 = outcome
+                    .results
+                    .iter()
+                    .filter(|result| {
+                        result.force == ForceId(1)
+                            && result.kind.as_str() == warrior_contingent_key(index)
+                    })
+                    .map(|result| result.strikes_landed)
+                    .sum();
+                warrior_strikes += landed * absorbed_share;
+                *charged += landed * absorbed_share;
+            }
             // Apply ONLY the defender side (`ForceId(1)`); the predator side is discarded (no biomass
             // take here to reconcile, but band casualties are all this phase cares about).
             let (killed_f, wounded_f) =
@@ -2742,14 +2846,16 @@ pub fn advance_predator_raids(
         // Warrior row was raided with its populace standing in the open; nothing was swung, so
         // nothing wore out — the same pairing that makes the bare-handed comparison free to run
         // everywhere else.
-        if fights_fought > 0.0 && warrior_count > 0.0 {
+        if warrior_strikes > 0.0 {
             if let Some(kit) = band_equipment.as_mut() {
-                kit.wear_kit(
-                    &equipment_cfg,
-                    &warrior_kit,
-                    crate::equipment_config::WearQuantum::Fight,
-                    fights_fought,
-                );
+                for (crew_kit, strikes) in warrior_crew_kits.iter().zip(&warrior_strikes_by_crew) {
+                    kit.wear_kit(
+                        &equipment_cfg,
+                        crew_kit,
+                        crate::equipment_config::WearQuantum::Strike,
+                        *strikes,
+                    );
+                }
             }
         }
         for line in raid_lines {

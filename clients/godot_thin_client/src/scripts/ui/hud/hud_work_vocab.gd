@@ -254,6 +254,11 @@ const FACTION_KIT_ALL_EQUIPPED := "all equipped"
 
 const FACTION_KIT_DRY_NOTE := "a kit has run out"
 
+## The SHORTFALL note (issue #520) — a band whose gear works and does not go round. It is worded away
+## from `FACTION_KIT_DRY_NOTE`'s finality on purpose: running out is permanent and a shortfall is the
+## band outgrowing its gear, which crafting can answer.
+const FACTION_KIT_SHORT_NOTE := "a kit does not go round"
+
 ## **THE SUMMARY TABS' VOCABULARY.** Work and Parties are one idea in two scopes — a row per thing,
 ## flagged when it wants attention — so they share every word below rather than each growing its own.
 ## The flag is the ORB's glyph and the orb's two severities; this page invents no third.

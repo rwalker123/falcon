@@ -78,6 +78,9 @@ pub fn spawn_initial_world(
     // that installs neither must not panic worldgen.
     recipes: Option<Res<crate::recipes_config::RecipesConfigHandle>>,
     materials: Option<Res<crate::materials_config::MaterialsConfigHandle>>,
+    // **The fourth half of the start kit** — the working-age share a spawn's stock is sized against
+    // (see [`StartKit::working_fraction`]). `Option` for the same reason the three above are.
+    demographics: Option<Res<crate::demographics_config::DemographicsConfigHandle>>,
     tile_registry: Option<Res<TileRegistry>>,
 ) {
     // Guard FIRST: the starting inventory, knowledge and culture seeding below all run ahead of any
@@ -836,6 +839,14 @@ pub fn spawn_initial_world(
         equipment: &start_kit_equipment,
         recipes: &start_kit_recipes,
         materials: &start_kit_materials,
+        working_fraction: demographics
+            .as_ref()
+            .map(|handle| handle.get().initial_distribution.working)
+            .unwrap_or_else(|| {
+                crate::demographics_config::DemographicsConfig::builtin()
+                    .initial_distribution
+                    .working
+            }),
     };
     if config.start_profile_overrides.starting_units.is_empty() {
         spawn_default_population_clusters(
@@ -2889,6 +2900,16 @@ struct StartKit<'a> {
     equipment: &'a crate::equipment_config::EquipmentConfig,
     recipes: &'a crate::recipes_config::RecipesConfig,
     materials: &'a crate::materials_config::MaterialsConfig,
+    /// **What share of a spawned band's head count is working-age** —
+    /// `demographics.initial_distribution.working`, the very split
+    /// [`crate::systems::apply_starting_inventory_effects`] applies at Startup.
+    ///
+    /// A spawn stocks a **party's worth** of each item now, and the party is the band's *workers*:
+    /// children and elders hold nothing. The brackets are seeded a stage later than this spawn, so
+    /// the head count is all there is here and the same distribution has to be read twice — from
+    /// the one config that owns it, rather than from a second constant that would drift the moment
+    /// the demographics were retuned.
+    working_fraction: f32,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3051,10 +3072,17 @@ fn spawn_population_entity(
     // count slice, so a spawn that inserted `Default` would send the band out bare-handed — this is
     // the flip's load-bearing call site (`.claude/rules/core_sim/equipment.md`). One unit is one
     // item's `starting_durability`, which is exactly the life the shipped opening has always had.
+    // **A PARTY'S WORTH, sized off the workers this band will have** — one unit of each item would
+    // arm one person, so the band's own head count times the working-age share is what the stock is
+    // measured against (`.claude/rules/core_sim/equipment.md` → "a spawn stocks a party's worth").
     entity.insert(BandEquipment::start_stocked_owned(
         start_kit.equipment,
         start_kit.recipes,
         start_kit.materials,
+        // **Floored, because `available_workers` floors.** The stock is sized against the party the
+        // band can actually field, so the two readings of "this band's workers" agree and the
+        // ledger stays reproducible from the cohort.
+        (size as f32 * start_kit.working_fraction).floor(),
     ));
     // **And an EMPTY BENCH.** `Default` is *no job*, so a fresh band crafts nothing until the
     // player puts a recipe on it — there is no opening move where everyone builds tools first

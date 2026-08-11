@@ -206,10 +206,65 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // no readout ever has to infer it — `count > 0` means the band holds units, and
             // `remaining` is then the life left on the unit in hand.
             let _ = row.insert("count", condition.count() as i64);
+            // **A UNIT ARMS A PERSON, SO OWNING ONE IS NOT ARMING THE BAND.** `count` is UNITS,
+            // this is PEOPLE reached — and the two differ whenever the band is short of an item or
+            // holds the spawn's reserve above its head count. The sim resolves it through the same
+            // `coverage` seam the take runs through; a client CANNOT compute it, because
+            // `workers_per_unit` and which job is staffed are both sim-side.
+            //
+            // Quoted at the job whose kit carries the item (spears/sled at the hunt row, baskets at
+            // the forage default, clubs at the warrior one), so a `0` here is THREE sentences —
+            // nobody staffed, the band owns none, or no quoted kit carries it — and `count` beside
+            // it is what separates them. A float, because a forecast counts workers in fractions.
+            let _ = row.insert("workers_holding", condition.workersHolding() as f64);
+            // **ITS DENOMINATOR, AND THE TWO ARE ONE SENTENCE** — *"workers_holding of
+            // workers_on_quoted_job"*. The head count of the job this row is quoted at, resolved off
+            // the SAME coverage the numerator came from, so the pair can never describe two
+            // different jobs. Without it only the hunt was renderable (`Σ hunt_crews.workers` being
+            // the only job head count on the wire), so a spears shortfall could be stated and a
+            // basket's, club's or wayfinding's could not.
+            //
+            // **TWO ZEROS A READER MUST NOT CONFUSE**, and nothing may divide by this without
+            // guarding it: `0` here means NOBODY IS STAFFED on that job — `0 of 0`, not a warning,
+            // because a band with no gatherers needed no basket — while a POSITIVE denominator with
+            // `workers_holding == 0` is the real shortfall, every worker on a staffed job at the
+            // unequipped tier.
+            let _ = row.insert(
+                "workers_on_quoted_job",
+                condition.workersOnQuotedJob() as f64,
+            );
             kit_item_conditions.push(&row.to_variant());
         }
     }
     let _ = dict.insert("kit_item_conditions", &kit_item_conditions);
+    // **HOW THIS BAND'S GEAR DIVIDES ITS HUNT WORKERS** (issue #520). `hunter_attack` below is ONE
+    // number per band and, for a partly-equipped party, it is the BEST-equipped answer for
+    // everybody — wrong in the reassuring direction, because `max(0, attack − defense)` decides
+    // whether a species can be taken AT ALL. Ten spears among seventeen hunters take a Red Deer
+    // with ten of them and with none of the other seven, and one tier cannot say that.
+    //
+    // One row per run of workers holding identical gear, best-equipped FIRST, `Σ workers` = the
+    // band's hunt head count (an in-flight party's own workers). **Never empty**: a uniformly
+    // equipped band publishes exactly ONE row, so no reader has to tell "no crews" from "one crew
+    // holding nothing", and a band with nobody on the hunt job publishes one row at `workers 0`.
+    //
+    // **THE SIM'S ANSWER, never an input to a client-side derivation.** Each row's `hunter_attack`
+    // is that run's own FLAT tier — the same rule `kit_tiers` states, one level down.
+    let mut hunt_crews = VarArray::new();
+    if let Some(crews) = cohort.huntCrews() {
+        for crew in crews.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("workers", crew.workers() as f64);
+            let _ = row.insert("hunter_attack", crew.hunterAttack() as f64);
+            let item_ids = crew
+                .itemIds()
+                .map(crate::dict::strings_to_variant_array)
+                .unwrap_or_default();
+            let _ = row.insert("item_ids", &item_ids);
+            hunt_crews.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("hunt_crews", &hunt_crews);
     // **WHAT EVERY OFFERED KIT WOULD GRANT *THIS* BAND, RIGHT NOW** — one row per roster kit,
     // resolved against this band's LIVE wear. It is the sim's ANSWER, not an input to a client-side
     // derivation: stepping a fresh tier down needs to know which ITEM supplies which AXIS, that
@@ -256,6 +311,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // The RESOLVED tiers, so the client renders this band's real numbers instead of re-deriving them
     // from the durabilities plus a config it does not have. `hunter_attack` is the term the combat
     // gate `max(0, attack − defense)` compares against `HerdTelemetryState.defense`.
+    //
+    // **IT IS THE BEST-EQUIPPED CREW'S TIER, NOT THE WHOLE BAND'S** — the sim reads it off
+    // `hunt_crews[0]`, so anything rendering it as if it spoke for everybody states the reassuring
+    // half of a split party. `hunt_crews` above is the rest of the answer.
     let _ = dict.insert("hunter_attack", cohort.hunterAttack() as f64);
     let _ = dict.insert(
         "hunt_carry_per_worker_biomass",

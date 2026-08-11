@@ -296,6 +296,14 @@ static func hunt_gate_line(root: Node) -> String:
 	var node := Q.find_meta_node(root, HudWidgets.HUNT_GATE_META)
 	return (node as RichTextLabel).get_parsed_text() if node is RichTextLabel else ""
 
+## **THE SPLIT PARTY'S LINE** (issue #520), by its OWN meta for the reason the pair above have theirs:
+## it is composed from `huntCrews` where the gate is composed from `hunterAttack` against the herd's
+## pair, so one handle would let either regress behind an assertion on the other. `""` when absent,
+## which is the shipped reading for every uniformly-equipped band and half of what is asserted.
+static func hunt_crew_split_line(root: Node) -> String:
+	var node := Q.find_meta_node(root, HudWidgets.HUNT_CREW_SPLIT_META)
+	return (node as RichTextLabel).get_parsed_text() if node is RichTextLabel else ""
+
 ## What `hunt_gate_blocked` answers when NO gate line rendered at all. A third state, not a `false`:
 ## "the sheet says the fight is winnable" and "the sheet says nothing about the fight" are different
 ## findings, and collapsing them would let a vanished line pass an is-not-blocked assertion.

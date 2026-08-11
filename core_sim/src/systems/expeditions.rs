@@ -187,7 +187,7 @@ pub fn advance_expeditions(
         let party_wear = party_equipment
             .as_deref()
             .cloned()
-            .unwrap_or_else(|| BandEquipment::start_stocked(&equipment_cfg));
+            .unwrap_or_else(|| BandEquipment::start_stocked_for(&equipment_cfg, workers as f32));
         // **The kit this party was SENT OUT WITH** — stored on the `Expedition` at launch and read
         // from there, never re-resolved against the home band's current stock. A party sent out with
         // `none` stays bare-handed for its whole life; re-reading the band's spears each turn would
@@ -196,28 +196,29 @@ pub fn advance_expeditions(
         // **Every tier resolved once per party per turn**, through the kit mask and the party's own
         // wear — so a party using nothing runs unequipped and, because wear rides the same mask,
         // spends nothing either.
-        let per_worker_biomass = equipment_cfg.hunt_per_worker_biomass_capacity(
-            equipped_haul_rate,
-            &party_kit,
-            &party_wear,
-        );
+        // **How this party's gear divides its people** (`equipment.md` → "the partly-equipped
+        // party") — resolved once beside the tiers, so the haul it drags and the fight it puts up
+        // describe the same crews.
+        let coverage = equipment_cfg.coverage(&party_kit, workers as f32, &party_wear);
+        let per_worker_biomass = coverage.weighted_rate(|kit| {
+            equipment_cfg.hunt_per_worker_biomass_capacity(equipped_haul_rate, kit, &party_wear)
+        });
         // The weapon decides what the party can hurt at all (§4.2's gate), so it is resolved here and
         // not left at the intrinsic bare-handed tier. `exposure` and `dispersion` ride beside it —
         // a raid carrying a stand-off kit takes no injuries and scares nothing off, exactly as a
         // resident band with the same kit does.
         // **A FACTORY, for the reason `advance_labor_allocation`'s is** — a mass-bounded weapon is
         // only a weapon against quarry it can hold, so the attack tier waits for the target.
-        let party_for = |body_mass: f32| fauna::HuntingParty {
-            hunter: equipment_cfg.hunter_profile_against(
-                person_profile,
-                &party_kit,
-                &party_wear,
-                body_mass,
-            ),
+        let party_resolution = fauna::PartyResolution {
+            equipment: &equipment_cfg,
+            coverage: &coverage,
+            wear: &party_wear,
+            intrinsic: person_profile,
             tuning: combat_tuning,
-            injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal
-                * equipment_cfg.exposure(&party_kit, &party_wear),
-            dispersion: equipment_cfg.dispersion(&party_kit, &party_wear),
+            hunt_injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal,
+        };
+        let party_for = |body_mass: f32| {
+            party_resolution.party_against(crate::equipment_config::Quarry::Mass(body_mass))
         };
         // Home band's LIVE tile (bands are nomadic): drives the comm check, the return target, and
         // the hunt drop-off. An orphaned expedition (home band gone) simply can't report/deliver.
@@ -390,16 +391,13 @@ pub fn advance_expeditions(
                     // no spears blunts none, and a party dragging by hand wears no sled.
                     if let Some(kit) = party_equipment.as_mut() {
                         // **Named by QUANTUM, not by item.** Every item in the party's kit that
-                        // wears per kill is charged for the kills, every item that wears per
-                        // biomass hauled for the haul — so an item added to a kit is charged
-                        // here without editing this call, and an item the kit does not carry is
-                        // never charged at all.
-                        kit.wear_kit(
-                            &equipment_cfg,
-                            &party_kit,
-                            crate::equipment_config::WearQuantum::Kill,
-                            take.killed as f32,
-                        );
+                        // wears per biomass hauled is charged for the haul — so an item added to a
+                        // kit is charged here without editing this call, and an item the kit does
+                        // not carry is never charged at all.
+                        //
+                        // **The WEAPON is charged per crew, for the blows it landed** — a run that
+                        // could not clear the quarry's defence swung at nothing and pays nothing.
+                        outcome.fight.charge_strike_wear(kit, &equipment_cfg);
                         kit.wear_kit(
                             &equipment_cfg,
                             &party_kit,
@@ -637,12 +635,10 @@ pub fn advance_expeditions(
                             // biomass hauled for the haul — so an item added to a kit is charged
                             // here without editing this call, and an item the kit does not carry is
                             // never charged at all.
-                            kit.wear_kit(
-                                &equipment_cfg,
-                                &party_kit,
-                                crate::equipment_config::WearQuantum::Kill,
-                                take.killed as f32,
-                            );
+                            // **The WEAPON is charged per crew, for the blows it landed** — a
+                            // run that could not clear the quarry's defence swung at nothing and
+                            // pays nothing.
+                            outcome.fight.charge_strike_wear(kit, &equipment_cfg);
                             kit.wear_kit(
                                 &equipment_cfg,
                                 &party_kit,
@@ -1236,6 +1232,7 @@ fn expedition_take_biomass(
                 casualties: fauna::FightCasualties::default(),
                 fought: false,
                 wounds: quarry.wounds,
+                strike_charges: Vec::new(),
             },
             engaged: NOTHING_ENGAGED,
             fled: NOTHING_ENGAGED,
@@ -1285,6 +1282,7 @@ fn expedition_take_biomass(
     *credit = (*credit + rate - take.killed_biomass())
         .max(0.0)
         .min(standing_surplus);
+    let brought_down = fight.brought_down;
     HuntOutcome {
         take,
         fight,
@@ -1301,7 +1299,7 @@ fn expedition_take_biomass(
             room,
             body_mass,
             stayed,
-            fight.brought_down,
+            brought_down,
             stop,
         ),
     }
@@ -1396,7 +1394,9 @@ pub fn expedition_take_provisions(
 /// The two used to be resolved by two unrelated code paths that could disagree
 /// (`docs/plan_hunt_through_combat.md` §0.1); they are one resolution now, so they come back
 /// together and no caller can apply one without the other.
-#[derive(Debug, Clone, Copy, PartialEq)]
+// **Clone, not `Copy`** — it carries a [`fauna::HuntFight`], which carries the strike charges the
+// party's crews are billed for.
+#[derive(Debug, Clone, PartialEq)]
 pub struct HuntOutcome {
     /// Killed / carried / wasted, in biomass.
     pub take: AnimalTake,
@@ -1584,6 +1584,7 @@ pub fn hunt_take(
     // **The herd loses every animal KILLED, not merely what was carried** — you cannot un-kill the
     // mammoth you could not haul. That is the waste, and it is `take.wasted`.
     herd.biomass -= take.killed_biomass();
+    let brought_down = fight.brought_down;
     HuntOutcome {
         take,
         fight,
@@ -1599,7 +1600,7 @@ pub fn hunt_take(
             collection,
             herd.body_mass,
             stayed,
-            fight.brought_down,
+            brought_down,
             fauna::EngagementStop::WhenPackFull,
         ),
     }

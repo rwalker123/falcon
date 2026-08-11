@@ -221,6 +221,34 @@ pub struct KitItemConditionState {
     /// client has to infer ownership from a condition of zero.
     #[serde(default)]
     pub count: u32,
+    /// **Workers this item actually reaches** — what a *"spears 87 · 10 of 17"* row counts.
+    ///
+    /// A unit arms `workers_per_unit` people, so [`Self::count`] (units owned) and this (people
+    /// reached) differ whenever the band is short — or holds the reserve above its head count that a
+    /// spawn stocks. Resolved through `EquipmentConfig::coverage`, the same seam the take runs
+    /// through; a client cannot compute it, because `workers_per_unit` and which job is staffed are
+    /// both sim-side.
+    ///
+    /// **Quoted at the job whose kit carries the item**, and at the one
+    /// [`PopulationCohortState::kit_id`] names for an item several jobs' kits carry — the same
+    /// convention [`PopulationCohortState::pen_carry_per_worker_biomass`] already follows. An item
+    /// no quoted kit carries reads `0`, a bench tool included.
+    #[serde(default)]
+    pub workers_holding: f32,
+    /// **The denominator of [`Self::workers_holding`]** — the head count of the job this row is
+    /// quoted at, so the two are one sentence: *"`workers_holding` of `workers_on_quoted_job`"*.
+    ///
+    /// Published rather than re-derived, and it is the very number the resolving pass divided
+    /// against — only the hunt has a head count on the wire otherwise
+    /// ([`PopulationCohortState::hunt_crews`]), so a spears shortfall could be stated and a basket's
+    /// or a club's could not.
+    ///
+    /// **Two zeros a reader must not confuse.** `0` here means **nobody is staffed** on that job —
+    /// *"0 of 0"* is not a shortfall, and nothing may divide by it. A positive value with
+    /// `workers_holding == 0` is the real one: the job is staffed and every worker on it is at the
+    /// unequipped tier.
+    #[serde(default)]
+    pub workers_on_quoted_job: f32,
 }
 
 /// **What one kit would grant THIS band, at its current wear** — a row of
@@ -838,6 +866,34 @@ pub struct PopulationCohortState {
     /// dependents at all: an elder rounded into existence is not a person.
     #[serde(default)]
     pub elders_count: u32,
+    /// **How this band's gear divides its HUNT workers** — best-equipped first, `Σ workers ==` the
+    /// hunt head count, and **never empty**: a uniformly-equipped band publishes exactly one row.
+    /// See [`BandKitCrewState`].
+    #[serde(default)]
+    pub hunt_crews: Vec<BandKitCrewState>,
+}
+
+/// **One run of a band's hunt workers holding the same gear** — a row of
+/// [`PopulationCohortState::hunt_crews`], and the sim's own answer rather than an input to a
+/// client-side derivation.
+///
+/// # The hunt gate is why one number per band is not enough
+///
+/// `max(0, hunter_attack − defense)` decides whether a species can be taken **at all**. A band with
+/// ten spears and seventeen hunters takes a Red Deer with ten of them and not with the other seven,
+/// and [`PopulationCohortState::hunter_attack`] — the *best-equipped* crew's tier — says only the
+/// reassuring half of that. This is the division `EquipmentConfig::coverage` already resolved for
+/// the take.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct BandKitCrewState {
+    /// How many of the band's hunters are in this run. Fractional, because a forecast's head counts
+    /// are.
+    pub workers: f32,
+    /// This run's own `attack` tier — **flat, never a blend of two tiers**.
+    pub hunter_attack: f32,
+    /// What this run is holding, by `equipment.json` item id. Empty for a bare-handed run, which is
+    /// an ordinary crew and not a sentinel.
+    pub item_ids: Vec<String>,
 }
 
 /// **One axis of one batch — the exact reading AND the band it falls in.**
