@@ -31,7 +31,7 @@ server side, so the two ends of the wire have the same shape.
 | `snapshot/delta.rs` | `DeltaAggregator` + `CrisisAnnotationRecord` — a delta carries only changed sections, so it accumulates them into full-snapshot shape and re-enters `snapshot_dict` |
 | `snapshot/cache.rs` | `WorldCache` — the world a delta is applied *to*: the last complete client dict, the pre-normalization `RasterCache` behind it, the `SectionCaches` (one complete array + identity index per diff-carried section, configured by the `KEYED_SECTIONS` registry), and the epoch/frame-sequence gate that says whether an incoming delta may be merged at all |
 | `dict/mod.rs` | ONLY the leaf helpers with consumers in two or more sections: `strings_to_variant_array`, `string_vector_to_packed`, the `u16/u32/u64_vector_to_packed_*` packers, `fixed64_to_f32` / `fixed64_to_f64` |
-| `dict/{map,economy,population,subsistence,knowledge,governance,culture,campaign}.rs` | The ~60 `*_to_dict` / `*_to_array` / `*_label` converters, one module per `snapshot.fbs` section |
+| `dict/{map,economy,population,subsistence,knowledge,governance,culture,campaign,connections}.rs` | The ~60 `*_to_dict` / `*_to_array` / `*_label` converters, one module per `snapshot.fbs` section |
 
 There is deliberately **no `dict/vision.rs`** — the vision section is only the
 fog/visibility/military rasters, which `snapshot/raster.rs` and the assemblers already
@@ -433,3 +433,37 @@ runner fails the run on a caught Rust panic (see the `decode_guard.gd` Key Scrip
 
 ---
 
+
+## The `connections` section, and the eight cohort fields the shipment arc appended
+
+Arc #527. `dict/connections.rs` → `connections_to_array` is the client's FIRST reader of the contact
+ties (#538 shipped the section with none), and it is a **whole-section replace** — decoded on BOTH
+paths through `insert_changed` on the delta, exactly like `culture_tensions` and the crafting
+catalogues. Present-and-EMPTY means *"you hold no ties now"*, which is why there is no emptiness gate
+here: adding one is the defect that blanked the culture tensions on every first delta.
+
+**No faction column, and the decoder must not invent one.** Faction is a property of the endpoint
+(`.claude/rules/core_sim/connections.md`), and the section is already filtered sim-side to the
+viewer's observing bands — a client-side re-filter would be the first place the arc's discipline
+broke. **`strength == 0` is a PARKED tie, not an absent one**, so the row is published and the picker
+renders it disabled; **`last_seen_{x,y}` is CLOCK 1** — where the subject was, not where they are —
+and a consumer that renders it as a live position claims a sighting the tie never granted.
+
+`dict/population.rs` gained eight cohort keys in the same arc, in three groups:
+
+| keys | shape |
+|---|---|
+| `expedition_destination_band` / `expedition_destination_name` | the KEY and its DISPLAY TWIN, the `expedition_target_herd` / `expedition_target_species` rule — the name is resolved at launch and carried, because a party outlives its destination's presence in the viewer's world |
+| `expedition_cargo_food` / `expedition_cargo_materials` | the shipment, the materials reusing `MaterialPayoff` — **never summed**, empty means "no row", the key always present |
+| `transfer_received` / `transfer_sent` · `expedition_trade_per_worker_carry` / `expedition_trade_material_carry_weight` | the food-ledger pair, and the two GLOBAL levers echoed onto every cohort so the outfit UI can price a manifest for a party that does not exist yet |
+
+**`expedition_carry_cap` resolves per MISSION, and that is the trap worth naming**: a raid's pack is
+its provisions ceiling, a shipment's is what its people can carry out. They are different numbers on
+different levers, so `expedition_per_worker_carry` (the HUNT lever) must never be used to price a
+shipment — a client doing so is one config edit from quoting a cap the launch command refuses.
+
+**`expedition_cargo_materials` is a VECTOR field, so it takes the `material_yield` treatment** rather
+than an appended scalar's: saturation reaches it and the golden re-record is the only step, but a
+consumer that coerces it through `float()` fails loudly and at a distance (see the vector-field note
+above). All nine keys are in the golden — re-record with `cargo xtask decode-guard --write-golden`
+after any intended change here.

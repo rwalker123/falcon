@@ -554,7 +554,7 @@ built from the code under test can only agree with itself. **They are the SIM's 
 from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
 payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-**A clean run is 301 frames / 867 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
+**A clean run is 309 frames / 895 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
 three times in one arc and once across a merge, and a running total kept by addition would be wrong
 by now.
 
@@ -750,3 +750,43 @@ outbound leg — plus the no-lever fallback to the bare hedge. **The pair is the
 ignored `travel` satisfies the first alone and one that always shifted satisfies the second alone. It
 is driven rather than rendered because no denial fixture in either harness stages a `horizon` row, and
 a sentence is a string — a frame shows a plausible verdict whichever clock it quotes.
+
+## `chapters/trade.gd` — the cargo picker and a shipment in flight (arc #527, issue #517)
+
+**Appended LAST in `CHAPTERS`**, after `crafting_bench`. Seven frames and twenty-three `PASS` — plus
+a twenty-fourth in `chapters/event_dock.gd`, where the shipment's `destination=` label swap belongs
+beside the band-label trio it extends rather than in a chapter that instantiates no dock. It
+injects a real `BandCityPanel` docked RIGHT on the PARTIES tab, drives the whole compose act through
+the panel's own controls, and releases the panel and hands the reference band back before it ends —
+so a chapter appended after it starts where every other one does.
+
+**Every control is driven, not set.** The footer's mission button is pressed (by
+`HudWidgets.MISSION_LAUNCH_META`, never by face), the destination is chosen through the picker's own
+`item_selected`, the party is raised through its stepper's `+` reading `PARTY_STEPPER_COUNT_META`
+back on each press, and each cargo row is loaded by repeated presses of its OWN `+` — which is what
+exercises the clamp-to-the-pile and the per-press rebuild rather than the members behind them.
+
+**The claims that only a driven run can make:**
+
+| claim | why nothing else says it |
+|---|---|
+| the picker lists BOTH ties, the parked one disabled with its reason in its own label | a picker that filtered parked ties renders a shorter list that looks perfectly correct |
+| the destination's position is worded as REMEMBERED, and the walk wears `≈` | the arc's keystone; a live-position render is indistinguishable in a screenshot |
+| a material row names the pile's RATING | the fixture holds TWO `hide` piles at different ratings, which is the only shape that can fail |
+| mass and cap composed from the FIXTURE's side | the harness and the sheet arrive at one number from opposite ends |
+| an over-cap manifest disables the send | the client's courtesy, reached by shrinking the party rather than by growing the cargo, so the cap moves and the manifest does not |
+| the shipment's materials are **not** summed | asserted as an ABSENCE — a row that added hide to bone still renders two plausible numbers and every other assertion passes |
+| the destination `BandId` never appears on screen | the id is distinctive (`BandFx.FIXTURE_BAND_ID_OFFSET + entity`), so a leak has something to find |
+| the `Bound for` row names the band anyway | the fixture publishes `expeditionDestinationName` as `""` — the LIVE shape, bands having no names — so the row can only read `Band 2` by joining the roster on the id beside it |
+
+**`trade_footer` exists for the GLYPH, and that is not decoration.** A mark missing from this
+client's fallback font renders as an INVISIBLE GAP — no tofu box, nothing an assertion can see — and
+that is exactly what 🤝 did on the Food breakdown's transfer rows before it was replaced. The frame
+is the only thing that catches it, and it caught the fifth footer button being clipped off the edge
+of a 354px column in the same pass.
+
+**The Food-ledger half opens the disclosure**, because the headline alone passes on a client that
+folded the transfer into some other row. **Its label search starts at the HARNESS ROOT, not the
+HUD**: a player band's detail renders into the Band/City panel, which is a sibling `CanvasLayer`
+rather than a child of the HUD, so a HUD-rooted walk finds nothing and the click silently never
+happens.

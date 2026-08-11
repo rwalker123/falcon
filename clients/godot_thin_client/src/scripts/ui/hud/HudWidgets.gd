@@ -261,7 +261,7 @@ static func build_marker_icon(texture: Texture2D, glyph: String, box_px: float, 
 ## one-line and two-line forms compose the same stepper. `on_change` fires with the new count.
 static func add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: bool, on_change: Callable, compact_chrome: bool = false) -> void:
     var minus := Button.new()
-    minus.text = "−"
+    minus.text = HudWorkVocab.STEPPER_MINUS_FACE
     minus.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH, 0)
     HudStyle.apply_button(minus, "ghost")
     minus.disabled = count <= 0
@@ -274,7 +274,7 @@ static func add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: b
     value.add_theme_color_override("font_color", HudStyle.INK if count > 0 else HudStyle.INK_FAINT)
     row.add_child(value)
     var plus := Button.new()
-    plus.text = "+"
+    plus.text = HudWorkVocab.STEPPER_PLUS_FACE
     plus.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH, 0)
     HudStyle.apply_button(plus, "ghost")
     plus.disabled = not plus_enabled
@@ -749,6 +749,13 @@ const HUNT_CREW_SPLIT_META := "hunt_crew_split"
 ## harness cannot match on. `tools/command_guard.gd` presses it through this meta — it is the ONLY
 ## way to reach those two emit sites, whose payload-building lives in an inline `pressed` lambda.
 const SEND_HUNT_CONFIRM_META := "send_hunt_confirm"
+
+## The "send a shipment" CONFIRM button, as `Button` meta (arc #527) — its own handle rather than the
+## hunt one's, because the shipment form reaches it from FIVE branches (no ties, no destination
+## chosen, no stores, an unsendable manifest, and the live send) and a harness's claim about which
+## branch rendered is only checkable if all five wear one findable mark. It is set on the DISABLED
+## branches too: a form that built nothing at all would otherwise satisfy an absence assertion.
+const SEND_TRADE_CONFIRM_META := "send_trade_confirm"
 
 ## The DENIAL raid's confirm button (`docs/plan_denial_raid.md`). **Its OWN meta, not the hunt one**,
 ## and for the reason the two forms are separate at all: a harness that pressed "the send button" on a

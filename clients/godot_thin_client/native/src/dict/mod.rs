@@ -4,6 +4,7 @@
 //! sections live in this file.
 
 pub(crate) mod campaign;
+pub(crate) mod connections;
 pub(crate) mod culture;
 pub(crate) mod economy;
 pub(crate) mod governance;

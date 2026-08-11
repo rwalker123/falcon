@@ -733,3 +733,85 @@ claims about the verdict's structure (a `repelled` outcome carrying a full turn 
 number; an unbounded `past_recovery` still names its outcome; and the two degenerate band forms). Each
 is sabotage-verified against a different mutation. The launch half and the vocabulary live in
 `band-city-panel.md` → "DENIAL is a third MISSION on the parties footer".
+
+## The Food line has SIX terms, and two of them were missing for the life of the band game
+
+Arc #527, issue #517. The larder identity the sim pins is
+
+```text
+larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit
+                + transferReceived − transferSent
+```
+
+and `DetailFormat.band_net_food` now sums all six. **The last pair is not a trade feature and calling
+it one is how it stays broken.** `balance_supply_networks` has moved food between neighbouring
+larders every turn since turn one, so any two co-networked bands have had a Food line that did not
+add up — off by the WHOLE transfer, not by a rounding drift — and the headline was the only place a
+player could have noticed. A shipment landing is simply the second producer of the same fact.
+
+- **Two named magnitudes, never one signed net**, matching `penFeedUpkeep` and `raidForfeit` beside
+  them: a band that both sends and receives inside one window is doing something, and a net renders
+  that as nothing having happened.
+- **The window is the SNAPSHOT window, not the turn.** A `send_trade_expedition` debits the larder
+  when the command is applied, between two published frames, so the sim accumulates across exactly
+  the interval a client's own `larder_delta` measures and clears after the capture. Nothing here may
+  re-scale them to a per-turn rate.
+- **They enter `band_has_food_flow` too**, or a band whose only movement this window was a transfer
+  loses its net line and its whole breakdown — the same defect the income term's own note records.
+- **FOOD ONLY.** Materials cross between bands as well (the network pools them per rating, a shipment
+  carries them) and there is deliberately no materials identity: a material's account is the batch
+  store, and a scalar total of hide and bone is the retired trade axis under a new name.
+
+**The breakdown gets a row each** (`DisclosureController.food_breakdown_lines`) — `⇄ From other
+bands` as an income row, `⇄ To other bands` as a debit — each omitted at zero exactly like Pen feed
+and Lost to raids, so a band nobody trades with renders the ledger it always did.
+
+**ONE glyph for both rows, and it is an ARROW rather than a handshake.** Pen feed and Lost to raids
+each carry their own mark because they are different debits; these two are one fact in two
+directions, and the row's own words say which way. The emoji that says "deal" (🤝) is **not in this
+client's fallback font and renders as an invisible gap** — no tofu box, nothing to notice — which is
+the silent-failure class `Typography.gd` was retired for; `⇄` comes from the Arrows block the ▸/◀/▲▼
+carets already draw from.
+
+**Frames:** `trade_food_ledger` (the headline moved by a transfer with no income at all) and
+`trade_food_transfers` (the same row OPENED, which is the only state that can say the two terms are
+itemized rather than folded into some other row).
+
+## A trade party states WHO IT IS FOR and WHAT IS IN THE PACKS, and nothing else
+
+`BandDetailLines._shipment_summary_lines`, reached by an early return from
+`expedition_summary_lines` — a shipment borrows NONE of the raid's rows. It has no quarry, no floor,
+no delivery ETA and no trip bound, so every `is_hunt` / `is_raid` branch stays closed to it, and the
+`Provisions:` row beneath them would restate a pack this mission states properly. Four rows at most
+(`Mission` / `Bound for` / `Phase` / `Carrying`, plus `Position` in the drawer), comfortably inside
+the parties strip's seven-line worst case, which is a HUNT party's.
+
+- **`Bound for` renders a NAME and never `expeditionDestinationBand`** — the id is the key
+  `send_trade_expedition` addresses and must never reach a label. The name comes from
+  `HudFormat.expedition_destination_label`, which is **the one resolution the parties-strip row and
+  the destination picker also use**, so a band cannot be called three things on three surfaces:
+  - **the sim's published `expeditionDestinationName` when it is non-empty** — it is resolved at
+    LAUNCH and carried on the mission, because the destination is precisely the thing a party
+    outlives (a band walks away, leaves the viewer's sight, or is gone while the shipment is still
+    bound for it), and the day a second faction lands (#513) a FOREIGN band's name can only come from
+    the sim, this client holding no roster to resolve one from;
+  - **else this client's own label for that band**, joined on the id through
+    `HudBandLaborState.band_label_for_id` — a roster POSITION, the same `Band 2` the cycler, the band
+    picker and the event dock's `band=` swap give it.
+  **It is empty on every live shipment today, and that is the sim declining to guess.** Bands have no
+  names in this game; the field was briefly filled from the sending path's `StartingUnit.kind` — the
+  unit ARCHETYPE, the same `"BandForager"` for every seeded band — which made the row disagree with
+  what the rest of the HUD called that same band. A wrong name is worse than none: none has a
+  fallback. A destination neither tier can name renders **no row**, rather than the raw `BandId`.
+- **`Carrying` reads `expeditionCargoFood` against `expeditionCarryCap`, whose lever is the
+  MISSION's.** A raid's cap is the provisions ceiling it fills before delivering; a shipment's is
+  what its people can carry out. They are different numbers on different levers, and a readout that
+  reached for the hunt one would quote a cap the launch command refuses.
+- **`_shipment_cargo_clause` is NOT `_party_pack_clause`.** The pack clause reads `material_batches`,
+  the party's OWN kit — what a scout skinned on the road, and what a trade escort carries for
+  itself — while the shipment is the cargo store beside it. Rendering one for the other would let an
+  escort's gear read as goods bound for another people. **One term per material, never summed**, the
+  same contract; the frame asserts the SUM is absent, because a row that added hide to bone still
+  renders two plausible numbers and every other assertion passes.
+
+Frame: `trade_party_panel`.

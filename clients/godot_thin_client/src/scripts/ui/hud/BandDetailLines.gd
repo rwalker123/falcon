@@ -126,6 +126,22 @@ const HUNT_FULL_BADGE := "· FULL"
 const PARTY_PACK_CLAUSE_PREFIX := " · "
 const PARTY_PACK_ENTRY_FORMAT := "%s %s"
 
+# ---- A SHIPMENT'S OWN TWO ROWS (arc #527) --------------------------------------------------------
+# A trade party's readout is the two questions a shipment raises and no others: WHO it is for, and
+# WHAT it is carrying. It has no quarry, no floor, no delivery ETA and no trip bound — the mission
+# carries no such levers — so every hunt-gated row stays gated and none of them is borrowed here.
+#
+# The destination is the sim's `expeditionDestinationName`, resolved at LAUNCH and carried, rendered
+# verbatim. Its key twin `expeditionDestinationBand` is what the command addresses and NEVER appears.
+const TRADE_DESTINATION_ROW := "Bound for"
+# `Carrying: 18.0 / 24.0 · 4.0 hide · 1.2 bone` — the shipment beside the pack it fills, and the
+# materials as ONE TERM PER MATERIAL, never summed (`_shipment_cargo_clause`). The cap is
+# `expedition_carry_cap`, which resolves per MISSION, so this quotes the shipment pack rather than a
+# hunt's provisions ceiling.
+const TRADE_CARGO_ROW := "Carrying"
+const TRADE_CARGO_CAP_FORMAT := "%s: %s / %s%s"
+const TRADE_CARGO_NO_CAP_FORMAT := "%s: %s%s"
+
 # ---- Morale-trend arrow glyphs. Whether a trend reads as flat at all is `DetailFormat.MORALE_TREND_EPSILON`,
 # which stays there — `DetailFormat.morale_is_concerning` tests it too.
 const MORALE_TREND_FALLING_GLYPH := "▼"
@@ -379,6 +395,13 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
     # not be looked up twice.
     var target_herd: Dictionary = _band_labor.expedition_target_herd(unit_data) if is_raid else {}
     lines.append("Mission: %s" % DetailFormat.expedition_mission_label(mission))
+    # **A SHIPMENT'S ROWS ARE ITS OWN, AND IT BORROWS NONE OF THE RAID'S** (arc #527). It has no
+    # quarry, no floor, no delivery ETA and no trip bound — the mission carries no such levers — so
+    # the raid branches below stay closed to it and it answers the two questions a shipment raises:
+    # who it is for, and what is in the packs. Returned early rather than woven in, because the
+    # Provisions row beneath the raid branches would restate a pack this party states properly.
+    if mission == HudExpeditionVocab.EXPEDITION_MISSION_TRADE:
+        return _shipment_summary_lines(unit_data, context, lines)
     if is_raid:
         # The migratory herd it follows (species label from the fauna_id, falling back to the id).
         # A hunt party's target MIGRATES and is often NOT the herd on the tile the player is looking
@@ -469,6 +492,71 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
     if pos_array.size() == 2:
         lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
     return lines
+
+## **A TRADE PARTY'S ROWS** (arc #527) — `Mission` (already appended by the caller), who it is bound
+## for, the phase it is in, and the shipment beside the pack it fills. Four lines at most, which is
+## inside the parties strip's own budget: the seven-line worst case is a HUNT party's, and a shipment
+## has none of the three rows that make that case (Orders, Next delivery, the trip bound).
+##
+## **THE DESTINATION IS THE SIM'S DISPLAY TWIN, RENDERED VERBATIM.** `expedition_destination_band` is
+## the key the command addresses and never appears on screen; the NAME was resolved at launch and
+## rides the mission because a party outlives its destination's presence in the viewer's world.
+func _shipment_summary_lines(unit_data: Dictionary, context: DetailFormat.Context,
+        lines: Array[String]) -> Array[String]:
+    # **ONE RESOLUTION FOR THE DESTINATION'S NAME, SHARED WITH THE PARTIES ROW AND THE PICKER.** The
+    # sim's published name when there is one — and there is not, today, because bands have no names
+    # and the sim declines to guess — else this client's own label for that band, joined on
+    # `expedition_destination_band`. A destination neither tier can name renders NO ROW, rather than
+    # the raw `BandId`, which is the key the command addresses and never a label.
+    var destination := HudFormat.expedition_destination_label(unit_data,
+        _band_labor.band_label_for_id)
+    if destination != "":
+        lines.append("%s: %s" % [TRADE_DESTINATION_ROW, destination])
+    var phase := String(unit_data.get("expedition_phase", "")).strip_edges()
+    if phase != "":
+        lines.append("Phase: %s" % HudFormat.expedition_phase_label(phase))
+    # The party's own runway still tints the cargo row, the `Carried:` contract: a shipment eats out
+    # of its provisions on the road exactly as a scout does, and the walk is where a haul's cost lives.
+    context.food_turns = float(unit_data.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
+    var cargo_food := float(unit_data.get("expedition_cargo_food", 0.0))
+    var cargo := _shipment_cargo_clause(unit_data)
+    var cap := float(unit_data.get("expedition_carry_cap", 0.0))
+    if cap > 0.0:
+        lines.append(TRADE_CARGO_CAP_FORMAT % [TRADE_CARGO_ROW,
+            HudCraftingVocab.BATCH_AMOUNT_FORMAT % cargo_food,
+            HudCraftingVocab.BATCH_AMOUNT_FORMAT % cap, cargo])
+    else:
+        lines.append(TRADE_CARGO_NO_CAP_FORMAT % [TRADE_CARGO_ROW,
+            HudCraftingVocab.BATCH_AMOUNT_FORMAT % cargo_food, cargo])
+    var pos_array: Array = Array(unit_data.get("pos", []))
+    if pos_array.size() == 2:
+        lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
+    return lines
+
+## **THE SHIPMENT'S MATERIALS, ONE TERM PER MATERIAL AND NEVER SUMMED** — ` · 4.0 hide · 1.2 bone`,
+## `""` when the shipment is food alone. `expedition_cargo_materials` is the wire's per-material
+## total across the batches the party holds (its `MaterialPayoff` rows), so this reads it as it
+## arrives; adding hide to bone would be the retired trade axis rebuilt under a new name.
+##
+## **IT IS NOT `_party_pack_clause`.** That one reads `material_batches`, the party's OWN pack — what
+## a scout skinned on the road, and what a trade party's escort is carrying for itself — and a
+## shipment is the cargo store beside it. Rendering one for the other would let a hungry escort's
+## kit read as goods bound for another people.
+func _shipment_cargo_clause(unit_data: Dictionary) -> String:
+    var terms: Array[String] = []
+    for row_variant in unit_data.get("expedition_cargo_materials", []):
+        if not (row_variant is Dictionary):
+            continue
+        var row: Dictionary = row_variant
+        var material_id := String(row.get(HudCraftingVocab.BATCH_MATERIAL_ID_KEY, "")).strip_edges()
+        var amount := float(row.get(HudCraftingVocab.BATCH_AMOUNT_KEY, 0.0))
+        if material_id == "" or not SourceForecast.has_component(amount):
+            continue
+        terms.append(PARTY_PACK_ENTRY_FORMAT % [
+            HudCraftingVocab.BATCH_AMOUNT_FORMAT % amount, material_id])
+    if terms.is_empty():
+        return ""
+    return PARTY_PACK_CLAUSE_PREFIX + PARTY_PACK_CLAUSE_PREFIX.join(terms)
 
 # ---- The band rows `unit_summary_lines` assembles -------------------------------------------------
 

@@ -182,6 +182,20 @@ func food_breakdown_lines(band: Dictionary) -> Array[String]:
     var raid_forfeit := DetailFormat.band_raid_forfeit(band)
     if raid_forfeit >= SourceForecast.FOOD_FLOW_MIN:
         lines.append(DetailFormat.food_breakdown_row(-raid_forfeit, DetailFormat.FOOD_LABEL_RAID_FORFEIT))
+    # **THE TWO TRANSFER ROWS** (arc #527) — food that crossed between bands, which passes through
+    # NEITHER of the income rows above (what THIS band's workers produced) nor either debit (what its
+    # own people and animals ate). A FIFTH and SIXTH kind of row, and they are not a trade feature:
+    # `balance_supply_networks` pools between neighbours every turn, so before these rows a player
+    # watching two co-networked bands saw both larders move for no stated reason.
+    #
+    # Rendered as income and debit respectively — `food_breakdown_row` takes the sign — and each is
+    # omitted at zero, exactly like Pen feed and Lost to raids.
+    var received := DetailFormat.band_transfer_received(band)
+    if received >= SourceForecast.FOOD_FLOW_MIN:
+        lines.append(DetailFormat.food_breakdown_row(received, DetailFormat.FOOD_LABEL_TRANSFER_RECEIVED))
+    var sent := DetailFormat.band_transfer_sent(band)
+    if sent >= SourceForecast.FOOD_FLOW_MIN:
+        lines.append(DetailFormat.food_breakdown_row(-sent, DetailFormat.FOOD_LABEL_TRANSFER_SENT))
     return lines
 
 ## **`trade_breakdown_lines` IS RETIRED** (arc #527) with the Trade row it opened. It itemized the

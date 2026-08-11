@@ -140,6 +140,29 @@ const FOOD_LABEL_PEN_FEED := "%s Pen feed (animals)" % CORRAL_GLYPH
 const RAID_GLYPH := "⚔"
 const FOOD_LABEL_RAID_FORFEIT := "%s Lost to raids" % RAID_GLYPH
 
+# The TRANSFER pair (arc #527): food that crossed between bands, in or out. They are the fifth and
+# sixth terms of the larder identity
+#   larder_delta == income − consumption − pen_feed − raid_forfeit + received − sent
+# and they close a hole that was NEVER about trade alone: `balance_supply_networks` has been pooling
+# food between neighbouring larders every turn since turn one, so any two co-networked bands had a
+# Food line that silently did not add up — by the whole transfer, not a rounding drift.
+#
+# TWO ROWS, NOT ONE SIGNED ONE, matching the two debit rows above and the wire's own shape: a band
+# that both sends and receives in one window is doing something, and a net would render that as
+# nothing having happened. The received row is an INCOME row (▲ green) and the sent row a DEBIT
+# (▼ amber), which the shared `food_breakdown_row` decides from the sign it is handed.
+#
+# **A PLAIN ARROW PAIR, NOT A HANDSHAKE OR A CART**, for two reasons. What these rows report is
+# neighbours pooling as often as it is a shipment arriving, so a trade glyph would promise a deal the
+# supply network never made. And the emoji that says "deal" (🤝) is not in this client's fallback
+# font: it renders as an INVISIBLE gap — no tofu box, just a wider indent — which is the silent
+# failure mode `Typography.gd` is retired for. ⇄ is in the Arrows block the ▸/◀/▲▼ carets already
+# come from, so it draws everywhere they do. **One glyph for both rows**, unlike Pen feed and Lost to
+# raids: these two are ONE fact in two directions, and the row's own words say which way.
+const TRANSFER_GLYPH := "⇄"
+const FOOD_LABEL_TRANSFER_RECEIVED := "%s From other bands" % TRANSFER_GLYPH
+const FOOD_LABEL_TRANSFER_SENT := "%s To other bands" % TRANSFER_GLYPH
+
 # ---- THE THREE KITS (`docs/plan_hunt_through_combat.md` §4.8) ------------------------------------
 # ONE KIT, ONE JOB: spears raise a hunter's `attack`, a SLED is the HUNT's carry (a carcass is one
 # lumpy object you drag out whole), BASKETS are the FORAGE web's (berries are loose and bounded by
@@ -1190,7 +1213,16 @@ static func morale_is_concerning(unit_data: Dictionary) -> bool:
 # =====================================================================================
 
 ## Net per-turn food flow: income − what the PEOPLE eat − what the band's penned ANIMALS eat − what
-## PREDATORS raided off the larder this turn. Positive → the larder is growing. `pen_feed_upkeep` is
+## PREDATORS raided off the larder this turn + what CROSSED IN from other bands − what crossed OUT.
+##
+## **THE TRANSFER PAIR IS NOT ABOUT TRADE, AND LEAVING IT OUT WAS A REAL DEFECT** (arc #527).
+## `balance_supply_networks` has moved food between neighbouring larders every turn since turn one,
+## so this headline was short by the whole transfer for any two co-networked bands — not a rounding
+## drift, and visible as a larder that moved for no stated reason. The identity
+## `larder_delta == income − consumption − pen_feed − raid_forfeit + received − sent` is pinned
+## sim-side (`integration_tests/tests/transfer_food_ledger.rs`).
+##
+## Positive → the larder is growing. `pen_feed_upkeep` is
 ## the sim's own answer for the third term (`PopulationCohortState.penFeedUpkeep` — the food this band
 ## actually PAID for pen feed this turn, summed across every pen it keeps) and `raid_forfeit` is the
 ## fourth (`PopulationCohortState.raidForfeit`, Predators Phase 3 — food lost to raids this turn); the
@@ -1204,7 +1236,9 @@ static func band_net_food(band: Dictionary) -> float:
     return band_food_income(band) \
         - float(band.get("food_consumption", 0.0)) \
         - band_pen_feed(band) \
-        - band_raid_forfeit(band)
+        - band_raid_forfeit(band) \
+        + band_transfer_received(band) \
+        - band_transfer_sent(band)
 
 ## The STEADY total food income = Gathered + Hunted (Σ per-source realized average across the band's
 ## forage + hunt assignments). Summed from the SAME per-source realized values as the breakdown rows, so
@@ -1226,6 +1260,22 @@ static func band_pen_feed(band: Dictionary) -> float:
 ## 0 when no raid landed — the ledger then omits the row entirely, exactly like Pen feed.
 static func band_raid_forfeit(band: Dictionary) -> float:
     return float(band.get("raid_forfeit", 0.0))
+
+## Food that CROSSED IN from another band over the snapshot window
+## (`PopulationCohortState.transferReceived`) — a supply-network pooling, a shipment landing, a
+## party's pack coming home. 0 for a band nobody sent to, which the ledger renders as no row at all.
+##
+## **THE WINDOW IS THE SNAPSHOT WINDOW, NOT THE TURN**, because a launch draw happens when a command
+## is applied, between two published frames. The sim accumulates across exactly the interval a
+## client's own `larder_delta` measures and clears after the capture.
+static func band_transfer_received(band: Dictionary) -> float:
+    return float(band.get("transfer_received", 0.0))
+
+## …and what crossed OUT (`PopulationCohortState.transferSent`). Its own magnitude rather than a
+## signed net with the term above: a band that both sends and receives in one window is doing
+## something, and a net would render that as nothing having happened.
+static func band_transfer_sent(band: Dictionary) -> float:
+    return float(band.get("transfer_sent", 0.0))
 
 ## The band's larder (provisions) as a float — the starting point of the food-outlook projection and
 ## the number the Food summary row prints (rounded there). Here beside the rest of the band food
@@ -1266,7 +1316,9 @@ static func band_has_food_flow(band: Dictionary) -> bool:
     return band_food_income(band) >= SourceForecast.FOOD_FLOW_MIN \
         or float(band.get("food_consumption", 0.0)) >= SourceForecast.FOOD_FLOW_MIN \
         or band_pen_feed(band) >= SourceForecast.FOOD_FLOW_MIN \
-        or band_raid_forfeit(band) >= SourceForecast.FOOD_FLOW_MIN
+        or band_raid_forfeit(band) >= SourceForecast.FOOD_FLOW_MIN \
+        or band_transfer_received(band) >= SourceForecast.FOOD_FLOW_MIN \
+        or band_transfer_sent(band) >= SourceForecast.FOOD_FLOW_MIN
 
 ## Sum of per-source `realized_yield` (the STEADY per-source average, food/turn) across this band's
 ## labor assignments of one kind — the category total behind the Food breakdown (Gathered = forage,

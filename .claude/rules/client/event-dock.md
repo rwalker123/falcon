@@ -42,6 +42,14 @@ founding is the opposite on every count: rare, player-initiated, and the first a
 that cannot be undone. The same kind carries the command's REFUSALS, which belong there too — a
 refused irreversible order is as loud as a taken one.
 
+**`trade_delivered` is NOTABLE, and it is the one expedition event that happens where OTHER PEOPLE
+live** (arc #527). That novelty is what earns it a kind of its own sim-side; it is not what decides
+its rung, because the ladder asks how LOUDLY, not how new. A shipment landing sits exactly beside
+`expedition_arrived`: a party reached where it was going and did the thing it was sent to do, turns
+after the player asked for it. Alert is for violence, for an investment lost and for an irreversible
+player-initiated act — none of which a delivery is. **A REFUSED shipment is not this kind at all**:
+a rejected command rides `system`, which is already Alert.
+
 **`died` and `migrated` are NOTABLE, not Alert.** Bands lose elders to cold as a matter of course,
 and a rung that interrupts for every one of them trains the player to stop reading the bar — the
 precise failure the three-rung ladder exists to prevent. A death that *matters* (a whole band
@@ -316,17 +324,31 @@ The join needs the roster, which the HUD owns, and the dock is `Main`'s panel �
 `HudLayer.update_band_alerts` publishes `band_labels_changed({band_id: name})` and `Main` relays it.
 The sim's label is never changed; neither surface reaches into the other.
 
-Two details:
+Four details:
 
 - **Resolved at RENDER time, not stamped at ingest** (`_row_label`), so a roster change relabels rows
   already held and a row that arrives before the first `set_band_labels` is not stuck with the
   fallback forever.
+- **EVERY token that names a band is swapped, not just `band=`** (arc #527, `BAND_ID_TOKEN_LABELS`).
+  A shipment's landing line names the receiving band through the sim's own fallback spelling and
+  repeats the id as `destination=<id>`; without a second entry the feed would print one band's raw id
+  beside the `Bound for Band 2` the parties strip prints for the same party — two surfaces naming one
+  band differently, which is the defect the `band=` swap exists to remove. A table is what stops it
+  regrowing once per producer, and each token is its own ROLE: a line can name the sender as `band=`
+  and the receiver as `destination=` at once, and sharing a key would rewrite one with the other's
+  name.
+- **A SECOND TOKEN NEEDS A SECOND FORMAT STRING, and the two shipped differ in CASE.** The sim writes
+  a band as `Band 3` (`systems::population::band_label`) and a shipment's destination as `band 30`
+  (`ExpeditionMission::destination_display`'s last-resort tier, which is the normal path today
+  because bands have no names). `SIM_DESTINATION_LABEL_FORMAT` is therefore separate from
+  `SIM_BAND_LABEL_FORMAT` rather than a reuse — a shared format would have looked right and never
+  fired, which is exactly the silent no-op `SIM_BAND_LABEL_FORMAT`'s own note warns about.
 - **The substitution stops at a DIGIT BOUNDARY.** A plain `String.replace` of `Band 3` finds the
   `Band 3` inside `Band 30` first and corrupts the label to `Band 10`. The sim names exactly one band
   per label today, so no live event reaches that trap — which is why `ui_preview`'s fixture
   CONSTRUCTS it (`"Four left Band 3 for Band 30"`) rather than quoting one. It also pins the honest
-  limitation: only the band the token NAMES is substituted; a second band in the same label keeps
-  whatever the sim called it.
+  limitation: only the band a token NAMES is substituted; a band in the label that no token names
+  keeps whatever the sim called it.
 
 ## `command_events` is per-frame history, so the dock ACCUMULATES
 

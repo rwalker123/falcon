@@ -174,6 +174,21 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     //                  Full net is larder_delta == food_income − food_consumption − pen_feed_upkeep
     //                  − raid_forfeit.
     let _ = dict.insert("raid_forfeit", cohort.raidForfeit() as f64);
+    //   transfer_received / transfer_sent — FOOD THAT CROSSED BETWEEN BANDS (arc #527), the last two
+    //                  terms of the ledger identity
+    //                    larder_delta == food_income − food_consumption − pen_feed_upkeep
+    //                                    − raid_forfeit + transfer_received − transfer_sent
+    //                  Food moving from one larder to another passes through NEITHER income (what
+    //                  THIS band's workers produced) nor consumption (what its people ate) — the
+    //                  same hole pen_feed_upkeep and raid_forfeit were each minted for. TWO NAMED
+    //                  MAGNITUDES, never one signed net: a band that both sends and receives in a
+    //                  window is doing something, and a net would render that as nothing happening.
+    //                  **NOT trade-only** — `balance_supply_networks` has pooled food between
+    //                  neighbouring larders every turn since turn one, so any two co-networked bands
+    //                  move these. FOOD ONLY: materials cross too and there is deliberately no
+    //                  materials identity (the batch store IS a material's account).
+    let _ = dict.insert("transfer_received", cohort.transferReceived() as f64);
+    let _ = dict.insert("transfer_sent", cohort.transferSent() as f64);
     // --- THE MINIMAL TOE (`docs/plan_hunt_through_combat.md` 4.8) ---------------------------------
     // The band's THREE consumable kits and the tiers they resolve to. **All six shipped on the wire
     // with NO consumer here**, which is this crate's most-repeated bug and the third time this arc
@@ -612,6 +627,63 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert(
         "expedition_carry_cap",
         f64::from(cohort.expeditionCarryCap()),
+    );
+    // --- THE SHIPMENT A TRADE PARTY IS CARRYING (arc #527, issue #517) ----------------------------
+    // **THE KEY AND ITS DISPLAY TWIN**, the `expedition_target_herd` / `expedition_target_species`
+    // rule: `expedition_destination_band` is the `BandId` `send_trade_expedition` addresses and must
+    // NEVER be rendered, `expedition_destination_name` is what a readout shows — resolved at LAUNCH
+    // and carried, because the destination is exactly the thing a party outlives (a band walks away,
+    // leaves the viewer's sight, or is gone while the shipment is still bound for it).
+    //
+    // **THERE IS NO FACTION FIELD, AND THAT IS THE ARC'S DISCIPLINE.** A shipment to your own
+    // splinter and one to strangers are the same row.
+    let _ = dict.insert(
+        "expedition_destination_band",
+        cohort.expeditionDestinationBand() as i64,
+    );
+    let _ = dict.insert(
+        "expedition_destination_name",
+        cohort.expeditionDestinationName().unwrap_or(""),
+    );
+    // What the party carries, in the two accounts a band store holds. The materials reuse
+    // `MaterialPayoff`, so this is the `material_yield` / `delivered_material` shape a third time —
+    // **NEVER SUMMED** (a total of hide and bone is the retired trade axis under a new name), EMPTY
+    // MEANS "no row" rather than zero, and the key is always present. The per-material amount is the
+    // total across the batches the party holds; the batches themselves, with their exact readings,
+    // ride `material_batches` above.
+    let _ = dict.insert(
+        "expedition_cargo_food",
+        f64::from(cohort.expeditionCargoFood()),
+    );
+    let mut cargo_materials = VarArray::new();
+    if let Some(rows) = cohort.expeditionCargoMaterials() {
+        for row in rows.iter() {
+            let mut entry = VarDictionary::new();
+            let _ = entry.insert("material_id", row.materialId().unwrap_or(""));
+            let _ = entry.insert("amount", row.amount() as f64);
+            cargo_materials.push(&entry.to_variant());
+        }
+    }
+    let _ = dict.insert("expedition_cargo_materials", &cargo_materials);
+    // **THE TWO SHIPMENT-MASS LEVERS, ECHOED ONTO EVERY COHORT** — the same global-lever idiom as
+    // `expedition_per_worker_carry` / `hunt_per_worker_provisions` above, and the pair the OUTFIT UI
+    // needs: it prices a manifest for a party that does not exist yet, so no per-party field can
+    // serve that screen. The sim's own expression, held verbatim client-side:
+    //
+    //   mass = Σ food rows + expedition_trade_material_carry_weight × Σ material row amounts
+    //   cap  = party_workers × expedition_trade_per_worker_carry
+    //
+    // **THE PACK LEVER IS NOT `expedition_per_worker_carry`.** That one is the HUNT pack — a raid's
+    // provisions ceiling — and a client composing a trade cap out of it is one config edit away from
+    // quoting a cap `send_trade_expedition` refuses. Once a shipment is on the map its own pack is
+    // `expedition_carry_cap` above, which resolves per MISSION.
+    let _ = dict.insert(
+        "expedition_trade_per_worker_carry",
+        f64::from(cohort.expeditionTradePerWorkerCarry()),
+    );
+    let _ = dict.insert(
+        "expedition_trade_material_carry_weight",
+        f64::from(cohort.expeditionTradeMaterialCarryWeight()),
     );
     // WHICH STOP WILL END THIS PARTY'S RAID — the `core_sim::HuntTripBound` key
     // ("pack_full" | "floor" | "herd_lost" | "horizon"), off the same in-flight
