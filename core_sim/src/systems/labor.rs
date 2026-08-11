@@ -978,17 +978,23 @@ pub fn advance_labor_allocation(
                         // answers "did this call finish it", so a second band working an
                         // already-tended patch clears its verb (above) without announcing the
                         // cultivation a second time.
-                        // **The gear is charged for the progress it bought** — the handling
-                        // gear's `build_progress` quantum, and nothing on the forage job declares
-                        // it yet (issue #539), so today this is a no-op on the plant web that will
-                        // become live the day a hoe ships without touching this call site.
+                        // **The gear is charged for the progress the METER TOOK, not the progress
+                        // the rung offered** — measured as the meter's own delta across the accrual,
+                        // so a build the patch refuses (another faction owns it) is structurally
+                        // free rather than free-if-the-caller-remembered. The handling gear's
+                        // `build_progress` quantum; nothing on the forage job declares it yet
+                        // (issue #539), so today this is a no-op on the plant web that will become
+                        // live the day a hoe ships without touching this call site.
+                        let progress_before = patch.cultivation_progress;
+                        let cultivated =
+                            accrual > 0.0 && patch.accrue_cultivation(faction, accrual);
                         charge_build_wear(
                             band_equipment.as_deref_mut(),
                             &equipment_cfg,
                             &crew_kit,
-                            accrual,
+                            patch.cultivation_progress - progress_before,
                         );
-                        if accrual > 0.0 && patch.accrue_cultivation(faction, accrual) {
+                        if cultivated {
                             completed.push(idx);
                             event_log.push(CommandEventEntry::new(
                                 tick.0,
@@ -1536,6 +1542,13 @@ pub fn advance_labor_allocation(
                         // **A ring wears the gear like the pen it widens** — same rung, same work,
                         // so the same charge. Gated on `pen_extending` so a keeper merely tending a
                         // finished pen spends nothing on a build that is not running.
+                        //
+                        // **The one arm that bills the OFFERED accrual rather than its meter's
+                        // delta**, and deliberately: a ring is only ever raised around a herd the
+                        // faction already owns, so there is no owner-lock here to refuse the offer
+                        // and turn it into a phantom charge; and `accrue_pen_extension` *resets*
+                        // `pen_extend_progress` to zero when the ring completes, so a before/after
+                        // delta would read negative on exactly the turn the crew worked hardest.
                         if herd.pen_extending {
                             charge_build_wear(
                                 band_equipment.as_deref_mut(),
@@ -1768,13 +1781,23 @@ pub fn advance_labor_allocation(
                         // The TRANSITION, not the state (the Cultivate arm's rule): a second band
                         // taming the same herd clears its verb via the already-built check above
                         // without re-announcing the taming.
+                        //
+                        // **The gear is charged off the METER'S DELTA.** Ownership lives in
+                        // `accrue_domestication` and deliberately not in `eligible`, so a band whose
+                        // `Tame` outlived another faction claiming the herd computes a positive
+                        // `accrual` every turn while the herd refuses all of it — billing the
+                        // offered amount would bleed its gear dry against a meter that never moves.
+                        // Its verb is never cleared either (`hunt_rung_already_built` reads
+                        // `is_domesticated`), so it would bleed forever.
+                        let progress_before = herd.domestication_progress;
+                        let tamed = accrual > 0.0 && herd.accrue_domestication(faction, accrual);
                         charge_build_wear(
                             band_equipment.as_deref_mut(),
                             &equipment_cfg,
                             &crew_kit,
-                            accrual,
+                            herd.domestication_progress - progress_before,
                         );
-                        if accrual > 0.0 && herd.accrue_domestication(faction, accrual) {
+                        if tamed {
                             completed.push(idx);
                             event_log.push(CommandEventEntry::new(
                                 tick.0,
@@ -1823,30 +1846,34 @@ pub fn advance_labor_allocation(
                             workers,
                             crew_build_rate,
                         );
+                        // **Charged off the pen meter's own delta** (the Tame arm's rule): the
+                        // owner-lock lives in `accrue_corral`, so a keeper the herd refuses spends
+                        // nothing structurally rather than by this site re-checking the gate.
+                        let pen_tile = herd.position();
+                        let progress_before = herd.corral_progress;
+                        let penned =
+                            accrual > 0.0 && herd.accrue_corral(faction, accrual, pen_tile);
                         charge_build_wear(
                             band_equipment.as_deref_mut(),
                             &equipment_cfg,
                             &crew_kit,
-                            accrual,
+                            herd.corral_progress - progress_before,
                         );
-                        if accrual > 0.0 {
-                            let pen_tile = herd.position();
-                            if herd.accrue_corral(faction, accrual, pen_tile) {
-                                completed.push(idx);
-                                event_log.push(CommandEventEntry::new(
-                                    tick.0,
-                                    CommandEventKind::Corral,
-                                    faction,
-                                    format!(
-                                        "Corralled {} at ({}, {})",
-                                        fauna_id, pen_tile.x, pen_tile.y
-                                    ),
-                                    Some(format!(
-                                        "status=complete action=corral herd={} x={} y={}",
-                                        fauna_id, pen_tile.x, pen_tile.y
-                                    )),
-                                ));
-                            }
+                        if penned {
+                            completed.push(idx);
+                            event_log.push(CommandEventEntry::new(
+                                tick.0,
+                                CommandEventKind::Corral,
+                                faction,
+                                format!(
+                                    "Corralled {} at ({}, {})",
+                                    fauna_id, pen_tile.x, pen_tile.y
+                                ),
+                                Some(format!(
+                                    "status=complete action=corral herd={} x={} y={}",
+                                    fauna_id, pen_tile.x, pen_tile.y
+                                )),
+                            ));
                         }
                     }
                     if provisions > scalar_zero() {
@@ -2227,17 +2254,19 @@ fn hunt_rung_already_built(herd: &Herd, improvement: Improvement) -> bool {
 /// [`crate::equipment_config::WearQuantum::BuildProgress`] site, and the only one (issue #515).
 ///
 /// One helper rather than five copies, because every build arm charges the identical thing and a
-/// per-arm spelling is how one of them comes to charge the wrong quantum or forget the kit mask. It
-/// takes the accrual the seam produced, so a crew whose build was refused — wrong verb, gate unmet,
-/// nothing standing above its floor — spends nothing: `wear_kit` filters by quantum and by the kit's
-/// own mask, and `usable_uses` floors a zero.
+/// per-arm spelling is how one of them comes to charge the wrong quantum or forget the kit mask.
+/// `wear_kit` filters by quantum and by the kit's own mask, and `usable_uses` floors a zero.
 ///
-/// **CHARGED FOR THE TURN'S WORK, NOT THE METER'S REMAINDER.** A build one turn from done accrues a
-/// full turn's progress and is clamped to [`crate::intensification::RUNG_COMPLETE`] by the source's
-/// own meter, and this bills the full amount either way — the crew worked the whole turn, and the
-/// surplus effort is not refunded any more than the completing turn's dip is
-/// (`intensification.md` → "Completion CLEARS the improvement"). The overcharge is bounded by one
-/// turn's accrual on the last turn of a build, i.e. a few percent of its gear cost.
+/// **CHARGED FOR THE PROGRESS THE METER TOOK, NOT THE PROGRESS THE RUNG OFFERED.** Every build arm
+/// reads its source's meter before the accrual and passes the *delta*, because the accrual a rung
+/// computes is only an offer: the accrue helpers own the `owner is None || owner == faction` rule
+/// (deliberately absent from each arm's `eligible`), so a source can refuse the whole of it. A band
+/// whose `Tame` outlived another faction claiming the herd is the reachable case — it passes every
+/// gate this site checks, banks nothing, and never has its verb cleared — and billing the offer
+/// would bleed its gear dry against a meter that never moved. The delta makes *"a build that was
+/// refused spends nothing"* structural rather than a rule each caller must remember, and it bills
+/// the completing turn for exactly the progress it banked instead of a full turn's offer clamped
+/// away by [`crate::intensification::RUNG_COMPLETE`].
 fn charge_build_wear(
     equipment: Option<&mut BandEquipment>,
     config: &crate::equipment_config::EquipmentConfig,
@@ -2306,18 +2335,26 @@ fn accrue_field(
         workers,
         build_rate,
     );
-    // **The gear is charged BEFORE the zero-accrual early return, and it costs nothing there** —
-    // `charge_build_wear` floors a zero, so the ordering is free and the charge cannot be skipped by
-    // a future edit that moves the return. The three equipment arguments ride together rather than
-    // the caller charging after the call, because the accrual this bills for is computed here and
-    // handing it back would be a second number to keep in step.
-    charge_build_wear(equipment, equipment_cfg, crew_kit, accrual);
     if accrual <= 0.0 {
         return false;
     }
     // The TRANSITION, not the state — `ForagePatch::accrue_field` answers "did this call finish it",
     // so a second band cannot re-announce a Field the first one sowed.
-    if patch.accrue_field(faction, accrual) {
+    //
+    // **The gear is charged off the METER'S DELTA, after the accrual.** `accrue_field` owns the
+    // owner-lock, so a crew sowing ground another faction has claimed banks nothing and therefore
+    // spends nothing — a property of the arithmetic rather than of this site re-checking the gate.
+    // The three equipment arguments ride here rather than the caller charging afterwards because
+    // the meter this bills against is the one this function advances.
+    let progress_before = patch.field_progress;
+    let sown = patch.accrue_field(faction, accrual);
+    charge_build_wear(
+        equipment,
+        equipment_cfg,
+        crew_kit,
+        patch.field_progress - progress_before,
+    );
+    if sown {
         event_log.push(CommandEventEntry::new(
             tick,
             CommandEventKind::Sow,
@@ -6188,10 +6225,33 @@ mod labor_yield_tests {
     /// **kit** is the only thing that differs: written twice, a stray difference in the floor, the
     /// crew or the herd's seating would be indistinguishable from the effect under test.
     fn tame_one_turn_on(kit_id: &str) -> (f32, f32) {
+        let turn = tame_one_turn_on_herd_owned_by(kit_id, None);
+        (turn.progress, turn.gear_wear)
+    }
+
+    /// What one turn of a `Tame` assignment left behind — the build meter, the gear it spent, and the
+    /// two liveness handles that tell a *refused* build apart from a fixture that never ran at all:
+    /// `tame_arm_ran` is the herd's `tamed_this_turn`, which the `Tame` arm sets on entry, and
+    /// `improvement` is the verb the assignment still carries afterwards.
+    struct TameTurn {
+        progress: f32,
+        gear_wear: f32,
+        tame_arm_ran: bool,
+        improvement: Option<Improvement>,
+    }
+
+    /// [`tame_one_turn_on`] with the herd's **owner** as a second dial: `None` leaves it unowned (the
+    /// ordinary case — the first accrual claims it), `Some(faction)` seats an owner before the turn
+    /// so the ownership rule inside `Herd::accrue_domestication` can be exercised from the labor
+    /// system. Parameterised rather than copied so the two arms differ in the owner and nothing else.
+    fn tame_one_turn_on_herd_owned_by(kit_id: &str, owner: Option<FactionId>) -> TameTurn {
         const BIG_HERD_CAP: f32 = 1_000.0;
         let (mut world, tile) = world_with_source(CAP);
         reseat_herd(&mut world, BIG_HERD_CAP, BIG_HERD_CAP);
         grant_knowledge(&mut world, HERDING_DISCOVERY_ID);
+        if let Some(owner) = owner {
+            world.resource_mut::<HerdRegistry>().herds[0].owner = Some(owner);
+        }
         let equipment = crate::equipment_config::EquipmentConfig::builtin();
         let band =
             spawn_band(
@@ -6227,7 +6287,17 @@ mod labor_yield_tests {
             .get::<crate::components::BandEquipment>(band)
             .expect("the band's ledger survives the turn")
             .wear_of("husbandry_gear");
-        (progress, gear_wear)
+        let tame_arm_ran = world
+            .resource::<HerdRegistry>()
+            .find(HERD_ID)
+            .expect("the fixture herd survives the turn")
+            .tamed_this_turn;
+        TameTurn {
+            progress,
+            gear_wear,
+            tame_arm_ran,
+            improvement: only_assignment(&world, band).improvement,
+        }
     }
 
     /// **THE HANDLING GEAR SPEEDS THE CLIMB, and the kit is the only thing that decides it**
@@ -6340,6 +6410,62 @@ mod labor_yield_tests {
             ledger.wear_of("husbandry_gear"),
             0.0,
             "a crew holding the gear with no build in flight must spend none of it"
+        );
+    }
+
+    /// **A BUILD THE HERD REFUSES SPENDS NOTHING** — the phantom-charge defect.
+    ///
+    /// Ownership is deliberately absent from the `Tame` arm's `eligible`: `accrue_domestication`
+    /// owns the `owner is None || owner == faction` rule. So a band whose `Tame` outlived another
+    /// faction claiming the herd passes every gate the arm checks and computes a positive accrual
+    /// each turn, while the herd banks none of it — and because `hunt_rung_already_built(Tame)` is
+    /// `is_domesticated()`, its verb is never cleared either. Charged for the accrual it *offered*,
+    /// that band bled its handling gear dry against a meter that never moved.
+    ///
+    /// The two arms are the whole claim, and the second is not optional: *"it spent nothing"* is
+    /// also what a fixture that never reached the build seam would report. **The owner is the only
+    /// value that differs between them**, and nothing the accrual is computed from — the rung, the
+    /// knowledge, the husbandry ceiling, the work predicate, the floor, the crew, the kit's build
+    /// rate — reads it, so the offer the owned arm banks is exactly the offer the refused arm was
+    /// made and declined.
+    #[test]
+    fn a_build_the_source_refuses_spends_no_gear() {
+        /// The rival that claims the herd out from under the taming band — anyone but
+        /// [`BAND_FACTION`], whose claim the arm would honour.
+        const RIVAL_FACTION: FactionId = FactionId(7);
+
+        let refused = tame_one_turn_on_herd_owned_by("husbandry", Some(RIVAL_FACTION));
+        assert_eq!(
+            refused.progress, 0.0,
+            "a herd another faction owns banks none of the offered accrual"
+        );
+        assert_eq!(
+            refused.gear_wear, 0.0,
+            "and so the crew spends none of its handling gear: charged for the meter's delta, \
+             a refused build is free"
+        );
+        // **The fixture really did reach the seam** — the arm sets `tamed_this_turn` on entry — and
+        // its verb is still standing afterwards, which is exactly why the old offered-amount charge
+        // bled every turn forever rather than stopping at a completion.
+        assert!(
+            refused.tame_arm_ran,
+            "fixture: the Tame arm must actually have run, or 'spent nothing' is vacuous"
+        );
+        assert_eq!(
+            refused.improvement,
+            Some(Improvement::Tame),
+            "fixture: the stalled verb is never cleared, so the bleed had no end"
+        );
+
+        // **Liveness — the same fixture on the band's OWN herd both accrues and spends.**
+        let owned = tame_one_turn_on_herd_owned_by("husbandry", Some(BAND_FACTION));
+        assert!(
+            owned.progress > 0.0,
+            "fixture: the same crew on its own herd must actually tame it"
+        );
+        assert!(
+            owned.gear_wear > 0.0,
+            "fixture: and must actually spend the gear, or 'spent nothing' proves nothing"
         );
     }
 

@@ -376,9 +376,15 @@ pub enum WearQuantum {
     /// would additionally make the gear's cost track a species' `taming_rate` — the same
     /// species-dependence `equipment.md` rejected for `body_mass` on the learning rate.
     ///
+    /// The total is **exactly** `RUNG_COMPLETE` because the charge is the source meter's own
+    /// *delta* across the turn's accrual, not the accrual the rung offered: the completing turn is
+    /// billed for the sliver of progress it actually banked, not for the full turn's offer the
+    /// meter clamped away.
+    ///
     /// **Still not a clock.** A stalled build accrues nothing and pays nothing: a crew below its
-    /// rung's knowledge gate, on a source it is not working, or holding no build verb at all moves
-    /// the meter by zero and the charge is zero with it — `docs/plan_denial_raid.md` §1.2 intact.
+    /// rung's knowledge gate, on a source it is not working, holding no build verb at all, or one
+    /// the source's owner-lock refuses outright moves the meter by zero and the charge is zero with
+    /// it — `docs/plan_denial_raid.md` §1.2 intact.
     BuildProgress,
 }
 
@@ -1879,7 +1885,7 @@ impl EquipmentConfig {
     /// with no durability is born dry, so both are rejected rather than shipped as a silently eternal
     /// (or silently absent) item.
     ///
-    /// `Invalid` names a **dynamic** field path now (`items.spears.headline_wear().amount`) rather than one of a
+    /// `Invalid` names a **dynamic** field path now (`items.spears.wear[0].amount`) rather than one of a
     /// fixed nine, because the item table is open — a config that adds a bow gets the same checks with
     /// no edit here.
     pub fn validate(&self) -> Result<(), EquipmentConfigError> {

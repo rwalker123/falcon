@@ -19,7 +19,8 @@ so without a spear the fight's gate `max(0, attack − defense)` is the entire g
 ## Two nouns, and they are not the same
 
 An **ITEM** is a piece of equipment. It owns what it does (its `effects`), how long it lasts
-(`starting_durability`) and what wears it (its `wear.per` quantum). A **KIT** is a roster entry that
+(`starting_durability`) and **every quantum that wears it** — `wear` is a **list**, because one item
+may do more than one job (see "An item may wear on SEVERAL quanta"). A **KIT** is a roster entry that
 *lists* the items a party is sent out with.
 
 The items used to be named `hunting_kit` / `sled_kit` / `basket_kit` while the kits were
@@ -180,10 +181,24 @@ That invariance is the reason to prefer it over a per-worker-turn charge, which 
 per-use costume *and* would make the gear's cost track a species' `taming_rate`. **Still not a
 clock**: a stalled build moves the meter by zero and pays zero.
 
-**It is charged for the TURN'S WORK, not the meter's remainder.** A build one turn from done accrues
-a full turn's progress and is clamped by the source's own meter; `systems::labor::charge_build_wear`
-bills the full amount either way, the same convention by which the completing turn still pays the
-dip. The overcharge is bounded by one turn's accrual on the last turn of a build.
+**It is charged for the progress the METER TOOK, not the progress the RUNG OFFERED.** Each build arm
+reads its source's meter before the accrual and hands `systems::labor::charge_build_wear` the
+*delta*, because a rung's accrual is an offer the source may decline: the accrue helpers
+(`Herd::accrue_domestication` / `accrue_corral`, `ForagePatch::accrue_cultivation` / `accrue_field`)
+own the `owner is None || owner == faction` rule, deliberately absent from each arm's `eligible`. A
+band whose `Tame` outlived another faction claiming the herd is the reachable case — it clears every
+gate the arm checks, banks nothing, and never has its verb cleared, because
+`hunt_rung_already_built(Tame)` reads `is_domesticated()` — so billing the offer bled its handling
+gear dry against a meter that never moved, forever. The delta makes *"a refused build spends
+nothing"* a property of the arithmetic rather than a rule each call site must remember, and it makes
+the fixed total **exact**: the completing turn pays for the sliver it banked, not for a full turn's
+offer the meter clamped away. Guard:
+`labor::labor_yield_tests::a_build_the_source_refuses_spends_no_gear`.
+
+**`ExtendPen` is the one arm that still bills the offer**, for two reasons that hold only there: a
+ring is raised around a herd the faction already owns, so there is no owner-lock to refuse it; and
+`Herd::accrue_pen_extension` **resets** `pen_extend_progress` to zero when a ring completes, so a
+before/after delta would read *negative* on precisely the turn the crew worked hardest.
 
 ### An item may wear on SEVERAL quanta, and the handling gear is why
 
@@ -980,7 +995,7 @@ charged strikes = strikes_landed × (damage_absorbed / damage_dealt)
 
 ### The cost, measured — and NOT retuned
 
-`wear.amount` was authored against kills and is deliberately untouched; the retune is **issue #495**,
+The spears' `wear[0].amount` was authored against kills and is deliberately untouched; the retune is **issue #495**,
 and `report_the_strike_wear_the_shipped_opening_pays` (an `#[ignore]`d, assert-free harness in
 `integration_tests/tests/equipment_toe.rs`, the `fauna_migratory_representation` precedent) is its
 input. Measured on the **shipped** opening — the ~17-worker band, Red Deer at the default `0.50`
