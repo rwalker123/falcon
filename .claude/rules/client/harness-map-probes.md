@@ -244,19 +244,20 @@ label has room for exactly ONE rate, so WHICH account it states is the whole cla
 directly — the choice is split out of `_draw_yield_label` for that reason, a draw call rendering to
 a canvas nothing can read a glyph back off — over values rather than a fixture, and pairs every
 fall-through with the case that must NOT change: food still leads wherever there is food (which is
-what stops "always show fodder" passing), trade still wins the slot ahead of fodder, and a source
-paying into no account at all still prints its food zero. `_entry_fodder` is asked beside them,
+what stops "always show fodder" passing), and a source paying into no account at all still prints its
+food zero. (A TRADE branch sat between the two and won the slot ahead of fodder; arc #527 retired it,
+so the cascade is food → fodder and an inedible quarry falls through to the zero.) `_entry_fodder` is asked beside them,
 since the fall-through is unreachable if the entry's feed rate is never read — and it has no
 realized fallback to make, fodder being plant-only.
 
 **A THIRD WORKED FORAGE TILE RENDERS THE LABEL, because the guard's claim is not the frame's**
-(`FODDER_FIELD_*`, a sown hay Field paying feed and neither provisions nor trade). The guard pins
+(`FODDER_FIELD_*`, a sown hay Field paying feed and no provisions). The guard pins
 WHICH account fills the one slot; only a frame can say whether the chosen STRING fits beside its
 neighbours, and `_draw_pill_plate` sizes to the measured run rather than clipping, so a label that
 spans hexes overdraws an adjacent marker with every assertion green — the class
 `map_band_label_overlap` exists for. Measured on `map_band_work`: the plate is **67px against a 74px
-hex-column pitch**, i.e. just inside its own hex's band, against 49px for `+0.27 ⚠ ⇊` and 47px for
-the wolf's `⇄+0.22 ⇊`.
+hex-column pitch**, i.e. just inside its own hex's band, against 49px for `+0.27 ⚠ ⇊` (the 47px
+`⇄+0.22 ⇊` it was also measured against went with arc #527's retired account).
 
 **The 2.5× figure that motivated the state is wrong — it is 1.4×** — and the reason is the plate
 rather than the text: padding is a fixed fraction of the font size, so it does not scale with the

@@ -417,15 +417,33 @@
           "can_cultivate": true,
           "can_sow": true,
           "cultivate_fodder_payoff": 67.110001,
+          "cultivate_material_payoff": [
+            {
+              "amount": 15.26,
+              "material_id": "forage_patches[0].composition[0].cultivate_material_payoff[0].material_id"
+            },
+            {
+              "amount": 100.419998,
+              "material_id": "forage_patches[0].composition[0].cultivate_material_payoff[1].material_id"
+            }
+          ],
           "cultivate_payoff": 18.76,
-          "cultivate_trade_payoff": 38.880001,
           "cultivate_yield_ratio": 71.150002,
           "display_name": "forage_patches[0].composition[0].display_name",
           "role": "forage_patches[0].composition[0].role",
           "share": 4.84,
           "sow_fodder_payoff": 70.239998,
+          "sow_material_payoff": [
+            {
+              "amount": 81.18,
+              "material_id": "forage_patches[0].composition[0].sow_material_payoff[0].material_id"
+            },
+            {
+              "amount": 77.07,
+              "material_id": "forage_patches[0].composition[0].sow_material_payoff[1].material_id"
+            }
+          ],
           "sow_payoff": 15.1,
-          "sow_trade_payoff": 75.809998,
           "sow_yield_ratio": 69.620003,
           "species": "forage_patches[0].composition[0].species"
         },
@@ -433,15 +451,33 @@
           "can_cultivate": true,
           "can_sow": true,
           "cultivate_fodder_payoff": 108.559998,
+          "cultivate_material_payoff": [
+            {
+              "amount": 112.279999,
+              "material_id": "forage_patches[0].composition[1].cultivate_material_payoff[0].material_id"
+            },
+            {
+              "amount": 65.690002,
+              "material_id": "forage_patches[0].composition[1].cultivate_material_payoff[1].material_id"
+            }
+          ],
           "cultivate_payoff": 42.560001,
-          "cultivate_trade_payoff": 42.290001,
           "cultivate_yield_ratio": 12.23,
           "display_name": "forage_patches[0].composition[1].display_name",
           "role": "forage_patches[0].composition[1].role",
           "share": 84.0,
           "sow_fodder_payoff": 56.23,
+          "sow_material_payoff": [
+            {
+              "amount": 49.650002,
+              "material_id": "forage_patches[0].composition[1].sow_material_payoff[0].material_id"
+            },
+            {
+              "amount": 96.25,
+              "material_id": "forage_patches[0].composition[1].sow_material_payoff[1].material_id"
+            }
+          ],
           "sow_payoff": 63.709999,
-          "sow_trade_payoff": 84.169998,
           "sow_yield_ratio": 44.119999,
           "species": "forage_patches[0].composition[1].species"
         }
@@ -452,7 +488,6 @@
       "ecology_phase": "forage_patches[0].ecology_phase",
       "field_fodder": 51.360001,
       "field_progress": 67.019997,
-      "field_trade": 31.200001,
       "field_yield": 78.199997,
       "fodder_per_biomass": 74.5,
       "has_neglect_grace": true,
@@ -470,9 +505,7 @@
       "sow_site_refusal": "forage_patches[0].sow_site_refusal",
       "stressed_fraction": 35.610001,
       "tended_fodder": 66.300003,
-      "tended_trade": 73.300003,
       "tended_yield": 11.58,
-      "trade_per_biomass": 40.57,
       "x": 0,
       "y": 0
     },
@@ -487,15 +520,33 @@
           "can_cultivate": true,
           "can_sow": true,
           "cultivate_fodder_payoff": 53.099998,
+          "cultivate_material_payoff": [
+            {
+              "amount": 18.209999,
+              "material_id": "forage_patches[1].composition[0].cultivate_material_payoff[0].material_id"
+            },
+            {
+              "amount": 41.68,
+              "material_id": "forage_patches[1].composition[0].cultivate_material_payoff[1].material_id"
+            }
+          ],
           "cultivate_payoff": 15.93,
-          "cultivate_trade_payoff": 65.269997,
           "cultivate_yield_ratio": 106.290001,
           "display_name": "forage_patches[1].composition[0].display_name",
           "role": "forage_patches[1].composition[0].role",
           "share": 72.419998,
           "sow_fodder_payoff": 94.639999,
+          "sow_material_payoff": [
+            {
+              "amount": 62.619999,
+              "material_id": "forage_patches[1].composition[0].sow_material_payoff[0].material_id"
+            },
+            {
+              "amount": 92.75,
+              "material_id": "forage_patches[1].composition[0].sow_material_payoff[1].material_id"
+            }
+          ],
           "sow_payoff": 43.549999,
-          "sow_trade_payoff": 26.370001,
           "sow_yield_ratio": 97.620003,
           "species": "forage_patches[1].composition[0].species"
         },
@@ -503,15 +554,33 @@
           "can_cultivate": true,
           "can_sow": true,
           "cultivate_fodder_payoff": 22.51,
+          "cultivate_material_payoff": [
+            {
+              "amount": 98.43,
+              "material_id": "forage_patches[1].composition[1].cultivate_material_payoff[0].material_id"
+            },
+            {
+              "amount": 35.84,
+              "material_id": "forage_patches[1].composition[1].cultivate_material_payoff[1].material_id"
+            }
+          ],
           "cultivate_payoff": 50.290001,
-          "cultivate_trade_payoff": 111.720001,
           "cultivate_yield_ratio": 48.369999,
           "display_name": "forage_patches[1].composition[1].display_name",
           "role": "forage_patches[1].composition[1].role",
           "share": 38.57,
           "sow_fodder_payoff": 23.5,
+          "sow_material_payoff": [
+            {
+              "amount": 110.25,
+              "material_id": "forage_patches[1].composition[1].sow_material_payoff[0].material_id"
+            },
+            {
+              "amount": 63.650002,
+              "material_id": "forage_patches[1].composition[1].sow_material_payoff[1].material_id"
+            }
+          ],
           "sow_payoff": 37.689999,
-          "sow_trade_payoff": 63.009998,
           "sow_yield_ratio": 27.1,
           "species": "forage_patches[1].composition[1].species"
         }
@@ -522,7 +591,6 @@
       "ecology_phase": "forage_patches[1].ecology_phase",
       "field_fodder": 98.510002,
       "field_progress": 6.39,
-      "field_trade": 33.970001,
       "field_yield": 75.790001,
       "fodder_per_biomass": 95.839996,
       "has_neglect_grace": true,
@@ -540,9 +608,7 @@
       "sow_site_refusal": "forage_patches[1].sow_site_refusal",
       "stressed_fraction": 11.05,
       "tended_fodder": 52.509998,
-      "tended_trade": 68.269997,
       "tended_yield": 86.169998,
-      "trade_per_biomass": 7.82,
       "x": 1,
       "y": 1
     }
@@ -693,7 +759,6 @@
       "collapse_fraction": 9.08,
       "corral_build_fraction": 42.07,
       "corral_progress": 82.440002,
-      "corral_trade": 67.93,
       "corral_yield": 50.880001,
       "corralled": true,
       "default_kit_id": "herds[0].default_kit_id",
@@ -718,7 +783,6 @@
       "neglect_grace_remaining": 142,
       "next_x": 68,
       "next_y": 57,
-      "pastoral_trade": 51.23,
       "pastoral_yield": 90.18,
       "pen_extend_progress": 34.240002,
       "pen_fed_fraction": 2.26,
@@ -729,7 +793,6 @@
       "pen_radius": 8,
       "pen_upkeep": 13.16,
       "per_worker_biomass": 8.51,
-      "per_worker_trade": 100.550003,
       "per_worker_yield": 30.27,
       "prey_sense_radius": 108,
       "provisions_per_biomass": 82.150002,
@@ -740,8 +803,6 @@
       "stay_fraction": 26.790001,
       "stressed_fraction": 81.589996,
       "tame_build_fraction": 71.720001,
-      "trade_per_animal": 89.330002,
-      "trade_per_biomass": 106.330002,
       "x": 0,
       "y": 0
     },
@@ -754,7 +815,6 @@
       "collapse_fraction": 77.970001,
       "corral_build_fraction": 0.28,
       "corral_progress": 69.410004,
-      "corral_trade": 7.57,
       "corral_yield": 35.5,
       "corralled": true,
       "default_kit_id": "herds[1].default_kit_id",
@@ -779,7 +839,6 @@
       "neglect_grace_remaining": 57,
       "next_x": 1,
       "next_y": 12,
-      "pastoral_trade": 12.55,
       "pastoral_yield": 53.27,
       "pen_extend_progress": 58.25,
       "pen_fed_fraction": 94.949997,
@@ -790,7 +849,6 @@
       "pen_radius": 109,
       "pen_upkeep": 26.040001,
       "per_worker_biomass": 22.99,
-      "per_worker_trade": 7.45,
       "per_worker_yield": 37.77,
       "prey_sense_radius": 23,
       "provisions_per_biomass": 55.490002,
@@ -801,8 +859,6 @@
       "stay_fraction": 64.949997,
       "stressed_fraction": 10.21,
       "tame_build_fraction": 59.450001,
-      "trade_per_animal": 4.15,
-      "trade_per_biomass": 52.099998,
       "x": 1,
       "y": 1
     }
@@ -1767,14 +1823,10 @@
           "kind": "populations[0].labor_assignments[0].kind",
           "kit_id": "populations[0].labor_assignments[0].kit_id",
           "overdraws": true,
-          "realized_trade_yield": 22.299999,
           "realized_yield": 50.82,
           "sustainable_yield": 16.4,
           "target_x": 117,
           "target_y": 128,
-          "trade_yield": 19.889999,
-          "trade_yield_high": 53.009998,
-          "trade_yield_low": 100.93,
           "wasted_yield": 8.95,
           "workers": 6,
           "workers_needed": 56
@@ -1791,14 +1843,10 @@
           "kind": "populations[0].labor_assignments[1].kind",
           "kit_id": "populations[0].labor_assignments[1].kit_id",
           "overdraws": true,
-          "realized_trade_yield": 22.049999,
           "realized_yield": 67.830002,
           "sustainable_yield": 35.830002,
           "target_x": 44,
           "target_y": 33,
-          "trade_yield": 51.599998,
-          "trade_yield_high": 32.029999,
-          "trade_yield_low": 76.809998,
           "wasted_yield": 32.889999,
           "workers": 1,
           "workers_needed": 77
@@ -2263,14 +2311,10 @@
           "kind": "populations[1].labor_assignments[0].kind",
           "kit_id": "populations[1].labor_assignments[0].kit_id",
           "overdraws": true,
-          "realized_trade_yield": 106.169998,
           "realized_yield": 31.379999,
           "sustainable_yield": 23.76,
           "target_x": 62,
           "target_y": 51,
-          "trade_yield": 45.68,
-          "trade_yield_high": 62.389999,
-          "trade_yield_low": 60.599998,
           "wasted_yield": 77.68,
           "workers": 195,
           "workers_needed": 163
@@ -2287,14 +2331,10 @@
           "kind": "populations[1].labor_assignments[1].kind",
           "kit_id": "populations[1].labor_assignments[1].kit_id",
           "overdraws": true,
-          "realized_trade_yield": 35.52,
           "realized_yield": 16.93,
           "sustainable_yield": 31.49,
           "target_x": 135,
           "target_y": 146,
-          "trade_yield": 81.550003,
-          "trade_yield_high": 102.5,
-          "trade_yield_low": 42.599998,
           "wasted_yield": 58.150002,
           "workers": 120,
           "workers_needed": 78

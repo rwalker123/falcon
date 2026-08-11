@@ -76,10 +76,8 @@ const STALE_VERB_PER_WORKER_BIOMASS := 8.0
 # flax pay no food at all, which is why the patch converts at well under `provisions_per_biomass`.
 
 const STALE_VERB_FOOD_PER_BIOMASS := 0.03325
-# …and the same basket's trade rate, which the two cash crops carry: 0.35 × 0.005 + 0.30 × 0.200 +
-# 0.20 × 0.150 + 0.15 × 0.005.
-
-const STALE_VERB_TRADE_PER_BIOMASS := 0.0925
+# (Its trade-rate sibling went with arc #527's yield axis; a cash crop's non-food product is a
+# per-material vector on the composition entry, not a rate on the patch.)
 # The plant rungs' `yield_fraction_while_building` (`intensification_ladder.json`) — the factor that
 # must NOT ride a crew whose build has already landed.
 
@@ -128,17 +126,15 @@ static func seed_growth_terms(src: Dictionary, prefix: String) -> void:
 	# **THE WHOLE-ANIMAL QUANTUM, IN BIOMASS.** `crew_to_hold` rounds up to one body on this web
 	# (mirroring the sim's `hunt_haul_workers`), and `body_mass` is the term it rounds to — in the same
 	# units as the curve, unlike `food_per_animal`, which is that body already converted to provisions.
-	# Derived from the fixture's own pair on whichever account the species pays, so it cannot disagree
-	# with the rates beside it; a species that pays neither leaves it absent and the rounding is simply
-	# not applied.
+	# Derived from the fixture's own provisions pair, so it cannot disagree with the rates beside it; a
+	# species that states neither leaves it absent and the rounding is simply not applied. (A trade
+	# pair stood beside the food one until arc #527 retired that account.)
 	if src.has(prefix + SourceForecast.FORECAST_BODY_MASS_KEY):
 		return
-	for pair in [["food_per_animal", "provisions_per_biomass"], ["trade_per_animal", "trade_per_biomass"]]:
-		var per_animal := float(src.get(prefix + String(pair[0]), 0.0))
-		var rate := float(src.get(prefix + String(pair[1]), 0.0))
-		if per_animal > 0.0 and rate > 0.0:
-			src[prefix + SourceForecast.FORECAST_BODY_MASS_KEY] = per_animal / rate
-			return
+	var per_animal := float(src.get(prefix + "food_per_animal", 0.0))
+	var rate := float(src.get(prefix + "provisions_per_biomass", 0.0))
+	if per_animal > 0.0 and rate > 0.0:
+		src[prefix + SourceForecast.FORECAST_BODY_MASS_KEY] = per_animal / rate
 
 ## One sample of the seeded curve: the source's one-turn biomass delta at `fraction` of K.
 static func fixture_regrowth_delta(fraction: float, capacity: float, is_herd: bool) -> float:
@@ -163,8 +159,6 @@ static func floorify_ceilings(src: Dictionary, prefix: String) -> void:
 		floorify_estimates(src)
 		return
 	var peak_food := float((rows as Dictionary).get("sustain", 0.0))
-	var peak_trade := legacy_peak(src, prefix, legacy + "_trade" if legacy.begins_with("forage") \
-		else "hunt_policy_trade_ceilings")
 	var peak_fodder := legacy_peak(src, prefix, "forage_policy_fodder_ceilings")
 	# The stock the ceiling is composed from. Reuse the fixture's own pair when it leaves real room
 	# above the peak; otherwise seed one, since dividing by a zero room would fabricate an infinity.
@@ -189,7 +183,6 @@ static func floorify_ceilings(src: Dictionary, prefix: String) -> void:
 		room = biomass - SourceForecast.FLOOR_FOOD_PEAK * capacity
 		src[prefix + "biomass"] = biomass
 	src[prefix + "provisions_per_biomass"] = peak_food / room
-	src[prefix + "trade_per_biomass"] = peak_trade / room
 	src[prefix + "fodder_per_biomass"] = peak_fodder / room
 	for key in ["hunt_policy_ceilings", "hunt_policy_trade_ceilings", "forage_policy_ceilings",
 			"forage_policy_trade_ceilings", "forage_policy_fodder_ceilings",
@@ -362,8 +355,12 @@ static func flora_basket_rows(lines: Array[String]) -> Array[String]:
 
 ## A basket with a FODDER crop (Flora roster F3): Hay Grass is fodder-dominant, so a `N.N×` row alone
 ## would call it worthless. Under Sow the picker reads `Hay Grass 30% · 1.80 hay` beside the staple's
-## `Wild Emmer 70% · 3.2× · 0.16 trade` — each row stating every account it pays. On sowable ground so
-## both rows are legal and pressable: a fodder crop is a legal, valuable choice.
+## `Wild Emmer 70% · 3.2×` — each row stating every account it pays. On sowable ground so both rows
+## are legal and pressable: a fodder crop is a legal, valuable choice.
+##
+## **NEITHER PLANT PAYS A MATERIAL AT EITHER RUNG**, and the empty vectors are stated OUT LOUD rather
+## than omitted: an absent key would exercise the reader's default instead of the wire's own contract,
+## which is that the key is always present and empty means "no row" (arc #527).
 ##
 ## **Hay `can_cultivate` too (issue #419)** — its `cultivation_ceiling` is `field`, so the Cultivate rung
 ## reaches it, and its rung-2 hay is its own number (0.72), not the Field's 1.8. This fixture greyed it
@@ -376,19 +373,25 @@ static func fodder_basket_tile_fixture() -> Dictionary:
 			"cultivate_yield_ratio": 2.70, "sow_yield_ratio": 3.20,
 			"cultivate_payoff": 1.35, "sow_payoff": 1.60,
 			"cultivate_fodder_payoff": 0.0, "sow_fodder_payoff": 0.0,
-			"cultivate_trade_payoff": 0.11, "sow_trade_payoff": 0.16},
+			"cultivate_material_payoff": [], "sow_material_payoff": []},
 		{"species": "hay_grass", "role": "fodder", "display_name": "Hay Grass", "share": 0.30,
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 0.25, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.12, "sow_payoff": 0.0,
 			"cultivate_fodder_payoff": 0.72, "sow_fodder_payoff": 1.8,
-			"cultivate_trade_payoff": 0.0, "sow_trade_payoff": 0.0},
+			"cultivate_material_payoff": [], "sow_material_payoff": []},
 	]
 	return tile
 
-## A basket with a CASH crop (Flora roster F4): Flax is trade-dominant, so its provisions payoff is a
-## fraction of the staple's and the `N.N×` row alone would call it worthless. Both rows state every
-## account they pay — `Wild Emmer 70% · 3.2× · 0.16 trade` beside `Flax 30% · 2.40 trade` under Sow.
+## A basket with a CASH crop (Flora roster F4): Flax pays a MATERIAL rather than calories, so its
+## provisions payoff is a fraction of the staple's and the `N.N×` row alone would call it worthless.
+## Both rows state every account they pay — `Wild Emmer 70% · 3.2×` beside `Flax 30% · 0.72 fibre`
+## under Sow.
+##
+## **THE TWO RUNGS DIFFER IN KIND HERE, WHICH IS THE POINT OF THE PAIR OF FRAMES** (arc #527). A sown
+## Field is 100% its crop, so the emmer's Field quotes NO material at all; a TENDED patch is a weeded
+## basket whose flax volunteers are still standing, so the same emmer honestly quotes their fibre. A
+## fixture that scaled one rung's vector from the other's would make that indistinguishable.
 ##
 ## **BOTH RUNGS ARE POPULATED, and flax `can_cultivate` (issue #419).** This fixture had
 ## `can_cultivate: false` on the cash crop and no `cultivate_*_payoff` at all, which is a fiction: every
@@ -406,20 +409,24 @@ static func cash_basket_tile_fixture() -> Dictionary:
 			"cultivate_yield_ratio": 2.70, "sow_yield_ratio": 3.20,
 			"cultivate_payoff": 1.35, "sow_payoff": 1.60,
 			"cultivate_fodder_payoff": 0.0, "sow_fodder_payoff": 0.0,
-			"cultivate_trade_payoff": 0.11, "sow_trade_payoff": 0.16},
+			# A TENDED emmer patch keeps its flax volunteers, so it honestly quotes their fibre; a sown
+			# emmer FIELD is 100% grain and quotes nothing.
+			"cultivate_material_payoff": [{"material_id": "fibre", "amount": 0.04}],
+			"sow_material_payoff": []},
 		{"species": "flax", "role": "cash", "display_name": "Flax", "share": 0.30,
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 0.30, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.15, "sow_payoff": 0.0,
 			"cultivate_fodder_payoff": 0.0, "sow_fodder_payoff": 0.0,
-			"cultivate_trade_payoff": 0.95, "sow_trade_payoff": 2.4},
+			"cultivate_material_payoff": [{"material_id": "fibre", "amount": 0.29}],
+			"sow_material_payoff": [{"material_id": "fibre", "amount": 0.72}]},
 	]
 	return tile
 
 ## PER-TILE FLORA REALIZATION (Flora roster F4) — the SECOND Alluvial Plain tile. Same biome as
 ## `cash_basket_tile_fixture` (both "Alluvial Plain"), but a DIFFERENT realized basket: two tiles of
 ## one biome no longer carry the uniform per-biome roster, they carry a seeded per-tile SUBSET. This
-## one is cash-DOMINANT — Cotton 55% + Flax 45%, both cash crops paying trade — where its twin was
+## one is cash-DOMINANT — Cotton 55% + Flax 45%, both cash crops paying fibre — where its twin was
 ## grain-dominant (Wild Emmer 70% + Flax 30%). Rendered beside it, the pair is the visible proof that
 ## same-biome tiles realize different species/shares. A different coord so it reads as its own tile.
 static func cash_variant_basket_tile_fixture() -> Dictionary:
@@ -432,13 +439,15 @@ static func cash_variant_basket_tile_fixture() -> Dictionary:
 			"cultivate_yield_ratio": 0.28, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.14, "sow_payoff": 0.0,
 			"cultivate_fodder_payoff": 0.0, "sow_fodder_payoff": 0.0,
-			"cultivate_trade_payoff": 1.42, "sow_trade_payoff": 3.6},
+			"cultivate_material_payoff": [{"material_id": "fibre", "amount": 0.43}],
+			"sow_material_payoff": [{"material_id": "fibre", "amount": 1.08}]},
 		{"species": "flax", "role": "cash", "display_name": "Flax", "share": 0.45,
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 0.30, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.15, "sow_payoff": 0.0,
 			"cultivate_fodder_payoff": 0.0, "sow_fodder_payoff": 0.0,
-			"cultivate_trade_payoff": 0.95, "sow_trade_payoff": 2.4},
+			"cultivate_material_payoff": [{"material_id": "fibre", "amount": 0.29}],
+			"sow_material_payoff": [{"material_id": "fibre", "amount": 0.72}]},
 	]
 	return tile
 

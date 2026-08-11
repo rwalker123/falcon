@@ -24,7 +24,6 @@ const BOAR_FOOD_PER_ANIMAL := 4.0
 # rots the rest. Named here rather than left a local because the waste assertion computes the same
 # percentage the readout prints, and two spellings of one quantum would drift.
 
-const RAID_TRADE_PER_ANIMAL := 0.5
 # **THE DENIAL RAID's carry** (`docs/plan_denial_raid.md`) — food ONE party member hauls home over the
 # whole raid. Deliberately tiny beside what the raid kills, because that ratio IS the mission: a party
 # that never stops engaging kills far more than its pack holds, so `delivered_food` is a rounding error
@@ -77,9 +76,7 @@ const HERD_SCAN_MAX_DEPTH := 8
 ## sheet opened on it answered `available: false` and rendered no forecast at all — a state a live herd
 ## cannot be in (the sim exports an estimate row for every huntable herd) and the one state in which
 ## every claim about the trip readout would pass vacuously. The counts are the reference deer's own
-## `food_per_animal` 2.0 through `raid_estimate_table`, so the payload is `animals × 2` food beside
-## `animals × RAID_TRADE_PER_ANIMAL` trade — both accounts positive, which is what makes the
-## zero-account frame beside it (`_partial_waste_mammoth`, no trade at all) a real contrast.
+## `food_per_animal` 2.0 through `raid_estimate_table`, so the payload is `animals × 2` food.
 static func hunt_distance_herd() -> Dictionary:
 	var herd := herd_fixture()
 	herd["tile_info"] = plain_herd_tile_info()
@@ -102,11 +99,10 @@ static func raid_boar_herd() -> Dictionary:
 ## deeper policies raid to a lower floor, so they take MORE animals (Surplus < Deplete < Eradicate) — the
 ## per-policy ASCENDING the picker buttons read. **Eradicate DELIVERS** — it takes the most animals and
 ## banks the whole-stock windfall (issue #337 redefined `delivers_food`: it means the QUARRY IS EDIBLE,
-## not "this rung is a denial mission", and a boar is edible on every rung). Every cell also carries the
-## trade twin, since a hunt pays a VECTOR: `delivers_trade` + `delivered_trade = animals × tpa`.
+## not "this rung is a denial mission", and a boar is edible on every rung). A `delivers_trade` /
+## `delivered_trade` twin rode every cell until arc #527 retired that account.
 ## The per-policy bumps are illustrative fixture data; the live sim exports the real per-floor counts.
 static func raid_estimate_table(turns_row: Array, animals_row: Array, fpa: float,
-		tpa: float = RAID_TRADE_PER_ANIMAL,
 		bound: String = SourceForecast.TRIP_BOUND_PACK_FULL) -> Dictionary:
 	var table := {}
 	for i in animals_row.size():
@@ -118,10 +114,9 @@ static func raid_estimate_table(turns_row: Array, animals_row: Array, fpa: float
 		for entry in [["sustain", 0], ["surplus", 2], ["deplete", 3], ["eradicate", 5]]:
 			var animals: int = base + int(entry[1])
 			table["%s:%d" % [String(entry[0]), i + 1]] = {
-				"turns_to_fill": turns, "delivers_food": true, "delivers_trade": true,
+				"turns_to_fill": turns, "delivers_food": true,
 				"animals_taken": animals,
-				"delivered_food": float(animals) * fpa,
-				"delivered_trade": float(animals) * tpa, "wasted_food": 0.0,
+				"delivered_food": float(animals) * fpa, "wasted_food": 0.0,
 				# **WHICH STOP ENDS THIS SAMPLED TRIP** (`docs/plan_hunt_through_combat.md` §5.2). The
 				# sim writes it on every row, so a fixture omitting it would be a herd no live server can
 				# produce — and every bound-clause assertion would pass vacuously against the one state
@@ -183,14 +178,14 @@ static func assign_preview_herd(id: String, species: String, phase: String, sust
 ##   `hunt_policy_ceilings` — the BAND's renewable FLOW ceiling {policy → provisions/turn}. The local
 ##       hunt preview is pure arithmetic over it (Sustain's entry IS the herd's sustainable yield).
 ##   `hunt_trip_estimates` — the sim's forward-SIMULATED expedition trip answers, keyed
-##       `"<policy>:<party_workers>"` → `{turns_to_fill, delivers_food, delivers_trade, …}`. An
+##       `"<policy>:<party_workers>"` → `{turns_to_fill, delivers_food, …}`. An
 ##       expedition's trip is NOT a rate division (on Surplus/Deplete the ceiling is a *stock* the party
 ##       strips in a turn or two, then it crawls at the regrowth trickle), so the client looks the answer
 ##       up and does no math. `turns_to_fill == 0` → the projection ran out with the raid still going,
 ##       which is `TRIP_BOUND_HORIZON` and nothing else — a raid that ends by emptying the range
-##       reports the turn it ended on, like any other; `delivers_food ==
-##       false` says the QUARRY IS INEDIBLE (#337), and only `delivers_food AND delivers_trade` both
-##       false is a denial mission — the raid banks whichever half the species pays.
+##       reports the turn it ended on, like any other; `delivers_food == false` says the QUARRY IS
+##       INEDIBLE (#337) and, since arc #527 retired the `delivers_trade` sibling, is on its own what
+##       makes a raid a denial mission.
 ## **A ROW THAT DELIVERS NOTHING CANNOT WEAR A PARTY-SIDE BOUND.** `pack_full` requires a LOAD, and a
 ## load is a delivery — so the sim never pairs it with an empty payload, and
 ## a fixture that did would be a herd no live server can produce. It would also be invisible: the
@@ -261,37 +256,25 @@ static func forecast_herd(id: String, species: String, phase: String, sustain_ce
 			"deplete": sustain_ceiling * 2.0,
 			"eradicate": sustain_ceiling * 8.0,
 		},
-		# The trade half of each rung's ceiling (issue #337), a fixed fraction of the food one.
-		"trade_per_animal": fpa * 0.15,
-		"per_worker_trade": 0.12,
-		"hunt_policy_trade_ceilings": {
-			"sustain": sustain_ceiling * 0.15,
-			"surplus": sustain_ceiling * 4.0 * 0.15,
-			"deplete": sustain_ceiling * 2.0 * 0.15,
-			"eradicate": sustain_ceiling * 8.0 * 0.15,
-		},
 		"hunt_trip_estimates": {
 			"sustain:%d" % HUNT_FORECAST_PARTY: {
-				"turns_to_fill": trip_turns, "delivers_food": true, "delivers_trade": true,
+				"turns_to_fill": trip_turns, "delivers_food": true,
 				"animals_taken": sustain_animals,
-				"delivered_food": sustain_delivered,
-				"delivered_trade": float(sustain_animals) * RAID_TRADE_PER_ANIMAL, "wasted_food": 0.0,
+				"delivered_food": sustain_delivered, "wasted_food": 0.0,
 				SourceForecast.TRIP_BOUND_KEY: clean_raid_bound(sustain_animals, "sustain",
 					SourceForecast.TRIP_BOUND_PACK_FULL),
 			},
 			"surplus:%d" % HUNT_FORECAST_PARTY: {
-				"turns_to_fill": surplus_trip_turns, "delivers_food": true, "delivers_trade": true,
+				"turns_to_fill": surplus_trip_turns, "delivers_food": true,
 				"animals_taken": surplus_animals,
-				"delivered_food": surplus_delivered,
-				"delivered_trade": float(surplus_animals) * RAID_TRADE_PER_ANIMAL, "wasted_food": 0.0,
+				"delivered_food": surplus_delivered, "wasted_food": 0.0,
 				SourceForecast.TRIP_BOUND_KEY: clean_raid_bound(surplus_animals, "surplus",
 					SourceForecast.TRIP_BOUND_PACK_FULL),
 			},
 			"deplete:%d" % HUNT_FORECAST_PARTY: {
-				"turns_to_fill": surplus_trip_turns, "delivers_food": true, "delivers_trade": true,
+				"turns_to_fill": surplus_trip_turns, "delivers_food": true,
 				"animals_taken": surplus_animals,
-				"delivered_food": surplus_delivered,
-				"delivered_trade": float(surplus_animals) * RAID_TRADE_PER_ANIMAL, "wasted_food": 0.0,
+				"delivered_food": surplus_delivered, "wasted_food": 0.0,
 				SourceForecast.TRIP_BOUND_KEY: clean_raid_bound(surplus_animals, "deplete",
 					SourceForecast.TRIP_BOUND_PACK_FULL),
 			},
@@ -299,10 +282,9 @@ static func forecast_herd(id: String, species: String, phase: String, sustain_ce
 			# rung is a denial mission, and an Eradicate raid banks the whole-stock windfall.
 			"eradicate:%d" % HUNT_FORECAST_PARTY: {
 				"turns_to_fill": STRIP_BARE_TRIP_TURNS,
-				"delivers_food": true, "delivers_trade": true,
+				"delivers_food": true,
 				"animals_taken": surplus_animals,
-				"delivered_food": surplus_delivered,
-				"delivered_trade": float(surplus_animals) * RAID_TRADE_PER_ANIMAL, "wasted_food": 0.0,
+				"delivered_food": surplus_delivered, "wasted_food": 0.0,
 				# **THE FLOOR-`0` ROW COMPLETES, and its turn count is what says so.** It used to pair
 				# `turns_to_fill == 0` with `TRIP_BOUND_HORIZON` — the wire's "still going when the
 				# projection ran out" — which the sheet read on three surfaces at once as a raid that
@@ -328,15 +310,14 @@ static func taming_herd_fixture() -> Dictionary:
 	fixture["tile_info"] = compact_herd_tile_fixture()
 	return fixture
 
-## THE BOTH-PRODUCTS INVESTMENT PAYOFF (issue #397) — a Wild Boar, edible AND worth its hide/bristles,
-## on a pen-ceiling species so BOTH investment rungs are offered. Its four extractive rungs already pay
-## a pair; the numbers here are the OTHER pair, the one the payoff faces render:
-##   Tame   → `pastoral_yield` 1.48 food + `pastoral_trade` 0.37 trade  ⇒ `→ 1.48 food · 0.37 trade`
-##   Corral → `corral_yield`   2.95 food + `corral_trade`   0.74 trade  ⇒ `→ 2.95 food · 0.74 trade`
-## The food halves are the boar figures from the issue's own report (where the faces read `→ 1.48 food`
-## and `→ 2.95 food` and the trade halves were dropped); each trade half is a quarter of its food half,
-## the boar's hide-to-meat ratio, so the pair ascends together up the ladder exactly as the extractive
-## caps do. Ordering is the ladder's: Sustain (0.90) < Tame (1.48) < Corral (2.95).
+## THE INVESTMENT PAYOFF FACES (issue #397) — a Wild Boar on a pen-ceiling species, so BOTH investment
+## rungs are offered and both wear the payoff the faces render:
+##   Tame   → `pastoral_yield` 1.48 food  ⇒ `→ 1.48 food`
+##   Corral → `corral_yield`   2.95 food  ⇒ `→ 2.95 food`
+## These are the boar figures from the issue's own report. A `pastoral_trade` / `corral_trade` half
+## rode beside each until arc #527 retired that account, so the faces state food alone again — and a
+## herd's non-food product has no per-rung quote on the wire at all. Ordering is the ladder's:
+## Sustain (0.90) < Tame (1.48) < Corral (2.95).
 ## `domestication` stays mid-ladder (0.4) because Tame RETIRES from the picker at full domestication
 ## while Corral is gated below it — the only way both rungs appear at once, with Corral greyed and
 ## still wearing its payoff.
@@ -347,9 +328,7 @@ static func investment_pair_boar_herd() -> Dictionary:
 	fixture["species"] = "Wild Boar"
 	fixture["size_class"] = "medium"
 	fixture["pastoral_yield"] = 1.48
-	fixture["pastoral_trade"] = 0.37
 	fixture["corral_yield"] = 2.95
-	fixture["corral_trade"] = 0.74
 	return fixture
 
 ## A still-WILD but tameable herd (pen ceiling) for the taming-startup-lag guard. It is NOT yet managed,
@@ -423,8 +402,7 @@ const DENIAL_COLLAPSE_KILLS := [30, 48, 60, 70, 78, 86, 92, 98]
 ## horizon on that end", never "immediately".
 static func denial_estimate_table(outcome: String, turns_row: Array, low_row: Array,
 		high_row: Array, kills_row: Array, fpa: float,
-		carry_per_worker: float = DENIAL_CARRY_PER_WORKER,
-		tpa: float = RAID_TRADE_PER_ANIMAL) -> Array:
+		carry_per_worker: float = DENIAL_CARRY_PER_WORKER) -> Array:
 	var rows: Array = []
 	for i in kills_row.size():
 		var party := i + 1
@@ -433,7 +411,6 @@ static func denial_estimate_table(outcome: String, turns_row: Array, low_row: Ar
 		# What the pack holds, never what it killed — the raid banks a rounding error on the way home
 		# and leaves the rest standing dead on the range.
 		var hauled := minf(killed_food, float(party) * carry_per_worker)
-		var hauled_share := (hauled / killed_food) if killed_food > 0.0 else 0.0
 		rows.append({
 			"party_workers": party,
 			"turns_to_collapse": int(turns_row[i]),
@@ -443,13 +420,6 @@ static func denial_estimate_table(outcome: String, turns_row: Array, low_row: Ar
 			"animals_killed": killed,
 			"delivered_food": hauled,
 			"wasted_food": killed_food - hauled,
-			# The trade half rides the same carried biomass, so it scales with what came home rather
-			# than with what died — and its WASTE is the rest of the same conversion. The sim runs one
-			# `HuntYield::apply` over `take.wasted`, so a kill left on the range takes its hides with
-			# it; a table stating `wasted_trade` as 0 beside a large `wasted_food` would be a herd no
-			# live server can produce.
-			"delivered_trade": float(killed) * tpa * hauled_share,
-			"wasted_trade": float(killed) * tpa * (1.0 - hauled_share),
 		})
 	return rows
 
@@ -508,17 +478,6 @@ static func herd_fixture() -> Dictionary:
 		# multiplies WHICHEVER stance the crew holds: a Deplete builder takes 2.70 x 0.256 = 0.69.
 		"tame_build_fraction": 0.23 / 0.90,
 		"corral_build_fraction": 0.23 / 0.90,
-		# The TRADE half of the same list (issue #337) — the decoder fills both dicts in one pass over
-		# the one wire list, so a fixture that carries the food rows must carry these or the picker
-		# under-reports what the rung pays.
-		"trade_per_animal": 0.30,
-		"per_worker_trade": 0.05,
-		"hunt_policy_trade_ceilings": {
-			"sustain": 0.14,
-			"surplus": 0.27,
-			"deplete": 0.41,
-			"eradicate": 0.68,
-		},
 		"tile_info": BaseFx.food_tile_fixture(),
 	}
 

@@ -39,10 +39,9 @@ const BREAKDOWN_KIND_MORALE := "morale"
 # combine by product; see `DetailFormat.fertility_breakdown_row`.
 const BREAKDOWN_KIND_GROWTH := "growth"
 
-# The band's trade goods — the SECOND product of the same worked sources the Food breakdown itemizes
-# (issue #381), so its popover carries the same two income rows (Gathered/Hunted) and no debit row at
-# all: nothing consumes trade goods. See `DisclosureController.trade_breakdown_lines`.
-const BREAKDOWN_KIND_TRADE := "trade"
+# **`BREAKDOWN_KIND_TRADE` IS RETIRED** (arc #527) with the row it drilled into: the band's trade
+# goods were the second product of the same worked sources the Food breakdown itemizes, and that
+# account no longer exists.
 
 # The band's THREE consumable kits (`docs/plan_hunt_through_combat.md` §4.8) — spears, a sled, and
 # baskets — and the tier each one currently resolves its role to. It is a disclosure rather than three
@@ -57,8 +56,6 @@ const DETAIL_ROW_FOOD := "Food"
 const DETAIL_ROW_MORALE := "Morale"
 
 const DETAIL_ROW_GROWTH := "Growth"
-
-const DETAIL_ROW_TRADE := "Trade"
 
 # **"Gear", not "Kit"** — this row and its disclosure list the condition of the ITEMS the band owns.
 # The KIT is the named loadout a crew is sent out with, and it is picked in the compose sheet

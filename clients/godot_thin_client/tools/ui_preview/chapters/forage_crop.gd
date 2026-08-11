@@ -83,8 +83,11 @@ func _rect_contains(rect: Rect2, control: Control) -> bool:
 ## of reaching either cap. Taken from the playtest hex that broke them: Wild Emmer 47 / Flax Fields 21
 ## / Hay Grass 21 / Wild Grapevine 11, committed to the emmer with the build barely started, worked by
 ## a band (so the sheet also carries its `Now 1` line — the row that was clipped off the top).
-## The mixed accounts are deliberate: a provisions crop, two cash crops and a fodder crop put all
-## three row formats in one frame at the length where the height is tightest.
+## The mixed accounts are deliberate: a provisions crop, two cash crops and a fodder crop put every
+## row shape in one frame at the length where the height is tightest — including the **two-material**
+## one, since a tended patch here keeps both cash volunteers standing and honestly quotes the fibre
+## AND the grape they pay (arc #527). That is the shape a summed "materials/turn" figure would erase,
+## so it needs a frame.
 func _four_species_committed_tile_fixture() -> Dictionary:
 	var tile := BaseFx.food_tile_fixture()
 	tile["patch_committed_species"] = "wild_emmer"
@@ -98,7 +101,12 @@ func _four_species_committed_tile_fixture() -> Dictionary:
 		{"species": "flax_fields", "role": "cash", "display_name": "Flax Fields", "share": 0.21,
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
-			"cultivate_payoff": 0.0, "sow_payoff": 0.0, "sow_trade_payoff": 11.7},
+			"cultivate_payoff": 0.0, "sow_payoff": 0.0,
+			# A sown Field is 100% flax and pays fibre alone; a TENDED patch keeps the grapevine
+			# volunteers, so it quotes two materials — the row shape this fixture exists to carry.
+			"cultivate_material_payoff": [
+				{"material_id": "fibre", "amount": 1.42}, {"material_id": "grape", "amount": 0.31}],
+			"sow_material_payoff": [{"material_id": "fibre", "amount": 3.51}]},
 		{"species": "hay_grass", "role": "fodder", "display_name": "Hay Grass", "share": 0.21,
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
@@ -106,7 +114,10 @@ func _four_species_committed_tile_fixture() -> Dictionary:
 		{"species": "wild_grapevine", "role": "cash", "display_name": "Wild Grapevine", "share": 0.11,
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
-			"cultivate_payoff": 0.0, "sow_payoff": 0.0, "sow_trade_payoff": 12.5},
+			"cultivate_payoff": 0.0, "sow_payoff": 0.0,
+			"cultivate_material_payoff": [
+				{"material_id": "grape", "amount": 0.74}, {"material_id": "fibre", "amount": 0.46}],
+			"sow_material_payoff": [{"material_id": "grape", "amount": 3.75}]},
 	]
 	return tile
 
@@ -121,12 +132,12 @@ func _long_basket_tile_fixture() -> Dictionary:
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 2.70, "sow_yield_ratio": 4.20,
 			"cultivate_payoff": 1.35, "sow_payoff": 2.10,
-			"cultivate_trade_payoff": 0.11, "sow_trade_payoff": 0.16},
+			"cultivate_material_payoff": [], "sow_material_payoff": []},
 		{"species": "hazel", "role": "staple", "display_name": "Hazel", "share": 0.24,
 			"can_cultivate": true, "can_sow": false,
 			"cultivate_yield_ratio": 1.34, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.67, "sow_payoff": 0.0,
-			"cultivate_trade_payoff": 0.06, "sow_trade_payoff": 0.0},
+			"cultivate_material_payoff": [], "sow_material_payoff": []},
 		{"species": "river_fish", "role": "staple", "display_name": "River Fish", "share": 0.18,
 			"can_cultivate": false, "can_sow": false,
 			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
@@ -135,7 +146,7 @@ func _long_basket_tile_fixture() -> Dictionary:
 			"can_cultivate": true, "can_sow": false,
 			"cultivate_yield_ratio": 0.90, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.45, "sow_payoff": 0.0,
-			"cultivate_trade_payoff": 0.04, "sow_trade_payoff": 0.0},
+			"cultivate_material_payoff": [], "sow_material_payoff": []},
 		{"species": "oak_mast", "role": "staple", "display_name": "Oak Mast", "share": 0.10,
 			"can_cultivate": false, "can_sow": false,
 			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
@@ -516,8 +527,8 @@ func run(harness) -> void:
 	# **THE STOCKPILE PUSH THAT USED TO SIT HERE IS GONE, AND WITH IT A LAYOUT TERM** (issue #381).
 	# The left-dock Stockpiles card sat below the tile card and was hidden until a faction carried
 	# stock, so seeding stock here was what put a reserved sibling into `DockScrollFit`'s measurement.
-	# That card is retired and the band dock's Trade row that replaced it is band-scoped (a rate, no
-	# faction stock), so nothing in the HUD reads `faction_inventory` and `HudLayer.update_stockpiles`
+	# That card is retired, and the band-scoped Trade row that replaced it went with the trade account
+	# itself (arc #527), so nothing in the HUD reads `faction_inventory` and `HudLayer.update_stockpiles`
 	# no longer exists. The drawer's cap is now measured against a left dock holding the tile card and
 	# the default-hidden command feed — which IS the layout the player has, and a slightly roomier one
 	# than this state was originally tuned against.
@@ -782,10 +793,11 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("forage_crop_picker_fodder")
 
-	# State F4 cash crop — a basket with a CASH crop under Sow. Flax pays trade, not provisions or
+	# State F4 cash crop — a basket with a CASH crop under Sow. Flax pays a MATERIAL, not provisions or
 	# fodder, so its provisions ratio is 0 and the ordinary "N.N×" row would read it as worthless; the
-	# picker instead shows "Flax 30% · 2.4 trade". The provisions crop beside it (Wild Emmer) keeps its
-	# unchanged "70% · 3.2×" ratio — proof a normal crop's row is untouched (twin of the fodder frame).
+	# picker instead shows "Flax 30% · 0.72 fibre". The provisions crop beside it (Wild Emmer) keeps its
+	# unchanged "70% · 3.2×" ratio and — a sown Field being 100% its crop — quotes NO material at all,
+	# which is the Sow half of the two-rungs-differ pair (arc #527).
 	h._show_tile(ForageFx.cash_basket_tile_fixture())
 	h._compose_forage(ForageFx.cash_basket_tile_fixture())   # settle the source key first (it changed)
 	h._hud._compose.set_forage_improvement("sow")
@@ -808,15 +820,17 @@ func run(harness) -> void:
 
 	# Issue #419 — THE SAME CASH BASKET ONE RUNG DOWN, which had no frame at all before this. Two
 	# defects were invisible without it:
-	#   1. Every row printed as trade-only (`Wild Emmer 70% · 0.4 trade`), because "cash crop" was
-	#      detected from `trade_payoff > 0` and EVERY staple carries the flat 0.005 trade token.
-	#   2. The row quoted `sow_*` — a FIELD payoff — on the Cultivate rung, so flax advertised the
-	#      2.4 trade a sown field pays instead of the 0.95 a tended patch does.
-	# It must now read `Wild Emmer 70% · 2.7× · 0.11 trade` and `Flax 30% · 0.3× · 0.95 trade`: the
-	# ratio the rung exists to compare is back on every row, each row states BOTH accounts it pays,
-	# and the numbers are the tended rung's own. Flax's food ratio is a warn-inked LOSS and that is
-	# correct — rung 2 weeds rather than replaces, so committing to flax really does surrender
-	# calories, which is the cost its trade clause is the benefit of.
+	#   1. Every row printed as non-food-only (`Wild Emmer 70% · 0.4 trade`), because "cash crop" was
+	#      detected from `trade_payoff > 0` and EVERY staple carried the flat 0.005 trade token.
+	#   2. The row quoted `sow_*` — a FIELD payoff — on the Cultivate rung, so flax advertised what a
+	#      sown field pays instead of what a tended patch does.
+	# It must now read `Wild Emmer 70% · 2.7× · 0.04 fibre` and `Flax 30% · 0.3× · 0.29 fibre`: the
+	# ratio the rung exists to compare is back on every row, each row states every account it pays,
+	# and the numbers are the tended rung's own. **The emmer's fibre is the Cultivate half of the
+	# two-rungs-differ pair** (arc #527) — a tended grain patch keeps its flax volunteers standing and
+	# honestly quotes their fibre, where its sown Field quotes none. Flax's food ratio is a warn-inked
+	# LOSS and that is correct — rung 2 weeds rather than replaces, so committing to flax really does
+	# surrender calories, which is the cost its material clause is the benefit of.
 	h._show_tile(ForageFx.cash_basket_tile_fixture())
 	h._compose_forage(ForageFx.cash_basket_tile_fixture())   # settle the source key first (it changed)
 	h._hud._compose.set_forage_improvement("cultivate")

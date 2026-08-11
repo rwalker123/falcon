@@ -169,14 +169,16 @@ func _emit_improvement(band: Dictionary, kind: String, composed: String, standin
     })
 
 ## The per-turn take `workers` from `band` get off `herd` under `policy` — the sim's LOCAL/band hunt
-## take before the output multiplier, `min(workers × per-worker, band_ceiling)`, ON THE COMPONENT THE
-## SPECIES PAYS. Returns `{available, rate, axis}` (`available` false when the levers/ceiling are absent).
+## take before the output multiplier, `min(workers × per-worker, band_ceiling)`, in PROVISIONS.
+## Returns `{available, rate}` (`available` false when the levers/ceiling are absent).
 ##
-## **The per-worker rate is the HERD's `per_worker_yield` / `per_worker_trade`, never the cohort's
+## **The per-worker rate is the HERD's own `per_worker_yield`, never the cohort's
 ## `hunt_per_worker_provisions`** (issue #337). That cohort field is a species-BLIND echo of the global
 ## `hunt.provisions_per_biomass` — it has no herd in scope, so it cannot know an inedible quarry pays no
-## meat, and clamping a per-herd preview with it quotes a positive food rate against a wolf's all-zero
-## food ceilings. The sim's own doc comments now say exactly this.
+## meat, and clamping a per-herd preview with it quotes a positive food rate against such a herd's
+## all-zero food ceilings. The sim's own doc comments now say exactly this. Since arc #527 retired the
+## trade axis an inedible quarry answers `available: false` here, and the sheet states no rate at all
+## rather than a rate in an account nothing keeps.
 ## Resident-band only: an EXPEDITION's trip is never a rate division (see `SourceForecast.hunt_trip_forecast`).
 ##
 ## **`improvement` IS THE CREW'S OWN DIP** — while a Tame or a Corral runs the sim pays
@@ -195,7 +197,6 @@ func _hunt_take_rate(herd: Dictionary, floor: float, workers: int, improvement: 
     return {
         "available": true,
         "rate": maxf(minf(float(workers) * per_worker_rate, ceiling), 0.0),
-        "axis": String(rates["axis"]),
     }
 
 
@@ -253,11 +254,12 @@ func _hunt_avg_window_turns(herd: Dictionary, floor: float, improvement: String)
 ## and reaching for a raw dict instead would quote the equipped reference to a bare-handed crew.
 func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float, workers: int,
         improvement: String, holding: bool = false) -> Dictionary:
-    # PER COMPONENT, on the one this species pays (issue #337). The three terms must come from the SAME
-    # axis or the arithmetic is nonsense: a wolf's per-animal FOOD quantum is 0 (divide by zero) while
-    # its per-animal TRADE quantum is real. `herd_axis_rates` is the single place that choice is made,
-    # and it reads the HERD's species-aware per-worker rates — never the cohort's species-blind
-    # `hunt_per_worker_provisions`, which is what would re-introduce phantom food here.
+    # ON THE PROVISIONS AXIS, through `herd_axis_rates` — the single place the quantised take's terms
+    # are resolved, reading the HERD's species-aware per-worker rate rather than the cohort's
+    # species-blind `hunt_per_worker_provisions`, which is what would re-introduce phantom food here.
+    # An inedible quarry's per-animal food quantum is honestly `0`, so the guard below answers
+    # `available: false` for it rather than dividing by zero; the trade quantum that used to stand in
+    # went with the axis (arc #527).
     #
     # **THE DIP MULTIPLIES THE COLLECTION, AND THE QUANTISATION HAPPENS AFTER IT** — the sim's own
     # order (`hunt_take` composes `workers × per_worker × build_dip`, THEN
@@ -329,7 +331,7 @@ func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float,
     var waste := maxf(killed_food - delivered, 0.0)
     var waste_pct := (waste / killed_food) if killed_food > 0.0 else 0.0
     return {"available": true, "delivered": delivered, "waste": waste, "waste_pct": waste_pct,
-        "axis": String(rates["axis"]), "per_animal": fpa}
+        "per_animal": fpa}
 
 ## An animals-per-turn rate string: up to 2 decimals with trailing zeros AND a trailing dot stripped
 ## (1.90→"1.9", 1.00→"1", 0.65→"0.65", 0.15→"0.15"). `String.num` keeps a lone ".0", so format fixed and
@@ -361,8 +363,8 @@ func _format_animal_rate(value: float) -> String:
 ##
 ## **THE PRESET METRICS THEMSELVES ARE UNDIPPED, AND THAT IS THE RULE RATHER THAN AN OVERSIGHT** — a
 ## ceiling is what the herd offers above the floor whether the crew is hunting it or building on it
-## (§3.1). `improvement` is threaded in for the WINDOW alone, which resolves its axis through
-## `herd_axis_rates` and must pick the same component the sheet's take does.
+## (§3.1). `improvement` is threaded in for the WINDOW alone, which resolves its terms through
+## `herd_axis_rates` and must divide by the same quantum the sheet's take does.
 ##
 ## Empty when the wire does not describe this herd (older snapshot / non-huntable).
 func _hunt_floor_takes(herd: Dictionary, band: Dictionary, improvement: String) -> Dictionary:
@@ -374,11 +376,11 @@ func _hunt_floor_takes(herd: Dictionary, band: Dictionary, improvement: String) 
         var forecast := _hunt_forecast(herd, band, floor_value)
         if not bool(forecast["known"]):
             continue
-        # BOTH products (issue #337): each preset's cap is a pair, each half rendered only when
-        # non-zero. A wolf's presets therefore read as trade caps rather than `+0.00`s — the false
-        # reading that said an inedible species was worth nothing at every floor.
+        # Each preset's cap, rendered only when non-zero. **An inedible quarry's presets are BLANK
+        # since arc #527**: the trade cap that used to stand in for its food zeros went with the axis,
+        # and the materials replacing it have no per-turn ceiling on the herd wire.
         var pair := SourceForecast.extractive_take_pair(
-            float(forecast["ceiling"]), float(forecast["ceiling_trade"]), 0.0, zero_account)
+            float(forecast["ceiling"]), 0.0, zero_account)
         var window_turns := _hunt_avg_window_turns(herd, floor_value, improvement)
         if window_turns > 0:
             pair["note"] = HudComposeVocab.HUNT_AVG_WINDOW_FORMAT % window_turns
@@ -400,8 +402,7 @@ func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, floor: float
 ##
 ## **ITS ROWS ARE ACCOUNTS, LIKE EVERY OTHER PER-TURN READING — one per account the take PAYS.** The
 ## readout answers what a turn of this hunt puts in the band's stores, so it is stated in every
-## account the take credits (an edible species that also sells its hide pays food AND trade; a wolf
-## pays trade alone) through `SourceForecast.rescaled_accounts` → `yield_rows` and the account
+## account the take credits through `SourceForecast.rescaled_accounts` → `yield_rows` and the account
 ## table's units, exactly as the plant web's is and exactly as the raid's payload
 ## (`_trip_yield_rows`) already was. **The WHOLE-ANIMAL reading belongs to the CHART above it** (the
 ## escapement curve and its handle, which count bodies) and to the whole-trip payload of a raid; a
@@ -494,10 +495,9 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
     # below is off `herd`; the raw dict is not in scope again, which is the point of shadowing it here
     # rather than pricing at each `herd_axis_rates` call (this model makes three).
     var herd := _hunt_priced_herd(herd_raw, band)
-    # **THE SUSTAINABILITY BAR IS THE FOOD PEAK'S CEILING**, on the SAME axis the take is measured on
-    # (comparing a trade take against a food ceiling would flag every wolf hunt as an overdraw, or
-    # none of them). It is the floor at which the herd settles on its most productive biomass, so a
-    # take above it is one the herd cannot pay forever — which is exactly what the verdict claims.
+    # **THE SUSTAINABILITY BAR IS THE FOOD PEAK'S CEILING**, in the same account the take is measured
+    # in. It is the floor at which the herd settles on its most productive biomass, so a take above it
+    # is one the herd cannot pay forever — which is exactly what the verdict claims.
     #
     # **AND IT IS RESOLVED AT `IMPROVEMENT_NONE` DELIBERATELY — the one call site where the undipped
     # rates are the correct ones.** This is the LINE THE TAKE IS JUDGED AGAINST, not a take: it is the
@@ -514,31 +514,27 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
     var sustainable := sustain_ceiling * output
     var dw := _hunt_delivered_and_waste(band, herd, floor, workers, improvement)
     if not bool(dw.get("available", false)):
-        # Graceful degrade — the per-animal quantum (or a lever) is unknown on BOTH components, so fall
-        # back to the smoothed per-turn line rather than regress the readout. **It credits the SAME
-        # account set the quantised path does**, through the same rescale: the two paths differ in
-        # whether the take is quantised, never in what a take pays, and a model whose two branches
-        # stated different currencies for one herd is the defect one branch above records.
+        # Graceful degrade — the per-animal quantum (or a lever) is unknown, so fall back to the
+        # smoothed per-turn line rather than regress the readout. **It credits the SAME account set
+        # the quantised path does**, through the same rescale: the two paths differ in whether the
+        # take is quantised, never in what a take pays, and a model whose two branches stated
+        # different accounts for one herd is the defect one branch above records.
         var take := _hunt_take_rate(herd, floor, workers, improvement)
         if not bool(take.get("available", false)):
             return {}
         var actual := float(take["rate"]) * output
         var smooth := SourceForecast.rescaled_accounts(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
-            String(take["axis"]), actual)
-        var trade_axis: bool = String(take["axis"]) == SourceForecast.YIELD_AXIS_TRADE
-        var account := SourceForecast.YIELD_ACCOUNT_TRADE if trade_axis \
-            else SourceForecast.YIELD_ACCOUNT_FOOD
+            actual)
+        var account := SourceForecast.YIELD_ACCOUNT_FOOD
         var smooth_after := {}
         if _walks_to_the_floor(reaches, improvement):
             var smooth_hold := _hunt_take_rate(herd, floor, workers, improvement, true)
             if bool(smooth_hold.get("available", false)):
                 smooth_after = SourceForecast.rescaled_accounts(herd,
-                    HudComposeVocab.BARE_FORECAST_PREFIX, String(smooth_hold["axis"]),
-                    float(smooth_hold["rate"]) * output)
+                    HudComposeVocab.BARE_FORECAST_PREFIX, float(smooth_hold["rate"]) * output)
         return {
             YIELD_MODEL_ROWS: SourceForecast.yield_rows(
                 float(smooth[SourceForecast.YIELD_ACCOUNT_FOOD]),
-                float(smooth[SourceForecast.YIELD_ACCOUNT_TRADE]),
                 float(smooth[SourceForecast.YIELD_ACCOUNT_FODDER]),
                 account, smooth_after),
             # The SENTENCE states the same vector the rows do — `yield_components` is the joiner the
@@ -547,7 +543,6 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
             YIELD_MODEL_TEXT: HudComposeVocab.LOCAL_HUNT_YIELD_FORMAT % (
                 SourceForecast.yield_components(
                     float(smooth[SourceForecast.YIELD_ACCOUNT_FOOD]),
-                    float(smooth[SourceForecast.YIELD_ACCOUNT_TRADE]),
                     float(smooth[SourceForecast.YIELD_ACCOUNT_FODDER]), account)),
             YIELD_MODEL_OVERDRAW: _is_overdraw(actual, sustainable) \
                 and _herd_take_draws_down(herd, floor, workers, improvement),
@@ -565,21 +560,16 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
     # Overdraw and waste are DIFFERENT flags and may co-occur — render both. Overdraw = the delivered take
     # exceeds the herd's food-peak ceiling; waste = a kill the crew couldn't carry.
     var waste_pct := float(dw["waste_pct"])
-    # **THE COUNT IS TAKEN ON ONE AXIS AND VALUED IN EVERY ACCOUNT** — the sim's own order
-    # (`forecast_production_and_take`: quantise on `ratio_axis()`, then `YieldPair::rescaled_to`), and
-    # the half this readout used to drop. A boar's take genuinely credits meat AND hide; stopping at
-    # the axis the quantiser happened to divide by rendered its `PER TURN` row as food alone, while
-    # the very same species raided by an expedition (`_trip_yield_rows`) stated both. `yield_rows` is
-    # still the one place the "render only where the vector pays" rule lives, so a wolf — whose
+    # **THE COUNT IS TAKEN ON THE PROVISIONS AXIS AND VALUED IN EVERY ACCOUNT** — the sim's own order
+    # (`forecast_production_and_take`: quantise, then `YieldPair::rescaled_to`). `yield_rows` is the
+    # one place the "render only where the vector pays" rule lives, so an inedible quarry — whose
     # provisions rate is a structural 0 — rescales to a zero food component that renders NO row, and
     # the zero account below keeps that answer for an all-zero take.
     var take := SourceForecast.rescaled_accounts(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
-        String(dw["axis"]), delivered)
-    # THE ZERO ACCOUNT IS THE AXIS THE TAKE WAS MEASURED ON — the same choice the degrade branch above
-    # makes, so one model's two paths can never state an empty take in two different currencies.
-    var trade_axis: bool = String(dw["axis"]) == SourceForecast.YIELD_AXIS_TRADE
-    var account := SourceForecast.YIELD_ACCOUNT_TRADE if trade_axis \
-        else SourceForecast.YIELD_ACCOUNT_FOOD
+        delivered)
+    # THE ZERO ACCOUNT IS THE ACCOUNT THE TAKE WAS MEASURED IN — the same choice the degrade branch
+    # above makes, so one model's two paths can never state an empty take in two different accounts.
+    var account := SourceForecast.YIELD_ACCOUNT_FOOD
     # THE STEADY STATE RIDES EACH ACCOUNT'S OWN `after`, so `build_yields_row` composes the arrow from
     # the two magnitudes it formats itself and its header keys them. It RESCALES THE SAME WAY the take
     # does — an arrowed row must key both accounts consistently, and a hold rate credited on one axis
@@ -590,11 +580,10 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
         var held := _hunt_delivered_and_waste(band, herd, floor, workers, improvement, true)
         if bool(held.get("available", false)):
             after = SourceForecast.rescaled_accounts(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
-                String(held["axis"]), float(held["delivered"]))
+                float(held["delivered"]))
     return {
         YIELD_MODEL_ROWS: SourceForecast.yield_rows(
             float(take[SourceForecast.YIELD_ACCOUNT_FOOD]),
-            float(take[SourceForecast.YIELD_ACCOUNT_TRADE]),
             float(take[SourceForecast.YIELD_ACCOUNT_FODDER]),
             account, after),
         YIELD_MODEL_TEXT: HudComposeVocab.HUNT_DELIVERED_FORMAT % [rate_text, quarry],
@@ -627,10 +616,9 @@ func _herd_take_draws_down(herd: Dictionary, floor: float, workers: int,
 ## line. "" (no line) when the forecast levers are unknown, so the panel degrades gracefully.
 ##
 ## **THE WHOLE VECTOR, EACH ACCOUNT ONLY WHEN NON-ZERO (#426).** This read the food account alone,
-## which is the same lie the picker face above it told: a flax patch previewed `+0.00 /turn ·
-## renewable` — "staff this and get nothing, sustainably" — for a rung that pays real trade goods, and
-## a hay meadow said the same of its fodder. `SourceForecast.yield_components` is the joiner the worked
-## rows already use, so the composed preview and the row it becomes next turn word the vector alike.
+## which is the same lie the picker face above it told: a hay meadow previewed `+0.00 /turn ·
+## renewable` — "staff this and get nothing, sustainably" — for a rung that fills the band's fodder
+## store every turn. `SourceForecast.yield_components` is the joiner the worked rows already use, so the composed preview and the row it becomes next turn word the vector alike.
 ##
 ## **The overdraw verdict is likewise PER ACCOUNT, and ANY account overdrawing carries the line.** The
 ## comparison used to be food-against-food, so a fodder crop's Eradicate rung — which strips the
@@ -684,12 +672,8 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
         return {}
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
     var actual := SourceForecast.expected_yield(forecast, workers, band)
-    # The trade account names its own whole-animal quantum so the engagement arm can price it; a PATCH
-    # publishes none, so the arm drops out and the plant web reads exactly as it did. Fodder names
-    # none anywhere — no animal pays it — which is why those two calls leave the key defaulted.
-    var actual_trade := SourceForecast.expected_yield_account(
-        forecast, workers, band, "per_worker_trade", "ceiling_trade",
-        SourceForecast.FORECAST_TRADE_PER_ANIMAL_KEY)
+    # Fodder names no whole-animal quantum anywhere — no animal pays it — which is why these calls
+    # leave the engagement arm's key defaulted and the arm drops out.
     var actual_fodder := SourceForecast.expected_yield_account(
         forecast, workers, band, "per_worker_fodder", "ceiling_fodder")
     var zero_account := String(forecast["zero_account"])
@@ -704,13 +688,10 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
             SourceForecast.YIELD_ACCOUNT_FOOD: SourceForecast.expected_yield_account(
                 forecast, workers, band, "per_worker", "hold_ceiling",
                 SourceForecast.FORECAST_FOOD_PER_ANIMAL_KEY),
-            SourceForecast.YIELD_ACCOUNT_TRADE: SourceForecast.expected_yield_account(
-                forecast, workers, band, "per_worker_trade", "hold_ceiling_trade",
-                SourceForecast.FORECAST_TRADE_PER_ANIMAL_KEY),
             SourceForecast.YIELD_ACCOUNT_FODDER: SourceForecast.expected_yield_account(
                 forecast, workers, band, "per_worker_fodder", "hold_ceiling_fodder"),
         }
-    var rows := SourceForecast.yield_rows(actual, actual_trade, actual_fodder, zero_account, after)
+    var rows := SourceForecast.yield_rows(actual, actual_fodder, zero_account, after)
     if rows.is_empty():
         # The patch pays in NO account at all — there is no line to draw rather than a zero to print.
         return {}
@@ -739,13 +720,12 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
         YIELD_MODEL_ROWS: rows,
         # The joined sentence has no room for the reason, so it must not promise the account at all.
         YIELD_MODEL_TEXT: SourceForecast.yield_components(
-            actual, actual_trade, banked_fodder, zero_account),
+            actual, banked_fodder, zero_account),
         # **THE FODDER CEILING COMPARISON STAYS, LOCK OR NO LOCK, and deleting it is the plausible
         # wrong move.** The take draws the same biomass down whether or not the crew banks the hay, so
         # the drawdown is unchanged — and on a hay-only patch this comparison is the only drawdown
         # signal there is.
         YIELD_MODEL_OVERDRAW: (_is_overdraw(actual, float(sustain["ceiling"]) * output) \
-            or _is_overdraw(actual_trade, float(sustain["ceiling_trade"]) * output) \
             or _is_overdraw(actual_fodder, float(sustain["ceiling_fodder"]) * output)) \
             and SourceForecast.take_draws_down(tile_info, SourceForecast.SOURCE_KIND_FORAGE,
                 HudComposeVocab.FORAGE_FORECAST_PREFIX, floor, workers, improvement),
@@ -784,7 +764,7 @@ func _yield_preview_bbcode(model: Dictionary, overdraw_suffix: String) -> String
     var waste := String(model[YIELD_MODEL_WASTE])
     if waste != "":
         body += "[color=#%s]%s%s[/color]" % [
-            HudStyle.WARN_HEX, SourceForecast.TRADE_COMPONENT_SEPARATOR, waste]
+            HudStyle.WARN_HEX, SourceForecast.COMPONENT_SEPARATOR, waste]
     return body
 
 ## A "Band: [▼]" dropdown row for the assign controls: lists every player band (positional
@@ -953,7 +933,7 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         String(HudComposeVocab.IMPROVEMENT_OFFER_LABELS.get(rung, rung.capitalize()))]
     var reasons := RungGates.gate_reasons_for({rung: offer.get("reasons", [])}, rung)
     # **GATED — THE REASON IS THE CONTROL, and the offer text is not shown at all.** This used to
-    # render the full offer ("🌱 Cultivate this patch · then 0.04 food · 2.74 trade · 0.81 fodder") as
+    # render the full offer ("🌱 Cultivate this patch · then 0.04 food · 0.81 fodder") as
     # a greyed checkbox with "Your people know Cultivation 0% — ♻ Sustain-forage a wild patch to learn
     # it" on a line beneath. That is an OFFER the player cannot accept sitting directly above the
     # sentence explaining that they cannot accept it — the card arguing with itself, and an imperative
@@ -1110,8 +1090,8 @@ func _improvement_deal_row(kind: String, source: Dictionary, prefix: String, ban
     }
 
 ## The payoff terms for a rung — the payoff VECTOR the built rung pays, each account only when
-## non-zero, so a hay meadow reads `1.80 fodder` and a pelt species `0.37 trade`. "" when the wire
-## quotes no payoff at all, which the readout renders as no payoff row rather than "0.00".
+## non-zero, so a hay meadow reads `1.80 fodder`. "" when the wire quotes no payoff at all, which the
+## readout renders as no payoff row rather than "0.00".
 ##
 ## Quoted at the FOOD PEAK, because a payoff is a property of the finished rung and not of the floor
 ## the crew happens to hold while building it. The floor reaches the deal only through the crew's dip.
@@ -1130,7 +1110,7 @@ func _payoff_terms(deal: Dictionary, band: Dictionary) -> String:
         return ""
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
     return SourceForecast.picker_products(float(deal["payoff"]) * output,
-        float(deal["payoff_trade"]) * output, float(deal["payoff_fodder"]) * output)
+        float(deal["payoff_fodder"]) * output)
 
 ## THE overdraw test: a take above the source's renewable-sustainable ceiling (by more than the
 ## epsilon) draws the source down. One definition, shared by the confirmed allocation rows
@@ -1183,7 +1163,7 @@ func _emit_extend_pen(x: int, y: int) -> void:
 # ordinary rebuild runs and everything re-reads.
 #
 # **THE SET IS A REGISTRY, NOT A FIXED PAIR OF KEYS, AND WHAT IT MISSED WAS THE POINT OF THE PANEL.**
-# It held the crew targets and the verdict; the YIELDS ROW — the food and trade numbers the player is
+# It held the crew targets and the verdict; the YIELDS ROW — the food and fodder numbers the player is
 # dragging TOWARD — was outside it, so the one reading the gesture is aimed at was the one frozen
 # while the gesture ran, catching up only on release. Reported from play. The rule the registry
 # encodes: anything whose value depends on the floor belongs in it (the yields, both crew targets, the
@@ -1659,7 +1639,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # floor's meaning is its position relative to the food peak, which is the same fact for a patch and
     # a herd. The two things that genuinely differ are composed in, not tabulated: what stripping
     # COSTS (a patch reseeds; a herd is gone for good) and the fact that a detached party learns no
-    # craft, so the above-peak trade is not one an expedition can make.
+    # craft, so the above-peak bargain is not one an expedition can make.
     # **THE TRIP, RESOLVED BEFORE THE CREW ROW** — the same `_compose.hunt_count()` the stepper below
     # renders (the cap clamp is already done above, and nothing between here and the button moves it),
     # so the readout at the bottom and the floor hint at the top branch on ONE lookup rather than two.
@@ -1958,12 +1938,12 @@ func _mount_kit_row(target: VBoxContainer, kits: Array, job: String, kit_id: Str
 ## FORAGE picker's preset readout. The plant twin of `_hunt_floor_takes`, so both pickers wear the
 ## same button metric. A patch the wire does not describe is skipped.
 ##
-## **ALL THREE ACCOUNTS (#426), and the ZERO now lands in the right one (§7.7).** This once handed the
-## shared joiner an explicit `0.0` for trade, on the standing claim that the plant web projected no
-## trade rate — so a flax patch, which pays trade and no food, rendered `0.00 food` at every floor and
-## read exactly like the worthless-source lie #337 removed from the hunt picker. Each account now
-## comes off the patch's own per-biomass vector and renders only when non-zero, and when the take is
-## empty in ALL of them the surviving zero is the account the patch actually pays.
+## **BOTH ACCOUNTS (#426), and the ZERO lands in the right one (§7.7).** This once handed the shared
+## joiner an explicit `0.0` for its non-food account, so a patch that pays no food rendered
+## `0.00 food` at every floor and read exactly like the worthless-source lie #337 removed from the
+## hunt picker. Each account comes off the patch's own per-biomass vector and renders only when
+## non-zero, and when the take is empty in BOTH the surviving zero is the account the patch actually
+## pays. (A third, trade-goods account rode here until arc #527 retired it.)
 ##
 ## **The Cultivate/Sow PAYOFF faces left with the build verbs** (issue #442): they were a second loop
 ## here, wearing the crop-substituted payoff because a build verb was a rung of this picker. The
@@ -2002,7 +1982,7 @@ func _forage_floor_takes(tile_info: Dictionary, band: Dictionary) -> Dictionary:
         if not bool(forecast["known"]):
             continue
         takes[preset] = SourceForecast.extractive_take_pair(
-            float(forecast["ceiling"]), float(forecast["ceiling_trade"]),
+            float(forecast["ceiling"]),
             0.0 if locked else float(forecast["ceiling_fodder"]), zero_account)
     return takes
 
@@ -2039,17 +2019,22 @@ func _flora_entry_fodder_payoff(entry: Dictionary, policy: String) -> float:
         return float(entry.get("sow_fodder_payoff", SourceForecast.FLORA_CROP_RATIO_NONE))
     return float(entry.get("cultivate_fodder_payoff", SourceForecast.FLORA_CROP_RATIO_NONE))
 
-## The TRADE this entry would credit to the faction trade_goods stockpile per turn under `policy` —
-## the exact twin of the fodder payoff above, per rung for the same reason. `FLORA_CROP_RATIO_NONE` (0)
-## where the vector pays no trade or the plant cannot climb this rung.
+## **WHAT THIS CROP PAYS PER TURN, PER MATERIAL, under `policy`** (arc #527) — the replacement for the
+## retired trade scalar, and deliberately NOT a restoration of it: `[{material_id, amount}]`, one row
+## per material, never a total. `SourceForecast.flora_basket_entries` has already normalized the wire
+## rows, so this only picks the rung.
 ##
-## **A NON-ZERO VALUE HERE DOES NOT MEAN "CASH CROP".** Every staple carries the flat
-## `trade_goods_per_biomass: 0.005` token, so all 27 of them quote a small real number — which is why
-## the row states each account it finds rather than branching on one of them to pick a single account.
-func _flora_entry_trade_payoff(entry: Dictionary, policy: String) -> float:
+## **PER RUNG, exactly like the fodder payoff above** — and here the two rungs differ in KIND rather
+## than by a factor. A sown Field is 100% its crop (#433), so a grain Field quotes NOTHING; a tended
+## patch is a weeded basket whose volunteers are still standing, so a tended grain honestly quotes the
+## fibre its neighbours pay. Neither rung's answer may be inferred from the other's.
+##
+## **EMPTY IS "THIS PLANT PAYS NO MATERIAL", WHICH IS A REAL ANSWER** — the caller renders no clause,
+## never a `0.00`, which would read as a cash crop that pays badly.
+func _flora_entry_material_payoff(entry: Dictionary, policy: String) -> Array:
     if policy == HudConst.LABOR_POLICY_SOW:
-        return float(entry.get("sow_trade_payoff", SourceForecast.FLORA_CROP_RATIO_NONE))
-    return float(entry.get("cultivate_trade_payoff", SourceForecast.FLORA_CROP_RATIO_NONE))
+        return entry.get("sow_material_payoff", []) as Array
+    return entry.get("cultivate_material_payoff", []) as Array
 
 ## The rung noun the payoff tooltips name — "a tended patch" under Cultivate, "a sown field" under Sow.
 ## These payoffs are per-rung, so a tooltip that named the wrong rung would restate the very bug the
@@ -2059,21 +2044,30 @@ func _flora_rung_noun(policy: String) -> String:
         policy, HudFloraVocab.FLORA_CROP_RUNG_NOUN_FALLBACK))
 
 ## **The row face for one basket entry: every account this plant actually pays, none it does not.**
-## The base share row, then a ratio / hay / trade clause each gated by whether its component is really
-## there — food leading, the shared render-only-when-non-zero rule (`SourceForecast.has_component` is
-## THE gate, so the two non-food accounts are judged exactly as the hunt faces judge trade).
+## The base share row, then a ratio / hay clause and ONE CLAUSE PER MATERIAL, each gated by whether its
+## component is really there — food leading, the shared render-only-when-non-zero rule
+## (`SourceForecast.has_component` is THE gate, never a bespoke threshold).
 ##
 ## The ratio keeps its own `> FLORA_CROP_RATIO_NONE` test rather than `has_component`: `0` there is the
 ## **cannot-climb sentinel**, not a small rate, and the sentinel must never print as `0.0×`.
+##
+## **THE MATERIALS ARE ROWS, AND THEY STAY ROWS** — one clause each, in the wire's order. Summing them
+## would be the retired trade scalar under a new name (`HudFloraVocab.FLORA_CROP_MATERIAL_CLAUSE_FORMAT`
+## carries the long form), and an EMPTY list renders no clause at all rather than a `0.00`.
 func _flora_row_face(crop_name: String, percent: int, ratio: float, fodder: float,
-        trade: float) -> String:
+        materials: Array) -> String:
     var face := HudFloraVocab.FLORA_SHARE_FORMAT % [crop_name, percent]
     if ratio > SourceForecast.FLORA_CROP_RATIO_NONE:
         face += HudFloraVocab.FLORA_CROP_RATIO_CLAUSE_FORMAT % ratio
     if SourceForecast.has_component(fodder):
         face += HudFloraVocab.FLORA_CROP_HAY_CLAUSE_FORMAT % fodder
-    if SourceForecast.has_component(trade):
-        face += HudFloraVocab.FLORA_CROP_TRADE_CLAUSE_FORMAT % trade
+    for row_variant in materials:
+        var row: Dictionary = row_variant
+        var amount := float(row[SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY])
+        if not SourceForecast.has_component(amount):
+            continue
+        face += HudFloraVocab.FLORA_CROP_MATERIAL_CLAUSE_FORMAT % [
+            amount, String(row[SourceForecast.MATERIAL_PAYOFF_ID_KEY])]
     return face
 
 ## Provisions/turn this rung pays once complete, committed to THIS species — the sim's own number, in
@@ -2106,17 +2100,32 @@ func _crop_payoff_terms(tile_info: Dictionary, entries: Array[Dictionary], speci
     if deal.is_empty():
         return ""
     var payoff := float(deal["payoff"])
-    var trade := float(deal["payoff_trade"])
     var fodder := float(deal["payoff_fodder"])
+    # **THE MATERIALS ARE THE CROP'S ALONE — the patch quote has no species-blind twin for them**, so
+    # an uncommitted picker with no selection resolved states none. That is the honest answer rather
+    # than a gap: the sim quotes a material payoff PER PLANT and there is no basket-wide figure to
+    # fall back to, where `payoff` / `payoff_fodder` genuinely have one.
+    var materials: Array = []
     if species != "":
         for entry in entries:
             if String(entry["species"]) != species:
                 continue
             payoff = _flora_entry_payoff(entry, rung)
-            trade = _flora_entry_trade_payoff(entry, rung)
             fodder = _flora_entry_fodder_payoff(entry, rung)
+            materials = _flora_entry_material_payoff(entry, rung)
             break
-    return SourceForecast.picker_products(payoff * output, trade * output, fodder * output)
+    # **THE FOOD ZERO SURVIVES BESIDE A MATERIAL CLAUSE, AND THAT IS THE READING.** A sown Field of
+    # cotton pays exactly `0.00 food`, and stating it next to `0.29 fibre` is the whole land-use
+    # bargain in one row — which is what the retired trade scalar was standing in for.
+    var terms := SourceForecast.picker_products(payoff * output, fodder * output)
+    for row_variant in materials:
+        var row: Dictionary = row_variant
+        var amount := float(row[SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY]) * output
+        if not SourceForecast.has_component(amount):
+            continue
+        terms += HudFloraVocab.FLORA_CROP_MATERIAL_CLAUSE_FORMAT % [
+            amount, String(row[SourceForecast.MATERIAL_PAYOFF_ID_KEY])]
+    return terms
 
 ## The crop this compose will SEND: the player's pick while it is still legal on this tile+rung, else
 ## the HIGHEST-SHARE legal entry — which is the sim's own `default_species_for_rung`, so picking
@@ -2187,17 +2196,16 @@ func _build_crop_picker(
         var percent := int(entry["percent"])
         var legal := _flora_entry_allows(entry, policy)
         var ratio := _flora_entry_ratio(entry, policy)
-        # ALL THREE ACCOUNTS OF THIS RUNG, read per rung. A plant pays into as many of them as its
-        # yield vector has components — a staple food AND its trade token, a cash crop trade AND (at
-        # rung 2, which weeds rather than replaces) the volunteers' calories — so nothing here picks
-        # one account to state.
+        # EVERY ACCOUNT OF THIS RUNG, read per rung. A plant pays into as many as its yield vector has
+        # components — a cash crop's materials AND (at rung 2, which weeds rather than replaces) the
+        # volunteers' calories — so nothing here picks one account to state.
         var fodder_payoff := _flora_entry_fodder_payoff(entry, policy)
-        var trade_payoff := _flora_entry_trade_payoff(entry, policy)
+        var material_payoff := _flora_entry_material_payoff(entry, policy)
         var btn := Button.new()
         # The face states each account that is really there and nothing else — so a row greyed by the
         # climbability flags is a bare `Name 12%` (printing "0.0×" there would read as "a crop worth
         # nothing" rather than "not a crop at this rung").
-        btn.text = _flora_row_face(crop_name, percent, ratio, fodder_payoff, trade_payoff)
+        btn.text = _flora_row_face(crop_name, percent, ratio, fodder_payoff, material_payoff)
         btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         # WHICH ROW IS MARKED depends on which question the block is asking: an open picker marks the
         # composed pick (and only if that pick is legal), a committed one marks the crop the patch is
@@ -2216,15 +2224,16 @@ func _build_crop_picker(
         if legal:
             any_legal = true
             # THE TOOLTIP IS COMPOSED THE SAME WAY THE FACE IS: the food verdict (which is about the
-            # ratio) and then a clause per non-food account, each only where the component exists. It
-            # used to be a five-way elif in which a hay or trade payoff SUPPRESSED the food verdict
-            # entirely — the tooltip half of the one-account-per-row defect.
+            # ratio), then a clause per non-food account and ONE LINE PER MATERIAL, each only where
+            # the component exists. It used to be a five-way elif in which a hay or cash payoff
+            # SUPPRESSED the food verdict entirely — the tooltip half of the one-account-per-row
+            # defect.
             var tooltip_lines: Array[String] = []
             # A LOSS-MAKING but legal crop: warn ink, FULLY pressable. Never hidden, clamped, sorted
             # by, or disabled — the ratio is there to stop a bad idea being invisible, not to forbid it.
             # **A cash crop earns this ink honestly at rung 2** and must not be exempted: weeding
             # cotton up through the basket really does pay less food than gathering the tile wild, and
-            # that surrendered calorie is the cost the trade clause below is the benefit of.
+            # that surrendered calorie is the cost the material clauses below are the benefit of.
             if ratio > SourceForecast.FLORA_CROP_RATIO_NONE and ratio < HudFloraVocab.FLORA_CROP_BREAK_EVEN_RATIO:
                 btn.add_theme_color_override("font_color", HudStyle.WARN)
                 btn.add_theme_color_override("font_hover_color", HudStyle.WARN)
@@ -2237,9 +2246,17 @@ func _build_crop_picker(
             if SourceForecast.has_component(fodder_payoff):
                 tooltip_lines.append(HudFloraVocab.FLORA_CROP_FODDER_TOOLTIP_FORMAT
                     % [crop_name, fodder_payoff, rung_noun])
-            if SourceForecast.has_component(trade_payoff):
-                tooltip_lines.append(HudFloraVocab.FLORA_CROP_TRADE_TOOLTIP_FORMAT
-                    % [crop_name, trade_payoff, rung_noun])
+            # ONE LINE PER MATERIAL — never a summed "materials/turn", which is the retired trade
+            # scalar wearing a new noun. An empty vector adds no line at all.
+            for material_variant in material_payoff:
+                var material: Dictionary = material_variant
+                var material_amount := float(
+                    material[SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY])
+                if not SourceForecast.has_component(material_amount):
+                    continue
+                tooltip_lines.append(HudFloraVocab.FLORA_CROP_MATERIAL_TOOLTIP_FORMAT % [
+                    crop_name, material_amount,
+                    String(material[SourceForecast.MATERIAL_PAYOFF_ID_KEY]), rung_noun])
             if not tooltip_lines.is_empty():
                 btn.tooltip_text = "\n".join(tooltip_lines)
             # The tooltips above still earn their keep on a locked row (what the plant pays is a fact

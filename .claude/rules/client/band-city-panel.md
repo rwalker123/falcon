@@ -19,7 +19,7 @@ paths:
 | `ui/hud/BandPanelController.gd` | `RefCounted` controller (HUD decomposition Phase 2d, `docs/plan_hud_decomposition.md`) owning the **BAND/CITY PANEL's whole render path** — the last big mass to leave `Hud.gd`. It holds the panel HANDLE (`_panel`), the three public **zone builders** `build_band_zone` / `build_work_zone` / `build_parties_zone` and everything under them (the band zone's vitals/PEOPLE/food-outlook/WORKFORCE + role cards; the work zone's paged board, filter chips, pager, inspector strip and source models; the parties zone's rows, inspector strip, footer and the mission compose sheet), the panel's **cycler + snapshot refresh** (`render_band` / `refresh_snapshot` / `rerender` / `cycle_band` / `focus_band` / `select_expedition` / `focus_labor_source` / `confirm_recall_expedition` / `_push_zone_badges`), and the **zone state that survives a snapshot** — `_work_filter` / `_work_sort` / `_work_page` / `_work_open_key` / `_work_policy_open` / `_work_zone_host` / `_work_zone_band` / `_band_zone_tier` / `_party_open_key` / `_party_compose_open` / `_party_compose_mission` / `_send_expedition_count` / `_send_hunt_policy` — ~1,580 lines, 72 moved functions. **`_band_zone_tier` is why the band and work halves are ONE controller**: it is a bare `int` written by `build_band_zone` and read by `_on_zones_resized`, so splitting them would have straddled it. Hud holds it as `_bandpanel`, constructed in `_ready` after `_disclosures` (the vitals row wires its carets through it). **THE PANEL HANDLE IS PRIVATE** — the two non-moving `HudLayer` readers (`_refresh_disclosure_hosts`, `_render_occupant_drawer`) only ever asked "is a panel injected?", so they ask **`has_panel()`** instead of holding the node. **The injection surface is TWO Callables** (it was nine, then six; the three detail-line ones went with `BandDetailLines`, and the four send-expedition/quarry targeting ones went with `TargetingController`), each retained on HudLayer by the "an injection you still have to hold is relocated, not eliminated" test: `_emit_assign_labor` (owns the `assign_labor_requested` emit + optimistic pending write, so `assign_labor` stays INDIRECT) · `_herd_label_for_id`. Each is reached through a **typed adapter**. The parties zone's send-expedition + quarry verbs (`begin_send_expedition` / `begin_pick_quarry` / `cancel_pick_quarry` / `is_expedition_quarry`) are a typed **`TargetingController`** collaborator now, not four Callables. `_is_player_unit` is a trivial private COPY (the `SelectionCardController` precedent). Collaborators: the SAME `_band_labor` / `_compose` model instances BY REFERENCE, `_selectioncard` (roster lookup + map pinning, for the cycler / labor-source / party jump routing, **plus `selected_terrain_label()`** — the one selection read the vitals rows need), `_disclosures` for `wire_label` ONLY, **`_banddetail` (a typed `BandDetailLines` ref — the vitals label and the parties inspector strip render through it; the three `*_fn` members `_unit_summary_lines_fn` / `_expedition_summary_lines_fn` / `_expedition_row_tooltip_fn` and their adapter wrappers are DELETED, the tooltip being a static `DetailFormat.expedition_row_tooltip` call now)**, and the HUD CanvasLayer as the **host** it `add_child`s its `ConfirmationDialog` into (a `RefCounted` cannot parent — the `TurnOrbController` pattern). **It emits SIX signals, all RELAYED by HudLayer** (the controller never emits a HudLayer signal): `cancel_order_requested` · `send_hunt_expedition_requested` · `recall_expedition_requested` · **`split_band_requested`** · `alert_focus_requested` · `roster_occupant_selected`. **`set_band_city_panel` / `cycle_panel_band` / `focus_panel_band` MUST stay callable on the HUD node** — `Main._wire_band_city_panel` probes all three with `has_method` and binds the latter two to `BandCityPanel`'s `cycle_requested` / `subject_activated`, and a failed probe fails SILENTLY — so HudLayer keeps them as thin delegators. **`_build_allocation_panel` does NOT live on this controller**: it writes the drawer's `%AllocationPanel` node, so it stays with the drawer render dispatch (it moved to `SubjectDrawerController` with that dispatch in Phase 2c-3, still a thin function stacking this controller's three public zone builders; its two siblings on that host, `_build_band_move_actions` / `_build_expedition_panel`, are branches of `_render_occupant_drawer` and travelled with it for the same reason). Word tables, formats and thresholds stay on `HudLayer` and are read back as `HudLayer.X`, the `HudWidgets`/`HudFormat`/`SelectionCardController`/`DrawerComposeController` convention. Behaviour identical to the old inlined band-panel code |
 | `ui/BandCityPanel.gd` / `.tscn` | The dockable **Band/City command center** CanvasLayer — persistent whenever ≥1 player band exists, dockable to any of the 4 edges (default left, persisted to `user://band_city_dock.cfg`) + collapse-to-rail (the rail runs along the dock's PLENTIFUL axis — stacked on L/R, one line with the restore toggle right-justified on T/B — and `COLLAPSED_SIZE` is a FLOOR on the strip it reserves, not an answer; see "The collapsed rail runs along the dock's plentiful axis"). Header (stage glyph/name/label + the band's hex coordinates + `◀ n/N ▶` cycler + 2×2 dock chooser + collapse) plus an **ACTION REGISTRY** — a registration seam (`register_action` / `action_invoked`) holding every verb the panel offers, the `⚒` included, rendered on its own BAR row under the header on a vertical dock, on the SUBJECT ROW itself on a horizontal one and on the COLLAPSED RAIL in either, taking zero height wherever it is not the live mount; see "The action registry is ONE list with THREE mount points" — body hosts **AN ORDERED LIST OF NAMED ZONES AT A FIXED CROSS-AXIS SIZE**, declared by the SUBJECT via **`set_zone_layout(specs)`** and filled by **`set_zones(contents)`** (keys `&"band"`/`&"work"`/`&"knowledge"`/`&"parties"`; the panel OWNS and frees them, and frees a content handed in for a zone the layout does not declare). A band declares three, the faction page four — see "THE BODY IS AN ORDERED LIST OF ZONES". Two shells, chosen by the panel's own **WIDTH** (`wide_shell_min_width()` — never a dock-edge test, so a resizable dock needs no special case). **That threshold is DERIVED FROM THE LIVE ZONE LIST, never hand-picked and never a fixed set of terms**: it sums each declared zone's flank (an EXPANDING zone contributing `ZONE_WORK_MIN_WIDTH`, the one readable board column the test exists to protect) plus **one `RAIL_SEPARATOR_SPAN` per GAP** plus `PANEL_CHROME_H` — so a band's three come to 380 + 380 + 354 + 2×25 + 26 = **1190** and the faction page's four to 380 + 380 + 354 + 354 + 3×25 + 26 = **1569**. **It is therefore PER-SUBJECT**: on a window between the two the faction page correctly tabs while a band's page stays abreast, which is also why `set_zone_layout` is called BEFORE the zone contents are built. `ZONE_WORK_MIN_WIDTH` (380) MIRRORS Hud's `WORK_COLUMN_MIN_WIDTH` — one readable board column — exactly as `ZONE_WORK_MAX_WIDTH` (1520) mirrors `WORK_COLUMN_MIN_WIDTH × WORK_MAX_COLUMNS`; the two are a PAIR with Hud's column consts and move with them. The chrome term is load-bearing because the threshold is tested against the panel's OUTER `_panel_extent().x` while the zones live in `_interior_size()`. It shipped hand-picked at **900**, which broke the whole 900–1055 band (the derived threshold was 1056 then, before the flanks widened): the work zone came out 224px, Hud clamped to one column, its labels clipped — and the NARROW shell would have given the board the full 874px, so flipping wide early made it ~4× narrower, degrading the thing the wide shell exists to improve. `PANEL_CHROME_H` is a `const`; `_wide_separator_span()` and `_fixed_zone_span()` are FUNCTIONS over `_zone_layout`, shared by `wide_shell_min_width()`, `_card_width()`, `_affordable_work_columns()` and `zone_size()` so none of them can disagree about how much width the chrome eats. (`WIDE_SEPARATOR_SPAN`, the `const` that hard-wired TWO gaps, is deleted — it was the one term a fourth column could not have been added around.) **wide** (in practice T/B) = every declared zone side by side, the flanks fixed at `ZONE_BAND_WIDTH` (380) / `ZONE_PARTY_WIDTH` (`PANEL_WIDTH − PANEL_CHROME_H` = 354 — see "The wide shell's flanks are never narrower than the narrow shell's zone") / `ZONE_KNOWLEDGE_WIDTH` (the same 354, taking the same floor for the same rule), work EXPAND_FILL, `LINE_SOFT` hairlines in every gap, no tab bar; **narrow** (in practice L/R) = the subject's own tab bar under the header + exactly one zone beneath it (active tab = SIGNAL ink + a 2px SIGNAL underline, badges via `set_tab_badge(zone, text, hot)`, selection persisted as `CONFIG_KEY_TAB`). **The cross-axis size is FIXED** — `PANEL_WIDTH` 380 (L/R) / `_horizontal_panel_height()` = the body budget (`PANEL_HEIGHT_WIDE` 360 at one band column, `PANEL_HEIGHT_WIDE_TWO_COLUMN` 335 at two) **plus the active shell's own chrome** (`_shell_chrome_height()`: 0 wide, the tab bar narrow), clamped to `MAX_WIDE_HEIGHT_FRACTION` of the window (T/B) — see "The strip's height is 360 at ONE band column and 335 at two" — so `current_reservation_size()` changes ONLY on dock/collapse/hide/viewport-resize and a content edit can no longer re-emit `reservation_changed` → `MapView.set_reserved_inset` → cache invalidation (the map flicker on every `+` press). **TWO sanctioned `ScrollContainer`s exist in the panel — the PARTIES list and the BAND zone** — and the harness asserts both halves for each: that it exists, and that no OTHER zone has grown one (`_assert_scroll_only_where_sanctioned`, a table of `(node name, owning zone)` pairs, so a scroll under the wrong zone still fails). Everything else is no-scroll by design; the work zone pages itself against **`work_zone_size()`** — a named reader of the KEYED **`zone_size(zone)`**, which is one answer with one parameter rather than a named accessor per zone that a fourth zone would have to add a fifth of — the zone's interior after chrome — e.g. 354×1107 in a 380 L dock, 789×300 in a 1920 bottom dock with the chrome rail sharing that row — and re-pages on the **`zones_resized`** signal). **Zone hosts are plain `Control`s, not containers**, so an over-wide zone content cannot push the card past its fixed cross-axis size; `clip_contents` keeps overflow inside its own zone. Reserves its edge via `reservation_changed(edge, size)` → `Main._apply_reservation(&"band_panel", …)`, which since issue #377 fans a HORIZONTAL dock's reservation to the map at 0 (the card floats over live map) and a TOP dock's to the HUD at 0 as well (its readouts belong beside the card, not below the strip). On a **BOTTOM** dock the strip also carries **a trailing CHROME RAIL** the HUD parks its stacked bottom-bar chrome into (`rail_slot_host` / `set_rail_width`, issue #324) — a SIBLING of the card, not a cell of its row, and bottom-only since #377 (a top dock never displaces `BottomBar`, so its chrome stays home). See "Band/City dockable panel". See "Band/City dockable panel" + `docs/plan_band_city_dock.md` |
 | `ui/hud/BandComposeFloat.gd` | **The parties compose sheet, floated off the panel when its zone cannot hold it** — see "A COMPOSE SHEET THE ZONE CANNOT HOLD LEAVES THE ZONE" for the trigger. An **`AutoSizingPanel`**, not `PanelCard` + `DockScrollFit`: this card is measured against the VIEWPORT rather than against a dock's remaining height, which is the free-floating half of that pair (`panel-framework.md`). Both axes are fitted explicitly, because the node is a plain `Control` and no child minimum ever reaches it. **It is the card and NOTHING more — there is deliberately no full-screen catcher.** `ComposeSheet`, the herd drawer's floating sheet, is a catcher with a card inside it so a click anywhere outside dismisses; that is exactly wrong here, because the DOCK's sheet stays open through a map pick — the targeting banner and the herd glow ride on the sheet still being open while the player clicks a herd — and a catcher would eat that click. `PanelRoot`'s autopsy applies in reverse: a `STOP` control the pointer finds makes the Viewport mark the press handled before `MapView._unhandled_input` sees it, so every pixel this node claims is a pixel of dead map, and it claims only its own rect (`band_panel_preview._assert_float_leaves_the_map_clickable` drives that through `Viewport.push_input`, never off a `mouse_filter` value). **It never overlaps the card it came from, structurally rather than by a clamp**: `_room()` is the viewport inside `VIEWPORT_MARGIN` cut back to the MAP-FACING side of the panel card (`MAP_FACING_SIDE`, the opposite of the docked edge) with `ANCHOR_GAP` of clearance, and the width fit, the height fit and the placement all read that ONE rect — a card too tall for it scrolls, it does not creep back across the seam. **`target_width` is the ZONE width plus this card's own chrome**, never the zone width itself: `AutoSizingPanel`'s width is the OUTER one, and a sheet handed the zone width minus a border, two content margins and a scroll gutter re-wraps, which would falsify the very measurement that floated it. `mount` applies that width BEFORE the frame `refit` waits, or the height fit reads the previous width's wrapping and leaves the card ~100px taller than its content (measured). Its ONE `ScrollContainer` is not a breach of the panel's no-scroll rule — that rule is about content whose height feeds back into a FIXED reservation, and this ceiling is real viewport room — and it stays DISABLED unless `fit_to_content` finds the content taller than the room. It draws in `BandCityPanel.panel_card_stylebox()`, the panel's own, so it reads as the panel's surface rather than a second kind of card |
-| `ui/hud/FactionRollup.gd` | **All-`static`, stateless** builder of the FACTION PAGE's FOUR zones (issue #450) — the all-band rollup the cycler pins first. `build_band_zone` (the summed PEOPLE bar + the band page's own five vitals rows — Food / Trade / Kit / Morale / Growth), `build_work_zone` (the whole workforce as one bar and the per-band roster), **`build_knowledge_zone`** (SETTLING, the craft tracks, DISCOVERIES — the fourth column the panel's ordered-list body exists to hold, with a `full` HEIGHT TIER that drops the last of the three in a height-capped horizontal dock) and `build_parties_zone` (every party and the band it left, its NAME jumping to that band — see "THE PARTIES ROW NAMES THE HOME BAND" for why `_summary_row` binds a separate `jump_owner`), plus the `_stat_row` leaf they are built from. Its two new inputs are threaded in as PARAMETERS like every other: the player faction's sedentarization entry and its discovered-site array, read off `FactionReadouts` (`faction_sedentarization` / `faction_discovered_sites`), which is where the PLAYER-FACTION FILTER over those two per-faction wire arrays already lives — a second walk looking for `PLAYER_FACTION_ID` is a second chance to disagree about whose faction is being reported. **It is a shared LAYER rather than a controller because the page is a READOUT** — no steppers, no compose sheet, no open row, nothing that survives a snapshot — so it has no per-cluster state to own, which is the whole of what makes a controller one (`hud-modules.md`). The one thing it needs is threaded in as a PARAMETER: the `HudBandLaborState` instance, plus the faction's `{track: progress}` row and the caller's `herd_label_for_id` Callable (the treatment `HudFormat.panel_expedition_summary` already takes — a stateless layer must not reach for the roster/selection/herd-list state that resolver reads). **IT RE-DERIVES NOTHING**: every total is a SUM over answers the per-band surfaces already give (`DetailFormat.band_net_food` / `band_provisions` / `band_trade_stock` / `band_trade_income`, `HudBandLaborState.effective_idle` / `effective_worker_map` / `effective_role_workers` / `band_party_workers`, `FactionReadouts.faction_tracks`), so a band's own page and this one cannot disagree about a number — a rollup with its own food ledger would be a second source of truth for the identity `larder_delta == income − consumption − pen_feed − raid_forfeit` the food arc keeps closed. Dependency direction: it reads `HudWidgets` / `HudFormat` / `DetailFormat` / `SourceForecast` / `HudStyle` / the vocab leaves and `FactionReadouts`' track table, and none of them may read it back |
+| `ui/hud/FactionRollup.gd` | **All-`static`, stateless** builder of the FACTION PAGE's FOUR zones (issue #450) — the all-band rollup the cycler pins first. `build_band_zone` (the summed PEOPLE bar + the band page's own vitals rows — Food / Kit / Morale / Growth; a fifth, Trade, went with arc #527's retired account), `build_work_zone` (the whole workforce as one bar and the per-band roster), **`build_knowledge_zone`** (SETTLING, the craft tracks, DISCOVERIES — the fourth column the panel's ordered-list body exists to hold, with a `full` HEIGHT TIER that drops the last of the three in a height-capped horizontal dock) and `build_parties_zone` (every party and the band it left, its NAME jumping to that band — see "THE PARTIES ROW NAMES THE HOME BAND" for why `_summary_row` binds a separate `jump_owner`), plus the `_stat_row` leaf they are built from. Its two new inputs are threaded in as PARAMETERS like every other: the player faction's sedentarization entry and its discovered-site array, read off `FactionReadouts` (`faction_sedentarization` / `faction_discovered_sites`), which is where the PLAYER-FACTION FILTER over those two per-faction wire arrays already lives — a second walk looking for `PLAYER_FACTION_ID` is a second chance to disagree about whose faction is being reported. **It is a shared LAYER rather than a controller because the page is a READOUT** — no steppers, no compose sheet, no open row, nothing that survives a snapshot — so it has no per-cluster state to own, which is the whole of what makes a controller one (`hud-modules.md`). The one thing it needs is threaded in as a PARAMETER: the `HudBandLaborState` instance, plus the faction's `{track: progress}` row and the caller's `herd_label_for_id` Callable (the treatment `HudFormat.panel_expedition_summary` already takes — a stateless layer must not reach for the roster/selection/herd-list state that resolver reads). **IT RE-DERIVES NOTHING**: every total is a SUM over answers the per-band surfaces already give (`DetailFormat.band_net_food` / `band_provisions`, `HudBandLaborState.effective_idle` / `effective_worker_map` / `effective_role_workers` / `band_party_workers`, `FactionReadouts.faction_tracks`), so a band's own page and this one cannot disagree about a number — a rollup with its own food ledger would be a second source of truth for the identity `larder_delta == income − consumption − pen_feed − raid_forfeit` the food arc keeps closed. Dependency direction: it reads `HudWidgets` / `HudFormat` / `DetailFormat` / `SourceForecast` / `HudStyle` / the vocab leaves and `FactionReadouts`' track table, and none of them may read it back |
 | `ui/PenStatus.gd` | Single source of truth for **"is this pen's herd starving?"** — `FULLY_FED` / `FED_EPSILON` + `fed_fraction(herd)` / `is_starving(fed)`, reading `HerdTelemetryState.penFedFraction` (`< 1` ⇒ the keeper underpaid the pen's feed, so the herd is SHRINKING every turn). Plus `herd_is_starving(herd)` for a caller holding only the herd dict. The ONE test all three surfaces ask — the herd drawer (`DetailFormat.corral_label` + the Pen feed row), the map's distress badge (`MapView._draw_herd`) and the turn orb's `starving_pen` producer — so they can never disagree about which pen is dying |
 ## Band/City dockable panel
 
@@ -438,7 +438,7 @@ edge on a horizontal dock is the HUD's authored lateral column (`Hud.lateral_col
 `max(authored, live)`), which the card is holding clear on purpose. It is not the card failing to
 stretch, and widening it into that gap would put it over a live HUD column.
 - **Zone `band` — vitals · PEOPLE · food outlook · WORKFORCE + role cards** (`BandPanelController.build_band_zone`).
-  The Food/Trade/Morale/Growth rows are the disclosures — and their breakdowns open in a
+  The Food/Morale/Growth/Kit rows are the disclosures — and their breakdowns open in a
   POPOVER, never inline (see Band food status: inline growth is what clipped this very zone).
   **There is no `Output:` row and no `Position:` row here.** Productivity reads on the WORK zone's
   head, where the rates it scales are (see Zone `work` below); the coordinates read in the panel
@@ -446,17 +446,17 @@ stretch, and widening it into that gap would put it over a live HUD column.
   column is the one with no room, and both landed where their answer is already being used —
   `unit_summary_lines` gates the second on `with_position`, and the Occupants drawer, which has no
   header, keeps it.
-  **The SHORT tier spends its two remaining optional rows differently: the Trade row is DROPPED, the
-  Fodder row is MERGED** (`_build_vitals_label` passes `compact` to
-  `BandDetailLines.unit_summary_lines`). Both are the row-level twin of this zone's
-  food-outlook-chart gate below and taken for the same measured reason — the row measures 26px
+  **The SHORT tier MERGES its optional rows rather than dropping them** (`_build_vitals_label` passes
+  `compact` to `BandDetailLines.unit_summary_lines`). It is the row-level twin of this zone's
+  food-outlook-chart gate below and taken for the same measured reason — a vitals row measures 26px
   against a ~300px T/B zone that CLIPS rather than scrolls — but `compact` says **HEIGHT is scarce,
-  not width**, which is the horizontal dock exactly, and that buys the second treatment: the hay
+  not width**, which is the horizontal dock exactly, and that buys the merge treatment: the hay
   stock rides the Food line as `· 128.4 hay` instead of vanishing, because a hay larder has no other
-  surface to be legible on while Trade still reads on the WORK zone header's `⇄` total. See
-  `band-readouts.md` for the clause and the width it was measured against. The Trade row carries the band's own stock
-  AND its per-turn rate — both band-scoped, since the sim keeps trade goods in the cohort's `stores`;
-  it is specified in `band-readouts.md`; the `Population … Workers … (Idle …)` LINE is
+  surface to be legible on. See `band-readouts.md` for the clause and the width it was measured
+  against. **A `Trade` row was the one row this tier DROPPED**, on the reasoning that its rate still
+  read on the WORK zone header — the whole reason a drop was affordable for it and for nothing else;
+  arc #527 retired that account, the row and the header total together, so the tier drops nothing
+  today. The `Population … Workers … (Idle …)` LINE is
   **gone** — the two bars below state the same facts as charts, and a text restatement above them was
   the third telling of one fact. **PEOPLE** is the new one: a stacked children/working/elders bar
   (`age_children`/`age_working`/`age_elders`, falling back to `working_age` for the middle) plus its
@@ -513,14 +513,14 @@ stretch, and widening it into that gap would put it over a live HUD column.
   is what `_on_zones_resized` distinguishes, and skipping it lands a tall-shell band zone in a short
   box where its host silently clips it.
 - **Zone `work` — THE PAGED BOARD** (`BandPanelController.build_work_zone` / `_fill_work_zone`). Header (`WORK` ·
-  n sources · total /turn · the trade total when non-zero · **`Output 62%` when the band is below
+  n sources · total /turn · the fodder total when non-zero · **`Output 62%` when the band is below
   full productivity** · a `⋯` `MenuButton`) · filter CHIPS · the board · pager · inspector strip.
   **The Output item QUALIFIES the two totals beside it rather than adding to them**, which is why it
   trails them and why it lives here at all: `output_multiplier` is the discontent modifier every rate
   on this board is already scaled by, so the head is where its consequence is visible — a vitals row
   in the height-capped band zone stated it away from everything it acts on. Same gate that row
   carried (**only below `SourceForecast.OUTPUT_FULL`** — a permanent `Output 100%` is noise on a row
-  that is otherwise live summary, the rule the trade total already follows) and the same buckets,
+  that is otherwise live summary, the rule the sibling account total already follows) and the same buckets,
   through `BandFoodStatus.color_for_output`, a `Color` accessor rather than a hex one because this
   head is built out of `Label`s rather than BBCode — and, since the head is now the multiplier's ONE
   surface, the only accessor there is (`hex_for_output` went with the vitals row that called it). Vocabulary (`WORK_OUTPUT_FORMAT` /
@@ -686,7 +686,7 @@ stretch, and widening it into that gap would put it over a live HUD column.
   ordinary — so the band zone was never once asked to hold the whole set at the same time, and a band
   carrying all of them overflowed a `clip_contents` box with every assertion green (issue #374). That
   state stages ONE band with a hay larder *and* a pen feed bill, productivity below full, a fertility
-  reading, a trade stock *and* rate, and the per-source `arrival_schedule`s the FOOD OUTLOOK chart
+  reading, a kit ledger, and the per-source `arrival_schedule`s the FOOD OUTLOOK chart
   needs — every gate in `build_band_zone` / `unit_summary_lines` live at once — in the height-capped
   TOP dock, and runs the bounds assertion, `_assert_zone_content_fits` and
   `_assert_merged_food_row_fits` over it. It reads **299px of a 300px box**. The margin is the point,
@@ -730,9 +730,9 @@ stretch, and widening it into that gap would put it over a live HUD column.
   (quarry → policy → party → forecast, with the real per-policy metrics and max-useful cap) ·
   **`band_panel_compose_hunt_eradicate`** (the ONE surface that renders `SEND_HUNT_POLICY_HINTS`
   verbatim, so it is the frame the EXPEDITION Eradicate hint is judged on: the rung's face reads the
-  ladder's top `💀 +6.50 ⇄ +0.81`, the hint describes the one-trip haul, the currency the SPECIES pays
-  (meat, ⇄ trade goods, or both — the raid banks the trade half too since #337) + the permanent end state, and
-  the raid line below it delivers `~52 food · ⇄ ~7 trade goods` under an ordinary primary Send — no
+  ladder's top `💀 +6.50`, the hint describes the one-trip haul, the currency the SPECIES pays
+  + the permanent end state, and
+  the raid line below it delivers `~52 food` under an ordinary primary Send — no
   denial anywhere, #337) ·
   `band_panel_compose_hunt_no_quarry` (the empty state: `Choose…`, the hint, a disabled Send, nothing
   below — reached by CLEARING a composed quarry, so it inherits the full form's mark) ·
@@ -1018,7 +1018,7 @@ scrolling surface.
 
 ## THE FACTION PAGE IS A SUBJECT, AND A SUBJECT DECLARES ITS OWN ZONES (issue #450)
 
-The all-band rollup — population, food and trade stores and rates, herds and pens, knowledge, and a
+The all-band rollup — population, food stores and rates, herds and pens, knowledge, and a
 SUMMARY of workers and parties — is a **pinned first entry in the panel's existing cycler**, rendered
 through the same shell a band uses. `BandPanelController.render_faction` is its
 `render_band`, `FactionRollup` is its zone builders, and `_panel_is_faction` is the one bit of state
@@ -1102,7 +1102,7 @@ pre-existing `band_panel_*` frame moved in that readout and in nothing else.
 
 | zone | holds |
 |---|---|
-| `band` | the summed PEOPLE bar · the band page's own five vitals rows through its own renderer — Food · Trade · Kit · Morale · Growth |
+| `band` | the summed PEOPLE bar · the band page's own vitals rows through its own renderer — Food · Kit · Morale · Growth (a fifth, Trade, went with arc #527's retired account) |
 | `work` | the whole WORKFORCE bar · one row per band, its work summarised as counts (`2 sources · 1 pen`) |
 | `knowledge` | SETTLING (the stage's WORD, keyed, with its meter) · the craft tracks · DISCOVERIES (kinds, headed by the instance count) — **the last of the three only where the box can hold it** |
 | `parties` | one row per party — its mission summary and the band it LEFT |
@@ -1121,7 +1121,7 @@ are not — the reason the dependency figure came off the top bar.
 
 ### THE TYPE SCALE IS THE PAGE'S OWN VITALS ROWS
 
-**Every row on this page renders at the size the `band` zone's vitals rows do** — Food, Trade, Kit,
+**Every row on this page renders at the size the `band` zone's vitals rows do** — Food, Kit,
 Morale, Growth — with heads at `ZONE_HEAD_FONT_SIZE` (10) and key chips at
 `COMPOSITION_KEY_FONT_SIZE` (11) above them. One size for all four zones' rows, deliberately: a page
 whose zones disagreed about how big a row is reads as two designs sharing a card, and the vitals are
@@ -1595,7 +1595,7 @@ code changed; the card was off-centre *because* `_available_card_span()` was not
 
 **1920 pays for its full-height tile column with band-zone density.** Keeping the strip there costs
 the card the leading 360, the flank drops 2 columns → 1, and the zone falls from TALL to SHORT: no
-food-outlook chart, no role-card hint text, Trade merged away. It is the documented flank trade
+food-outlook chart, no role-card hint text, Fodder merged away. It is the documented flank trade
 extended down, not a new failure mode — but it is a visible content loss at the commonest resolution,
 and **the lever for it is the fork, not the centring**. Above 2432 the change gives back instead:
 2432–2560 returns to two columns and 3440's work board goes 3 → 4.
@@ -1777,45 +1777,52 @@ accident: it is the only one that fits.** Do not treat the pairing as a design p
 survive the blocks changing size — re-measure all four.
 
 **A band with no food history builds no chart, and that is turn one** — the first frame of every new
-game. Under the charted split that column was the vitals alone, 130 against 263. So there was a
-**second authored layout**, selected by one boolean (`people_column = PEOPLE if outlook != null else
-LARDER`): PEOPLE was the only block that moved, measured **200 / 193** chartless against **246 / 263**
-charted.
+game. Under the charted split that column was the vitals alone, 130 against 263, so there was a
+**SECOND authored layout** selected by one boolean (`people_column = PEOPLE if outlook != null else
+LARDER`) with PEOPLE as the only block that moved.
 
-### BOTH LAYOUTS SURVIVED THE ROLE CARDS' PICKERS, and the CHARTED one now sits ON the floor
+### ONE AUTHORED SPLIT NOW — the boolean went with the row that made it necessary (arc #527)
 
-Each role card grew a kit picker and a gear line, so WORKFORCE went from the lightest block on the
-flank to the heaviest and the split's margins moved a long way. **Neither authored layout had to
-change** — re-measured in the harness's two column states, which is what the docstring's
-*"re-measure all four"* asks for:
+Retiring the `Trade` vitals row took ~26px out of the vitals block, which is the only block the
+SHORT column can pay with, and both layouts fell through `band_panel_preview`'s levelness floor. The
+answer this file mandates is *re-author the split and re-measure, never lower the floor* — so all four
+candidates were re-measured, and the result is that **the two layouts collapsed into one**:
 
-| | LARDER | WORKFORCE | level | was |
-|---|---|---|---|---|
-| charted | 246 | 326 | **75%** | 94% |
-| chartless | 200 | 256 | 78% | 97% |
+| | LARDER | WORKFORCE | level |
+|---|---|---|---|
+| **charted** — vitals + PEOPLE + outlook \| WORKFORCE | **290** | 256 | **88%** |
+| **chartless** — the same split, no chart | **174** | 256 | **68%** |
 
-**The charted flank is now EXACTLY ON `band_panel_preview`'s 75% levelness floor**, with 1.5px of
-slack (`246 >= 326 × 0.75`, i.e. 244.5). It is the tightest constraint on this flank, and the next row
-that lands in the WORKFORCE column trips it — at which point the answer is to re-author the split and
-re-measure, never to lower the floor.
+`vitals + PEOPLE + outlook | WORKFORCE` is the best CHARTED layout *and* the best CHARTLESS one, so
+one split serves both and `people_column` is deleted. PEOPLE now sits in the LARDER column
+unconditionally.
 
-> **A card ORDERING moved this, and that is worth knowing before the next one.** An intermediate
-> layout put the description above the controls; on it WORKFORCE measured **332** and the charted
-> split read **74% — failing**. Moving the prose to the bottom of the card (see "The role cards carry
-> the band's OTHER two kits") took 6px back off the block and put the split over the line. So the
-> floor is currently sensitive to a change with no obvious geometric content at all.
+**THE FLOOR MOVED, AND ONLY BECAUSE NO SPLIT CLEARS IT.** `band_panel_preview`'s
+`BAND_FLANK_BALANCE_FLOOR` went **0.75 → 0.65**. That is the re-calibration this file warns against,
+taken only after the re-authoring it mandates: with three chartless blocks there are three orderings
+and the rivals measure **32%** and **19%**, so 68% is the CEILING of what the chartless flank can
+reach, not a shortfall against a reachable better one. The floor still fails the best rival by a wide
+margin, which is what keeps it a real assertion rather than a rubber stamp. **The charted flank has
+23 points of slack at 88%** and is no longer the binding case; the chartless one is.
 
-Both layouts were hand-authored and hand-measured, and the split feeds no geometry, so the flicker
-invariant was never in play for either.
+> **A card ORDERING moved this once, and that is worth knowing before the next change.** An
+> intermediate role-card layout put the description above the controls; on it WORKFORCE measured
+> **332** and the then-charted split read **74% — failing**. Moving the prose to the bottom of the card
+> (see "The role cards carry the band's OTHER two kits") took 6px back off the block. The flank is
+> sensitive to changes with no obvious geometric content at all.
+
+The split is hand-authored and hand-measured, and it feeds no geometry, so the flicker invariant was
+never in play for it.
 
 **The measured numbers do not decompose by subtraction** — separations and spacing differ per grouping,
 and both predictions made that way were wrong (188 vs the actual 200; 258 vs the actual 246).
 Re-measure; never derive.
 
-**66% was the chartless flank's CEILING, not a shortfall.** Its three blocks totalled 393px against
-the 600px two columns offer, and the total is the total however it is dealt out. What the split buys
-is *where* the emptiness sits. (With the role cards' pickers the flank no longer has emptiness to
-place — it OVERFLOWS its box and the zone's own scroll carries the remainder.)
+**A LOW FILL FIGURE IS A CEILING, NOT A SHORTFALL** — this flank's oldest lesson and the one that
+justifies the floor move above. The chartless blocks total what they total against the 600px two
+columns offer, and the total is the total however it is dealt out; what the split buys is *where* the
+emptiness sits. (With the role cards' pickers the CHARTED flank no longer has emptiness to place — it
+OVERFLOWS its box and the zone's own scroll carries the remainder.)
 
 Blocks are emitted in **build** order for one column and by **column** field for two, so the flat stack
 stays vitals · PEOPLE · outlook · WORKFORCE.
@@ -1908,9 +1915,9 @@ quarry whose outcome a band-wide kit could fail to change. A future rule lands a
   name it had eaten the end of.
 
 **WHAT IT COSTS THE FLANK, MEASURED:** the WORKFORCE column went **326px** charted against a 275px
-two-column box (from ~263), which took the band zone's charted split from 94% level to **exactly the
-75% floor** — the authored split is unchanged and it has 1.5px of slack, so see "The band zone's tier
-reads the whole STACKING BUDGET" before adding a row to that column. In the one-column horizontal dock
+two-column box (from ~263), which took the band zone's charted split from 94% level to exactly the
+then-75% floor. (Arc #527 has since re-authored the split into ONE layout and re-measured that column
+at **256px**; see "The band zone's tier reads the whole STACKING BUDGET" before adding a row to it.) In the one-column horizontal dock
 the flank reads **416px of a 300px box**, so the role steppers sit further under the zone's scroll fold
 than before; that zone SCROLLS, so nothing is lost, and the standing lever if the steppers must be
 reachable without a gesture is a density cut at SHORT (see "`PANEL_HEIGHT_WIDE` is the BODY's budget").
@@ -1932,65 +1939,62 @@ command-guard` carries the other half: it now drives a band-wide role with a non
 parses `assign_labor 0 <band> scout 2 kit none` with the real server parser, a grammar whose tail was
 closed until this.
 
-## Work rows and the two hunt products (issue #337)
+## Work rows carry ONE account, and the aggregates carry a SIBLING (issues #337 / #449 / #527)
 
-A board row's rate column is a single fixed width, so it shows the product the source actually PAYS:
-food when there is food (unchanged for every forage patch and edible quarry), else the trade rate with
-`FoodIcons.TRADE_GOODS_GLYPH` — `⇄+0.22` on a hunted wolf pack, never the `+0.00` that said the hunt
-was worth nothing. `_work_row_rate_text` is the one definition. The **inspector strip** has room for
-the pair and states both (`SourceForecast.yield_components`), which is where an edible quarry's trade
-shows.
+A board row's rate column is a single fixed width, so it shows the account the source actually PAYS,
+falling through **food → fodder**: food when there is food (unchanged for every forage patch and
+edible quarry), else the fodder rate spelled with the WORD — `+0.40 fodder` on a sown hay Field, never
+the `+0.00` that said the source was worth nothing. `_work_row_rate_text` is the one definition. The
+**inspector strip** has room for the pair and states both (`SourceForecast.yield_components`).
 
-**The AGGREGATES carry a SIBLING trade total, never a folded-in one.** The header's food figure and
-each chip's food figure stay `actual_yield`-denominated — that is the sim's larder identity, and
-folding trade in would break the one invariant this arc preserved — but omitting trade entirely made
-the header *visibly* not add up: `3 sources +0.35 /turn` with a `⇄+0.22` wolf row directly beneath it,
-so the one source paying only trade read as contributing nothing. So the per-row rule is applied one
-level up: a second total beside the first, shown only when non-zero. The header reads `3 sources +0.35
-/turn ⇄ +0.22` (`WORK_TRADE_TOTAL_TOOLTIP` spells out that it is counted beside the food total, not in
-it) and a per-kind chip reads `🦌 2 · 0.20 ⇄ 0.22` — via `SourceForecast.magnitude_components`, the
+**A TRADE branch stood between the two until arc #527** — `⇄+0.22` on a hunted wolf pack, marked with
+the retired `FoodIcons.TRADE_GOODS_GLYPH`. With that account gone an inedible quarry has no
+fall-through and reads `+0.00`, the wire quoting a herd no per-turn material figure at all. **A hunt
+row's fodder is a structural zero** (no animal is harvested for feed), so a hunt call site passes no
+fodder argument and the animal web has no second account to fall through to.
+
+**THE AGGREGATES CARRY A SIBLING TOTAL, NEVER A FOLDED-IN ONE.** The header's food figure and each
+chip's food figure stay `actual_yield`-denominated — that is the sim's larder identity — but omitting
+a second account entirely made the header *visibly* not add up: `3 sources +0.35 /turn` with a source
+paying only that account directly beneath it, reading as contributing nothing. So the per-row rule is
+applied one level up: a second total beside the first, shown only when non-zero.
+
+**FODDER IS THAT SIBLING** (issue #449), and it credits the band's `FODDER` store and never the larder,
+so folding it into the food figure would break the identity
+`larder_delta == income − consumption − pen_feed − raid_forfeit`. The head reads `2 sources +0.20
+/turn +0.40 fodder` (`WORK_FODDER_TOTAL_TOOLTIP` making the beside-not-in point) and a chip covering
+only hay-bearing patches reads `🌿 1 · 0.40 fodder` — via `SourceForecast.magnitude_components`, the
 bare-magnitude twin of `yield_components` (a chip states levels, not deltas, so no `+`). A kind whose
-whole set pays trade alone drops the food term: `🦌 1 · ⇄ 0.22`, not a `0.00` denying that its sources
-produce anything. **A band with no trade-paying source renders exactly as it did before.**
+whole set pays fodder alone drops the food term rather than printing a `0.00` denying its sources
+produce anything. **The word, never a glyph** — fodder has none, and the `⇄` that marked the retired
+third sibling is gone with it (`WORK_TRADE_TOTAL_TOOLTIP` went too).
 `_work_component_sum(models, key)` is the zone's ONE summing primitive, so head and chips add the same
-rows the same way.
-
-**THE FODDER TOTAL IS A THIRD SIBLING (issue #449), on exactly that argument one account further out.**
-Fodder credits the band's `FODDER` store and never the larder, so folding it into the food figure would
-break the same identity — and leaving it out made the header visibly not add up on a band working a
-sown hay Field, whose one source pays feed every turn and read as producing nothing. So the head can
-carry all three (`2 sources +0.20 /turn ⇄ +0.04 +0.40 fodder`, `WORK_FODDER_TOTAL_TOOLTIP` making the
-beside-not-in point in the trade tooltip's own words), each rendered only when non-zero, and a chip
-covering only hay-bearing patches reads `🌿 1 · 0.40 fodder`. **The word, never a glyph** — fodder has
-none. **A hunt row's fodder is a structural zero**, no animal being harvested for feed, so nothing on
-the animal web moves. Frames: `band_panel_work_fodder` for the positive (its board carries the Field
-AND an ordinary deer hunt, so all three siblings are in one head) and `band_panel_work_trade_totals`
-for the paired negative — a head that rendered the total unconditionally passes every claim made on a
-band that actually grows hay.
+rows the same way. Frames: `band_panel_work_fodder` for the positive and
+`band_panel_work_trade_totals` for the paired negative — a head that rendered the total
+unconditionally passes every claim made on a band that actually grows hay.
 
 **"Sort by yield" is ONE TIER PER ACCOUNT, not a raw magnitude sort** (`_work_sorts_before`):
-food-paying sources first by their food figure descending, then trade payers by their trade figure
-descending, then fodder payers by theirs — with the sources paying nothing in any account last, where
-they belong. Sorting on food *alone* was the bug — it interleaved every trade-only source among the
-zero-food rows at the bottom of the board, off page one on a busy band, the same "an inedible quarry
-is worth nothing" reading the per-row work removed. **The tier list grows with the accounts, and
-issue #449 is the proof**: while the sort was food-then-trade, a sown hay Field published `0.00` in
-both and sank into the pays-nothing tie at the bottom of the board — the same failure, against the
-same control, one account later. A new account means a new tier here, in the same order the readouts
-state them. But ranking them by raw displayed magnitude is a DIFFERENT
-error and must not be "fixed" back to it: a wolf's `0.22` trade above a patch's `0.15` food compares
-two quantities the sim publishes **no exchange rate** between, and under a control labelled *sort by
-yield* that asserts the wolf is the more productive source — a claim the game does not make and the
-player cannot check. Tiering asserts nothing about an exchange rate; it only orders attention. **Food
-leads not because it is worth more per unit** but because the larder is the live survival constraint
-the player decides against every turn, while trade is still economically thin (the design doc's own
-Deferred section). Revisit when trade acquires a sink, not before.
+food-paying sources first by their food figure descending, then fodder payers by theirs — with the
+sources paying nothing in any account last, where they belong. Sorting on food *alone* was the bug —
+it interleaved every food-less source among the zero rows at the bottom of the board, off page one on
+a busy band, the same "this source is worth nothing" reading the per-row work removed. **The tier list
+grows AND SHRINKS with the accounts**: it was food-then-trade when a sown hay Field published `0.00`
+in both and sank into the pays-nothing tie — the same failure, one account later, which is what bought
+the fodder tier — and arc #527 retired the trade tier, taking it from three tiers back to two. A new
+account means a new tier here, in the same order the readouts state them.
 
-Frames `band_panel_work_trade_rows` (mixed board — food row, food+trade row, trade-only row) /
-`band_panel_work_trade_inspector` / **`band_panel_work_trade_totals`** (the same band with the deer
-unassigned, so the sole hunt pays trade: `2 sources +0.15 /turn ⇄ +0.22`, chip `🦌 1 · ⇄ 0.22` — the
-aggregate suppression path the mixed board cannot reach). The rule and the axis contract live in
-`labor-ui.md`.
+**Ranking by raw displayed magnitude is a DIFFERENT error and must not be "fixed" back to it.** Two
+accounts' figures compare quantities the sim publishes **no exchange rate** between, and under a
+control labelled *sort by yield* that asserts one source is the more productive — a claim the game
+does not make and the player cannot check. Tiering asserts nothing about an exchange rate; it only
+orders attention. **Food leads not because it is worth more per unit** but because the larder is the
+live survival constraint the player decides against every turn.
+
+Frames `band_panel_work_trade_rows` (mixed board) / `band_panel_work_trade_inspector` /
+**`band_panel_work_trade_totals`** (the aggregate-suppression path the mixed board cannot reach).
+**The three keep their names and their subject moved**: they stage an inedible quarry, whose rows now
+read `+0.00 /turn` because the wire states no rate for it rather than because the client dropped one.
+The rule and the axis contract live in `labor-ui.md`.
 
 **Yield is the OPT-IN sort, not the default** — see the next section for why.
 
@@ -2019,17 +2023,18 @@ that board contradicts the very chips above it. `band_panel_rung_ready` already 
 Sorting on `kind` means no third label prefix can break it. The kind test is a **boolean tier**, which
 is exact for the two kinds that exist; a third kind would need an explicit rank, since a boolean
 cannot express one. `_work_sorts_before` was the same idiom until fodder made it three — which is the
-worked example of that limit, not an exception to it: its tiers are now a cascade of
-`has_component` tests, one per account, precisely because a bool could not say "food, else trade,
-else fodder".
+worked example of that limit, not an exception to it: its tiers are a cascade of `has_component`
+tests, one per account, precisely because a bool could not say "food, else trade, else fodder". Arc
+#527 retired the middle tier and it is a cascade of TWO today; the cascade stays, because what made a
+bool wrong was that the list can grow, not that it happened to be three.
 
 **BOTH comparators tiebreak on the model's `key`, and that is a correctness fix, not tidiness.**
 `sort_custom` is **not stable** in Godot, and a tie is reachable in each mode: two herds can carry the
 same label (two "Wild Boar" herds produce identical `"Hunt %s"` strings), and two sources can carry
 the same rate — two patches at one food figure in the food tier, and every source paying **nothing in
 any** account sitting at `0.0` together in the LAST tier. (Not "every source paying no food": each
-tier's test is `has_component` on *that tier's own* figure, so a patch paying food and no trade is in
-the food tier and never reaches the trade comparison, and a hay Field paying only feed is in the
+tier's test is `has_component` on *that tier's own* figure, so a patch paying food and no fodder is in
+the food tier and never reaches the fodder comparison, and a hay Field paying only feed is in the
 fodder tier and never reaches the pays-nothing tie.) Without the tiebreak neither sort is a total order, so
 tied rows could swap on any unrelated re-render — a snapshot tick, a zone resize — which is the same
 jump this section exists to remove, just triggered by something other than the pointer. `key` is the
@@ -2361,27 +2366,28 @@ cohort carries `expeditionForecastHorizonTurns` the sentence quotes it:
 
 On a hunt an unhauled kill is an occasional overflow and wears `HUNT_FORECAST_WARN_GLYPH`'s `⚠`; on a
 raid it is essentially the whole take and it is the **point** of the mission. `denial_take_bbcode` is
-therefore a quiet `INK_DIM` line — `kills ≈55 Wild Boar · brings home 6.00 food · ⇄ 0.75 trade goods ·
-leaves 214.00 and ⇄ 26.75 trade goods on the range` — with each account rendered only when the quarry
-pays it (the render-only-when-non-zero rule), and no alarm glyph anywhere.
+therefore a quiet `INK_DIM` line — `kills ≈55 Wild Boar · brings home 6.00 food · leaves 214.00 on the
+range` — with the account rendered only when the quarry pays it (the render-only-when-non-zero rule),
+and no alarm glyph anywhere.
 
-**THE WASTE IS A PAIR, AND IT IS ONE CLAUSE.** The sim publishes `wastedFood` **and `wastedTrade`**
-out of one `HuntYield::apply` over the same wasted biomass, so a kill left on the range takes its
-hides with it; stated food-only, a raid whose quarry pays in pelts reported its waste as zero.
-`SourceForecast.denial_waste_face` is the ONE spelling of "what was left on the range", so a second
-surface that ever states a raid's waste states it in these words:
+**RETIRED — the waste PAIR (arc #527).** The sim published `wastedFood` **and `wastedTrade`** out of
+one `HuntYield::apply` over the same wasted biomass, so a kill left on the range took its hides with
+it, and stated food-only a raid whose quarry pays in pelts reported its waste as zero. The trade
+account is gone, so the clause is a single figure — and `DENIAL_TAKE_TRADE_FORMAT`,
+`DENIAL_TAKE_LEFT_TRADE_FORMAT` and `DENIAL_TAKE_LEFT_JOIN` went with it. **Three rules it left
+behind:**
 
-- **Food leads and renders BARE; trade carries the glyph and the words.** An edible quarry with no
-  trade therefore reads exactly as it did before the pair existed, and the bare figure can never be
-  mistaken for the trade one — which it could, silently, the moment a second number joined it.
-- **The two are joined by `DENIAL_TAKE_LEFT_JOIN` (` and `), NOT by `TRADE_COMPONENT_SEPARATOR`.**
-  ` · ` is what separates this line's own CLAUSES, so nesting it inside one clause's subject would
-  read as a fourth clause beginning at the trade figure and ending "on the range".
-- **A quarry that wastes nothing renders NO clause, not two zeros.** An inedible quarry is exactly
-  that case and it is a fact about the PRODUCT: `carry_room_biomass` answers `NO_CARRY_BOUND` for a
-  species paying no provisions, the pack never binds, and the party hauls every pelt. So the fixture
-  that proves this pair has to be an EDIBLE quarry, where the pack binds hard — a wolf fixture would
-  assert nothing.
+- **`SourceForecast.denial_waste_face` is still the ONE spelling of "what was left on the range"**, so
+  a second surface that ever states a raid's waste states it in these words.
+- **A second figure in one clause needs its own joiner, never the line's clause separator.** The pair
+  joined on ` and `, deliberately not on ` · ` — that is what separates this line's own CLAUSES, so
+  nesting it inside one clause's subject reads as an extra clause beginning at the second figure and
+  ending "on the range".
+- **A quarry that wastes nothing renders NO clause, not a zero.** An inedible quarry is exactly that
+  case and it is a fact about the PRODUCT: `carry_room_biomass` answers `NO_CARRY_BOUND` for a species
+  paying no provisions, the pack never binds, and the party hauls everything. So the fixture that
+  proves this clause has to be an EDIBLE quarry, where the pack binds hard — a wolf fixture asserts
+  nothing about waste.
 
 **The IN-FLIGHT surface states no waste at all and needed no change.**
 `DetailFormat.expedition_collapse_line` renders the collapse verdict and the quoted-party note and

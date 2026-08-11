@@ -38,11 +38,10 @@ const LOCAL_HUNT_CAPPED_CREW := 3
 ## staging a cap the client does not apply would render the max-useful note under a party-size name.
 const LABOR_BOUND_CREW := 3
 
-## The crew the TWO-PRODUCT frames (issue #337) are composed with — the wolf's pelts-only pair and the
-## oracle deer's food+trade control. Two hunters is the oracle's own no-waste point (food_per_animal
-## 1.23 ÷ the band's 0.8 per-worker carry ⇒ 2 carriers haul one whole body), so the frame the trade
-## components are read on carries no waste term to argue with; the wolf rides the same crew so the
-## inedible quarry and the both-products control are compared at ONE party size.
+## The crew the INEDIBLE-QUARRY pair is composed with — the wolf and the oracle deer that contrasts
+## with it. Two hunters is the oracle's own no-waste point (food_per_animal 1.23 ÷ the band's 0.8
+## per-worker carry ⇒ 2 carriers haul one whole body), so the frame the accounts are read on carries no
+## waste term to argue with; the wolf rides the same crew so the two are compared at ONE party size.
 const PELT_FRAME_HUNTERS := 2
 
 # **BELOW `ecology.collapse_fraction` (0.15).** The herd is past its Allee threshold, so the sampled
@@ -60,9 +59,13 @@ const FLOOR_CHART_ALLEE_STOCK_FRACTION := 0.08
 ## and then off that face into the READOUT's payoff row, which is where they are asserted now. The
 ## payoff ARROW went at the first move (the face already read `· then <terms>`, so an arrow inside the
 ## terms said "then → 1.48" twice) and stays gone: the row's key states the condition instead.
-const BOAR_TAME_PAYOFF_FACE := "1.48 food · 0.37 trade"
+##
+## **THEY LOST THEIR SECOND CLAUSE WITH THE TRADE AXIS** (arc #527). Each face read `… · 0.37 trade`
+## beside its food half; a herd's non-food product is materials now, and the wire quotes none per rung,
+## so a prepared herd's payoff is a food figure alone again.
+const BOAR_TAME_PAYOFF_FACE := "1.48 food"
 
-const BOAR_CORRAL_PAYOFF_FACE := "2.95 food · 0.74 trade"
+const BOAR_CORRAL_PAYOFF_FACE := "2.95 food"
 
 # The sim's forward-SIMULATED turns-to-fill for the 4-worker party in these states (it exports the
 # answer; the client never divides). Sustain is a small renewable flow → slow; Surplus/Deplete strip the
@@ -92,10 +95,6 @@ const NO_SURPLUS_ANIMALS := 0
 # frame the "delivers ≈5 boar over ≈7 turns" readout and the stepper-cap-at-plateau are judged on.
 const MAMMOTH_FOOD_PER_ANIMAL := 16.0
 
-# One animal's worth of TRADE GOODS on an EDIBLE quarry (issue #337) — a hunt pays a vector, so every
-# raid cell carries a trade payload beside its food one and the readout names both. Deliberately much
-# smaller than the food quantum: a deer/boar is meat first, hide second (the INEDIBLE case, where trade
-# is the whole payload, is the wolf fixture below).
 const RAID_TRAVEL_TURNS := 8
 
 const RAID_TRAVEL_HUNT_TURNS := 8
@@ -118,24 +117,22 @@ const LESSON_NOT_YET_LEARNED := false
 ## after the loop because the loop is where each state is actually staged, and re-staging one to assert
 ## it would risk asserting a sheet the frame never rendered.
 ##
-## **EACH IS ONE HALF OF A PAIR**, the other half being `herd_hunt_expedition`'s block (a clean raid
-## paying BOTH accounts, no waste, a brisk OK verdict): a lone "the waste note is here" passes on a
-## readout that always prints one, and a lone "there is no trade row" passes on a readout that can no
-## longer print any account at all.
+## **EACH IS ONE HALF OF A PAIR**, the other half being `herd_hunt_expedition`'s block (a clean raid,
+## no waste, a brisk OK verdict): a lone "the waste note is here" passes on a readout that always
+## prints one.
 func _assert_trip_readout(state_name: String) -> void:
 	var sheet: Control = h._hud._drawercompose._compose_sheet
 	match state_name:
 		"herd_hunt_forecast_viable":
-			# A party of 4 kills a 16-food mammoth and hauls 4 of it — the WASTE half, and the ZERO
-			# ACCOUNT half in one fixture: this cell carries no `delivers_trade` at all, so the trade
-			# row must not render. The trade-paying deer in `herd_hunt_expedition` is its twin.
+			# A party of 4 kills a 16-food mammoth and hauls 4 of it — the WASTE half. The deer in
+			# `herd_hunt_expedition` is its clean-raid twin.
 			var wasted := Readout.yields_text(sheet)
 			var waste_pct := int(round((MAMMOTH_FOOD_PER_ANIMAL - HerdFx.HUNT_FORECAST_PARTY)
 				/ MAMMOTH_FOOD_PER_ANIMAL * 100.0))
 			h._assert_hud("a partial kill states its WASTE on the trip's yields row",
 				wasted.contains((SourceForecast.HUNT_WASTE_NOTE_FORMAT % waste_pct).to_upper()))
-			h._assert_hud("…and an account the quarry does not pay renders NO row",
-				wasted.contains("FOOD") and not wasted.contains("TRADE"))
+			h._assert_hud("…beside the FOOD the party actually lands",
+				wasted.contains("FOOD"))
 		"herd_hunt_forecast_slow":
 			# 54 turns past the band's 20-turn warn line — the verdict carries the severity the Send
 			# button and the one-line form already carry, so the box cannot disagree with either.
@@ -240,14 +237,14 @@ func _labor_bound_raid_herd() -> Dictionary:
 	for i in sustain_animals.size():
 		var w := i + 1
 		# Every rung DELIVERS, Eradicate included (issue #337 — `delivers_food` is about the species,
-		# and a bison is edible on every rung). Both products on every cell.
+		# and a bison is edible on every rung).
 		for entry in [["sustain", sustain_animals[i], 8], ["surplus", surplus_animals[i], 6],
 				["deplete", deplete_animals[i], 5], ["eradicate", int(deplete_animals[i]) + 2, 4]]:
 			var animals: int = int(entry[1])
 			table["%s:%d" % [String(entry[0]), w]] = {
-				"turns_to_fill": int(entry[2]), "delivers_food": true, "delivers_trade": true,
+				"turns_to_fill": int(entry[2]), "delivers_food": true,
 				"animals_taken": animals, "delivered_food": float(animals) * fpa,
-				"delivered_trade": float(animals) * HerdFx.RAID_TRADE_PER_ANIMAL, "wasted_food": 0.0,
+				"wasted_food": 0.0,
 				# A clean raid that hauls its whole kill: the PACK is what stops it.
 				SourceForecast.TRIP_BOUND_KEY: SourceForecast.TRIP_BOUND_PACK_FULL}
 	herd["hunt_trip_estimates"] = table
@@ -263,13 +260,13 @@ func _no_surplus_herd() -> Dictionary:
 	# comes home empty and the button DISABLES ("too lean — no surplus above this policy's floor").
 	var table := {}
 	for w in range(1, 9):
-		# The species is edible and its pelts sell — it is the HERD that has nothing left, so both
-		# `delivers_*` flags are true on every rung and BOTH payloads are 0. That is what makes this
-		# the "too lean" case rather than the "denial mission" one (issue #337).
+		# The species is EDIBLE — it is the HERD that has nothing left, so `delivers_food` is true on
+		# every rung and the payload is 0. That is what makes this the "too lean" case rather than the
+		# "denial mission" one (issue #337).
 		for policy in ["sustain", "surplus", "deplete", "eradicate"]:
 			table["%s:%d" % [policy, w]] = {
-				"turns_to_fill": 0, "delivers_food": true, "delivers_trade": true,
-				"animals_taken": 0, "delivered_food": 0.0, "delivered_trade": 0.0,
+				"turns_to_fill": 0, "delivers_food": true,
+				"animals_taken": 0, "delivered_food": 0.0,
 				"wasted_food": 0.0,
 				# The herd IS at its floor, so the raid's stop is the floor — reached on turn one, with
 				# nothing taken. The client never renders this clause (the readout takes the refusal
@@ -512,8 +509,6 @@ func _yield_take(yields_text: String, account: String) -> float:
 ## different route than the client, which rescales through the per-biomass vector.
 const ORACLE_DEER_FOOD_PER_ANIMAL := 1.23
 
-const ORACLE_DEER_TRADE_PER_ANIMAL := 0.18
-
 const ORACLE_DEER_PER_WORKER := 0.8
 
 const ORACLE_DEER_SUSTAIN_CEILING := 2.33
@@ -536,23 +531,20 @@ func _delivered_oracle_herd() -> Dictionary:
 			"sustain": ORACLE_DEER_SUSTAIN_CEILING,
 			"surplus": 3.5, "deplete": 5.0, "eradicate": 7.0,
 		},
-		# THE SECOND PRODUCT (issue #337). A deer is edible AND its hide sells, so it pays BOTH: the
-		# picker's four rungs must read food-then-trade (food leading), never food alone. The trade
-		# ceilings are the food ones times the species' hide-to-meat ratio, so they ascend together.
-		"trade_per_animal": ORACLE_DEER_TRADE_PER_ANIMAL,
-		"per_worker_trade": 0.12,
-		"hunt_policy_trade_ceilings": {
-			"sustain": 0.34, "surplus": 0.51, "deplete": 0.73, "eradicate": 1.02,
-		},
 		"tile_info": HerdFx.plain_herd_tile_info(),
 	}
 
-## THE INEDIBLE QUARRY (issue #337) — a wolf pack: `provisions == 0` on every rung, a real TRADE yield
-## on all four. It is the frame the whole arc is judged on. Before the fix the client read only food, so
-## this herd rendered `+0.00` on every picker button and a source "worth nothing"; it must now read four
-## ASCENDING trade numbers, NO food line anywhere, and no zeros. Every food-denominated field is
-## deliberately 0/absent — `food_per_animal` too — so anything that still divides by a food quantum
-## divides by zero and shows up in the frame rather than hiding.
+## THE INEDIBLE QUARRY (issue #337, arc #527) — a wolf pack: `provisions == 0` on every rung. Every
+## food-denominated field is deliberately 0/absent, `food_per_animal` included, so anything that still
+## divides by a food quantum divides by zero and shows up in the frame rather than hiding.
+##
+## **WHAT THIS FRAME PROVES CHANGED WITH THE TRADE AXIS.** It used to carry a real trade ceiling on
+## all four rungs and was the frame the two-product arc was judged on: four ascending trade numbers,
+## no food line, no zeros. That account is retired and a herd's materials have NO per-rung quote on
+## the wire, so the honest reading now is that this sheet states **no per-turn rate at all** — and
+## the claim worth pinning is the one that never changed: it must not print a `0.00 FOOD` saying a
+## wolf's pelts are worth no meat. The `herd_hunt_both_products` deer beside it is what keeps that
+## negative from passing on a readout that lost every account.
 func _pelt_only_wolf_herd() -> Dictionary:
 	return {
 		"id": "game_wolf_03", "label": "Grey Wolf (game_wolf_03)", "species": "Grey Wolf",
@@ -565,17 +557,14 @@ func _pelt_only_wolf_herd() -> Dictionary:
 		"hunt_policy_ceilings": {
 			"sustain": 0.0, "surplus": 0.0, "deplete": 0.0, "eradicate": 0.0,
 		},
-		"trade_per_animal": 1.40,
-		"per_worker_trade": 0.45,
-		"hunt_policy_trade_ceilings": {
-			"sustain": 0.90, "surplus": 1.35, "deplete": 1.95, "eradicate": 2.70,
-		},
 		"tile_info": HerdFx.plain_herd_tile_info(),
 	}
 
-## The wolf's RAID table: `delivers_food = false` (an INEDIBLE quarry, NOT a denial policy) beside
-## `delivers_trade = true` on every rung, so the expedition line must read a real delivery in trade
-## goods rather than the "denial mission" the old `delivers_food`-only branch would have called it.
+## The wolf's RAID table: `delivers_food = false` on every rung — an INEDIBLE quarry, not a denial
+## POLICY. Since arc #527 retired the `delivers_trade` sibling that made such a raid a real delivery,
+## this is the shape a raid on an inedible quarry now has, and the sheet reads it as a **denial
+## mission**: the party brings nothing home, because the wire states no material payload for it to
+## bring. That is the honest client reading of the sim's current contract, not a client-side loss.
 func _pelt_only_wolf_raid_herd() -> Dictionary:
 	var herd := _pelt_only_wolf_herd()
 	var table := {}
@@ -585,10 +574,9 @@ func _pelt_only_wolf_raid_herd() -> Dictionary:
 			var animals: int = int(animals_row[i]) + int(entry[1])
 			table["%s:%d" % [String(entry[0]), i + 1]] = {
 				"turns_to_fill": int(entry[2]),
-				"delivers_food": false, "delivers_trade": true,
+				"delivers_food": false,
 				"animals_taken": animals,
 				"delivered_food": 0.0, "wasted_food": 0.0,
-				"delivered_trade": float(animals) * 1.40,
 				# **AN INEDIBLE QUARRY NEVER FILLS A *FOOD* PACK**, so the pack is inert on a wolf raid
 				# and the herd's own floor is what ends it — the sim's `raid_load` rule, stated on the
 				# fixture rather than left for the client to infer from `delivers_food`.
@@ -613,12 +601,6 @@ func _big_game_window_herd() -> Dictionary:
 		"hunt_policy_ceilings": {
 			"sustain": 2.4, "surplus": 3.6, "deplete": 5.0, "eradicate": 7.0,
 		},
-		# Ivory sells (issue #337) — a live herd carries the trade half of its vector too.
-		"trade_per_animal": 2.4,
-		"per_worker_trade": 0.12,
-		"hunt_policy_trade_ceilings": {
-			"sustain": 0.36, "surplus": 0.54, "deplete": 0.75, "eradicate": 1.05,
-		},
 		"tile_info": HerdFx.plain_herd_tile_info(),
 	}
 
@@ -640,11 +622,6 @@ func _aurochs_big_game_fixture() -> Dictionary:
 	fixture["per_worker_yield"] = 0.80
 	fixture["hunt_policy_ceilings"] = {
 		"sustain": 0.74, "surplus": 1.20, "deplete": 1.86, "eradicate": 2.60,
-	}
-	fixture["trade_per_animal"] = 0.24
-	fixture["per_worker_trade"] = 0.12
-	fixture["hunt_policy_trade_ceilings"] = {
-		"sustain": 0.11, "surplus": 0.18, "deplete": 0.28, "eradicate": 0.39,
 	}
 	fixture["tile_info"] = HerdFx.compact_herd_tile_fixture()
 	return fixture
@@ -801,7 +778,7 @@ func run(harness) -> void:
 	h._record_compose_spine(COMPOSE_SPINE_KEY_EXPEDITION)
 	# **THE TRIP READOUT — the expedition's answer in the SAME box the local sheet uses.** The branch
 	# used to render one wrapped sentence carrying five facts ("delivers ≈3 Red Deer over ≈9 turns ·
-	# ~6 food · ⇄ ~2 trade goods"), beside a local sheet that laid the same kinds of fact out in a
+	# ~6 food"), beside a local sheet that laid the same kinds of fact out in a
 	# bounded well — two sheets on one panel reading nothing alike. What must NOT carry over is the
 	# per-turn framing, and the header is where that shows: a trip has no steady state, so
 	# `THIS TRIP` and not `PER TURN`, and no `now → after` arrow to key.
@@ -811,20 +788,16 @@ func run(harness) -> void:
 	h._assert_hud("…so it states no PER TURN header and no now → after arrow",
 		not Readout.yields_header(h._hud._drawercompose._compose_sheet).contains("PER TURN")
 			and not Readout.yields_header(h._hud._drawercompose._compose_sheet).contains("→"))
-	# THE PAYLOAD, ALL THREE TERMS. The animal count leads in the local hunt row's own idiom (the `≈`
-	# face, the quarry as the unit, no account), then the accounts those bodies pay. Every term is
-	# named, because matching one survives losing either of the others — and this quarry pays BOTH
-	# accounts, which is the positive half of the render-only-where-the-vector-pays pair asserted on
-	# the zero-trade mammoth below.
+	# THE PAYLOAD, BOTH TERMS. The animal count leads in the local hunt row's own idiom (the `≈` face,
+	# the quarry as the unit, no account), then the account those bodies pay. Both are named, because
+	# matching one survives losing the other — and this quarry PAYS FOOD, which is the positive half of
+	# the render-only-where-the-vector-pays pair whose negative is the wolf frame further down.
 	var trip_yields = Readout.yields_text(h._hud._drawercompose._compose_sheet)
 	h._assert_hud("the ANIMAL count leads the row, in the quarry's own name",
 		trip_yields.contains("≈%d" % HerdFx.DISTANCE_RAID_ANIMALS[0]) and trip_yields.contains("RED DEER"))
 	h._assert_hud("…with the trip's FOOD beside it",
 		trip_yields.contains(SourceForecast.format_magnitude(HerdFx.DISTANCE_RAID_ANIMALS[0] * 2.0))
 			and trip_yields.contains("FOOD"))
-	h._assert_hud("…and its TRADE, since this quarry pays both",
-		trip_yields.contains(SourceForecast.format_magnitude(
-			HerdFx.DISTANCE_RAID_ANIMALS[0] * HerdFx.RAID_TRADE_PER_ANIMAL)) and trip_yields.contains("TRADE"))
 	h._assert_hud("a raid that hauls its whole kill states NO waste note",
 		not trip_yields.contains("wasted".to_upper()))
 	# THE VERDICT states the trip's length. This band carries no move rate, so travel is 0 and there is
@@ -1358,13 +1331,12 @@ func run(harness) -> void:
 	await h._save("herd_hunt_big_game_window")
 	h._assert_compose_sheet_fits("herd_hunt_big_game_window")
 
-	# 3w — THE INEDIBLE QUARRY (issue #337). A wolf pays PELTS AND NO MEAT: `provisions == 0` on every
-	# rung, a real trade ceiling on all four. This is the frame the whole arc is judged on. The picker's
-	# four buttons must read FOUR ASCENDING TRADE numbers on their second line — `0.90 / 1.35 / 1.95 /
-	# 2.70 trade` — with NO food term and NO zeros anywhere; before the fix the client read only food, so all four read `+0.00`
-	# and the pack rendered as a source worth nothing. The preview line below the picker must still show a
-	# per-turn ANIMAL rate (the ratio is unit-free — it divides by the TRADE quantum, since the food one
-	# is honestly 0), and the averaging-window disclaimer must still appear.
+	# 3w — THE INEDIBLE QUARRY (issue #337, arc #527). A wolf pays PELTS AND NO MEAT: `provisions == 0`
+	# on every rung. It used to carry a real trade ceiling on all four and read four ascending trade
+	# numbers here; that account is retired, a herd's materials have NO per-rung quote on the wire, and
+	# the honest reading is that this sheet quotes NO per-turn rate at all. What must still hold — and
+	# is the claim this frame has always really been about — is that it never prints a `0.00 FOOD`
+	# saying a wolf's pelts are worth no meat.
 	var wolf := _pelt_only_wolf_herd()
 	h._hud._compose.reset_hunt_source()
 	h._hud._compose.set_hunt_band(-1)
@@ -1377,15 +1349,12 @@ func run(harness) -> void:
 	# **THE REGRESSION THAT MATTERS MOST once the readout credits every account a take pays.** The
 	# rule is render-only-where-the-vector-PAYS, not "render every account": a wolf's provisions rate
 	# is a structural 0, so the crossing into food answers a structural zero and `yield_rows` emits NO
-	# food row — never the `0.00 FOOD` that says its pelts are worth no meat. Asserted as a PAIR, since
-	# the negative alone is satisfied by a readout that lost both accounts.
+	# food row — never the `0.00 FOOD` that says its pelts are worth no meat. **Asserted as a PAIR
+	# WITH `herd_hunt_both_products`**, whose deer states a live FOOD row off the same producer: on its
+	# own this negative is satisfied by a readout that has stopped printing any account at all, which
+	# is exactly the failure mode a retired account invites.
 	var wolf_yields := Readout.yields_text(h._hud._drawercompose._compose_sheet)
-	h._assert_hud("an inedible quarry's PER TURN row states the TRADE it pays…",
-		wolf_yields.contains(SourceForecast.YIELD_ACCOUNT_UNITS[
-			SourceForecast.YIELD_ACCOUNT_TRADE].to_upper())
-			and _yield_take(wolf_yields, SourceForecast.YIELD_ACCOUNT_UNITS[
-				SourceForecast.YIELD_ACCOUNT_TRADE].to_upper()) > 0.0)
-	h._assert_hud("…and NO food row beside it — a wolf pays pelts and no meat, ever",
+	h._assert_hud("an inedible quarry states NO food row — its pelts are not meat",
 		not wolf_yields.contains(SourceForecast.YIELD_ACCOUNT_UNITS[
 			SourceForecast.YIELD_ACCOUNT_FOOD].to_upper()))
 	# **THE CHART ON AN INEDIBLE QUARRY** (the wolf half of the five chart cases). The readout above it
@@ -1521,9 +1490,10 @@ func run(harness) -> void:
 			and not String(at_floor.get("text", "")).contains("1075"))
 
 	# 3x — the same wolf as an EXPEDITION target (band 27 tiles off). `delivers_food = false` on every
-	# cell now means THE QUARRY IS INEDIBLE, not "a denial mission", so the raid line must read a real
-	# delivery whose payload is trade goods — `delivers ≈5 Grey Wolf over ≈9 turns · ⇄ ~7 trade goods` —
-	# and the Send button must be the ordinary primary send, NOT "brings nothing home".
+	# cell says THE QUARRY IS INEDIBLE, and since arc #527 retired the `delivers_trade` sibling that
+	# used to make such a raid a real delivery, the line reads as a DENIAL MISSION: the party brings
+	# nothing home, because the raid wire states no material payload for it to bring. That is the
+	# client reading the sim's current contract honestly, and the frame is here to make it visible.
 	var wolf_raid := _pelt_only_wolf_raid_herd()
 	h._hud._band_labor._player_bands = [_hunt_preview_far_band()]
 	h._hud._band_labor._player_band = h._hud._band_labor._player_bands[0]
@@ -1534,11 +1504,12 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("herd_hunt_pelts_raid")
 
-	# 3y — THE BOTH-PRODUCTS CONTROL: the same oracle deer, whose hide sells beside its meat. Each picker
-	# button's product line must carry BOTH components with FOOD LEADING (`2.33 food · 0.34 trade`), which
-	# is the half of the rule the wolf frame cannot prove. Rendered right after the wolf so the two are
-	# compared directly. Both frames also judge the TWO-LINE FACE itself: the rung's name over its
-	# products, so `which rung` and `what it pays` stop competing in one line of glyphs.
+	# 3y — THE PAYING CONTROL: the same oracle deer, which pays real food. Each picker button's product
+	# line must carry that food (`2.33 food`), which is the half of the rule the wolf frame cannot
+	# prove — its all-zero readout is only meaningful beside a readout that still prints. Rendered right
+	# after the wolf so the two are compared directly. Both frames also judge the TWO-LINE FACE itself:
+	# the rung's name over its products, so `which rung` and `what it pays` stop competing in one line
+	# of glyphs.
 	h._hud._band_labor._player_bands = [_delivered_oracle_band()]
 	h._hud._band_labor._player_band = h._hud._band_labor._player_bands[0]
 	var oracle_pair := _delivered_oracle_herd()
@@ -1548,43 +1519,33 @@ func run(harness) -> void:
 	h._compose_herd(oracle_pair, PELT_FRAME_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
 	await h._settle()
 	await h._save("herd_hunt_both_products")
-	# **THE READOUT'S HALF OF THE PAIR — one animal count, valued in BOTH accounts.** The picker faces
-	# above have named the pair since #337; the `PER TURN` row beneath them did not, and reported from
-	# play a Wild Boar's compose sheet read `0.00 FOOD` with no trade row while an expedition on the
-	# same species read `20.00 FOOD  2.50 TRADE`. A quantised take must be COUNTED on one axis (a
-	# wolf's food quantum is honestly 0, so nothing else may divide), but the count is unit-free: the
-	# sim quantises on `ratio_axis()` and then values that count in every currency the species pays
-	# (`YieldPair::rescaled_to`). The client stopped at the axis it had quantised on.
+	# **THE READOUT'S HALF OF THE PAIR — the quantised animal count, valued in the account it pays.**
+	# Reported from play, a Wild Boar's compose sheet read `0.00 FOOD` while an expedition on the same
+	# species read a real take: a quantised take is COUNTED on one axis, but the count is unit-free, and
+	# the sim values it through `YieldPair::rescaled_to` while the client had stopped at the axis it had
+	# quantised on. **This is the LIVE half of the wolf frame's negative** — with the trade account
+	# retired, "the readout prints nothing" and "the readout is correctly silent" are the same picture,
+	# and only a frame that still prints tells them apart.
 	var pair_yields := Readout.yields_text(h._hud._drawercompose._compose_sheet)
 	var food_unit: String = SourceForecast.YIELD_ACCOUNT_UNITS[
 		SourceForecast.YIELD_ACCOUNT_FOOD].to_upper()
-	var trade_unit: String = SourceForecast.YIELD_ACCOUNT_UNITS[
-		SourceForecast.YIELD_ACCOUNT_TRADE].to_upper()
-	h._assert_hud("a local hunt's PER TURN row names BOTH accounts this take pays",
-		pair_yields.contains(food_unit) and pair_yields.contains(trade_unit))
-	# THE MAGNITUDES, recomposed from the sim's own two steps: `quantise_animal_take` for the count
-	# (the harness's `HerdFx.hunt_take_oracle`, in food), then the species' whole-animal quanta for the
-	# crossing into trade. The client rescales through the per-biomass VECTOR instead, so the two
-	# arrive at the same pair by different routes rather than by construction — and a fix that valued
-	# the second account off the per-worker rates (0.12 / 0.80, a mix the crew's carry has no business
-	# supplying) misses it.
+	h._assert_hud("a local hunt's PER TURN row names the account this take pays",
+		pair_yields.contains(food_unit))
+	# THE MAGNITUDE, recomposed from the sim's own step: `quantise_animal_take` for the count (the
+	# harness's `HerdFx.hunt_take_oracle`, in food). The client composes it through the per-biomass
+	# vector instead, so the two arrive at one answer by different routes rather than by construction.
 	var pair_food := float(HerdFx.hunt_take_oracle(PELT_FRAME_HUNTERS * ORACLE_DEER_PER_WORKER,
 		ORACLE_DEER_SUSTAIN_CEILING, ORACLE_DEER_FOOD_PER_ANIMAL)["delivered"])
-	var pair_trade := pair_food * ORACLE_DEER_TRADE_PER_ANIMAL / ORACLE_DEER_FOOD_PER_ANIMAL
-	h._assert_hud("…the FOOD reading is the crew's quantised take (%s)"
+	h._assert_hud("…and it is the crew's quantised take (%s)"
 		% SourceForecast.format_magnitude(pair_food),
 		is_equal_approx(_yield_take(pair_yields, food_unit),
 			float(SourceForecast.format_magnitude(pair_food))))
-	h._assert_hud("…and the TRADE reading is that SAME take in the other currency (%s)"
-		% SourceForecast.format_magnitude(pair_trade),
-		is_equal_approx(_yield_take(pair_yields, trade_unit),
-			float(SourceForecast.format_magnitude(pair_trade))))
 
-	# 3z — THE INVESTMENT-RUNG TWIN of 3y (issue #397). The extractive rungs above have paid a pair since
-	# #337, but Tame and Corral rendered a FOOD-ONLY payoff face — a Wild Boar read `→ 1.48 food` beside
-	# its own extractive rungs' `0.74 food · 0.18 trade`, silently dropping a trade half the sim exports
-	# (`pastoralTrade` / `corralTrade`). A prepared herd pays the same two products a hunted one does, so
-	# the payoff obeys the same render-only-when-non-zero rule: both faces must name FOOD THEN TRADE.
+	# 3z — THE INVESTMENT-RUNG TWIN of 3y (issue #397). A prepared herd pays what a hunted one does, so
+	# the payoff obeys the same render-only-when-non-zero rule and both faces must name their FOOD.
+	# The pair briefly carried a trade clause each (`pastoralTrade` / `corralTrade`); arc #527 retired
+	# both wire fields with the axis, and the wire quotes a herd no per-rung material figure to put in
+	# their place — so a payoff face is a food figure again.
 	# Domestication is mid-ladder on purpose — Tame retires from the picker once the herd is fully tamed,
 	# and Corral is knowledge-gated below that, so a frame carrying BOTH rungs necessarily has one greyed.
 	# A gated rung still wears its payoff (that is the point of showing it), which this frame also proves.
@@ -1924,8 +1885,8 @@ func _unkillable_aurochs_herd() -> Dictionary:
 			table["%s:%d" % [String(stance), w]] = {
 				# `turns_to_fill == 0` and `bound == horizon` are ONE statement of the same fact and
 				# must move together: the projection never completed.
-				"turns_to_fill": 0, "delivers_food": true, "delivers_trade": false,
-				"animals_taken": 0, "delivered_food": 0.0, "delivered_trade": 0.0,
+				"turns_to_fill": 0, "delivers_food": true,
+				"animals_taken": 0, "delivered_food": 0.0,
 				"wasted_food": 0.0,
 				SourceForecast.TRIP_BOUND_KEY: SourceForecast.TRIP_BOUND_HORIZON,
 			}

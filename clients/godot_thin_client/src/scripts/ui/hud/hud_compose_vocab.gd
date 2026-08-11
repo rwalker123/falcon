@@ -170,11 +170,11 @@ const CREW_TARGET_FACE_SEPARATION := 5
 #   a. THE YIELDS ROW — the answer. A big tabular number beside a small uppercase unit, and NOTHING
 #      else (`2.34  FOOD`). The rate lives in the CAPTION, so a `/TURN` on the reading says it twice;
 #      and a `→ CAMP` destination tail earned its width only while trade was the odd account out,
-#      banked faction-wide — #381 routed it band-local like the other two, after which the suffix was
-#      three identical words on the readout's widest line (`labor-ui.md` → "A reading states its unit
-#      and NO destination"). The render-only-where-the-vector-pays rule is unchanged: a cash crop
-#      shows no food line and a wolf shows no food line at all, because `provisionsPerBiomass` is
-#      genuinely 0 there and a `0.00 food` reading would be false, not empty.
+#      banked faction-wide — #381 routed it band-local and #527 retired it outright, after which the
+#      suffix was identical words on the readout's widest line (`labor-ui.md` → "A reading states its
+#      unit and NO destination"). The render-only-where-the-vector-pays rule is unchanged: a hay-only
+#      meadow shows no food line at all, because `provisionsPerBiomass` is genuinely 0 there and a
+#      `0.00 food` reading would be false, not empty.
 #   a2. THE IMPROVEMENT DEAL — ONE labelled row a composed or offered rung adds beneath the take:
 #      what the finished rung will pay. It renders only where there is a rung to state, which is why
 #      it is a register rather than a fourth permanent row. **A SECOND, `WITHOUT THE BUILD` BASELINE
@@ -297,7 +297,7 @@ const HUNT_CREW_LABEL := "Hunters"
 const HERD_CREW_LABEL := "Herders"
 
 # A policy button carries its per-policy metric TWICE: the COMPACT product line on the SECOND row of
-# the button face (`0.96 food · 0.24 trade` — the first row is the rung's glyph + name) and the VERBOSE
+# the button face (`0.96 food · 0.40 fodder` — the first row is the rung's glyph + name) and the VERBOSE
 # full string in the tooltip (led by the policy name, and the only one of the two that spells "up
 # to …/turn"). Each `*_policy_takes` helper emits both as a `{compact, full}` pair.
 # The INVESTMENT rungs (Cultivate/Sow, Tame/Corral) wear a metric too, but it is not an immediate take
@@ -1026,7 +1026,7 @@ const CANCEL_SCOPE_ROLES := "roles"
 #       which is linear and exact, so the client lands on the number the sim would at ANY floor.
 #       With the cohort's levers that makes the LOCAL hunt preview pure arithmetic.
 #   the EXPEDITION's trip is ASKED FOR (`ForecastQuery` → `HuntTripForecastReply.at_composed`:
-#       {floor, party_workers, turns_to_fill, delivers_food, delivers_trade, …}), forward-simulated
+#       {floor, party_workers, turns_to_fill, delivers_food, …}), forward-simulated
 #       server-side for the exact band, kit, party and floor the sheet composed. A trip length is NOT
 #       a rate division: above the peak the ceiling is a *stock*, so the party strips the headroom in
 #       a turn or two and then crawls at the herd's regrowth trickle. A re-derived `carryCap / rate`
@@ -1037,11 +1037,11 @@ const CANCEL_SCOPE_ROLES := "roles"
 # because it is linear; a raid's trip has no closed form, and a hunt's TAKE is rounded to whole
 # animals (`floor(ceiling / bodyMass)`), which is not linear either. The client draws the curve; the
 # sim states the take.
-# (`delivers_food` WAS REDEFINED by #337 and no longer marks a denial mission: it now says the QUARRY
-# IS EDIBLE, with `delivers_trade` as its sibling, so a wolf reads `delivers_food = false,
-# delivers_trade = true` — pelts, no meat — and a raid at the bare floor delivers like any other. A
-# DENIAL raid is one that lands nothing in EITHER currency, which is a property of the SPECIES;
-# `SourceForecast.hunt_trip_forecast` owns that test.)
+# (`delivers_food` says the QUARRY IS EDIBLE (#337) rather than marking a denial mission, so a raid at
+# the bare floor delivers like any other. Its `delivers_trade` sibling went with arc #527's axis, so a
+# DENIAL raid is now one whose quarry pays no food — a property of the SPECIES;
+# `SourceForecast.hunt_trip_forecast` owns that test, and its header records what an inedible quarry
+# consequently reads as.)
 #
 # **THE THREE PRESET FLOORS ARE MARKS ON A DIAL, NOT A SET OF OPTIONS.** The floor is continuous, the
 # launch command accepts ANY value in `0.0..=1.0`, and a question carries whatever the chart was

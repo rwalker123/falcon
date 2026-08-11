@@ -118,8 +118,16 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 233 `assert OK` lines, 313 `: PASS` ones and ZERO `FAIL` ones, over
-91 frames.** **The three figures are MEASURED from a run, never summed** — band fission retired one
+**A clean run exits 0 and prints 225 `assert OK` lines, 310 `: PASS` ones and ZERO `FAIL` ones, over
+88 frames.** (It was 233 / 313 / 91 before arc #527 retired the `trade_goods` yield axis. **Three
+frames went with the band's Trade vitals row** — `band_panel_trade_expanded_left` /
+`band_panel_trade_zero` / `band_panel_trade_short_tier` — taking their three `assert OK` PAIRS and
+their `_assert_forage_trade_counted` / `_assert_trade_row_reads_zero` /
+`_assert_trade_row_absent_in_short_tier` helpers with them. **The three WORK-board frames were KEPT
+and RE-PURPOSED**: `band_panel_work_trade_rows` / `_inspector` / `_totals` keep their names and stage
+an inedible quarry, whose rows read `+0.00 /turn` because the wire states no rate for it — a frame
+that stopped asserting anything is worse than one that fails, so the states that could still say
+something real were re-pointed rather than deleted.) **The three figures are MEASURED from a run, never summed** — band fission retired one
 family of frames here and added another in the same merge this arc landed in, so two arcs' deltas
 added by hand is exactly how a tally stops matching its harness. (The retired **"start a life
 here"** arrival verb had five frames here — `band_panel_settle_offered` / `_withheld` / `_confirm` /
@@ -633,27 +641,33 @@ frame alone.
 `Label`-scoped assertion on either would find nothing and pass vacuously. It returns the whole PARSED
 line rather than a bool for the equality claim above.
 
-**Three fixture rules the denial tables must follow**, all because a fixture that breaks one makes the
+**Two fixture rules the denial tables must follow**, both because a fixture that breaks one makes the
 assertions decorative: a row's `delivered_food` is what the PACK holds and everything else killed is
 `wasted_food` (a raid that hauled its whole kill is a hunting raid wearing a denial outcome, and the
-waste readout would have nothing to state); **BOTH products come off ONE conversion of that same
-split**, so `delivered_trade` rides the carried share and `wasted_trade` the rest (the sim runs
-`hunt_yield.apply(take.wasted)` beside `hunt_yield.apply(take.carried)`, so a table stating a zero
-`wasted_trade` beside a large `wasted_food` is a herd no live server can produce); and a `repelled`
-table's kill counts are small but **non-zero** — a repelled party is outbred, not incapable.
+waste readout would have nothing to state); and a `repelled` table's kill counts are small but
+**non-zero** — a repelled party is outbred, not incapable.
 
-**The INEDIBLE table is the exception to the second rule and states the exception's own reason.**
-`_denial_trade_only_rows` hauls the WHOLE pelt yield and wastes nothing, because `carry_room_biomass`
-answers `NO_CARRY_BOUND` for a species paying no provisions — the pack is measured in provisions, so a
-quarry that pays none never fills it. Inheriting the boar's food-bound carry share there quoted a wolf
-pack losing three quarters of its hides to a pack it cannot fill. **The consequence for the waste pair
-is that a wolf fixture asserts nothing about it** — zero is honest there in both products — so
-`band_panel_compose_deny`'s EDIBLE boar, where the pack binds hard, is where the pair is proved.
+**A THIRD rule went with arc #527's retired account, and the reasoning is worth keeping.** Both
+products came off ONE conversion of that same split — `delivered_trade` rode the carried share and
+`wasted_trade` the rest, because the sim runs `hunt_yield.apply(take.wasted)` beside
+`hunt_yield.apply(take.carried)` — so a table stating a zero `wasted_trade` beside a large
+`wasted_food` was a herd no live server could produce. **The general rule survives the account: a
+fixture that states one half of a sim-side pair must state the other from the same split.**
+
+**The INEDIBLE table was the exception to that rule and states the exception's own reason.**
+`_denial_pelt_only_rows` hauls the whole kill and wastes nothing, because `carry_room_biomass` answers
+`NO_CARRY_BOUND` for a species paying no provisions — the pack is measured in provisions, so a quarry
+that pays none never fills it. **With the trade account retired that table has no product left to
+quote**, so its rows carry an all-zero food account and the frame's claim is the NEGATIVE one: no
+false `0.00 FOOD`, judged against the edible boar beside it. `band_panel_compose_deny`'s EDIBLE boar,
+where the pack binds hard, is where the waste clause itself is proved.
 
 **`_assert_denial_viable`'s take claim is an EQUALITY over the whole line**, not a `contains`: half
-the claim is what the sentence must not also say, and a waste stated food-only satisfies every
-containment test while silently dropping the hides. Sabotage-verified by dropping the trade half of
-`denial_waste_face`, which fails exactly that one assertion and prints both lines side by side.
+the claim is what the sentence must not also say, and a `contains` passes on a line carrying an extra
+clause. (It was written against a waste stated food-only, which satisfied every containment test while
+silently dropping the hides the retired trade half accounted; the equality form is what survives the
+retirement, and the expectation is composed from the VOCABULARY and the fixture's own arithmetic
+rather than re-derived through `denial_take_bbcode`.)
 
 **The TWO SPANS are asserted on different harnesses, and each names its own.** `band_panel_compose_deny`
 expects the launch clock — both ends of the band plus `DENIAL_OUTBOUND_TRAVEL_TURNS`, then the travel

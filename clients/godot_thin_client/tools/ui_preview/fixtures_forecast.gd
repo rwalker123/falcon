@@ -67,8 +67,9 @@ static func answer(hud: Node, request_id: int, ask: Dictionary) -> Dictionary:
 
 ## **THE PLATEAU, SCANNED OVER THE FIXTURE'S OWN PARTY AXIS.** The sim walks `1..=max` contiguously;
 ## a fixture table carries the sizes it was authored with, so this walks those. It scans the component
-## the QUARRY pays — an inedible species delivers 0 food at every size, and a food-only scan would
-## find no plateau and drop the stepper's cap.
+## the QUARRY pays. It read a `delivered_trade` fallback for an inedible species until arc #527
+## retired that account; such a species now delivers 0 at every size and the scan finds no plateau,
+## which is the honest reading of a raid with nothing to bring home.
 static func _useful_cap(table: Dictionary, floor_value: float) -> int:
 	var sampled := _nearest_floor(table, floor_value)
 	var rows := _rows_at_floor(table, sampled)
@@ -81,8 +82,8 @@ static func _useful_cap(table: Dictionary, floor_value: float) -> int:
 		var workers := int(row.get("party_workers", 0))
 		if workers <= 0:
 			continue
-		var delivered := float(row.get("delivered_food", 0.0)) if bool(row.get("delivers_food", false)) \
-			else float(row.get("delivered_trade", 0.0))
+		var delivered := float(row.get("delivered_food", 0.0)) \
+			if bool(row.get("delivers_food", false)) else 0.0
 		if delivered > previous:
 			previous = delivered
 			# A payload that has not risen ABOVE ZERO is not a plateau — a raid every size comes home

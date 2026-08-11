@@ -210,8 +210,8 @@ band's three consumable kits and the tiers they resolve to: `hunting_kit_durabil
 `sled_kit_durability` / `basket_kit_durability` (condition on equipment.json's 0-100 scale, `0` = dry)
 plus `hunter_attack` / `hunt_carry_per_worker_biomass` / `forage_carry_per_worker_biomass`. All six
 shipped on the wire with **no consumer here at all** — the third time this arc reproduced this crate's
-most-repeated bug — as did the labor assignment's forecast BAND (`actual_yield_low`/`_high`,
-`trade_yield_low`/`_high`, §6.4) and `HerdTelemetryState.durability` (§4.2/§6.5, the last term the
+most-repeated bug — as did the labor assignment's forecast BAND (`actual_yield_low`/`_high`, plus a
+`trade_yield_low`/`_high` pair arc #527 has since retired with its account, §6.4) and `HerdTelemetryState.durability` (§4.2/§6.5, the last term the
 combat gate needed). Eleven fields, thirty golden lines, no fixture edit: `decode_fixture.rs`'s
 SATURATION reaches an appended scalar automatically, so the only step an appended scalar needs here is
 the converter and a re-record.
@@ -250,11 +250,13 @@ than a signal off the worker, so a render never observes a half-applied answer.
 nothing, and that recapture is the expensive half of a turn. Nothing downstream may wait on a frame
 to render an answer; the reply is the whole of it.
 
-**THE WASTE IS A PAIR, AND BOTH HALVES ARE DECODED** — `wasted_trade` is the twin `delivered_trade`
-already had, and it rides `DenialRow` on the reply for the reason it rode the retired table: the sim
-prices both out of ONE `HuntYield::apply` over the wasted biomass, so a kill left on the range takes
-its hides with it. Decoding the food half alone reported a raid whose quarry pays pelts as wasting
-nothing — on the one mission whose entire readout is what it destroys and does not bring home.
+**RETIRED — the waste PAIR.** `wasted_trade` rode `DenialRow` as the twin `delivered_trade` already
+had, because the sim priced both out of ONE `HuntYield::apply` over the wasted biomass and decoding
+the food half alone reported a raid whose quarry pays pelts as wasting nothing — on the one mission
+whose entire readout is what it destroys and does not bring home. **Arc #527 retired the account**, so
+the reply carries `wasted_food` alone and the client's waste clause is a single figure. **The rule
+that put the pair there survives it**: an appended field that is one half of a sim-side pair must be
+decoded with its sibling, or a readout states half a fact and reads as a zero.
 
 **A `0` ON ANY TURN FIELD MEANS "not within the horizon on that end", never "immediately"**, and
 `outcome` is what the client renders instead of a blank — decode them together or the consumer cannot

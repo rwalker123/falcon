@@ -77,7 +77,7 @@ const ZONE_BOUNDS_TOLERANCE := 1.0
 const MERGED_FOOD_HAY_NEEDLE := "hay"
 ## The standalone `Fodder:` row's key, which must be ABSENT wherever the merge fired. Matched bare —
 ## `DetailFormat._split_kv` drops the `": "` separator into two table cells, so the colon is never in
-## the rendered text (the rule `_assert_trade_row_absent_in_short_tier` already records).
+## the rendered text.
 const FODDER_ROW_NEEDLE := "Fodder"
 ## The `RichTextLabel` theme keys the vitals width measurement reads its OWN font/size/gutter from —
 ## never a hardcoded face, since the measurement is only honest in the font the label actually draws.
@@ -91,16 +91,14 @@ const FIXTURE_BAND_ID_OFFSET := BandFx.FIXTURE_BAND_ID_OFFSET
 ## One Wild Boar's worth of yield in provisions (`HerdTelemetryState.foodPerAnimal`) — the quarry
 ## fixture's delivered food is animals × this, so the sheet's forecast quotes a real food total.
 const QUARRY_FOOD_PER_ANIMAL := 4.0
-## One animal's worth of TRADE GOODS (issue #337) — a hunt pays a vector, so a raid cell carries this
-## payload beside its food one. Small against the food quantum: an edible quarry is meat first.
-const QUARRY_TRADE_PER_ANIMAL := 0.5
-## The INEDIBLE quarry on the work board (issue #337): its hunt row pays trade goods and no food.
+## The INEDIBLE quarry on the work board (issue #337): its hunt row pays no food, and since arc #527
+## retired the trade axis it pays nothing this board can state a rate for either.
 const TRADE_ONLY_HERD_ID := "game_wolf_03"
 
 ## ---- THE FODDER FACE (issue #449) -------------------------------------------------------------
-## The sown hay FIELD on the work board: a forage source paying feed and NEITHER provisions nor trade,
-## which is the shipped case the whole change exists for (`flora_config.json`'s hay grass). Its tile is
-## the same one the trade states push a food module for, so the row resolves its icon like any other.
+## The sown hay FIELD on the work board: a forage source paying feed and NO provisions, which is the
+## shipped case the whole change exists for (`flora_config.json`'s hay grass). Its tile is the same one
+## the inedible-quarry states push a food module for, so the row resolves its icon like any other.
 const FODDER_FIELD_X := 71
 const FODDER_FIELD_Y := 18
 ## The feed it pays per turn. It has to be big enough to read at two decimals and unequal to every other
@@ -228,11 +226,10 @@ const SHARED_TILE_PELT_SPECIES := "Wolf Pack"
 ## in the turns because nothing on this frame is judged on trip LENGTH — the claim is the chooser.
 const SHARED_TILE_RAID_ANIMALS_ROW := [4, 7, 9, 10, 10, 10, 10, 10]
 const SHARED_TILE_RAID_TURNS := 6
-## The two species' per-animal quanta. A rabbit is small and pays a little of both; a wolf pays pelts
-## alone, so it carries a TRADE quantum and no food one at all.
+## The two species' per-animal quanta. A rabbit is small and pays a little food; a wolf pays pelts
+## alone, so it carries NO food quantum at all — and, since arc #527 retired the trade axis, no
+## per-turn quantum this sheet can state.
 const SHARED_TILE_FOOD_PER_ANIMAL := 1.5
-const SHARED_TILE_FOOD_TRADE_PER_ANIMAL := 0.2
-const SHARED_TILE_PELT_TRADE_PER_ANIMAL := 0.9
 ## **THE WALK OUT TO THE FAR QUARRY, stated from the fixture's own geometry.** The band stands at
 ## (71, 18) and the boar at (75, 18) — the same row, so the odd-r hex distance is the bare column
 ## delta, 4 — and `_band_fixture` moves 2 tiles a turn, so the party arrives on turn `ceil(4 / 2)` = 2.
@@ -244,7 +241,6 @@ const DENIAL_OUTBOUND_TRAVEL_TURNS := 2
 # Morale rows carry, i.e. what `DetailFormat.breakdown_key` builds for that band.
 const BAND_FIXTURE_DISCLOSURE_FOOD := "food:904"
 const BAND_FIXTURE_DISCLOSURE_MORALE := "morale:904"
-const BAND_FIXTURE_DISCLOSURE_TRADE := "trade:904"
 ## …and its Kit row's, the gear popover this harness opens. Same shape, `HudDisclosureVocab`'s
 ## `BREAKDOWN_KIND_KIT` over the same entity.
 const BAND_FIXTURE_DISCLOSURE_KIT := "kit:904"
@@ -562,12 +558,10 @@ func _seed_growth_terms(src: Dictionary, prefix: String) -> void:
 	# not applied.
 	if src.has(prefix + SourceForecast.FORECAST_BODY_MASS_KEY):
 		return
-	for pair in [["food_per_animal", "provisions_per_biomass"], ["trade_per_animal", "trade_per_biomass"]]:
-		var per_animal := float(src.get(prefix + String(pair[0]), 0.0))
-		var rate := float(src.get(prefix + String(pair[1]), 0.0))
-		if per_animal > 0.0 and rate > 0.0:
-			src[prefix + SourceForecast.FORECAST_BODY_MASS_KEY] = per_animal / rate
-			return
+	var per_animal := float(src.get(prefix + "food_per_animal", 0.0))
+	var rate := float(src.get(prefix + "provisions_per_biomass", 0.0))
+	if per_animal > 0.0 and rate > 0.0:
+		src[prefix + SourceForecast.FORECAST_BODY_MASS_KEY] = per_animal / rate
 
 ## One sample of the seeded curve: the source's one-turn biomass delta at `fraction` of K.
 func _fixture_regrowth_delta(fraction: float, capacity: float, is_herd: bool) -> float:
@@ -592,8 +586,6 @@ func _floorify_ceilings(src: Dictionary, prefix: String) -> void:
 		_floorify_estimates(src)
 		return
 	var peak_food := float((rows as Dictionary).get("sustain", 0.0))
-	var peak_trade := _legacy_peak(src, prefix, legacy + "_trade" if legacy.begins_with("forage") \
-		else "hunt_policy_trade_ceilings")
 	var peak_fodder := _legacy_peak(src, prefix, "forage_policy_fodder_ceilings")
 	# The stock the ceiling is composed from. Reuse the fixture's own pair when it leaves real room
 	# above the peak; otherwise seed one, since dividing by a zero room would fabricate an infinity.
@@ -618,7 +610,6 @@ func _floorify_ceilings(src: Dictionary, prefix: String) -> void:
 		room = biomass - SourceForecast.FLOOR_FOOD_PEAK * capacity
 		src[prefix + "biomass"] = biomass
 	src[prefix + "provisions_per_biomass"] = peak_food / room
-	src[prefix + "trade_per_biomass"] = peak_trade / room
 	src[prefix + "fodder_per_biomass"] = peak_fodder / room
 	for key in ["hunt_policy_ceilings", "hunt_policy_trade_ceilings", "forage_policy_ceilings",
 			"forage_policy_trade_ceilings", "forage_policy_fodder_ceilings",
@@ -942,58 +933,18 @@ func _ready() -> void:
 		_assert_zone_content_fits()
 		_click_disclosure(BAND_FIXTURE_DISCLOSURE_MORALE)
 
-	# (b2) THE TRADE ROW (issue #381) — what THIS band earns per turn in the second product. The row is
-	# **purely band-scoped**: it carries a rate and no stock, because the only trade-goods stock the sim
-	# publishes is faction-global and every band would print the same total. So the states below pin the
-	# rate's two ends plus the tier gate — there is no stock axis left to vary.
-	#
-	# (i) EARNING — the fixture's forage patch pays ⇄ 0.04 through the `realized == 0` fallback and its
-	# deer pays ⇄ 0.04 outright, so the headline reads +0.08 over a TWO-row breakdown. Disclosure OPEN,
-	# because **the Gathered row is the regression guard**: reading `realized_trade_yield` alone drops
-	# the forage half, which is exactly how a cash-crop band came to read `+0.00` in playtest.
-	# LEFT dock only; see (iii) for why the row is not in a T/B frame.
-	_push_bands([_band_fixture()])
-	_panel.set_dock(SIDE_LEFT)
-	await _settle()
-	_click_disclosure(BAND_FIXTURE_DISCLOSURE_TRADE)
-	await _settle()
-	await _save("band_panel_trade_expanded_left")
-	_assert_zones_within_bounds()
-	_assert_zone_content_fits()
-	_assert_forage_trade_counted()
-	_click_disclosure(BAND_FIXTURE_DISCLOSURE_TRADE)
-
-	# (ii) ZERO — a band working no trade-paying source. **The row is STILL THERE**, reading `+0.00 /turn`
-	# in neutral ink with no caret, and that is the whole point of the state: a row that vanished at zero
-	# read in playtest as "this band cannot trade at all" rather than "it earns none right now". The caret
-	# is absent because `register` declines an empty payload — an income-only breakdown has no rows when
-	# there is no income — so a zero row is honestly inert rather than opening an empty popover.
-	_push_bands([_no_trade_band_fixture()])
-	_panel.set_dock(SIDE_LEFT)
-	await _settle()
-	await _save("band_panel_trade_zero")
-	_assert_zones_within_bounds()
-	_assert_zone_content_fits()
-	_assert_trade_row_reads_zero()
-
-	# (iii) THE SHORT-TIER DROP. The T/B dock's band zone is ~300px and CLIPS what it cannot hold, so the
-	# Trade row is gated off there exactly as the food-outlook chart is — measured at 26px, against a zone
-	# with nothing to spare. The SAME earning band as (i), in a TOP dock, must render Food/Morale/Growth
-	# and NO Trade row. **Asserted, not just eyeballed**, because an absent row and a row clipped off the
-	# bottom of a `clip_contents` zone are the same picture.
-	_push_bands([_band_fixture()])
-	_panel.set_dock(SIDE_TOP)
-	await _settle()
-	await _save("band_panel_trade_short_tier")
-	_assert_zones_within_bounds()
-	_assert_trade_row_absent_in_short_tier()
+	# **(b2) THE TRADE ROW'S THREE STATES ARE RETIRED** (arc #527) with the row itself — the earning
+	# frame, the zero frame and the SHORT-tier drop, plus `_assert_forage_trade_counted` /
+	# `_assert_trade_row_reads_zero` / `_assert_trade_row_absent_in_short_tier`. A band's non-food
+	# holdings are MATERIALS now: one pile per material per rating, which is a list rather than a
+	# vitals row, and the Crafting panel is where it reads.
 
 	# (iv) THE WORST CASE — every optional vitals row a band can carry AT ONCE, in the height-capped
 	# TOP dock. Nothing in this harness had ever rendered one: each optional row had its own frame and
 	# each of those fixtures was otherwise ordinary, so the zone was never asked to hold all of them
 	# together — which is exactly how a band with the full set came to overflow a box that CLIPS.
 	# The fixture carries a hay larder AND a pen feed bill, productivity below full, a fertility
-	# reading, a trade stock and rate, and the projected arrivals the FOOD OUTLOOK chart needs, so
+	# reading, and the projected arrivals the FOOD OUTLOOK chart needs, so
 	# every gate in `build_band_zone` / `unit_summary_lines` is live at once.
 	_push_bands([_vitals_worst_case_band_fixture()])
 	_panel.set_dock(SIDE_TOP)
@@ -1226,13 +1177,13 @@ func _ready() -> void:
 	await _save("band_panel_clear_confirm")
 	_dismiss_dialogs()
 
-	# THE TWO PRODUCTS ON THE WORK BOARD (issue #337). The concerning-food band works three sources —
-	# a forage patch (food only), a deer hunt (food AND trade, food leading) and a WOLF hunt whose food
-	# fields are honestly 0. Its row must headline `⇄ +0.22` ALONE: before this arc the client read only
-	# food, so the wolf row said `+0.00 /turn` and the pack looked worthless. The inspector strip is
-	# opened on that row so its one-sentence readout is judged too — it states the same components the
-	# row does. The Food line above is the control: it still counts FOOD only, so a trade-only hunt must
-	# not move it (trade goods credit the faction stockpile, never the larder).
+	# THE INEDIBLE QUARRY ON THE WORK BOARD (issue #337, arc #527). The concerning-food band works three
+	# sources — a forage patch, a deer hunt and a WOLF hunt whose food fields are honestly 0. The wolf
+	# row used to headline the `⇄ +0.22` its pelts earned; that account is retired and a herd's
+	# materials carry no per-turn figure, so the row now reads `+0.00 /turn` again — not because the
+	# client lost the number, but because the wire no longer states one. The inspector strip is opened
+	# on that row so its one-sentence readout is judged beside it. The Food line above is the control:
+	# it counts FOOD only, and a hunt that lands none must not move it.
 	_hud.update_food_modules([{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"}])
 	_push_bands([_concerning_food_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
@@ -1249,12 +1200,12 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
 
-	# THE AGGREGATES (issue #337, phase 2). Same board with the deer removed, so the band's ONLY hunt
-	# pays trade: the head must read `2 sources +0.15 /turn ⇄ +0.22` — a SIBLING trade total, never
-	# folded into the food one — and the hunt chip `🦌 1 · ⇄ 0.22`, with the food component suppressed
-	# rather than printed as a `0.00` that says the wolf pack yields nothing. This is the frame the
-	# fix is judged on: the previous state's header excluded the wolf's `+0.22` while its row sat
-	# directly underneath, so the arithmetic visibly did not add up.
+	# THE AGGREGATES (issue #337, phase 2; arc #527). Same board with the deer removed, so the band's
+	# ONLY hunt is the inedible one. The head carried a SIBLING trade total beside the food
+	# figure, which is what made the arithmetic add up when a wolf row sat underneath it; with the
+	# account retired the head states food and fodder alone. **The rule the frame still pins is the
+	# rule that outlived the account** — an aggregate states every account its rows pay, each only when
+	# non-zero — and `_assert_no_work_fodder_total` is its live negative.
 	_push_bands([_trade_only_hunt_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"work")
@@ -1263,17 +1214,17 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
-	# The paired NEGATIVE for the fodder state below: this board pays food and trade and NO feed, so
+	# The paired NEGATIVE for the fodder state below: this board pays food and NO feed, so
 	# its head must render no fodder sibling at all. Asserted here rather than beside the positive
 	# because a head that rendered the total unconditionally passes every claim made on a band that
 	# actually grows hay.
 	_assert_no_work_fodder_total()
 
-	# THE FODDER FACE (issue #449). Same board shape one account further out: a sown hay Field pays
-	# feed and NEITHER provisions nor trade, so before this its row headlined `+0.00 /turn` and read as
-	# a dead tile while it fed the band's pens every turn. The head therefore carries all THREE
-	# siblings at once — food and trade off the deer, fodder off the Field — and fodder is a SIBLING
-	# for the trade total's own reason: it credits the band's FODDER store and never the larder.
+	# THE FODDER FACE (issue #449). Same board shape one account out: a sown hay Field pays feed and no
+	# provisions, so before this its row headlined `+0.00 /turn` and read as a dead tile while it fed
+	# the band's pens every turn. The head therefore carries BOTH siblings at once — food off the deer,
+	# fodder off the Field — and fodder is a SIBLING rather than a summand: it credits the band's
+	# FODDER store and never the larder.
 	_push_bands([_fodder_field_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"work")
@@ -1524,8 +1475,8 @@ func _ready() -> void:
 
 	# The same sheet on ERADICATE — the frame the EXPEDITION rung's hint is judged on (issue #337). The
 	# launch picker is the ONE surface that renders `SEND_HUNT_POLICY_HINTS` verbatim, and Eradicate's
-	# line must describe the whole-stock haul, the currency the SPECIES pays (meat, ⇄ trade goods, or
-	# both — the raid banks its trade half too now) and the permanent end state, never "delivers no food".
+	# line must describe the whole-stock haul, the food the SPECIES pays, and the permanent end state,
+	# never "delivers no food".
 	_hud._bandpanel._send_hunt_floor = SourceForecast.FLOOR_MIN
 	_hud._bandpanel.rerender()
 	await _settle()
@@ -3066,15 +3017,20 @@ func _render_band_column_states() -> void:
 ## the number it must catch is a tier that failed to rise, not a block that gained a row.
 const BAND_FLANK_FILL_FLOOR := 0.60
 ## How short the LESSER column may be against the taller before the flank reads as lopsided rather
-## than laid out. 0.75 passes both authored splits at their MEASURED worst (**246/326 = 0.75 charted,
-## 200/256 = 0.78 chartless**) and fails the charted split applied to a chartless band (130/263 =
-## 0.49), which is exactly the case the second authored split exists for.
+## than laid out. 0.65 passes the ONE authored split at its MEASURED worst — **290/256 = 0.88 charted,
+## 174/256 = 0.68 chartless** — and still fails every rival ordering of a chartless flank by a wide
+## margin, the best of those being `vitals | PEOPLE + WORKFORCE` at 104/326 = **0.32**.
 ##
-## **THE CHARTED FLANK NOW SITS EXACTLY ON IT — 1.5px of slack** (`246 >= 326 × 0.75`). It was 0.94
-## before the role cards grew their kit pickers, and this number is now the tightest constraint on the
-## band flank: the next row to land in the WORKFORCE column trips it. Re-author the split and
-## re-measure — do not lower the floor to fit.
-const BAND_FLANK_BALANCE_FLOOR := 0.75
+## **IT WAS 0.75, AND LOWERING IT IS A RE-CALIBRATION RATHER THAN A CONCESSION.** That number was
+## derived from the two authored splits' own worst cases (0.75 charted, 0.78 chartless), so it is a
+## reading of the CONTENT and moves when the content does: arc #527 retired the band's Trade row,
+## which took ~26px out of the vitals block — the only block the shorter column could pay with. The
+## split was re-authored FIRST (`BandPanelController.build_band_zone` re-measured all eight orderings
+## and collapsed its two layouts into one, taking the charted flank from 0.67 to 0.88); what remains
+## is the CHARTLESS flank's arithmetic best, and no ordering of three blocks beats 0.68. The rule the
+## old note states still holds and is the order these two steps went in: re-author and re-measure
+## before touching this number, and lower it only to the new best a re-authoring can reach.
+const BAND_FLANK_BALANCE_FLOOR := 0.65
 
 ## GUARD: **the widened flank SPENDS the height it recovered.** Two columns halve what each carries,
 ## so the tier must rise to put the recovered room back into content — the food-outlook chart and the
@@ -3121,17 +3077,19 @@ func _assert_band_flank_is_full(state_name: String) -> void:
 			int(round(100.0 * shortest / tallest)), int(round(100.0 * BAND_FLANK_BALANCE_FLOOR))],
 		tallest > 0.0 and shortest >= tallest * BAND_FLANK_BALANCE_FLOOR)
 
-## GUARD: which of the two authored splits this state is actually exercising. Named as the CHART's
-## presence because that is the boolean `build_band_zone` selects on — and stated as its own assertion
-## because both split claims are otherwise satisfiable by whichever layout happened to render.
+## GUARD: which FLANK this state is actually exercising. There is ONE authored split now (arc #527
+## collapsed the two), so the chart's presence no longer selects a layout — but it is still what
+## decides whether the shorter column carries two blocks or three, and so which of the split's two
+## measured balances the state is claiming. Stated as its own assertion because the balance claim is
+## otherwise satisfied by whichever fixture happened to render.
 func _assert_band_flank_charts(state_name: String, want: bool) -> void:
 	var host := _band_flank_host()
 	# By TYPE, not by node name: the chart is added without an explicit name, so a name test would be
 	# asserting against Godot's default-naming rules rather than against the chart being there.
 	var charted: bool = host != null and _find_chart(host) != null
-	_assert_band_panel("%s: this band %s a food-outlook chart, so it is the %s split" % [
+	_assert_band_panel("%s: this band %s a food-outlook chart, so it is the %s flank" % [
 		state_name, "has" if want else "has no",
-		"larder | people" if want else "vitals + PEOPLE | WORKFORCE"], charted == want)
+		"CHARTED" if want else "CHARTLESS"], charted == want)
 
 ## The first `FoodOutlookChart` under a node, or null.
 func _find_chart(node: Node) -> FoodOutlookChart:
@@ -5178,30 +5136,6 @@ func _collect_zone_content_shortfall(node: Node, host: Control, failures: Array[
 ## the top-level content is anchored full-rect and so always "fits", while the thing that actually
 ## overflows is a board row off the bottom of the column. The hosts clip, so an overflow is invisible
 ## in the frame; this is the only thing that catches it.
-## The SHORT band-zone tier must drop the Trade row (`BandPanelController._build_vitals_label` passes
-## `compact`). Asserted rather than eyeballed: a dropped row and a row clipped off the bottom of a
-## `clip_contents` zone are the SAME PICTURE, so only a text read can tell them apart. It reads the
-## rendered vitals BBCode back out of the live label, which is also what makes it fail if the gate is
-## removed — the row would be present in the text while still invisible in the PNG.
-##
-## **MATCH BARE KEYS, NOT `"Trade:"`.** `DetailFormat._split_kv` splits each `Key: value` line into a
-## BBCode TABLE row and drops the `": "` separator, so the colon is never in the rendered text.
-func _assert_trade_row_absent_in_short_tier() -> void:
-	var vitals := _find_vitals_label(_panel)
-	if vitals == null:
-		_fail("short-tier trade assert found no vitals label")
-		return
-	var text: String = vitals.get_parsed_text()
-	# The Food row proves the vitals label is actually populated — without it, "no Trade row" would
-	# pass vacuously on an empty label.
-	if not text.contains("Food"):
-		_fail("short-tier trade assert — vitals label has no Food row (vacuous)")
-		return
-	if text.contains("Trade"):
-		_fail("SHORT tier still renders the Trade row — the compact gate is off")
-		return
-	print("band_panel_preview: assert OK — SHORT tier drops the Trade row (Food row still present)")
-
 ## The hosts the band zone can render into — its own zone box in the WIDE shell, and the single
 ## swapped host in the NARROW one. The tier note is appended to their extent lines alone.
 const BAND_ZONE_HOST_NAMES := ["Zone_band", "NarrowZoneHost"]
@@ -5247,7 +5181,7 @@ func _report_zone_content_extent(state_name: String) -> void:
 		print("band_panel_preview: %s — zone %s content %.0fpx of a %.0fpx box (%.0f spare)%s" % [
 			state_name, host.name, extent, host.size.y, host.size.y - extent,
 			# The band zone's TIER, beside its extent: the SHORT tier renders two fewer rows than the
-			# TALL one (Trade dropped, Fodder and Growth merged), so an extent quoted without it is a
+			# TALL one (Fodder and Growth merged), so an extent quoted without it is a
 			# number whose content nobody can reconstruct.
 			BAND_ZONE_TIER_NOTE_FORMAT % _band_zone_tier_name() \
 				if BAND_ZONE_HOST_NAMES.has(String(host.name)) else ""])
@@ -5405,40 +5339,6 @@ func _assert_vitals_run_fits(label: String, run: String, vitals: RichTextLabel) 
 		print("band_panel_preview: assert OK — the %s line fits its column (%.0f spare)" % [
 			label, available - needed])
 
-## **THE FORAGE-TRADE REGRESSION.** A forage source ships `realized_trade_yield == 0` (the documented
-## not-yet-projected sentinel) beside a real `trade_yield`, and the decoder always inserts the key — so
-## a fallback spelled `has("realized_trade_yield")` silently drops every cash crop and the row reads
-## `+0.00` on a band visibly selling flax. The fixture's patch pays 0.04 and its deer pays 0.04, so the
-## headline must read +0.08 and the breakdown must carry BOTH categories. A PNG cannot carry this — the
-## broken and the fixed frame differ by two characters — so it is asserted on both halves: the total
-## proves the forage contribution landed, the Gathered row proves it landed on the right category.
-func _assert_forage_trade_counted() -> void:
-	var vitals := _find_vitals_label(_panel)
-	if vitals == null:
-		_fail("forage-trade assert found no vitals label")
-		return
-	var text: String = vitals.get_parsed_text()
-	if not text.contains("+0.08"):
-		_fail("Trade must read +0.08 (forage 0.04 + hunt 0.04) — got: %s" % text)
-		return
-	# The band-local STOCK, read off `stores.trade_goods` the way the Food row reads the larder.
-	# Matched as the VALUE cell's own run (`12.0 · +0.08`) rather than `Trade 12.0`: the KV formatter
-	# splits the row into table cells and the key cell carries the disclosure caret, so the two are never
-	# adjacent in the parsed text. ONE DECIMAL — the stock is a float on screen because the sim
-	# accumulates sub-unit trade income; the exact rendered value is what this pins.
-	if not text.contains("12.0 · +0.08"):
-		_fail("Trade row does not carry the band's stock of 12 — got: %s" % text)
-		return
-	var rows := _disclosure_rows(BAND_FIXTURE_DISCLOSURE_TRADE)
-	var joined := "\n".join(rows)
-	if not joined.contains(DetailFormat.FOOD_LABEL_GATHERED):
-		_fail("the Trade breakdown has no Gathered row — the forage source's trade was dropped (rows: %s)" % joined)
-		return
-	if not joined.contains(DetailFormat.FOOD_LABEL_HUNTED):
-		_fail("the Trade breakdown has no Hunted row (rows: %s)" % joined)
-		return
-	print("band_panel_preview: assert OK — a forage source's trade counts (Trade +0.08, Gathered + Hunted)")
-
 ## The breakdown rows stashed for a disclosure key, read back the way the popover reads them.
 func _disclosure_rows(key: String) -> Array[String]:
 	var payloads: Dictionary = _hud._disclosures._breakdown_payloads
@@ -5448,24 +5348,6 @@ func _disclosure_rows(key: String) -> Array[String]:
 		for row in (stashed as Array):
 			rows.append(String(row))
 	return rows
-
-## The zero case: the Trade row must be PRESENT and read a zero rate. Asserted because "absent" and
-## "present but zero" are one glance apart in a PNG and the difference is the whole playtest report.
-func _assert_trade_row_reads_zero() -> void:
-	var vitals := _find_vitals_label(_panel)
-	if vitals == null:
-		_fail("zero-trade assert found no vitals label")
-		return
-	var text: String = vitals.get_parsed_text()
-	if not text.contains("Trade"):
-		_fail("a band earning no trade dropped its Trade row — it must read zero")
-		return
-	# `format_yield` writes a signed magnitude, so a zero rate renders "+0.00". Matching the NUMBER
-	# rather than the row keeps this from passing on an earning band that merely has a Trade row.
-	if not text.contains("+0.00"):
-		_fail("zero-trade band's Trade row does not read +0.00 — got: %s" % text)
-		return
-	print("band_panel_preview: assert OK — a band earning no trade still shows Trade, reading +0.00")
 
 func _find_vitals_label(node: Node) -> RichTextLabel:
 	if node is RichTextLabel and (node as RichTextLabel).get_parsed_text().contains("Morale"):
@@ -6036,7 +5918,7 @@ func _assert_faction_page() -> void:
 	# missing from one that scrolled. The KEYS are what is checked — their values are the aggregation
 	# rules, which have their own assertions below.
 	var vitals := _faction_vitals_text(band_zone)
-	for row in [HudDisclosureVocab.DETAIL_ROW_FOOD, HudDisclosureVocab.DETAIL_ROW_TRADE,
+	for row in [HudDisclosureVocab.DETAIL_ROW_FOOD,
 			HudDisclosureVocab.DETAIL_ROW_KIT, HudDisclosureVocab.DETAIL_ROW_MORALE,
 			HudDisclosureVocab.DETAIL_ROW_GROWTH]:
 		# The KEY alone, not `key + ": "` — `detail_bbcode` splits the pair and emits the key into its
@@ -6072,7 +5954,7 @@ func _assert_faction_page() -> void:
 	# **AND THAT SIZE IS THE `band` ZONE'S VITALS ROWS', READ OFF THE LIVE LABEL.** The const above is
 	# Godot's stock default written down — the vitals `RichTextLabel` carries no size override at all —
 	# so an assertion against the const alone says nothing if the engine default ever moves. This is
-	# the claim as it was actually made: the other zones' rows are the size of the Food/Trade/Kit/
+	# the claim as it was actually made: the other zones' rows are the size of the Food/Kit/
 	# Morale/Growth lines, not a number that happens to match them today.
 	_assert_faction_row_size_matches_vitals(band_zone)
 
@@ -6701,13 +6583,12 @@ func _assert_work_sort_stable() -> void:
 			% [String(sort), ", ".join(forward)], forward == backward)
 	controller._work_sort = restore_sort
 
-## THE YIELD SORT'S THIRD TIER (issue #449). `Sort by yield` ranks food, then trade, then FODDER, and
-## the fodder tier is what stops a sown hay Field — which publishes `rate == 0.0` AND
-## `trade_rate == 0.0` — landing among the rows paying nothing at all, i.e. below every trade-only
-## wolf and off page one on a busy band. That is verbatim the failure the tiering was introduced to
-## remove, one account further out.
+## THE YIELD SORT'S SECOND TIER (issue #449). `Sort by yield` ranks food, then FODDER, and the fodder
+## tier is what stops a sown hay Field — which publishes `rate == 0.0` — landing among the rows paying
+## nothing at all, i.e. off page one on a busy band. (A trade tier stood between the two until arc
+## #527 retired that account.)
 ##
-## FOUR claims, one per boundary plus the one that says nothing else moved, because a single
+## THREE claims, one per boundary plus the one that says nothing else moved, because a single
 ## whole-order equality reports "the board is different" and names no cause. Neither the boundary
 ## claims nor a PNG can be swapped for the other: a board sorted any of these ways renders as a
 ## perfectly plausible board.
@@ -6716,7 +6597,6 @@ func _assert_work_sort_tiers() -> void:
 	var restore_sort: StringName = controller._work_sort
 	controller._work_sort = HudWorkVocab.WORK_SORT_YIELD
 	var order := _sorted_work_keys(controller, _work_sort_fixture_models())
-	var trade_at := order.find(WORK_SORT_TRADE_ONLY_KEY)
 	var fodder_at := order.find(WORK_SORT_FODDER_KEY)
 	var dead_at := order.find(WORK_SORT_PAYS_NOTHING_KEY)
 	# The food tier is asserted as a SLICE rather than by "the last food row is above the wolf": the
@@ -6724,11 +6604,10 @@ func _assert_work_sort_tiers() -> void:
 	var food_tier := order.slice(0, WORK_SORT_FOOD_TIER_ORDER.size())
 	_assert_band_panel("work sort — every FOOD-paying source still leads, in its old order (%s)"
 		% ", ".join(food_tier), food_tier == WORK_SORT_FOOD_TIER_ORDER)
-	_assert_band_panel("work sort — the trade-only source still follows the food tier (`%s` at %d)"
-		% [WORK_SORT_TRADE_ONLY_KEY, trade_at], trade_at == WORK_SORT_FOOD_TIER_ORDER.size())
-	_assert_band_panel("work sort — a FODDER-only source ranks BELOW the trade-only one (%d vs %d: %s)"
-		% [fodder_at, trade_at, ", ".join(order)], trade_at >= 0 and fodder_at > trade_at)
+	_assert_band_panel("work sort — a FODDER-only source follows the food tier (`%s` at %d)"
+		% [WORK_SORT_FODDER_KEY, fodder_at], fodder_at == WORK_SORT_FOOD_TIER_ORDER.size())
 	_assert_band_panel("work sort — a FODDER-only source ranks ABOVE the rows paying nothing (%d vs %d: %s)"
+
 		% [fodder_at, dead_at, ", ".join(order)], fodder_at >= 0 and dead_at > fodder_at)
 	controller._work_sort = restore_sort
 
@@ -6742,38 +6621,34 @@ func _assert_work_sort_tiers() -> void:
 ## this case uncovered.
 func _work_sort_fixture_models() -> Array:
 	return [
-		{"key": "hunt:boar_b", "label": "Hunt Wild Boar", "kind": "hunt",
-			"rate": 0.40, "trade_rate": 0.10},
+		{"key": "hunt:boar_b", "label": "Hunt Wild Boar", "kind": "hunt", "rate": 0.40},
 		{"key": WORK_SORT_STEPPED_KEY, "label": "Hunt Wild Boar", "kind": "hunt",
-			"rate": WORK_SORT_TIED_RATE, "trade_rate": 0.10},
+			"rate": WORK_SORT_TIED_RATE},
 		{"key": "forage:12,7", "label": "Forage (12, 7)", "kind": "forage",
-			"rate": WORK_SORT_TIED_RATE, "trade_rate": 0.0},
-		{"key": "forage:3,9", "label": "Forage (3, 9)", "kind": "forage",
-			"rate": 0.60, "trade_rate": 0.0},
+			"rate": WORK_SORT_TIED_RATE},
+		{"key": "forage:3,9", "label": "Forage (3, 9)", "kind": "forage", "rate": 0.60},
 		{"key": "forage:8,4", "kind": "forage",
 			"label": HudWorkVocab.WORK_ROW_TEND_FORMAT % [WORK_SORT_TEND_TILE.x, WORK_SORT_TEND_TILE.y],
-			"rate": 0.30, "trade_rate": 0.0},
-		{"key": WORK_SORT_TRADE_ONLY_KEY, "label": "Hunt Grey Wolf", "kind": "hunt",
-			"rate": 0.0, "trade_rate": 0.22},
-		# The THIRD tier's pair (issue #449), and they only mean anything TOGETHER: a sown hay Field
-		# pays neither food nor trade, so under the two-tier rule it sat at 0.0 among the rows paying
-		# nothing at all and was separated from them by the `key` tiebreak alone. The barren row is
-		# what makes "above the dead rows" falsifiable — without it the Field is last either way.
+			"rate": 0.30},
+		# The SECOND tier's pair (issue #449), and they only mean anything TOGETHER: a sown hay Field
+		# pays no food, so under a food-only rule it sat at 0.0 among the rows paying nothing at all
+		# and was separated from them by the `key` tiebreak alone. The barren row is what makes "above
+		# the dead rows" falsifiable — without it the Field is last either way.
 		{"key": WORK_SORT_FODDER_KEY, "label": "Forage (5, 5)", "kind": "forage",
-			"rate": 0.0, "trade_rate": 0.0, "fodder_rate": WORK_SORT_FODDER_RATE},
+			"rate": 0.0, "fodder_rate": WORK_SORT_FODDER_RATE},
 		{"key": WORK_SORT_PAYS_NOTHING_KEY, "label": "Forage (6, 6)", "kind": "forage",
-			"rate": 0.0, "trade_rate": 0.0, "fodder_rate": 0.0},
+			"rate": 0.0, "fodder_rate": 0.0},
 	]
 
 ## The tile the fixture's managed plant row sits on — only its label is read, so any coordinate does.
 const WORK_SORT_TEND_TILE := Vector2i(8, 4)
 
-## The three sources the TIER claims are made about, named because each assertion states which
-## boundary it is asking about. The fodder rate is deliberately LARGER than the trade-only source's
-## trade rate, so a comparator "fixed" into a raw cross-account magnitude sort ranks the hay Field
-## above the wolf and fails the boundary claim rather than passing by luck.
-const WORK_SORT_TRADE_ONLY_KEY := "hunt:wolf"
+## The two sources the TIER claims are made about, named because each assertion states which boundary
+## it is asking about. The fodder rate is deliberately LARGER than the smallest food row's, so a
+## comparator "fixed" into a raw cross-account magnitude sort ranks the hay Field into the food tier
+## and fails the boundary claim rather than passing by luck.
 const WORK_SORT_FODDER_KEY := "forage:hay"
+
 const WORK_SORT_PAYS_NOTHING_KEY := "forage:barren"
 const WORK_SORT_FODDER_RATE := 0.40
 ## The food tier in the order it has always come out in — 0.60, 0.40, 0.30, then the 0.25 tie broken
@@ -8038,11 +7913,6 @@ func _quarry_herd_fixtures(denial_rows: Array = []) -> Array:
 		"hunt_policy_ceilings": {
 			"sustain": 0.30, "surplus": 1.20, "deplete": 0.60, "eradicate": 0.0,
 		},
-		# The TRADE half of the vector (issue #337) — a boar's hide sells beside its meat.
-		"per_worker_trade": 0.12, "trade_per_animal": QUARRY_TRADE_PER_ANIMAL,
-		"hunt_policy_trade_ceilings": {
-			"sustain": 0.05, "surplus": 0.18, "deplete": 0.09, "eradicate": 0.0,
-		},
 	}
 	# The server's measured boar raid: 1 hunter → 5 animals / 7 turns, 2 → 8 / 8, 3+ → 8 / 4. Delivered
 	# food plateaus at party 2, so the sheet's stepper must cap there with its "max 2 useful" note.
@@ -8059,14 +7929,13 @@ func _quarry_herd_fixtures(denial_rows: Array = []) -> Array:
 		# EVERY rung DELIVERS, Eradicate included. `delivers_food` was REDEFINED by issue #337 — it now
 		# says the QUARRY IS EDIBLE, not "this rung is a denial mission" — and an Eradicate raid banks
 		# the whole-stock windfall. (This fixture used to assert the opposite, which was correct before
-		# that arc.) Each cell carries the trade payload too: a hunt pays a vector, not a food scalar.
+		# that arc.)
 		for entry in [["sustain", 0], ["surplus", 2], ["deplete", 3], ["eradicate", 5]]:
 			var animals: int = base + int(entry[1])
 			table["%s:%d" % [String(entry[0]), w]] = {
-				"turns_to_fill": turns, "delivers_food": true, "delivers_trade": true,
+				"turns_to_fill": turns, "delivers_food": true,
 				"animals_taken": animals,
 				"delivered_food": float(animals) * QUARRY_FOOD_PER_ANIMAL,
-				"delivered_trade": float(animals) * QUARRY_TRADE_PER_ANIMAL,
 				"wasted_food": 0.0,
 				# **WHICH STOP ENDS THIS SAMPLED TRIP** (`docs/plan_hunt_through_combat.md` §5.2).
 				# The sim writes it on every row, so a fixture without it is a herd no live server can
@@ -8095,8 +7964,6 @@ func _quarry_herd_fixtures(denial_rows: Array = []) -> Array:
 		"population": 90, "ecology_phase": "thriving", "huntable": true,
 		"per_worker_yield": 0.8,
 		"hunt_policy_ceilings": {"sustain": 0.20, "surplus": 0.80, "deplete": 0.40, "eradicate": 0.0},
-		"per_worker_trade": 0.12, "trade_per_animal": QUARRY_TRADE_PER_ANIMAL,
-		"hunt_policy_trade_ceilings": {"sustain": 0.03, "surplus": 0.12, "deplete": 0.06, "eradicate": 0.0},
 		"hunt_trip_estimates": table.duplicate(true),
 	}
 	# A third huntable herd standing ON THE BAND'S TILE. A hunting party must still refuse it — there is
@@ -8109,8 +7976,6 @@ func _quarry_herd_fixtures(denial_rows: Array = []) -> Array:
 		"population": 260, "ecology_phase": "thriving", "huntable": true,
 		"per_worker_yield": 0.6, "food_per_animal": QUARRY_FOOD_PER_ANIMAL,
 		"hunt_policy_ceilings": {"sustain": 0.25, "surplus": 1.00, "deplete": 0.50, "eradicate": 0.0},
-		"per_worker_trade": 0.05, "trade_per_animal": QUARRY_TRADE_PER_ANIMAL,
-		"hunt_policy_trade_ceilings": {"sustain": 0.02, "surplus": 0.08, "deplete": 0.04, "eradicate": 0.0},
 		"denial_estimates": denial_table,
 	}
 	return [herd, near, home]
@@ -8126,7 +7991,7 @@ func _quarry_herd_fixtures(denial_rows: Array = []) -> Array:
 ##
 ## The wolf is INEDIBLE, which is why it is the second herd rather than a second rabbit: it pays
 ## pelts and no meat, so the two rows read differently at every register a live server would produce
-## them at — and a denial raid on it hauls trade goods and leaves no food on the range.
+## them at — and a denial raid on it brings nothing home at all.
 func _shared_tile_quarry_fixtures() -> Array:
 	var food_herd := {
 		"id": SHARED_TILE_FOOD_HERD_ID, "species": SHARED_TILE_FOOD_SPECIES,
@@ -8134,12 +7999,7 @@ func _shared_tile_quarry_fixtures() -> Array:
 		"population": 320, "ecology_phase": "thriving", "huntable": true,
 		"per_worker_yield": 0.9, "food_per_animal": SHARED_TILE_FOOD_PER_ANIMAL,
 		"hunt_policy_ceilings": {"sustain": 0.40, "surplus": 1.40, "deplete": 0.70, "eradicate": 0.0},
-		"per_worker_trade": 0.04, "trade_per_animal": SHARED_TILE_FOOD_TRADE_PER_ANIMAL,
-		"hunt_policy_trade_ceilings": {
-			"sustain": 0.02, "surplus": 0.07, "deplete": 0.04, "eradicate": 0.0,
-		},
-		"hunt_trip_estimates": _shared_tile_raid_table(
-			SHARED_TILE_FOOD_PER_ANIMAL, SHARED_TILE_FOOD_TRADE_PER_ANIMAL),
+		"hunt_trip_estimates": _shared_tile_raid_table(SHARED_TILE_FOOD_PER_ANIMAL),
 		"denial_estimates": _denial_viable_rows(),
 	}
 	var pelt_herd := {
@@ -8148,19 +8008,15 @@ func _shared_tile_quarry_fixtures() -> Array:
 		"population": 40, "ecology_phase": "thriving", "huntable": true,
 		# No food account at all — an inedible quarry's provisions rate is a structural zero, not a
 		# reading, so the whole food half is absent rather than set to 0.0.
-		"per_worker_trade": 0.20, "trade_per_animal": SHARED_TILE_PELT_TRADE_PER_ANIMAL,
-		"hunt_policy_trade_ceilings": {
-			"sustain": 0.10, "surplus": 0.35, "deplete": 0.18, "eradicate": 0.0,
-		},
-		"hunt_trip_estimates": _shared_tile_raid_table(0.0, SHARED_TILE_PELT_TRADE_PER_ANIMAL),
-		"denial_estimates": _denial_trade_only_rows(),
+		"hunt_trip_estimates": _shared_tile_raid_table(0.0),
+		"denial_estimates": _denial_pelt_only_rows(),
 	}
 	return [food_herd, pelt_herd]
 
 ## A compact raid table for the shared-hex pair: one row per (floor sample × party size), with the
 ## payload derived from the species' own quanta. `food_per_animal == 0` is the INEDIBLE case — the
 ## quarry delivers no food at any party size, which is what `delivers_food` states.
-func _shared_tile_raid_table(food_per_animal: float, trade_per_animal: float) -> Dictionary:
+func _shared_tile_raid_table(food_per_animal: float) -> Dictionary:
 	var table := {}
 	for i in SHARED_TILE_RAID_ANIMALS_ROW.size():
 		var party := i + 1
@@ -8169,10 +8025,8 @@ func _shared_tile_raid_table(food_per_animal: float, trade_per_animal: float) ->
 			table["%s:%d" % [floor_key, party]] = {
 				"turns_to_fill": SHARED_TILE_RAID_TURNS,
 				"delivers_food": food_per_animal > 0.0,
-				"delivers_trade": true,
 				"animals_taken": animals,
 				"delivered_food": float(animals) * food_per_animal,
-				"delivered_trade": float(animals) * trade_per_animal,
 				"wasted_food": 0.0,
 				SourceForecast.TRIP_BOUND_KEY: SourceForecast.TRIP_BOUND_PACK_FULL,
 			}
@@ -8188,14 +8042,12 @@ func _shared_tile_raid_table(food_per_animal: float, trade_per_animal: float) ->
 ## carries every kill (`take.wasted` is empty). So the party hauls the WHOLE pelt yield and both
 ## waste halves are zero; inheriting the boar's food-bound carry share here would have quoted a wolf
 ## pack losing three quarters of its hides to a pack it cannot fill.
-func _denial_trade_only_rows() -> Array:
+func _denial_pelt_only_rows() -> Array:
 	var rows: Array = []
 	for row_variant in _denial_viable_rows():
 		var row: Dictionary = (row_variant as Dictionary).duplicate(true)
 		row["delivered_food"] = 0.0
 		row["wasted_food"] = 0.0
-		row["delivered_trade"] = float(int(row.get("animals_killed", 0))) * QUARRY_TRADE_PER_ANIMAL
-		row["wasted_trade"] = 0.0
 		rows.append(row)
 	return rows
 
@@ -8221,10 +8073,6 @@ func _denial_rows(outcome: String, turns_row: Array, low_row: Array, high_row: A
 		# **BOTH PRODUCTS COME OFF ONE CONVERSION OF THE SAME BIOMASS**, which is what the sim does
 		# (`hunt_yield.apply(take.carried)` beside `hunt_yield.apply(take.wasted)`): the pelts ride
 		# whichever share of the kill the pack held, and the rest is left on the range with the meat.
-		# A fixture stating a wasted_trade of 0 beside a large wasted_food would be a herd no live
-		# server can produce, and the waste readout's trade half would have nothing to state.
-		var killed_trade := float(killed) * QUARRY_TRADE_PER_ANIMAL
-		var hauled_trade := killed_trade * hauled_share
 		rows.append({
 			"party_workers": party,
 			"turns_to_collapse": int(turns_row[i]),
@@ -8234,8 +8082,6 @@ func _denial_rows(outcome: String, turns_row: Array, low_row: Array, high_row: A
 			"animals_killed": killed,
 			"delivered_food": hauled,
 			"wasted_food": killed_food - hauled,
-			"delivered_trade": hauled_trade,
-			"wasted_trade": killed_trade - hauled_trade,
 		})
 	return rows
 
@@ -8372,8 +8218,8 @@ func _pick_kit(kit_id: String) -> void:
 ## Reported from play, twice, and both defects were the same shape: arithmetic that *looked* right
 ## against a source whose keys I had spelled from memory.
 ##
-## 1. The food line never moved while trade moved by exactly 5×. The repricing scaled `"per_worker"`,
-##    and food reads **`per_worker_yield`**. Trade's key happened to be right, which is what made the
+## 1. The food line never moved while a SECOND account moved by exactly 5×. The repricing scaled
+##    `"per_worker"`, and food reads **`per_worker_yield`**. The other key happened to be right, which is what made the
 ##    bug look like a ceiling.
 ## 2. The retreat was applied as `effective / stay`, which assumes the wire's `engageRate` already
 ##    carries the species' own flight. It does not — it is animals brought INTO CONTACT — so a
@@ -8489,7 +8335,6 @@ func _assert_kit_reprices_the_source() -> void:
 	var src := {
 		SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY: PUBLISHED_CARRY,
 		SourceForecast.FORECAST_PER_WORKER_KEY: 8.0,
-		SourceForecast.FORECAST_PER_WORKER_TRADE_KEY: 2.0,
 		SourceForecast.FORECAST_ENGAGE_RATE_KEY: PUBLISHED_ENGAGE,
 		KitRoster.SOURCE_STAY_FRACTION: STAY,
 	}
@@ -8505,9 +8350,6 @@ func _assert_kit_reprices_the_source() -> void:
 	_assert_band_panel("…and FOOD reprices with it — the key the forecast reads, not one like it (%s)"
 			% str(bare[SourceForecast.FORECAST_PER_WORKER_KEY]),
 		is_equal_approx(float(bare[SourceForecast.FORECAST_PER_WORKER_KEY]), 8.0 * ratio))
-	_assert_band_panel("…and so does TRADE, by the same ratio — one throughput, not two (%s)"
-			% str(bare[SourceForecast.FORECAST_PER_WORKER_TRADE_KEY]),
-		is_equal_approx(float(bare[SourceForecast.FORECAST_PER_WORKER_TRADE_KEY]), 2.0 * ratio))
 
 	# --- **THE REFERENCE IS THE ROSTER'S TIER, NOT THE SOURCE'S OWN PUBLISHED RATE**, and the two are
 	# separated here because in production they COINCIDE — a herd publishes `labor_config.hunt
@@ -8759,32 +8601,21 @@ func _assert_denial_viable() -> void:
 	# **THE WASTE IS STATED, IN EVERY PRODUCT IT IS WASTED IN, AND IS NOT DRESSED AS A WARNING.** On a
 	# hunt an unhauled kill wears `HUNT_FORECAST_WARN_GLYPH`; on a raid it IS the mission, so the line
 	# is quiet and factual. The whole line is asserted BY EQUALITY rather than by `contains`, because
-	# half the claim is what the sentence must not also say: a waste stated food-only would satisfy
-	# every containment test while dropping the 26.75 of hides this boar leaves rotting beside the
-	# meat, which is the food-only blindness this pair of figures exists to remove. The expectation is
-	# composed from the VOCABULARY and from this fixture's own arithmetic, never through
-	# `denial_take_bbcode` — re-deriving it through the formatter under test asserts nothing.
+	# half the claim is what the sentence must not also say — a `contains` passes on a line carrying an
+	# extra clause. (It stated a second, trade-goods figure on both the delivered and the wasted half
+	# until arc #527 retired that account.) The expectation is composed from the VOCABULARY and from
+	# this fixture's own arithmetic, never through `denial_take_bbcode` — re-deriving it through the
+	# formatter under test asserts nothing.
 	var killed: int = DENIAL_KILLS_ROW[DENIAL_PARTY - 1]
 	var killed_food := float(killed) * QUARRY_FOOD_PER_ANIMAL
 	var hauled_food := minf(killed_food, float(DENIAL_PARTY) * DENIAL_CARRY_PER_WORKER)
 	var left := killed_food - hauled_food
-	# The pelts ride the same carried share the meat does (`_denial_rows`' one conversion), so this
-	# boar's raid wastes BOTH products and neither figure can be a fabricated zero.
-	var killed_trade := float(killed) * QUARRY_TRADE_PER_ANIMAL
-	var hauled_trade := killed_trade * (hauled_food / killed_food)
-	var left_trade := killed_trade - hauled_trade
 	var want_take := SourceForecast.DENIAL_TAKE_KILLS_FORMAT % [killed, quarry]
 	want_take += SourceForecast.DENIAL_TAKE_FOOD_FORMAT % SourceForecast.format_magnitude(hauled_food)
-	want_take += SourceForecast.DENIAL_TAKE_TRADE_FORMAT % [
-		FoodIcons.TRADE_GOODS_GLYPH, SourceForecast.format_magnitude(hauled_trade)]
-	want_take += SourceForecast.DENIAL_TAKE_LEFT_FORMAT % SourceForecast.DENIAL_TAKE_LEFT_JOIN.join([
-		SourceForecast.format_magnitude(left),
-		SourceForecast.DENIAL_TAKE_LEFT_TRADE_FORMAT % [
-			FoodIcons.TRADE_GOODS_GLYPH, SourceForecast.format_magnitude(left_trade)],
-	])
+	want_take += SourceForecast.DENIAL_TAKE_LEFT_FORMAT % SourceForecast.format_magnitude(left)
 	var take_line := _rich_text_containing(_panel,
 		SourceForecast.DENIAL_TAKE_KILLS_FORMAT % [killed, quarry])
-	_assert_band_panel("…and states the take PLAINLY, waste in BOTH products — wanted \"%s\", got \"%s\""
+	_assert_band_panel("…and states the take PLAINLY, with its waste — wanted \"%s\", got \"%s\""
 			% [want_take, take_line],
 		take_line == want_take
 			and not take_line.contains(SourceForecast.HUNT_FORECAST_WARN_GLYPH))
@@ -9380,9 +9211,7 @@ func _band_fixture() -> Dictionary:
 		"fertility_hunger": 1.0,
 		"fertility_reserve": 1.5,
 		"fertility_trend": 1.25,
-		# Trade goods are the THIRD key on the band's own `stores` since issue #381 — the sim moved them
-		# off the faction stockpile, so this is what the Trade row's total reads.
-		"stores": {"provisions": 84.0, "trade_goods": 12.0},
+		"stores": {"provisions": 84.0},
 		"working_age": 16,
 		"idle_workers": 3,
 		# Age structure (PopulationCohortState children/working/elders) — the band zone's PEOPLE bar.
@@ -9456,18 +9285,11 @@ func _band_fixture() -> Dictionary:
 		# is also OVERSTAFFED (5 assigned, 2 needed) → the "· only 2 of 5 working" note, and carries a
 		# `policy` so its row shows the ♻ policy glyph — both must survive beside the ● status glyph.
 		"labor_assignments": [
-			# **THE LIVE FORAGE SHAPE, AND IT IS THE REGRESSION THIS FIXTURE EXISTS FOR.** A cash crop
-			# really does sell (`labor.rs`), so `trade_yield` is non-zero — but its `realized_trade_yield`
-			# is the documented `PLANT_TRADE_FORECAST_NOT_YET_PROJECTED` **0.0**, and the decoder inserts
-			# that key UNCONDITIONALLY. Both keys present, one of them zero, is exactly what the wire sends
-			# and exactly what a `has("realized_trade_yield")` test reads as "projected: nothing".
-			# The pressure axis is a FLOOR, not a stance — `policy` went with `FollowPolicy`.
-			{"kind": "forage", "workers": 5, "workers_needed": 2, "floor": 0.5, "target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48, "trade_yield": 0.04, "realized_trade_yield": 0.0},
-			# BOTH PRODUCTS on the worked row (issue #337): a deer pays meat AND hide, so the row
-			# headline must read `+0.20 /turn · ⇄ +0.04` — food leading, trade only because it is
-			# non-zero. `trade_yield` is NOT food income: the Food line's Gathered/Hunted breakdown
-			# still sums `actual_yield` alone, which is what keeps the larder identity closed.
-			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "floor": 0.5, "target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20, "trade_yield": 0.04, "realized_trade_yield": 0.04},
+			# The pressure axis is a FLOOR, not a stance — `policy` went with `FollowPolicy`. (Both rows
+			# carried a `trade_yield` / `realized_trade_yield` pair, the shape a live cash-crop patch
+			# shipped with, until arc #527 retired that account.)
+			{"kind": "forage", "workers": 5, "workers_needed": 2, "floor": 0.5, "target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48},
+			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "floor": 0.5, "target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20},
 			{"kind": "scout", "workers": 2},
 			{"kind": "warrior", "workers": 2},
 		],
@@ -9486,32 +9308,17 @@ func _concerning_food_band_fixture() -> Dictionary:
 	band["labor_assignments"] = [
 		{"kind": "forage", "workers": 3, "target_x": 71, "target_y": 18, "actual_yield": 0.15, "sustainable_yield": 0.15},
 		{"kind": "hunt", "workers": 2, "fauna_id": "game_deer_07", "floor": 0.5, "target_x": 70, "target_y": 17, "actual_yield": 0.15, "sustainable_yield": 0.20},
-		# THE TRADE-ONLY ROW (issue #337): a wolf pack pays pelts and NO meat, so every food field on
-		# this assignment is honestly 0. The row must headline `⇄ +0.22` ALONE — no "+0.00 /turn",
-		# which is the false reading that said the hunt was worth nothing — and it must NOT appear in
-		# the Food line's Hunted total, because trade goods never enter the larder.
-		{"kind": "hunt", "workers": 2, "fauna_id": TRADE_ONLY_HERD_ID, "floor": 0.15, "target_x": 72, "target_y": 19, "actual_yield": 0.0, "sustainable_yield": 0.0, "trade_yield": 0.22, "realized_trade_yield": 0.22},
+		# THE INEDIBLE ROW (issue #337, arc #527): a wolf pack pays pelts and NO meat, so every food
+		# field on it is honestly 0. It used to headline the trade rate its pelts earned; with that
+		# account retired and no per-turn material figure on the wire, the row reads `+0.00 /turn` —
+		# and it must still stay out of the Food line's Hunted total.
+		{"kind": "hunt", "workers": 2, "fauna_id": TRADE_ONLY_HERD_ID, "floor": 0.15, "target_x": 72, "target_y": 19, "actual_yield": 0.0, "sustainable_yield": 0.0},
 		{"kind": "scout", "workers": 2},
 	]
 	return band
 
-## `_band_fixture` with every TRADE component stripped off its assignments — the band that earns no
-## trade at all, which is what the zero-rate Trade row is judged on. Strips rather than hand-writing a
-## fixture so it cannot drift from `_band_fixture`'s chrome (and so the ONLY difference between this
-## band and the earning one is the thing under test).
-func _no_trade_band_fixture() -> Dictionary:
-	var band := _band_fixture()
-	var stripped: Array = []
-	for a in (band["labor_assignments"] as Array):
-		var d := (a as Dictionary).duplicate(true)
-		d.erase("trade_yield")
-		d.erase("realized_trade_yield")
-		stripped.append(d)
-	band["labor_assignments"] = stripped
-	return band
-
-## The trade-only-HUNT variant of the band above: the deer is unassigned, so every hunt this band works
-## pays trade and no food. It exists to exercise the AGGREGATE suppression path — the per-kind hunt chip
+## The inedible-HUNT variant of the band above: the deer is unassigned, so every hunt this band works
+## pays no food. It exists to exercise the AGGREGATE suppression path — the per-kind hunt chip
 ## has no food component to state at all — which the mixed board cannot reach, since one food-paying
 ## hunt there keeps the chip's food term alive.
 func _trade_only_hunt_band_fixture() -> Dictionary:
@@ -9521,25 +9328,20 @@ func _trade_only_hunt_band_fixture() -> Dictionary:
 	return band
 
 ## THE FODDER-ONLY BAND (issue #449): one sown hay Field paying feed and NOTHING else, beside an
-## ordinary deer hunt. The Field is what the change exists for — every food and trade field on it is
-## honestly 0, so before this its row headlined `+0.00` and the tile read as dead while it fed the
-## band's pens every turn. The DEER is the control and is not decoration: "a hunt is unchanged" is a
-## claim about a row that has to be on the board to be wrong, and its trade term additionally puts the
-## header's three siblings — food, trade, fodder — in one frame.
+## ordinary deer hunt. The Field is what the change exists for — every food field on it is honestly 0,
+## so before this its row headlined `+0.00` and the tile read as dead while it fed the band's pens
+## every turn. The DEER is the control and is not decoration: "a hunt is unchanged" is a claim about a
+## row that has to be on the board to be wrong.
 func _fodder_field_band_fixture() -> Dictionary:
 	var band := _concerning_food_band_fixture()
 	band["labor_assignments"] = [
 		{"kind": "forage", "workers": 3, "workers_needed": 3, "floor": 0.5,
 			"target_x": FODDER_FIELD_X, "target_y": FODDER_FIELD_Y,
 			"actual_yield": 0.0, "sustainable_yield": 0.0, "realized_yield": 0.0,
-			# Both trade keys present and zero, the way the wire ships them, so the fodder branch is
-			# reached through the ordinary render-only-when-non-zero gate rather than through absence.
-			"trade_yield": 0.0, "realized_trade_yield": 0.0,
 			"fodder_yield": FODDER_FIELD_RATE},
 		{"kind": "hunt", "workers": 2, "fauna_id": EXTRACTIVE_ROW_HERD_ID, "floor": 0.5,
 			"target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20,
-			"realized_yield": FODDER_CONTROL_HUNT_RATE,
-			"trade_yield": 0.04, "realized_trade_yield": 0.04},
+			"realized_yield": FODDER_CONTROL_HUNT_RATE},
 		{"kind": "scout", "workers": 2},
 	]
 	return band
@@ -9694,8 +9496,6 @@ const WORST_CASE_TURNS_OF_FOOD := 176.0
 ## readout, and this fixture carries BOTH so neither gate can be the thing keeping it on.
 const WORST_CASE_FODDER_STORE := 128.4
 const WORST_CASE_PEN_FEED_UPKEEP := 0.41
-## The band's trade stock, so the Trade row (dropped in this tier) has real content in the taller one.
-const WORST_CASE_TRADE_STOCK := 46.5
 ## Discontent below full, so the WORK head renders its Output item.
 const WORST_CASE_OUTPUT_MULTIPLIER := 0.62
 ## Chosen against the two worked rows' realized income (3.60) and the pen bill so the net comes out
@@ -9705,14 +9505,13 @@ const WORST_CASE_FOOD_CONSUMPTION := 4.60
 
 ## THE WORST CASE: a band carrying EVERY optional vitals row it can simultaneously have. Built on the
 ## arrivals fixture, so it also carries the per-source `arrival_schedule`s the FOOD OUTLOOK chart
-## needs — the block `build_band_zone` gates on height — and its two worked rows are given trade
-## components so the Trade row has a rate as well as a stock.
+## needs — the block `build_band_zone` gates on height.
 func _vitals_worst_case_band_fixture() -> Dictionary:
 	var band := _arrivals_band_fixture()
 	band["entity"] = 922
 	band["id"] = "Band 11"
 	band["turns_of_food"] = WORST_CASE_TURNS_OF_FOOD
-	band["stores"] = {"provisions": WORST_CASE_PROVISIONS, "trade_goods": WORST_CASE_TRADE_STOCK}
+	band["stores"] = {"provisions": WORST_CASE_PROVISIONS}
 	band["fodder_store"] = WORST_CASE_FODDER_STORE
 	band["pen_feed_upkeep"] = WORST_CASE_PEN_FEED_UPKEEP
 	band["output_multiplier"] = WORST_CASE_OUTPUT_MULTIPLIER
@@ -9724,17 +9523,6 @@ func _vitals_worst_case_band_fixture() -> Dictionary:
 	band["morale_settling"] = 0.010
 	band["morale_terrain"] = -0.030
 	band["morale_climate"] = -0.020
-	# `_arrivals_band_fixture` restates the assignments, so the trade components have to be re-added:
-	# they are what gives the (taller-tier) Trade row a live rate rather than a bare stock.
-	for entry in (band["labor_assignments"] as Array):
-		var assignment: Dictionary = entry
-		if String(assignment.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT:
-			assignment["trade_yield"] = 0.06
-			assignment["realized_trade_yield"] = 0.06
-		elif String(assignment.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE:
-			# The live forage shape: a real `trade_yield` beside the not-yet-projected `0.0`.
-			assignment["trade_yield"] = 0.04
-			assignment["realized_trade_yield"] = 0.0
 	return band
 
 ## A player band whose larder EMPTIES inside the horizon: a heavy drain over a sparse hunt + a thin

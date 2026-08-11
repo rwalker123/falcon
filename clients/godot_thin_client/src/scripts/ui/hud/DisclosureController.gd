@@ -142,11 +142,6 @@ func _is_concerning(kind: String, band: Dictionary) -> bool:
             return DetailFormat.food_is_concerning(band)
         HudDisclosureVocab.BREAKDOWN_KIND_GROWTH:
             return DetailFormat.growth_is_concerning(band)
-        HudDisclosureVocab.BREAKDOWN_KIND_TRADE:
-            # Trade is NEVER concerning: there is no trade analogue of starvation — nothing consumes
-            # trade goods, so the stock cannot drain and the flow cannot go negative. Answered
-            # explicitly rather than falling through to the morale verdict by accident.
-            return false
         HudDisclosureVocab.BREAKDOWN_KIND_KIT:
             # A kit that has RUN OUT is concerning; one merely wearing down is not. There is no
             # replenishment path, so the step down is permanent — the caret is the one warning the
@@ -185,27 +180,10 @@ func food_breakdown_lines(band: Dictionary) -> Array[String]:
         lines.append(DetailFormat.food_breakdown_row(-raid_forfeit, DetailFormat.FOOD_LABEL_RAID_FORFEIT))
     return lines
 
-## The category breakdown sub-lines under Trade — the same two INCOME rows the Food breakdown opens
-## with (`    ▲ +0.48  Gathered` / `    ▲ +0.12  Hunted`), reusing `FOOD_LABEL_GATHERED` /
-## `FOOD_LABEL_HUNTED` because they name the same two categories of worked source, not the same
-## product.
-##
-## **INCOME-ONLY — every row is ▲, and that is the whole difference from Food.** Trade goods have no
-## consumer: nothing eats them and no pen is fed on them, so there is no Eaten/Pen-feed/Lost-to-raids
-## analogue and no debit row exists to write. The rows therefore sum to the headline directly.
-##
-## Both rows gate on `has_component` — the DISPLAY floor — where the Food rows above gate on the
-## sim-side `FOOD_FLOW_MIN`. A trade rate is small enough often enough (one forager on a staple patch
-## earns ~0.003/turn) that the finer floor would list rows reading `▲ +0.00 Gathered`.
-func trade_breakdown_lines(band: Dictionary) -> Array[String]:
-    var lines: Array[String] = []
-    var gathered := DetailFormat.sum_realized_trade(band, SourceForecast.LABOR_KIND_FORAGE)
-    if SourceForecast.has_component(gathered):
-        lines.append(DetailFormat.food_breakdown_row(gathered, DetailFormat.FOOD_LABEL_GATHERED))
-    var hunted := DetailFormat.sum_realized_trade(band, SourceForecast.LABOR_KIND_HUNT)
-    if SourceForecast.has_component(hunted):
-        lines.append(DetailFormat.food_breakdown_row(hunted, DetailFormat.FOOD_LABEL_HUNTED))
-    return lines
+## **`trade_breakdown_lines` IS RETIRED** (arc #527) with the Trade row it opened. It itemized the
+## band's trade income by category (Gathered / Hunted); the account it summed no longer exists, and
+## the materials that replaced it are held as batches rather than earned as a per-turn rate a
+## category row could sum.
 
 ## **EVERY ITEM THE BAND CARRIES, EACH BESIDE THE ROLE IT SETS**
 ## (`docs/plan_hunt_through_combat.md` §4.8) — the Kit row's breakdown, and the only place a band's

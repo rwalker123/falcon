@@ -163,14 +163,17 @@ added), and it is proven non-vacuous by dropping the second field again — whic
 **The forage-vector states (#426)** — `forage_three_accounts` / `forage_three_accounts_overdraw` /
 `forage_dead_season`, built on `_hay_meadow_tile_fixture` / `_dead_season_tile_fixture`. They are
 the first forage fixtures to pay anything but provisions, and both write their per-policy ROWS out
-by hand rather than taking `BaseFx.seed_forage_rows`' derivation, which seeds trade and fodder to 0
-by design — the "genuinely non-derivable row" case that helper's own docstring names.
+by hand rather than taking `BaseFx.seed_forage_rows`' derivation, which seeds the non-food accounts
+to 0 by design — the "genuinely non-derivable row" case that helper's own docstring names.
 
 **The hay meadow's two accounts bind DIFFERENTLY on purpose** (food is slow to gather off ground
 that carries plenty, hay comes in fast off a meadow that regrows little), which is what makes a
 per-account `min(w × per_worker, ceiling)` and a per-account overdraw verdict observably different
-from ones applied to a total; and its TRADE column is deliberately non-monotone, `Deplete` alone
-carrying the ×4 market markup. Eight assertions ride them, each sabotage-verified to fail.
+from ones applied to a total. **Its third account was TRADE**, retired with the axis by arc #527, so
+these fixtures carry food and fodder alone. (Its column was once deliberately non-monotone — `Deplete`
+carried a ×4 market markup that put its cell above Eradicate's — and the harvest-floor arc had already
+retired that markup before the account went, since a deeper floor earns more only by taking more
+BIOMASS.) Eight assertions ride them, each sabotage-verified to fail.
 
 **The ZERO-CREW pairs** — `forage_unstaffed` / `forage_unassign` and their hunt twins
 **`herd_hunt_unstaffed` / `herd_hunt_unassign`** — are judged as pairs, never singly: a crew of 0 is
@@ -551,7 +554,10 @@ built from the code under test can only agree with itself. **They are the SIM's 
 from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
 payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-**A clean run is 296 frames / 827 `PASS`, exit 0.** **Twelve** of those frames are the Materials &
+**A clean run is 296 frames / 824 `PASS`, exit 0.** (It was 827 before arc #527 retired the
+`trade_goods` yield axis — three claims went with the account; **no frame was added or removed**, and
+the crop-picker frames listed under `land-readouts.md` → "WHAT A CASH CROP PAYS, PER MATERIAL" moved
+in place as their basket rows swapped a trade scalar for per-material clauses.) **Twelve** of those frames are the Materials &
 Crafting chapter's: the ledger's own frame, its reserved-edge / event-bar / band-dock / co-edge /
 collapsed variants, the two-tier and folded group heads, and the two stopped benches — the crew that
 walked off and the store that cannot cover the next draw. **The figure is

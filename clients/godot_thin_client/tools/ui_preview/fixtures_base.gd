@@ -53,11 +53,11 @@ const LEGACY_STANCE_FLOORS := {
 ##
 ## Deriving the rows here rather than hand-writing them at ~30 fixture sites keeps each fixture naming
 ## its numbers ONCE, in the readable scalar form its comments explain, and makes the two
-## representations unable to disagree. A state that wants a genuinely NON-derivable row (a trade-paying
-## or fodder-paying tile) overwrites the relevant dict after calling this.
+## representations unable to disagree. A state that wants a genuinely NON-derivable row (a
+## fodder-paying tile) overwrites the relevant dict after calling this.
 ##
-## Trade and fodder default to 0 — the render-only-when-non-zero rule means every existing frame is
-## then byte-identical, which is exactly what a reseeding pass must not disturb.
+## Fodder defaults to 0 — the render-only-when-non-zero rule means every existing frame is then
+## byte-identical, which is exactly what a reseeding pass must not disturb.
 ##
 ## **THE `patch_ceiling_*` KEYS IT READS ARE A FIXTURE-AUTHORING SHORTHAND, NOT WIRE KEYS, AND THIS
 ## ERASES THEM** (#426). The six flat scalars they are named after are retired `(deprecated)` wire
@@ -73,14 +73,12 @@ static func seed_forage_rows(tile: Dictionary) -> Dictionary:
 	# `seed_forage_rows`. Reading only the scalars would silently zero every account the second caller
 	# did NOT restate.
 	var peak_food := float(tile.get("patch_ceiling_sustain", 0.0))
-	var peak_trade := 0.0
 	var peak_fodder := 0.0
 	if tile.has("patch_provisions_per_biomass"):
 		var prior_room := float(tile.get("patch_biomass", 0.0)) \
 			- SourceForecast.FLOOR_FOOD_PEAK * float(tile.get("patch_carrying_capacity", 0.0))
 		if peak_food <= 0.0:
 			peak_food = float(tile["patch_provisions_per_biomass"]) * prior_room
-		peak_trade = float(tile.get("patch_trade_per_biomass", 0.0)) * prior_room
 		peak_fodder = float(tile.get("patch_fodder_per_biomass", 0.0)) * prior_room
 	# **THE STOCK THE CEILING IS COMPOSED FROM.** A fixture states a ceiling; the wire states the terms
 	# a ceiling is built out of, so this reverses the arithmetic the client now does — pinning each
@@ -97,14 +95,12 @@ static func seed_forage_rows(tile: Dictionary) -> Dictionary:
 	# positive; what a dead season zeroes is the crew's throughput and the standing crop. Zeroing the
 	# RATE instead would make the patch read as one the wire never described, which is the opposite of
 	# the state.
-	if peak_food <= 0.0 and peak_trade <= 0.0 and peak_fodder <= 0.0:
+	if peak_food <= 0.0 and peak_fodder <= 0.0:
 		tile["patch_biomass"] = SourceForecast.FLOOR_FOOD_PEAK * capacity
 		tile["patch_provisions_per_biomass"] = BARREN_PATCH_PER_BIOMASS
-		tile["patch_trade_per_biomass"] = 0.0
 		tile["patch_fodder_per_biomass"] = 0.0
 	else:
 		tile["patch_provisions_per_biomass"] = peak_food / room
-		tile["patch_trade_per_biomass"] = peak_trade / room
 		tile["patch_fodder_per_biomass"] = peak_fodder / room
 	# **THE TWO BUILD DIPS ARE FRACTIONS** (issue #442). `patch_ceiling_cultivate` /
 	# `patch_ceiling_sow` remain the fixture-authoring shorthand — a fixture states the dip as the

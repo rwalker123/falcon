@@ -290,8 +290,8 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# forecast field is — each describes live patch state a remembered tile does not know — and
 	# redacting them is also what keeps a remembered tile reading "no forecast" rather than a stale
 	# one: `SourceForecast.forecast_is_known` reads the vector's PRESENCE, so the answer comes for free.
-	"patch_provisions_per_biomass", "patch_trade_per_biomass", "patch_fodder_per_biomass",
-	"patch_tended_trade", "patch_tended_fodder", "patch_field_trade", "patch_field_fodder",
+	"patch_provisions_per_biomass", "patch_fodder_per_biomass",
+	"patch_tended_fodder", "patch_field_fodder",
 	# The two build DIPS, as fractions (#442). They are patch CONFIG rather than patch state — the
 	# fraction does not move with biomass — but they are redacted with the rest of the payload for the
 	# reason `patch_sow_site_refusal` is: they are only ever read to compose the improvement forecast,
@@ -2723,12 +2723,11 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# `SourceForecast` "the wire describes this source" apart from "the source pays nothing at this
 		# floor" — the #426 distinction, now answered by a rate rather than a row.
 		info["patch_provisions_per_biomass"] = float(patch.get("provisions_per_biomass", 0.0))
-		info["patch_trade_per_biomass"] = float(patch.get("trade_per_biomass", 0.0))
 		info["patch_fodder_per_biomass"] = float(patch.get("fodder_per_biomass", 0.0))
-		# The two investment rungs' non-food payoff twins, each quoted at ITS OWN rung (#433).
-		info["patch_tended_trade"] = float(patch.get("tended_trade", 0.0))
+		# The two investment rungs' FODDER payoff twins, each quoted at ITS OWN rung (#433). Their
+		# `*_trade` siblings went with arc #527's yield axis; a cash crop's payoff is now a per-material
+		# vector on the COMPOSITION entry, which travels whole in `patch_composition`.
 		info["patch_tended_fodder"] = float(patch.get("tended_fodder", 0.0))
-		info["patch_field_trade"] = float(patch.get("field_trade", 0.0))
 		info["patch_field_fodder"] = float(patch.get("field_fodder", 0.0))
 		# THE TWO BUILD DIPS, AS FRACTIONS (#442) — the factor applied while a crew builds that rung.
 		# **It multiplies the CREW, not the ceiling** (docs/plan_harvest_floor.md §3.1): dipping the

@@ -980,7 +980,7 @@ static func build_floor_picker(
         #   • they rank the presets BACKWARDS from the decision they annotate. `Take everything` reads
         #     twice `Best harvest` because it frees twice the standing stock, while in the long run it
         #     pays ~nothing and `Best harvest` pays the peak forever;
-        #   • they are in FOOD/TRADE/FODDER units directly above a chart whose axis is BIOMASS, with
+        #   • they are in FOOD/FODDER units directly above a chart whose axis is BIOMASS, with
         #     nothing relating the two;
         #   • and they are worker-independent, so they alone sit still while the whole sheet under
         #     them moves with the stepper.
@@ -1055,9 +1055,9 @@ static func build_floor_chart(model: Dictionary, on_change: Callable) -> VBoxCon
     return block
 
 ## **THE EXPEDITION'S READOUT — the same box, the same three registers, a different question.** The
-## branch used to answer with one wrapped bbcode sentence carrying five facts (the animals, the
-## turns, the split, the food, the trade and the waste), beside a local sheet that laid the same
-## kinds of fact out in a bounded well. Two sheets on one panel, reading nothing alike.
+## branch used to answer with one wrapped bbcode sentence carrying every fact at once (the animals,
+## the turns, the split, the food and the waste), beside a local sheet that laid the same kinds of
+## fact out in a bounded well. Two sheets on one panel, reading nothing alike.
 ##
 ## What must NOT carry over is the local readout's PER-TURN framing: the header
 ## (`EXPEDITION_TRIP_ROW_HEADER`), the absent `now → after` on every row, and a verdict about the
@@ -1107,11 +1107,11 @@ static func mount_trip_readout(parent: VBoxContainer, trip: Dictionary, quarry: 
 ## because a body is not an account. It borrows the `≈` FACE vocabulary and deliberately not the
 ## `/turn` UNIT one: this is a whole-trip count, and the header above already says so.
 ##
-## The food and trade rows go through `SourceForecast.yield_rows`, so the render-only-where-the-
-## vector-pays rule keeps one definition — a wolf raid states pelts and no `0 food`, an edible quarry
-## with no trade states food alone. `YIELD_ACCOUNT_NONE` as the zero account means NO row is
-## synthesised when both are empty; that state cannot arrive here anyway (it is `empty`, and the
-## caller took the sentence branch), so a fabricated zero would be a reading of nothing.
+## The food row goes through `SourceForecast.yield_rows`, so the render-only-where-the-vector-pays
+## rule keeps one definition. `YIELD_ACCOUNT_NONE` as the zero account means NO row is synthesised
+## when it is empty; that state cannot arrive here anyway (it is `empty`, and the caller took the
+## sentence branch), so a fabricated zero would be a reading of nothing. (A trade row rode beside the
+## food one until arc #527 retired that account.)
 ##
 ## No `after` on any row: a trip has no holding state to arrow toward.
 static func _trip_yield_rows(trip: Dictionary, quarry: String) -> Array[Dictionary]:
@@ -1123,8 +1123,7 @@ static func _trip_yield_rows(trip: Dictionary, quarry: String) -> Array[Dictiona
         YIELD_ROW_UNIT: quarry,
     }]
     rows.append_array(SourceForecast.yield_rows(
-        float(trip.get("food", 0.0)), float(trip.get("trade", 0.0)), 0.0,
-        SourceForecast.YIELD_ACCOUNT_NONE))
+        float(trip.get("food", 0.0)), 0.0, SourceForecast.YIELD_ACCOUNT_NONE))
     return rows
 
 ## **THE TWO CREW TARGETS** (`docs/plan_harvest_floor.md` §7.6) — the distinction the rate model never
@@ -1400,7 +1399,7 @@ const IMPROVEMENT_DEAL_ROW_VALUE := "value"
 
 ## **THE IMPROVEMENT DEAL** — the readout's register between the take and the verdict, and it is
 ## exactly ONE labelled row: what the rung on the table will pay once it stands
-## (`ONCE TENDED  1.39 food · 0.38 trade`).
+## (`ONCE TENDED  1.39 food · 0.38 fodder`).
 ##
 ## The key wears the readout's own small-print uppercase — the same `_readout_unit_label` treatment
 ## the yields row gives an ACCOUNT, because a term of the deal is read exactly as an account's unit

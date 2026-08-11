@@ -369,17 +369,16 @@ static func equipped_tier(kits: Array, axis_key: String) -> float:
 ## typed out here.**
 ##
 ## Spelling them by hand is how the first version shipped broken: it scaled `"per_worker"`, and the
-## key food actually reads is `per_worker_yield`. Trade repriced, food did not, and the sheet quoted
-## a five-fold trade change beside an unmoved food line. A literal cannot be wrong in a way the
+## key food actually reads is `per_worker_yield`. One account repriced, food did not, and the sheet
+## quoted a five-fold change beside an unmoved food line. A literal cannot be wrong in a way the
 ## compiler or a rename would catch; a constant reference can.
 ##
 ## **`per_worker_biomass` carries more than its own account.** On the forage web `forecast_inputs`
-## DERIVES trade and fodder from it (`carry × <account>_per_biomass`), so scaling it reprices those
-## two for free; on the hunt web trade is published in its own right and needs its own entry.
+## DERIVES fodder from it (`carry × fodder_per_biomass`), so scaling it reprices that account for
+## free. (A third entry rode this list for the retired trade axis, arc #527.)
 const SOURCE_PER_WORKER_KEYS := [
 	SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY,
 	SourceForecast.FORECAST_PER_WORKER_KEY,
-	SourceForecast.FORECAST_PER_WORKER_TRADE_KEY,
 ]
 const SOURCE_PER_WORKER_BIOMASS := SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY
 const SOURCE_ENGAGE_RATE := SourceForecast.FORECAST_ENGAGE_RATE_KEY

@@ -222,26 +222,26 @@ const FLORA_CROP_MODEST_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this 
 
 const FLORA_CROP_STRONG_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this tile wild does — strong ground for it."
 
-# ---- THE ROW FACE: ONE PLANT, EVERY ACCOUNT IT PAYS (issue #419) ---------------------------------
+# ---- THE ROW FACE: ONE PLANT, EVERY ACCOUNT IT PAYS (issue #419, arc #527) -----------------------
 # A crop row is BUILT, not picked from a menu of whole-row formats. It used to be three mutually
 # exclusive ones (`FLORA_CROP_ROW_FORMAT` / `_FODDER_ROW_FORMAT` / `_TRADE_ROW_FORMAT`) chosen by an
 # if/elif chain, so a row could state exactly ONE account — and the chain tested "is the trade payoff
-# > 0" to detect a cash crop. EVERY staple carries `trade_goods_per_biomass: 0.005`, so that test
-# fired on all 27 of them and printed every crop as trade-only: `Wild Emmer 39% · 0.4 trade`, with the
-# ratio the rung exists to compare nowhere on the row.
+# > 0" to detect a cash crop. EVERY staple carried the flat `trade_goods_per_biomass` token, so that
+# test fired on all 27 of them and printed every crop as trade-only: `Wild Emmer 39% · 0.4 trade`,
+# with the ratio the rung exists to compare nowhere on the row.
 #
 # So the row states each account that is actually THERE, in the shared render-only-when-non-zero
-# shape (`.claude/rules/client/labor-ui.md` → "A hunt pays TWO products"), gated by the ONE
+# shape (`.claude/rules/client/labor-ui.md` → "A source pays a VECTOR OF ACCOUNTS"), gated by the ONE
 # `SourceForecast.has_component` — the same gate the hunt faces use, never a bespoke threshold:
 #
-#   Wild Emmer 39% · 1.4× · 0.11 trade      a staple: food ratio LEADS, its trade token trails
-#   Cotton Fields 26% · 0.1× · 4.28 trade   a cash crop: both real, and the food ratio is a LOSS
+#   Wild Emmer 39% · 1.4×                   a staple: the food ratio, and nothing else to state
+#   Cotton Fields 26% · 0.1× · 0.29 fibre   a cash crop: both real, and the food ratio is a LOSS
 #   Hay Grass 30% · 1.80 hay                fodder only — no provisions ratio to state
 #   Oak Mast 12%                            greyed by the ceiling flags: no account at all
 #
-# THE COMPARISON IS THE POINT. Cotton pays ~38x the staple's trade and costs most of its calories; a
-# row stating one account cannot say that, whichever one it picks. And a cash crop's food ratio being
-# a WARN-inked loss is the honest reading of the land-use tension, not a bug to suppress: rung 2
+# THE COMPARISON IS THE POINT. Cotton costs most of its calories and pays fibre for them; a row
+# stating one account cannot say that, whichever one it picks. And a cash crop's food ratio being a
+# WARN-inked loss is the honest reading of the land-use tension, not a bug to suppress: rung 2
 # *weeds* rather than replaces, so a tended cotton patch really does keep paying its volunteers'
 # calories at a rate below gathering the tile wild.
 #
@@ -255,21 +255,41 @@ const FLORA_CROP_STRONG_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this 
 # wild", not a second significant figure.
 const FLORA_CROP_RATIO_CLAUSE_FORMAT := " · %.1f×"
 
-# The two NON-FOOD clauses — absolute per-turn rates, so TWO decimals: unlike the ratio these span two
-# orders of magnitude across one basket (0.11 trade for a staple's token beside 4.28 for cotton on the
-# same ground), and one decimal would flatten the small end to `0.1` and lose exactly the distinction
-# the row is for. It is also the precision the shared two-product joiner already uses
-# (`SourceForecast.picker_products` → `0.96 food · 0.24 trade`).
+# The NON-FOOD clauses — absolute per-turn rates, so TWO decimals: unlike the ratio these span two
+# orders of magnitude across one basket (a staple's incidental 0.03 fibre beside cotton's 0.29 on the
+# same ground), and one decimal would flatten the small end to `0.0` and lose exactly the distinction
+# the row is for. It is also the precision the shared product joiner already uses
+# (`SourceForecast.picker_products` → `0.96 food · 0.40 fodder`).
 const FLORA_CROP_HAY_CLAUSE_FORMAT := " · %.2f hay"
-const FLORA_CROP_TRADE_CLAUSE_FORMAT := " · %.2f trade"
+
+# ---- WHAT A CASH CROP PAYS: ONE CLAUSE PER MATERIAL (arc #527) ----------------------------------
+# **A VECTOR, NOT A SCALAR, IS THE WHOLE DIFFERENCE.** The retired `· %.2f trade` clause answered
+# *"how much trade"* — a number a market could total and a player could not act on. This answers
+# *"0.29 fibre"*, which is what a cash crop IS. **Never sum the rows into one materials/turn figure**:
+# that is the retired axis under a new name, and it re-collapses the distinction the materials model
+# exists to keep. One clause per material, in the wire's order (merged by id and sorted by it
+# sim-side, so the order is stable across turns).
+#
+# **THE MATERIAL NAMES ITSELF, AND THAT IS THE MARK IT WEARS.** `⇄` used to lead every non-food
+# component of a yield, and it could only ever say "this is not food" — the one thing an account with
+# no name has to fall back on. A material HAS a name, and it is a short lowercase word on the wire
+# (`fibre`, `tobacco`, `grape` — the `materials.json` ids the material catalogue and a band's
+# `material_batches` are keyed by), so the row reads `0.29 fibre` exactly as its neighbour reads
+# `1.80 hay`: the noun IS the mark, and there is no generic glyph because there is no longer a
+# generic account. **Do not add one.**
+const FLORA_CROP_MATERIAL_CLAUSE_FORMAT := " · %.2f %s"
 
 # ---- THE TOOLTIP CLAUSES, same composition, same per-rung wording -------------------------------
 # `%s` is the RUNG's own noun, because these payoffs are per-rung: a tended patch and a sown field pay
 # different amounts from different baskets, and a tooltip naming the wrong one is how the Cultivate
-# row came to quote a Field's trade. Fed by FLORA_CROP_RUNG_NOUNS.
+# row came to quote a Field's figures. Fed by FLORA_CROP_RUNG_NOUNS.
 const FLORA_CROP_FODDER_TOOLTIP_FORMAT := "%s pays %.2f fodder/turn as %s — feed for penned animals, not food for people."
 
-const FLORA_CROP_TRADE_TOOLTIP_FORMAT := "%s pays %.2f trade/turn as %s — goods for your stockpile, not food for people."
+# ONE LINE PER MATERIAL, for the same reason the face carries one clause per material. `%s` order is
+# crop, amount, material, rung noun. It says "for your crafters" rather than "for your stockpile"
+# because that is the concrete difference the arc bought: a material is worked at a bench into
+# something, where a trade good only ever sat in a pile nothing could read.
+const FLORA_CROP_MATERIAL_TOOLTIP_FORMAT := "%s pays %.2f %s/turn as %s — a material for your crafters, not food for people."
 
 # The rung's noun for the tooltips above, keyed by the composing policy. A payoff quoted on the
 # Cultivate rung describes A TENDED PATCH; only the Sow rung describes a sown field.

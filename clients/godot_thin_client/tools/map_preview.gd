@@ -88,8 +88,6 @@ const WORK_FLOOR_MARKS_MIN := 2
 # agrees with whatever that code emits.
 const YIELD_LABEL_FOOD_RATE := 0.31
 const YIELD_LABEL_FOOD_FACE := "+0.31"
-const YIELD_LABEL_TRADE_RATE := 0.22
-const YIELD_LABEL_TRADE_FACE := "+0.22"
 const YIELD_LABEL_FODDER_RATE := 0.40
 const YIELD_LABEL_FODDER_FACE := "+0.40 fodder"
 # What a source paying into NO account still prints: the food zero, which is the honest reading of a
@@ -1479,8 +1477,9 @@ func _assert_work_floor_marks() -> void:
 	_assert_map("worked-band floor marks — every floored assignment resolves to a mark (no blank zone)",
 		not marks.has(""))
 
-## **THE ONE-SLOT FALL-THROUGH, food → trade → FODDER** (issue #449). A map label has room for exactly
-## one rate, so which account it states is the whole claim — and a PNG cannot carry it: `+0.00` and
+## **THE ONE-SLOT FALL-THROUGH, food → FODDER** (issue #449; a trade branch stood between the two
+## until arc #527 retired that account). A map label has room for exactly one rate, so which account
+## it states is the whole claim — and a PNG cannot carry it: `+0.00` and
 ## `+0.40 fodder` are the same badge at map scale, and every fall-through renders a perfectly plausible
 ## label. So the CHOICE is asked of the renderer directly (`_yield_label_rate_text`), over values rather
 ## than over a fixture, and each case is paired with the one that must NOT change: a source paying food
@@ -1491,15 +1490,12 @@ func _assert_work_floor_marks() -> void:
 func _assert_yield_label_component() -> void:
 	var overlays: BandOverlayRenderer = _map._band_overlays
 	_assert_map("yield label — a fodder-only source states its feed rate, not +0.00",
-		overlays._yield_label_rate_text(0.0, 0.0, YIELD_LABEL_FODDER_RATE) == YIELD_LABEL_FODDER_FACE)
+		overlays._yield_label_rate_text(0.0, YIELD_LABEL_FODDER_RATE) == YIELD_LABEL_FODDER_FACE)
 	_assert_map("yield label — food still leads wherever there is food",
-		overlays._yield_label_rate_text(YIELD_LABEL_FOOD_RATE, 0.0, YIELD_LABEL_FODDER_RATE)
+		overlays._yield_label_rate_text(YIELD_LABEL_FOOD_RATE, YIELD_LABEL_FODDER_RATE)
 			== YIELD_LABEL_FOOD_FACE)
-	_assert_map("yield label — trade still wins the slot ahead of fodder",
-		overlays._yield_label_rate_text(0.0, YIELD_LABEL_TRADE_RATE, YIELD_LABEL_FODDER_RATE)
-			== FoodIcons.TRADE_GOODS_GLYPH + YIELD_LABEL_TRADE_FACE)
 	_assert_map("yield label — a source paying nothing still prints its food zero",
-		overlays._yield_label_rate_text(0.0, 0.0, 0.0) == YIELD_LABEL_EMPTY_FACE)
+		overlays._yield_label_rate_text(0.0, 0.0) == YIELD_LABEL_EMPTY_FACE)
 	_assert_map("yield label — the feed rate is read off the entry with no realized fallback",
 		is_equal_approx(overlays._entry_fodder({"fodder_yield": YIELD_LABEL_FODDER_RATE}),
 			YIELD_LABEL_FODDER_RATE)
@@ -1974,8 +1970,10 @@ func _deer_herd() -> Dictionary:
 	# Well outside the work-range ring (Chebyshev distance 5 from the band).
 	return {"id": "game_deer_07", "label": "Red Deer (game_deer_07)", "x": 13, "y": 6, "biomass": 800.0, "huntable": true}
 
-## The INEDIBLE quarry (issue #337) — a wolf pack whose hunt pays trade goods only, so its yield label
-## must fall through to the trade component instead of announcing a `+0.00` food rate.
+## The INEDIBLE quarry (issue #337, arc #527) — a wolf pack whose hunt pays no food at all. Its label
+## used to fall through to a trade rate; that account is retired and a herd's materials carry no
+## per-turn figure, so what it prints now is the honest `+0.00` of a hunt that banks no commodity the
+## one-slot label can name.
 func _pelt_only_wolf_herd() -> Dictionary:
 	return {"id": "game_wolf_03", "label": "Grey Wolf (game_wolf_03)", "x": 11, "y": 4,
 		"biomass": 240.0, "huntable": true, "prey_sense_radius": 4}
@@ -2086,20 +2084,19 @@ func _snapshot_work() -> Dictionary:
 		{"kind": "forage", "workers": 5, "target_x": FORAGE_A_X, "target_y": FORAGE_A_Y, "floor": WORK_PEAK_FLOOR, "actual_yield": 0.48, "sustainable_yield": 0.48, "overdraws": false},
 		{"kind": "forage", "workers": 3, "target_x": 9, "target_y": 8, "floor": WORK_DRAWDOWN_FLOOR, "actual_yield": 0.27, "sustainable_yield": 0.20, "overdraws": true},
 		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "floor": WORK_PEAK_FLOOR, "target_x": 13, "target_y": 6, "actual_yield": 0.46, "sustainable_yield": 0.20, "overdraws": false},
-		# THE INEDIBLE QUARRY's label (issue #337): a hunted wolf pack pays trade goods and NO food, so
-		# every food field here is honestly 0. A one-slot map label has no room for two rates, so it
-		# shows the product the species PAYS — `⇄+0.22` — rather than the `+0.00` that said the pack
-		# was worth nothing. The deer label beside it is the control: it still reads its food rate.
-		{"kind": "hunt", "workers": 2, "fauna_id": "game_wolf_03", "floor": WORK_DRAWDOWN_FLOOR, "target_x": 11, "target_y": 4, "actual_yield": 0.0, "sustainable_yield": 0.0, "realized_trade_yield": 0.22, "trade_yield": 0.22, "overdraws": false},
+		# THE INEDIBLE QUARRY's label (issue #337, arc #527): a hunted wolf pack pays NO food, so every
+		# food field here is honestly 0. It used to fall through to a `⇄+0.22` trade rate; with that
+		# account retired and no per-turn material figure on the wire, the label reads `+0.00` — the
+		# honest statement that this hunt banks no commodity a one-slot label can name. The deer label
+		# beside it is the control: it still reads its food rate.
+		{"kind": "hunt", "workers": 2, "fauna_id": "game_wolf_03", "floor": WORK_DRAWDOWN_FLOOR, "target_x": 11, "target_y": 4, "actual_yield": 0.0, "sustainable_yield": 0.0, "overdraws": false},
 		# THE SOWN HAY FIELD's label (issue #449), the same argument one account further out: a Field
-		# pays FEED and neither provisions nor trade, so every food and trade field here is honestly 0
-		# and the label falls through to `+0.40 fodder`. Both trade keys are present and zero, the way
-		# the wire ships them, so the fall-through is reached through the ordinary
-		# render-only-when-non-zero gate rather than through absence. It is also the only rendered
+		# pays FEED and no provisions, so every food field here is honestly 0 and the label falls
+		# through to `+0.40 fodder`. It is also the only rendered
 		# fodder label in either preview harness — `_assert_yield_label_component` pins WHICH account
 		# fills the one slot, and only a frame can say whether the chosen string FITS beside its
 		# neighbours (the widest run this plate has ever drawn).
-		{"kind": "forage", "workers": 2, "target_x": FODDER_FIELD_X, "target_y": FODDER_FIELD_Y, "floor": WORK_PEAK_FLOOR, "actual_yield": 0.0, "sustainable_yield": 0.0, "realized_yield": 0.0, "trade_yield": 0.0, "realized_trade_yield": 0.0, "fodder_yield": FODDER_FIELD_RATE, "overdraws": false},
+		{"kind": "forage", "workers": 2, "target_x": FODDER_FIELD_X, "target_y": FODDER_FIELD_Y, "floor": WORK_PEAK_FLOOR, "actual_yield": 0.0, "sustainable_yield": 0.0, "realized_yield": 0.0, "fodder_yield": FODDER_FIELD_RATE, "overdraws": false},
 		{"kind": "warrior", "workers": 2},
 	]
 	# work_range 2 (forage green), scout radius 4 (azure) → three DISTINCT nested range borders in one

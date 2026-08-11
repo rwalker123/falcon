@@ -186,10 +186,10 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     wasted_food}` (so it flows through `tile_info.herds` untouched — **`delivered_food`/`wasted_food` are
     the newest appended fields, added to this decoder dict in this pass; the decoder has silently dropped
     appended fields 6× now, always audit it first**). `SourceForecast.hunt_trip_forecast` just looks it up:
-    `delivers_food == false` **and** `delivers_trade == false` → **denial** (the quarry pays NEITHER product;
-    `delivers_food` alone was redefined by #337 to mean "the quarry is edible", so a wolf reads
-    `delivers_food false, delivers_trade true` and is a real delivery — the SIM decides this, the client
-    never infers it from the policy string); **`delivered_food == 0`** → **no surplus** (the one blocked
+    `delivers_food == false` → **denial** (the quarry pays no food; `delivers_food` was redefined by
+    #337 to mean "the quarry is edible", and its `delivers_trade` sibling went with arc #527's retired
+    account — so an inedible quarry now falls into this branch rather than reading as a real delivery.
+    The SIM decides it, and the client never infers it from the policy string); **`delivered_food == 0`** → **no surplus** (the one blocked
     case — the raid returns empty at every party size; NOT `animals_taken == 0`, which is now ≥ 1 whenever
     there's any surplus since a small party still kills one animal and wastes the uncarried meat); else the
     raid delivers `delivered_food` food (`animals_taken` kills, `wasted_food` rotted), with `turns_to_fill
@@ -219,7 +219,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   + `expedition_launch_policy_sustain`; herd-panel expedition states `herd_hunt_forecast_viable` (the
   partial-with-waste Thunder Mammoth: `~4 food · ⚠ 75% wasted`, button ENABLED) / `_slow` / `_surplus` /
   `_no_surplus` (`deliveredFood 0` everywhere → disabled "too lean") / `_eradicate` (a real delivery —
-  `delivers ≈12 Red Deer over ≈11 turns · ~24 food · ⇄ ~6 trade goods`, ordinary Send — a strip-bare raid
+  `delivers ≈12 Red Deer over ≈11 turns · ~24 food`, ordinary Send — a strip-bare raid
   COMPLETES) / `_horizon` + `herd_hunt_horizon_travel` (the raid that genuinely does not finish, quoting
   its floor: `Send Anyway (more than 68 turns)`),
   the raid set `herd_hunt_boar_raid` (clean, no waste) / `herd_hunt_max_useful` / `herd_hunt_raid_travel`
