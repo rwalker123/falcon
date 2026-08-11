@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use sim_runtime::MaterialPayoff;
 
 use super::*;
@@ -879,35 +877,23 @@ fn patch_composition_info(
         .collect()
 }
 
-/// **A source's material rows scaled onto one basis** — the material twin of
-/// `HuntYield::apply`, which does exactly this for the scalar accounts.
+/// **A source's material rows scaled onto one basis, in the WIRE's shape** — the sim's own
+/// [`crate::materials_config::material_yield_totals`] with its rows renamed for the snapshot.
 ///
 /// `biomass` is what the rate is being stated *per*: [`ONE_UNIT_OF_BIOMASS`] gives the per-biomass
 /// rate a client composes a ceiling from, one hunter's haul gives the per-worker throughput. The
-/// band's `output_multiplier` folds in here for the same reason it does on every other rate on the
-/// row — a material is another account of one harvest, not a parallel economy.
-///
-/// **Merged per material id, in id order**, the way `credit_material_yield` reports its deposit and
-/// `LocalStore::material_total` sums its store, so a published rate and a credited amount are
-/// comparable numbers. **Empty in, empty out** — "no row", never a zero.
+/// band's output multiplier folds in for the reason it does on every other rate on the row — a
+/// material is another account of one harvest, not a parallel economy.
 fn material_rates(
     rows: &[crate::materials_config::MaterialYieldDef],
     biomass: f32,
     output_multiplier: f32,
 ) -> Vec<MaterialPayoff> {
-    let mut totals: BTreeMap<&str, f32> = BTreeMap::new();
-    for row in rows {
-        let amount = row.per_biomass * biomass * output_multiplier;
-        if amount <= 0.0 {
-            continue;
-        }
-        *totals.entry(row.material.as_str()).or_insert(0.0) += amount;
-    }
-    totals
+    crate::materials_config::material_yield_totals(rows, biomass, output_multiplier)
         .into_iter()
-        .map(|(material_id, amount)| MaterialPayoff {
-            material_id: material_id.to_string(),
-            amount,
+        .map(|payoff| MaterialPayoff {
+            material_id: payoff.material,
+            amount: payoff.amount,
         })
         .collect()
 }

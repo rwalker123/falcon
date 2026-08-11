@@ -1653,10 +1653,13 @@ pub struct HuntTripForecast {
     /// premise "denial carries nothing home" — the premise this arc reverses, since an Eradicate raid
     /// now banks the whole-stock windfall. `false` today means *"wolves are not food"*.
     pub delivers_food: bool,
-    // **RETIRED: `delivers_trade`** (arc #527), with the trade axis it reported. "Does this species
-    // give a material" is now `HuntYield::yields_materials`, which the forecast does not project:
-    // a material is a batch with a characteristic vector, not a per-turn number this table can add
-    // up. The wire slot `HuntTripEstimate.deliversTrade` is deprecated in place.
+    // **RETIRED: `delivers_trade`** (arc #527), with the trade axis it reported. **A boolean is not
+    // what replaced it** — [`Self::delivered_material`] below states the amount per material, which
+    // answers *"does it give a material"* and *"how much of what"* in one reading, so a separate flag
+    // would be a second statement of the first half. (`HuntYield::yields_materials` remains the
+    // species-level predicate the picker rule reads; it is not a trip fact.) The wire slot
+    // `HuntTripEstimate.deliversTrade` is deprecated in place — and that whole table is deprecated
+    // too: the live surface is the query reply's `HuntTripRow`.
     /// Provisions landed on the **first** hunting turn — the trip's opening rate, and (with
     /// `animals_taken`) a "can this herd give me anything at all?" signal.
     pub first_turn_provisions: f32,
@@ -1674,11 +1677,25 @@ pub struct HuntTripForecast {
     /// party too small to haul its kills whole; `wasted_food / (delivered_food + wasted_food)` is the
     /// waste fraction the client shows.
     pub wasted_food: f32,
-    // **RETIRED: `delivered_trade`** (arc #527). On an inedible quarry it was the whole projected
-    // payload, and what such a raid really brings home is **material batches** — which this table
-    // cannot state, because a batch carries a characteristic vector. So an inedible raid now
-    // projects `0` on every account it has, honestly and incompletely; see the note on
-    // `SourceYieldForecast::per_worker_yield`.
+    /// **What the party actually LANDS over the raid, per material** — `Σ` the species' material
+    /// rows over the biomass it *carried*, and on an **inedible** quarry the entire payload: a wolf
+    /// trip's `delivered_food` is `0` and this is what comes home.
+    ///
+    /// **Projected off the SAME `take.carried` `delivered_food` is projected from**, turn by turn
+    /// through the same accumulator, so the two readouts of one trip cannot disagree about it. It is
+    /// the same expression the live arm's `credit_material_yield` is paid on
+    /// ([`crate::materials_config::material_yield_totals`]), which is what makes the launch sheet's
+    /// promise checkable against what the home band ends up holding.
+    ///
+    /// **It replaced `delivered_trade`** (arc #527), which was retired on the reasoning that a
+    /// material is a batch with a characteristic vector and not a number this table can sum. That is
+    /// right about **merging readings** and wrong about **stating a quantity per material id** —
+    /// which is exactly what `MaterialPayoff` does. The readings are not here and do not need to be:
+    /// they ride the batches the take really creates.
+    ///
+    /// **Empty is "no row", never zero**, and it is never summed into one figure — the two contracts
+    /// every material readout in this arc carries.
+    pub delivered_material: Vec<crate::materials_config::MaterialPayoff>,
     /// **Which stop ended the trip** — see [`HuntTripBound`]. Paired with `turns_to_fill`, which says
     /// *when*: the two together are the readout the fill target turns on, because the same "4 turns"
     /// means "you got the animals you asked for" or "the herd ran out" depending on this.
@@ -1846,6 +1863,8 @@ fn hunt_trip_forecast_seeded(
             animals_taken: 0,
             delivered_food: 0.0,
             wasted_food: 0.0,
+            // No party, no haul — an EMPTY list, never a row of zeros.
+            delivered_material: Vec::new(),
             // No party, no projection — the raid does not end, it never starts.
             bound: HuntTripBound::Horizon,
         };
@@ -1873,6 +1892,12 @@ fn hunt_trip_forecast_seeded(
     let mut animals_taken = 0u32;
     let mut delivered_food = 0.0_f32;
     let mut wasted_food = 0.0_f32;
+    // **The biomass the party carries home, summed over the trip** — the one term the material
+    // projection needs, and deliberately the *same* `take.carried` `delivered_food` is converted
+    // from on the line below. Accumulating the biomass rather than converting per turn is what keeps
+    // the two readouts describing one haul: the conversion is linear, so `Σ(rows × carried)` and
+    // `rows × Σcarried` are the same number, and there is only one place to get it wrong.
+    let mut carried_biomass = 0.0_f32;
     // Which stop the projection ran into. It starts at the honest "still going when the projection
     // ran out" and is overwritten by whichever of the raid's stops fires first.
     let mut bound = HuntTripBound::Horizon;
@@ -1941,6 +1966,7 @@ fn hunt_trip_forecast_seeded(
         // cannot promise food it will not pay, nor forget the pelts it will (#337).
         let landed = hunt_yield.apply(take.carried, EXPEDITION_OUTPUT_MULTIPLIER);
         delivered_food += landed.provisions;
+        carried_biomass += take.carried;
         wasted_food += hunt_yield
             .apply(take.wasted, EXPEDITION_OUTPUT_MULTIPLIER)
             .provisions;
@@ -2001,6 +2027,13 @@ fn hunt_trip_forecast_seeded(
                 animals_taken,
                 delivered_food,
                 wasted_food,
+                // **The material half of the same haul** — the species' own rows over the
+                // biomass this trip carried, through the one seam the live credit is paid on.
+                delivered_material: crate::materials_config::material_yield_totals(
+                    fauna.hunt_materials_for(&herd.species),
+                    carried_biomass,
+                    EXPEDITION_OUTPUT_MULTIPLIER,
+                ),
                 // **The herd-side stop wins a tie**, mirroring the live arm testing `done` before
                 // `relaunch`: when the pack fills on the very turn the surplus runs out, the fact
                 // that decides whether to send the party back is that there is nothing left to send
@@ -2024,6 +2057,12 @@ fn hunt_trip_forecast_seeded(
         animals_taken,
         delivered_food,
         wasted_food,
+        // See the early-completion return above — the same projection, off the same accumulator.
+        delivered_material: crate::materials_config::material_yield_totals(
+            fauna.hunt_materials_for(&herd.species),
+            carried_biomass,
+            EXPEDITION_OUTPUT_MULTIPLIER,
+        ),
         bound,
     }
 }

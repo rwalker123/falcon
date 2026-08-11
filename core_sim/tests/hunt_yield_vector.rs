@@ -1607,6 +1607,8 @@ struct ExportedRaid {
     animals_taken: u32,
     delivered_food: f32,
     wasted_food: f32,
+    /// What the trip promises to land, per material — the entire payload on an inedible quarry.
+    delivered_material: Vec<sim_runtime::commands::MaterialPayoff>,
     bound: String,
 }
 
@@ -1654,6 +1656,7 @@ fn exported_raid_row(app: &mut App, id: &str, floor: f32) -> ExportedRaid {
         animals_taken: row.animals_taken,
         delivered_food: row.delivered_food,
         wasted_food: row.wasted_food,
+        delivered_material: row.delivered_material,
         bound: row.bound,
     }
 }
@@ -1757,6 +1760,96 @@ fn a_hunting_expedition_delivers_the_food_it_forecast_and_hauls_its_hides() {
         );
     }
 }
+
+/// **THE LAUNCH SHEET'S MATERIAL PROMISE IS WHAT THE TRIP BANKS** (arc #527) — the expedition
+/// mirror of the crop picker's and the herd row's quotes, held to the same property.
+///
+/// The retired `delivers_trade`/`delivered_trade` left the trip forecast with **nothing to say about
+/// an inedible quarry**: a wolf raid's `delivered_food` is `0`, so the launch sheet promised a trip
+/// that appeared to bring home nothing while the sim banked real hides on fold-back.
+/// `delivered_material` is the replacement, and a **wolf is the subject because its entire payload is
+/// material** — nothing else on the estimate can cover for this vector being wrong.
+///
+/// **Asserted against the home band's `LocalStore::material_total` after a real driven trip**, not
+/// against a re-derivation of the projection: the raid is run through the real systems in the real
+/// order until it folds back, and what the band ends up *holding* is the number the promise is
+/// compared to.
+#[test]
+fn an_inedible_raids_promised_material_is_what_the_trip_banks() {
+    let (mut app, id, pos) = headless_with_species(INEDIBLE_SPECIES);
+    steady_quarry(&mut app, INEDIBLE_SPECIES);
+    pin_quarry(&mut app, &id);
+    reveal_herd(&mut app, &id);
+    recapture_snapshot_in_place(&mut app.world);
+
+    let promised = exported_raid_row(&mut app, &id, SUSTAIN_FLOOR);
+    assert_eq!(
+        promised.delivered_food, 0.0,
+        "the fixture's premise: a wolf trip promises no food, so the material vector is all it has"
+    );
+    assert!(
+        promised.turns_to_fill > 0,
+        "…and it is a real trip that COMES HOME, or there is no fold-back to compare against"
+    );
+    assert!(
+        !promised.delivered_material.is_empty(),
+        "a wolf trip must promise the hides it will land, or the launch sheet says nothing at all"
+    );
+    assert!(
+        promised
+            .delivered_material
+            .iter()
+            .all(|row| row.amount > 0.0),
+        "a promised row is a row that pays: {:?}",
+        promised.delivered_material
+    );
+
+    let home = spawn_raid_home_band(&mut app, pos);
+    let party = spawn_raid_party(&mut app, home, pos, &id, SUSTAIN_FLOOR);
+    let (landed_food, banked_materials) = run_one_raid(&mut app, party, home);
+    assert_eq!(
+        landed_food, 0.0,
+        "a wolf hunt adds nothing to the larder — the larder ledger stays food-only"
+    );
+    assert!(
+        banked_materials > 0.0,
+        "the trip must actually bank something, or every comparison below is against zero"
+    );
+
+    // **THE CLAIM**: what the sheet promised is what the band holds, per material.
+    let cohort = app
+        .world
+        .get::<PopulationCohort>(home)
+        .expect("the home band still exists");
+    for row in &promised.delivered_material {
+        let held = cohort.stores.material_total(&row.material_id).to_f32();
+        assert!(
+            (held - row.amount).abs() <= RAID_PAYLOAD_EPSILON,
+            "the sheet promised {} of {} and the home band holds {held}",
+            row.amount,
+            row.material_id
+        );
+    }
+    // …and nothing came home that was never promised, which is the other half of "the promise IS the
+    // payload" and is what a projection reading the wrong rows would fail.
+    for (material, batches) in cohort.stores.materials() {
+        let total: f32 = batches.values().map(|batch| batch.amount.to_f32()).sum();
+        if total <= 0.0 {
+            continue;
+        }
+        assert!(
+            promised
+                .delivered_material
+                .iter()
+                .any(|row| row.material_id == material),
+            "the band holds {total} of {material} the launch sheet never promised"
+        );
+    }
+}
+
+/// The floor the raid guards run at — the food peak, where the quarry has a real standing surplus to
+/// spend so the trip completes and folds back inside the horizon.
+const SUSTAIN_FLOOR: f32 = 0.5;
 
 /// **11. An INEDIBLE raid comes home with hides and exactly zero food.**
 ///

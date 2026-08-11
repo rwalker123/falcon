@@ -285,6 +285,13 @@ substrate is in better shape for it than the scalar ever was.
 > actually credited — the same `MaterialPayoff` rows, the same three contracts (never summed, empty
 > means no row, key always present). See `.claude/rules/core_sim/fauna.md` → "What a hunt is MADE OF
 > is on the wire, per material".
+>
+> **And the EXPEDITION's launch sheet, third and last.** A raid's `delivered_trade` was retired on the
+> reasoning that a material cannot be summed into a trip table — right about merging readings, wrong
+> about stating a quantity per material id. `HuntTripRow.delivered_material` is what the trip lands,
+> per material, projected off the same carried biomass `delivered_food` is. The *in-flight* half
+> needed nothing: `materialBatches` is ungated by `ResidentBand`, so a party's carried materials are
+> already on the wire with their exact readings.
 
 > **The retired `FactionInventory` grant was a different thing that shared the name.** The shipped
 > start profile used to hand the faction 40 `trade_goods`, which `apply_trade_goods_bonus` then

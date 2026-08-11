@@ -61,10 +61,7 @@
 //! is now rung 4 (Farm)'s identity — the first rung to drop the gathering-site term, with a fertility
 //! floor back in its place. Design: `docs/plan_intensification_ladder.md` §2.
 
-use std::{
-    borrow::Cow,
-    collections::{BTreeMap, HashMap},
-};
+use std::{borrow::Cow, collections::HashMap};
 
 use bevy::prelude::*;
 
@@ -1306,21 +1303,13 @@ fn rung_material_payoff(
         RungKey::PlantTended => tended_msy_take(patch, forage),
         _ => return Vec::new(),
     };
-    // **The same rows `credit_material_yield` is handed**, off the same hypothetical patch — so the
-    // quote is the payout's own arithmetic rather than a re-derivation of it. A `BTreeMap` both
-    // merges the duplicate ids and fixes the output order, which the wire needs.
-    let mut totals: BTreeMap<String, f32> = BTreeMap::new();
-    for row in patch_material_yields(patch, tile_composition, flora, forage) {
-        let amount = row.per_biomass * harvest_biomass * output_multiplier;
-        if amount <= 0.0 {
-            continue;
-        }
-        *totals.entry(row.material).or_insert(0.0) += amount;
-    }
-    totals
-        .into_iter()
-        .map(|(material, amount)| MaterialPayoff { material, amount })
-        .collect()
+    // **The same rows `credit_material_yield` is handed, through the same expression** — the quote is
+    // the payout's own arithmetic rather than a re-derivation of it.
+    crate::materials_config::material_yield_totals(
+        &patch_material_yields(patch, tile_composition, flora, forage),
+        harvest_biomass,
+        output_multiplier,
+    )
 }
 
 /// **What this tile pays per turn left WILD** — the denominator of [`commit_yield_ratio`], and the

@@ -287,6 +287,16 @@ fn hunt_trip_row(
         animals_taken: forecast.animals_taken,
         delivered_food: forecast.delivered_food,
         wasted_food: forecast.wasted_food,
+        // **What the trip lands, per material** — the whole payload on an inedible quarry, whose
+        // `delivered_food` is honestly `0`. Transcribed, never re-projected.
+        delivered_material: forecast
+            .delivered_material
+            .iter()
+            .map(|payoff| sim_runtime::commands::MaterialPayoff {
+                material_id: payoff.material.clone(),
+                amount: payoff.amount,
+            })
+            .collect(),
     }
 }
 

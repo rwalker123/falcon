@@ -562,6 +562,44 @@ pub struct MaterialPayoff {
     pub amount: f32,
 }
 
+/// **What `biomass` of a source yields, per material** — the projection twin of
+/// [`credit_material_yield`], stating the same `biomass × per_biomass × output_multiplier`
+/// expression without depositing anything.
+///
+/// **Every material QUOTE in the sim goes through here**: the crop picker's cash rows
+/// ([`crate::forage::commit_material_payoff`]), the herd row's per-biomass and per-worker rates, and
+/// a raid's projected haul. One expression, so a quote cannot drift from the credit it is quoting —
+/// which is the whole reason a *resolved* row reports [`credit_material_yield`]'s own return instead
+/// of calling this.
+///
+/// **Merged per material id, in id order.** A basket can name one material twice; those land in two
+/// *batches* in the store (different readings), but a readout row says *"0.29 fibre"* and
+/// [`LocalStore::material_total`] sums the same way, which is what makes a quote and a credit
+/// comparable numbers.
+///
+/// **Empty in, empty out, and a non-positive row is dropped** — "no row", never a published zero.
+pub fn material_yield_totals(
+    rows: &[MaterialYieldDef],
+    biomass: f32,
+    output_multiplier: f32,
+) -> Vec<MaterialPayoff> {
+    let mut totals: BTreeMap<&str, f32> = BTreeMap::new();
+    for row in rows {
+        let amount = biomass * row.per_biomass * output_multiplier;
+        if amount <= 0.0 {
+            continue;
+        }
+        *totals.entry(row.material.as_str()).or_insert(0.0) += amount;
+    }
+    totals
+        .into_iter()
+        .map(|(material, amount)| MaterialPayoff {
+            material: material.to_string(),
+            amount,
+        })
+        .collect()
+}
+
 /// **Credit a take's material yield into a store** — the fourth account of the same harvest, on the
 /// same seam the provisions are credited on.
 ///

@@ -397,6 +397,20 @@ pub mod query_error {
     pub const INVALID_PARTY: &str = "invalid_party";
 }
 
+/// **One material a projection lands, and how much of it** — the runtime twin of the snapshot's
+/// `MaterialPayoff`, and the shape every material readout in this arc uses.
+///
+/// It carries **no quality reading**: a rating is a characteristic vector on the batch the take
+/// really creates, and a launch-sheet row asks the flat question *"how much of what"*. **Never
+/// summed** into one figure — that is the retired trade-goods axis under a new name.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MaterialPayoff {
+    /// The `materials.json` id — `hide`, `bone`, `fibre`. Resolved client-side for display.
+    pub material_id: String,
+    /// Units of that material the trip lands.
+    pub amount: f32,
+}
+
 /// One answered hunt-trip forecast. The wire twin of a row of the retired `HuntTripEstimateState`
 /// table, plus the echoed `floor` / `party_workers` that make it self-describing.
 #[derive(Debug, Clone, PartialEq)]
@@ -412,6 +426,10 @@ pub struct HuntTripRow {
     pub animals_taken: u32,
     pub delivered_food: f32,
     pub wasted_food: f32,
+    /// **What the trip lands, per material** — and on an **inedible** quarry the entire payload,
+    /// since `delivered_food` is `0` there. Projected off the same carried biomass `delivered_food`
+    /// is. **Empty is "no row", never zero**, and it is never summed.
+    pub delivered_material: Vec<MaterialPayoff>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1523,6 +1541,14 @@ fn hunt_trip_row_to_proto(row: &HuntTripRow) -> pb::HuntTripRow {
         animals_taken: row.animals_taken,
         delivered_food: row.delivered_food,
         wasted_food: row.wasted_food,
+        delivered_material: row
+            .delivered_material
+            .iter()
+            .map(|payoff| pb::MaterialPayoff {
+                material_id: payoff.material_id.clone(),
+                amount: payoff.amount,
+            })
+            .collect(),
     }
 }
 
@@ -1536,6 +1562,14 @@ fn hunt_trip_row_from_proto(row: pb::HuntTripRow) -> HuntTripRow {
         animals_taken: row.animals_taken,
         delivered_food: row.delivered_food,
         wasted_food: row.wasted_food,
+        delivered_material: row
+            .delivered_material
+            .into_iter()
+            .map(|payoff| MaterialPayoff {
+                material_id: payoff.material_id,
+                amount: payoff.amount,
+            })
+            .collect(),
     }
 }
 

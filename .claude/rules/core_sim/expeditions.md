@@ -277,15 +277,48 @@ branches on mission:
     fraction is `wasted_food / (delivered_food + wasted_food)`. A small party on a big animal now
     delivers a partial with waste, so **"too lean to raid" is `delivered_food == 0`**, not "party too
     small to seat a whole animal".
-  - **`delivered_trade` is RETIRED with the trade axis** (arc #527). **The forecast still simulates
-    an inedible quarry like any other** (#337): it used to short-circuit to an all-zero projection on
-    the premise "a wolf trip is not a food trip", which also zeroed `animals_taken` — the client
-    quoted `⇄ ~0` on a wolf while the sim banked real pelts. Only an **empty party** (`cap <= 0`)
-    short-circuits now; a wolf raid gets a real ETA (it ends when the standing surplus is spent) and
-    its food fields fall out at `0` on their own. **What it brings home is MATERIALS, and the
-    projection does not state them** — a material is a batch with a characteristic vector, not a
-    per-turn number this reply can add up — so `animals_taken` is the reading a client has for an
-    inedible raid, and it is also what `forecast_query::useful_party_cap` scans for its plateau.
+  - **`delivered_material`** — **what the trip actually lands, per material**, and on an
+    **inedible** quarry the *entire* payload: a wolf's `delivered_food` is `0`, so without it the
+    launch sheet promised a trip that appeared to bring home nothing while the sim banked real hides
+    on fold-back. `[MaterialPayoff { materialId, amount }]`, the shape the crop picker and the herd
+    rates already use — **no second table was minted**.
+
+    **Projected off the SAME carried biomass `delivered_food` is**, accumulated turn by turn in one
+    `carried_biomass` local beside it and converted once through
+    `materials_config::material_yield_totals` — the same expression the live arm's
+    `credit_material_yield` is paid on. Converting per turn would have been arithmetically identical
+    (the conversion is linear) and given two places to get it wrong; one accumulator is why the two
+    readouts of one trip cannot disagree.
+
+    **It replaced `delivered_trade`, which was retired and deliberately not replaced** on the
+    reasoning recorded at the site: *a material is a batch with a characteristic vector, not a
+    per-turn number this table can sum.* That is right about **merging readings** and wrong about
+    **stating a quantity per material id** — which is exactly what `MaterialPayoff` does. The
+    readings are not here and do not need to be: they ride the batches the take really creates.
+
+    Same three contracts as every material readout in this arc: **never summed**, **empty is "no
+    row" not zero**, **key always present**.
+
+  - **The forecast still simulates an inedible quarry like any other** (#337): it used to
+    short-circuit to an all-zero projection on the premise "a wolf trip is not a food trip", which
+    also zeroed `animals_taken`. Only an **empty party** (`cap <= 0`) short-circuits now; a wolf raid
+    gets a real ETA (it ends when the standing surplus is spent) and its food fields fall out at `0`
+    on their own. `animals_taken` remains what `forecast_query::useful_party_cap` scans for its
+    plateau — a plateau is a fact about the herd's surplus rather than about a currency.
+  > **THE LIVE SURFACE IS THE QUERY REPLY, NOT THE `.fbs` TABLE.** `HuntTripEstimate` /
+  > `HerdTelemetryState.huntTripEstimates` are `(deprecated)` and nothing writes them — the client
+  > *asks* for a trip forecast (`sim_runtime`'s `QueryCommand` → `forecast_query::hunt_trip_row` →
+  > `HuntTripRow` over `command.proto`). So `delivered_material` was appended to the **proto row**
+  > (field 11, beside a new `MaterialPayoff` message); adding it to the deprecated table would have
+  > shipped a field nobody reads.
+  >
+  > **The guard is `hunt_yield_vector::an_inedible_raids_promised_material_is_what_the_trip_banks`**,
+  > and a wolf is the subject because its entire payload is material — nothing else on the estimate
+  > can cover for the vector being wrong. It drives a **real** raid through the real systems until it
+  > folds back and asserts the promise against the home band's `LocalStore::material_total`, never
+  > against a re-derivation of the projection. Its second half is the one a mis-read row would fail:
+  > nothing may come home that was not promised.
+
   - **`bound`** (`HuntTripBound`) — **WHICH stop ended the trip**: `PackFull` / `Floor` / `HerdLost`
     / `Horizon`, wire keys `"pack_full"` / `"floor"` / `"herd_lost"` / `"horizon"`. **Four, not
     five** — the retired `FillTarget` went with the lever it named (see the callout above). A trip
@@ -388,6 +421,10 @@ branches on mission:
     it and there is nothing left for a rollback to silently zero. The feed line's *"returning EMPTY"*
     test reads `systems::expeditions::materials_carried` — the party's own batch total — so a wolf
     raid coming home with a pack full of hides is still never called empty.
+  - **The IN-FLIGHT half needs no sim work.** `PopulationCohortState.materialBatches` is resolved
+    from `cohort.stores` with **no `ResidentBand` gate**, so a detached party's carried materials are
+    already on the wire per batch, with their exact readings, for the whole trip. A scout hauling a
+    wolf home is legible today and always was — what was missing was only the *promise* above.
   - **The scout's opportunistic replenish banks its hides too** — a roadside kill is skinned as well
     as butchered — so it is no longer a pure waste of animals on an inedible herd.
   - **Still expedition-side gaps:** no **husbandry/domestication accrual** (a Sustain *expedition*
@@ -929,12 +966,18 @@ them. What that test said is still true and is no longer measured: **a carcass l
 takes its hide with it**, so on an edible quarry whose pack binds hard, the raid's real destruction
 is under-reported by everything it did not bring home in materials.
 
-> **Closing it needs a PER-MATERIAL projection, not a flat "wasted materials" scalar.** A material
-> carries a characteristic vector, so it cannot be summed into `DenialForecast` the way `wasted_food`
-> is — and a flat total would be the retired trade axis under a new name, collapsing exactly the
-> distinction the crafting arc exists to keep. `server::describe_denial_ledger` accordingly states
-> the food ledger alone and falls back to *"nothing worth hauling from this quarry"* when there is no
-> food to weigh, which is honest about a wolf raid rather than silent about it.
+> **The same shape WOULD work here, and it is deliberately not built.** `HuntTripRow` just proved a
+> per-material vector states a projection perfectly well (`delivered_material`, above), so the
+> original reasoning — *"a material cannot be summed into this table"* — does not survive as an
+> argument against a `wasted_material` beside `wasted_food`. **Ray has ruled the waste line out of
+> scope**: the waste is already legible as a percentage, so the missing half buys a second reading of
+> a fact the sheet states. Recorded so the next person does not re-derive the wrong reason for it
+> being absent. What must NOT happen is a flat "wasted materials" scalar — that is the retired trade
+> axis under a new name.
+>
+> `server::describe_denial_ledger` accordingly states the food ledger alone and falls back to
+> *"nothing worth hauling from this quarry"* when there is no food to weigh, which is honest about a
+> wolf raid rather than silent about it.
 
 > **An INEDIBLE quarry is the wrong place to look for this, and not for the obvious reason.**
 > `carry_room_biomass` answers `NO_CARRY_BOUND` for a species paying no provisions, so a wolf raid's
