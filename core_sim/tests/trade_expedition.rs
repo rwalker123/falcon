@@ -676,9 +676,14 @@ fn a_shipment_publishes_its_destination_and_its_cargo_on_the_wire() {
         published_destination, destination_id.0,
         "the KEY the command addresses the destination by is on the wire"
     );
+    // **The name CARRIES when there is one.** The fixture supplies one because that is the claim
+    // this assertion makes — the mission holds the name for the party's life and it reaches the
+    // wire, which is what #513 will need. A **real launch** resolves no name at all and publishes
+    // `""`; that is pinned where launches happen, in
+    // `server::tests::a_real_launch_publishes_no_destination_name_rather_than_a_unit_kind`.
     assert_eq!(
         name, "the neighbours",
-        "and its display twin beside it — what a client renders"
+        "a name the mission carries reaches the wire verbatim"
     );
     assert!(
         (food - CARGO_FOOD).abs() < EPSILON,

@@ -1182,10 +1182,22 @@ pub enum ExpeditionMission {
         /// an `Entity` for the reason every other durable handle in this file is one: the band
         /// outlives any entity index, and the party must still name it after a rollback.
         destination_band: BandId,
-        /// **The destination's display name, resolved ONCE at launch** — the same rule as
-        /// [`ExpeditionMission::Hunt::target_species`], and for the same reason: the party outlives
-        /// its target's presence in the viewer's world. A band the shipment is walking toward can be
-        /// out of sight, or gone, long before the party stops being bound to it.
+        /// **The destination's display name, resolved ONCE at launch — and EMPTY today, because
+        /// bands have no names in this game.**
+        ///
+        /// The field exists for the reason [`ExpeditionMission::Hunt::target_species`] does: the
+        /// party outlives its target's presence in the viewer's world, so a name that can only be
+        /// resolved at launch has to be *carried*. The moment a second faction lands (#513) a
+        /// foreign band's name must come from here, because the client has no roster to resolve one
+        /// from.
+        ///
+        /// **It is empty rather than guessed.** It was briefly filled from `StartingUnit.kind`,
+        /// which is the unit *archetype* (`"BandForager"`) and not a name at all: every band in the
+        /// game published the same string, and it disagreed with the positional label
+        /// ("Band 2") the rest of the HUD uses for the same band. Empty means **"no name"** — the
+        /// same *"empty is no row, never a zero"* contract this arc's material readouts use — and a
+        /// client falls back to whatever it calls that band everywhere else. Inventing a naming
+        /// scheme to fill it is a separate piece of design, not a field default.
         destination_name: String,
     },
 }
@@ -1258,9 +1270,32 @@ impl ExpeditionMission {
         }
     }
 
-    /// **The string a player is shown for a shipment's destination** — the name resolved at launch,
-    /// and the band's id only as a last resort, exactly as [`Self::target_display`] falls back for a
-    /// quarry. Empty for every non-`Trade` mission.
+    /// **The destination's name as it will be PUBLISHED** — [`Self::destination_band`]'s display
+    /// twin, and empty when there is none. `""` for every non-`Trade` mission.
+    ///
+    /// **This is what crosses the wire, and it is deliberately not
+    /// [`Self::destination_display`].** The display form falls back to the band's raw id so the
+    /// sim's own event feed always has *something* to print; a wire field must not, because the
+    /// client already has a label for a band and an id-shaped string would fight it. Empty means
+    /// "no name", and the client uses whatever it calls that band everywhere else.
+    pub fn destination_name(&self) -> &str {
+        match self {
+            ExpeditionMission::Trade {
+                destination_name, ..
+            } => destination_name,
+            _ => "",
+        }
+    }
+
+    /// **The string the SIM'S OWN EVENT FEED prints for a shipment's destination** — the name when
+    /// there is one, the band's id as a last resort, exactly as [`Self::target_display`] falls back
+    /// for a quarry. Empty for every non-`Trade` mission.
+    ///
+    /// **The id tier is the normal path today**, not an edge case: bands have no names, so every
+    /// live shipment prints `band <id>`. That is the honest floor for a line the sim has to be able
+    /// to write on its own — and the `detail` token beside it carries `destination=<id>`, so a
+    /// client that would rather print its own label for that band has the key to do it with.
+    /// **Never published**: the wire takes [`Self::destination_name`].
     pub fn destination_display(&self) -> String {
         match self {
             ExpeditionMission::Trade {

@@ -686,7 +686,11 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 .destination_band()
                 .map(|band| band.0)
                 .unwrap_or_default(),
-            exp.mission.destination_display(),
+            // **The raw name, not the display fallback.** `destination_display` prints the band's
+            // id when there is no name, which is right for the sim's own feed prose and wrong for a
+            // wire field: the client already has a label for a band, and an id-shaped string would
+            // fight it. Empty means "no name" — see `ExpeditionMission::Trade::destination_name`.
+            exp.mission.destination_name().to_string(),
             exp.cargo.get(FOOD).to_f32(),
             exp.cargo
                 .materials()

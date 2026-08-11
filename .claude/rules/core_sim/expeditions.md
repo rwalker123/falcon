@@ -1204,11 +1204,35 @@ good.
 `expeditionMission` gains `"trade"`, and `PopulationCohortState` gains four appended fields on both
 `WorldSnapshot` and `WorldDelta` (one `PopulationSection` serves both):
 `expeditionDestinationBand` (the key every command addresses the destination by, never rendered) /
-`expeditionDestinationName` (its display twin, resolved at launch and carried, on exactly the
-`expeditionTargetHerd` / `expeditionTargetSpecies` rule — the party outlives its target's presence in
-the viewer's world) / `expeditionCargoFood` / `expeditionCargoMaterials`, which **reuses
-`MaterialPayoff`** rather than minting a second table and carries the same three contracts as every
-material readout in this arc: never summed, empty is *"no row"* not zero, key always present.
+`expeditionDestinationName` (its display twin, on exactly the `expeditionTargetHerd` /
+`expeditionTargetSpecies` rule — the party outlives its target's presence in the viewer's world, so a
+name resolvable only at launch has to be *carried*) / `expeditionCargoFood` /
+`expeditionCargoMaterials`, which **reuses `MaterialPayoff`** rather than minting a second table and
+carries the same three contracts as every material readout in this arc: never summed, empty is *"no
+row"* not zero, key always present.
+
+> #### `expeditionDestinationName` IS EMPTY, because bands have no names in this game
+>
+> **Empty means "no name", not "unknown"** — the same *"empty is no row, never a zero"* contract the
+> material rows beside it use. The sim declines to guess, and a client renders whatever it already
+> calls that band (its own positional label, "Band 2"), joined on `expeditionDestinationBand`.
+>
+> It first shipped filled from `starting_unit_label` → **`StartingUnit.kind`**, which is the unit
+> *archetype* — `"BandForager"` for every seeded band. So an in-flight party's row read *"Bound for
+> BandForager"*, for every destination in the game, **and disagreed with the label the rest of the
+> HUD gives that same band**. A wrong name is worse than none: none has a fallback, and a
+> plausible-looking one does not.
+>
+> **The field stays, and it is not cosmetic.** When a second faction lands (#513) a foreign band's
+> name has to come from the sim — the client holds no roster to resolve one from. Filling it means
+> designing a band naming scheme, which is its own piece of work and not a field default.
+>
+> **`ExpeditionMission::destination_name` is what crosses the wire; `destination_display` is not.**
+> The display form falls back to `band <id>` so the sim's own event feed always has something to
+> print, and with no names that id tier is the *normal* path rather than an edge case. It is
+> deliberately never published: an id-shaped string on the wire would fight the label the client
+> already has. Every feed line carries `destination=<id>` in its `detail`, which is the key a client
+> needs to substitute its own label.
 
 `CommandEventKind::TradeDelivered` (`trade_delivered`) is the landing beat — its own kind, because it
 is the one expedition event that happens where *other people* live.

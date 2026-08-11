@@ -4011,16 +4011,19 @@ fn resolve_shipment(
     const VERB: &str = "send_trade_expedition";
     // --- the destination is a real, resident band -------------------------------------------
     let wanted = BandId(destination_band_id);
+    // The entity is deliberately not carried out of here: nothing downstream needs it. It *was*,
+    // to resolve a display name off `StartingUnit` — see `ResolvedShipment::destination_name` for
+    // why that is gone.
     let destination = {
         let mut query = app
             .world
-            .query_filtered::<(Entity, &BandId, &PopulationCohort), With<ResidentBand>>();
+            .query_filtered::<(&BandId, &PopulationCohort), With<ResidentBand>>();
         query
             .iter(&app.world)
-            .find(|(_, id, _)| **id == wanted)
-            .map(|(entity, id, cohort)| (entity, *id, cohort.current_tile))
+            .find(|(id, _)| **id == wanted)
+            .map(|(id, cohort)| (*id, cohort.current_tile))
     };
-    let Some((destination_entity, destination_band, destination_tile)) = destination else {
+    let Some((destination_band, destination_tile)) = destination else {
         emit_command_failure(
             app,
             CommandEventKind::ExpeditionSent,
@@ -4202,7 +4205,19 @@ fn resolve_shipment(
 
     Some(ResolvedShipment {
         destination_band,
-        destination_name: starting_unit_label(app, destination_entity),
+        // **EMPTY, because bands have no names in this game.** This briefly resolved through
+        // `starting_unit_label`, which answers `StartingUnit.kind` — the unit *archetype*
+        // (`"BandForager"`), the same string for every seeded band — so an in-flight party's row
+        // rendered *"Bound for BandForager"* for every destination in the game, and disagreed with
+        // the positional label ("Band 2") the rest of the HUD gives the same band.
+        //
+        // The right fix is not a better guess: it is to say **nothing**, which is what `""` means on
+        // this field (the *"empty is no row, never a zero"* contract this arc's material readouts
+        // use). The client then falls back to the label it already uses everywhere else. The field
+        // stays because a naming scheme is a separate piece of design and because #513 makes it
+        // load-bearing: a foreign band's name has to come from the sim, the client having no roster
+        // to resolve one from.
+        destination_name: String::new(),
         destination_pos,
         food,
         materials,
@@ -4332,11 +4347,15 @@ fn handle_send_trade_expedition(
     }
 
     let band_label = outfit.band.label.clone();
-    let destination_name = shipment.destination_name.clone();
     let mission = ExpeditionMission::Trade {
         destination_band: shipment.destination_band,
         destination_name: shipment.destination_name,
     };
+    // **The launch line names the destination through `destination_display`**, which falls back to
+    // the band's id — the sim has to be able to write this sentence on its own, and today there is
+    // no name to write. The `destination=<id>` detail token beside it is the key a client uses if it
+    // would rather print its own label.
+    let destination_label = mission.destination_display();
     let carried_food = shipment_store.get(FOOD).to_f32();
     let carried_materials: Vec<String> = shipment
         .materials
@@ -4383,7 +4402,7 @@ fn handle_send_trade_expedition(
         CommandEventKind::ExpeditionSent,
         faction,
         format!(
-            "{band_label} shipment -> {destination_name} ({})",
+            "{band_label} shipment -> {destination_label} ({})",
             manifest.join(", ")
         ),
         Some(format!(
@@ -13404,6 +13423,78 @@ mod tests {
         assert_eq!(
             parties, 1,
             "a shipment addressed to another party must be refused, not launched"
+        );
+    }
+
+    /// **A real launch publishes NO destination name, and that is the fix rather than the gap.**
+    ///
+    /// Bands have no names in this game, so the sim has nothing to put on
+    /// `expeditionDestinationName` and declines to guess. This first shipped resolving it through
+    /// `starting_unit_label` -> `StartingUnit.kind`, which is the unit **archetype** — the same
+    /// string for every seeded band — so every in-flight party's row read *"Bound for
+    /// BandForager"*, and disagreed with the positional label ("Band 2") the rest of the HUD gives
+    /// that same band. A wrong name is worse than none: none has a fallback.
+    ///
+    /// **The unit kind is asserted absent by NAME**, not merely "the string is empty" — that is what
+    /// makes this a regression test for the specific wrong answer rather than a restatement of the
+    /// field's default. The band's id is asserted present beside it, because a client renders its
+    /// own label by joining on that key and the row is useless without it.
+    #[test]
+    fn a_real_launch_publishes_no_destination_name_rather_than_a_unit_kind() {
+        let mut app = build_world_app();
+        let (sender, destination, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        // The archetype the broken version published — read off the world rather than spelled out,
+        // so the assertion tracks the shipped start profile instead of a copy of it.
+        let unit_kind = starting_unit_label(&app, sender);
+        assert!(
+            !unit_kind.is_empty(),
+            "the fixture rests on the bands carrying a `StartingUnit.kind` at all"
+        );
+
+        handle_send_trade_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            destination.0,
+            food_cargo(TRADE_CARGO_FOOD),
+            None,
+        );
+        let party = launched_party(&mut app).expect("the shipment left");
+        let mission = app
+            .world
+            .get::<Expedition>(party)
+            .expect("the party carries its mission")
+            .mission
+            .clone();
+
+        assert_eq!(
+            mission.destination_name(),
+            "",
+            "a real launch has no name to give, and empty means NO NAME — the client falls back to \
+             the label it uses for that band everywhere else"
+        );
+        assert_ne!(
+            mission.destination_name(),
+            unit_kind,
+            "and it must never be the unit ARCHETYPE ('{unit_kind}'), which is the same string for \
+             every band in the game"
+        );
+        assert_eq!(
+            mission.destination_band(),
+            Some(destination),
+            "the KEY is still there — it is what a client joins its own label on"
+        );
+        // The sim's own feed prose still names something: `destination_display` falls back to the
+        // band's id, which is the honest floor for a line the sim has to write on its own. It is
+        // deliberately NOT what the wire carries.
+        assert!(
+            mission
+                .destination_display()
+                .contains(&destination.0.to_string()),
+            "the feed line names the band by id when it has no name: {}",
+            mission.destination_display()
         );
     }
 }

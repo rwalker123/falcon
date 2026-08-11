@@ -1035,10 +1035,24 @@ table PopulationCohortState {
   //
   // *** THE KEY AND ITS DISPLAY TWIN, the expeditionTargetHerd/expeditionTargetSpecies rule. ***
   // expeditionDestinationBand is the BandId every command addresses the destination by, and a player
-  // must never see a raw id. expeditionDestinationName is what the client renders — resolved at
-  // LAUNCH and carried on the mission, because the destination is exactly the thing a party
-  // outlives: a band walks away, leaves the viewer's sight, or is gone from the world entirely while
-  // the shipment is still bound for it.
+  // must never see a raw id. expeditionDestinationName is the name to render — resolved at LAUNCH
+  // and carried on the mission, because the destination is exactly the thing a party outlives: a
+  // band walks away, leaves the viewer's sight, or is gone from the world entirely while the
+  // shipment is still bound for it.
+  //
+  // *** IT IS EMPTY TODAY, AND EMPTY MEANS "NO NAME". *** Bands have no names in this game, so the
+  // sim has nothing to put here and declines to guess — the same "empty is no row, never a zero"
+  // contract this arc's material readouts use. A client renders whatever it already calls that band
+  // (its own positional label), joined on expeditionDestinationBand.
+  //
+  // It was briefly filled from the sending path's `StartingUnit.kind` — the unit ARCHETYPE
+  // ("BandForager"), the same string for every seeded band — which made every in-flight row read
+  // "Bound for BandForager" and disagree with the label the rest of the HUD gives that same band.
+  // A wrong name is worse than none: none has a fallback, and a plausible-looking one does not.
+  //
+  // The field stays, and is not cosmetic: the moment a second faction lands (#513) a foreign band's
+  // name HAS to come from the sim, because the client holds no roster to resolve one from. Filling
+  // it means designing a band naming scheme, which is its own piece of work and not a field default.
   //
   // *** THERE IS NO FACTION FIELD, AND THAT IS THE ARC'S DISCIPLINE. *** Faction is a property of
   // the endpoint (`.claude/rules/core_sim/connections.md`), never a branch: a shipment to your own

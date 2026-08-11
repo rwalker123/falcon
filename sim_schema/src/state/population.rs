@@ -887,8 +887,21 @@ pub struct PopulationCohortState {
     /// a shipment to your own splinter and a shipment to another people are the same row.
     #[serde(default)]
     pub expedition_destination_band: u64,
-    /// **The destination band's display name**, resolved at launch — what a client renders. Empty
-    /// for every non-trade party.
+    /// **The destination band's display name**, resolved at launch — and **empty today, because
+    /// bands have no names in this game.** Empty for every non-trade party too.
+    ///
+    /// **Empty means "no name", not "unknown"** — the *"empty is no row, never a zero"* contract
+    /// this arc's material readouts use. The sim declines to guess, and a client renders whatever it
+    /// already calls that band, joined on [`Self::expedition_destination_band`].
+    ///
+    /// It was briefly filled from the sending path's `StartingUnit.kind` — the unit *archetype*
+    /// (`"BandForager"`), the same string for every seeded band — which made every in-flight row
+    /// read *"Bound for BandForager"* and disagree with the label the rest of the HUD gives that
+    /// same band. A wrong name is worse than none: none has a fallback.
+    ///
+    /// The field is not cosmetic. When a second faction lands (#513) a foreign band's name has to
+    /// come from the sim, the client holding no roster to resolve one from; filling it means
+    /// designing a band naming scheme, which is its own piece of work.
     #[serde(default)]
     pub expedition_destination_name: String,
     /// **The FOOD the shipment holds.** It is a *separate* store from the party's own pack (which
