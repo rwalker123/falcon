@@ -625,6 +625,27 @@ pub struct ForagePatchState {
     pub stressed_fraction: f32,
 }
 
+/// **One material a commitment would pay, and how much of it per turn** — a row of
+/// [`FloraShareInfo::sow_material_payoff`] / [`FloraShareInfo::cultivate_material_payoff`].
+///
+/// **A vector of these rather than one scalar is the whole point.** It replaced
+/// `sow_trade_payoff` / `cultivate_trade_payoff` (arc #527), which answered *"how much trade"* — a
+/// number a market could total and a player could not act on. This answers *"0.29 fibre"*, which is
+/// what a cash crop **is**. Do not sum them back into one figure for display: that is the retired
+/// trade axis under a new name.
+///
+/// It carries **no quality reading**, deliberately: a rating is a characteristic vector on the batch
+/// the harvest creates ([`MaterialBatchState`](crate::MaterialBatchState)), and a picker row asks the
+/// flat question *"how much of what"*.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct MaterialPayoff {
+    /// The `materials.json` id — `fibre`, `tobacco`, `grape`. Resolved for display against the
+    /// material catalogue this snapshot already ships.
+    pub material_id: String,
+    /// Units of that material per turn, at this rung, on this tile.
+    pub amount: f32,
+}
+
 /// One named plant's share of a tile's forage capacity — see [`ForagePatchState::composition`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct FloraShareInfo {
@@ -730,6 +751,24 @@ pub struct FloraShareInfo {
     /// true. Appended (append-only).
     #[serde(default)]
     pub role: String,
+    /// **What a sown Field of this plant would pay, per material** (arc #527) — the replacement for
+    /// the retired `sow_trade_payoff`, and the number the crop picker's cash-crop row states.
+    ///
+    /// **Empty means "no row", never "zero".** A food crop yields no material and must render
+    /// nothing here — a `0` would read as a cash crop that pays badly. Empty is also what a plant
+    /// that cannot climb the rung on this ground reports, the convention
+    /// [`Self::sow_payoff`]'s `0` follows.
+    ///
+    /// Produced by `forage::commit_material_payoff` off the same per-rung harvest
+    /// `credit_material_yield` is paid on, so the quote and the payout cannot drift. Appended
+    /// (append-only).
+    #[serde(default)]
+    pub sow_material_payoff: Vec<MaterialPayoff>,
+    /// The **tended-rung** twin of [`Self::sow_material_payoff`] — its own field for the reason
+    /// [`Self::cultivate_payoff`] is: rung 2 is a drawn-down MSY skim and rung 3 a managed rate on
+    /// the standing crop, so one number cannot answer both rungs. Appended (append-only).
+    #[serde(default)]
+    pub cultivate_material_payoff: Vec<MaterialPayoff>,
 }
 
 /// Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's

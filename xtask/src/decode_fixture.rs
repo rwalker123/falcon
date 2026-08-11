@@ -1065,9 +1065,17 @@ fn seed_snapshot() -> WorldSnapshot {
     s.forage_patches = rows();
     for patch in &mut s.forage_patches {
         patch.owner = Some(0);
+        let mut composition = rows::<sim_schema::FloraShareInfo>();
+        for share in &mut composition {
+            // The crop picker's PER-MATERIAL cash quote (arc #527) — a nested repeated field, so it
+            // is seeded for the same reason `regrowth_samples` is: an empty one is a field the
+            // decode guard cannot exercise.
+            share.sow_material_payoff = rows();
+            share.cultivate_material_payoff = rows();
+        }
         // Shared on the state struct (a tile's basket, not a frame's), so the fixture's rows are
         // handed over as one — the encoded bytes are identical either way.
-        patch.composition = rows::<sim_schema::FloraShareInfo>().into();
+        patch.composition = composition.into();
         // The TILE's per-rung vector (#426) — the plant twin of `hunt_policy_ceilings` above, and
         // seeded for the same reason: a repeated field the fixture leaves empty is a field the decode
         // guard cannot exercise, which is how four appended fields reached the client as zeros.

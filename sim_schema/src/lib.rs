@@ -1000,6 +1000,91 @@ mod tests {
         }
     }
 
+    /// **THE PER-MATERIAL CASH QUOTE SURVIVES THE WIRE, and EMPTY stays EMPTY** (arc #527).
+    ///
+    /// `sowMaterialPayoff` / `cultivateMaterialPayoff` replaced the retired `sowTradePayoff` /
+    /// `cultivateTradePayoff` with a **vector**, because a material yield is *which material and how
+    /// much*, not one number. Two properties have to survive the codec and neither is checkable in
+    /// process:
+    ///
+    /// 1. **Each rung carries its OWN rows** — the two fields exist precisely because a Field's
+    ///    managed rate and a tended patch's MSY skim are different harvests, so a codec that wrote
+    ///    one vector into both slots would silently quote a Field's number on the Cultivate row,
+    ///    which is the exact defect issue #419 fixed for the fodder account.
+    /// 2. **An empty quote decodes as empty** — the "no row" reading the field's contract rests on.
+    ///    A nested vector that failed to serialize decodes as *absent*, which is the same shape, so
+    ///    the populated row beside it is what keeps this from passing blind.
+    #[test]
+    fn the_per_material_cash_quote_survives_the_wire_per_rung() {
+        /// A Field is 100% its crop; the tended patch beside it is a weeded basket, so the two rungs
+        /// legitimately quote different amounts of the same material.
+        const SOW_FIBRE: f32 = 4.28;
+        const CULTIVATE_FIBRE: f32 = 0.29;
+
+        let snapshot = WorldSnapshot {
+            forage_patches: vec![ForagePatchState {
+                composition: vec![
+                    FloraShareInfo {
+                        species: "cotton".to_string(),
+                        sow_material_payoff: vec![MaterialPayoff {
+                            material_id: "fibre".to_string(),
+                            amount: SOW_FIBRE,
+                        }],
+                        cultivate_material_payoff: vec![MaterialPayoff {
+                            material_id: "fibre".to_string(),
+                            amount: CULTIVATE_FIBRE,
+                        }],
+                        ..FloraShareInfo::default()
+                    },
+                    // A grain Field beside it: no material at all, and it must stay that way.
+                    FloraShareInfo {
+                        species: "wild_emmer".to_string(),
+                        ..FloraShareInfo::default()
+                    },
+                ]
+                .into(),
+                ..ForagePatchState::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("a decodable snapshot envelope");
+        let composition = envelope
+            .payload_as_snapshot()
+            .expect("a snapshot payload")
+            .subsistence()
+            .expect("a subsistence section")
+            .foragePatches()
+            .expect("the forage patches")
+            .get(0)
+            .composition()
+            .expect("the patch's composition");
+
+        let cotton = composition.get(0);
+        let sow = cotton
+            .sowMaterialPayoff()
+            .expect("the Sow quote survives the codec");
+        let cultivate = cotton
+            .cultivateMaterialPayoff()
+            .expect("the Cultivate quote survives the codec");
+        assert_eq!((sow.len(), cultivate.len()), (1, 1));
+        assert_eq!(sow.get(0).materialId(), Some("fibre"));
+        assert_eq!(cultivate.get(0).materialId(), Some("fibre"));
+        assert!((sow.get(0).amount() - SOW_FIBRE).abs() < 1e-6);
+        assert!(
+            (cultivate.get(0).amount() - CULTIVATE_FIBRE).abs() < 1e-6,
+            "each rung must carry its OWN rows — a Field's number on the Cultivate row is the \
+             defect the two fields exist to prevent"
+        );
+
+        let grain = composition.get(1);
+        assert!(
+            grain.sowMaterialPayoff().is_none_or(|rows| rows.is_empty()),
+            "a food crop quotes NO ROW — never a zero-valued one"
+        );
+    }
+
     /// A species the roster does not name ships `""` — **unstated**, which a client must not read as
     /// `"staple"`. The empty-string convention is only worth anything if the encoder actually writes
     /// the field rather than leaving the slot absent.

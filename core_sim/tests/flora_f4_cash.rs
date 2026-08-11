@@ -24,10 +24,10 @@ use core_sim::{
     FactionInventory, FaunaConfigHandle, FloraConfig, ForageRegistry, GenerationId,
     GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
     LaborAssignment, LaborConfig, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore,
-    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, RungKey, SimulationConfig,
-    SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry,
-    WellbeingConfigHandle, BUILTIN_LABOR_CONFIG, FODDER, FOOD,
+    MapPresets, MapPresetsHandle, MaterialPayoff, MoraleCause, PopulationCohort, RungKey,
+    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, Tile,
+    TileRegistry, WellbeingConfigHandle, BUILTIN_LABOR_CONFIG, FODDER, FOOD,
 };
 use sim_runtime::TerrainType;
 
@@ -427,11 +427,151 @@ fn a_hay_field_publishes_the_fodder_it_credits_and_nothing_in_the_other_two_acco
     );
 }
 
-// **RETIRED: `the_picker_trade_payoff_matches_the_credited_store`** (arc #527). It pinned
-// `commit_trade_payoff` — the crop picker's cash-crop quote — against what the labor arm credited.
-// The quote went with the account: a material yield is a per-material reading with a characteristic
-// vector, and there is no honest per-turn scalar for a picker row to state.
-//
-// **The gap is real and is client-side work**, not a scalar to restore: the picker's cash-crop row
-// is now the one surface that cannot say what sowing cotton is *for*. Its Rust half will be a
-// per-material quote on `FloraShareInfo`, which is a shape this arc did not build.
+/// **THE PICKER'S MATERIAL QUOTE IS THE MATERIAL THE SIM CREDITS** (arc #527) — the material-side
+/// restoration of the retired `the_picker_trade_payoff_matches_the_credited_store`, and the §4.3
+/// "assert the quote against the payoff function" rule applied to the account a cash crop actually
+/// pays into.
+///
+/// The labor arm's `credit_material_yield` and the crop picker's `commit_material_payoff` are one
+/// seam: seed a Field at exactly the hypothetical patch the quote builds (this tile's own `K` for
+/// the biome, at full standing crop — a Field neither raises nor lowers it, #433), staff it past the
+/// collection cap so the quote's production basis and the payout's `min(production, collection)`
+/// coincide, and the **credited store** must equal the quote per material.
+///
+/// **A quote that disagrees with what lands in the band's store is worse than no quote**, which is
+/// why this is asserted against `LocalStore::material_total` — what the band ends up *holding* —
+/// rather than against a re-derivation of the credit's arithmetic.
+#[test]
+fn the_picker_material_quote_is_the_material_the_sim_credits() {
+    let mut app = spawn_world();
+    let (tile, coord) = first_patch_tile(&app);
+
+    // Build the quote for a biome cotton actually hosts, and reproduce the hypothetical patch's
+    // standing crop so the sim's paid value and the quote read the identical biomass.
+    let labor = labor();
+    let flora = FloraConfig::builtin();
+    let terrain = TerrainType::Floodplain;
+    let quote_tile = UVec2::new(terrain as u32, 0);
+    let quote_capacity = labor.forage.capacity_for(terrain);
+    let composition = flora.composition(terrain);
+
+    seat_cotton_field(&mut app, coord, quote_capacity);
+    let keeper = spawn_forager(&mut app, tile, coord);
+    app.world.run_system_once(advance_labor_allocation);
+
+    let quoted = core_sim::commit_material_payoff(
+        quote_tile,
+        quote_capacity,
+        "cotton",
+        composition,
+        &flora,
+        &labor.forage,
+        QUOTE_MULTIPLIER,
+        RungKey::PlantField,
+    );
+    assert_eq!(
+        quoted.len(),
+        1,
+        "a cotton Field's basket is 100% cotton, so it quotes exactly its one material: {quoted:?}"
+    );
+    let fibre = &quoted[0];
+    assert_eq!(fibre.material, "fibre");
+    assert!(
+        fibre.amount > 0.0,
+        "the fixture must quote a real material payoff, or the comparison below is two zeros"
+    );
+
+    let cohort = app
+        .world
+        .get::<PopulationCohort>(keeper)
+        .expect("the keeper band still exists");
+    let credited = cohort.stores.material_total(&fibre.material).to_f32();
+    assert!(
+        (credited - fibre.amount).abs() <= EPSILON * fibre.amount.max(1.0),
+        "the credited {} must equal the picker's quote: credited {credited} vs quoted {}",
+        fibre.material,
+        fibre.amount
+    );
+}
+
+/// **"NOTHING" IS AN EMPTY VECTOR, NEVER A ZERO — and a FIELD is where a food crop says it.**
+///
+/// The distinction is the field's whole contract: a client renders one row per entry, so an empty
+/// quote is *no row* while a `0`-valued entry would read as a cash crop that pays badly.
+///
+/// **The rungs answer differently, and that is the model rather than an inconsistency.** A **Field**
+/// is 100% its crop (#433), so a grain Field quotes nothing at all. A **tended patch** is a *weeded
+/// basket* — the favored share rises but the volunteers are still standing — so committing to a
+/// grain still quotes whatever fibre and leaf its neighbours pay, which is exactly what the turn
+/// credits (`patch_material_yields` decomposes rather than averaging). That is the same fact the
+/// food account already records for a rung-2 cash crop paying non-zero calories, read from the other
+/// side.
+#[test]
+fn a_field_of_a_food_crop_quotes_an_empty_material_payoff_not_a_zero() {
+    let labor = labor();
+    let flora = FloraConfig::builtin();
+    let forage = &labor.forage;
+    let terrain = TerrainType::Floodplain;
+    let tile = UVec2::new(terrain as u32, 0);
+    let capacity = forage.capacity_for(terrain);
+    let composition = flora.composition(terrain);
+    let quote = |species: &str, rung| {
+        core_sim::commit_material_payoff(
+            tile,
+            capacity,
+            species,
+            composition,
+            &flora,
+            forage,
+            QUOTE_MULTIPLIER,
+            rung,
+        )
+    };
+
+    // A grain FIELD is one plant, and that plant is made of nothing anyone builds with.
+    let grain_field = quote("wild_emmer", RungKey::PlantField);
+    assert!(
+        grain_field.is_empty(),
+        "a grain Field names no material, so it must quote NO ROW rather than a zero: {grain_field:?}"
+    );
+    // …while the cash crop on the same ground at the same rung does quote one, or the assertion
+    // above would pass against a seam that never returns anything.
+    let cotton_field = quote("cotton", RungKey::PlantField);
+    assert_eq!(
+        cotton_field.len(),
+        1,
+        "a cotton Field is 100% cotton and quotes exactly its fibre: {cotton_field:?}"
+    );
+    assert!(cotton_field[0].amount > 0.0);
+
+    // **A TENDED grain still quotes its neighbours' materials**, because weeding does not evict
+    // them — and every row it does quote is strictly positive, never a published zero.
+    let grain_tended = quote("wild_emmer", RungKey::PlantTended);
+    assert!(
+        grain_tended.iter().all(|row| row.amount > 0.0),
+        "a quoted row is a row that pays: {grain_tended:?}"
+    );
+
+    // A plant that cannot climb the rung here quotes nothing either — the same "no row" reading,
+    // reached down a different branch, and the one that makes `empty` unambiguous.
+    let cannot_climb = quote_absent_species(&flora, tile, capacity);
+    assert!(
+        cannot_climb.is_empty(),
+        "a species absent from this tile's basket cannot climb here, so it quotes no row"
+    );
+}
+
+/// `commit_material_payoff` for a species this tile's basket does not carry — the `species_climbs`
+/// refusal branch, kept out of the test body so the point above stays one line.
+fn quote_absent_species(flora: &FloraConfig, tile: UVec2, capacity: f32) -> Vec<MaterialPayoff> {
+    core_sim::commit_material_payoff(
+        tile,
+        capacity,
+        "cotton",
+        &[],
+        flora,
+        &labor().forage,
+        QUOTE_MULTIPLIER,
+        RungKey::PlantField,
+    )
+}

@@ -268,6 +268,15 @@ carries a *rating*, `balance_supply_networks` already pools per `(material id, b
 `LocalStore::drain_materials_into` already moves a haul batch by batch without averaging. The
 substrate is in better shape for it than the scalar ever was.
 
+> **The one surface the retirement really cost, and how it came back.** The crop picker's cash-crop
+> row read `sowTradePayoff` / `cultivateTradePayoff`, so for a while a cotton row showed only its
+> small rung-2 calories — a cash crop the player could not evaluate is a cash crop nobody sows.
+> `forage::commit_material_payoff` replaced it with a **per-material** quote
+> (`FloraShareInfo.sowMaterialPayoff` / `cultivateMaterialPayoff`, `[{ materialId, amount }]`), which
+> is the same lesson as the retirement itself: the answer is *"0.29 fibre"*, not a number a market
+> could total. Nothing may sum those rows back into one figure. See
+> `.claude/rules/core_sim/flora.md` → "The crop picker's cash quote is PER MATERIAL".
+
 > **The retired `FactionInventory` grant was a different thing that shared the name.** The shipped
 > start profile used to hand the faction 40 `trade_goods`, which `apply_trade_goods_bonus` then
 > drained into an openness field on a `TradeLink` that never existed — so the grant was deleted at

@@ -423,7 +423,8 @@ same scarce sowable tile" is the land-use tension, and *cash* is now literally *
 > strength 0.35`) and hay straw (`0.22 / 0.30`) are both `fibre` and are not the same thing. So
 > `trade_goods_per_biomass`, `field_trade_goods`, `tended_take_trade_goods`,
 > `patch_trade_per_biomass`, `managed_per_worker_trade` and `commit_trade_payoff` are **all deleted**;
-> `docs/plan_contact_and_logistics.md` §Q5 carries the argument.
+> `docs/plan_contact_and_logistics.md` §Q5 carries the argument. The picker's cash quote came back as
+> `commit_material_payoff` — see "The crop picker's cash quote is PER MATERIAL" below.
 
 - **The plant half — the vector routes by account, no `role` branch.** A Field's managed harvest
   credits each component to its own account, commodity-generically: `field_provisions` → the band's
@@ -453,13 +454,62 @@ same scarce sowable tile" is the land-use tension, and *cash* is now literally *
   realization (§10) is what keeps the staples (wild_emmer / reed_and_root) dominant** — the commit bar
   reads a tile's *local realized share*, so some alluvial tiles realize as wheat and others as cotton,
   rather than the cash crop being kept off that ground. Material rates are **playtest dials**.
-- **THE CROP PICKER HAS NO CASH QUOTE ANY MORE, and that is an open client-side gap.**
-  `commit_trade_payoff` and the wire fields it fed (`FloraShareInfo.sowTradePayoff` /
-  `cultivateTradePayoff`) are gone: a material yield is a **per-material reading with a
-  characteristic vector**, and there is no honest per-turn scalar for a picker row to state. So the
-  Cultivate/Sow rows of a cash crop now show its (small, rung-2) calories and nothing about the fibre
-  that is the whole point of sowing it. Filling it needs a per-material quote on `FloraShareInfo` —
-  **not** a flat "materials/turn" number, which would be the retired trade axis under a new name.
+- **The crop picker's cash quote is PER MATERIAL** — see the section below.
+
+### The crop picker's cash quote is PER MATERIAL — `commit_material_payoff` (arc #527)
+
+The retired `commit_trade_payoff` was the one surface that told a player what sowing cotton is
+**for**, and losing it made a cash crop unevaluable: the Cultivate/Sow rows showed only its (small,
+rung-2) calories. `forage::commit_material_payoff` is the replacement, and it is deliberately **not**
+a restoration.
+
+> **A VECTOR, NOT A SCALAR, IS THE WHOLE DIFFERENCE.** The trade quote answered *"how much trade"* —
+> a number a market could total and a player could not act on. This answers *"0.29 fibre"*, which is
+> what a cash crop **is**. **Do not sum the rows into one materials/turn figure** anywhere, client
+> included: that is the retired axis under a new name, and it re-collapses the distinction the
+> materials model exists to keep.
+
+- **Shape.** `Vec<MaterialPayoff { material, amount }>`, one row per material, **merged by material
+  id and ordered by it** (a `BTreeMap`, so the wire order is stable). A rung-2 basket can name one
+  material twice — cotton fibre beside hay straw — and merging is what makes the quote comparable to
+  `LocalStore::material_total`, which sums the same way. It carries **no quality reading**: a rating
+  is a characteristic vector on the batch the harvest creates, and a picker row asks the flat
+  question *"how much of what"*.
+- **Priced on each rung's OWN harvest**, through the same expressions the payout runs:
+  `field_harvest_production` at rung 3 and `tended_msy_take` at rung 2. `field_harvest_production` was
+  **split out of `field_harvest_biomass`** for exactly the reason `tended_msy_take` was extracted —
+  it is the `production` term of the payout's own `min(production, collection)`, so a Field staffed
+  past its collection cap quotes and pays the identical number, and there is no second copy of
+  `biomass × field_provisions_per_biomass` to drift.
+- **EMPTY MEANS "NO ROW", NEVER "ZERO"**, and this is the field's contract rather than a nicety: a
+  client renders one row per entry, so an empty quote is *no row* while a `0`-valued entry would read
+  as a cash crop that pays badly. Empty is what a plant paying no material reports **and** what a
+  plant that cannot climb the rung here reports — the `cultivatePayoff`-reads-`0` convention carried
+  onto a vector.
+- **The two rungs answer DIFFERENTLY, and that is the model.** A **Field** is 100% its crop (#433),
+  so a grain Field quotes nothing at all. A **tended patch** is a *weeded basket* — the favored share
+  rises but the volunteers are still standing — so committing to a grain still quotes whatever fibre
+  and leaf its neighbours pay, which is exactly what the turn credits
+  (`patch_material_yields` decomposes rather than averaging). It is the same fact the food account
+  already records from the other side, where a rung-2 cash crop pays non-zero calories.
+- **Wire (append-only, last on `FloraShareInfo`):** `sowMaterialPayoff` /
+  `cultivateMaterialPayoff`, each `[MaterialPayoff { materialId, amount }]`. **A new table with a new
+  id** — the freed `sowTradePayoff`/`cultivateTradePayoff` slots stay `(deprecated)` and are not
+  reused. Two fields for one account, for `cultivatePayoff`/`sowPayoff`'s reason: the rungs differ in
+  basket, conversion gain *and* the shape of the harvest.
+- **Guarded at three levels, because the failure modes differ.**
+  `flora_f4_cash::the_picker_material_quote_is_the_material_the_sim_credits` runs a real turn and
+  asserts the quote against `LocalStore::material_total` — *a quote that disagrees with what lands in
+  the band's store is worse than no quote*.
+  `flora_quotes::every_quoted_plant_carries_its_own_per_rung_material_payoff` asserts the **capture**
+  stamps the seam's own rows (a quote computed correctly and then not written onto the row looks
+  exactly like the retired quote's absence). And
+  `sim_schema::the_per_material_cash_quote_survives_the_wire_per_rung` pins the **codec**, including
+  that an empty vector decodes as empty — a nested vector that failed to serialize decodes as
+  *absent*, which is the same shape as "no row" and would otherwise hide.
+- **Client:** the native reader surfaces `sow_material_payoff` / `cultivate_material_payoff` as
+  arrays of `{ material_id, amount }` dicts on each `composition` entry. **Rendering them is the
+  client pass** — nothing in GDScript reads the keys yet.
 
 ### The `role` tag is on the wire — `FloraShareInfo.role`
 
@@ -470,11 +520,12 @@ definition and cannot be re-derived into a second. Still a **display tag**: noth
 on it, and a client renders it and nothing more. `""` means **unstated** (a species the roster no longer
 names), never `staple` — the `displayName` convention.
 
-**A client cannot derive it from the payoffs beside it.** `cultivatePayoff` / `cultivateFodderPayoff` /
-`cultivateTradePayoff` and the `sow*` triple are **rung-2 and rung-3** numbers — they fold in the weeding
-and conversion gains rather than stating the species' own vector — and they are **all zero** for a plant
-that cannot climb on this ground (`canCultivate`/`canSow` false), which is exactly the `wild`-ceiling case
-where the role is still a true and useful fact. Pinned by
+**A client cannot derive it from the payoffs beside it.** `cultivatePayoff` /
+`cultivateFodderPayoff` / `cultivateMaterialPayoff` and their `sow*` twins are **rung-2 and rung-3**
+numbers — they fold in the weeding and conversion gains rather than stating the species' own vector —
+and they are **all zero or empty** for a plant that cannot climb on this ground
+(`canCultivate`/`canSow` false), which is exactly the `wild`-ceiling case where the role is still a
+true and useful fact. Pinned by
 `sim_schema`'s `the_three_crop_roles_survive_the_wire_distinctly` /
 `an_unstated_role_ships_as_an_empty_string_rather_than_a_default_category` and, at the capture site, by
 `flora_quotes::tests::every_quoted_plant_carries_its_rosters_own_role`.
@@ -569,10 +620,9 @@ now feeds every account at rung 2:
     share but leaves the volunteers standing, so `cultivate_payoff` is their calories — a *loss*
     against gathering the same tile wild. Only a sown **Field** is 100% crop and pays exactly `0`
     food.
-  - **THE CASH QUOTE ITSELF IS GONE** (arc #527) — `cultivateTradePayoff` / `sowTradePayoff` went with
-    the trade axis, so the picker's cash-crop rows now show only that (small) food number and say
-    nothing about the fibre or leaf a player is sowing for. See "Cash crops — the F4 coupling" for
-    what filling it would take.
+  - **The cash quote is a VECTOR now** (arc #527) — `cultivateTradePayoff` / `sowTradePayoff` went
+    with the trade axis and `cultivateMaterialPayoff` / `sowMaterialPayoff` replaced them, per
+    material rather than per currency. See "The crop picker's cash quote is PER MATERIAL".
 - **Still provisions-only:** `project_realized_forage` / `project_arrivals_forage` — the forward
   projection reports food, so a cash Field's contribution to it is its calories and nothing else.
 

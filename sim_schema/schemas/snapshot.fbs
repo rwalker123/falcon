@@ -1788,6 +1788,24 @@ table ForagePolicyCeiling {
 }
 
 // One named plant's share of a tile's forage capacity — see `ForagePatchState.composition`.
+// ONE MATERIAL A COMMITMENT WOULD PAY, AND HOW MUCH OF IT PER TURN (appended, arc #527) - a row of
+// FloraShareInfo.sowMaterialPayoff / cultivateMaterialPayoff.
+//
+// A VECTOR RATHER THAN A SCALAR IS THE WHOLE POINT. It replaced sowTradePayoff/cultivateTradePayoff,
+// which answered "how much trade" - a number a market could total and a player could not act on.
+// This answers "0.29 fibre", which is what a cash crop IS. Do NOT sum these into one
+// materials/turn figure for display: that is the retired trade axis under a new name, and it
+// collapses the distinction the whole materials model exists to keep.
+//
+// `materialId` is the materials.json id (`fibre`, `tobacco`, `grape`), resolved for display against
+// the materialCatalogue this snapshot already ships. It carries NO quality reading: a rating is a
+// characteristic vector on the batch the harvest creates (MaterialBatchState), and a picker row asks
+// the flat question "how much of what".
+table MaterialPayoff {
+  materialId:string;
+  amount:float;
+}
+
 table FloraShareInfo {
   // The stable config key (`flora_config.json` -> species), e.g. "hazel". Free-form string (the
   // `species`/`policy` convention), so adding a plant needs no schema change.
@@ -1915,6 +1933,25 @@ table FloraShareInfo {
   // (`canCultivate`/`canSow` false) — exactly the wild-ceiling case where the role is still a true
   // and useful fact.
   role:string;
+  // --- WHAT A CASH CROP WOULD PAY, PER MATERIAL (appended last, arc #527) ---
+  // The replacement for the retired sowTradePayoff / cultivateTradePayoff, one entry per material
+  // this plant would yield per turn at that rung on this tile. See MaterialPayoff above for why it
+  // is a vector.
+  //
+  // EMPTY MEANS "NO ROW", NEVER "ZERO". A food crop yields no material and must render nothing at
+  // all here - not a `0`, which would read as a cash crop that pays badly. Empty is also what a
+  // plant that cannot climb the rung on this ground reports, the same convention
+  // cultivatePayoff/sowPayoff's `0` follows.
+  //
+  // Produced by the same forage::commit_material_payoff seam at each rung's own harvest
+  // (field_harvest_production at rung 3, tended_msy_take at rung 2) that credit_material_yield is
+  // paid off, so the quote and the payout cannot drift - pinned by
+  // flora_f4_cash::the_picker_material_quote_is_the_material_the_sim_credits.
+  //
+  // TWO FIELDS, ONE PER RUNG, for exactly the reason cultivatePayoff/sowPayoff are two: the rungs
+  // differ in basket, conversion gain AND the shape of the harvest, so one number cannot answer both.
+  sowMaterialPayoff:[MaterialPayoff];
+  cultivateMaterialPayoff:[MaterialPayoff];
 }
 
 // Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's

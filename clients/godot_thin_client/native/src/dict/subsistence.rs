@@ -419,6 +419,27 @@ pub(crate) fn kits_to_array(kits: Vector<'_, ForwardsUOffset<fb::KitOption<'_>>>
     array
 }
 
+/// One rung's per-material crop quote, as an array of `{ material_id, amount }` dicts.
+///
+/// **Empty in, empty out** — an absent wire vector and an empty one are the same answer here ("this
+/// plant pays no material at this rung"), which is why this collapses them rather than distinguishing
+/// them. See the insertion site for why the KEY is nonetheless always written.
+fn material_payoffs_to_array(
+    payoffs: Option<flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::MaterialPayoff<'_>>>>,
+) -> VarArray {
+    let mut rows = VarArray::new();
+    let Some(payoffs) = payoffs else {
+        return rows;
+    };
+    for payoff in payoffs.iter() {
+        let mut row = VarDictionary::new();
+        let _ = row.insert("material_id", payoff.materialId().unwrap_or_default());
+        let _ = row.insert("amount", payoff.amount());
+        rows.push(&row.to_variant());
+    }
+    rows
+}
+
 pub(crate) fn forage_patches_to_array(
     patches: Vector<'_, ForwardsUOffset<fb::ForagePatchState<'_>>>,
 ) -> VarArray {
@@ -518,11 +539,7 @@ pub(crate) fn forage_patches_to_array(
                 // food but valuable as feed. The crop picker shows this hay value in place of the 0×
                 // provisions ratio so a fodder crop does not read as a loss. 0 for a normal crop.
                 let _ = share_dict.insert("sow_fodder_payoff", share.sowFodderPayoff());
-                // **RETIRED with the trade-goods yield axis** (arc #527). A cash crop's payoff is
-                // its MATERIALS, which have no per-turn scalar for a picker row to state — so the
-                // crop picker's cash-crop line has no server-side number to read until a
-                // per-material quote is built. Flagged as client work, not filled with a zero.
-                // The same two accounts AT THE TENDED RUNG (#419). The two `sow_*` payoffs above are
+                // The same account AT THE TENDED RUNG (#419). The two `sow_*` payoffs above are
                 // Field figures, so a Cultivate row that read them quoted rung 3's managed rate for a
                 // rung that pays an MSY skim off a merely-weeded basket. Which one a row states is the
                 // POLICY's question, so both ride the entry and the picker picks by rung.
@@ -542,6 +559,31 @@ pub(crate) fn forage_patches_to_array(
                 if let Some(role) = share.role() {
                     let _ = share_dict.insert("role", role);
                 }
+                // WHAT A CASH CROP PAYS, PER MATERIAL (arc #527) — the replacement for the retired
+                // `sow_trade_payoff`/`cultivate_trade_payoff`, which answered "how much trade": a
+                // number a market could total and a player could not act on. Each key holds an
+                // ARRAY of `{ material_id, amount }` dicts — one row per material this plant would
+                // yield per turn at that rung on this tile.
+                //
+                // **AN EMPTY ARRAY IS "NO ROW", NEVER "ZERO".** A food crop yields no material and
+                // must render nothing at all; a `0` would read as a cash crop that pays badly. The
+                // key is always inserted (empty array included) so a reader can tell "this server
+                // sent no quote" from "this plant pays no material" — the opposite convention to
+                // `role` above, and deliberately so, because here the empty case is a real answer
+                // rather than an unstated one.
+                //
+                // **DO NOT SUM THEM INTO ONE materials/turn FIGURE.** That is the retired trade axis
+                // under a new name, and it collapses the distinction the materials model exists to
+                // keep. `material_id` resolves for display against the material catalogue the
+                // snapshot already ships.
+                let _ = share_dict.insert(
+                    "sow_material_payoff",
+                    &material_payoffs_to_array(share.sowMaterialPayoff()),
+                );
+                let _ = share_dict.insert(
+                    "cultivate_material_payoff",
+                    &material_payoffs_to_array(share.cultivateMaterialPayoff()),
+                );
                 shares.push(&share_dict.to_variant());
             }
             let _ = dict.insert("composition", &shares);

@@ -4,7 +4,7 @@ use crate::codec::FbBuilder;
 use crate::state::subsistence::{
     CharacteristicBandState, CraftKnowledgeState, FloraShareInfo, FoodModuleState,
     ForagePatchState, HerdTelemetryState, IntensificationKnowledgeState, KitOptionState,
-    MaterialDefState, RecipeDefState, SedentarizationState,
+    MaterialDefState, MaterialPayoff, RecipeDefState, SedentarizationState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -559,6 +559,11 @@ fn create_flora_shares<'a>(
         let species = builder.create_string(share.species.as_str());
         let display_name = builder.create_string(share.display_name.as_str());
         let role = builder.create_string(share.role.as_str());
+        // **Built before the parent table opens**, the ordinary FlatBuffers rule: a nested vector
+        // cannot be written while `FloraShareInfo` is under construction.
+        let sow_materials = create_material_payoffs(builder, &share.sow_material_payoff);
+        let cultivate_materials =
+            create_material_payoffs(builder, &share.cultivate_material_payoff);
         let entry = fb::FloraShareInfo::create(
             builder,
             &fb::FloraShareInfoArgs {
@@ -581,6 +586,33 @@ fn create_flora_shares<'a>(
                 // What the plant is FOR — a display tag off the roster, appended last (append-only
                 // wire). `""` is "unstated", never "staple".
                 role: Some(role),
+                // **What a cash crop would pay, per material** — appended last (append-only wire,
+                // arc #527), replacing the retired `sowTradePayoff`/`cultivateTradePayoff`. An EMPTY
+                // vector is "no row", never "zero": a food crop yields no material and must render
+                // nothing at all.
+                sowMaterialPayoff: Some(sow_materials),
+                cultivateMaterialPayoff: Some(cultivate_materials),
+            },
+        );
+        entries.push(entry);
+    }
+    builder.create_vector(&entries)
+}
+
+/// One rung's per-material quote, as a wire vector. Empty in, empty out — the "no row" reading the
+/// field's own contract rests on, so an absent quote never becomes a zero-valued one.
+fn create_material_payoffs<'a>(
+    builder: &mut FbBuilder<'a>,
+    payoffs: &[MaterialPayoff],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::MaterialPayoff<'a>>>> {
+    let mut entries = Vec::with_capacity(payoffs.len());
+    for payoff in payoffs {
+        let material_id = builder.create_string(payoff.material_id.as_str());
+        let entry = fb::MaterialPayoff::create(
+            builder,
+            &fb::MaterialPayoffArgs {
+                materialId: Some(material_id),
+                amount: payoff.amount,
             },
         );
         entries.push(entry);

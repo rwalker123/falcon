@@ -61,7 +61,10 @@
 //! is now rung 4 (Farm)'s identity — the first rung to drop the gathering-site term, with a fertility
 //! floor back in its place. Design: `docs/plan_intensification_ladder.md` §2.
 
-use std::{borrow::Cow, collections::HashMap};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, HashMap},
+};
 
 use bevy::prelude::*;
 
@@ -1243,10 +1246,97 @@ fn rung_fodder_payoff(
 }
 
 // **RETIRED: `commit_trade_payoff` / `rung_trade_payoff`** (arc #527), with the trade-goods axis
-// they quoted. The picker's cash-crop row was the one surface that made the retired scalar look like
-// a resource; what a cash crop actually pays is **materials**, which are batches with a
-// characteristic vector and cannot be quoted as a per-turn number the way food and fodder can. The
-// crop picker's material quote is client-side work that follows this arc, not a scalar to restore.
+// they quoted. What a cash crop actually pays is **materials** — see `commit_material_payoff`
+// below, which is the replacement rather than a restoration: it answers per material instead of
+// flattening every one of them into a single number, which is the whole reason the scalar went.
+
+/// **How much of ONE material a commitment would pay per turn** — one row of the crop picker's cash
+/// quote, and the shape [`commit_material_payoff`] returns a vector of.
+///
+/// **It names the material and nothing about its quality**, deliberately. A material's *rating* is a
+/// characteristic vector living on the batch the harvest actually creates ([`patch_material_yields`]
+/// carries the readings); a picker row asks the flat question *"how much of what"*, and answering it
+/// with a rating too would put the merge model in a preview. What a player needs here is which crop
+/// pays which stuff and how fast.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MaterialPayoff {
+    /// The `materials.json` id — `fibre`, `tobacco`, `grape`. Resolved client-side for display.
+    pub material: String,
+    /// Units of that material per turn, at this rung, on this ground.
+    pub amount: f32,
+}
+
+/// **The MATERIALS committing this tile to THIS plant would pay per turn, on `rung`** — the
+/// replacement for the retired `commit_trade_payoff` (arc #527), and the number the crop picker's
+/// cash-crop row states.
+///
+/// **A VECTOR, not a scalar, and that is the whole difference.** The retired quote answered "how
+/// much trade", which a market could total but a player could not act on; this answers "0.29 fibre"
+/// or "0.21 tobacco", which is what a cash crop *is*. Totalling it back into one number would be the
+/// retired axis under a new name.
+///
+/// Built through the *same* `hypothetical_patch` construction and the *same* per-rung harvest
+/// expressions the sim pays with — [`field_harvest_production`] at rung 3, [`tended_msy_take`] at
+/// rung 2 — so the published number and the payout cannot drift (the §4.3 "assert the quote against
+/// the payoff function" rule). **Empty** for a plant that pays no material or cannot climb `rung`
+/// here, which a client must render as *no row*, never as a zero.
+///
+/// **Rows are merged per material id, in id order.** A mixed rung-2 basket can name one material
+/// twice (cotton fibre beside hay straw), and those land in *different* batches in the store because
+/// their readings differ — but `LocalStore::material_total` sums exactly this way, which is what
+/// makes the quote checkable against what the band ends up holding.
+#[allow(clippy::too_many_arguments)]
+pub fn commit_material_payoff(
+    tile: UVec2,
+    tile_capacity: f32,
+    species: &str,
+    composition: &[FloraShare],
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+    output_multiplier: f32,
+    rung: RungKey,
+) -> Vec<MaterialPayoff> {
+    if !species_climbs(species, share_of(composition, species), flora, rung) {
+        return Vec::new();
+    }
+    let patch = hypothetical_patch(tile, tile_capacity, Some(species), rung);
+    rung_material_payoff(&patch, composition, forage, flora, output_multiplier, rung)
+}
+
+/// **What a patch pays in MATERIALS, standing on `rung`** — the material arm of [`rung_payoff`],
+/// dispatching to the *same* harvest each rung is paid on: [`field_harvest_production`] at rung 3 (a
+/// managed rate on the standing crop) and [`tended_msy_take`] at rung 2 (the MSY skim, because rung
+/// 2 is drawn down). Rung 1 pays no *committed* quote — a wild gather's fibre is not a commitment's
+/// payoff — so it is empty, the same "cannot climb this rung" sentinel the ratios use.
+fn rung_material_payoff(
+    patch: &ForagePatch,
+    tile_composition: &[FloraShare],
+    forage: &ForageLaborConfig,
+    flora: &FloraConfig,
+    output_multiplier: f32,
+    rung: RungKey,
+) -> Vec<MaterialPayoff> {
+    let harvest_biomass = match rung {
+        RungKey::PlantField => field_harvest_production(patch, forage),
+        RungKey::PlantTended => tended_msy_take(patch, forage),
+        _ => return Vec::new(),
+    };
+    // **The same rows `credit_material_yield` is handed**, off the same hypothetical patch — so the
+    // quote is the payout's own arithmetic rather than a re-derivation of it. A `BTreeMap` both
+    // merges the duplicate ids and fixes the output order, which the wire needs.
+    let mut totals: BTreeMap<String, f32> = BTreeMap::new();
+    for row in patch_material_yields(patch, tile_composition, flora, forage) {
+        let amount = row.per_biomass * harvest_biomass * output_multiplier;
+        if amount <= 0.0 {
+            continue;
+        }
+        *totals.entry(row.material).or_insert(0.0) += amount;
+    }
+    totals
+        .into_iter()
+        .map(|(material, amount)| MaterialPayoff { material, amount })
+        .collect()
+}
 
 /// **What this tile pays per turn left WILD** — the denominator of [`commit_yield_ratio`], and the
 /// same Sustain skim `rung_payoff` gives any uncommitted patch.
@@ -1828,27 +1918,38 @@ pub(crate) fn field_provisions(
         * output_multiplier
 }
 
-/// **What a sown Field hands over each turn, stated in BIOMASS** — the managed harvest before it is
-/// routed into any one currency, capped by what the crew can carry.
+/// **What a sown Field OFFERS each turn, stated in BIOMASS, before any crew is counted** — the
+/// production half of [`field_harvest_biomass`], and the basis every rung-3 *quote* is priced on.
 ///
-/// The three scalar accounts each convert this through their own rate, so none of them ever needs
-/// the biomass itself. The **material** account does: a material's `per_biomass` is a rate on the
-/// crop rather than on the currency it would otherwise have been sold as, and a cash Field's
-/// provisions are `0`, so there is no currency to scale off. Same `min(production, collection)` shape
-/// the other three run — an understaffed Field brings home less of everything, in step.
+/// Split out for the reason [`tended_msy_take`] is: the picker's material quote
+/// ([`commit_material_payoff`]) and the payout must describe the same harvest, and a second copy of
+/// `biomass × field_provisions_per_biomass` is exactly how they would start to disagree. It is the
+/// production term of the same `min(production, collection)` the payout runs, which is why a Field
+/// staffed past its collection cap quotes and pays the identical number.
 ///
 /// A Field is never drawn down, so this is a *rate on the standing crop* and `patch.biomass` is
 /// unchanged by it.
+pub(crate) fn field_harvest_production(patch: &ForagePatch, forage: &ForageLaborConfig) -> f32 {
+    patch.biomass * forage.cultivation.field_provisions_per_biomass
+}
+
+/// **What a sown Field hands over each turn, stated in BIOMASS** — the managed harvest before it is
+/// routed into any one currency, capped by what the crew can carry.
+///
+/// The scalar accounts each convert this through their own rate, so neither of them ever needs the
+/// biomass itself. The **material** account does: a material's `per_biomass` is a rate on the crop
+/// rather than on a currency it would otherwise have been sold as, and a cash Field's provisions are
+/// `0`, so there is no currency to scale off. Same `min(production, collection)` shape the others
+/// run — an understaffed Field brings home less of everything, in step.
 pub(crate) fn field_harvest_biomass(
     patch: &ForagePatch,
     forage: &ForageLaborConfig,
     equipped_gather_rate: f32,
     workers: u32,
 ) -> f32 {
-    let production = patch.biomass * forage.cultivation.field_provisions_per_biomass;
     let collection =
         workers as f32 * forage_per_worker_biomass(equipped_gather_rate, MANAGED_HARVEST_SEASON);
-    production.min(collection)
+    field_harvest_production(patch, forage).min(collection)
 }
 
 /// The **projected** fodder conversion rate — the projected basket's `yield.fodder_per_biomass`
