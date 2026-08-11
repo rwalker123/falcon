@@ -108,11 +108,10 @@ pub use components::{
     BandEquipment, BandId, BandTravel, BandWorkforce, BatchGrade, DeathCause,
     DemographicFlowAccumulator, DrawnInputs, DrawnMaterial, ElementKind, EquipmentBatch,
     Expedition, ExpeditionMission, ExpeditionPhase, Improvement, KnowledgeFragment,
-    LaborAllocation, LaborAssignment, LaborTarget, LocalStore, LogisticsLink, MaterialBatch,
-    MaterialDraw, MoraleCause, PendingMigration, PopulationCohort, PowerNode, ResidentBand,
-    Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink, YieldRange,
-    DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE,
-    TRADE_GOODS,
+    LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch, MaterialDraw,
+    MoraleCause, PendingMigration, PopulationCohort, PowerNode, ResidentBand, Settlement,
+    SourceYield, StartingUnit, Tile, TownCenter, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER,
+    FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE,
 };
 pub use config_load::ConfigLoadError;
 pub use config_override::{
@@ -199,15 +198,15 @@ pub use food::{
     FoodSiteKind, DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
 };
 pub use forage::{
-    advance_cultivation, advance_forage_regrowth, commit_fodder_payoff, commit_payoff,
-    commit_trade_payoff, commit_yield_ratio, composition_for_rung, default_species_for_rung,
+    advance_cultivation, advance_forage_regrowth, commit_fodder_payoff, commit_material_payoff,
+    commit_payoff, commit_yield_ratio, composition_for_rung, default_species_for_rung,
     forage_per_worker_biomass, forage_provisions, forage_source_yield_preview, patch_composition,
-    patch_provisions_per_biomass, patch_species_quality, patch_trade_per_biomass,
+    patch_material_yields, patch_provisions_per_biomass, patch_species_quality,
     project_arrivals_forage, project_realized_forage, resolve_committed_species, rung_payoff,
     rung_site_refusal, spawn_initial_forage, species_is_legal_here, tended_take_fodder,
-    tended_take_trade_goods, tile_flora_composition, tile_forage_capacity, tile_is_fresh_watered,
-    wild_payoff, ForagePatch, ForageRegistry, SpeciesRefusal, CANNOT_CLIMB_RATIO,
-    CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET,
+    tile_flora_composition, tile_forage_capacity, tile_is_fresh_watered, wild_payoff, ForagePatch,
+    ForageRegistry, SpeciesRefusal, CANNOT_CLIMB_RATIO, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON,
+    SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use graze::{advance_graze_regrowth, spawn_initial_graze, GrazePatch, GrazeRegistry};
@@ -242,9 +241,10 @@ pub use labor_config::{
 };
 pub use map_preset::{ErosionConfig, MapPreset, MapPresets, MapPresetsHandle, BUILTIN_MAP_PRESETS};
 pub use materials_config::{
-    credit_material_yield, load_materials_config_from_env, BandKey, CharacteristicBand,
-    HandWorking, MaterialDef, MaterialYieldDef, MaterialYieldError, MaterialsConfig,
-    MaterialsConfigError, MaterialsConfigHandle, MaterialsConfigMetadata, BUILTIN_MATERIALS_CONFIG,
+    credit_material_yield, load_materials_config_from_env, material_yield_totals, BandKey,
+    CharacteristicBand, HandWorking, MaterialDef, MaterialPayoff, MaterialYieldDef,
+    MaterialYieldError, MaterialsConfig, MaterialsConfigError, MaterialsConfigHandle,
+    MaterialsConfigMetadata, BUILTIN_MATERIALS_CONFIG,
 };
 pub use recipes_config::{
     load_recipes_config_from_env, CraftingTuning, RecipeDef, RecipeGrade, RecipeInput,
@@ -276,10 +276,10 @@ pub use snapshot_overlays_config::{
     SnapshotOverlaysConfigMetadata, BUILTIN_SNAPSHOT_OVERLAYS_CONFIG,
 };
 pub use start_profile::{
-    resolve_active_profile, snapshot_profiles, ActiveStartProfile, CampaignLabel, StartProfile,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartProfileKnowledgeTagsMetadata,
-    StartProfileLookup, StartProfileOverrides, StartProfilesHandle, StartProfilesMetadata,
-    StartingUnitSpec,
+    resolve_active_profile, snapshot_profiles, ActiveStartProfile, CampaignLabel, InventoryEntry,
+    StartProfile, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
+    StartProfileKnowledgeTagsMetadata, StartProfileLookup, StartProfileOverrides,
+    StartProfilesHandle, StartProfilesMetadata, StartingUnitSpec,
 };
 pub use supply::{balance_supply_networks, SupplyNetworkMembership};
 pub use supply_network_config::{
@@ -287,9 +287,9 @@ pub use supply_network_config::{
     SupplyNetworkConfigMetadata,
 };
 pub use turn_pipeline_config::{
-    load_turn_pipeline_config_from_env, LogisticsPhaseConfig, PopulationPhaseConfig,
-    PowerPhaseConfig, TradePhaseConfig, TurnPipelineConfig, TurnPipelineConfigHandle,
-    TurnPipelineConfigMetadata, BUILTIN_TURN_PIPELINE_CONFIG,
+    load_turn_pipeline_config_from_env, PopulationPhaseConfig, PowerPhaseConfig,
+    TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata,
+    BUILTIN_TURN_PIPELINE_CONFIG,
 };
 pub use victory::{
     load_victory_config_from_env, VictoryConfigHandle, VictoryModeId, VictoryModeKind,
@@ -806,7 +806,6 @@ pub fn build_headless_app() -> App {
                 // so the executor could not overlap them even if they were left unordered.
                 (
                     systems::simulate_materials,
-                    systems::simulate_logistics,
                     advance_herds,
                     advance_herd_grazing,
                     advance_predation,
@@ -817,7 +816,7 @@ pub fn build_headless_app() -> App {
                 // The flora/pasture half touches `ForageRegistry`/`GrazeRegistry`, which the fauna
                 // backbone above does not, so it runs alongside it. Each declares the one edge it
                 // actually has rather than inheriting the whole chain.
-                advance_forage_regrowth.after(systems::simulate_logistics),
+                advance_forage_regrowth.after(systems::simulate_materials),
                 // The second edge is the feed line: `advance_cultivation` announces a lost plant
                 // rung and `advance_husbandry` a lost pen / an under-herded flock, so the two now
                 // share `CommandEventLog` and the order they append in is observable. The plant
@@ -828,7 +827,6 @@ pub fn build_headless_app() -> App {
                     .before(advance_husbandry),
                 advance_graze_regrowth.after(advance_herd_grazing),
                 supply::balance_supply_networks.after(advance_herds),
-                systems::trade_knowledge_diffusion.after(repopulate_fauna),
             )
                 .in_set(TurnStage::Logistics)
                 .run_if(capability_enabled(
@@ -930,7 +928,6 @@ pub fn build_headless_app() -> App {
                 (
                     visibility_systems::clear_active_visibility,
                     visibility_systems::calculate_visibility,
-                    visibility_systems::apply_trade_route_visibility,
                     visibility_systems::apply_visibility_decay,
                     sites::discover_sites,
                 )

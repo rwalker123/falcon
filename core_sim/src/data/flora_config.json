@@ -5,8 +5,8 @@
 
   "_comment_host_biomes": "host_biomes IS A TABLE OF RELATIVE AFFINITY WEIGHTS, NOT CAPACITIES. A weight is meaningful only against the other weights on the SAME biome — 0.55 does not mean '0.55 of anything', it means 'more of this biome's basket than a species weighted 0.30 on it'. A species' best country carries its higher weight (date palm 0.55 on OasisBasin against 0.45 on HotDesertErg). NORMALIZATION IS WHAT MAKES NEUTRALITY STRUCTURAL: the engine divides each weight by the biome's total, so the shares sum to exactly 1 whatever anyone writes here. You cannot retune this table into a capacity change — the only thing a weight edit can do is move share BETWEEN the named plants of one biome. Retuning the human food web is a labor_config.json edit and must never ride in on a roster change.",
 
-  "_comment_yield": "THE YIELD VECTOR — three characteristic SHAPES of one per-species output vector, not three subsystems. A harvest of B biomass pays B x yield.* into three different accounts: provisions (human food, the shipped forage path), fodder (animal feed) and trade_goods (trade value, which differentiates today's single flat scalar). `role` survives only as a DISPLAY TAG derived from which component dominates — it is never branched on in the sim. PROVISIONS_PER_BIOMASS IS NOW HAND-TUNED PER SPECIES AND LIVE (S1, docs/plan_flora_roster.md §4.3) — it was flat 0.05 verbatim in F1, and identical rates would have made every commitment pay the same. SINCE #433 EVERY RATE HERE IS LIVE AT EVERY RUNG: a patch converts at the SHARE-WEIGHTED AVERAGE of its own basket's vectors, so these numbers price a WILD tile too, not just a committed one — what is growing there decides what the tile pays. labor_config.json -> forage.provisions_per_biomass (0.05) is NO LONGER the wild rate; it survives as the empty-basket fallback and the rung-3 quality normalization baseline. Rung 2 then WEEDS (the favored share rises to min(1, share x tended_weeding_gain)) and multiplies THAT SPECIES' TERM ALONE by tended_conversion_gain — the favored-term-only rule is what makes the crop choice matter, since a blanket multiplier would pay the same for favoring anything. So the rates below are tuned so a good staple on its best country pays materially better than favoring a marginal neighbour on the same tile. Grains and tubers on their best ground are the strongest (wild_emmer 0.080 on AlluvialPlain); the gathered wild things sit at or barely above the 0.05 baseline (shellfish and river fish 0.050, pine nut 0.048, oak mast 0.045, arctic greens 0.040) — they are what you GATHER, not what you farm, and every one carries cultivation_ceiling `wild` so it can never be COMMITTED. THAT NO LONGER MAKES ITS RATE INERT (it did before #433): a wild-ceiling species is still weighted into its tile's basket average, so an oak-mast-heavy realization genuinely pays less per biomass than an emmer-heavy one and these numbers have to be right. fodder_per_biomass is 0.0 on every STAPLE row (grain is not feed) and LIVE since F3 on the one fodder crop, hay_grass (0.20) — a hay Field's harvest credits the band's FODDER store, a pen that knows Foddering draws it (see docs/plan_flora_roster.md §5). trade_goods_per_biomass stays the flat 0.005 on staples and is 0.0 on hay_grass (a fodder crop pays no trade). It is LIVE — trade-dominant on the four cash crops (F4), and since #433 it is the rate for EVERY drawn-down harvest at rungs 1 and 2, with the Deplete policy's trade_goods_multiplier as a markup on top. Because every staple carries 0.005, a staple-only basket's wild Deplete sale is numerically unchanged; only baskets holding a cash crop moved. PLAYTEST DIALS.",
-  "_comment_yield_materials": "WHAT THE PLANT IS MADE OF (docs/plan_crafting_and_materials.md section 2) — the yield vector's FOURTH account, and IT IS THE SAME BLOCK, character for character, that fauna_config's `hunt_yield.materials` carries and that a deposit's will carry. That is the point rather than a coincidence: a material is generic (there is no flax_fibre, there is Fibre), so nothing in the model may be plant-shaped or animal-shaped. AN OMITTED LIST IS THE ORDINARY CASE — most plants are food and nothing else — and unlike the three rate components there is no global to fall back to, because there is no species-blind statement of WHICH thing a plant gives. IT CANNOT BE AVERAGED ACROSS A BASKET the way the three scalars are: food, fodder and trade are interchangeable numbers, a material carries a CHARACTERISTIC VECTOR, and averaging two species' would invent a plant that is not growing there. So a mixed tile's harvest DECOMPOSES into one credit per species, each keeping its own exact reading; credits that land in the same band merge in the band's store, which is where merging belongs. FIBRE IS THE ONLY MATERIAL THIS ROSTER GIVES — bast, boll, leaf and stem — and the two axes make 'there is no best fibre' real: cotton is fineness 0.92 EXCELLENT / strength 0.35 FAIR (a fine thread that will not hold), mesquite bast is 0.30 / 0.70 (coarse and strong), and neither is the upgrade. Hay straw (0.22 / 0.30) is the honest bottom of both. The rates are the plants humans actually retted, twisted and stripped: flax 0.06 and cotton 0.07 (a fibre crop is mostly fibre) against hazel bast at 0.010 (you take the bark off a shrub that is otherwise nuts). Validated against materials.json at load, exactly as the fauna edge is. PLAYTEST DIALS.",
+  "_comment_yield": "THE YIELD VECTOR — characteristic SHAPES of one per-species output vector, not separate subsystems. A harvest of B biomass pays B x yield.* into every account the species names: provisions (human food, the shipped forage path), fodder (animal feed) and MATERIALS (what the plant is made of — see _comment_yield_materials). TRADE_GOODS_PER_BIOMASS IS RETIRED (arc #527): it was written by every take site and read by nothing, while the materials block beside it credited the same take's concrete fibre and leaf. A cash crop is paid in materials now. `role` survives only as a DISPLAY TAG derived from which component dominates — it is never branched on in the sim. PROVISIONS_PER_BIOMASS IS NOW HAND-TUNED PER SPECIES AND LIVE (S1, docs/plan_flora_roster.md §4.3) — it was flat 0.05 verbatim in F1, and identical rates would have made every commitment pay the same. SINCE #433 EVERY RATE HERE IS LIVE AT EVERY RUNG: a patch converts at the SHARE-WEIGHTED AVERAGE of its own basket's vectors, so these numbers price a WILD tile too, not just a committed one — what is growing there decides what the tile pays. labor_config.json -> forage.provisions_per_biomass (0.05) is NO LONGER the wild rate; it survives as the empty-basket fallback and the rung-3 quality normalization baseline. Rung 2 then WEEDS (the favored share rises to min(1, share x tended_weeding_gain)) and multiplies THAT SPECIES' TERM ALONE by tended_conversion_gain — the favored-term-only rule is what makes the crop choice matter, since a blanket multiplier would pay the same for favoring anything. So the rates below are tuned so a good staple on its best country pays materially better than favoring a marginal neighbour on the same tile. Grains and tubers on their best ground are the strongest (wild_emmer 0.080 on AlluvialPlain); the gathered wild things sit at or barely above the 0.05 baseline (shellfish and river fish 0.050, pine nut 0.048, oak mast 0.045, arctic greens 0.040) — they are what you GATHER, not what you farm, and every one carries cultivation_ceiling `wild` so it can never be COMMITTED. THAT NO LONGER MAKES ITS RATE INERT (it did before #433): a wild-ceiling species is still weighted into its tile's basket average, so an oak-mast-heavy realization genuinely pays less per biomass than an emmer-heavy one and these numbers have to be right. fodder_per_biomass is 0.0 on every STAPLE row (grain is not feed) and LIVE since F3 on the one fodder crop, hay_grass (0.20) — a hay Field's harvest credits the band's FODDER store, a pen that knows Foddering draws it (see docs/plan_flora_roster.md §5). THE FIVE CASH CROPS (cotton, flax, tobacco, tea, grapevine) READ 0 IN BOTH SCALAR ACCOUNTS and are paid entirely by their materials rows, which is what keeps YieldVector::pays_something() true for them — a row paying into no account at all is rejected at load. PLAYTEST DIALS.",
+  "_comment_yield_materials": "WHAT THE PLANT IS MADE OF (docs/plan_crafting_and_materials.md section 2) — the yield vector's third account (and, on a cash crop, its only one), and IT IS THE SAME BLOCK, character for character, that fauna_config's `hunt_yield.materials` carries and that a deposit's will carry. That is the point rather than a coincidence: a material is generic (there is no flax_fibre, there is Fibre), so nothing in the model may be plant-shaped or animal-shaped. AN OMITTED LIST IS THE ORDINARY CASE — most plants are food and nothing else — and unlike the three rate components there is no global to fall back to, because there is no species-blind statement of WHICH thing a plant gives. IT CANNOT BE AVERAGED ACROSS A BASKET the way the three scalars are: food and fodder are interchangeable numbers, a material carries a CHARACTERISTIC VECTOR, and averaging two species' would invent a plant that is not growing there. So a mixed tile's harvest DECOMPOSES into one credit per species, each keeping its own exact reading; credits that land in the same band merge in the band's store, which is where merging belongs. FIBRE IS THE ONLY CRAFTED MATERIAL THIS ROSTER GIVES — bast, boll, leaf and stem — and the two axes make 'there is no best fibre' real: cotton is fineness 0.92 EXCELLENT / strength 0.35 FAIR (a fine thread that will not hold), mesquite bast is 0.30 / 0.70 (coarse and strong), and neither is the upgrade. Hay straw (0.22 / 0.30) is the honest bottom of both. The rates are the plants humans actually retted, twisted and stripped: flax 0.06 and cotton 0.07 (a fibre crop is mostly fibre) against hazel bast at 0.010 (you take the bark off a shrub that is otherwise nuts). The three luxury crops (tobacco, tea, grapevine) give the UNCRAFTED materials tobacco/tea/grape instead - a producer exists, a craft does not; see materials.json's _comment_roster. Validated against materials.json at load, exactly as the fauna edge is. PLAYTEST DIALS.",
 
   "_comment_cultivation_ceiling": "HOW FAR UP THE PLANT LADDER A SPECIES CAN CLIMB — the exact twin of fauna_config.json's husbandry_ceiling, for the same reason. The ladder is a SEQUENCE (wild -> tended -> field), so a species' reach is a single ceiling and not two independent flags, which makes the incoherent 'sowable but not tendable' state unrepresentable (no validate() combination guard needed). `wild` is a gather-forever stand — an oak's mast is a wild harvest and you do not sow an oak forest on a five-turn horizon; `tended` reaches Cultivate but never Sow; `field` is the full ladder. Not every plant climbs, mirroring the manual's 'not every animal climbs'. LIVE SINCE S1: allows_cultivate()/allows_sow() gate which species a Cultivate/Sow assignment may COMMIT a patch to, and the auto-pick falls to the highest-share species the rung permits. A biome whose whole basket is `wild` therefore cannot be tended or sown at all (the open-water fisheries, the alpine peaks) — that is the ruling working, not a gap. reed_and_root is `field` rather than `tended` because it is the delta/marsh basket's only member: rice and taro on a river delta are the archetypal field crop, and leaving it at `tended` would have made the richest sowable ground in the game unsowable.",
 
@@ -34,8 +34,7 @@
       },
       "yield": {
         "provisions_per_biomass": 0.05,
-        "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005
+        "fodder_per_biomass": 0.0
       },
       "regrowth_rate": 0.25
     },
@@ -55,7 +54,6 @@
       "yield": {
         "provisions_per_biomass": 0.062,
         "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005,
         "materials": [
           { "material": "fibre", "per_biomass": 0.02, "characteristics": { "fineness": 0.34, "strength": 0.52 } }
         ]
@@ -77,8 +75,7 @@
       },
       "yield": {
         "provisions_per_biomass": 0.08,
-        "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005
+        "fodder_per_biomass": 0.0
       },
       "regrowth_rate": 0.25
     },
@@ -97,7 +94,6 @@
       "yield": {
         "provisions_per_biomass": 0.066,
         "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005,
         "materials": [
           { "material": "fibre", "per_biomass": 0.015, "characteristics": { "fineness": 0.26, "strength": 0.34 } }
         ]
@@ -118,7 +114,6 @@
       "yield": {
         "provisions_per_biomass": 0.075,
         "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005,
         "materials": [
           { "material": "fibre", "per_biomass": 0.01, "characteristics": { "fineness": 0.25, "strength": 0.68 } }
         ]
@@ -136,8 +131,7 @@
       },
       "yield": {
         "provisions_per_biomass": 0.045,
-        "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005
+        "fodder_per_biomass": 0.0
       },
       "regrowth_rate": 0.25
     },
@@ -157,8 +151,7 @@
       },
       "yield": {
         "provisions_per_biomass": 0.058,
-        "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005
+        "fodder_per_biomass": 0.0
       },
       "regrowth_rate": 0.25
     },
@@ -177,8 +170,7 @@
       },
       "yield": {
         "provisions_per_biomass": 0.048,
-        "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005
+        "fodder_per_biomass": 0.0
       },
       "regrowth_rate": 0.25
     },
@@ -199,8 +191,7 @@
       },
       "yield": {
         "provisions_per_biomass": 0.065,
-        "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005
+        "fodder_per_biomass": 0.0
       },
       "regrowth_rate": 0.25
     },
@@ -218,7 +209,6 @@
       "yield": {
         "provisions_per_biomass": 0.067,
         "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005,
         "materials": [
           { "material": "fibre", "per_biomass": 0.03, "characteristics": { "fineness": 0.36, "strength": 0.74 } }
         ]
@@ -239,8 +229,7 @@
       },
       "yield": {
         "provisions_per_biomass": 0.062,
-        "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005
+        "fodder_per_biomass": 0.0
       },
       "regrowth_rate": 0.25
     },
@@ -259,8 +248,7 @@
       },
       "yield": {
         "provisions_per_biomass": 0.04,
-        "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005
+        "fodder_per_biomass": 0.0
       },
       "regrowth_rate": 0.25
     },
@@ -275,13 +263,12 @@
       },
       "yield": {
         "provisions_per_biomass": 0.05,
-        "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005
+        "fodder_per_biomass": 0.0
       },
       "regrowth_rate": 0.25
     },
     "hay_grass": {
-      "_comment": "THE FODDER CROP (Flora Roster F3, docs/plan_flora_roster.md §5). A fodder-DOMINANT species: its yield vector pays into the fodder account, NOT provisions (hay feeds animals, not people) and NOT trade. `role: fodder` is a DISPLAY TAG derived from that dominance — the sim never branches on it; the vector does the routing (a hay Field's harvest credits the band's FODDER store, a grain Field's the FOOD store, through the SAME commodity-generic code). `cultivation_ceiling: field` because you SOW it — it is an ordinary rung-3 Field in every other respect (site rule, build, feral-if-abandoned). It hosts exactly the good sowable farmland (AlluvialPlain/Floodplain/RiverDelta/PrairieSteppe/RollingHills) so it COMPETES WITH GRAIN for the same scarce sowable tiles: calories OR herd-ceiling from one river-valley tile, the §4.3 land-use tension extended to the animal web. Adding it DILUTES the existing staple shares on those five biomes (the F1 normalization) — economy-neutral at the wild rung by construction (shares still sum to 1). SINCE #433 A WILD TILE READS THIS VECTOR TOO — a hay-bearing wild stand converts at its share of the 0.20, exactly as it does for provisions and trade (see _comment_yield above); the older 'only a COMMITTED patch ever reads its vector' claim is superseded and was contradicting this file's own top-level comment. What an uncommitted patch does not get is the CREDIT: wild fodder is gated at the CONSUMER on the faction knowing Foddering (2007), at the credit site in systems/labor.rs and never in the rate seam, because crediting hay to a band with nowhere to put it hands out animal feed nobody bid for (docs/plan_flora_roster.md §4.3). `fodder_per_biomass` (0.20) is a PLAYTEST DIAL: it sets how much delivered graze-flow one unit of hay biomass is worth to a pen, and thereby how big a herd one hay field can carry (via the K_pen fodder term). Raise it for bigger fed pens, lower it if hay makes fodder the dominant strategy.",
+      "_comment": "THE FODDER CROP (Flora Roster F3, docs/plan_flora_roster.md §5). A fodder-DOMINANT species: its yield vector pays into the fodder account, NOT provisions (hay feeds animals, not people). `role: fodder` is a DISPLAY TAG derived from that dominance — the sim never branches on it; the vector does the routing (a hay Field's harvest credits the band's FODDER store, a grain Field's the FOOD store, through the SAME commodity-generic code). `cultivation_ceiling: field` because you SOW it — it is an ordinary rung-3 Field in every other respect (site rule, build, feral-if-abandoned). It hosts exactly the good sowable farmland (AlluvialPlain/Floodplain/RiverDelta/PrairieSteppe/RollingHills) so it COMPETES WITH GRAIN for the same scarce sowable tiles: calories OR herd-ceiling from one river-valley tile, the §4.3 land-use tension extended to the animal web. Adding it DILUTES the existing staple shares on those five biomes (the F1 normalization) — economy-neutral at the wild rung by construction (shares still sum to 1). SINCE #433 A WILD TILE READS THIS VECTOR TOO — a hay-bearing wild stand converts at its share of the 0.20, exactly as it does for provisions (see _comment_yield above); the older 'only a COMMITTED patch ever reads its vector' claim is superseded and was contradicting this file's own top-level comment. What an uncommitted patch does not get is the CREDIT: wild fodder is gated at the CONSUMER on the faction knowing Foddering (2007), at the credit site in systems/labor.rs and never in the rate seam, because crediting hay to a band with nowhere to put it hands out animal feed nobody bid for (docs/plan_flora_roster.md §4.3). `fodder_per_biomass` (0.20) is a PLAYTEST DIAL: it sets how much delivered graze-flow one unit of hay biomass is worth to a pen, and thereby how big a herd one hay field can carry (via the K_pen fodder term). Raise it for bigger fed pens, lower it if hay makes fodder the dominant strategy.",
       "display_name": "Hay Grass",
       "plural": "hay grass",
       "adjective": "hay",
@@ -297,7 +284,6 @@
       "yield": {
         "provisions_per_biomass": 0.0,
         "fodder_per_biomass": 0.2,
-        "trade_goods_per_biomass": 0.0,
         "materials": [
           { "material": "fibre", "per_biomass": 0.03, "characteristics": { "fineness": 0.22, "strength": 0.3 } }
         ]
@@ -305,7 +291,7 @@
       "regrowth_rate": 0.25
     },
     "cotton": {
-      "_comment": "A CASH CROP (Flora Roster F4, docs/plan_flora_roster.md §6). A trade-DOMINANT species: its yield vector pays into the trade-goods account, NOT provisions (cotton is worthless as food — provisions_per_biomass is a SAFE, intended 0.0: patch_species_quality divides by the WILD provisions rate, never the species rate, so a cash Field yields exactly 0 food with no divide-by-zero, and the vector's trade component keeps YieldVector::pays_something() true) and NOT fodder. `role: cash` is a DISPLAY TAG derived from that dominance — the sim never branches on it; the vector does the routing (a cotton Field's harvest credits the faction trade_goods stockpile, a grain Field's the FOOD store, a hay Field's the FODDER store, through the SAME commodity-generic code — F4 is the exact twin of F3's fodder work). `cultivation_ceiling: field` because you SOW it — an ordinary rung-3 Field in every other respect (site rule, build, feral-if-abandoned). It hosts warm river-valley farmland (AlluvialPlain/Floodplain/RiverDelta) plus SemiAridScrub — HOSTED HONESTLY now that PER-TILE REALIZATION (§10) dissolved the F4 dilution bind: adding cotton to AlluvialPlain no longer erodes wheat on every alluvial tile, because the rung-2 commit bar reads each tile's LOCAL realized share, and some alluvial tiles realize as cotton while others realize as wheat. It COMPETES WITH GRAIN AND HAY for the scarce sowable tiles: calories OR herd-ceiling OR cash from one river-valley tile, the sharp 'pays no calories' land-use tension. `trade_goods_per_biomass` (0.20) is a PLAYTEST DIAL: raise it to make cash cropping more tempting against food, lower it if cash crowds out staples.",
+      "_comment": "A CASH CROP (Flora Roster F4, docs/plan_flora_roster.md 6). Paid in MATERIALS and nothing else: provisions_per_biomass is a SAFE, intended 0.0 (cotton is worthless as food - patch_species_quality divides by the WILD provisions rate, never the species rate, so a cash Field yields exactly 0 food with no divide-by-zero), fodder likewise 0.0, and the `materials` block below is the whole payoff. IT IS THE MATERIALS ROWS THAT KEEP YieldVector::pays_something() TRUE - the trade_goods scalar that used to do that is retired (arc #527), so a cash crop with no material rows would be rejected at load rather than silently producing nothing. `role: cash` is a DISPLAY TAG derived from that shape - the sim never branches on it; the vector does the routing (a cotton Field's harvest credits the band's material batches, a grain Field's the FOOD store, a hay Field's the FODDER store, through the SAME commodity-generic code). `cultivation_ceiling: field` because you SOW it - an ordinary rung-3 Field in every other respect. It hosts warm river-valley farmland (AlluvialPlain/Floodplain/RiverDelta) plus SemiAridScrub - HOSTED HONESTLY now that PER-TILE REALIZATION (10) dissolved the F4 dilution bind: some alluvial tiles realize as cotton while others realize as wheat. It COMPETES WITH GRAIN AND HAY for the scarce sowable tiles: calories OR herd-ceiling OR fibre from one river-valley tile, the sharp 'pays no calories' land-use tension. The fibre rate (0.07) is a PLAYTEST DIAL.",
       "display_name": "Cotton Fields",
       "plural": "cotton",
       "adjective": "cotton",
@@ -320,7 +306,6 @@
       "yield": {
         "provisions_per_biomass": 0.0,
         "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.2,
         "materials": [
           { "material": "fibre", "per_biomass": 0.07, "characteristics": { "fineness": 0.92, "strength": 0.35 } }
         ]
@@ -328,7 +313,7 @@
       "regrowth_rate": 0.25
     },
     "flax": {
-      "_comment": "A CASH CROP (Flora Roster F4, docs/plan_flora_roster.md §6) — the cool-temperate-loam twin of cotton. Trade-DOMINANT: pays the trade-goods account, 0 food (SAFE — see the cotton comment) and 0 fodder. `role: cash` is a DISPLAY TAG; the vector routes, no role branch. `cultivation_ceiling: field` — a sown rung-3 Field competing with grain and hay for the scarce sowable tiles: cash OR calories OR herd-ceiling from one river-valley tile. Hosts AlluvialPlain/Floodplain (sowable) + RollingHills — honest hosting under per-tile realization (§10). `trade_goods_per_biomass` (0.15) is a PLAYTEST DIAL — deliberately below cotton's 0.20 so cotton is the richer cash crop and flax the marginal one.",
+      "_comment": "A CASH CROP (Flora Roster F4, docs/plan_flora_roster.md 6) - the cool-temperate-loam twin of cotton. Paid in MATERIALS: 0 food (SAFE - see the cotton comment), 0 fodder, and a fibre row that is the whole payoff. `role: cash` is a DISPLAY TAG; the vector routes, no role branch. `cultivation_ceiling: field` - a sown rung-3 Field competing with grain and hay for the scarce sowable tiles. Hosts AlluvialPlain/Floodplain (sowable) + RollingHills - honest hosting under per-tile realization (10). Flax fibre is 0.88 fineness / 0.80 strength against cotton's 0.92 / 0.35: THE PAIR IS THE POINT, not a rung ladder. PLAYTEST DIALS.",
       "display_name": "Flax Fields",
       "plural": "flax",
       "adjective": "flax",
@@ -342,7 +327,6 @@
       "yield": {
         "provisions_per_biomass": 0.0,
         "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.15,
         "materials": [
           { "material": "fibre", "per_biomass": 0.06, "characteristics": { "fineness": 0.88, "strength": 0.8 } }
         ]
@@ -350,7 +334,7 @@
       "regrowth_rate": 0.25
     },
     "tobacco": {
-      "_comment": "A CASH CROP (Flora Roster F4, docs/plan_flora_roster.md §6) — temperate, fertile, well-drained. Trade-DOMINANT: pays the trade-goods account, 0 food (SAFE — patch_species_quality divides by the WILD provisions rate, never the species rate) and 0 fodder. `role: cash` is a DISPLAY TAG; the vector routes, no role branch. `cultivation_ceiling: field` — a sown rung-3 Field competing with grain and hay for the scarce sowable tiles. Hosts AlluvialPlain/Floodplain (sowable river-deposit ground, so the land-use tension lands) plus RollingHills/MixedWoodland — honest hosting under per-tile realization (§10). `trade_goods_per_biomass` (0.18) is a PLAYTEST DIAL.",
+      "_comment": "A CASH CROP (Flora Roster F4, docs/plan_flora_roster.md 6) - temperate, fertile, well-drained. Paid in MATERIALS: 0 food (SAFE - patch_species_quality divides by the WILD provisions rate, never the species rate), 0 fodder, and the UNCRAFTED material `tobacco` (arc #527). It paid the retired trade scalar and nothing else before that, so without this row it would produce literally nothing. `role: cash` is a DISPLAY TAG; the vector routes, no role branch. `cultivation_ceiling: field` - a sown rung-3 Field competing with grain and hay for the scarce sowable tiles. Hosts AlluvialPlain/Floodplain (sowable river-deposit ground, so the land-use tension lands) plus RollingHills/MixedWoodland. THE RATE (0.07) SITS WITH COTTON'S 0.07 AND FLAX'S 0.06 rather than with a byproduct like hazel bast's 0.010, because on a cash crop the harvested plant IS the product. The potency/keeping readings are PROVISIONAL PLACEHOLDERS for a luxury system that does not exist - see materials.json's _comment_roster.",
       "display_name": "Tobacco Fields",
       "plural": "tobacco",
       "adjective": "tobacco",
@@ -365,12 +349,14 @@
       "yield": {
         "provisions_per_biomass": 0.0,
         "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.18
+        "materials": [
+          { "material": "tobacco", "per_biomass": 0.07, "characteristics": { "potency": 0.85, "keeping": 0.75 } }
+        ]
       },
       "regrowth_rate": 0.25
     },
     "tea": {
-      "_comment": "A CASH CROP (Flora Roster F4, docs/plan_flora_roster.md §6) — a HILL/HIGHLAND crop, NOT lowland. Trade-DOMINANT: pays the trade-goods account, 0 food (SAFE) and 0 fodder. `role: cash` is a DISPLAY TAG; the vector routes, no role branch. `cultivation_ceiling: field` — a sown rung-3 Field. Hosts RollingHills/MixedWoodland/HighPlateau — the upland/woodland baskets cotton and the grains do not reach, so tea is the cash crop of ground that grows little else. It is deliberately kept off the river valleys (no AlluvialPlain/Floodplain) so it is a genuinely different siting decision. Honest hosting under per-tile realization (§10). `trade_goods_per_biomass` (0.16) is a PLAYTEST DIAL.",
+      "_comment": "A CASH CROP (Flora Roster F4, docs/plan_flora_roster.md 6) - a HILL/HIGHLAND crop, NOT lowland. Paid in MATERIALS: 0 food (SAFE), 0 fodder, and the UNCRAFTED material `tea` (arc #527), which is the whole payoff. `role: cash` is a DISPLAY TAG; the vector routes, no role branch. `cultivation_ceiling: field` - a sown rung-3 Field. Hosts RollingHills/MixedWoodland/HighPlateau - the upland/woodland baskets cotton and the grains do not reach, so tea is the cash crop of ground that grows little else. It is deliberately kept off the river valleys (no AlluvialPlain/Floodplain) so it is a genuinely different siting decision. The rate (0.06) matches flax's; the potency/keeping readings are PROVISIONAL PLACEHOLDERS - see materials.json's _comment_roster.",
       "display_name": "Tea Gardens",
       "plural": "tea",
       "adjective": "tea",
@@ -384,7 +370,9 @@
       "yield": {
         "provisions_per_biomass": 0.0,
         "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.16
+        "materials": [
+          { "material": "tea", "per_biomass": 0.06, "characteristics": { "potency": 0.45, "keeping": 0.8 } }
+        ]
       },
       "regrowth_rate": 0.25
     },
@@ -403,7 +391,6 @@
       "yield": {
         "provisions_per_biomass": 0.045,
         "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005,
         "materials": [
           { "material": "fibre", "per_biomass": 0.018, "characteristics": { "fineness": 0.3, "strength": 0.62 } }
         ]
@@ -425,8 +412,7 @@
       },
       "yield": {
         "provisions_per_biomass": 0.045,
-        "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005
+        "fodder_per_biomass": 0.0
       },
       "regrowth_rate": 0.25
     },
@@ -447,7 +433,6 @@
       "yield": {
         "provisions_per_biomass": 0.07,
         "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005,
         "materials": [
           { "material": "fibre", "per_biomass": 0.015, "characteristics": { "fineness": 0.3, "strength": 0.38 } }
         ]
@@ -470,7 +455,6 @@
       "yield": {
         "provisions_per_biomass": 0.069,
         "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005,
         "materials": [
           { "material": "fibre", "per_biomass": 0.025, "characteristics": { "fineness": 0.4, "strength": 0.45 } }
         ]
@@ -491,8 +475,7 @@
       },
       "yield": {
         "provisions_per_biomass": 0.065,
-        "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005
+        "fodder_per_biomass": 0.0
       },
       "regrowth_rate": 0.25
     },
@@ -509,8 +492,7 @@
       },
       "yield": {
         "provisions_per_biomass": 0.069,
-        "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005
+        "fodder_per_biomass": 0.0
       },
       "regrowth_rate": 0.25
     },
@@ -528,8 +510,7 @@
       },
       "yield": {
         "provisions_per_biomass": 0.06,
-        "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005
+        "fodder_per_biomass": 0.0
       },
       "regrowth_rate": 0.25
     },
@@ -547,8 +528,7 @@
       },
       "yield": {
         "provisions_per_biomass": 0.07,
-        "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005
+        "fodder_per_biomass": 0.0
       },
       "regrowth_rate": 0.25
     },
@@ -568,7 +548,6 @@
       "yield": {
         "provisions_per_biomass": 0.045,
         "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005,
         "materials": [
           { "material": "fibre", "per_biomass": 0.012, "characteristics": { "fineness": 0.3, "strength": 0.7 } }
         ]
@@ -588,8 +567,7 @@
       },
       "yield": {
         "provisions_per_biomass": 0.064,
-        "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005
+        "fodder_per_biomass": 0.0
       },
       "regrowth_rate": 0.25
     },
@@ -608,8 +586,7 @@
       },
       "yield": {
         "provisions_per_biomass": 0.045,
-        "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005
+        "fodder_per_biomass": 0.0
       },
       "regrowth_rate": 0.25
     },
@@ -632,8 +609,7 @@
       },
       "yield": {
         "provisions_per_biomass": 0.04,
-        "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005
+        "fodder_per_biomass": 0.0
       },
       "regrowth_rate": 0.25
     },
@@ -651,8 +627,7 @@
       },
       "yield": {
         "provisions_per_biomass": 0.069,
-        "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005
+        "fodder_per_biomass": 0.0
       },
       "regrowth_rate": 0.25
     },
@@ -671,13 +646,12 @@
       },
       "yield": {
         "provisions_per_biomass": 0.06,
-        "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.005
+        "fodder_per_biomass": 0.0
       },
       "regrowth_rate": 0.25
     },
     "grapevine": {
-      "_comment": "Wild grapevine of the river valleys, oasis and hills (Flora Roster F5) — a CASH crop, the exact twin of cotton/flax: trade-dominant, provisions 0.0 (worthless as food, patch_species_quality divides by the WILD rate so no divide-by-zero), 0 fodder. Field-ceiling; contests grain on sowable valley ground. Starting affinity/playtest dial.",
+      "_comment": "Wild grapevine of the river valleys, oasis and hills (Flora Roster F5) - a CASH crop, the exact twin of cotton/flax: 0 food (worthless as food, patch_species_quality divides by the WILD rate so no divide-by-zero), 0 fodder, paid in the UNCRAFTED material `grape` (arc #527), which is the whole payoff. Field-ceiling; contests grain on sowable valley ground. GRAPE IS CURRENTLY DOMINATED ON BOTH ITS AXES by tobacco and tea, which sits badly against 'there is no best material' - recorded honestly rather than resolved, because a grape's value is entirely on the far side of a craft (fermenting) that does not exist. See materials.json's _comment_roster. Starting affinity/playtest dial.",
       "display_name": "Wild Grapevine",
       "plural": "wild grapes",
       "adjective": "grape",
@@ -693,7 +667,9 @@
       "yield": {
         "provisions_per_biomass": 0.0,
         "fodder_per_biomass": 0.0,
-        "trade_goods_per_biomass": 0.16
+        "materials": [
+          { "material": "grape", "per_biomass": 0.07, "characteristics": { "potency": 0.2, "keeping": 0.15 } }
+        ]
       },
       "regrowth_rate": 0.25
     }

@@ -408,7 +408,6 @@ pub struct TileState {
     pub x: u32,
     pub y: u32,
     pub element: u8,
-    pub mass: i64,
     pub temperature: i64,
     pub terrain: TerrainType,
     pub terrain_tags: TerrainTags,
@@ -539,7 +538,6 @@ mod published_state_tests {
             x: 0,
             y: 0,
             element: 0,
-            mass: 1_000_000,
             temperature: 5_000_000,
             terrain: TerrainType::DeepOcean,
             terrain_tags: TerrainTags::default(),
@@ -556,21 +554,6 @@ mod published_state_tests {
             forage_capacity: 0.0,
             underlying_terrain: TerrainType::DeepOcean,
         }
-    }
-
-    /// `mass` is not published, so it must not be able to mark a tile dirty. This is the whole
-    /// finding of #386: it drifted every turn on every tile — including open ocean — and by itself
-    /// put all 4160 tiles of an 80x52 map into every delta.
-    #[test]
-    fn mass_alone_never_marks_a_tile_changed() {
-        let before = tile();
-        let mut after = before.clone();
-        after.mass += 29_736; // the measured per-turn drift on a lifeless ocean tile
-        assert!(before.same_published_state(&after));
-        assert_ne!(
-            before, after,
-            "PartialEq stays exact for rollback/determinism"
-        );
     }
 
     /// The comparison is a deadband at hundredths, not exact equality.

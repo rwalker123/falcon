@@ -427,20 +427,18 @@ pub fn advance_expeditions(
                     ) {
                         event_log.push(entry);
                     }
-                    // **One conversion, both products** — a roadside kill is skinned as well as
-                    // butchered (#337). The food tops the pack up to `room`; the hides ride home on
-                    // `carried_trade` like the hunt party's, so an opportunistic take on an
-                    // *inedible* herd is no longer a pure waste of animals.
+                    // The food tops the pack up to `room`.
                     let landed = scout_yield.apply(take.carried, EXPEDITION_OUTPUT_MULTIPLIER);
                     let provisions = scalar_from_f32(landed.provisions);
                     let added = provisions.min(room);
                     if added > scalar_zero() {
                         cohort.stores.add(FOOD, added);
                     }
-                    expedition.carried_trade += landed.trade_goods;
-                    // **The MATERIAL account of the same roadside kill.** Off `take.carried`, like
-                    // the two above it and like every resident seam: you cannot tan a hide you left
-                    // on the range, so a scout that hauled nothing banks nothing.
+                    // **The MATERIAL account of the same roadside kill** — a scout's kill is skinned
+                    // as well as butchered. Off `take.carried`, like the food above it and like
+                    // every resident seam: you cannot tan a hide you left on the range, so a scout
+                    // that hauled nothing banks nothing. It is what keeps an opportunistic take on
+                    // an *inedible* herd from being a pure waste of animals.
                     crate::materials_config::credit_material_yield(
                         &mut cohort.stores,
                         &materials_cfg,
@@ -490,21 +488,19 @@ pub fn advance_expeditions(
                 if near_home || home_pos.is_none() {
                     // Close enough to run home: fold workers + carried food back in (after the scout
                     // flush above, so the final findings reported), then despawn.
-                    // **The other half of the haul settles into the SAME store as the meat.** Trade
-                    // goods are band-local (see [`TRADE_GOODS`]), so the pelts land in the home
-                    // band's larder alongside the provisions — the last chance before the party
-                    // despawns and the bank goes with it. No home band left to receive them means
-                    // the haul is simply lost, exactly as the carried food is.
-                    let mut banked_trade = scalar_zero();
+                    // **The other half of the haul goes into the SAME store as the meat** — the
+                    // party's material batches move into the home band's store, the last chance
+                    // before the party despawns and its pack goes with it. No home band left to
+                    // receive them means the haul is simply lost, exactly as the carried food is.
+                    let mut banked_materials = 0.0;
                     if let Ok(mut home) = bands.get_mut(expedition.home_band) {
-                        banked_trade =
-                            fold_party_into_band(&mut cohort, &mut expedition, &mut home);
+                        banked_materials = fold_party_into_band(&mut cohort, &mut home);
                     }
                     event_log.push(expedition_returned_event(
                         current_turn,
                         faction,
                         exp_pos,
-                        banked_trade,
+                        banked_materials,
                         entity,
                     ));
                     commands.entity(entity).despawn();
@@ -686,13 +682,12 @@ pub fn advance_expeditions(
                         // never a promise that the party threw the carcasses away; the whole-stock
                         // take is a windfall the party banks up to its pack.
                         //
-                        // **BOTH components come out of ONE conversion of the same carried biomass**,
-                        // exactly as `hunt_trip_forecast` projects them — the raid cannot pay food it
-                        // did not promise, nor pocket the pelts it did. They then part ways: the meat
-                        // is bounded by the pack (`room`), the pelts ride home on `carried_trade` and
-                        // settle into the home band's store at the drop-off. Both scale off what the
-                        // party **carries**, never what it killed: you cannot trade a hide you left on
-                        // the range.
+                        // **BOTH accounts come out of ONE conversion of the same carried biomass**,
+                        // exactly as `hunt_trip_forecast` projects the food — the raid cannot pay
+                        // food it did not promise, nor pocket the hides it did. Both scale off what
+                        // the party **carries**, never what it killed: you cannot tan a hide you
+                        // left on the range. They then part ways only in the pack: the meat is
+                        // bounded by `room`, the materials are not.
                         {
                             let carried = cohort.stores.get(FOOD);
                             let room = (cap - carried).max(scalar_zero());
@@ -703,15 +698,13 @@ pub fn advance_expeditions(
                             if added > scalar_zero() {
                                 cohort.stores.add(FOOD, added);
                             }
-                            expedition.carried_trade += landed.trade_goods;
-                            // **The MATERIAL account of the raid.** The fourth account of one
-                            // haul, credited on the SAME `take.carried` the food and the pelts are
-                            // — so a party that hauled nothing yields nothing, exactly as the four
-                            // resident seams do. It banks into the PARTY's own store rather than
-                            // a scalar on the expedition, because a material is a batch with a
-                            // characteristic vector and there is nothing to flatten it to; it
-                            // travels home in `LocalStore` and merges into the band's stock at the
-                            // drop-off ([`LocalStore::drain_materials_into`]).
+                            // **The MATERIAL account of the raid** — and, on an inedible quarry, the
+                            // whole of what a raid brings home. Credited on the SAME `take.carried`
+                            // the food is, so a party that hauled nothing yields nothing, exactly as
+                            // the resident seams do. It banks into the PARTY's own store, because a
+                            // material is a batch with a characteristic vector and there is nothing
+                            // to flatten it to; it travels home in `LocalStore` and merges into the
+                            // band's stock at the drop-off ([`LocalStore::drain_materials_into`]).
                             crate::materials_config::credit_material_yield(
                                 &mut cohort.stores,
                                 &materials_cfg,
@@ -822,11 +815,12 @@ pub fn advance_expeditions(
                             // Deliver + fold back via the shared Returning arm (deposits carried food).
                             expedition.phase = ExpeditionPhase::Returning;
                             // Never report a cheerful zero: an empty pack must name its cause.
-                            // **"Empty" is a claim about BOTH products** (#337) — a wolf raid comes
-                            // home with no meat and a pack full of pelts, and calling that EMPTY
-                            // would be exactly the food-only blindness this arc removes. The pelts
-                            // are still banked on `carried_trade`; the `Returning` arm settles them.
-                            let pelts = expedition.carried_trade;
+                            // **"Empty" is a claim about BOTH accounts** (#337) — a wolf raid comes
+                            // home with no meat and a pack full of hides, and calling that EMPTY
+                            // would be exactly the food-only blindness that arc removed. Since arc
+                            // #527 the second account is the party's own material batches, so the
+                            // test reads the store the raid actually banked into.
+                            let pelts = materials_carried(&cohort.stores);
                             // The quarry by NAME, never by `fauna_id` — same rule as the lost-herd
                             // guard above, and the `detail` below still carries no id at all.
                             let target = mission.target_display();
@@ -923,18 +917,18 @@ pub fn advance_expeditions(
                         let carried = cohort.stores.get(FOOD);
                         cohort.stores.take(FOOD, carried)
                     };
-                    // The trip's pelts settle with its meat — one delivery, both products into the
+                    // The trip's hides settle with its meat — one delivery, both accounts into the
                     // one band store, so the credit matches the raid forecast this trip was quoted
                     // against.
-                    let mut banked_trade = scalar_zero();
+                    let mut banked_materials = 0.0;
                     if let Ok(mut home) = bands.get_mut(expedition.home_band) {
                         if delivered > scalar_zero() {
                             home.stores.add(FOOD, delivered);
                         }
                         // **The materials ride the same delivery**, batch by batch so a mammoth
                         // hide is never averaged into a hare pelt on the walk home.
+                        banked_materials = materials_carried(&cohort.stores);
                         cohort.stores.drain_materials_into(&mut home.stores);
-                        banked_trade = settle_carried_trade(&mut expedition, &mut home);
                     }
                     event_log.push(CommandEventEntry::new(
                         current_turn,
@@ -942,11 +936,12 @@ pub fn advance_expeditions(
                         faction,
                         format!(
                             "Hunting expedition dropped off {}",
-                            describe_haul(delivered.to_i64_whole(), banked_trade.to_f32())
+                            describe_haul(delivered.to_i64_whole(), banked_materials)
                         ),
                         Some(format!(
-                            "status=delivered trade_goods={:.2} expedition={}",
-                            banked_trade.to_f32(),
+                            "status=delivered materials={:.*} expedition={}",
+                            HAUL_MATERIAL_DECIMALS,
+                            banked_materials,
                             entity.to_bits()
                         )),
                     ));
@@ -997,25 +992,22 @@ fn carry_room_biomass(room: Scalar, hunt_yield: &HuntYield) -> f32 {
     }
 }
 
-/// Bank everything a party is carrying in [`Expedition::carried_trade`] into the **home band's**
-/// store and empty the pack, returning what was credited.
+/// **How much material a party is carrying, summed over every batch** — the *"is the pack really
+/// empty"* reading, and the second half of a haul's prose.
 ///
-/// **Called on ARRIVAL — a `Delivering` drop-off or a `Returning` fold-back — not at the kill**, and
-/// that is the whole reason the field exists: a raid's promised `HuntTripForecast::delivered_trade`
-/// is a sum over the *whole trip*, and the pack has to physically reach the band before anyone can
-/// hold what is in it (`docs/plan_hunt_yield_model.md` Decision 8).
+/// It is a bare total across materials on purpose: the question it answers is whether the party is
+/// bringing anything home at all, and for that a hare pelt and a mammoth hide are both *something*.
+/// Nothing downstream of it makes a quality claim — the batches themselves carry the readings, and
+/// they move home unaveraged ([`crate::LocalStore::drain_materials_into`]).
 ///
-/// **Nothing is rounded off any more.** The banked amount used to be `round()`ed to whole goods
-/// because `FactionInventory` is an `i64` account; a [`LocalStore`](crate::LocalStore) is
-/// fixed-point, so the exact carried fraction lands and `forecast == actual` holds without a
-/// remainder being dropped on each trip.
-fn settle_carried_trade(expedition: &mut Expedition, home: &mut PopulationCohort) -> Scalar {
-    let banked = scalar_from_f32(expedition.carried_trade);
-    expedition.carried_trade = 0.0;
-    if banked > scalar_zero() {
-        home.stores.add(TRADE_GOODS, banked);
-    }
-    banked
+/// It replaced `Expedition::carried_trade`, the retired scalar that banked the same haul as a number
+/// (arc #527).
+fn materials_carried(store: &crate::LocalStore) -> f32 {
+    store
+        .materials()
+        .flat_map(|(_, batches)| batches.values())
+        .fold(scalar_zero(), |total, batch| total + batch.amount)
+        .to_f32()
 }
 
 /// **THE fold-back — the one settlement routine for a party that has come home**, shared by the
@@ -1023,37 +1015,31 @@ fn settle_carried_trade(expedition: &mut Expedition, home: &mut PopulationCohort
 /// party where it stands rather than sending it on a round trip it never started.
 ///
 /// Everything the party holds goes back into the band it was drawn from: its `working` returns to
-/// the band's pool, the leftover pack lands in the band's larder, and the trade half settles through
-/// [`settle_carried_trade`] into that **same** store. Returns what was banked in trade goods, for the
-/// feed line.
+/// the band's pool, the leftover pack lands in the band's larder, and its material batches move into
+/// that **same** store. Returns how much material came home, for the feed line.
 ///
-/// `party` is read, never written: the caller despawns it immediately after, so writing the pack back
-/// to zero would only be bookkeeping for a corpse. **Two call sites, one routine** — the two paths
-/// differ only in *when* they fire, never in what a homecoming pays.
-pub fn fold_party_into_band(
-    party: &mut PopulationCohort,
-    expedition: &mut Expedition,
-    home: &mut PopulationCohort,
-) -> Scalar {
+/// The pack is read rather than emptied: the caller despawns the party immediately after, so writing
+/// it back to zero would only be bookkeeping for a corpse. The **materials** are genuinely drained,
+/// because a batch carries a characteristic vector and "hand it over" is a move rather than a copy of
+/// a number. **Two call sites, one routine** — the two paths differ only in *when* they fire, never
+/// in what a homecoming pays.
+pub fn fold_party_into_band(party: &mut PopulationCohort, home: &mut PopulationCohort) -> f32 {
     home.working += party.working;
     let leftover = party.stores.get(FOOD);
     if leftover > scalar_zero() {
         home.stores.add(FOOD, leftover);
     }
-    // **The party's materials come home too, batch by batch.** They are drained rather than read,
-    // which is why `party` is `&mut` where the pack above is only read: a material batch carries a
-    // characteristic vector, so "hand it over" is a move and not a copy of a number.
+    let banked_materials = materials_carried(&party.stores);
     party.stores.drain_materials_into(&mut home.stores);
-    let banked_trade = settle_carried_trade(expedition, home);
     home.sync_size();
-    banked_trade
+    banked_materials
 }
 
 /// The `ExpeditionReturned` feed line a fold-back publishes, built in one place so the two call
 /// sites of [`fold_party_into_band`] cannot describe the same event differently.
 ///
 /// **Its detail stays `status=returned` for a cancel too.** Nothing about the *world* differs
-/// between a cancel and a homecoming — the same workers, pack and pelts land in the same band — so a
+/// between a cancel and a homecoming — the same workers, pack and hides land in the same band — so a
 /// second status word here would encode *how the fold-back was triggered* into a field that
 /// otherwise reports *what happened*, and every reader would then have to know both. The cancel is
 /// named where it belongs, on the `ExpeditionRecalled` **ack** that answers the button press
@@ -1062,7 +1048,7 @@ pub fn expedition_returned_event(
     turn: u64,
     faction: FactionId,
     at: UVec2,
-    banked_trade: Scalar,
+    banked_materials: f32,
     entity: Entity,
 ) -> CommandEventEntry {
     CommandEventEntry::new(
@@ -1074,8 +1060,9 @@ pub fn expedition_returned_event(
             at.x, at.y
         ),
         Some(format!(
-            "status=returned trade_goods={:.2} expedition={}",
-            banked_trade.to_f32(),
+            "status=returned materials={:.*} expedition={}",
+            HAUL_MATERIAL_DECIMALS,
+            banked_materials,
             entity.to_bits()
         )),
     )
@@ -1087,34 +1074,34 @@ pub fn expedition_returned_event(
 /// scope — so a party still holding observed tiles must take the ordinary `Returning` path, which
 /// flushes and *then* folds.
 ///
-/// Food and trade are deliberately **not** part of this test: [`fold_party_into_band`] settles both
-/// exactly as the `Returning` arm does, so making a party standing in camp with a full pack wait a
-/// turn would reintroduce the round trip a cancel exists to remove.
+/// Food and materials are deliberately **not** part of this test: [`fold_party_into_band`] settles
+/// both exactly as the `Returning` arm does, so making a party standing in camp with a full pack wait
+/// a turn would reintroduce the round trip a cancel exists to remove.
 pub fn party_owes_a_report(expedition: &Expedition) -> bool {
     !expedition.pending_reveal.is_empty()
 }
 
-/// A haul as feed-line prose — *"12 provisions"*, *"4.00 trade goods"*, or *"12 provisions and 4.00
-/// trade goods"*. **A zero component is omitted, never printed** (the render-only-when-non-zero rule
-/// the whole yield-vector arc runs on): a wolf raid does not report "0 provisions", and a species with
-/// no commercial value does not report "0 trade goods". Both zero is not this function's case — the
+/// A haul as feed-line prose — *"12 provisions"*, *"4.00 materials"*, or *"12 provisions and 4.00
+/// materials"*. **A zero component is omitted, never printed** (the render-only-when-non-zero rule
+/// the whole yield-vector arc runs on): a wolf raid does not report "0 provisions", and a species
+/// nothing is made out of does not report "0 materials". Both zero is not this function's case — the
 /// caller reports an empty pack with its cause instead.
 ///
-/// Trade goods print to [`HAUL_TRADE_DECIMALS`] rather than as a whole count: since they became a
-/// fixed-point band store a raid can honestly come home with a *fraction* of a good, and a whole-count
-/// readout would print "0 trade goods" over a pack that really did bank pelts.
-fn describe_haul(provisions: i64, trade_goods: f32) -> String {
-    let trade = format!("{trade_goods:.*} trade goods", HAUL_TRADE_DECIMALS);
-    match (provisions > 0, trade_goods > 0.0) {
-        (true, true) => format!("{provisions} provisions and {trade}"),
-        (false, true) => trade,
+/// Materials print to [`HAUL_MATERIAL_DECIMALS`] rather than as a whole count: the batch store is
+/// fixed-point, so a raid can honestly come home with a *fraction* of a hide, and a whole-count
+/// readout would print "0 materials" over a pack that really did bank pelts.
+fn describe_haul(provisions: i64, materials: f32) -> String {
+    let stuff = format!("{materials:.*} materials", HAUL_MATERIAL_DECIMALS);
+    match (provisions > 0, materials > 0.0) {
+        (true, true) => format!("{provisions} provisions and {stuff}"),
+        (false, true) => stuff,
         _ => format!("{provisions} provisions"),
     }
 }
 
-/// Decimal places a feed line prints a fractional trade haul to — enough to show a sub-unit pack
-/// (a wolf raid's ~0.4 pelts) without turning the line into a float dump.
-const HAUL_TRADE_DECIMALS: usize = 2;
+/// Decimal places a feed line prints a fractional material haul to — enough to show a sub-unit pack
+/// (a wolf raid's ~0.4 hides) without turning the line into a float dump.
+const HAUL_MATERIAL_DECIMALS: usize = 2;
 
 // **Retired in slice 7: `TENDED_SOURCE_WORKERS_NEEDED = 1`.** A managed source used to define its
 // `SourceYield.workers_needed` as a hardcoded one worker ("maintenance labor — a tending presence, not
@@ -1675,10 +1662,13 @@ pub struct HuntTripForecast {
     /// premise "denial carries nothing home" — the premise this arc reverses, since an Eradicate raid
     /// now banks the whole-stock windfall. `false` today means *"wolves are not food"*.
     pub delivers_food: bool,
-    /// **Does this trip bring home TRADE GOODS?** The sibling of `delivers_food`
-    /// (`HuntYield::tradeable`) — the other half of the species' yield vector, so the client can say
-    /// "pelts, no meat" instead of inferring a denial mission from a food `false`.
-    pub delivers_trade: bool,
+    // **RETIRED: `delivers_trade`** (arc #527), with the trade axis it reported. **A boolean is not
+    // what replaced it** — [`Self::delivered_material`] below states the amount per material, which
+    // answers *"does it give a material"* and *"how much of what"* in one reading, so a separate flag
+    // would be a second statement of the first half. (`HuntYield::yields_materials` remains the
+    // species-level predicate the picker rule reads; it is not a trip fact.) The wire slot
+    // `HuntTripEstimate.deliversTrade` is deprecated in place — and that whole table is deprecated
+    // too: the live surface is the query reply's `HuntTripRow`.
     /// Provisions landed on the **first** hunting turn — the trip's opening rate, and (with
     /// `animals_taken`) a "can this herd give me anything at all?" signal.
     pub first_turn_provisions: f32,
@@ -1696,11 +1686,25 @@ pub struct HuntTripForecast {
     /// party too small to haul its kills whole; `wasted_food / (delivered_food + wasted_food)` is the
     /// waste fraction the client shows.
     pub wasted_food: f32,
-    /// **Trade goods the party actually LANDS over the raid** — `Σ HuntYield::apply(carried)` on the
-    /// trade component, projected through the *same* vector the live take pays with (#337). For an
-    /// **inedible** quarry this is the whole payload: `delivered_food` is `0` and `delivers_food`
-    /// false, while this is what comes home.
-    pub delivered_trade: f32,
+    /// **What the party actually LANDS over the raid, per material** — `Σ` the species' material
+    /// rows over the biomass it *carried*, and on an **inedible** quarry the entire payload: a wolf
+    /// trip's `delivered_food` is `0` and this is what comes home.
+    ///
+    /// **Projected off the SAME `take.carried` `delivered_food` is projected from**, turn by turn
+    /// through the same accumulator, so the two readouts of one trip cannot disagree about it. It is
+    /// the same expression the live arm's `credit_material_yield` is paid on
+    /// ([`crate::materials_config::material_yield_totals`]), which is what makes the launch sheet's
+    /// promise checkable against what the home band ends up holding.
+    ///
+    /// **It replaced `delivered_trade`** (arc #527), which was retired on the reasoning that a
+    /// material is a batch with a characteristic vector and not a number this table can sum. That is
+    /// right about **merging readings** and wrong about **stating a quantity per material id** —
+    /// which is exactly what `MaterialPayoff` does. The readings are not here and do not need to be:
+    /// they ride the batches the take really creates.
+    ///
+    /// **Empty is "no row", never zero**, and it is never summed into one figure — the two contracts
+    /// every material readout in this arc carries.
+    pub delivered_material: Vec<crate::materials_config::MaterialPayoff>,
     /// **Which stop ended the trip** — see [`HuntTripBound`]. Paired with `turns_to_fill`, which says
     /// *when*: the two together are the readout the fill target turns on, because the same "4 turns"
     /// means "you got the animals you asked for" or "the herd ran out" depending on this.
@@ -1846,7 +1850,7 @@ fn hunt_trip_forecast_seeded(
     // The quarry's yield vector — **the species decides the product**, the policy only the intensity.
     let hunt_yield = fauna::herd_hunt_yield(herd, fauna);
     let delivers_food = hunt_yield.edible();
-    let delivers_trade = hunt_yield.tradeable();
+
     // The party-side stop — the pack, resolved exactly as the `ExpeditionPhase::Hunting` arm
     // resolves it, so the projection cannot quote a different load than the raid brings home.
     let cap = scalar_from_f32(workers as f32 * expedition.hunt.per_worker_carry);
@@ -1864,12 +1868,12 @@ fn hunt_trip_forecast_seeded(
         return HuntTripForecast {
             turns_to_fill: None,
             delivers_food,
-            delivers_trade,
             first_turn_provisions: 0.0,
             animals_taken: 0,
             delivered_food: 0.0,
             wasted_food: 0.0,
-            delivered_trade: 0.0,
+            // No party, no haul — an EMPTY list, never a row of zeros.
+            delivered_material: Vec::new(),
             // No party, no projection — the raid does not end, it never starts.
             bound: HuntTripBound::Horizon,
         };
@@ -1896,8 +1900,13 @@ fn hunt_trip_forecast_seeded(
     let mut first_turn_provisions = 0.0_f32;
     let mut animals_taken = 0u32;
     let mut delivered_food = 0.0_f32;
-    let mut delivered_trade = 0.0_f32;
     let mut wasted_food = 0.0_f32;
+    // **The biomass the party carries home, summed over the trip** — the one term the material
+    // projection needs, and deliberately the *same* `take.carried` `delivered_food` is converted
+    // from on the line below. Accumulating the biomass rather than converting per turn is what keeps
+    // the two readouts describing one haul: the conversion is linear, so `Σ(rows × carried)` and
+    // `rows × Σcarried` are the same number, and there is only one place to get it wrong.
+    let mut carried_biomass = 0.0_f32;
     // Which stop the projection ran into. It starts at the honest "still going when the projection
     // ran out" and is overwritten by whichever of the raid's stops fires first.
     let mut bound = HuntTripBound::Horizon;
@@ -1966,7 +1975,7 @@ fn hunt_trip_forecast_seeded(
         // cannot promise food it will not pay, nor forget the pelts it will (#337).
         let landed = hunt_yield.apply(take.carried, EXPEDITION_OUTPUT_MULTIPLIER);
         delivered_food += landed.provisions;
-        delivered_trade += landed.trade_goods;
+        carried_biomass += take.carried;
         wasted_food += hunt_yield
             .apply(take.wasted, EXPEDITION_OUTPUT_MULTIPLIER)
             .provisions;
@@ -2023,12 +2032,17 @@ fn hunt_trip_forecast_seeded(
             return HuntTripForecast {
                 turns_to_fill: Some(turn),
                 delivers_food,
-                delivers_trade,
                 first_turn_provisions,
                 animals_taken,
                 delivered_food,
                 wasted_food,
-                delivered_trade,
+                // **The material half of the same haul** — the species' own rows over the
+                // biomass this trip carried, through the one seam the live credit is paid on.
+                delivered_material: crate::materials_config::material_yield_totals(
+                    fauna.hunt_materials_for(&herd.species),
+                    carried_biomass,
+                    EXPEDITION_OUTPUT_MULTIPLIER,
+                ),
                 // **The herd-side stop wins a tie**, mirroring the live arm testing `done` before
                 // `relaunch`: when the pack fills on the very turn the surplus runs out, the fact
                 // that decides whether to send the party back is that there is nothing left to send
@@ -2048,12 +2062,16 @@ fn hunt_trip_forecast_seeded(
         // confused: `turns_to_fill == None` is now exactly [`HuntTripBound::Horizon`].
         turns_to_fill: completed_on,
         delivers_food,
-        delivers_trade,
         first_turn_provisions,
         animals_taken,
         delivered_food,
         wasted_food,
-        delivered_trade,
+        // See the early-completion return above — the same projection, off the same accumulator.
+        delivered_material: crate::materials_config::material_yield_totals(
+            fauna.hunt_materials_for(&herd.species),
+            carried_biomass,
+            EXPEDITION_OUTPUT_MULTIPLIER,
+        ),
         bound,
     }
 }
@@ -2160,18 +2178,26 @@ pub struct DenialForecast {
     /// Food killed and left on the range — **the bulk of a raid's take**, and stated rather than
     /// hidden (§3).
     pub wasted_food: f32,
-    /// The trade half of the same carried biomass. For an inedible quarry (a wolf — a legitimate
-    /// denial target) this is the whole payload.
-    pub delivered_trade: f32,
-    /// **Trade goods killed and left on the range** — the twin of [`Self::wasted_food`], and on an
-    /// **inedible** quarry the only one of the two that can be non-zero.
+    /// **What the raid actually LANDS, per material** — the same haul
+    /// [`Self::delivered_food`] converts, and on an **inedible** quarry the whole of it.
     ///
-    /// It is what makes the readout honest on the target the mission is clearest about: a Grey Wolf
-    /// Pack pays `provisions_per_biomass == 0`, so a food-only waste line reports `0` beside a large
-    /// [`Self::animals_killed`] on a raid whose waste is *total*. Denial's whole readout is what it
-    /// destroys and does not bring home (`docs/plan_denial_raid.md` §3), so it has to be stated per
-    /// **product** — the same widening issue #337 made everywhere else.
-    pub wasted_trade: f32,
+    /// Projected off the same `take.carried` accumulator `delivered_food` is, through the expression
+    /// the live arm's `credit_material_yield` is paid on — so a denial launch sheet's promise is
+    /// checkable against what the party brings home.
+    ///
+    /// **Its WASTE twin is deliberately absent**, and not for the reason the retired `wasted_trade`
+    /// was: a per-material vector states a projection perfectly well (this field proves it). Ray has
+    /// ruled the waste line out of scope — the waste is already legible as a percentage, so a
+    /// `wasted_material` buys a second reading of a fact the sheet states. Do **not** add a flat
+    /// "wasted materials" scalar: that is the retired trade axis under a new name.
+    pub delivered_material: Vec<crate::materials_config::MaterialPayoff>,
+    // **RETIRED: `delivered_trade` / `wasted_trade`** (arc #527), with the trade axis they were the
+    // two halves of. The delivered half was replaced by [`Self::delivered_material`] above; the
+    // waste half was **not**, and the reason is the ruling recorded on that field rather than an
+    // expressiveness problem — a per-material vector states a projection perfectly well, which is
+    // precisely what the field above does. What remains true is the consequence: on an inedible
+    // quarry a denial raid's whole destruction is in HIDES, and `wasted_food` reports `0` beside a
+    // large `animals_killed` for it.
 }
 
 /// One quantile's worth of [`denial_forecast`]'s forward simulation.
@@ -2181,8 +2207,10 @@ struct DenialProjection {
     animals_killed: u32,
     delivered_food: f32,
     wasted_food: f32,
-    delivered_trade: f32,
-    wasted_trade: f32,
+    /// The biomass the party carried home over the raid — what the material projection is the
+    /// conversion of, kept in biomass for the reason `HuntTripForecast::delivered_material` is:
+    /// one accumulator beside `delivered_food`, so the two readouts describe one haul.
+    carried_biomass: f32,
 }
 
 /// **The pre-launch denial readout**, evaluated at three quantiles of the take's own distribution —
@@ -2237,8 +2265,13 @@ pub fn denial_forecast(
         animals_killed: likely.animals_killed,
         delivered_food: likely.delivered_food,
         wasted_food: likely.wasted_food,
-        delivered_trade: likely.delivered_trade,
-        wasted_trade: likely.wasted_trade,
+        // **The material half of the same haul** — the species' own rows over the biomass the
+        // likely projection carried, through the one seam the live credit is paid on.
+        delivered_material: crate::materials_config::material_yield_totals(
+            fauna.hunt_materials_for(&herd.species),
+            likely.carried_biomass,
+            EXPEDITION_OUTPUT_MULTIPLIER,
+        ),
     }
 }
 
@@ -2284,9 +2317,9 @@ fn denial_projection_at(
     let mut larder = scalar_zero();
     let mut animals_killed = 0u32;
     let mut delivered_food = 0.0_f32;
-    let mut delivered_trade = 0.0_f32;
+    // The biomass the party carries home — see `DenialProjection::carried_biomass`.
+    let mut carried_biomass = 0.0_f32;
     let mut wasted_food = 0.0_f32;
-    let mut wasted_trade = 0.0_f32;
     // **The headway window** (§3's *"its kills per turn below the herd's regrowth"*): the herd's
     // biomass halfway through the projection, so the verdict at the horizon is read over the whole
     // second half rather than off one turn. A single turn cannot answer it — at the equilibrium a
@@ -2309,8 +2342,7 @@ fn denial_projection_at(
                 animals_killed,
                 delivered_food,
                 wasted_food,
-                delivered_trade,
-                wasted_trade,
+                carried_biomass,
             };
         }
 
@@ -2342,13 +2374,16 @@ fn denial_projection_at(
         animals_killed += take.killed;
         let landed = hunt_yield.apply(take.carried, EXPEDITION_OUTPUT_MULTIPLIER);
         delivered_food += landed.provisions;
-        delivered_trade += landed.trade_goods;
-        // **BOTH products of the wasted biomass, off ONE conversion** — the rule the delivered pair
-        // above already follows. A food-only waste line reports `0` on an inedible quarry, which is
-        // exactly the raid whose waste is total.
+        carried_biomass += take.carried;
+        // **The waste is FOOD ONLY, and that is a ruling rather than an omission.** The delivered
+        // pair above accumulates both products off one conversion; this deliberately does not, so an
+        // inedible quarry's waste reads `0` beside a large `animals_killed`. Ray ruled the
+        // per-material waste out of scope: the waste is already legible as a percentage, so a
+        // `wasted_material` vector buys a second reading of a fact the sheet states. **A flat
+        // "wasted materials" scalar is the one thing that must NOT be added here** — that is the
+        // retired trade axis under a new name. See `DenialForecast::delivered_material`.
         let left_on_the_range = hunt_yield.apply(take.wasted, EXPEDITION_OUTPUT_MULTIPLIER);
         wasted_food += left_on_the_range.provisions;
-        wasted_trade += left_on_the_range.trade_goods;
         let room = (cap - larder).max(scalar_zero());
         larder += scalar_from_f32(landed.provisions).min(room);
 
@@ -2359,8 +2394,7 @@ fn denial_projection_at(
                 animals_killed,
                 delivered_food,
                 wasted_food,
-                delivered_trade,
-                wasted_trade,
+                carried_biomass,
             };
         }
     }
@@ -2381,8 +2415,7 @@ fn denial_projection_at(
         animals_killed,
         delivered_food,
         wasted_food,
-        delivered_trade,
-        wasted_trade,
+        carried_biomass,
     }
 }
 

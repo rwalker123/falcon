@@ -29,11 +29,9 @@ var h
 # the sim refuses.
 const HERD_DIP_BODY_MASS := 120.0
 
-# `fauna_config` `hunt.provisions_per_biomass` / `trade_goods_per_biomass`, and `labor_config`'s
-# `hunt.per_worker_biomass_capacity` — the three rates that turn biomass into this sheet's numbers.
+# `fauna_config` `hunt.provisions_per_biomass` and `labor_config`'s
+# `hunt.per_worker_biomass_capacity` — the two rates that turn biomass into this sheet's numbers.
 const HERD_DIP_PROVISIONS_PER_BIOMASS := 0.02
-
-const HERD_DIP_TRADE_PER_BIOMASS := 0.005
 
 const HERD_DIP_PER_WORKER_BIOMASS := 40.0
 
@@ -97,14 +95,11 @@ func _building_herd_fixture() -> Dictionary:
 		"carrying_capacity": HERD_DIP_CAPACITY,
 		"graze_range_radius": 2,
 		"provisions_per_biomass": HERD_DIP_PROVISIONS_PER_BIOMASS,
-		"trade_per_biomass": HERD_DIP_TRADE_PER_BIOMASS,
 		"per_worker_biomass": HERD_DIP_PER_WORKER_BIOMASS,
 		"per_worker_yield": HERD_DIP_PER_WORKER_BIOMASS * HERD_DIP_PROVISIONS_PER_BIOMASS,
-		"per_worker_trade": HERD_DIP_PER_WORKER_BIOMASS * HERD_DIP_TRADE_PER_BIOMASS,
-		# One body, in each account and in biomass — the three statements of the same animal, so the
-		# whole-animal quantum the sheet divides by cannot disagree with the curve beside it.
+		# One body, in food and in biomass — two statements of the same animal, so the whole-animal
+		# quantum the sheet divides by cannot disagree with the curve beside it.
 		"food_per_animal": HERD_DIP_BODY_MASS * HERD_DIP_PROVISIONS_PER_BIOMASS,
-		"trade_per_animal": HERD_DIP_BODY_MASS * HERD_DIP_TRADE_PER_BIOMASS,
 		"body_mass": HERD_DIP_BODY_MASS,
 		"tame_build_fraction": HERD_DIP_BUILD_FRACTION,
 		# The pastoral rung's payoff (its own MSY: the pastoral r over this K, through the hunt rate),
@@ -267,9 +262,9 @@ func run(harness) -> void:
 	var built_collection := bare_collection * dip_fraction
 	var bare_take := HerdFx.hunt_take_oracle(bare_collection, dip_ceiling, dip_fpa)
 	var built_take := HerdFx.hunt_take_oracle(built_collection, dip_ceiling, dip_fpa)
-	# THE NEEDLE IS THE ACCOUNT MAGNITUDE THE ROW STATES. The readout's per-turn readings are food and
-	# trade like every other web's — the whole-animal count is the CHART's business above it, and the
-	# raid's whole-trip payload's — so the needle is spelled through `format_magnitude`, exactly as
+	# THE NEEDLE IS THE ACCOUNT MAGNITUDE THE ROW STATES. The readout's per-turn readings are accounts
+	# like every other web's — the whole-animal count is the CHART's business above it, and the raid's
+	# whole-trip payload's — so the needle is spelled through `format_magnitude`, exactly as
 	# `HudWidgets._yield_reading` spells the number it is aimed at.
 	var bare_face := SourceForecast.format_magnitude(float(bare_take["delivered"]))
 	var built_face := SourceForecast.format_magnitude(float(built_take["delivered"]))

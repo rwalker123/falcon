@@ -131,46 +131,48 @@ const POLICY_ICONS := {
 static func for_policy(policy: String) -> String:
 	return String(POLICY_ICONS.get(policy.strip_edges().to_lower(), ""))
 
-# THE TRADE-GOODS GLYPH (issue #337) — the mark on every non-food component of a hunt/gather yield
-# ON THE TIGHT SURFACES, so a rate is never mistaken for food: the worked-row headlines, the work
-# zone's filter chips, the map's yield labels, the tooltips. NOT the policy picker, which is the one
-# surface with room to say the word (`SourceForecast.picker_products` → `0.96 food · 0.24 trade`):
-# its rung buttons already wear a policy glyph naming the RUNG, and an abstract arrow naming the
-# PRODUCT beside it at the same weight is two axes the eye cannot separate. Where a word does not
-# fit, the mark still beats nothing.
-# ONE glyph for the whole product: the sim models trade goods
-# as a SCALAR, and the client says so. There is deliberately NO per-species noun (pelt / ivory /
-# hide) — a named good per species is a flavor layer on top of the scalar
-# (docs/plan_hunt_yield_model.md, Deferred), and inventing one here would put words on the wire's
-# behalf that the sim cannot back.
+# **THE TRADE-GOODS GLYPH (`⇄`) IS RETIRED** (arc #527) with the account it marked. It was the mark
+# on every non-food component of a hunt/gather yield — worked-row headlines, work-zone filter chips,
+# map yield labels, tooltips — and it earned that job by being ONE glyph for a whole product, because
+# the sim modelled trade goods as a SCALAR.
 #
-# It is ⇄, the exchange arrow the `Market` → `Deplete` rename FREED (see the POLICY_ICONS note above):
-# that rename removed it from the policy ladder precisely BECAUSE it named the rung's PRODUCT rather
-# than its pressure — and the product is exactly what this labels. It obeys the same legibility rule
-# as the rest of this file: a text-presentation symbol in bold line art, so it inherits the label's
-# colour (tinting WARN-amber with an overdrawn row, greying out with a disabled button) instead of
-# carrying emoji colours of its own. 🪙 / 💰 / ⚖ were already measured and rejected at these sizes.
-const TRADE_GOODS_GLYPH := "⇄"
+# **A MATERIAL DOES NOT NEED IT, AND MUST NOT BE GIVEN ONE.** The scalar is gone; what a harvest pays
+# beyond food and feed is `fibre`, `hide`, `tobacco` — each with a name of its own, and a name is a
+# better mark than an abstract arrow saying only "not food". So a material row states its material
+# (`0.29 fibre`, `HudFloraVocab.FLORA_CROP_MATERIAL_CLAUSE_FORMAT`) and wears no generic glyph:
+# there is no generic account left for one to stand for. Do not reintroduce a "materials" mark.
 
 # ---- WHAT A PLANT IS FOR — the crop-ROLE glyphs ------------------------------------------------
 # One mark per `FloraShareInfo.role` ("staple" | "fodder" | "cash"), worn by each row of the tile
 # card's basket so the composition of a stand reads at a glance: how much of this ground is food for
-# people, feed for animals, or goods to trade. The role is a DISPLAY TAG the sim ships and nothing
-# branches on — the yield vector is the behaviour — so nothing here may be derived from a payoff.
+# people, feed for animals, or **a material for the bench**. The role is a DISPLAY TAG the sim ships
+# and nothing branches on — the yield vector is the behaviour — so nothing here may be derived from a
+# payoff.
 #
-# THE THREE EMOJI BELOW ARE NOW THE FALLBACK, NOT THE SHIPPED MARK — `CropRoleSprites` carries
-# bundled art for all three, and `for_crop_role` prefers it (issue #463). They are kept, and kept
-# accurate, because that fallback is LIVE: it is what renders while art is being iterated on, and
-# what renders if a PNG ever fails to load. All three were BORROWED rather than invented, and TWO OF
-# THEM STILL MEAN SOMETHING ELSE ELSEWHERE IN THIS HUD, which is exactly why they were replaced:
+# **`CROP_ROLE_CASH` SURVIVED THE TRADE AXIS AND MEANS SOMETHING MORE CONCRETE NOW** (arc #527). The
+# sim still ships `role: cash`, and it still names the same plants; what changed is what they pay.
+# A cash crop used to credit a scalar stockpile nothing could spend. It now pays a NAMED MATERIAL —
+# cotton and flax pay `fibre`, tobacco/tea/grapevine pay themselves — which a crafter works at a
+# bench. So the role reads *"this plant pays a material, not calories"* rather than *"this plant pays
+# trade goods"*, and the art (a bolt of dyed cloth) is already the more accurate of the two readings.
+#
+# THE THREE EMOJI BELOW ARE THE FALLBACK, NOT THE SHIPPED MARK — `CropRoleSprites` carries bundled
+# art for all three, and `for_crop_role` prefers it (issue #463). They are kept, and kept accurate,
+# because that fallback is LIVE: it is what renders while art is being iterated on, and what renders
+# if a PNG ever fails to load. All three were BORROWED rather than invented, and two of them STILL
+# MEAN SOMETHING ELSE ELSEWHERE IN THIS HUD, which is exactly why they were replaced:
 #   • 🌾 is the food/forage mark the roster's land row wears beside its staffed forager count
 #     (`2 🌾`) and the map's grassland site marker, i.e. "what people eat off this ground".
 #   • 🐄 is `POLICY_CORRAL`'s penned-livestock mark — still, on the work board and the map — and
 #     fodder is defined on this HUD as "feed for penned animals, not food for people"
 #     (`FLORA_CROP_FODDER_TOOLTIP_FORMAT`). Near enough to pass, but not the same claim.
-#   • ⇄ is `TRADE_GOODS_GLYPH` itself, the mark every non-food component of a yield wears, so a cash
-#     crop was marked with the ACCOUNT IT PAYS INTO rather than with what it is.
-# The art names the PRODUCT instead (a grain ear / a bale of cut forage / a bolt of dyed cloth), so
+#   • The cash fallback was `⇄`, the retired trade-goods glyph — so a cash crop was marked with the
+#     ACCOUNT IT PAID INTO rather than with what it is. **🧵 replaced it with the axis** (arc #527):
+#     a spool of thread is the PRODUCT, matching what the bundled art already draws, and it collides
+#     with nothing else in this HUD (the client spends no other textile mark). It is emoji rather
+#     than a text-presentation symbol for the reason its two neighbours are — this row is a
+#     fallback, and the shipped mark is art.
+# The art names the PRODUCT throughout (a grain ear / a bale of cut forage / a bolt of dyed cloth), so
 # no mark is doing two jobs. Borrowing was what kept these legible without a fresh proof at ~13px;
 # the art is proven at that size directly — see `assets/icons/icon_prompts.txt` → CROP ROLES, which
 # is the one place the sub-style is written down, and note it INVERTS the marker house style's
@@ -181,7 +183,7 @@ const CROP_ROLE_CASH := "cash"
 const CROP_ROLE_ICONS := {
 	CROP_ROLE_STAPLE: "🌾",
 	CROP_ROLE_FODDER: POLICY_ICONS[POLICY_CORRAL],
-	CROP_ROLE_CASH: TRADE_GOODS_GLYPH,
+	CROP_ROLE_CASH: "🧵",
 }
 
 ## The `[img]` BBCode a bundled mark is rendered through. Boxed SQUARE at the caller's pixel size:

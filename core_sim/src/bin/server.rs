@@ -3020,7 +3020,6 @@ fn handle_send_expedition(
                 pending_reveal: Vec::new(),
                 // An outfitted party leaves with an empty trade pack — it earns its pelts in the
                 // field (`advance_expeditions`).
-                carried_trade: 0.0,
                 // **A scout carries the HUNT job's default kit.** `send_expedition` names no kit —
                 // scouting is not a kit job — but a scout's opportunistic roadside kill resolves
                 // through the very same hunt seams, so it needs a real mask rather than a hole.
@@ -3298,13 +3297,31 @@ fn resolve_raid_kit(
 /// projection does not have. The `detail` twin keeps the finer `{:.2}` a machine reader wants.
 const DENIAL_LEDGER_DECIMALS: usize = 1;
 
-/// **What a denial raid brings home and what it leaves — PER PRODUCT** (issue #337).
+/// Decimal places the same line prints a **material** haul to — finer than the food figure beside
+/// it, for the reason `systems::expeditions::HAUL_MATERIAL_DECIMALS` is finer than a whole count: a
+/// raid can honestly come home with a *fraction* of a hide, and a one-digit readout would print
+/// `~0.0` over a pack that really did bank pelts — the exact `~0.0` the omission rule below exists
+/// to prevent.
+const DENIAL_LEDGER_MATERIAL_DECIMALS: usize = 2;
+
+/// **What a denial raid brings home and what it leaves — food AND materials.**
 ///
-/// A Grey Wolf Pack pays `provisions_per_biomass == 0`, so the food-only line this replaced read
-/// *"~0.0 food home, ~0.0 left on the range"* on exactly the raid whose waste is total — while the
-/// same projection carried a large trade waste. **A component with nothing on either side of it is
-/// omitted rather than printed as `~0.0`**, the `describe_haul` rule: a zero there is a fact about
-/// the species, not about this raid.
+/// A Grey Wolf Pack pays `provisions_per_biomass == 0`, so a food-only line reads *"~0.0 food home,
+/// ~0.0 left on the range"* on exactly the raid whose waste is total, and says nothing at all about
+/// the hides that raid really banks. [`core_sim::DenialForecast::delivered_material`] states that
+/// haul per material, so this line states it too — **the client's own take line
+/// (`SourceForecast.denial_take_bbcode`) reads that same field off that same forecast**, and the
+/// server's sentence and the client's must not disagree about one raid. The material id is printed
+/// verbatim; `materials.json` authors no display name, and the client resolves the same key.
+///
+/// **A component with nothing on either side of it is omitted rather than printed as `~0.0`**, the
+/// `describe_haul` rule: a zero there is a fact about the species, not about this raid — and an
+/// empty `delivered_material` is *"no row"*, never a zero, so nothing has to special-case it.
+///
+/// **The waste stays food-only, deliberately.** `DenialForecast` carries no `wasted_material` and is
+/// not to grow one: Ray ruled the per-material waste out of scope (the waste is already legible as a
+/// percentage, so a second reading buys nothing), and a flat "wasted materials" scalar would be the
+/// retired trade axis under a new name. See `DenialForecast::delivered_material`'s own comment.
 fn describe_denial_ledger(forecast: &core_sim::DenialForecast) -> String {
     let mut ledger = Vec::new();
     if forecast.delivered_food > 0.0 || forecast.wasted_food > 0.0 {
@@ -3316,18 +3333,16 @@ fn describe_denial_ledger(forecast: &core_sim::DenialForecast) -> String {
             forecast.wasted_food
         ));
     }
-    if forecast.delivered_trade > 0.0 || forecast.wasted_trade > 0.0 {
+    // One clause per material, never a sum: a total of hide and bone is the retired trade axis under
+    // a new name. Same grammar as the food clause above, so the two read as one ledger.
+    for payoff in &forecast.delivered_material {
         ledger.push(format!(
-            "~{:.*} trade goods home, ~{:.*} left on the range",
-            DENIAL_LEDGER_DECIMALS,
-            forecast.delivered_trade,
-            DENIAL_LEDGER_DECIMALS,
-            forecast.wasted_trade
+            "~{:.*} {} home",
+            DENIAL_LEDGER_MATERIAL_DECIMALS, payoff.amount, payoff.material
         ));
     }
     if ledger.is_empty() {
-        // Neither meat nor pelts — the raid destroys animals and brings back nothing at all, which
-        // is a statement rather than an empty clause.
+        // Neither meat nor material: the raid destroys animals and genuinely brings nothing back.
         return "nothing worth hauling from this quarry".to_string();
     }
     ledger.join("; ")
@@ -3429,7 +3444,6 @@ fn launch_detached_party(
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
                 pending_reveal: Vec::new(),
-                carried_trade: 0.0,
                 kit,
             },
             BandTravel { target: herd_pos },
@@ -3531,18 +3545,10 @@ fn handle_send_hunt_expedition(
         // used to fire for a denial *mission* (Eradicate); since #337 the policy is pure intensity
         // and the species decides the product, so a floor-`0` raid on a deer reports its windfall
         // like any other rung, and only a wolf lands here.
-        Some(f) if !f.delivers_food => (
-            if f.delivers_trade {
-                " — no food from this quarry: the party brings back trade goods, not meat"
-                    .to_string()
-            } else {
-                " — this quarry yields nothing: the party delivers neither food nor trade goods"
-                    .to_string()
-            },
-            format!(
-                " eta_turns=none viability=inedible delivers_trade={}",
-                f.delivers_trade
-            ),
+        Some(_f) if !_f.delivers_food => (
+            " — no food from this quarry: the party brings back hides and bone, not meat"
+                .to_string(),
+            " eta_turns=none viability=inedible".to_string(),
         ),
         // The herd has no surplus above the policy's floor — the honest non-viable case. "Too lean"
         // now means the raid lands NO food at all (a small party on a big animal still delivers a
@@ -3748,7 +3754,7 @@ fn handle_send_denial_raid(
                     ),
                     format!(
                         " outcome={} turns_to_collapse={} low={} high={} travel_turns={} \
-                         animals={} food={:.2} wasted={:.2} trade={:.2} wasted_trade={:.2}",
+                         animals={} food={:.2} wasted={:.2}",
                         f.outcome.as_str(),
                         turns,
                         f.turns_to_collapse_low.unwrap_or(0),
@@ -3756,9 +3762,7 @@ fn handle_send_denial_raid(
                         travel_turns,
                         f.animals_killed,
                         f.delivered_food,
-                        f.wasted_food,
-                        f.delivered_trade,
-                        f.wasted_trade
+                        f.wasted_food
                     ),
                 ),
                 // **Never a blank** (§3). A party whose kills cannot outpace the herd's regrowth is
@@ -3777,14 +3781,12 @@ fn handle_send_denial_raid(
                     },
                     format!(
                         " outcome={} turns_to_collapse=none travel_turns={} animals={} \
-                         food={:.2} wasted={:.2} trade={:.2} wasted_trade={:.2}",
+                         food={:.2} wasted={:.2}",
                         f.outcome.as_str(),
                         travel_turns,
                         f.animals_killed,
                         f.delivered_food,
-                        f.wasted_food,
-                        f.delivered_trade,
-                        f.wasted_trade
+                        f.wasted_food
                     ),
                 ),
             }
@@ -3907,7 +3909,8 @@ fn handle_recall_expedition(
         );
         // The world event beside the command ack: the fold-back is what actually happened, and it is
         // the same line the `Returning` arm publishes when a party walks home.
-        let event = expedition_returned_event(tick, faction, at.position, at.banked_trade, entity);
+        let event =
+            expedition_returned_event(tick, faction, at.position, at.banked_materials, entity);
         app.world.resource_mut::<CommandEventLog>().push(event);
         app.world.despawn(entity);
         return;
@@ -4008,7 +4011,7 @@ fn handle_split_band(
 /// needs from a fold-back that happened outside the turn loop.
 struct CancelledInCamp {
     position: UVec2,
-    banked_trade: Scalar,
+    banked_materials: f32,
 }
 
 /// Settle `entity` into its home band **now** if it is standing on that band's tile with nothing left
@@ -4022,7 +4025,7 @@ fn cancel_party_standing_in_camp(
     app: &mut bevy::prelude::App,
     entity: Entity,
 ) -> Option<CancelledInCamp> {
-    let mut expedition = app.world.get::<Expedition>(entity)?.clone();
+    let expedition = app.world.get::<Expedition>(entity)?.clone();
     if party_owes_a_report(&expedition) {
         return None;
     }
@@ -4039,10 +4042,10 @@ fn cancel_party_standing_in_camp(
     let mut home = app
         .world
         .get_mut::<PopulationCohort>(expedition.home_band)?;
-    let banked_trade = fold_party_into_band(&mut party, &mut expedition, &mut home);
+    let banked_materials = fold_party_into_band(&mut party, &mut home);
     Some(CancelledInCamp {
         position,
-        banked_trade,
+        banked_materials,
     })
 }
 
@@ -5535,15 +5538,15 @@ fn handle_reload_turn_pipeline_config(app: &mut bevy::prelude::App, path: Option
         watcher_state.restart_turn_pipeline(watch_path, command_sender);
     }
 
-    let logistics = new_config.logistics();
+    let population = new_config.population();
     info!(
         target: "shadow_scale::config",
         path = applied_path
             .as_ref()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "builtin".to_string()),
-        flow_gain_min = logistics.flow_gain_min().to_f32(),
-        flow_gain_max = logistics.flow_gain_max().to_f32(),
+        attrition_penalty_scale = population.attrition_penalty_scale().to_f32(),
+        hardness_penalty_scale = population.hardness_penalty_scale().to_f32(),
         "turn_pipeline_config.reloaded"
     );
 }
@@ -7409,7 +7412,6 @@ fn resolve_ready_turn(app: &mut bevy::prelude::App) {
         turn = metrics.turn,
         grid_width = metrics.grid_size.0,
         grid_height = metrics.grid_size.1,
-        total_mass = metrics.total_mass,
         avg_temp = metrics.avg_temperature,
         duration_ms,
         "turn.completed"
@@ -8505,7 +8507,6 @@ mod tests {
                 phase: ExpeditionPhase::Outbound,
                 announced: false,
                 pending_reveal: Vec::new(),
-                carried_trade: 0.0,
                 kit: core_sim::EquipmentConfig::builtin().default_kit(KitJob::Hunt),
             },
         ));
@@ -12413,6 +12414,65 @@ mod tests {
             BENCH_IDLE_CREW,
             "the crew already at the bench stays put across the swap — an absent number is not an \
              order to send them home"
+        );
+    }
+
+    /// A projection whose food half is honestly zero and whose whole payload is material — the wolf
+    /// shape, built directly so the assertion is about the *sentence* rather than about a roster.
+    fn inedible_denial_forecast(
+        delivered_material: Vec<core_sim::MaterialPayoff>,
+    ) -> core_sim::DenialForecast {
+        core_sim::DenialForecast {
+            turns_to_collapse: Some(4),
+            turns_to_collapse_low: Some(3),
+            turns_to_collapse_high: Some(6),
+            outcome: core_sim::DenialOutcome::PastRecovery,
+            animals_killed: 9,
+            delivered_food: 0.0,
+            wasted_food: 0.0,
+            delivered_material,
+        }
+    }
+
+    /// **The launch ack states the materials the same forecast promises.** The client's take line
+    /// reads `DenialForecast::delivered_material` off this very forecast, so a server sentence that
+    /// said *"nothing worth hauling"* beside it would contradict the client about one raid.
+    ///
+    /// Paired with the genuinely-empty case, because *"always name the hides"* would otherwise be
+    /// satisfiable by deleting the fallback — and a raid that brings back neither meat nor material
+    /// must still say so rather than print a `~0.0`.
+    #[test]
+    fn an_inedible_raids_ack_names_the_materials_its_forecast_promises() {
+        let hauling = inedible_denial_forecast(vec![
+            core_sim::MaterialPayoff {
+                material: "hide".to_string(),
+                amount: 3.2,
+            },
+            core_sim::MaterialPayoff {
+                material: "bone".to_string(),
+                amount: 0.44,
+            },
+        ]);
+        let line = describe_denial_ledger(&hauling);
+        assert!(
+            line.contains("hide") && line.contains("bone"),
+            "both promised materials belong on the line, never summed — got {line}"
+        );
+        assert!(
+            line.contains("3.20") && line.contains("0.44"),
+            "the amounts print finely enough to show a sub-unit pack — got {line}"
+        );
+        assert!(
+            !line.contains("food"),
+            "an inedible quarry states no food clause at all rather than a fabricated ~0.0 — got \
+             {line}"
+        );
+
+        let barren = inedible_denial_forecast(Vec::new());
+        assert_eq!(
+            describe_denial_ledger(&barren),
+            "nothing worth hauling from this quarry",
+            "a raid that really does bring nothing back still says so"
         );
     }
 }

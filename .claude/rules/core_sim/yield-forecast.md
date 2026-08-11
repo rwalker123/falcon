@@ -40,65 +40,78 @@ of those scalars, and the per-policy row lists that replaced them, are now retir
 `(deprecated)` slots.** A stance ceiling cannot be enumerated once the player drags a continuous
 floor — see "THE CEILING LISTS ARE RETIRED" below.
 
-> ### THE FORECAST IS A PAIR, not a food scalar (issue #337)
+> ### THE FORECAST IS A VECTOR, not a food scalar (issue #337) — and its trade half is RETIRED
 >
-> Every field of `SourceYieldForecast` is a **`YieldPair { provisions, trade_goods }`** —
-> `per_worker_yield`, all five `ceiling_*`, `managed_yield`, `pastoral_yield`, `body_mass_yield`. So is
-> `SourceYield`'s telemetry: `trade` (the twin of `actual`) and `realized_trade` (the twin of
-> `realized`) ride beside the food ones.
+> Every field of `SourceYieldForecast` is a **`YieldAccounts { provisions, fodder }`** —
+> `per_worker_yield`, `per_biomass_yield`, `managed_yield`, `pastoral_yield`, `body_mass_yield`. So is
+> `SourceYield`'s telemetry.
 >
-> **Why vectorised rather than sibling `*_trade` scalars.** A wolf's food ceilings are all `0`
-> (`hunt_yield.provisions_per_biomass == 0`), so a food-denominated forecast cannot express its yield
-> **at all** — the client would read "0/turn" on every rung and the forecast would be *false*, not
-> merely incomplete. Sibling scalars double the surface and let the two halves drift under a retune;
-> one pair per rung cannot, because `ceiling_for` hands both components to every reader at once.
+> **Why vectorised rather than sibling per-account scalars.** Sibling scalars double the surface and
+> let the halves drift apart under a retune; one vector per rung cannot, because `ceiling_at` hands
+> every component to every reader at once.
 >
-> **`forecast == actual` now holds PER COMPONENT**, and that is the invariant this whole arc rests on:
-> if the forecast can promise a number the sim will not pay in *either* currency, the UI lies. Pinned
-> on the **exported snapshot** (not the in-process struct) by
-> `hunt_yield_vector::the_forecast_equals_the_paid_take_in_both_products_on_the_wire`, across a
-> defaulting species and an inedible one × all four extractive rungs.
+> **`forecast == actual` holds PER COMPONENT**, and that is the invariant this whole arc rests on: if
+> the forecast can promise a number the sim will not pay in *any* account, the UI lies. Pinned on the
+> **exported snapshot** (not the in-process struct) by
+> `hunt_yield_vector::the_forecast_equals_the_paid_take_on_the_wire`, across a defaulting species and
+> an inedible one × all four extractive rungs.
 >
-> **Quantisation picks an AXIS, and it is never assumed to be food.** `forecast_production_and_take`
+> **Quantisation picks an AXIS, and it is never assumed to be food.** `forecast_production_and_take_at`
 > runs `quantise_animal_take` on `SourceYieldForecast::ratio_axis()` — the first component with a
-> *positive* per-biomass rate (`Provisions` preferred, so every edible species divides exactly the
-> numbers it divided before this arc; `TradeGoods` for a wolf) — then `YieldPair::rescaled_to` carries
-> the one animal count back into the other currency. An animal count is a **ratio**, and a ratio is
-> unit-free: any positive component gives the same answer, a zero one gives `0/0`. Correspondingly
-> **"does this source quantise?" is now `!body_mass_yield.is_zero()`**, not
-> `body_mass_yield.provisions > 0` — the old test would call a pack of wolves *continuous* and hand
-> back a smooth fraction of a wolf. Every pre-#337 source reads identically (plants are zero in both
-> components), so it is a widening, not a change.
+> *positive* per-biomass rate — then `YieldAccounts::rescaled_to` carries the one animal count back
+> into the other component. An animal count is a **ratio**, and a ratio is unit-free: any positive
+> component gives the same answer, a zero one gives `0/0`. Correspondingly **"does this source
+> quantise?" is `!body_mass_yield.is_zero()`**, not `body_mass_yield.provisions > 0`.
 >
-> **No trade `arrivals` schedule, deliberately.** `arrivals` answers *"when does food land so my people
-> eat"* — a question with a consumption clock. Trade goods sit in the band's own store with nothing
-> consuming them per turn, so a trade timetable would answer a question nobody asks. **And `food_income` stays
-> `Σ actual` and must never include `trade`**: that sum is one side of the pinned larder identity
-> `larder_delta == food_income − food_consumption − pen_feed_upkeep`, and trade never touches the
+> > #### THE TRADE-GOODS ACCOUNT IS RETIRED (arc #527), AND A WOLF NOW FORECASTS `0`
+> >
+> > `YieldAccounts` carried a third component, `trade_goods`, and it was the *only* positive account
+> > an inedible species had. It went because it was **written by every take site and read by none** —
+> > there was no `take(TRADE_GOODS)` anywhere in the workspace — while the `credit_material_yield`
+> > call beside each of those writes banked the same take's concrete hide, bone and fibre.
+> >
+> > **The consequence for this file is exact and worth stating plainly**: a wolf's forecast is now
+> > `0` in every component the forecast carries, and that reading is *honest but incomplete*. It is
+> > not food, and what it really pays — **material batches** — cannot live in a `YieldAccounts` at
+> > all: batches carry a characteristic vector, and this type is the part that adds, scales and
+> > `min`s componentwise. **Projecting materials is its own arc**; until it lands, an inedible
+> > species' preview states its zero and the take banks its pelts.
+> >
+> > Two readings changed with it, both deliberately:
+> > - **`ratio_axis` has two arms** (`Provisions`, then `Fodder`), so a wolf has none and takes the
+> >   continuous branch. Its forecast is `0` either way, so no answer moved.
+> > - **`HuntYield::yields_nothing` counts MATERIALS**, not a trade rate. Without that the picker's
+> >   one pruning rule (`fauna::species_requires_denial`) would have collapsed a wolf to floor `0`
+> >   alone — a real gameplay regression hiding inside a data removal.
+> >
+> > Retired wire slots, all `(deprecated)` in place and none deleted:
+> > `LaborAssignment.tradeYield` / `realizedTradeYield` / `tradeYieldLow` / `tradeYieldHigh` ·
+> > `HerdTelemetryState.perWorkerTrade` / `tradePerAnimal` / `pastoralTrade` / `corralTrade` /
+> > `tradePerBiomass` · `ForagePatchState.tradePerBiomass` / `tendedTrade` / `fieldTrade` ·
+> > `FloraShareInfo.sowTradePayoff` / `cultivateTradePayoff`. On the proto,
+> > `HuntTripRow.delivers_trade` / `delivered_trade` and `DenialRow.delivered_trade` / `wasted_trade`
+> > are **reserved field numbers**, never freed.
+>
+> **No fodder `arrivals` schedule, deliberately.** `arrivals` answers *"when does food land so my
+> people eat"* — a question with a consumption clock. Nothing consumes the fodder store on that
+> clock, so a fodder timetable would answer a question nobody asks. **And `food_income` stays
+> `Σ actual` and must never include `fodder`**: that sum is one side of the pinned larder identity
+> `larder_delta == food_income − food_consumption − pen_feed_upkeep`, and fodder never touches the
 > larder.
 >
-> **THE PLANT SIDE'S TRADE COMPONENT IS `0.0` — a known gap, not a claim.** `forage_forecast` fills
-> `forage::PLANT_TRADE_FORECAST_NOT_YET_PROJECTED` throughout, and `realized_trade` is `0` on every
-> forage source: a gather really does sell (the basket's own `patch_trade_per_biomass` — the
-> `forage.market.*` block this line used to cite is **deleted** with the stance axis), the sim
-> simply has not *projected* it — #337 vectorised the animal web, and the plant web's trade forecast is
-> its own arc. The trade a gather **actually earns** is reported (`SourceYield::trade` /
-> `LaborAssignmentState::trade_yield`). It is safe to ship because of the rendering rule below.
+> **THE PLANT SIDE'S FODDER COMPONENT IS `0.0` — a known gap, not a claim.** `forage_forecast` fills
+> `forage::PLANT_FODDER_FORECAST_NOT_YET_PROJECTED` throughout: a hay Field really does credit the
+> `FODDER` store, the sim simply has not *projected* it. The fodder a harvest **actually earns** is
+> reported (`SourceYield::fodder` / `LaborAssignmentState::fodder_yield`).
 >
-> **The client renders a trade line ONLY when `trade_goods > 0`** — exactly the rule flora's cash-crop
-> line already uses — so a plant shows *no trade line* rather than a false "0 trade goods/turn".
+> **The client renders a component's line ONLY when it is `> 0`** — so a source with no fodder shows
+> *no fodder line* rather than a false "0/turn".
 >
-> **New wire fields** (each appended at the END of its table — slots are positional):
-> `HuntPolicyCeiling.tradeGoodsPerTurn` · `HuntTripEstimate.deliveredTrade` (beside the already-shipped
-> `deliversTrade`) · `HerdTelemetryState.perWorkerTrade` / `tradePerAnimal` ·
-> `LaborAssignment.tradeYield` / `realizedTradeYield`. The investment rungs' twins
-> `HerdTelemetryState.pastoralTrade` / `corralTrade` followed in issue #397 (below).
->
-> **THE ROW IS A TRIPLE, NOT A PAIR — `SourceYield::fodder` / `LaborAssignment.fodderYield`**
-> (issue #449, appended last). The take pays three accounts (`docs/plan_flora_roster.md` §3) and the
-> row reported two, so a **sown hay Field** — `flora_config.json`'s `hay_grass`: no provisions, no
-> trade, `fodder_per_biomass 0.20` — published `+0.00` in every compact yield readout while feeding
-> the band's pens every turn. It is filled at the **two** sites that credit the `FODDER` store (the
+> **THE ROW CARRIES FODDER TOO — `SourceYield::fodder` / `LaborAssignment.fodderYield`**
+> (issue #449, appended last). The take pays every account the vector names
+> (`docs/plan_flora_roster.md` §3) and the row reported food alone, so a **sown hay Field** —
+> `flora_config.json`'s `hay_grass`: no provisions, `fodder_per_biomass 0.20` — published `+0.00` in
+> every compact yield readout while feeding the band's pens every turn. It is filled at the **two** sites that credit the `FODDER` store (the
 > Field arm and the wild/tended gather arm of `advance_labor_allocation`) and nowhere else:
 > - **It is the CREDITED value, never a recomputation**, gate included. The wild credit is gated on
 >   *Foddering* at the credit site (`flora.md` → "Wild fodder is gated at the CONSUMER"), so a row
@@ -106,17 +119,16 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 >   Pinned by `forage_basket_reweight::the_published_fodder_is_the_fodder_the_band_was_actually_credited`,
 >   which sweeps both sides of the gate.
 > - **It is not food income.** `food_income` stays `Σ actual`; fodder credits the band's `FODDER`
->   store and never touches the larder, exactly as `trade` does not.
-> - **There is no `realized_fodder` twin and no `YieldRange` fodder band, deliberately.**
->   `realized_trade` exists because the *animal* web projects a steady rate; fodder is paid by the
->   *plant* web alone, whose projection is the same known gap `PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`
->   names — so a projected-fodder field would be a constant zero on the only web that can pay it. And
->   every forage row's range is a point (nothing on the plant web is stochastic), so bounds would only
->   restate the scalar. The client reads the actual, as it already does for `trade` on a forage row.
+>   store and never touches the larder.
+> - **There is no `realized_fodder` twin and no `YieldRange` fodder band, deliberately.** Fodder is
+>   paid by the *plant* web alone, whose forward projection is the known gap
+>   `PLANT_FODDER_FORECAST_NOT_YET_PROJECTED` names — so a projected-fodder field would be a constant
+>   zero on the only web that can pay it. And every forage row's range is a point (nothing on the
+>   plant web is stochastic), so bounds would only restate the scalar. The client reads the actual.
 > - **A hunt row's `0.0` is structural**: no animal's `YieldAccounts` pays fodder. `forecast_source_yield`
 >   reads `actual.fodder` off the take vector rather than writing a literal, so a **pre-commit seed**
 >   still quotes `0` on both webs — the plant side because `forage::plant_food_only` keeps the forecast
->   food-only, which is the same gap the trade projection has. **A fresh hay-Field assignment therefore
+>   food-only. **A fresh hay-Field assignment therefore
 >   still previews `+0.00` until its first turn resolves**; closing it means giving the plant forecast a
 >   fodder component, not adding a field.
 >
@@ -124,7 +136,7 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > with it.** It is a per-*cohort* echo of the global `hunt.provisions_per_biomass`, and a cohort has no
 > herd, so there is no species to resolve a vector from; left unqualified it quotes a wolf's hunters a
 > positive food rate against all-zero food ceilings — a contradiction on the wire. The species-aware
-> rates are the herd's own `perWorkerYield` / `perWorkerTrade`, straight off its `hunt_forecast`, so
+> rate is the herd's own `perWorkerYield`, straight off its `hunt_forecast`, so
 > `min(workers × perWorkerYield, ceiling(floor))` is honest per component — and for the *crew* side
 > of the same question the herd carries **`perWorkerBiomass`**, which is positive on a wolf where
 > both the cohort echo and the food rate mislead. The cohort field survives as the expedition
@@ -156,8 +168,8 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > dragging a continuous floor asks a different one every frame.**
 >
 > What ships instead is the **terms**: `biomass`, `carryingCapacity`, the build-dip fractions, and the
-> source's **per-biomass yield vector** (`provisionsPerBiomass` / `fodderPerBiomass` /
-> `tradePerBiomass` — the patch's basket-averaged rates, or the herd's own `HuntYield`). The client
+> source's **per-biomass yield vector** (`provisionsPerBiomass` / `fodderPerBiomass`,
+> — the patch's basket-averaged rates, or the herd's own `HuntYield`). The client
 > composes
 >
 > ```text
@@ -274,14 +286,12 @@ rung-3 verbs are kind-exclusive, so one field serves both.)
 `SourceYieldForecast::pastoral_yield`) — what a Sustain hunt pays **once the herd is tamed**, so the
 client can render Tame's `→ +Y` instead of quoting only its during-building dip, which reads *below*
 the undipped stance and hides that taming out-yields wild hunting. `0` on a source that never
-offers Tame (a forage patch, or a herd already penned/forage-tended). **Each investment payoff is a
-PAIR on the wire** (issue #397): `pastoralTrade` / `corralTrade` carry the `trade_goods` half of the
-very same `SourceYieldForecast::pastoral_yield` / `managed_yield` `YieldPair`s their food siblings read
-`provisions` from, so an inedible-but-valuable species' Tame/Corral rungs quote the same vector its four
-extractive rungs already do (before them a Wild Boar's picker read `→ 1.48 food` on the investment rungs
-beside `0.74 food · 0.18 trade` on the extractive ones). `corralTrade` is **gross** like `corralYield` —
-the pen's feed (`penUpkeep`) is a provisions debit and never touches the trade component — and each
-component renders only when non-zero, the rule `perWorkerTrade` follows. **Both `pastoralYield` and the
+offers Tame (a forage patch, or a herd already penned/forage-tended).
+
+**`pastoralTrade` / `corralTrade` were the trade halves of the very same
+`SourceYieldForecast::pastoral_yield` / `managed_yield` vectors, and are `(deprecated)` slots since
+arc #527** — with the axis gone, an inedible species' investment rungs quote `0`, exactly as its
+extractive ones do. **Both `pastoralYield` and the
 un-penned `corralYield` projection (`managed_yield`) are the SUSTAINED MSY on the improved ecology** —
 `HuntYield::apply(sustainable_yield(biomass_before_regrowth, carrying_capacity, &{pastoral,pen}_ecology_for(..)))`,
 the long-run rate — **NOT** the one-turn constant-escapement take. Because MSY is `r`-dependent while
@@ -312,14 +322,14 @@ projection* is the sustained MSY. Pinned by
   > cannot come from two that can both be zero.
   >
   > It was absent because a per-worker scalar was held unable to state a *policy-dependent* rate,
-  > which the plant web's trade account then had (`Deplete` marked it up). That markup is deleted
-  > (`docs/plan_harvest_floor.md` §4) and no factor rides the depth of the draw anywhere in the
-  > model, so throughput is policy-blind in fact and one scalar states it honestly.
+  > which the plant web's retired trade account then had (`Deplete` marked it up). That markup is
+  > deleted (`docs/plan_harvest_floor.md` §4) and no factor rides the depth of the draw anywhere in
+  > the model, so throughput is policy-blind in fact and one scalar states it honestly.
   >
   > **It supersedes `PopulationCohortState.huntPerWorkerProvisions` for a per-herd preview** — see
-  > the trap that field carries, below. It is the same species-aware split `perWorkerYield` /
-  > `perWorkerTrade` already made for the accounts, one level down. The cohort field stays: it is
-  > still the expedition **outfit** lever, quoted before a target is chosen.
+  > the trap that field carries, below. It is the same species-aware split `perWorkerYield` makes for
+  > the food account, one level down. The cohort field stays: it is still the expedition **outfit**
+  > lever, quoted before a target is chosen.
 - `ceiling(floor)` = the stock standing above that floor, in food/turn, **already clamped to the
   source's remaining biomass** (belt-and-braces — an escapement ceiling cannot exceed the stock).
 - **`collapseFraction` / `stressedFraction` = the ecology phase BANDS**, as fractions of
@@ -425,9 +435,9 @@ projection* is the sustained MSY. Pinned by
 > fight (`SourceYieldForecast::fight` is `None`, `engage_rate` is `INFINITY`) — so the old invariant
 > survives there unchanged, at any configured width.
 >
-> Wire: `LaborAssignment.actualYieldLow` / `actualYieldHigh` / `tradeYieldLow` / `tradeYieldHigh`
-> (append-only, after `floor`), **both currencies** for #337's reason — a wolf's food band is honestly
-> all-zero. Guarded by `core_sim/tests/hunt_forecast_range.rs` on the exported snapshot: the
+> Wire: `LaborAssignment.actualYieldLow` / `actualYieldHigh` (append-only, after `floor`; their
+> `tradeYield*` siblings are `(deprecated)` slots since arc #527). Guarded by
+> `core_sim/tests/hunt_forecast_range.rs` on the exported snapshot: the
 > degenerate identity (bit-for-bit, animal web × a defaulting and an inedible species × the floor),
 > the plant web's structural point-ness at an absurd width, a resolved row's collapse under a **live**
 > sub-1 `hit_chance`, and the widened band's containment across 400 seeds — paired with three liveness
@@ -459,8 +469,8 @@ projection* is the sustained MSY. Pinned by
   `hunt_forecast`. The shared `SourceYieldForecast` struct (with `::tended`) is the common return shape.
   A corralled herd's `managed_yield` is **gross**; its `penUpkeep` is exported separately.
 - Guarded across **both products, on the exported snapshot**, by
-  `core_sim/tests/hunt_yield_vector.rs` (`the_forecast_equals_the_paid_take_in_both_products_on_the_wire`,
-  `a_wolves_exported_ceilings_read_no_food_and_real_trade_on_every_rung`,
+  `core_sim/tests/hunt_yield_vector.rs` (`the_forecast_equals_the_paid_take_on_the_wire`,
+  `a_wolves_exported_rate_reads_no_food_and_it_is_still_huntable_at_every_floor`,
   `a_composed_ceiling_carries_the_windfall_at_floor_zero`), and on the food component by
   `systems::labor_yield_tests::{forage,hunt}_forecast_equals_actual_take_for_every_floor_and_staffing`
   (every sampled floor × labor-bound/ceiling-bound staffing, comparing against the payout of a real
@@ -613,46 +623,27 @@ player-facing is issue #272's notification system.
 Guarded by `labor_allocation::forage_lapses_when_the_band_walks_out_of_work_range`, which asserts in the
 same run that an in-range band's assignment survives, so "lapse" cannot silently widen to "always drop".
 
-### Trade goods are a BAND-LOCAL store, and the faction figure is derived
+### RETIRED: trade goods were a BAND-LOCAL store, and now there is no such store at all
 
-`TRADE_GOODS` is a **third key on the same `PopulationCohort::stores` `LocalStore`** as `FOOD` and
-`FODDER` — a band/city holds what it produced until a trade network reaches it. Every ongoing credit
-site works the way the `FODDER` lines beside them do:
+`TRADE_GOODS` was a third key on `PopulationCohort::stores` beside `FOOD` and `FODDER`, credited by
+five sites — the Field harvest, the drawn-down forage take, the pen harvest, the wild hunt and the
+expedition's delivery. **Arc #527 retired it**, because those five writes had no reader: there was no
+`take(TRADE_GOODS)` anywhere in the workspace, and beside every one of them sat a
+`credit_material_yield` banking the same take's concrete hide, bone and fibre.
 
-```rust
-let trade_goods = scalar_from_f32(production.min(collection));
-if trade_goods > scalar_zero() {
-    cohort.stores.add(TRADE_GOODS, trade_goods);
-}
-```
+**What survives is the shape, and it is the material store's now.** Everything this section argued for
+a commodity key holds for a material batch:
 
-The five sites are the Field harvest, the drawn-down forage take, the pen harvest and the wild hunt
-(all `systems/labor.rs`), plus the expedition's delivery (`systems::expeditions::settle_carried_trade`,
-which credits the **home band**). There is **no faction-level total anywhere** — nothing in the sim
-reads accumulated trade goods, and a faction figure is a sum over its bands, computed where it is
-wanted rather than stored.
+- the snapshot ships batches generically (`snapshot/crafting.rs`), so a new material needs no schema
+  change;
+- `balance_supply_networks` pools them per **`(material id, band key)`** (`supply::MaterialKey`), so
+  same-faction bands inside `SupplyNetworkConfig.reach_tiles` share them and bands beyond it do not —
+  and pooling can never average a mammoth hide into a hare pelt;
+- a batch's amount is fixed-point, so per-turn flows accumulate instead of rounding to zero.
 
-**Three things fall out for free, which is why this is a key and not a new account:**
-- the snapshot already ships every key generically (`snapshot/population.rs` iterates `cohort.stores`),
-  so there is no schema change and no decoder change;
-- `balance_supply_networks` (`supply.rs`) collects `commodities` from whatever keys the member nodes
-  hold, so same-faction bands inside `SupplyNetworkConfig.reach_tiles` share their trade goods and
-  bands beyond it do not — **no trade-specific path belongs in that system**;
-- a `LocalStore` is fixed-point, so per-turn flows accumulate instead of rounding.
-
-> **The rounding those credits used to do was a live bug.** `FactionInventory` is an `i64` stockpile,
-> so each site banked `(production.min(collection)).round() as i64` — which discards **every** per-turn
-> trade income below `0.5`. A forage patch paying `0.04` trade/turn contributed exactly nothing,
-> forever, while the client honestly reported `+0.04 /turn` off `SourceYield::trade`. Small sources now
-> genuinely accrue, which is an observable balance change, not just a refactor. Pinned by
-> `forage_tended_vector::a_sub_unit_trade_income_accumulates_instead_of_vanishing` (a sub-unit
-> per-turn credit whose running total clears a whole good) and
-> `::trade_income_lands_in_the_producing_bands_store_not_the_faction_stockpile`.
-
-**`FactionInventory` survives on the start-profile path alone.** `seed_starting_inventory`
-(`systems/worldgen.rs`) writes a `StartProfileOverrides::inventory` grant into it and the **Startup-only**
-`apply_trade_goods_bonus` drains the `TRADE_GOODS` grant into the opening trade-link openness bonus.
-That conversion is the resource's only remaining reader, and it never sees ongoing income.
+**`FactionInventory` survives on the start-profile path alone**, and now carries no `trade_goods`
+grant either: `seed_starting_inventory` (`systems/worldgen.rs`) writes whatever a
+`StartProfileOverrides::inventory` names, and nothing spends it.
 
 #### `accessibleStockpile` is an unread wire table, and `reach_tiles` is the real radius
 

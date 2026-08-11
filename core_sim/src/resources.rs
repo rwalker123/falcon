@@ -103,9 +103,6 @@ pub struct SimulationConfig {
     pub temperature_lerp: Scalar,
     /// Latitude + elevation climate model levers (see `ClimateConfig`).
     pub climate: ClimateConfig,
-    pub logistics_flow_gain: Scalar,
-    pub base_link_capacity: Scalar,
-    pub mass_bounds: (Scalar, Scalar),
     pub population_growth_rate: Scalar,
     pub temperature_morale_penalty: Scalar,
     /// Dead-band (°) around `ambient_temperature` within which climate contributes **zero** morale
@@ -126,18 +123,9 @@ pub struct SimulationConfig {
     pub power_storage_bleed: Scalar,
     pub power_instability_warn: Scalar,
     pub power_instability_critical: Scalar,
-    pub mass_flux_epsilon: Scalar,
-    pub base_trade_tariff: Scalar,
-    pub base_trade_openness: Scalar,
-    pub trade_openness_decay: Scalar,
-    pub trade_leak_min_ticks: u32,
-    pub trade_leak_max_ticks: u32,
-    pub trade_leak_exponent: f32,
-    pub trade_leak_progress: Scalar,
+
     pub migration_fragment_scaling: Scalar,
     pub migration_fidelity_floor: Scalar,
-    pub corruption_logistics_penalty: Scalar,
-    pub corruption_trade_penalty: Scalar,
     pub corruption_military_penalty: Scalar,
     /// Host and **base port** of the server's port block. Slot 0 itself is
     /// **reserved and never bound** — it carried the retired bincode snapshot
@@ -283,9 +271,6 @@ struct SimulationConfigData {
     temperature_lerp: f32,
     #[serde(default)]
     climate: ClimateConfigData,
-    logistics_flow_gain: f32,
-    base_link_capacity: f32,
-    mass_bounds: MassBoundsData,
     population_growth_rate: f32,
     temperature_morale_penalty: f32,
     #[serde(default = "default_temperature_morale_tolerance")]
@@ -305,18 +290,8 @@ struct SimulationConfigData {
     power_storage_bleed: f32,
     power_instability_warn: f32,
     power_instability_critical: f32,
-    mass_flux_epsilon: f32,
-    base_trade_tariff: f32,
-    base_trade_openness: f32,
-    trade_openness_decay: f32,
-    trade_leak_min_ticks: u32,
-    trade_leak_max_ticks: u32,
-    trade_leak_exponent: f32,
-    trade_leak_progress: f32,
     migration_fragment_scaling: f32,
     migration_fidelity_floor: f32,
-    corruption_logistics_penalty: f32,
-    corruption_trade_penalty: f32,
     corruption_military_penalty: f32,
     port_base_bind: String,
     snapshot_flat_bind: String,
@@ -432,12 +407,6 @@ fn default_temperature_morale_tolerance() -> f32 {
     9.0
 }
 
-#[derive(Debug, Deserialize)]
-struct MassBoundsData {
-    min: f32,
-    max: f32,
-}
-
 #[derive(Debug, Deserialize, Default)]
 struct HydrologyOverridesData {
     river_density: Option<f32>,
@@ -496,12 +465,6 @@ impl SimulationConfigData {
             ambient_temperature: scalar_from_f32(self.ambient_temperature),
             temperature_lerp: scalar_from_f32(self.temperature_lerp),
             climate: self.climate.into_config(),
-            logistics_flow_gain: scalar_from_f32(self.logistics_flow_gain),
-            base_link_capacity: scalar_from_f32(self.base_link_capacity),
-            mass_bounds: (
-                scalar_from_f32(self.mass_bounds.min),
-                scalar_from_f32(self.mass_bounds.max),
-            ),
             population_growth_rate: scalar_from_f32(self.population_growth_rate),
             temperature_morale_penalty: scalar_from_f32(self.temperature_morale_penalty),
             temperature_morale_tolerance: scalar_from_f32(self.temperature_morale_tolerance),
@@ -520,18 +483,8 @@ impl SimulationConfigData {
             power_storage_bleed: scalar_from_f32(self.power_storage_bleed),
             power_instability_warn: scalar_from_f32(self.power_instability_warn),
             power_instability_critical: scalar_from_f32(self.power_instability_critical),
-            mass_flux_epsilon: scalar_from_f32(self.mass_flux_epsilon),
-            base_trade_tariff: scalar_from_f32(self.base_trade_tariff),
-            base_trade_openness: scalar_from_f32(self.base_trade_openness),
-            trade_openness_decay: scalar_from_f32(self.trade_openness_decay),
-            trade_leak_min_ticks: self.trade_leak_min_ticks,
-            trade_leak_max_ticks: self.trade_leak_max_ticks,
-            trade_leak_exponent: self.trade_leak_exponent,
-            trade_leak_progress: scalar_from_f32(self.trade_leak_progress),
             migration_fragment_scaling: scalar_from_f32(self.migration_fragment_scaling),
             migration_fidelity_floor: scalar_from_f32(self.migration_fidelity_floor),
-            corruption_logistics_penalty: scalar_from_f32(self.corruption_logistics_penalty),
-            corruption_trade_penalty: scalar_from_f32(self.corruption_trade_penalty),
             corruption_military_penalty: scalar_from_f32(self.corruption_military_penalty),
             port_base_bind: parse_socket(self.port_base_bind, "port_base_bind")?,
             snapshot_flat_bind: parse_socket(self.snapshot_flat_bind, "snapshot_flat_bind")?,

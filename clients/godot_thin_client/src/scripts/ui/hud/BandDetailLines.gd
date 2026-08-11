@@ -56,8 +56,8 @@ const BAND_FOOD_HAY_CLAUSE_FORMAT := " · [color=#%s]%.1f hay[/color]"
 # **MORALE AND GROWTH ARE THE RIGHT PAIR.** Both are player-band health scalars, both already carry
 # disclosure carets, and they read naturally together. The alternative — dropping a row — is not
 # available here: `Kit` is the row the tier gained and it is NOT droppable (a spent kit is stated
-# nowhere else in the client and is not recoverable from any other surface), and `Trade` is already
-# the row this tier drops.
+# nowhere else in the client and is not recoverable from any other surface), and the one row this tier
+# used to drop — `Trade` — is retired outright (arc #527), so there is nothing left to give up.
 #
 # **BOTH `[url]` METAS SURVIVE, which is the whole reason a merge beats a drop.** The vitals block is
 # ONE `RichTextLabel`, so a row is a line and merging two is joining two strings: the Growth clause
@@ -72,12 +72,12 @@ const BAND_FOOD_HAY_CLAUSE_FORMAT := " · [color=#%s]%.1f hay[/color]"
 const BAND_MORALE_GROWTH_CLAUSE_SEPARATOR := " · "
 const BAND_MORALE_GROWTH_CLAUSE_FORMAT := BAND_MORALE_GROWTH_CLAUSE_SEPARATOR + "%s [color=#%s]%s[/color]"
 
-# ---- The band's TRADE row (issue #381): what THIS band HOLDS and what it earns per turn in the
-# second product, in the Food row's shape — `Trade: 12.0 · +0.04 /turn`. The stock carries ONE decimal,
-# like the Fodder row above and for the same reason: sub-unit trade income accumulates in the sim
-# rather than rounding away, so a band earning ~0.005/turn would read a flat `0` for a hundred turns
-# beside a visibly non-zero rate if this printed an integer.
-const BAND_TRADE_ROW_FORMAT := "Trade: %.1f · [color=#%s]%s[/color]"
+# **THE BAND'S TRADE ROW IS RETIRED** (`Trade: 12.0 · +0.04 /turn`, arc #527). It read the
+# `trade_goods` store key and the `trade_yield` rates, both of which the sim has stopped writing, so
+# the row would have stood at a permanent `Trade: 0.0 · +0.00 /turn` on every band forever. What a
+# band holds beyond food and fodder is MATERIALS — one pile per material per rating — and that is a
+# LIST, not a vitals row: the Crafting panel's rail is where it reads, and no summary line here may
+# collapse it back into one number.
 
 # ---- The band's KIT row (`docs/plan_hunt_through_combat.md` §4.8) — `Kit: Spears 87 · Sled 54 ·
 # Baskets dry`. Three consumable kits, start-stocked and not craftable, each with its own condition
@@ -100,6 +100,31 @@ const BAND_KIT_ROW_ENTRY_FORMAT := "%s [color=#%s]%s[/color]"
 
 # ---- The hunt party's carry-ceiling FULL badge (shown when carried ≥ cap; the party heads home full).
 const HUNT_FULL_BADGE := "· FULL"
+
+# ---- THE PACK'S MATERIALS — a CLAUSE on the `Carried:` row, and never a row of its own -----------
+# `PopulationCohortState.materialBatches` is resolved from `cohort.stores` with NO resident-band gate,
+# so a detached party's carried materials have been on the wire the whole trip and nothing rendered
+# them: a scout hauled a wolf home and the UI never mentioned the hide.
+#
+# **IT IS A CLAUSE BECAUSE THE STRIP HAS NO EIGHTH LINE TO GIVE.** The parties inspector strip's
+# budget is fully spent at SEVEN lines in a ~300px clipping zone (`band-city-panel.md` → "The parties
+# strip's SEVEN lines"), and that section's own rule for a new fact is the band zone's SHORT-tier
+# idiom: two facts that read as one sentence cost one row. What the party is carrying home IS the
+# `Carried:` sentence.
+#
+# **A BATCH IS NOT A PAYOFF ROW, AND THE DIFFERENCE IS WHY THEY ARE NOT MERGED.** Everything else this
+# arc renders is `{material_id, amount}` — one figure per material. A BATCH is one pile of one
+# material AT ONE RATING, carrying a characteristic vector: two piles of `hide` at different readings
+# are two batches and two terms, because a mammoth hide and a hare pelt are both `hide` and are not
+# the same thing. Summing them is the retired trade scalar rebuilt out of its own replacement.
+#
+# **THE PER-AXIS READINGS ARE THE CRAFTING PANEL'S REGISTER, deliberately not restated here.** That
+# panel already renders every batch's amount beside its `tough: excellent` chips, for the band this
+# party folds back into; this row answers *what is coming home and how much*, in a clipping strip that
+# cannot afford a characteristic vector per pile. If piles of one material become common on a party,
+# the fix is the batch's band NAME inside its term — never a sum.
+const PARTY_PACK_CLAUSE_PREFIX := " · "
+const PARTY_PACK_ENTRY_FORMAT := "%s %s"
 
 # ---- Morale-trend arrow glyphs. Whether a trend reads as flat at all is `DetailFormat.MORALE_TREND_EPSILON`,
 # which stays there — `DetailFormat.morale_is_concerning` tests it too.
@@ -165,9 +190,9 @@ func _is_player_unit(unit: Dictionary) -> bool:
 ## exactly the horizontal (T/B) dock, whose band zone is height-capped and CLIPS rather than scrolls
 ## while having a whole screen of width to spend. It is the row-level twin of
 ## `BandPanelController.build_band_zone`'s gate on `_build_food_outlook_block`, and it buys two rows:
-##   * the Trade row is DROPPED (measured at 26px; the WORK head's `⇄` total still states the rate);
 ##   * the Fodder row is MERGED onto the Food line as a hay clause rather than dropped — a hay stock
 ##     has no other home, and one wider line is exactly the trade this host wants to make.
+## (It used to buy a second row by dropping the Trade row; that row is retired outright, arc #527.)
 ## Defaults false, so the drawer host and both harnesses are unaffected.
 ## `with_position` is the host saying whether it has somewhere ELSE to state the band's coordinates.
 ## The Band/City dock does — they are IDENTITY, so they live in its panel header beside the stage
@@ -217,20 +242,9 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
         # host has width to spend. See `BAND_FOOD_HAY_CLAUSE_FORMAT`.
         if not compact and _band_has_fodder_economy(unit_data):
             lines.append(BAND_FODDER_ROW_FORMAT % float(unit_data.get("fodder_store", 0.0)))
-        # The band's TRADE row, beneath the two larder rows: the SECOND product the same worked
-        # sources yield. UNCONDITIONAL for a player band (a zero reads `+0.00 /turn`, see
-        # `_band_trade_line`) — only the SHORT band-zone tier suppresses it, for room.
-        if not compact:
-            lines.append(_band_trade_line(unit_data))
-            # The SAME click-to-open disclosure as Food, in the same popover — offered only when there
-            # is FLOW to itemize, since a band earning nothing has no Gathered/Hunted rows behind it.
-            # `register` declines an empty payload, so a zero row simply wears no caret.
-            if DetailFormat.band_has_trade_flow(unit_data):
-                _disclosures.register(HudDisclosureVocab.DETAIL_ROW_TRADE, HudDisclosureVocab.BREAKDOWN_KIND_TRADE,
-                    unit_data, _disclosures.trade_breakdown_lines(unit_data))
         # THE BAND'S KIT, beneath its larders and above its morale: three consumable tools whose
         # condition only ever falls, and whose expiry silently drops a whole role to bare hands. It is
-        # our OWN bands' business, like Food and Trade — a rival's equipment is not ours to count.
+        # our OWN bands' business, like Food — a rival's equipment is not ours to count.
         # **Gated on the field being STATED, never on a value**: a dry kit is `0` and is the single
         # most important reading here, so only an absent field may suppress the row.
         if DetailFormat.band_states_kit(unit_data):
@@ -289,14 +303,46 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
     # (`core_sim/src/snapshot/population.rs`) returns the WHOLE faction stockpile, gated only on the
     # band sitting within `stockpile_access_radius` of the faction's START position — a half-built
     # proximity idea whose shipped radius is 0, so the rows showed for a band that had not left the
-    # start hex and vanished the moment it moved. Beside a Trade row on the same panel they printed
-    # the same faction number twice, one of them wearing a meaningless `radius 0`.
+    # start hex and vanished the moment it moved. Beside the (since-retired) Trade row on the same
+    # panel they printed the same faction number twice, one wearing a meaningless `radius 0`.
     # The carets this render registered are the LAST thing the context needs; read them back here so
     # every caller gets a fully-filled context by simply passing it in.
     context.disclosures = _disclosures.state()
     return lines
 
 ## Drawer readout for a selected expedition (docs/plan_exploration_and_sites.md §2 / §2b):
+## **THE PARTY'S PACK, PER BATCH** — ` · 2.4 hide · 1.1 hide`, or `""` when it carries none, which is
+## every scouting party that has walked past nothing worth skinning. The empty answer is what keeps
+## the `Carried:` row byte-identical for the parties this does not concern.
+##
+## **ONE TERM PER BATCH, NEVER MERGED BY MATERIAL** — see `PARTY_PACK_ENTRY_FORMAT` for why two piles
+## of `hide` are two terms and what would be lost by adding them. The reader's cue that they are
+## piles rather than an accounting error is the same ` · ` this HUD spends on separating accounts
+## everywhere else.
+##
+## **THE BATCH KEYS ARE THE CRAFTING PANEL'S OWN** (`HudCraftingVocab`), read rather than re-declared:
+## one vocabulary for one wire shape is what stops a party's pack and the band's rail naming the same
+## pile two ways. The amount likewise wears `BATCH_AMOUNT_FORMAT`, so a pile reads the same to one
+## decimal wherever it is quoted.
+##
+## A batch naming no material is dropped: an id is what a term is FOR, and a nameless amount could
+## only be rendered as the summed scalar this arc exists to refuse.
+func _party_pack_clause(unit_data: Dictionary) -> String:
+    var terms: Array[String] = []
+    for batch_variant in unit_data.get(HudCraftingVocab.BAND_MATERIAL_BATCHES_KEY, []):
+        if not (batch_variant is Dictionary):
+            continue
+        var batch: Dictionary = batch_variant
+        var material_id := String(batch.get(HudCraftingVocab.BATCH_MATERIAL_ID_KEY, "")).strip_edges()
+        var amount := float(batch.get(HudCraftingVocab.BATCH_AMOUNT_KEY, 0.0))
+        if material_id == "" or not SourceForecast.has_component(amount):
+            continue
+        terms.append(PARTY_PACK_ENTRY_FORMAT % [
+            HudCraftingVocab.BATCH_AMOUNT_FORMAT % amount, material_id])
+    if terms.is_empty():
+        return ""
+    return PARTY_PACK_CLAUSE_PREFIX + PARTY_PACK_CLAUSE_PREFIX.join(terms)
+
 ## mission, humanized phase, party size, and carried food (from stores/turnsOfFood). A hunt
 ## expedition (§2b) also lists the target herd it follows. Expeditions have no labor in v1, so
 ## this replaces the band's labor/morale rows entirely.
@@ -377,6 +423,8 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
                 carried += int(round(float(qty)))
         else:
             carried = int(round(float((stores_variant as Dictionary).get(HudConst.STORE_ITEM_PROVISIONS, 0.0))))
+    # The pack's MATERIALS, composed before the branch because both `Carried:` spellings take it.
+    var pack := _party_pack_clause(unit_data)
     if is_raid:
         # Carried X / cap + a FULL badge at the carry ceiling (the party heads home when full).
         # **A DENIAL PARTY SHOWS THIS ROW AND IT READS NEAR-EMPTY, WHICH IS THE POINT** — it banks
@@ -385,9 +433,9 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
         var cap := int(round(float(unit_data.get("expedition_carry_cap", 0.0))))
         if cap > 0:
             var full_badge := "  %s" % HUNT_FULL_BADGE if carried >= cap else ""
-            lines.append("Carried: %d / %d  (%s)%s" % [carried, cap, DetailFormat.food_turns_text(turns), full_badge])
+            lines.append("Carried: %d / %d  (%s)%s%s" % [carried, cap, DetailFormat.food_turns_text(turns), pack, full_badge])
         else:
-            lines.append("Carried: %d  (%s)" % [carried, DetailFormat.food_turns_text(turns)])
+            lines.append("Carried: %d  (%s)%s" % [carried, DetailFormat.food_turns_text(turns), pack])
         # **THE DENIAL PARTY'S OWN READOUT, IN PLACE OF A DELIVERY ETA.** The mission publishes none —
         # its verdict is whether the herd goes past the point of no return — so the HOST asks the
         # forecast query on this party's behalf and hands the answer in (see the parameter's note).
@@ -413,7 +461,10 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
         if bound_line != "":
             lines.append(bound_line)
     if not is_raid:
-        lines.append("Provisions: %d  (%s)" % [carried, DetailFormat.food_turns_text(turns)])
+        # **A SCOUT CARRIES THE CLAUSE TOO**, and it is not decoration: a scouting party that walks
+        # over a kill banks its materials exactly as a raid does, and the mission it was sent on is no
+        # reason to hide what is in its pack.
+        lines.append("Provisions: %d  (%s)%s" % [carried, DetailFormat.food_turns_text(turns), pack])
     var pos_array: Array = Array(unit_data.get("pos", []))
     if pos_array.size() == 2:
         lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
@@ -462,37 +513,6 @@ func _band_food_line(unit_data: Dictionary, ctx: DetailFormat.Context, merge_fod
             HudStyle.INK_DIM_HEX, float(unit_data.get("fodder_store", 0.0))]
     return line
 
-## Selection-panel band trade row: "Trade: 12.0 · +0.04 /turn" — what THIS band HOLDS and what it earns
-## per turn in the second product of the very sources the Food row totals. **ALWAYS emitted for a
-## player band**, reading `+0.00 /turn` when it earns none: trade is a standing account of the band's
-## economy, not a conditional feature like the Fodder row, and a row that vanishes when the number is
-## zero makes the player wonder whether the band *can* trade at all — which is exactly how it read in
-## playtest.
-##
-## **BOTH NUMBERS ARE GENUINELY THIS BAND'S**, which they were not when this row first shipped. Trade
-## goods used to live only in the faction-global `FactionInventory`, so the stock had to be tagged
-## `(faction)` to stay honest — and a caveat is the wrong answer to a wrong number. The sim now keeps
-## them in the band's own `stores`, the third key beside provisions and fodder (issue #381): a band
-## holds what it produces until a trade network reaches it, and `balance_supply_networks` pools it with
-## same-faction bands inside `SupplyNetworkConfig.reach_tiles`. So the stock is read the same way the
-## Food row reads the larder, and the tag is gone.
-##
-## The rate takes NO sign branch: nothing consumes trade goods, so it cannot come out negative and a
-## DANGER arm would be unreachable. Zero reads in neutral ink rather than green — a band earning
-## nothing is not a "good", the same call the Output row makes at full output. **The STOCK is not
-## tinted at all**, matching the Food row's provisions figure: a quantity on hand is not a verdict.
-##
-## **THE STOCK IS PRINTED AS A FLOAT**, unlike the Food row's whole-unit provisions: the sim
-## accumulates sub-unit trade income instead of rounding it away each turn, so an integer readout
-## would put that accumulation back on screen as a stuck `0`. One decimal, as the Fodder row does.
-func _band_trade_line(unit_data: Dictionary) -> String:
-    var income := DetailFormat.band_trade_income(unit_data)
-    var hex := HudStyle.HEALTHY_HEX if DetailFormat.band_has_trade_flow(unit_data) \
-        else HudStyle.INK_DIM_HEX
-    return BAND_TRADE_ROW_FORMAT % [
-        DetailFormat.band_trade_stock(unit_data), hex,
-        SourceForecast.format_yield(income)]
-
 ## Selection-panel band KIT row: `Kit: Spears 87 · Sled 54 · Baskets dry` — the band's three
 ## consumable kits and how much is left of each, with a spent one named in DANGER ink.
 ##
@@ -507,8 +527,8 @@ func _band_trade_line(unit_data: Dictionary) -> String:
 ## running out — and a row that hid the idle ones would hide the very kit whose loss is about to
 ## change what the band CAN do.
 ##
-## **IT SURVIVES THE `compact` TIER**, unlike Trade. The Trade row is a rate the WORK zone's head
-## restates; a spent kit is stated nowhere else in the client at all, and it is not recoverable.
+## **IT SURVIVES THE `compact` TIER.** A spent kit is stated nowhere else in the client at all, and
+## it is not recoverable from any other surface.
 ## How many items the compact kit row can show before it wraps and overflows `Zone_band`. Three is
 ## what the zone was sized for and what it carried for the whole of the minimal TOE; a fourth entry
 ## overflowed it by 22px. **Raising it means re-measuring the zone**, not just changing this number.

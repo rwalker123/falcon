@@ -3844,20 +3844,18 @@ fn starve_underfed_pen(
 // partly-equipped party is a list, so nothing holding one can be a bit-copy any more.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SourceYieldForecast {
-    /// **Every field is a [`YieldAccounts`] — food AND trade goods per turn, never a food scalar**
+    /// **Every field is a [`YieldAccounts`] — every scalar account per turn, never a food scalar**
     /// (`docs/plan_hunt_yield_model.md`, issue #337).
     ///
-    /// **Why vectorised rather than sibling `*_trade` scalars.** A wolf's food ceilings are all `0`,
-    /// so a food-denominated forecast cannot express its yield *at all* — the client would read
-    /// "0/turn" on every rung and the forecast would be **false**, not merely incomplete. Sibling
-    /// scalars would double the surface and let the two halves drift apart under a retune; one pair
-    /// per rung cannot, because `ceiling_for` hands both components to every reader at once.
+    /// **Why vectorised rather than sibling per-account scalars.** Sibling scalars double the
+    /// surface and let the halves drift apart under a retune; one vector per rung cannot, because
+    /// `ceiling_at` hands every component to every reader at once.
     ///
-    /// **The forage side fills `.trade_goods = 0.0` throughout** — see `forage::forage_forecast`.
-    /// That is a known gap (the plant web's Deplete gather *does* sell), not a regression: the
-    /// forecast carried no trade at all before this arc. The client renders a trade line **only when
-    /// `trade_goods > 0`** — flora's cash-crop rule — so a plant shows no trade line rather than a
-    /// false "0".
+    /// **The forecast is scalar-only, and a wolf therefore forecasts `0`** (arc #527). What an
+    /// inedible species pays is **materials**, which are batches carrying a characteristic vector
+    /// each and cannot be added, scaled or `min`'d the way this type's components are. A wolf's
+    /// forecast reading `0 food` is honest — it is not food — but it is also *silent* about the
+    /// pelts the take really banks. Projecting materials is its own arc.
     ///
     /// Food/turn one worker contributes at this source (throughput → provisions), before the policy
     /// ceiling binds. `0.0` means no worker can extract anything this turn (e.g. a zero seasonal
@@ -3924,6 +3922,21 @@ pub struct SourceYieldForecast {
     /// `0` on a source that never offers Tame: a forage patch (hunt-only verb), or a herd already
     /// penned or forage-tended. Crosses the wire as `HerdTelemetryState.pastoralYield`.
     pub pastoral_yield: YieldAccounts,
+    /// **The BIOMASS [`Self::managed_yield`] and [`Self::pastoral_yield`] are the conversion of** —
+    /// the two investment rungs' harvests before any rate is applied.
+    ///
+    /// **The MATERIAL account needs them and the scalar accounts do not**, which is the same
+    /// asymmetry `forage::field_harvest_biomass` already states one web over: a material's
+    /// `per_biomass` is a rate on the *carcass*, and an inedible species' currency components are
+    /// all `0`, so there is no currency to scale off. Without these a wolf's Tame and Corral rungs
+    /// could quote nothing at all — which is exactly what the retired `pastoralTrade`/`corralTrade`
+    /// used to say and what their material replacements say now.
+    ///
+    /// `0.0` on a source that offers neither rung (a forage patch, a herd already penned), matching
+    /// the `NO_PASTORAL_YIELD` convention beside it.
+    pub managed_yield_biomass: f32,
+    /// See [`Self::managed_yield_biomass`].
+    pub pastoral_yield_biomass: f32,
     /// **One animal's worth of yield** — `body_mass` through the same species vector every other
     /// field here uses — or **[`YieldAccounts::ZERO`] for a source that does not quantise**
     /// (intensification ladder slice 8).
@@ -3968,6 +3981,11 @@ pub struct SourceYieldForecast {
     /// slaughtered, not stalked). The same statement `engage_rate: f32::INFINITY` makes beside it.
     pub fight: Option<(HuntingParty, QuarryFight)>,
 }
+
+/// **The biomass an investment rung a source does not offer would harvest: none.** The biomass twin
+/// of [`NO_PASTORAL_YIELD`], named rather than a bare `0.0` because it is the statement *"there is no
+/// such rung here"* rather than a measurement of an empty one.
+pub(crate) const NO_INVESTMENT_RUNG_BIOMASS: f32 = 0.0;
 
 /// [`SourceYieldForecast::pastoral_yield`] for a source that never offers the `Tame` verb — a forage
 /// patch, or a herd already penned/forage-tended. `0` = *no Tame payoff to advertise*, the pastoral
@@ -4039,6 +4057,11 @@ impl SourceYieldForecast {
             // A rung-3 managed source (a Pen or a Field) is past taming — a penned herd never offers
             // the Tame verb — so it advertises no pastoral payoff.
             pastoral_yield: NO_PASTORAL_YIELD,
+            // **A rung-3 source quotes no INVESTMENT payoff at all** — it is already there — so the
+            // biomass behind those quotes is the same "no rung to advertise" zero. A penned herd's
+            // live material credit rides its actual take, not this.
+            managed_yield_biomass: NO_INVESTMENT_RUNG_BIOMASS,
+            pastoral_yield_biomass: NO_INVESTMENT_RUNG_BIOMASS,
         }
     }
 
@@ -4671,7 +4694,6 @@ pub(crate) fn forecast_source_yield(
     floor: f32,
     improvement: Option<Improvement>,
     realized: f32,
-    realized_trade: f32,
     arrivals: Vec<f32>,
     // How wide a band to report around the expected take (`combat_config.forecast_range_sigmas`) —
     // a **readout width**: nothing the sim resolves reads it, so it cannot move an animal.
@@ -4691,24 +4713,27 @@ pub(crate) fn forecast_source_yield(
         .scale(forecast.build_dips.of(improvement));
     SourceYield {
         actual: actual.provisions,
-        // **Trade is telemetry, not larder income** — it never enters `food_income` (see
-        // `SourceYield::trade`), so it rides beside `actual` rather than being summed into it.
-        trade: actual.trade_goods,
         // **The FEED currency, taken off the same take vector** (issue #449) — never a second
         // derivation. It is `0` today on both webs and for two different reasons: no animal pays
         // fodder at all, and the plant web's forecast is deliberately food-only
-        // (`forage::plant_food_only`, the same gap `PLANT_TRADE_FORECAST_NOT_YET_PROJECTED` names),
+        // (`forage::plant_food_only`, the gap `PLANT_FODDER_FORECAST_NOT_YET_PROJECTED` names),
         // so a pre-commit row quotes no fodder until that projection lands. Reading the component
         // rather than writing a literal means it starts telling the truth the moment it does.
         fodder: actual.fodder,
-        // The band the two scalars above sit in the middle of. Built from the SAME
+        // **A pre-commit row quotes NO material, and that is a stated gap rather than a claim of
+        // zero** (arc #527). Projecting materials needs the take in *biomass* — `credit_material_yield`
+        // is paid off `take.carried`, and this path resolves the take in currency space, where an
+        // inedible species has no positive axis to count on. The **resolved** row does carry it
+        // (`systems::labor` hands over exactly what the credit deposited), and the number a player
+        // decides on rides the herd row's own `material_per_biomass` / `per_worker_material`, which
+        // are rates and need no take at all.
+        materials: Vec::new(),
+        // The band `actual` sits in the middle of. Built from the SAME
         // `forecast_production_and_take_at`, three quantiles apart, so `low <= actual <= high` is a
         // property of the arithmetic rather than a clamp.
         range: YieldRange {
             low: range.low.provisions,
             high: range.high.provisions,
-            trade_low: range.low.trade_goods,
-            trade_high: range.high.trade_goods,
         },
         sustainable: if managed {
             actual.provisions
@@ -4723,7 +4748,6 @@ pub(crate) fn forecast_source_yield(
         // (`project_realized_hunt` / `project_realized_forage`), computed by the caller from the same
         // source state — a pure function of state, so the seed and the resolved row agree exactly.
         realized,
-        realized_trade,
         wasted: (production.provisions - actual.provisions).max(0.0),
         // **Every source reports its whole CREW: [`source_crew_needed`] = `max(standing, take)`** — the
         // SAME shape both resolved arms of `advance_labor_allocation` record, so the assign-time seed
@@ -4887,7 +4911,6 @@ pub fn hunt_source_yield_preview(
         floor,
         improvement,
         realized.provisions,
-        realized.trade_goods,
         arrivals,
         range_sigmas,
     )
@@ -6656,6 +6679,21 @@ pub(crate) fn hunt_forecast(
             hunt_yield.apply(herd.body_mass, output_multiplier),
         );
     }
+    // **The two investment rungs' harvests, in BIOMASS, resolved once.** Both quotes below are a
+    // rate applied to one of these, and the material account needs the biomass itself — see
+    // `SourceYieldForecast::managed_yield_biomass`. Same `biomass_before_regrowth` basis and
+    // `carrying_capacity` the wild ceiling uses, so the ONLY difference from Sustain is the rung's
+    // boosted `r`.
+    let pen_msy_biomass = sustainable_yield(
+        herd.biomass_before_regrowth,
+        herd.carrying_capacity,
+        &pen_ecology_for(herd, fauna),
+    );
+    let pastoral_msy_biomass = sustainable_yield(
+        herd.biomass_before_regrowth,
+        herd.carrying_capacity,
+        &pastoral_ecology_for(herd, fauna),
+    );
     SourceYieldForecast {
         per_worker_yield: hunt_yield.apply(per_worker_biomass_capacity.max(0.0), output_multiplier),
         // The quantum that makes this preview pulse exactly as the take does (slice 8).
@@ -6688,28 +6726,19 @@ pub(crate) fn hunt_forecast(
         // `biomass_before_regrowth` basis and `carrying_capacity` the wild `ceiling` closure uses, so
         // the ONLY difference from Sustain is the pen ecology's boosted `r`. The **actual** pen take
         // stays constant-escapement (`corral_yield`) — see the `is_corralled()` early-return.
-        managed_yield: hunt_yield.apply(
-            sustainable_yield(
-                herd.biomass_before_regrowth,
-                herd.carrying_capacity,
-                &pen_ecology_for(herd, fauna),
-            ),
-            output_multiplier,
-        ),
+        managed_yield: hunt_yield.apply(pen_msy_biomass, output_multiplier),
         // The Tame rung's PAYOFF (the pastoral analog of `managed_yield` above): the pastoral
         // **sustained MSY** — what a Sustain hunt pays once this herd is tamed — projected for a
         // still-wild herd on the same basis as Sustain, so the only difference is the pastoral `r`.
         // `ceiling_tame` is the during-building dip; this is the `→ +Y` the client renders. A wild
         // herd whose species never tames (`wild` ceiling) reads its wild MSY here, which is fine — the
         // client only surfaces it on the Tame affordance, hidden on a non-tameable herd.
-        pastoral_yield: hunt_yield.apply(
-            sustainable_yield(
-                herd.biomass_before_regrowth,
-                herd.carrying_capacity,
-                &pastoral_ecology_for(herd, fauna),
-            ),
-            output_multiplier,
-        ),
+        pastoral_yield: hunt_yield.apply(pastoral_msy_biomass, output_multiplier),
+        // **The biomass both quotes above are the conversion of** — stated once and handed over, so
+        // the material account (which has no currency to scale off on an inedible species) reads the
+        // *same* harvest the food quote does rather than a second `sustainable_yield` call.
+        managed_yield_biomass: pen_msy_biomass,
+        pastoral_yield_biomass: pastoral_msy_biomass,
     }
 }
 

@@ -192,8 +192,6 @@ pub(crate) struct PublishState {
     /// "first publication" simply mean `frame_seq == 0`.
     frame_seq: u64,
     tiles: Indexed<u64, TileState>,
-    logistics: Indexed<u64, LogisticsLinkState>,
-    trade_links: Indexed<u64, TradeLinkState>,
     populations: Indexed<u64, PopulationCohortState>,
     power: Indexed<u64, PowerNodeState>,
     power_metrics: Whole<PowerTelemetryState>,
@@ -215,7 +213,6 @@ pub(crate) struct PublishState {
     axis_bias: Whole<AxisBiasState>,
     sentiment: Whole<SentimentTelemetryState>,
     terrain_overlay: Whole<TerrainOverlayState>,
-    logistics_raster: Whole<ScalarRasterState>,
     sentiment_raster: Whole<ScalarRasterState>,
     corruption_raster: Whole<ScalarRasterState>,
     visibility_raster: Whole<ScalarRasterState>,
@@ -408,7 +405,6 @@ struct RasterParts {
     moisture: Option<FloatRasterState>,
     elevation: Option<ElevationOverlayState>,
     climate_bands: Option<ClimateBandsState>,
-    logistics: Option<ScalarRasterState>,
     sentiment: Option<ScalarRasterState>,
     corruption: Option<ScalarRasterState>,
     culture: Option<ScalarRasterState>,
@@ -422,7 +418,6 @@ struct RasterBaselines<'a> {
     moisture: &'a mut Whole<FloatRasterState>,
     elevation: &'a mut Whole<ElevationOverlayState>,
     climate_bands: &'a mut Whole<ClimateBandsState>,
-    logistics: &'a mut Whole<ScalarRasterState>,
     sentiment: &'a mut Whole<ScalarRasterState>,
     corruption: &'a mut Whole<ScalarRasterState>,
     culture: &'a mut Whole<ScalarRasterState>,
@@ -441,7 +436,6 @@ fn diff_rasters(
         elevation: diff_whole(baseline.elevation, &snapshot.elevation_overlay, write),
         // A per-map constant: it changes only on (re)generation, so the delta re-sends it just then.
         climate_bands: diff_whole(baseline.climate_bands, &snapshot.climate_bands, write),
-        logistics: diff_whole(baseline.logistics, &snapshot.logistics_raster, write),
         sentiment: diff_whole(baseline.sentiment, &snapshot.sentiment_raster, write),
         corruption: diff_whole(baseline.corruption, &snapshot.corruption_raster, write),
         culture: diff_whole(baseline.culture, &snapshot.culture_raster, write),
@@ -699,10 +693,6 @@ fn diff_subsistence(
 
 #[derive(Debug, Default)]
 struct PeopleParts {
-    logistics: Vec<LogisticsLinkState>,
-    removed_logistics: Vec<u64>,
-    trade_links: Vec<TradeLinkState>,
-    removed_trade_links: Vec<u64>,
     populations: Vec<PopulationCohortState>,
     removed_populations: Vec<u64>,
     generations: Vec<GenerationState>,
@@ -717,8 +707,6 @@ struct PeopleParts {
 
 /// The baselines the people-and-network section owns.
 struct PeopleBaselines<'a> {
-    logistics: &'a mut Indexed<u64, LogisticsLinkState>,
-    trade_links: &'a mut Indexed<u64, TradeLinkState>,
     populations: &'a mut Indexed<u64, PopulationCohortState>,
     generations: &'a mut Indexed<u16, GenerationState>,
     influencers: &'a mut Indexed<u32, InfluentialIndividualState>,
@@ -728,25 +716,13 @@ struct PeopleBaselines<'a> {
     capability_flags: &'a mut Whole<u32>,
 }
 
-/// People and the networks between them: cohorts, generations, influencers, the logistics and trade
-/// graphs, and the faction-wide scalars that ride with them.
+/// People and the networks between them: cohorts, generations, influencers, and the faction-wide
+/// scalars that ride with them.
 fn diff_people(
     baseline: PeopleBaselines<'_>,
     snapshot: &WorldSnapshot,
     write: Baseline,
 ) -> PeopleParts {
-    let (logistics, removed_logistics) = diff_new(
-        baseline.logistics,
-        &snapshot.logistics,
-        |state| state.entity,
-        write,
-    );
-    let (trade_links, removed_trade_links) = diff_new(
-        baseline.trade_links,
-        &snapshot.trade_links,
-        |state| state.entity,
-        write,
-    );
     let (populations, removed_populations) = diff_new(
         baseline.populations,
         &snapshot.populations,
@@ -766,10 +742,6 @@ fn diff_people(
         write,
     );
     PeopleParts {
-        logistics,
-        removed_logistics,
-        trade_links,
-        removed_trade_links,
         populations,
         removed_populations,
         generations,
@@ -795,8 +767,6 @@ impl PublishState {
             last_publish_profile: Vec::new(),
             frame_seq: 0,
             tiles: Indexed::default(),
-            logistics: Indexed::default(),
-            trade_links: Indexed::default(),
             populations: Indexed::default(),
             power: Indexed::default(),
             power_metrics: Whole::default(),
@@ -818,7 +788,6 @@ impl PublishState {
             axis_bias: Whole::default(),
             sentiment: Whole::default(),
             terrain_overlay: Whole::default(),
-            logistics_raster: Whole::default(),
             sentiment_raster: Whole::default(),
             corruption_raster: Whole::default(),
             visibility_raster: Whole::default(),
@@ -941,7 +910,6 @@ impl PublishState {
             moisture_raster,
             elevation_overlay,
             climate_bands,
-            logistics_raster,
             sentiment_raster,
             corruption_raster,
             culture_raster,
@@ -983,8 +951,6 @@ impl PublishState {
             default_scout_kit_id,
             default_warrior_kit_id,
             equipment_config_json,
-            logistics,
-            trade_links,
             populations,
             generations,
             influencers,
@@ -1032,7 +998,6 @@ impl PublishState {
                             moisture: moisture_raster,
                             elevation: elevation_overlay,
                             climate_bands,
-                            logistics: logistics_raster,
                             sentiment: sentiment_raster,
                             corruption: corruption_raster,
                             culture: culture_raster,
@@ -1105,8 +1070,6 @@ impl PublishState {
                 scope.spawn(|_| {
                     people_parts = diff_people(
                         PeopleBaselines {
-                            logistics,
-                            trade_links,
                             populations,
                             generations,
                             influencers,
@@ -1145,7 +1108,6 @@ impl PublishState {
             moisture_raster: raster_parts.moisture,
             elevation_overlay: raster_parts.elevation,
             climate_bands: raster_parts.climate_bands,
-            logistics_raster: raster_parts.logistics,
             sentiment_raster: raster_parts.sentiment,
             corruption_raster: raster_parts.corruption,
             culture_raster: raster_parts.culture,
@@ -1188,10 +1150,6 @@ impl PublishState {
             default_scout_kit_id: subsistence_parts.default_scout_kit_id,
             default_warrior_kit_id: subsistence_parts.default_warrior_kit_id,
             equipment_config_json: subsistence_parts.equipment_config_json,
-            logistics: people_parts.logistics,
-            removed_logistics: people_parts.removed_logistics,
-            trade_links: people_parts.trade_links,
-            removed_trade_links: people_parts.removed_trade_links,
             populations: people_parts.populations,
             removed_populations: people_parts.removed_populations,
             generations: people_parts.generations,
@@ -1291,14 +1249,6 @@ impl PublishState {
                 .map(|state| (state.entity, state.clone()))
                 .collect(),
         );
-        self.logistics.reset(
-            entry
-                .snapshot
-                .logistics
-                .iter()
-                .map(|state| (state.entity, state.clone()))
-                .collect(),
-        );
         self.populations.reset(
             entry
                 .snapshot
@@ -1343,8 +1293,6 @@ impl PublishState {
         self.axis_bias.reset(entry.snapshot.axis_bias.clone());
         self.sentiment.reset(entry.snapshot.sentiment.clone());
         self.terrain_overlay.reset(entry.snapshot.terrain.clone());
-        self.logistics_raster
-            .reset(entry.snapshot.logistics_raster.clone());
         self.sentiment_raster
             .reset(entry.snapshot.sentiment_raster.clone());
         self.corruption_raster
@@ -1543,10 +1491,6 @@ impl PublishState {
             header,
             tiles: Vec::new(),
             removed_tiles: Vec::new(),
-            logistics: Vec::new(),
-            removed_logistics: Vec::new(),
-            trade_links: Vec::new(),
-            removed_trade_links: Vec::new(),
             populations: Vec::new(),
             removed_populations: Vec::new(),
             power: Vec::new(),
@@ -1594,7 +1538,6 @@ impl PublishState {
             start_marker: None,
             axis_bias: Some(bias.clone()),
             sentiment: None,
-            logistics_raster: None,
             sentiment_raster: None,
             corruption_raster: None,
             culture_raster: None,
@@ -1682,10 +1625,6 @@ impl PublishState {
             header,
             tiles: Vec::new(),
             removed_tiles: Vec::new(),
-            logistics: Vec::new(),
-            removed_logistics: Vec::new(),
-            trade_links: Vec::new(),
-            removed_trade_links: Vec::new(),
             populations: Vec::new(),
             removed_populations: Vec::new(),
             power: Vec::new(),
@@ -1733,7 +1672,6 @@ impl PublishState {
             start_marker: None,
             axis_bias: None,
             sentiment: None,
-            logistics_raster: None,
             sentiment_raster: None,
             corruption_raster: None,
             culture_raster: None,
@@ -1805,10 +1743,6 @@ impl PublishState {
             header,
             tiles: Vec::new(),
             removed_tiles: Vec::new(),
-            logistics: Vec::new(),
-            removed_logistics: Vec::new(),
-            trade_links: Vec::new(),
-            removed_trade_links: Vec::new(),
             populations: Vec::new(),
             removed_populations: Vec::new(),
             power: Vec::new(),
@@ -1856,7 +1790,6 @@ impl PublishState {
             start_marker: None,
             axis_bias: None,
             sentiment: None,
-            logistics_raster: None,
             sentiment_raster: None,
             corruption_raster: None,
             culture_raster: None,
@@ -2109,7 +2042,6 @@ fn quoted_party_for(
 pub fn capture_snapshot(
     ctx: SnapshotContext,
     tiles: Query<(Entity, &Tile, Option<&FoodModuleTag>)>,
-    logistics_links: Query<(Entity, &LogisticsLink, &TradeLink)>,
     populations: PopulationSnapshotQuery,
     power_nodes: Query<(Entity, &PowerNode)>,
     power_grid: Res<PowerGridState>,
@@ -2309,19 +2241,6 @@ pub fn capture_snapshot(
         .map(|state| (state.entity, UVec2::new(state.x, state.y)))
         .collect();
     drop(tile_index_scope);
-
-    // The two link records, both copied straight off the `LogisticsLink`/`TradeLink` components.
-    // Per logistics link.
-    let links_scope = crate::turn_profile::scope("snapshot.build.links");
-    let mut logistics_states: Vec<LogisticsLinkState> = Vec::new();
-    let mut trade_states: Vec<TradeLinkState> = Vec::new();
-    for (entity, link, trade) in logistics_links.iter() {
-        logistics_states.push(logistics_state(entity, link));
-        trade_states.push(trade_link_state(entity, link, trade));
-    }
-    logistics_states.sort_unstable_by_key(|state| state.entity);
-    trade_states.sort_unstable_by_key(|state| state.entity);
-    drop(links_scope);
 
     // The per-cohort readout: two walks of the population query (the coord index, then the states),
     // each of which derives travel/scout/expedition figures rather than copying them. Per cohort,
@@ -2618,22 +2537,18 @@ pub fn capture_snapshot(
     let great_discovery_telemetry_state = snapshot_telemetry(&gds.ledger, &gds.telemetry);
     drop(discovery_scope);
 
-    // The contiguous full-grid raster block: terrain, logistics, sentiment, corruption, culture,
+    // The contiguous full-grid raster block: terrain, sentiment, corruption, culture,
     // military, visibility. The moisture/elevation overlays are built further down (they need
     // state assembled in between), so they re-enter this same label there — hence `rasters` reports
     // two calls per capture.
     let raster_scope = crate::turn_profile::scope("snapshot.build.rasters");
     let terrain_overlay = terrain_overlay_from_tiles(&tile_states, config.grid_size);
-    let logistics_raster =
-        logistics_raster_from_links(&tile_states, &logistics_states, config.grid_size);
     let sentiment_raster =
         sentiment_raster_from_populations(&tile_states, &population_states, config.grid_size);
     let corruption_raster = corruption_raster_from_simulation(CorruptionRasterInputs {
         tiles: &tile_states,
-        trade_links: &trade_states,
         populations: &population_states,
         power_nodes: &power_states,
-        logistics_raster: &logistics_raster,
         corruption_signals: CorruptionSignals {
             ledger: corruption_ledgers.ledger(),
             telemetry: &corruption_telemetry,
@@ -2651,7 +2566,6 @@ pub fn capture_snapshot(
         &tile_states,
         &population_states,
         &power_states,
-        &logistics_raster,
         config.grid_size,
         overlays_config.as_ref(),
     );
@@ -2798,8 +2712,6 @@ pub fn capture_snapshot(
     let mut header = SnapshotHeader::new(
         tick.0,
         tile_states.len(),
-        logistics_states.len(),
-        trade_states.len(),
         population_states.len(),
         power_states.len(),
         influencer_states.len(),
@@ -3024,13 +2936,10 @@ pub fn capture_snapshot(
             .default_kit_id(crate::equipment_config::KitJob::Warrior)
             .to_string(),
         tiles: tile_states,
-        logistics: logistics_states,
-        trade_links: trade_states,
         populations: population_states,
         power: power_states,
         power_metrics: power_metrics.clone(),
         terrain: terrain_overlay.clone(),
-        logistics_raster: logistics_raster.clone(),
         sentiment_raster: sentiment_raster.clone(),
         corruption_raster: corruption_raster.clone(),
         culture_raster: culture_raster.clone(),

@@ -302,9 +302,12 @@ fn evaluate_mode_progress(
             let pop_score = (metrics.population_total as f32 / HEGEMONY_POP_TARGET).clamp(0.0, 1.5);
             let morale = metrics.population_morale_avg.clamp(0.0, 1.0);
             let grid_relief = (1.0 - metrics.grid_stress_avg).clamp(0.0, 1.0);
-            let logistics = metrics.logistics_flow_avg.clamp(0.0, 1.0);
+            // The production term used to average `logistics_flow_avg` with the power surplus.
+            // The logistics metric counted the tile-pair mass network, which was demolished with
+            // the rest of the dead trade slice (`docs/plan_contact_and_logistics.md` §As-built);
+            // the term's weight is unchanged and now rests on the surplus alone.
             let surplus = (metrics.grid_surplus_margin + 0.5).clamp(0.0, 1.0);
-            0.45 * pop_score + 0.25 * morale + 0.2 * grid_relief + 0.1 * (logistics + surplus) / 2.0
+            0.45 * pop_score + 0.25 * morale + 0.2 * grid_relief + 0.1 * surplus
         }
         VictoryModeKind::Ascension => {
             let discovery_score = (metrics.great_discoveries_total as f32
@@ -313,17 +316,17 @@ fn evaluate_mode_progress(
             let morale = metrics.population_morale_avg.clamp(0.0, 1.0);
             0.65 * discovery_score + 0.35 * morale
         }
-        VictoryModeKind::Economic => {
-            let trade = metrics.trade_openness_avg.clamp(0.0, 1.0);
-            let surplus = (metrics.grid_surplus_margin + 0.5).clamp(0.0, 1.25);
-            let logistics = metrics.logistics_flow_avg.clamp(0.0, 1.0);
-            0.5 * trade + 0.3 * surplus + 0.2 * logistics
-        }
+        // Both of the two modes below were scored mostly on `trade_openness_avg`, which averaged
+        // a `TradeLink` set nothing ever populated and so read 0.0 for the whole life of the band
+        // game. The metric is gone with the rest of the dead trade slice
+        // (`docs/plan_contact_and_logistics.md` §As-built) and each mode's remaining terms are
+        // renormalized to sum to 1. Neither mode is enabled in `victory_config.json`; they get a
+        // real economy again when the contact/logistics substrate lands one.
+        VictoryModeKind::Economic => (metrics.grid_surplus_margin + 0.5).clamp(0.0, 1.25),
         VictoryModeKind::Diplomatic => {
-            let trade = metrics.trade_openness_avg.clamp(0.0, 1.0);
             let morale = metrics.population_morale_avg.clamp(0.0, 1.0);
             let turn_bonus = (normalized_turn / RAMP_LEN).clamp(0.0, 1.0);
-            0.5 * trade + 0.3 * morale + 0.2 * turn_bonus
+            0.6 * morale + 0.4 * turn_bonus
         }
         VictoryModeKind::Stewardship => {
             let grid_relief = metrics
@@ -388,7 +391,6 @@ mod tests {
             population_morale_avg: 0.9,
             grid_stress_avg: 0.1,
             grid_surplus_margin: 0.4,
-            logistics_flow_avg: 0.8,
             ..Default::default()
         });
         world.insert_resource(VictoryState::new(true));
@@ -408,7 +410,6 @@ mod tests {
             population_morale_avg: 0.9,
             grid_stress_avg: 0.05,
             grid_surplus_margin: 0.5,
-            logistics_flow_avg: 0.9,
             ..Default::default()
         });
         world.insert_resource(VictoryState::new(false));
@@ -426,7 +427,6 @@ mod tests {
             metrics.population_morale_avg = 0.1;
             metrics.grid_stress_avg = 0.9;
             metrics.grid_surplus_margin = -0.5;
-            metrics.logistics_flow_avg = 0.0;
         }
         world.insert_resource(SimulationTick(99));
         world.run_system_once(victory_tick);

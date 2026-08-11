@@ -438,9 +438,10 @@ table TileState {
   // open ocean with no life on it — so it alone put all 4160 tiles of an 80x52 map into every
   // delta and pinned per-turn cost to tile count, which is the property delta streaming exists to
   // remove. Its only consumer in the whole client was the Inspector's Terrain tab, rendering it as
-  // "Mass: %.1f". The serde `TileState.mass` beside this slot is still populated by
-  // `snapshot/map.rs`, but nothing reads it back: rollback restores from `SimState`, which clones
-  // the whole ECS `Tile`. Deprecated rather than deleted because slots are positional.
+  // "Mass: %.1f". The serde `TileState.mass` beside this slot is gone too, and so is `Tile.mass`
+  // itself: the whole mass economy was demolished with the dead logistics slice (arc #527,
+  // docs/plan_contact_and_logistics.md §As-built). Deprecated rather than deleted because slots
+  // are positional.
   mass:long (deprecated);
   temperature:long;
   terrain:TerrainType;
@@ -501,6 +502,13 @@ table TileState {
   underlyingTerrain:TerrainType;
 }
 
+// RETIRED (arc #527, docs/plan_contact_and_logistics.md §As-built). `TradeLink` was never inserted
+// by any system, so this vector was empty for the whole life of the band game; `LogisticsLink` was
+// one entity per adjacent tile pair moving a `Tile.mass` nothing gameplay-facing read. The sim no
+// longer builds either. The TABLES below are kept — a client may still decode an old capture, and
+// the contact/logistics substrate will want link-shaped rows again — but the two VECTOR SLOTS on
+// EconomySection are deprecated rather than freed: this repo is worked by concurrent sessions that
+// append to these tables, and a reused field id is exactly how two branches collide.
 table LogisticsLinkState {
   entity:ulong;
   from:ulong;
@@ -1144,8 +1152,11 @@ table LaborAssignment {
   // turn. `realizedTradeYield` is 0 on every FORAGE source — the plant web's trade PROJECTION is a
   // known gap (#337 covered the animal web); the trade a gather actually earned IS reported in
   // `tradeYield`. Appended last (append-only).
-  tradeYield:float = 0;
-  realizedTradeYield:float = 0;
+  // RETIRED (arc #527) with the trade-goods yield axis: written by every take site and read by
+  // nothing. What a take is really worth beyond food is MATERIALS, which ride
+  // PopulationCohortState.materialBatches as batches with a characteristic vector each.
+  tradeYield:float (deprecated);
+  realizedTradeYield:float (deprecated);
   // --- THE SECOND AXIS (appended, issue #442) ----------------------------------------------------
   // WHAT THIS CREW IS BUILDING on the source, independent of how hard it is pulling:
   //   "" | "cultivate" | "sow" | "tame" | "corral"
@@ -1205,8 +1216,9 @@ table LaborAssignment {
   // range could not state its take at all. Read each pair beside its scalar as one vector.
   actualYieldLow:float = 0;
   actualYieldHigh:float = 0;
-  tradeYieldLow:float = 0;
-  tradeYieldHigh:float = 0;
+  // RETIRED (arc #527) with the trade-goods axis they bounded.
+  tradeYieldLow:float (deprecated);
+  tradeYieldHigh:float (deprecated);
   // --- THE KIT THIS CREW IS WORKING UNDER (appended last) ---------------------------------------
   // The `equipment.json` roster id (SubsistenceSection.kits) the row's yields are priced at — what
   // the player named on `assign_labor`, or the job's default when they named none, RESOLVED: the
@@ -1236,6 +1248,26 @@ table LaborAssignment {
   // tradeYield on every forage source. No fodder BAND either: every forage row's range is a point
   // (nothing on the plant web is stochastic), so bounds would only restate this.
   fodderYield:float = 0;
+  // --- WHAT THIS SOURCE WAS MADE OF (appended last, arc #527) ---
+  // The MATERIALS this assignment credited to the band this turn, one entry per material id. The
+  // third account beside actualYield and fodderYield, and the ONLY one a cash Field or an inedible
+  // quarry pays into at all - so without it a wolf hunt's row and a cotton Field's row both publish
+  // their whole product as +0.00.
+  //
+  // REPORTED, NEVER RECOMPUTED: it is exactly what credit_material_yield deposited at the take site
+  // (the discipline fodderYield already carries). The credit skips a sub-quantum amount and an
+  // unknown material, and neither skip is visible to a second derivation.
+  //
+  // EMPTY MEANS "NO ROW", NEVER "ZERO" - most sources pay no material, and a published 0 would read
+  // as a source that pays badly rather than one that pays in something else. NEVER summed into one
+  // figure (that is the retired trade axis under a new name), and never into foodIncome, which stays
+  // Sum(actualYield) exactly as fodderYield is excluded from it.
+  //
+  // A PRE-COMMIT (seeded) row publishes an EMPTY list even where the turn will pay: projecting
+  // materials needs the take in biomass, which the forecast does not resolve for an inedible
+  // species. The number a player decides on is the herd row's materialPerBiomass /
+  // perWorkerMaterial, which are rates and need no take.
+  materialYield:[MaterialPayoff];
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -1617,9 +1649,12 @@ table ForagePatchState {
   // tended patch is drawn down, so its accounts ride the take; a Field is a managed rate. Two fields
   // per account per rung for `tendedYield`/`fieldYield`'s own reason: the rungs differ in basket,
   // conversion gain AND the shape of the harvest, so one number cannot answer both.
-  tendedTrade:float = 0;
+  // RETIRED (arc #527) with the trade-goods axis.
+  tendedTrade:float (deprecated);
   tendedFodder:float = 0;
-  fieldTrade:float = 0;
+  // RETIRED (arc #527). A cash Field's whole product is MATERIALS now; a material yield cannot
+  // be quoted as one per-turn number, so there is no replacement scalar here.
+  fieldTrade:float (deprecated);
   fieldFodder:float = 0;
   // --- THE BUILD DIPS, AS FRACTIONS (appended, issue #442) ---------------------------------------
   // Each plant investment rung's `yield_fraction_while_building` (0 < f < 1) — the factor a crew's
@@ -1710,7 +1745,9 @@ table ForagePatchState {
   // so a tended patch carrying a committed crop reads its committed conversion, not the wild one.
   provisionsPerBiomass:float = 0;
   fodderPerBiomass:float = 0;
-  tradePerBiomass:float = 0;
+  // RETIRED (arc #527) with the trade-goods axis: the source's non-food product is materials,
+  // and a material rate is a per-material reading rather than one scalar.
+  tradePerBiomass:float (deprecated);
   // --- THE PER-WORKER BIOMASS THROUGHPUT (appended) ----------------------------------------------
   // What ONE gatherer moves this turn, **in biomass**: `per_worker_biomass_capacity × seasonalWeight`
   // — the exact term `forage::forage_take`'s worker cap multiplies by the head-count. It folds in the
@@ -1790,6 +1827,31 @@ table ForagePatchState {
   // fields describe the same cliff from either side and must be read together.
   collapseFraction:float = 0;
   stressedFraction:float = 0;
+  // --- WHAT A GATHER OF THIS PATCH IS MADE OF (appended last, arc #527) ---
+  // The replacement for the retired tradePerBiomass above, and the RUNG-1 half of the material
+  // story: FloraShareInfo.sowMaterialPayoff/cultivateMaterialPayoff quote rungs 3 and 2, and a WILD
+  // gather had nothing at all - a tile whose basket is 32% cotton and 26% tobacco read
+  // "0.24 FOOD, - FODDER" while the turn banked fibre and leaf.
+  //
+  //   materialPerBiomass = what ONE UNIT of this patch's biomass is made of. The material twin of
+  //                        provisionsPerBiomass/fodderPerBiomass, so it composes at ANY floor by the
+  //                        same rule: ceiling(floor) = max(0, B - floor*K) x rate.
+  //   perWorkerMaterial  = what ONE GATHERER brings home per turn - the twin of perWorkerYield, so
+  //                        the sheet clamps min(workers x rate, ceiling) PER MATERIAL. It folds in
+  //                        the tile's SEASONAL WEIGHT exactly as perWorkerYield does, so it is
+  //                        honestly EMPTY in a dead season.
+  //
+  // A PATCH IS A MIXED BASKET, WHICH IS THE ONE DIFFERENCE FROM THE HERD. The rows are decomposed
+  // per species (forage::patch_material_yields, each species carrying its own share and its own
+  // exact reading) and then merged BY MATERIAL ID for the rate - two species that both give fibre
+  // sum into one fibre rate, which is what a rate quote means and what the crop picker already does.
+  // Their CHARACTERISTIC READINGS are never averaged: that would invent a plant that is not growing
+  // there. The reading belongs to the batch that lands in the store (MaterialBatchState); this says
+  // only how much of what.
+  //
+  // EMPTY MEANS "NO ROW", NEVER "ZERO" - most baskets grow nothing anyone builds with.
+  materialPerBiomass:[MaterialPayoff];
+  perWorkerMaterial:[MaterialPayoff];
 }
 
 // One STANCE's ceiling on one tile, in every account the tile's basket pays (issue #426). The plant
@@ -1828,6 +1890,24 @@ table ForagePolicyCeiling {
   perWorkerProvisions:float = 0;
   perWorkerTradeGoods:float = 0;
   perWorkerFodder:float = 0;
+}
+
+// ONE MATERIAL A COMMITMENT WOULD PAY, AND HOW MUCH OF IT PER TURN (appended, arc #527) - a row of
+// FloraShareInfo.sowMaterialPayoff / cultivateMaterialPayoff.
+//
+// A VECTOR RATHER THAN A SCALAR IS THE WHOLE POINT. It replaced sowTradePayoff/cultivateTradePayoff,
+// which answered "how much trade" - a number a market could total and a player could not act on.
+// This answers "0.29 fibre", which is what a cash crop IS. Do NOT sum these into one
+// materials/turn figure for display: that is the retired trade axis under a new name, and it
+// collapses the distinction the whole materials model exists to keep.
+//
+// `materialId` is the materials.json id (`fibre`, `tobacco`, `grape`), resolved for display against
+// the materialCatalogue this snapshot already ships. It carries NO quality reading: a rating is a
+// characteristic vector on the batch the harvest creates (MaterialBatchState), and a picker row asks
+// the flat question "how much of what".
+table MaterialPayoff {
+  materialId:string;
+  amount:float;
 }
 
 // One named plant's share of a tile's forage capacity — see `ForagePatchState.composition`.
@@ -1920,7 +2000,9 @@ table FloraShareInfo {
   // rung here. A STAPLE reads the small flat token (`trade_goods_per_biomass` 0.005), never `0` — so no
   // client surface may treat `trade > 0` as "cash crop". Produced by the same `field_trade_goods`
   // payoff function the sim pays with, so the quote and the payout cannot drift.
-  sowTradePayoff:float = 0;
+  // RETIRED (arc #527). The crop picker's cash-crop row went with the trade axis; a per-material
+  // quote is client-side work with a different shape.
+  sowTradePayoff:float (deprecated);
   // --- WHAT A TENDED PATCH WOULD PAY IN THE TWO NON-FOOD ACCOUNTS (appended, issue #419) ---
   // The rung-2 twins of `sowFodderPayoff`/`sowTradePayoff`: fodder and trade goods per turn a
   // completed TENDED PATCH of this plant would pay on this tile. `0` where the plant's vector pays
@@ -1939,7 +2021,8 @@ table FloraShareInfo {
   // `Deplete`-policy concept applied at the credit site, and a crop row states what the CROP pays on
   // this ground. The same rule `sowTradePayoff` states one rung up.
   cultivateFodderPayoff:float = 0;
-  cultivateTradePayoff:float = 0;
+  // RETIRED (arc #527) — see sowTradePayoff.
+  cultivateTradePayoff:float (deprecated);
   // --- WHAT THIS PLANT IS FOR (appended, tile-card crop roles) ---
   // The species' own `role` (flora_config.json -> species): "staple" | "fodder" | "cash". A DISPLAY
   // TAG — nothing in the sim branches on it, and nothing on a client may either. The yield vector is
@@ -1955,6 +2038,25 @@ table FloraShareInfo {
   // (`canCultivate`/`canSow` false) — exactly the wild-ceiling case where the role is still a true
   // and useful fact.
   role:string;
+  // --- WHAT A CASH CROP WOULD PAY, PER MATERIAL (appended last, arc #527) ---
+  // The replacement for the retired sowTradePayoff / cultivateTradePayoff, one entry per material
+  // this plant would yield per turn at that rung on this tile. See MaterialPayoff above for why it
+  // is a vector.
+  //
+  // EMPTY MEANS "NO ROW", NEVER "ZERO". A food crop yields no material and must render nothing at
+  // all here - not a `0`, which would read as a cash crop that pays badly. Empty is also what a
+  // plant that cannot climb the rung on this ground reports, the same convention
+  // cultivatePayoff/sowPayoff's `0` follows.
+  //
+  // Produced by the same forage::commit_material_payoff seam at each rung's own harvest
+  // (field_harvest_production at rung 3, tended_msy_take at rung 2) that credit_material_yield is
+  // paid off, so the quote and the payout cannot drift - pinned by
+  // flora_f4_cash::the_picker_material_quote_is_the_material_the_sim_credits.
+  //
+  // TWO FIELDS, ONE PER RUNG, for exactly the reason cultivatePayoff/sowPayoff are two: the rungs
+  // differ in basket, conversion gain AND the shape of the harvest, so one number cannot answer both.
+  sowMaterialPayoff:[MaterialPayoff];
+  cultivateMaterialPayoff:[MaterialPayoff];
 }
 
 // Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's
@@ -2397,8 +2499,10 @@ table HerdTelemetryState {
   // species (a wolf) reads `perWorkerYield == 0` and `foodPerAnimal == 0` with both of these
   // positive, so a client that renders a kill rhythm from food alone divides by zero; the animal
   // COUNT is the same on either component, because a ratio is unit-free.
-  perWorkerTrade:float = 0;
-  tradePerAnimal:float = 0;
+  // RETIRED (arc #527) with the trade-goods axis. A crew count on an inedible species reads
+  // perWorkerBiomass, which is positive there and always was.
+  perWorkerTrade:float (deprecated);
+  tradePerAnimal:float (deprecated);
   // --- The INVESTMENT rungs' trade half (issue #397, appended last) --- the trade twins of
   // `pastoralYield` / `corralYield`. A rung's payoff is a PAIR like every other yield in this
   // model (`SourceYieldForecast::pastoral_yield` / `managed_yield` are `YieldPair`s); exporting
@@ -2408,8 +2512,9 @@ table HerdTelemetryState {
   // non-zero (the same rule `perWorkerTrade` follows). 0 on a herd that never offers the rung.
   // `corralTrade` is GROSS like `corralYield`; the pen's feed (`penUpkeep`) is a PROVISIONS debit
   // and stays on the food half only.
-  pastoralTrade:float = 0;
-  corralTrade:float = 0;
+  // RETIRED (arc #527) with the trade-goods axis.
+  pastoralTrade:float (deprecated);
+  corralTrade:float (deprecated);
   // --- THE BUILD DIPS, AS FRACTIONS (appended, issue #442) --- the animal twins of
   // `ForagePatchState.cultivateBuildFraction`/`sowBuildFraction`; see there for why the dip stopped
   // being a `huntPolicyCeilings` row. `huntPolicyCeilings` is now exactly the four stance rows, and
@@ -2450,7 +2555,9 @@ table HerdTelemetryState {
   // `bodyMass`/`foodPerAnimal` are what make the pulse visible.
   provisionsPerBiomass:float = 0;
   fodderPerBiomass:float = 0;
-  tradePerBiomass:float = 0;
+  // RETIRED (arc #527) with the trade-goods axis: the source's non-food product is materials,
+  // and a material rate is a per-material reading rather than one scalar.
+  tradePerBiomass:float (deprecated);
   // --- THE PER-WORKER BIOMASS THROUGHPUT (appended) ----------------------------------------------
   // What ONE hunter moves this turn, **in biomass** — `labor_config.hunt.per_worker_biomass_capacity`,
   // the exact term `systems::hunt_take`'s collection multiplies by the head-count. **No seasonal
@@ -2634,6 +2741,48 @@ table HerdTelemetryState {
   // to dry sees the same default as one that just spawned. Empty only for a herd whose species the
   // roster cannot resolve, which falls back to `SubsistenceSection.defaultHuntKitId`.
   defaultKitId:string;
+  // --- WHAT A HUNT OF THIS HERD IS MADE OF (appended last, arc #527) ---
+  // The replacement for the retired tradePerBiomass/perWorkerTrade, and the reason an INEDIBLE
+  // quarry stops quoting nothing: a wolf's provisionsPerBiomass and perWorkerYield are honestly 0,
+  // and these carry its whole payload. Both are [MaterialPayoff] (see that table above
+  // FloraShareInfo) — one entry per material, NEVER summed into a single figure.
+  //
+  //   materialPerBiomass = what ONE UNIT of this herd's biomass is made of. The material twin of
+  //                        provisionsPerBiomass/fodderPerBiomass, so it composes at ANY floor by the
+  //                        same rule those do: ceiling(floor) = max(0, B - floor*K) x rate.
+  //   perWorkerMaterial  = what ONE HUNTER brings home per turn. The material twin of
+  //                        perWorkerYield, so a band preview clamps
+  //                        min(workers x perWorkerMaterial, ceiling) per material exactly as it does
+  //                        for food.
+  //
+  // Both are the species' OWN `hunt_yield.materials` rows through the same biomass terms every other
+  // field here uses (ONE_UNIT_OF_BIOMASS and hunt.per_worker_biomass_capacity) - the very rows
+  // credit_material_yield is handed at the take site, not a second derivation.
+  //
+  // BAND-AGNOSTIC, at an output multiplier of 1.0, exactly like every food field on this row: a herd
+  // row serves every band, so THE CONSUMER APPLIES ITS BAND'S outputMultiplier. Omitting it here
+  // under-reports a productive band's haul by that factor, and the food siblings beside these two
+  // need the same multiplication - so the whole row scales together or none of it does. The take
+  // site is where the band's real multiplier enters.
+  //
+  // EMPTY MEANS "NO ROW", NEVER "ZERO": most species are made of nothing anyone builds with, and a
+  // published 0 would read as a herd that pays badly rather than one that pays in meat alone.
+  materialPerBiomass:[MaterialPayoff];
+  perWorkerMaterial:[MaterialPayoff];
+  // --- WHAT THE TWO INVESTMENT RUNGS WOULD PAY, PER MATERIAL (appended last, arc #527) ---
+  // The material twins of corralYield/pastoralYield, and the replacement for the retired
+  // corralTrade/pastoralTrade. Without them an INEDIBLE quarry's Tame and Corral rungs quote nothing
+  // at all: a wolf's corralYield and pastoralYield are honestly 0, so the compose sheet's
+  // "-> then +Y" had no number on either rung.
+  //
+  // Priced on the SAME pen/pastoral MSY biomass their food siblings are
+  // (SourceYieldForecast::managedYieldBiomass / pastoralYieldBiomass, resolved once in
+  // hunt_forecast), so a rung's two readouts cannot describe different harvests.
+  //
+  // corralMaterial is GROSS like corralYield - the pen's feed (penUpkeep) is a PROVISIONS debit and
+  // never touches it. EMPTY on a herd that never offers the rung, and EMPTY means "no row".
+  corralMaterial:[MaterialPayoff];
+  pastoralMaterial:[MaterialPayoff];
 }
 
 table CommandEventState {
@@ -2677,8 +2826,9 @@ table VictoryState {
 table SnapshotHeader {
   tick:ulong;
   tileCount:uint;
-  logisticsCount:uint;
-  tradeLinkCount:uint;
+  // Retired with the link sections themselves (arc #527) — deprecated, not freed.
+  logisticsCount:uint (deprecated);
+  tradeLinkCount:uint (deprecated);
   populationCount:uint;
   powerCount:uint;
   influencerCount:uint;
@@ -2785,12 +2935,23 @@ table MapSection {
 }
 
 table EconomySection {
-  logistics:[LogisticsLinkState];
-  tradeLinks:[TradeLinkState];
-  logisticsRaster:ScalarRaster;
+  // FIVE retired slots (arc #527) — see the note above `LogisticsLinkState`. Deprecated, never
+  // freed: field ids are positional and reusing one silently mis-decodes an old capture.
+  logistics:[LogisticsLinkState] (deprecated);
+  tradeLinks:[TradeLinkState] (deprecated);
+  // The raster averaged `LogisticsLink.flow`, which went with the mass economy. It was briefly left
+  // UNdeprecated on the grounds that the client still decoded it and fell back when absent — that
+  // stopped being true in the same arc, which deleted the native decode site and the delta path
+  // (`apply_logistics_raster` / `SECTION_OVERLAY_LOGISTICS`), so nothing in the workspace reads the
+  // slot and `(deprecated)` is now the honest statement. Deprecating it also drops it from
+  // `EconomySectionArgs`, which is what removed the two `logisticsRaster: None` writes in
+  // `sim_schema/src/codec/economy.rs`: an always-absent field nobody decodes had two writers and no
+  // reader. A future logistics network refills THIS slot by un-deprecating it — the meaning is
+  // reserved, only the accessor is withdrawn.
+  logisticsRaster:ScalarRaster (deprecated);
   factionInventory:[FactionInventoryState];
-  removedLogistics:[ulong];    // delta-only
-  removedTradeLinks:[ulong];   // delta-only
+  removedLogistics:[ulong] (deprecated);    // delta-only
+  removedTradeLinks:[ulong] (deprecated);   // delta-only
 }
 
 table PopulationSection {

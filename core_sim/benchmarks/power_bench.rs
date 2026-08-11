@@ -72,7 +72,6 @@ fn spawn_power_nodes(
                     Tile {
                         position: UVec2::new(x, y),
                         element: ElementKind::Ferrite,
-                        mass: Scalar::one(),
                         temperature: scalar_zero(),
                         terrain: TerrainType::AlluvialPlain,
                         terrain_tags: TerrainTags::empty(),

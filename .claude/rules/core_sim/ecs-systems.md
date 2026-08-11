@@ -78,7 +78,7 @@ A **resident** band (`ResidentBand` — an expedition is detached and deliberate
 ### Knowledge & Espionage
 `KnowledgeLedger` tracks per-discovery secrecy posture, leak cadence, espionage pressure.
 
-**Leak Timer**: `knowledge_ledger_tick` runs after `trade_knowledge_diffusion`. Recomputes `half_life_ticks` from base + visibility + security − (spy_pressure + cultural_pressure).
+**Leak Timer**: `knowledge_ledger_tick` recomputes `half_life_ticks` from base + visibility + security − (spy_pressure + cultural_pressure).
 
 **Espionage**: `EspionageRoster` per faction. Mission lifecycle: Planning → Execution → Resolution. `EspionageProbeEvent` / `CounterIntelSweepEvent`.
 
@@ -125,9 +125,8 @@ Per-faction visibility tracking with three states: `Unexplored` (never seen), `D
 1. `clear_active_visibility` - Reset Active tiles to Discovered
 2. `prune_sweep_tracker` - Forget sweep positions of despawned cohorts
 3. `calculate_visibility` - Compute visibility from units/settlements
-4. `apply_trade_route_visibility` - Mark active trade-route tiles as Active
-5. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored (disabled by default; permanent memory)
-6. `discover_sites` - Record any `SiteTag` tile a faction has ever seen into `DiscoveredSites`, apply the reward, push a `SiteDiscovered` feed entry (see "Wondrous Sites")
+4. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored (disabled by default; permanent memory)
+5. `discover_sites` - Record any `SiteTag` tile a faction has ever seen into `DiscoveredSites`, apply the reward, push a `SiteDiscovered` feed entry (see "Wondrous Sites")
 
 **Visibility Sources**:
 - **Units**: `PopulationCohort` with `StartingUnit` marker provides sight from its
@@ -183,21 +182,27 @@ still shipped whole and masked by the raster client-side.
 
 ---
 
-## Trade-Fueled Knowledge Diffusion
+## Knowledge Diffusion Between Factions
 
-> **Deprecated / to be replaced.** `TradeLink` is dormant on a live game — nothing attaches it at
-> runtime (only snapshot rehydration does; its establishment path was never built), so
-> `trade_knowledge_diffusion` iterates an empty set and its test is `#[ignore]`d. The Settlement &
-> Population arc reframes this: inter-faction trade becomes a **trade *policy* on the supply
-> network** (see "Supply Network") — a consent gate + a priced return flow on cross-faction edges —
-> and the knowledge-leak-via-open-trade behavior re-homes onto those rails. `TradeLink` /
-> `trade_knowledge_diffusion` are slated for removal in that slice (not now, to avoid schema churn +
-> a coherent-behavior gap). Latent bug to fix then: the logistics snapshot query requires
-> `TradeLink`, so the logistics overlay is empty on a live game.
+> **The link-driven half is gone.** A `TradeLink`-and-`LogisticsLink` slice — `simulate_logistics`,
+> `trade_knowledge_diffusion`, `apply_trade_route_visibility`, the `logistics` / `tradeLinks` wire
+> sections, the `Tile.mass` economy — was demolished in arc **#527**. `TradeLink` was never inserted
+> by any system at runtime, so every one of those consumers walked an empty set for the whole life
+> of the band game; `LogisticsLink` was one entity per adjacent tile pair moving a `mass` nothing
+> gameplay-facing read. `docs/plan_contact_and_logistics.md` §As-built is the ledger of what went
+> and why, and the rest of that document is what replaces it: a **connection** primitive formed on
+> contact, with logistics, culture and knowledge as *riders* on it.
+>
+> **What survived, and why it is not dead code:** `TradeTelemetry` / `TradeDiffusionRecord` /
+> `TradeDiffusionEvent`, and `publish_trade_telemetry`. Misleadingly named, but live — the migration
+> path below writes them with `via_migration: true`, and it is the one knowledge-diffusion path that
+> was never dormant. `simulate_population` also owns the per-turn `TradeTelemetry::reset_turn()` it
+> inherited from the deleted diffusion system. **The leak-timer MODEL survived too**, as
+> `sim_runtime::TradeLeakCurve` — a timer that fires more slowly the more closed you are, with a
+> partial `KnowledgeFragment` at a fidelity. Currently unmounted; it is the shape §Q5 of the design
+> intends for a connection's knowledge rider.
 
-`TradeLinkState` carries throughput, tariff, `TradeLinkKnowledge` (openness, leak_timer, decay). `trade_knowledge_diffusion` runs after logistics, emits `TradeDiffusionEvent`s, applies progress to `DiscoveryProgressLedger`.
-
-**Migration**: `PendingMigration` payloads carry scaled knowledge fragments; on arrival they merge
+**Migration is the live path.** `PendingMigration` payloads carry scaled knowledge fragments; on arrival they merge
 into the destination ledger and the whole band emigrates (`cohort.faction = destination`) — the
 high-morale "brain-drain" / Cultural Osmosis vector. `simulate_population` gates it on **both** high
 morale (`migration_morale_threshold`) **and** a settled duration: a band must have been simulated at
@@ -206,7 +211,7 @@ least `migration_min_settled_turns` turns (`PopulationCohort.age_turns`, increme
 starting band from defecting on turn one (the `well_fed_morale_bonus` alone would otherwise clear the
 morale threshold immediately).
 
-**Config**: `trade_leak_min/max_ticks`, `trade_leak_exponent`, `trade_openness_decay`, `migration_fragment_scaling`; migration gating (`migration_morale_threshold`, `migration_eta_ticks`, `migration_min_settled_turns`) lives in the `population` block of `turn_pipeline_config.json`.
+**Config**: `migration_fragment_scaling`, `migration_fidelity_floor`; migration gating (`migration_morale_threshold`, `migration_eta_ticks`, `migration_min_settled_turns`) lives in the `population` block of `turn_pipeline_config.json`.
 
 ---
 

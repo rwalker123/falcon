@@ -412,22 +412,21 @@ func reconcile_pending(turn: int) -> bool:
 
 # Per-source rate keys whose ABSENCE is meaningful, so they are copied through only when the wire
 # assignment carried them (see the loop in `effective_worker_map`). `realized_yield` is the steady
-# food average; `trade_yield` / `realized_trade_yield` are its issue-#337 twins in the other product.
+# food average. (Its issue-#337 twins in the trade account went with that axis, arc #527.)
 ## THE FORECAST'S BAND (`docs/plan_hunt_through_combat.md` §6.4) travels the same presence-sensitive
 ## way, and for a sharper reason than the rates above: `source_yield_readout` renders a range ONLY
 ## when the two bounds differ, so a `get(..., 0.0)` default would hand it `0.0–0.0` — equal, and
 ## therefore silent — on an assignment that never carried them. Copying only what the wire sent keeps
 ## "no band published" and "the band is a point" the same rendered answer by construction rather than
-## by luck. Both products, read as one vector beside their scalars.
+## by luck.
 const OPTIONAL_YIELD_KEYS: Array[String] = [
 	# `fodder_yield` is the THIRD account (issue #449) and it rides this list for the plain reason the
 	# others do — a key not copied here does not exist as far as the work board is concerned, and a
 	# sown hay Field's whole product is this one number. It is the one entry whose absence carries no
 	# second meaning: there is no `realized_fodder_yield` to fall back from, so an absent key and a
 	# published zero are the same reading (`SourceForecast.fodder_rate_of` says why at length).
-	"realized_yield", "trade_yield", "realized_trade_yield", "fodder_yield",
+	"realized_yield", "fodder_yield",
 	SourceForecast.YIELD_RANGE_LOW_KEY, SourceForecast.YIELD_RANGE_HIGH_KEY,
-	SourceForecast.TRADE_RANGE_LOW_KEY, SourceForecast.TRADE_RANGE_HIGH_KEY,
 ]
 
 ## Confirmed labor assignments overlaid with this band's pending assigns, keyed by source/role.
@@ -468,12 +467,20 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		# The PRESENCE-SENSITIVE rate keys, copied through only when the wire carried them:
 		# `source_yield_readout` distinguishes "absent" (fall back to the actual/sustainable split)
 		# from "present and 0", so a `get(..., 0.0)` default here would silently assert a zero.
-		# `realized_trade_yield` / `trade_yield` are the trade twins (issue #337) — a hunt on an
-		# INEDIBLE species pays only these, and dropping them here is what would leave a wolf row
-		# with nothing to headline.
 		for rate_key in OPTIONAL_YIELD_KEYS:
 			if (a as Dictionary).has(rate_key):
 				(merged[key] as Dictionary)[rate_key] = float((a as Dictionary)[rate_key])
+		# **THE MATERIAL ACCOUNT TRAVELS TOO, AND IT IS NOT A SCALAR** (arc #527 follow-up). It rides
+		# beside the list above on the same reasoning one account further out — an inedible quarry's
+		# WHOLE product is this vector, and a key not copied here does not exist as far as the work
+		# board is concerned — but it cannot ride IN it: every entry there is coerced through
+		# `float()`, and an Array through that constructor is a hard script error, not a zero. An
+		# absent key and an empty array are one reading (no row), so there is nothing to fall back
+		# from here either, and it is copied verbatim rather than normalized: `material_rows_of` is
+		# the one normalizer and it lives beside the readouts that spend it.
+		if (a as Dictionary).has(SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY):
+			(merged[key] as Dictionary)[SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY] = \
+				(a as Dictionary)[SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY]
 	var pend := pending_assigns_for(int(band.get("entity", -1)))
 	for key in pend:
 		var pd: Dictionary = pend[key]

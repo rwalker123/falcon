@@ -11,7 +11,9 @@ class_name FaunaInspectorPanel
 
 const HERD_CONSUMPTION_BIOMASS := 250.0
 const HERD_PROVISIONS_YIELD_PER_BIOMASS := 0.02
-const HERD_TRADE_GOODS_YIELD_PER_BIOMASS := 0.005
+# **`HERD_TRADE_GOODS_YIELD_PER_BIOMASS` IS RETIRED** (arc #527) with the trade-goods yield axis. It
+# was a hardcoded client-side copy of a sim rate anyway, and what a kill pays beyond meat is now
+# MATERIALS — a per-species vector this display-only tab has no wire field for.
 const HERD_FOLLOW_MORALE_GAIN := 0.03
 const HERD_KNOWLEDGE_PROGRESS_PER_BIOMASS := 0.0004
 const HERD_KNOWLEDGE_PROGRESS_CAP := 0.25
@@ -109,15 +111,14 @@ func _herd_reward_summary_lines(biomass: float) -> Array[String]:
 	if consumption <= 0.0:
 		return lines
 	var provisions: float = round(consumption * HERD_PROVISIONS_YIELD_PER_BIOMASS)
-	var trade_goods: float = round(consumption * HERD_TRADE_GOODS_YIELD_PER_BIOMASS)
 	var lore_progress: float = min(
 		consumption * HERD_KNOWLEDGE_PROGRESS_PER_BIOMASS,
 		HERD_KNOWLEDGE_PROGRESS_CAP
 	)
 	lines.append("[b]Hunt rewards[/b]")
 	lines.append("• Morale +%.2f per band" % HERD_FOLLOW_MORALE_GAIN)
-	if provisions > 0 or trade_goods > 0:
-		lines.append("• Supplies: +%d provisions, +%d trade goods" % [int(provisions), int(trade_goods)])
+	if provisions > 0:
+		lines.append("• Supplies: +%d provisions" % int(provisions))
 	if lore_progress > 0.0:
 		lines.append("• Fauna lore +%.1f%% progress" % (lore_progress * 100.0))
 	lines.append("• Fog pulse reveals nearby tiles")

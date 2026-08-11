@@ -118,8 +118,52 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 234 `assert OK` lines, 313 `: PASS` ones and ZERO `FAIL` ones, over
-91 frames.** **The three figures are MEASURED from a run, never summed** — band fission retired one
+**A clean run exits 0 and prints 226 `assert OK` lines, 332 `: PASS` ones and ZERO `FAIL` ones, over
+89 frames.** (Five of those `PASS`es are `_assert_work_material_readouts`, the board half of closing
+the inedible quarry's `+0.00`; four more are the party PACK's, on `band_panel_worst_case_party`; one
+more is `_assert_denial_pelt_take`; **four more are the KIT REPRICING's material arm**, inside
+`_assert_kit_reprices_the_source` — the per-material rate by RATIO, its no-op twin at the reference
+tier, the take through `expected_materials` at a crew below the saturating one, and the plant web's
+own row on the no-retreat patch beside it. **They are named rather than numbered from an offset** —
+this tally moved twice in one merge, once for arc #527 and once for the partly-equipped arc, and a
+claim of the form *"the five above 310"* survives neither. It was 328 before the material arm; the
+`assert OK` count is unchanged, those four riding an existing state's driven block rather than a new
+frame.)
+
+**`_assert_denial_pelt_take` IS PNG-LESS, AND THAT IS FORCED RATHER THAN CHOSEN.** An inedible
+quarry's denial take line is what the claim is about, but re-targeting the deny sheet to the
+shared-tile wolf needs that herd in the world list at THAT point in the walk — and this harness's
+state order is load-bearing, so moving a roster push to suit one claim re-points every frame after
+it. The chain asserted is the real one (`denial_forecast` → `denial_take_bbcode`) against the same
+fixture table the chooser state renders, and **`band_panel_compose_deny`'s edible boar directly above
+is the live control**: its line must still read food and waste, or "state the materials" would be
+satisfied by a producer that replaced the food clause instead of joining it.
+
+**THE WORST-CASE PARTY CARRIES THE PACK CLAUSE, and its fixture holds TWO piles of one material at
+two ratings.** A batch is one pile at ONE RATING, so a fixture with one batch per material would pass
+just as well against a producer that summed them — which is the retired trade scalar rebuilt out of
+its own replacement. The fourth claim is therefore a NEGATIVE: the two amounts' sum must not appear.
+The clause rides the `Carried:` row rather than adding an eighth line, so the strip's measured extent
+is unchanged (`band-city-panel.md` → "The parties strip's SEVEN lines"), and the row is found by its
+own prefix rather than by index — a producer that moved the clause elsewhere then fails instead of
+passing on whichever line happened to sit there. (It was 233 / 313 / 91 before arc #527 retired the `trade_goods` yield axis. **Three
+frames went with the band's Trade vitals row** — `band_panel_trade_expanded_left` /
+`band_panel_trade_zero` / `band_panel_trade_short_tier` — taking their three `assert OK` PAIRS and
+their `_assert_forage_trade_counted` / `_assert_trade_row_reads_zero` /
+`_assert_trade_row_absent_in_short_tier` helpers with them. **The three WORK-board frames were KEPT
+and RE-PURPOSED**: `band_panel_work_trade_rows` / `_inspector` / `_totals` keep their names and stage
+an inedible quarry — a frame that stopped asserting anything is worse than one that fails, so the
+states that could still say something real were re-pointed rather than deleted. Their wolf row read
+`+0.00 /turn` for one release and now reads **`+0.22 hide`**, off the assignment's resolved
+`material_yield`.)
+
+**`_assert_work_material_readouts` makes THREE claims, and the deer beside the wolf is why they
+bite**: the wolf must state its hide; the deer must be UNCHANGED (so "always print the materials"
+cannot pass); and no material term may reach the deer's sentence, which is the
+render-only-when-non-zero rule asked one account further out. Its subject is the RESOLVED
+`material_yield` — **not** a rate the compose sheet would project, because a worked row reports what
+a turn actually credited. (`labor-ui.md` → "AN INEDIBLE QUARRY QUOTES WHAT IT PAYS" has the three
+fields and which surface reads which.) **The three figures are MEASURED from a run, never summed** — band fission retired one
 family of frames here and added another in the same merge this arc landed in, so two arcs' deltas
 added by hand is exactly how a tally stops matching its harness. (The retired **"start a life
 here"** arrival verb had five frames here — `band_panel_settle_offered` / `_withheld` / `_confirm` /
@@ -272,23 +316,6 @@ OFFER TEST and the GEAR BREAKDOWN's three new rows.
 to `ui_preview`** — `band_panel_role_kits` (the LEFT dock, both cards) with its bounds/content-fits
 pair, `_assert_role_card_gear`'s six, `_assert_role_cards_are_level`'s two and
 `_assert_role_kit_command_carries_the_pick`'s five. The figures before it were **86 / 225 / 265**.
-
-**The PEOPLE↔WORKFORCE cross-check contributes ONE frame and EIGHT `PASS` to `band_panel_preview`
-and nothing to `ui_preview`** — `band_panel_workforce_away` plus `_assert_people_matches_workforce`,
-run twice on deliberately opposite bands: at `band_panel_people` on a band with NO party out (the
-negative arm — the away clause must not grow a permanent `· 0 away`), and on the reference band with
-its two parties in the field, the only configuration in which a party crew counted as a workforce
-segment is visible at all. The figures before it were **91 / 233 / 313**.
-
-Its four claims are read off the RENDERED chips (`_composition_counts`, the structural twin of
-`_zone_head_readout`: a zone block is a VBox whose head names it and whose `HFlowContainer` carries
-one `▪ key count` chip per segment), because both defects it guards were in the rendering and
-neither is legible in a thumbnail. PEOPLE's 🛠 chip must EQUAL the denominator in WORKFORCE's
-`n idle of m` — the two blocks are one band counted two ways, and a client that rounded the age
-brackets for itself put **17** directly above **"0 idle of 16"**. The PEOPLE chips must account for
-the band's whole `size`. WORKFORCE's segments must sum to `working_age` — with 10 workers away, a
-Parties segment made that bar total 26. And the header must carry `· 10 away` exactly when there is
-someone away, so the fact stays reachable rather than being deleted along with the segment.
 
 **The gear breakdown contributes ONE frame, ONE `assert OK` and EIGHT `PASS` to `band_panel_preview`
 and nothing to `ui_preview`** — `band_panel_kit_expanded` (the dock's own Kit popover, opened on the
@@ -650,27 +677,33 @@ frame alone.
 `Label`-scoped assertion on either would find nothing and pass vacuously. It returns the whole PARSED
 line rather than a bool for the equality claim above.
 
-**Three fixture rules the denial tables must follow**, all because a fixture that breaks one makes the
+**Two fixture rules the denial tables must follow**, both because a fixture that breaks one makes the
 assertions decorative: a row's `delivered_food` is what the PACK holds and everything else killed is
 `wasted_food` (a raid that hauled its whole kill is a hunting raid wearing a denial outcome, and the
-waste readout would have nothing to state); **BOTH products come off ONE conversion of that same
-split**, so `delivered_trade` rides the carried share and `wasted_trade` the rest (the sim runs
-`hunt_yield.apply(take.wasted)` beside `hunt_yield.apply(take.carried)`, so a table stating a zero
-`wasted_trade` beside a large `wasted_food` is a herd no live server can produce); and a `repelled`
-table's kill counts are small but **non-zero** — a repelled party is outbred, not incapable.
+waste readout would have nothing to state); and a `repelled` table's kill counts are small but
+**non-zero** — a repelled party is outbred, not incapable.
 
-**The INEDIBLE table is the exception to the second rule and states the exception's own reason.**
-`_denial_trade_only_rows` hauls the WHOLE pelt yield and wastes nothing, because `carry_room_biomass`
-answers `NO_CARRY_BOUND` for a species paying no provisions — the pack is measured in provisions, so a
-quarry that pays none never fills it. Inheriting the boar's food-bound carry share there quoted a wolf
-pack losing three quarters of its hides to a pack it cannot fill. **The consequence for the waste pair
-is that a wolf fixture asserts nothing about it** — zero is honest there in both products — so
-`band_panel_compose_deny`'s EDIBLE boar, where the pack binds hard, is where the pair is proved.
+**A THIRD rule went with arc #527's retired account, and the reasoning is worth keeping.** Both
+products came off ONE conversion of that same split — `delivered_trade` rode the carried share and
+`wasted_trade` the rest, because the sim runs `hunt_yield.apply(take.wasted)` beside
+`hunt_yield.apply(take.carried)` — so a table stating a zero `wasted_trade` beside a large
+`wasted_food` was a herd no live server could produce. **The general rule survives the account: a
+fixture that states one half of a sim-side pair must state the other from the same split.**
+
+**The INEDIBLE table was the exception to that rule and states the exception's own reason.**
+`_denial_pelt_only_rows` hauls the whole kill and wastes nothing, because `carry_room_biomass` answers
+`NO_CARRY_BOUND` for a species paying no provisions — the pack is measured in provisions, so a quarry
+that pays none never fills it. **With the trade account retired that table has no product left to
+quote**, so its rows carry an all-zero food account and the frame's claim is the NEGATIVE one: no
+false `0.00 FOOD`, judged against the edible boar beside it. `band_panel_compose_deny`'s EDIBLE boar,
+where the pack binds hard, is where the waste clause itself is proved.
 
 **`_assert_denial_viable`'s take claim is an EQUALITY over the whole line**, not a `contains`: half
-the claim is what the sentence must not also say, and a waste stated food-only satisfies every
-containment test while silently dropping the hides. Sabotage-verified by dropping the trade half of
-`denial_waste_face`, which fails exactly that one assertion and prints both lines side by side.
+the claim is what the sentence must not also say, and a `contains` passes on a line carrying an extra
+clause. (It was written against a waste stated food-only, which satisfied every containment test while
+silently dropping the hides the retired trade half accounted; the equality form is what survives the
+retirement, and the expectation is composed from the VOCABULARY and the fixture's own arithmetic
+rather than re-derived through `denial_take_bbcode`.)
 
 **The TWO SPANS are asserted on different harnesses, and each names its own.** `band_panel_compose_deny`
 expects the launch clock — both ends of the band plus `DENIAL_OUTBOUND_TRAVEL_TURNS`, then the travel
@@ -691,22 +724,6 @@ clause first shipped passing with a Policy row put back on the form.
 is the only thing that can assert the four-token grammar. **Each mission's confirm wears its OWN
 meta** — a search for "the send button" on a parties compose sheet cannot tell which mission it just
 launched, and the two emit different signals with non-interchangeable payloads.
-
-### The LOST party's `Target:` row is asserted, and it was the gap that let issue #378 ship
-
-`_assert_next_delivery_disambiguation` walks three parties over one projected-`0` forecast, and it
-checks **both** lines for each: the delivery line *and* the `Target:` row. It did not always — the
-lost-target party had a delivery-line assertion and no target-line one, while the two cases either side
-of it checked both. So `_lost_hunt_expedition_fixture`, the one fixture in this file built for "the
-target has left the telemetry", rendered its raw `game_deer_gone` id **past a green run** in the very
-state it exists to cover.
-
-`_lost_hunt_expedition_fixture` therefore carries `expedition_target_species`, and
-`LOST_HUNT_TARGET_SPECIES` is deliberately a species **no herd in `_herd_fixtures()` has**: matching it
-proves the name came off the PARTY's own declared field rather than from a herd-list join that happened
-to resolve. The row carries **no `(x, y)`** — coordinates need the herd in `_world_herds`, and its
-absence is what the delivery line reports; naming the animal and knowing where it stands are separate
-statements.
 
 ### The party-axis guards, and why one of them is an INVERSION
 

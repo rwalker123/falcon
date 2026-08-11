@@ -86,14 +86,17 @@ painted from the human-food table under the `forage` channel, so it compares til
 on pasture; the shelf column glows on forage where it is barren on pasture) without a server:
 `scripts/preview.sh res://tools/map_preview.tscn`. Also the four **ANNOTATION states**, added by the
 `AnnotationRenderer` extraction because that family had **no fixture at all** and so no refactor of
-it could be pixel-checked:
+it could be pixel-checked. **Three remain; there were four.**
 
-**`map_trade_overlay`** (the Trade tab's diffusion links, pushed exactly the way `TradePanel` pushes
-them — `update_trade_overlay` → `set_trade_overlay_enabled` → `set_trade_overlay_selection` — with a
-SELECTED link, a busy open one, a thin closed one whose leak fires the red midpoint pip, and a
-fourth whose endpoints are not in `tile_lookup` so the skip guard is exercised; it is the one
-flat-backdrop state that publishes a `tiles` array, since links address their endpoints by tile
-ENTITY); **`map_crisis_annotations`** (all four shapes the draw can produce in one frame: a
+`map_trade_overlay` and its whole fixture (`_trade_link` / `_trade_links` / `_snapshot_trade_overlay`
+/ `_tile_entity` / `_entity_tiles` and the `TRADE_*` consts) went with the trade-link overlay itself:
+the sim publishes no link network, so the frame covered a draw that is handed the empty set on every
+live frame (`overlay-channels.md` → "RETIRED", `docs/plan_contact_and_logistics.md`). Issue #232's
+route-network overlay is what earns a frame back here, and it will need its own fixture rather than
+this one restored — the retired one addressed endpoints by tile ENTITY through `tile_lookup`, which
+is why it was the only flat-backdrop state publishing a `tiles` array.
+
+**`map_crisis_annotations`** (all four shapes the draw can produce in one frame: a
 multi-hop path in the `PackedInt32Array` wire form, a multi-hop path in the Array-of-`[col,row]`
 form, a single-tile halo+core marker, and a single-tile marker with an unknown severity — the
 `CRISIS_COLOR` fallback — and no label; the `crisis` channel is selected AFTER the snapshot, because
@@ -241,19 +244,25 @@ label has room for exactly ONE rate, so WHICH account it states is the whole cla
 directly — the choice is split out of `_draw_yield_label` for that reason, a draw call rendering to
 a canvas nothing can read a glyph back off — over values rather than a fixture, and pairs every
 fall-through with the case that must NOT change: food still leads wherever there is food (which is
-what stops "always show fodder" passing), trade still wins the slot ahead of fodder, and a source
-paying into no account at all still prints its food zero. `_entry_fodder` is asked beside them,
+what stops "always show fodder" passing), food still leads a source paying food AND a material,
+fodder still beats a material in the wire's own order, and a source paying into no account at all
+still prints its food zero. (A TRADE branch sat between food and fodder and won the slot ahead of it;
+arc #527 retired that account, and its follow-up put MATERIALS at the END of the cascade instead —
+`food → fodder → materials` — so an inedible quarry states `+0.22 hide` rather than falling through
+to the zero.) `_entry_materials` is asked beside `_entry_fodder`, for the same reason: a
+fall-through is unreachable if the entry's vector is never read, and neither has a realized fallback
+to make. `_entry_fodder` is asked beside them,
 since the fall-through is unreachable if the entry's feed rate is never read — and it has no
 realized fallback to make, fodder being plant-only.
 
 **A THIRD WORKED FORAGE TILE RENDERS THE LABEL, because the guard's claim is not the frame's**
-(`FODDER_FIELD_*`, a sown hay Field paying feed and neither provisions nor trade). The guard pins
+(`FODDER_FIELD_*`, a sown hay Field paying feed and no provisions). The guard pins
 WHICH account fills the one slot; only a frame can say whether the chosen STRING fits beside its
 neighbours, and `_draw_pill_plate` sizes to the measured run rather than clipping, so a label that
 spans hexes overdraws an adjacent marker with every assertion green — the class
 `map_band_label_overlap` exists for. Measured on `map_band_work`: the plate is **67px against a 74px
-hex-column pitch**, i.e. just inside its own hex's band, against 49px for `+0.27 ⚠ ⇊` and 47px for
-the wolf's `⇄+0.22 ⇊`.
+hex-column pitch**, i.e. just inside its own hex's band, against 49px for `+0.27 ⚠ ⇊` (the 47px
+`⇄+0.22 ⇊` it was also measured against went with arc #527's retired account).
 
 **The 2.5× figure that motivated the state is wrong — it is 1.4×** — and the reason is the plate
 rather than the text: padding is a fixed fraction of the font size, so it does not scale with the

@@ -547,11 +547,11 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			if show_yields and (entry.has("realized_yield") or entry.has("actual_yield")):
 				var fcenter := _label_anchor(tcol, trow, _view.secondary_food_key(int(entry.get("target_x", -1)), trow), radius, origin)
 				var forage_overdraw := bool(entry.get("overdraws", false))
-				# The trade and FODDER components ride along for the one-slot rule in
-				# `_draw_yield_label`; a forage patch normally pays food, so they change nothing here —
-				# except on the patch this exists for, a sown hay Field, which pays fodder alone.
+				# The FODDER component rides along for the one-slot rule in `_draw_yield_label`; a
+				# forage patch normally pays food, so it changes nothing here — except on the patch
+				# this exists for, a sown hay Field, which pays fodder alone.
 				_queue_yield_label(fcenter, _entry_realized_yield(entry), forage_overdraw, radius,
-					_entry_floor_glyph(entry), _entry_realized_trade(entry), _entry_fodder(entry))
+					_entry_floor_glyph(entry), _entry_fodder(entry), _entry_materials(entry))
 		elif kind == LABOR_KIND_HUNT:
 			var herd := _view._herd_by_id(String(entry.get("fauna_id", "")))
 			var herd_col := int(entry.get("target_x", -1))
@@ -579,13 +579,13 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 				var overhunt := bool(entry.get("overdraws", false))
 				var hunt_rate := float(entry["realized_yield"]) if entry.has("realized_yield") \
 					else float(entry.get("sustainable_yield", 0.0))
-				# An INEDIBLE quarry's steady food rate is honestly 0 (issue #337), so the label falls
-				# through to its trade rate rather than announcing the pack is worth nothing.
 				# NO FODDER ARGUMENT, and that is a decision rather than an omission (issue #449): no
 				# animal is harvested for feed, so a hunt row's fodder is a structural zero and passing
-				# it would only offer the label a fall-through it can never take.
+				# it would only offer the label a fall-through it can never take. **THE MATERIALS ARE
+				# PASSED, and they are the arm that closes the inedible quarry's `+0.00`** — a wolf's
+				# steady food rate is honestly 0, and its pelts are the whole of what the hunt pays.
 				_queue_yield_label(hlabel, hunt_rate, overhunt, radius, _entry_floor_glyph(entry),
-					_entry_realized_trade(entry))
+					0.0, _entry_materials(entry))
 
 	# 5. Optimistic PENDING actions for this band (dashed amber): a just-issued assign/move that
 	#    the snapshot hasn't confirmed yet. Drawn last so it reads on top of the confirmed styles.
@@ -833,19 +833,19 @@ func _entry_realized_yield(entry: Dictionary) -> float:
 		return float(entry["realized_yield"])
 	return float(entry.get("actual_yield", 0.0))
 
-## Its TRADE twin (issue #337) — the steady `realized_trade_yield`, falling back to the turn's actual
-## `trade_yield`. 0 for a source that pays no trade, which is exactly what suppresses the component.
-func _entry_realized_trade(entry: Dictionary) -> float:
-	if entry.has("realized_trade_yield"):
-		return float(entry["realized_trade_yield"])
-	return float(entry.get("trade_yield", 0.0))
-
 ## Its FODDER twin (issue #449) — and there is deliberately NO realized fallback to make: only the
 ## animal web projects a steady rate, and fodder is paid by the plant web alone, so the actual IS the
 ## honest rate (`SourceForecast.fodder_rate_of` is the one definition and says why at length). 0 on
 ## every hunt entry and on any patch growing no feed, which is what suppresses the component.
 func _entry_fodder(entry: Dictionary) -> float:
 	return float(entry.get("fodder_yield", 0.0))
+
+## Its MATERIAL twin, a VECTOR (arc #527 follow-up) — what this source actually credited to the band's
+## `MaterialStore` this turn, per material. Same "no realized fallback" reasoning: it is a resolved
+## take rather than a projection, and the sim seeds it empty pre-commit by design. It is what an
+## INEDIBLE quarry pays, and the reason a hunted wolf pack stops reading `+0.00` on the map.
+func _entry_materials(entry: Dictionary) -> Array:
+	return SourceForecast.material_rows_of(entry)
 
 ## DEFER a per-source yield label instead of drawing it inline. The label is an annotation OVER the
 ## map: drawn during the highlight pass it was painted over by every later layer (the dashed-amber
@@ -862,15 +862,15 @@ func _entry_floor_glyph(entry: Dictionary) -> String:
 		float(entry.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))))
 
 func _queue_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float, floor_glyph: String = "",
-		trade: float = 0.0, fodder: float = 0.0) -> void:
+		fodder: float = 0.0, materials: Array = []) -> void:
 	_deferred_yield_labels.append({
 		"tile_center": tile_center,
 		"value": value,
 		"overhunt": overhunt,
 		"radius": radius,
 		"floor_glyph": floor_glyph,
-		"trade": trade,
 		"fodder": fodder,
+		"materials": materials,
 	})
 
 ## Render (and drain) the deferred yield-label batch. Called LAST in `_draw` — after the markers,
@@ -881,7 +881,7 @@ func flush_yield_labels() -> void:
 	_deferred_source_badges.clear()
 	for label in _deferred_yield_labels:
 		_draw_yield_label(label["tile_center"], label["value"], label["overhunt"], label["radius"],
-			label["floor_glyph"], float(label.get("trade", 0.0)), float(label.get("fodder", 0.0)))
+			label["floor_glyph"], float(label.get("fodder", 0.0)), label.get("materials", []))
 	_deferred_yield_labels.clear()
 
 ## A small drop-shadow per-source yield label above a worked tile's center (reuses `_draw_marker_glyph`
@@ -896,17 +896,18 @@ func flush_yield_labels() -> void:
 ## A glyph resolved once and re-resolved is a mark that silently disappears the next time either table
 ## is re-keyed; the argument arrives resolved and is spent as-is.
 ##
-## ONE COMPONENT ONLY, and deliberately so (issues #337 / #449): a source pays a VECTOR — food, trade
-## goods, fodder — but a map label sits on a hex a few pixels wide beside a floor mark and a ⚠, and
-## there is no room for a second rate. It shows the one the source actually PAYS, in the wire's own
-## order: food when there is food (every edible quarry and every forage patch, so this is unchanged
-## for them), else the trade rate marked with `FoodIcons.TRADE_GOODS_GLYPH` so it can never be misread
-## as food, else the fodder rate spelled with the WORD (fodder has no glyph). A hunted wolf pack
-## therefore reads `⇄+0.12 ⇊` and a sown hay Field `+0.40 fodder ♻`, rather than the `+0.00` that said
-## each was worth nothing.
+## ONE ACCOUNT ONLY, and deliberately so (issues #337 / #449 / #527): a source pays a VECTOR — food,
+## fodder and materials — but a map label sits on a hex a few pixels wide beside a floor mark and a ⚠,
+## and there is no room for a second rate. It shows the one the source actually PAYS, in the wire's own
+## order: food when there is food (every edible quarry and every forage patch), else the fodder rate
+## spelled with the WORD (fodder has no glyph), else the MATERIALS, each naming itself. A sown hay
+## Field therefore reads `+0.40 fodder ♻` and a hunted wolf pack `+0.22 hide ⇊`, rather than the
+## `+0.00` that said either was worth nothing. (A trade branch sat between food and fodder until arc
+## #527 retired that account; the material vector is what replaced it, and it is a vector because a
+## mammoth hide and a hare pelt are both `hide` and are not the same thing.)
 func _draw_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float, floor_glyph: String = "",
-		trade: float = 0.0, fodder: float = 0.0) -> void:
-	var text := _yield_label_rate_text(value, trade, fodder)
+		fodder: float = 0.0, materials: Array = []) -> void:
+	var text := _yield_label_rate_text(value, fodder, materials)
 	var color := HudStyle.HEALTHY
 	if overhunt:
 		text += " " + YIELD_OVERHUNT_FLAG
@@ -923,17 +924,25 @@ func _draw_yield_label(tile_center: Vector2, value: float, overhunt: bool, radiu
 		_view._draw_pill_plate(label_center, text_size, font_size * YIELD_LABEL_PLATE_PAD_FACTOR, YIELD_LABEL_PLATE_BG)
 	_view._draw_marker_glyph(label_center, text, font_size, color)
 
-## THE ONE-SLOT CHOICE, on its own so it can be asserted: which of the three accounts this label
-## states, and how it is spelled. Split out of `_draw_yield_label` because a draw call renders to a
-## canvas and a harness cannot read a glyph back off one — the fall-through order (food → trade →
-## fodder) is the claim, and it needs somewhere to be asked. `YIELD_LABEL_COMPONENT_MIN` is the same
-## threshold on all three, so no account can be shown at a magnitude another would have been hidden at.
-func _yield_label_rate_text(value: float, trade: float, fodder: float) -> String:
-	if absf(value) < YIELD_LABEL_COMPONENT_MIN:
-		if trade >= YIELD_LABEL_COMPONENT_MIN:
-			return FoodIcons.TRADE_GOODS_GLYPH + _format_yield_signed(trade)
-		if fodder >= YIELD_LABEL_COMPONENT_MIN:
-			return SourceForecast.PICKER_FODDER_PRODUCT_FORMAT % _format_yield_signed(fodder)
+## THE ONE-SLOT CHOICE, on its own so it can be asserted: which of the accounts this label states, and
+## how it is spelled. Split out of `_draw_yield_label` because a draw call renders to a canvas and a
+## harness cannot read a glyph back off one — the fall-through order (food → fodder → materials) is
+## the claim, and it needs somewhere to be asked. `YIELD_LABEL_COMPONENT_MIN` is the same threshold on
+## the two scalars, so neither can be shown at a magnitude the other would have been hidden at; the
+## material arm is gated by `signed_material_components` answering `""`, which is the HUD's own
+## display floor and the same gate the work board's rate column tests.
+##
+## **THE MATERIAL ARM STATES EVERY MATERIAL.** Naming one of a vector picks a winner the sim does not
+## name, and summing them is the retired trade axis under a new name. The plate sizes to the MEASURED
+## run (`_draw_pill_plate`), so a two-material label is wide rather than clipped — which is a
+## legibility question for `map_band_label_overlap`, not a reason to state less than the truth.
+func _yield_label_rate_text(value: float, fodder: float, materials: Array = []) -> String:
+	if absf(value) < YIELD_LABEL_COMPONENT_MIN and fodder >= YIELD_LABEL_COMPONENT_MIN:
+		return SourceForecast.PICKER_FODDER_PRODUCT_FORMAT % _format_yield_signed(fodder)
+	if absf(value) < YIELD_LABEL_COMPONENT_MIN and fodder < YIELD_LABEL_COMPONENT_MIN:
+		var material_text := SourceForecast.signed_material_components(materials)
+		if material_text != "":
+			return material_text
 	return _format_yield_signed(value)
 
 ## Signed, fixed-decimal food-rate string for the on-tile yield labels ("+0.48" / "-0.30"). Mirrors

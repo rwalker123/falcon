@@ -9,7 +9,7 @@
 //!
 //! | Kind | On the wire | Merge rule |
 //! |---|---|---|
-//! | Rasters (logistics, visibility, moisture, …) | whole-raster-or-absent | present → replace; absent → keep |
+//! | Rasters (visibility, moisture, elevation, …) | whole-raster-or-absent | present → replace; absent → keep |
 //! | Sections (herds, demographics, …) | whole-list-or-absent | present → replace; absent → keep |
 //! | Keyed sections (tiles, populations, culture layers, …) | **sparse** — only the rows that changed, plus removed ids | patch the changed entries, then drop the removed |
 //!
@@ -25,7 +25,7 @@
 //! field of zeros — a world that claims to have no pasture and no gathering sites anywhere.
 //!
 //! **And the same trap sits under every OTHER diff-carried section.** `populations`,
-//! `culture_layers`, `trade_links`, `influencers`, `power_nodes`, `generations`,
+//! `culture_layers`, `influencers`, `power_nodes`, `generations`,
 //! `discovery_progress` and the two great-discovery sections all ride the wire as sparse diffs
 //! exactly like tiles do, and all were left standing at the baseline for the same reason. They are
 //! all patched by the one [`SectionCache`] — see its docs for the staleness that taught us so, and
@@ -45,7 +45,6 @@ pub(crate) struct RasterCache {
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) wrap_horizontal: bool,
-    pub(crate) logistics: Vec<f32>,
     pub(crate) sentiment: Vec<f32>,
     pub(crate) corruption: Vec<f32>,
     pub(crate) culture: Vec<f32>,
@@ -166,15 +165,6 @@ pub(crate) const SECTION_CULTURE_LAYERS: SectionSpec = SectionSpec {
     publish_empty_updates: true,
 };
 
-pub(crate) const SECTION_TRADE_LINKS: SectionSpec = SectionSpec {
-    key: "trade_links",
-    updates_key: "trade_link_updates",
-    removed_key: Some("trade_link_removed"),
-    identity: &["entity"],
-    watches: NO_WATCHES,
-    publish_empty_updates: true,
-};
-
 pub(crate) const SECTION_INFLUENCERS: SectionSpec = SectionSpec {
     key: "influencers",
     updates_key: "influencer_updates",
@@ -238,13 +228,12 @@ pub(crate) const SECTION_GREAT_DISCOVERY_PROGRESS: SectionSpec = SectionSpec {
 /// second time. **A new diff-carried section is added HERE and at its one `merge_section` call
 /// site — nowhere else.**
 ///
-/// `WorldDelta` also diffs `logistics` and `knowledge_ledger`; they are absent from this list
-/// because the client decoder never converts either one, so there is no base key to keep honest.
+/// `WorldDelta` also diffs `knowledge_ledger`; it is absent from this list because the client
+/// decoder never converts it, so there is no base key to keep honest.
 pub(crate) const KEYED_SECTIONS: &[&SectionSpec] = &[
     &SECTION_TILES,
     &SECTION_POPULATIONS,
     &SECTION_CULTURE_LAYERS,
-    &SECTION_TRADE_LINKS,
     &SECTION_INFLUENCERS,
     &SECTION_POWER_NODES,
     &SECTION_GENERATIONS,
@@ -276,7 +265,7 @@ pub(crate) struct SectionPatch {
 /// life of the world. Measured on `tiles`: `graze_biomass` summed over `tiles` was byte-identical
 /// across nine turns while `tile_updates` carried 400–600 moved tiles per turn. It was nine
 /// sections, not one — `Main`'s band alerts read `populations`, `MapView` reads `populations`,
-/// `culture_layers` and `trade_links`.
+/// `culture_layers` and `power_nodes`.
 ///
 /// The index is what makes patching cheap enough to do every frame: without it, placing ~600
 /// changed rows into a ~4,160-entry array is a linear scan each. With it the whole patch is one

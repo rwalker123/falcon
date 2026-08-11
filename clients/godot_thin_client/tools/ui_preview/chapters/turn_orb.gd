@@ -482,13 +482,12 @@ func run(harness) -> void:
 		{"faction": 0, "entity": 801, "size": 46, "turns_of_food": 1.0, "activity": "hunt",
 			"current_x": 64, "current_y": 11, "idle_workers": 0,
 			"labor_assignments": [
-				# BOTH PRODUCTS (issue #337): the hide sells beside the meat, so the drawer's standing
-				# summary must read `+0.84 /turn · ⇄ +0.12` — food leading, trade shown only because it
-				# is non-zero. Same `SourceForecast.source_yield_readout` the Band panel's rows use.
+				# The drawer's standing summary reads through the same
+				# `SourceForecast.source_yield_readout` the Band panel's rows use. (It carried a second,
+				# trade-goods clause until arc #527 retired that account.)
 				{"kind": "hunt", "workers": 1, "fauna_id": "game_deer_07", "floor": 0.5,
 					"improvement": "corral",
-					"target_x": 66, "target_y": 10, "actual_yield": 0.84, "sustainable_yield": 0.84,
-					"trade_yield": 0.12, "realized_trade_yield": 0.12},
+					"target_x": 66, "target_y": 10, "actual_yield": 0.84, "sustainable_yield": 0.84},
 			]},
 	])
 	h._hud.turn_orb.open_popover()

@@ -41,13 +41,12 @@ const EXPECTED_STAGES: [&str; 11] = [
 /// exactly the state that let the dominant 42% (`patches`) go unexamined for three arcs. A
 /// genuinely free section is worth a line for the same reason a gated-off `TurnStage` records ~0:
 /// "costs nothing" and "is not instrumented" must not look identical.
-const EXPECTED_CAPTURE_PHASES: [&str; 20] = [
+const EXPECTED_CAPTURE_PHASES: [&str; 19] = [
     "snapshot.build",
     "snapshot.build.prelude",
     "snapshot.build.tiles",
     "snapshot.build.patches",
     "snapshot.build.tile_index",
-    "snapshot.build.links",
     "snapshot.build.populations",
     "snapshot.build.power",
     "snapshot.build.ledgers",

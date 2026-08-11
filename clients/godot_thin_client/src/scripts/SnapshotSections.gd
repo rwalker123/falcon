@@ -13,7 +13,7 @@ class_name SnapshotSections
 ## absent now runs every turn. The manifest is the replacement signal, published by the native
 ## decoder as a `PackedStringArray` of the sections that actually MOVED — not the ones transmitted.
 ## A measured steady-state delta (80x52, late forager tribe) names sixteen sections and leaves
-## `forage_patches`, `food_modules`, `discovered_sites`, `culture_layers`, `trade_links`,
+## `forage_patches`, `food_modules`, `discovered_sites`, `culture_layers`,
 ## `overlays.terrain`, `overlays.elevation`, `overlays.visibility`, `tiles.rivers` and
 ## `tiles.culture_layer` out — which is between 10 and 20 ms of `MapView` work per turn.
 ##

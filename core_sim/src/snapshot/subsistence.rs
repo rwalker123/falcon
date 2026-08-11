@@ -1,12 +1,13 @@
+use sim_runtime::MaterialPayoff;
+
 use super::*;
 use crate::fauna::{
     herd_capacity, herd_ecology, net_biomass_delta, reseeding_logistic_regrowth,
-    NO_RETREAT_STAGE_STAY,
+    NO_RETREAT_STAGE_STAY, ONE_UNIT_OF_BIOMASS,
 };
 use crate::forage::{
-    field_fodder, field_trade_goods, forage_per_worker_biomass, patch_ecology,
-    patch_fodder_per_biomass, patch_neglect_grace_remaining, patch_provisions_per_biomass,
-    patch_trade_per_biomass, tended_fodder, tended_trade_goods,
+    field_fodder, forage_per_worker_biomass, patch_ecology, patch_fodder_per_biomass,
+    patch_neglect_grace_remaining, patch_provisions_per_biomass, tended_fodder,
 };
 use crate::intensification::NO_BUILD_REMAINING_FRACTION;
 
@@ -200,7 +201,7 @@ pub(crate) struct HerdSnapshotInputs<'a> {
     /// **It survived the estimate tables; it is not a leftover of them.** The two pre-launch tables
     /// that used to be priced here are gone (`crate::forecast_query` answers them per band, per kit,
     /// on demand), but `hunt_forecast` still needs a party to resolve the fight that decides
-    /// `per_worker_yield` / `per_worker_trade` / `corral_yield` / `corral_trade` — and those are
+    /// `per_worker_yield` / `corral_yield` — and those are
     /// facts about the **herd**, published once for every viewer, with no band to ask.
     ///
     /// The herd row therefore has no band to ask, but it *can* ask the **quarry**: it is still
@@ -346,16 +347,9 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 corralled: entry.corralled,
                 corral_progress: entry.corral_progress,
                 per_worker_yield: forecast.per_worker_yield.provisions,
-                // **The per-herd, SPECIES-AWARE per-worker rate — this is the one a band preview
-                // clamps with**, not the cohort's species-blind `hunt_per_worker_provisions`. A wolf
-                // reads `0` food here and a positive trade rate, so the two components together are
-                // the honest throughput.
-                per_worker_trade: forecast.per_worker_yield.trade_goods,
                 // The Corral investment rung's (gross) payoff once penned; the preparing dip is
                 // `hunt_policy_ceilings[stance] × corral_build_fraction` (issue #442).
                 corral_yield: forecast.managed_yield.provisions,
-                // The trade half of that same `managed_yield` pair — a rung's payoff is a vector.
-                corral_trade: forecast.managed_yield.trade_goods,
                 // The pen as a managed population: what it EATS, and whether its keeper is paying.
                 // `pen_upkeep` is answered for EVERY herd — a projection ("what would this pen cost to
                 // feed?") for an unpenned one, the live demand for a penned one — on the same biomass
@@ -380,11 +374,35 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 provisions_per_biomass: herd
                     .map(|herd| fauna.hunt_yield_for(&herd.species).provisions_per_biomass)
                     .unwrap_or(0.0),
-                // No animal pays fodder; the field is present so both webs publish the same triple.
+                // No animal pays fodder; the field is present so both webs publish the same pair.
                 fodder_per_biomass: NO_ANIMAL_PAYS_FODDER,
-                trade_per_biomass: herd
-                    .map(|herd| fauna.hunt_yield_for(&herd.species).trade_goods_per_biomass)
-                    .unwrap_or(0.0),
+                // **WHAT A HUNT OF THIS HERD IS MADE OF** (arc #527) — the material twins of the two
+                // rates around them, and the reason an inedible quarry stops quoting nothing: a
+                // wolf's `provisions_per_biomass` and `per_worker_yield` are honestly `0`, and these
+                // carry its whole payload.
+                //
+                // **The species' OWN `hunt_yield.materials` rows** — the very rows
+                // `credit_material_yield` is handed at the take site — through the same two biomass
+                // terms every other field here uses. Nothing is re-derived, so a retune of a rate
+                // moves the quote and the payout together.
+                material_per_biomass: herd
+                    .map(|herd| {
+                        material_rates(
+                            fauna.hunt_materials_for(&herd.species),
+                            ONE_UNIT_OF_BIOMASS,
+                            FORECAST_OUTPUT_MULTIPLIER,
+                        )
+                    })
+                    .unwrap_or_default(),
+                per_worker_material: herd
+                    .map(|herd| {
+                        material_rates(
+                            fauna.hunt_materials_for(&herd.species),
+                            equipped_haul_rate,
+                            FORECAST_OUTPUT_MULTIPLIER,
+                        )
+                    })
+                    .unwrap_or_default(),
                 // **One hunter's BIOMASS throughput** — the term `systems::hunt_take`'s collection
                 // multiplies by the head-count, with no seasonal factor (the animal web has none).
                 // It is the crew half of the composition: the vector above turns a floor into a
@@ -469,9 +487,6 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // (`food_per_animal / sustainable_yield`), already converted the same way every other
                 // yield field is.
                 food_per_animal: forecast.body_mass_yield.provisions,
-                // The same quantum in trade goods — one animal's pelt. A wolf's `food_per_animal` is
-                // honestly `0`, so the client needs this to render its kill rhythm at all.
-                trade_per_animal: forecast.body_mass_yield.trade_goods,
                 // Herd staffing — the herders a MANAGED herd owes this turn to hold its tameness (0 for
                 // a wild/unmanaged herd, per `herd_herders_needed`), and how well it is staffed
                 // (`Herd::herded_fraction`, the labor system's per-turn write; `FULLY_HERDED` for a herd
@@ -489,8 +504,32 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // every ceiling above reads, so it cannot drift; `0` for a source that never offers
                 // Tame (penned/forage), which is exactly `SourceYieldForecast::pastoral_yield`.
                 pastoral_yield: forecast.pastoral_yield.provisions,
-                // The trade half of that same `pastoral_yield` pair — a rung's payoff is a vector.
-                pastoral_trade: forecast.pastoral_yield.trade_goods,
+                // **THE TWO INVESTMENT RUNGS' MATERIAL PAYOFFS** (arc #527) — the twins of
+                // `corral_yield`/`pastoral_yield` above, and the replacement for the retired
+                // `corral_trade`/`pastoral_trade`. Without them an inedible quarry's Tame and Corral
+                // rungs quote nothing at all: a wolf's food payoff on both is honestly `0`.
+                //
+                // Priced on the **same** MSY biomass the food quotes are — the forecast hands both
+                // over (`managed_yield_biomass` / `pastoral_yield_biomass`) precisely so a rung's two
+                // readouts cannot describe different harvests.
+                corral_material: herd
+                    .map(|herd| {
+                        material_rates(
+                            fauna.hunt_materials_for(&herd.species),
+                            forecast.managed_yield_biomass,
+                            FORECAST_OUTPUT_MULTIPLIER,
+                        )
+                    })
+                    .unwrap_or_default(),
+                pastoral_material: herd
+                    .map(|herd| {
+                        material_rates(
+                            fauna.hunt_materials_for(&herd.species),
+                            forecast.pastoral_yield_biomass,
+                            FORECAST_OUTPUT_MULTIPLIER,
+                        )
+                    })
+                    .unwrap_or_default(),
                 // The hay this pen drew last turn (Flora Roster F3) — the transient `Herd::fodder_draw`
                 // the corral-tend branch wrote, so the client can render "fed by hay" beside the
                 // `pen_upkeep` bread bill. `0.0` for an unpenned/absent herd or one no hay reached.
@@ -656,9 +695,9 @@ pub(crate) fn snapshot_forage_patches(
                 biomass: patch.biomass,
                 carrying_capacity: patch.carrying_capacity,
                 ecology_phase: patch.ecology_phase.as_str().to_string(),
-                // The plant web's forecast is food-only for now — its `trade_goods` component is
-                // `forage::PLANT_TRADE_FORECAST_NOT_YET_PROJECTED` (a known gap, #337), so these
-                // project the provisions component rather than shipping a false `0` trade line.
+                // The plant web's forecast is food-only for now — its fodder component is
+                // `forage::PLANT_FODDER_FORECAST_NOT_YET_PROJECTED` (a known gap, #426), so these
+                // project the provisions component rather than shipping a false `0` fodder line.
                 per_worker_yield: forecast.per_worker_yield.provisions,
                 // The Cultivate investment rung: the preparing dip + the payoff once cultivated.
                 tended_yield: forecast.managed_yield.provisions,
@@ -704,7 +743,32 @@ pub(crate) fn snapshot_forage_patches(
                     flora,
                     forage,
                 ),
-                trade_per_biomass: patch_trade_per_biomass(patch, tile_composition, flora, forage),
+                // **WHAT A GATHER OF THIS PATCH IS MADE OF** (arc #527) — the material twins of the
+                // two rates above, and the **rung-1** half of the material story: `FloraShareInfo`'s
+                // two payoffs quote a commitment at rungs 2 and 3, and a *wild* gather had nothing
+                // at all. A tile whose basket carries a cash crop read food-and-fodder-only while
+                // the turn banked its fibre and leaf.
+                //
+                // **Through `patch_material_yields`, the very rows `credit_material_yield` is handed
+                // at the take site** — which is also what makes the mixed-basket rule fall out
+                // rather than being restated: it decomposes per species, each carrying its own share
+                // *and its own exact reading*, and `material_yield_totals` then merges by material
+                // id for the RATE. Two species that both give fibre sum into one fibre rate, which
+                // is what a rate means; their readings are never averaged, because that would invent
+                // a plant that is not growing there. The readings ride the batches the take creates.
+                material_per_biomass: material_rates(
+                    &crate::forage::patch_material_yields(patch, tile_composition, flora, forage),
+                    ONE_UNIT_OF_BIOMASS,
+                    FORECAST_OUTPUT_MULTIPLIER,
+                ),
+                // The gatherer's own throughput, with the tile's **seasonal weight** folded in
+                // exactly as `per_worker_yield` folds it — so this is honestly EMPTY in a dead
+                // season, and a client must not divide by it.
+                per_worker_material: material_rates(
+                    &crate::forage::patch_material_yields(patch, tile_composition, flora, forage),
+                    forage_per_worker_biomass(equipped_gather_rate, seasonal),
+                    FORECAST_OUTPUT_MULTIPLIER,
+                ),
                 // **One gatherer's BIOMASS throughput** — `per_worker_biomass_capacity × seasonal`,
                 // the exact term `forage_take`'s worker cap multiplies by the head-count, through the
                 // shared helper so the wire and the take cannot disagree. `0` in a dead season, like
@@ -755,21 +819,7 @@ pub(crate) fn snapshot_forage_patches(
                 // stand on. That is the #433 rule, and getting it wrong is the exact defect #433
                 // fixed: a Sow quote that inherited the tended basket's conversion gain overstated by
                 // 10% on the reference tile and by the full 2× wherever weeding saturates.
-                tended_trade: tended_trade_goods(
-                    patch,
-                    tile_composition,
-                    forage,
-                    flora,
-                    FORECAST_OUTPUT_MULTIPLIER,
-                ),
                 tended_fodder: tended_fodder(
-                    patch,
-                    tile_composition,
-                    forage,
-                    flora,
-                    FORECAST_OUTPUT_MULTIPLIER,
-                ),
-                field_trade: field_trade_goods(
                     patch,
                     tile_composition,
                     forage,
@@ -875,6 +925,27 @@ fn patch_composition_info(
                         ..info.clone()
                     },
                 )
+        })
+        .collect()
+}
+
+/// **A source's material rows scaled onto one basis, in the WIRE's shape** — the sim's own
+/// [`crate::materials_config::material_yield_totals`] with its rows renamed for the snapshot.
+///
+/// `biomass` is what the rate is being stated *per*: [`ONE_UNIT_OF_BIOMASS`] gives the per-biomass
+/// rate a client composes a ceiling from, one hunter's haul gives the per-worker throughput. The
+/// band's output multiplier folds in for the reason it does on every other rate on the row — a
+/// material is another account of one harvest, not a parallel economy.
+fn material_rates(
+    rows: &[crate::materials_config::MaterialYieldDef],
+    biomass: f32,
+    output_multiplier: f32,
+) -> Vec<MaterialPayoff> {
+    crate::materials_config::material_yield_totals(rows, biomass, output_multiplier)
+        .into_iter()
+        .map(|payoff| MaterialPayoff {
+            material_id: payoff.material,
+            amount: payoff.amount,
         })
         .collect()
 }

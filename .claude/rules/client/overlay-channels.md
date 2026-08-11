@@ -15,7 +15,6 @@ Raster overlays streamed from `core_sim`:
 
 | Channel | Color | Source |
 |---------|-------|--------|
-| `logistics` | Blue | Throughput flow |
 | `sentiment` | Red | Morale/agency composite |
 | `corruption` | Amber | Ledger intensity + risk weights |
 | `culture` | Violet | Divergence magnitude |
@@ -25,8 +24,42 @@ Raster overlays streamed from `core_sim`:
 | `forage` | Wheat→green ramp, **+ one off-ramp barren tone** | The FORAGE (human food) layer's per-tile **capacity** (`TileState.forageCapacity`) |
 | `hunt_danger` | Danger orange (generic lerp) | **NOT a wire raster** — projected client-side, `attack × ferocity` per herd (see below) |
 | `threat` | Threat red (generic lerp) | **NOT a wire raster** — projected client-side, `attack × aggression` per herd (see below) |
+| `elevation` | Elevation ramp | `MapSection.elevationOverlay` — **and the DEFAULT channel** (below) |
 
 Legend rendering: min/avg/max values + channel description.
+
+**`elevation` is the DEFAULT channel** (`overlays.default_channel`, the native decoder's
+`DEFAULT_OVERLAY_CHANNEL`), which the Inspector's Overlays selector opens on when the player has
+chosen nothing. A default has to be REAL on every map: elevation rides `MapSection.elevationOverlay`,
+which worldgen publishes for every world, so it is never a placeholder, and relative height is
+legible with no knowledge of the simulation's vocabulary.
+
+**RETIRED: the `logistics` channel ("Logistics Throughput", blue), the top-level `contrast` alias,
+and the whole trade-link overlay.** The sim no longer publishes a `logisticsRaster` or a link
+network at all — `TradeLink`, `LogisticsLink` and the `Tile.mass` economy went with the dead trade
+subsystem (`docs/plan_contact_and_logistics.md` §As-built) — so both had stopped saying anything:
+
+- The **channel** kept rendering because the decoder had an absent-raster fallback that filled the
+  plane with tile TEMPERATURE. Min-max stretched and labelled "Sum of supply flow touching the tile
+  after current corruption multipliers", it was also the map's DEFAULT overlay: a mislabelled
+  temperature map was the first thing a player saw. That fallback's one real job — deriving the grid
+  extent from the tile list when no raster names it — survives as `tile_dims` in `snapshot_to_dict`,
+  which is what it was always measuring.
+- The **`contrast` key** was a top-level alias of `logistics_contrast` with **no GDScript consumer at
+  all** (`MapView._ingest_overlay_channels` reads only each channel's own `normalized` / `raw` /
+  `label` / `description` / `placeholder`), so it was deleted rather than re-pointed. Each channel's
+  own `contrast` array inside `overlays.channels[key]` is unaffected and equally unread — leave it
+  alone; it is the shape `insert_overlay_channel` publishes, not a per-channel decision.
+- The **trade-link overlay** was `AnnotationRenderer.draw_trade_overlay` plus MapView's three
+  reflective pass-throughs (`update_trade_overlay` / `set_trade_overlay_enabled` /
+  `set_trade_overlay_selection`), the `trade_links` snapshot ingest, and the Map tab's
+  `%LogisticsOverlayToggle`. With no links on the wire it drew the empty set every frame.
+
+**This is "removed, and here is what replaces it", not "removed".** Issue #232 rebuilds a
+route-network overlay against a network that actually exists, and the map-probe frame
+(`map_trade_overlay`) is what it earns back. Do not resurrect the old seam names for it — they were
+shaped around per-link `throughput` / `knowledge.openness` / `leak_timer`, which the new network
+does not have.
 
 **RETIRED: the `fog` channel ("Fog of Knowledge", slate, inverted knowledge coverage).** It was a
 selectable *data* overlay fed by `VisionSection.fogRaster`, and it had nothing to do with fog of war —
@@ -91,7 +124,7 @@ biomass, and it sits on nearly every land tile with its own per-biome distributi
 this channel are load-bearing:
 - **It is NOT a wire raster.** Graze rides `TileState` (per-entity diffed → zero delta bytes on an
   ungrazed turn), so the channel is **assembled in the native decoder from the tiles**
-  (`snapshot_dict`'s `OverlaySlices.pasture_capacity`), exactly as the logistics fallback already is.
+  (`snapshot_dict`'s `OverlaySlices.pasture_capacity`), rather than read off a `ScalarRaster`.
   Everything downstream — MapView's channel ingest, the OverlayPanel selector, the legend — then works
   with no special-casing. (Do **not** synthesize it client-side in MapView the way `province` is: a
   MapView-only channel never reaches OverlayPanel's selector, so it can't be picked.)
@@ -156,16 +189,41 @@ inversion is real; the fixture stages it deterministically for the harness.
 
 ---
 
-## The on-tile yield label carries ONE component (issue #337)
+## The on-tile yield label carries ONE component (issues #337 / #449 / #527)
 
-A hunt pays food AND trade goods, but the label sits on a hex a few pixels wide beside a floor mark
-and a `⚠` — there is no room for a second rate. `BandOverlayRenderer._draw_yield_label` therefore
-shows the product the species PAYS: food when `realized_yield` is non-zero (every forage patch and
-edible quarry, so those frames are unchanged), else the assignment's `realized_trade_yield` marked
-with `FoodIcons.TRADE_GOODS_GLYPH`. A hunted wolf pack reads `⇄+0.22 ⇊` instead of `+0.00`.
+A source can pay more than one account, but the label sits on a hex a few pixels wide beside a floor
+mark and a `⚠` — there is no room for a second rate. `BandOverlayRenderer._draw_yield_label` therefore
+shows the account the source PAYS, falling through **food → fodder → materials** in the wire's own
+order: food when `realized_yield` is non-zero (every forage patch and edible quarry, so those frames
+are unchanged), else the assignment's `fodder_yield` spelled with the WORD — a sown hay Field reads
+`+0.40 fodder ♻` instead of `+0.00` — else its `material_yield`, each material naming itself, so a
+hunted wolf pack reads `+0.22 hide ⇊`. **The word, never a borrowed glyph**: fodder has none, and a
+material has a NAME, which is a better mark than an arrow saying only "not food".
+
+**A TRADE branch stood between food and fodder until arc #527** — the wolf read `⇄+0.22 ⇊`, marked
+with the retired `FoodIcons.TRADE_GOODS_GLYPH` — and for one release after that the inedible quarry
+had no fall-through at all and read `+0.00`. The material arm is what closed it: `material_yield` is
+the RESOLVED take, what the source actually credited to the band's `MaterialStore` this turn.
+
+**THE MATERIAL ARM STATES EVERY MATERIAL.** Naming one of a vector picks a winner the sim does not
+name, and summing them is the retired trade axis under a new name. `_draw_pill_plate` sizes to the
+MEASURED run, so a two-material label is wide rather than clipped — a legibility question for
+`map_band_label_overlap`, not a reason to state less than the truth.
+
+**A HUNT call site passes NO fodder argument**, deliberately: no animal is harvested for feed, so a
+hunt row's fodder is a structural zero and passing it would offer the label a branch it can never
+take. **It DOES pass the materials.** `_yield_label_rate_text(value, fodder, materials)` is split out
+of the draw call so a harness can ask it — a draw renders to a canvas and no assertion can read a
+glyph back off one — and `_entry_materials` is its reader, the vector twin of `_entry_fodder` with
+the same "no realized fallback" reasoning.
+
 `YIELD_LABEL_COMPONENT_MIN` is the map twin of `SourceForecast.FOOD_FLOW_MIN` and is the test that
-decides which. Frame: `map_preview` `map_band_work` (the wolf label beside the deer's `+0.20`); the
-general render-only-when-non-zero rule lives in `labor-ui.md`.
+decides between the two SCALARS, applied to both so neither can show at a magnitude the other would
+be hidden at; the material arm is gated instead by `SourceForecast.signed_material_components`
+answering `""`, which is the HUD's own display floor and the same gate the work board's rate column
+tests. Frame: `map_preview` `map_band_work` (the hay Field's label beside the deer's `+0.20`), with
+`_assert_yield_label_component` driving the fall-through directly; the general
+render-only-when-non-zero rule lives in `labor-ui.md`.
 
 ### The floor MARK is resolved ONCE and appended verbatim
 

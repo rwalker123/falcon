@@ -274,7 +274,6 @@ fn an_expedition_floor_round_trips_through_the_mission_and_the_rollback() {
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
                 pending_reveal: Vec::new(),
-                carried_trade: 0.0,
                 kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Hunt),
             },
         ))

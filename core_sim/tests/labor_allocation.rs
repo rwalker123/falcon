@@ -48,7 +48,7 @@ use core_sim::{
     MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, Tile, TileRegistry, WellbeingConfigHandle, FOOD,
-    NO_IMPROVEMENT_UNDERWAY, TRADE_GOODS,
+    NO_IMPROVEMENT_UNDERWAY,
 };
 
 fn spawn_world() -> App {
@@ -820,19 +820,21 @@ fn non_sustain_forage_trips_overdraw_while_sustain_does_not() {
     );
 }
 
-/// **A DEEPER FLOOR SELLS MORE — because it takes more biomass, and for no other reason.**
+/// **A DEEPER FLOOR PAYS MORE — because it takes more biomass, and for no other reason.**
 ///
-/// The retired `market.trade_goods_multiplier` paid a `Deplete`-depth draw a 4× trade *bonus*; §4 of
+/// The retired `market.trade_goods_multiplier` paid a `Deplete`-depth draw a 4× *bonus*; §4 of
 /// `docs/plan_harvest_floor.md` deleted it, so **no option carries a factor of any kind**. What is
 /// left is the intensity ladder doing the work: a deeper floor leaves less standing, so it takes more
-/// stock, so it sells more.
+/// stock, so it pays more.
 ///
-/// Asserted as an **ordering that tracks the drawdown**, not a ratio against a lever: the trade
+/// Asserted as an **ordering that tracks the drawdown**, not a ratio against a lever: the payout
 /// ordering must match the biomass ordering exactly, which is a statement a bonus would break. It
-/// reads the **band's own `TRADE_GOODS` store** — the fixed-point account every ongoing harvest
-/// credits — so the compared numbers are the unrounded ones the sim really banks.
+/// reads the **band's own `FOOD` store** — the fixed-point account the take really credits — so the
+/// compared numbers are the unrounded ones the sim banks. (It read `TRADE_GOODS` until arc #527
+/// retired that axis; food is the account every basket pays into, so the property is now asserted
+/// on a source that cannot be composed away by a tile realizing no cash crop.)
 #[test]
-fn a_deeper_floor_sells_more_because_it_takes_more() {
+fn a_deeper_floor_pays_more_because_it_takes_more() {
     /// A crew large enough that the escapement ceiling is always the binding term. With a small
     /// crew every floor takes the same amount — the worker cap — and the ordering under test would
     /// be about labour rather than about the floor.
@@ -857,14 +859,14 @@ fn a_deeper_floor_sells_more_because_it_takes_more() {
             forage_alloc_policy(pos, CEILING_BOUND_CREW, floor),
         );
         app.world.run_system_once(advance_labor_allocation);
-        // Read the band's own fixed-point store: the point is the proportionality, and the retired
-        // integer faction stockpile would have rounded it away on a staple basket.
-        let trade = app
+        // Read the band's own fixed-point store: the point is the proportionality, and a rounded
+        // account would discard it on a thin basket.
+        let paid = app
             .world
             .get::<PopulationCohort>(band)
             .expect("the foraging band still exists")
             .stores
-            .get(TRADE_GOODS)
+            .get(FOOD)
             .to_f32();
         let after = app
             .world
@@ -872,28 +874,29 @@ fn a_deeper_floor_sells_more_because_it_takes_more() {
             .patch(pos)
             .expect("patch present")
             .biomass;
-        (trade, before - after)
+        (paid, before - after)
     };
 
-    let (deep_trade, deep_take) = run(0.15);
-    let (peak_trade, peak_take) = run(0.5);
-    let (strip_trade, strip_take) = run(0.0);
+    let (deep_paid, deep_take) = run(0.15);
+    let (peak_paid, peak_take) = run(0.5);
+    let (strip_paid, strip_take) = run(0.0);
 
     assert!(
-        peak_trade > 0.0,
-        "every harvest sells its basket's trade component: {peak_trade}"
+        peak_paid > 0.0,
+        "every harvest pays its basket's food component: {peak_paid}"
     );
     assert!(
-        strip_trade > deep_trade && deep_trade > peak_trade,
-        "a deeper floor sells more: strip {strip_trade} > deep {deep_trade} > peak {peak_trade}"
+        strip_paid > deep_paid && deep_paid > peak_paid,
+        "a deeper floor pays more: strip {strip_paid} > deep {deep_paid} > peak {peak_paid}"
     );
     // **And in exactly the proportion of the biomass taken.** A per-depth bonus would show up here
-    // as a trade ratio that outran the take ratio — which is precisely what the retired 4× markup did.
-    let trade_ratio = deep_trade / peak_trade;
+    // as a payout ratio that outran the take ratio — which is precisely what the retired 4× markup
+    // did.
+    let paid_ratio = deep_paid / peak_paid;
     let take_ratio = deep_take / peak_take;
     assert!(
-        (trade_ratio - take_ratio).abs() < 1e-3,
-        "the trade ordering must track the DRAWDOWN, with no factor of its own: trade ×{trade_ratio} \
+        (paid_ratio - take_ratio).abs() < 1e-3,
+        "the payout ordering must track the DRAWDOWN, with no factor of its own: paid ×{paid_ratio} \
          against take ×{take_ratio}"
     );
     assert!(

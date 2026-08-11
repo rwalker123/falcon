@@ -503,7 +503,6 @@ mod power_tests {
                         Tile {
                             position: UVec2::new(x, y),
                             element: ElementKind::Ferrite,
-                            mass: Scalar::one(),
                             temperature: ambient_temperature,
                             terrain: TerrainType::AlluvialPlain,
                             terrain_tags: TerrainTags::empty(),

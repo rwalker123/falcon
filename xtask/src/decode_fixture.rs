@@ -52,7 +52,6 @@ use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 use sim_schema::codec::{encode_delta_flatbuffer, encode_snapshot_flatbuffer};
 use sim_schema::state::campaign::*;
 use sim_schema::state::culture::*;
-use sim_schema::state::economy::*;
 use sim_schema::state::governance::*;
 use sim_schema::state::map::*;
 use sim_schema::state::population::*;
@@ -737,7 +736,6 @@ fn blank_tile() -> TileState {
         x: 0,
         y: 0,
         element: 0,
-        mass: 0,
         temperature: 0,
         terrain: TerrainType::AlluvialPlain,
         terrain_tags: TerrainTags::empty(),
@@ -753,16 +751,6 @@ fn blank_tile() -> TileState {
         graze_ecology_phase: 0,
         forage_capacity: 0.0,
         underlying_terrain: TerrainType::AlluvialPlain,
-    }
-}
-
-fn blank_logistics_link() -> LogisticsLinkState {
-    LogisticsLinkState {
-        entity: 0,
-        from: 0,
-        to: 0,
-        capacity: 0,
-        flow: 0,
     }
 }
 
@@ -914,7 +902,6 @@ fn seed_snapshot() -> WorldSnapshot {
 
     // --- vision / scalar rasters -----------------------------------------
     for raster in [
-        &mut s.logistics_raster,
         &mut s.sentiment_raster,
         &mut s.corruption_raster,
         &mut s.culture_raster,
@@ -925,11 +912,6 @@ fn seed_snapshot() -> WorldSnapshot {
     }
 
     // --- economy ---------------------------------------------------------
-    s.logistics = rows_of(blank_logistics_link());
-    s.trade_links = rows();
-    for link in &mut s.trade_links {
-        link.pending_fragments = rows();
-    }
     s.faction_inventory = rows();
     for inv in &mut s.faction_inventory {
         inv.inventory = rows();
@@ -1038,6 +1020,9 @@ fn seed_snapshot() -> WorldSnapshot {
         cohort.labor_assignments = rows();
         for assignment in &mut cohort.labor_assignments {
             assignment.arrival_schedule = vec![0.0f32; 4];
+            // The row's MATERIAL account (arc #527) — a nested repeated field, seeded for the same
+            // reason `arrival_schedule` is: an empty one is a field the decode guard cannot see.
+            assignment.material_yield = rows();
         }
         cohort.pending_reveal_x = vec![0u32; ROWS];
         cohort.pending_reveal_y = vec![0u32; ROWS];
@@ -1066,6 +1051,13 @@ fn seed_snapshot() -> WorldSnapshot {
         // field or the decode guard cannot see it. Saturation overwrites the values; only the LENGTH
         // matters here, and it is the shipped one so the fixture exercises a real-shaped curve.
         herd.regrowth_samples = vec![0.0; REGROWTH_CURVE_SAMPLES];
+        // What a hunt of this herd is MADE OF (arc #527) — two nested repeated fields, seeded for
+        // the same reason the curve above is.
+        herd.material_per_biomass = rows();
+        herd.per_worker_material = rows();
+        // …and the two investment rungs' material payoffs.
+        herd.corral_material = rows();
+        herd.pastoral_material = rows();
     }
     s.food_modules = rows();
     // **The kit roster**, and each entry's `jobs` / `item_ids` — repeated fields inside a repeated
@@ -1110,9 +1102,21 @@ fn seed_snapshot() -> WorldSnapshot {
     s.forage_patches = rows();
     for patch in &mut s.forage_patches {
         patch.owner = Some(0);
+        let mut composition = rows::<sim_schema::FloraShareInfo>();
+        for share in &mut composition {
+            // The crop picker's PER-MATERIAL cash quote (arc #527) — a nested repeated field, so it
+            // is seeded for the same reason `regrowth_samples` is: an empty one is a field the
+            // decode guard cannot exercise.
+            share.sow_material_payoff = rows();
+            share.cultivate_material_payoff = rows();
+        }
         // Shared on the state struct (a tile's basket, not a frame's), so the fixture's rows are
         // handed over as one — the encoded bytes are identical either way.
-        patch.composition = rows::<sim_schema::FloraShareInfo>().into();
+        patch.composition = composition.into();
+        // What a gather of this patch is MADE OF (arc #527) — two nested repeated fields, seeded for
+        // the same reason the curve below is.
+        patch.material_per_biomass = rows();
+        patch.per_worker_material = rows();
         // The TILE's per-rung vector (#426) — the plant twin of `hunt_policy_ceilings` above, and
         // seeded for the same reason: a repeated field the fixture leaves empty is a field the decode
         // guard cannot exercise, which is how four appended fields reached the client as zeros.
@@ -1367,7 +1371,6 @@ fn apply_structural_fixups(s: &mut WorldSnapshot) {
     s.moisture_raster.height = GRID_H;
 
     for raster in [
-        &mut s.logistics_raster,
         &mut s.sentiment_raster,
         &mut s.corruption_raster,
         &mut s.culture_raster,

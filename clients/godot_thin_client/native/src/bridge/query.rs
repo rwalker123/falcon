@@ -279,11 +279,25 @@ fn hunt_row_to_dict(row: &sim_runtime::HuntTripRow) -> VarDictionary {
     let _ = dict.insert("turns_to_fill", i64::from(row.turns_to_fill));
     let _ = dict.insert("bound", row.bound.as_str());
     let _ = dict.insert("delivers_food", row.delivers_food);
-    let _ = dict.insert("delivers_trade", row.delivers_trade);
     let _ = dict.insert("animals_taken", i64::from(row.animals_taken));
     let _ = dict.insert("delivered_food", f64::from(row.delivered_food));
-    let _ = dict.insert("delivered_trade", f64::from(row.delivered_trade));
     let _ = dict.insert("wasted_food", f64::from(row.wasted_food));
+    // WHAT THE TRIP LANDS, PER MATERIAL (arc #527) — and on an INEDIBLE quarry (a wolf) the ENTIRE
+    // payload, since `delivered_food` is 0 there and nothing else on this row can say what comes
+    // home. An ARRAY of `{ material_id, amount }` dicts, projected off the same carried biomass
+    // `delivered_food` is, so the two readouts of one trip cannot disagree.
+    //
+    // **AN EMPTY ARRAY IS "NO ROW", NEVER "ZERO"** — most quarries are made of nothing anyone builds
+    // with. The key is always inserted so a reader can tell "no projection sent" from "this raid
+    // brings home no material". **DO NOT SUM** the rows into one figure.
+    let mut materials = VarArray::new();
+    for payoff in &row.delivered_material {
+        let mut entry = VarDictionary::new();
+        let _ = entry.insert("material_id", payoff.material_id.as_str());
+        let _ = entry.insert("amount", f64::from(payoff.amount));
+        materials.push(&entry.to_variant());
+    }
+    let _ = dict.insert("delivered_material", &materials);
     dict
 }
 
@@ -303,8 +317,18 @@ fn denial_row_to_dict(row: &sim_runtime::DenialRow) -> VarDictionary {
     let _ = dict.insert("animals_killed", i64::from(row.animals_killed));
     let _ = dict.insert("delivered_food", f64::from(row.delivered_food));
     let _ = dict.insert("wasted_food", f64::from(row.wasted_food));
-    let _ = dict.insert("delivered_trade", f64::from(row.delivered_trade));
-    let _ = dict.insert("wasted_trade", f64::from(row.wasted_trade));
+    // WHAT THE RAID LANDS, PER MATERIAL (arc #527) — the same haul `delivered_food` converts, and on
+    // an inedible quarry the whole of it. An ARRAY of `{ material_id, amount }` dicts; EMPTY means
+    // "no row", never "zero". Its WASTE twin does not exist by decision — the waste is already
+    // legible as a percentage — so do not synthesize one.
+    let mut materials = VarArray::new();
+    for payoff in &row.delivered_material {
+        let mut entry = VarDictionary::new();
+        let _ = entry.insert("material_id", payoff.material_id.as_str());
+        let _ = entry.insert("amount", f64::from(payoff.amount));
+        materials.push(&entry.to_variant());
+    }
+    let _ = dict.insert("delivered_material", &materials);
     dict
 }
 

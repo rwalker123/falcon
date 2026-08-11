@@ -369,17 +369,38 @@ static func equipped_tier(kits: Array, axis_key: String) -> float:
 ## typed out here.**
 ##
 ## Spelling them by hand is how the first version shipped broken: it scaled `"per_worker"`, and the
-## key food actually reads is `per_worker_yield`. Trade repriced, food did not, and the sheet quoted
-## a five-fold trade change beside an unmoved food line. A literal cannot be wrong in a way the
+## key food actually reads is `per_worker_yield`. One account repriced, food did not, and the sheet
+## quoted a five-fold change beside an unmoved food line. A literal cannot be wrong in a way the
 ## compiler or a rename would catch; a constant reference can.
 ##
 ## **`per_worker_biomass` carries more than its own account.** On the forage web `forecast_inputs`
-## DERIVES trade and fodder from it (`carry × <account>_per_biomass`), so scaling it reprices those
-## two for free; on the hunt web trade is published in its own right and needs its own entry.
+## DERIVES fodder from it (`carry × fodder_per_biomass`), so scaling it reprices that account for
+## free. (A third entry rode this list for the retired trade axis, arc #527.)
+##
+## **THE MATERIAL ACCOUNT IS NOT ON THIS LIST BECAUSE IT IS NOT A SCALAR** — see
+## `SOURCE_PER_WORKER_VECTOR_KEYS` below, which is the same substitution one type further out.
 const SOURCE_PER_WORKER_KEYS := [
 	SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY,
 	SourceForecast.FORECAST_PER_WORKER_KEY,
-	SourceForecast.FORECAST_PER_WORKER_TRADE_KEY,
+]
+
+## **THE SAME REPRICING, FOR THE ACCOUNT THAT TRAVELS AS A VECTOR.** `per_worker_material` is
+## `[{material_id, amount}]`, so it cannot ride the list above: `float(out[key]) * ratio` throws on an
+## `Array`, which is why "just add the key" is the wrong repair and why the account sat unrepriced
+## through the whole life of the kit seam.
+##
+## **The bug it closes is the one this file's other constant already records for food.** A worn or
+## lesser kit produced a correctly reduced FOOD line beside an unmoved HIDE line — `expected_materials`
+## clamps `min(workers × per_worker_material, ceiling)` off whatever rate reaches it, so the sheet
+## over-stated a raid's materials with a worse kit and under-stated them with a better one, on BOTH
+## webs (a hunt's pelts, a gather's fibre).
+##
+## **ONE RATIO FOR EVERY ROW**, through `SourceForecast.scaled_material_rows` rather than a loop
+## written here: the materials are one biomass flow through a fixed per-biomass vector, exactly as the
+## food and fodder accounts are, so a kit that moves half the biomass moves half of each of them. A
+## per-material factor would be a claim about equipment the wire does not make.
+const SOURCE_PER_WORKER_VECTOR_KEYS := [
+	SourceForecast.FORECAST_PER_WORKER_MATERIAL_KEY,
 ]
 const SOURCE_PER_WORKER_BIOMASS := SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY
 const SOURCE_ENGAGE_RATE := SourceForecast.FORECAST_ENGAGE_RATE_KEY
@@ -438,6 +459,12 @@ static func repriced_source(src: Dictionary, prefix: String, carry: float, refer
 			var full: String = prefix + String(key)
 			if out.has(full):
 				out[full] = float(out[full]) * ratio
+		# …and the same ratio through the vector account, row by row. Absent on a source that pays no
+		# material, which skips without a special branch exactly as the retreat below does.
+		for key in SOURCE_PER_WORKER_VECTOR_KEYS:
+			var full: String = prefix + String(key)
+			if out.has(full):
+				out[full] = SourceForecast.scaled_material_rows(out[full], ratio)
 	# **THE RETREAT, ON ITS OWN FIELD.** Absent = no retreat stage (a patch, a pen), which skips without
 	# a special branch: there is no key to substitute and the take arms read the wire's own `1`.
 	var stay_key := prefix + SOURCE_STAY_FRACTION

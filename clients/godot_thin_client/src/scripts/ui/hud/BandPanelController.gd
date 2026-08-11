@@ -584,16 +584,22 @@ func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContaine
     var outlook: Control = _build_food_outlook_block(band,
         _band_zone_tier != HudWorkVocab.BAND_ZONE_TIER_TALL)
     var workforce := _build_workforce_block(band)
-    # **PEOPLE IS THE ONE BLOCK THAT MOVES, and its column is the WHOLE of the second split.** With a
-    # chart the larder column already carries two blocks and PEOPLE belongs with WORKFORCE; without
-    # one it would be a lone vitals label against the pair, so PEOPLE crosses over to keep the two
-    # columns level. One boolean, two hand-measured layouts — not a reflow.
-    var people_column: int = BAND_COLUMN_PEOPLE if outlook != null else BAND_COLUMN_LARDER
+    # **ONE AUTHORED SPLIT: everything but WORKFORCE on the left.** It was TWO — PEOPLE crossed to the
+    # WORKFORCE column whenever a chart was built, because the larder column then carried two blocks
+    # already — and arc #527's retirement of the Trade row took ~26px out of the only block that
+    # column could pay with, which put the charted pairing at 220/326 (67%) against a 75% floor. Of the
+    # eight orderings the four blocks admit, `vitals + PEOPLE + outlook | WORKFORCE` is the best at
+    # **290/256 = 88%**, and it is also the best CHARTLESS one (**174/256 = 68%**) — so the two
+    # hand-measured layouts collapsed into one and the boolean went with them.
+    #
+    # **RE-MEASURE ALL EIGHT BEFORE MOVING A BLOCK.** The pairing reads as *the larder | the people*,
+    # which is defensible on its own terms and is not a principle that would survive the blocks
+    # changing size — this one is simply the arrangement that fits.
     var blocks: Array[Dictionary] = []
     if vitals != null:
         blocks.append({"control": vitals, "column": BAND_COLUMN_LARDER})
     if people != null:
-        blocks.append({"control": people, "column": people_column})
+        blocks.append({"control": people, "column": BAND_COLUMN_LARDER})
     if outlook != null:
         blocks.append({"control": outlook, "column": BAND_COLUMN_LARDER})
     blocks.append({"control": workforce, "column": BAND_COLUMN_PEOPLE})
@@ -690,9 +696,9 @@ func _band_zone_column_count() -> int:
         return 1
     return _panel.band_zone_columns()
 
-## The vitals readout — Food, Fodder, Trade, Morale and Growth, of which Food / Trade / Morale /
-## Growth carry the click-to-expand disclosures (Fodder is a plain row, and there is no Output row:
-## productivity reads on the WORK zone's head). Which of the optional rows appear is the producer's
+## The vitals readout — Food, Fodder, Morale and Growth, of which Food / Morale / Growth carry the
+## click-to-expand disclosures (Fodder is a plain row, and there is no Output row: productivity reads
+## on the WORK zone's head). Which of the optional rows appear is the producer's
 ## call — see `BandDetailLines.unit_summary_lines` and the `compact` note below. A
 ## FRESH RichTextLabel each render, so its `meta_clicked` is wired here (bound to ITSELF as the
 ## popover's anchor). The tint context is likewise fresh per render: it is built here, filled by
@@ -706,10 +712,10 @@ func _build_vitals_label(band: Dictionary) -> RichTextLabel:
     detail_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     _disclosures.wire_label(detail_label)
     var ctx := DetailFormat.Context.new()
-    # The SHORT tier still re-spends its two optional ROWS: Trade is dropped (it reads on the WORK
-    # zone's head) and the hay larder MERGES onto the Food line. Neither is a loss of content — one
-    # fact moves surface, the other changes shape — which is why this survives the rule that a tier may
-    # not delete a BLOCK. See `band-readouts.md` for the clause and the width it was measured against.
+    # The SHORT tier re-spends its optional ROW: the hay larder MERGES onto the Food line. That is a
+    # change of shape rather than a loss of content, which is why it survives the rule that a tier may
+    # not delete a BLOCK. (It also dropped the Trade row, which arc #527 retired outright.) See
+    # `band-readouts.md` for the clause and the width it was measured against.
     # No Position row either: the coordinates are IDENTITY and the panel HEADER states them
     # (`_panel_position_label`), so a vitals row would be a second telling — and one this zone pays
     # for in height. The drawer host keeps it (it has no header and renders foreign bands).
@@ -1094,7 +1100,7 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
     var idle := _band_labor.effective_idle(band)
     var models := _work_source_models(band, idle)
     col.add_child(_build_work_head(band, models,
-        _work_component_sum(models, "rate"), _work_component_sum(models, "trade_rate"),
+        _work_component_sum(models, "rate"),
         _work_component_sum(models, "fodder_rate")))
     # BEFORE the chips are built, so the pressed chip is always one that actually renders.
     _reconcile_work_filter(models)
@@ -1195,7 +1201,7 @@ func _build_work_board(band: Dictionary, page: Array, cols: int, rows_per_col: i
     return board
 
 ## The zone's head row: WORK · n sources · the band's total rate(s) · the `⋯` section menu.
-func _build_work_head(band: Dictionary, models: Array, income: float, trade_income: float,
+func _build_work_head(band: Dictionary, models: Array, income: float,
         fodder_income: float) -> HBoxContainer:
     # The two sorts are a mutually exclusive SET, so they carry the radio mark and `Unassign all` — an
     # action, not a member — does not. Without it the menu offered two sorts and stated neither, which
@@ -1220,23 +1226,9 @@ func _build_work_head(band: Dictionary, models: Array, income: float, trade_inco
     HudWidgets.set_label_tooltip(total, HudWorkVocab.WORK_TOTAL_TOOLTIP)
     head.add_child(total)
     head.move_child(total, head.get_child_count() - 2)
-    # THE TRADE TOTAL IS A SIBLING, NEVER A SUMMAND (issue #337). The food figure beside it is
-    # `actual_yield`-denominated because that is the sim's larder identity (`larder_delta ==
-    # food_income − food_consumption − pen_feed_upkeep`); folding trade in would break the one
-    # invariant this arc preserved. But leaving it out entirely made the header VISIBLY not add up —
-    # a trade-only wolf row sat directly beneath a total that excluded it, so the one source paying
-    # only trade read as contributing nothing. So: the arc's own rule, one level up. Rendered only
-    # when non-zero, hence a band with no trade-paying source renders exactly as it did before.
-    if SourceForecast.has_component(trade_income):
-        var trade_total := Label.new()
-        trade_total.text = SourceForecast.format_trade(trade_income)
-        trade_total.add_theme_font_size_override("font_size", HudWorkVocab.ZONE_HEAD_FONT_SIZE)
-        trade_total.add_theme_color_override("font_color", HudStyle.HEALTHY)
-        HudWidgets.set_label_tooltip(trade_total, HudWorkVocab.WORK_TRADE_TOTAL_TOOLTIP)
-        head.add_child(trade_total)
-        head.move_child(trade_total, head.get_child_count() - 2)
-    # THE FODDER TOTAL IS A SIBLING TOO, NEVER A SUMMAND (issue #449) — the same argument the trade
-    # total makes one block up, in the third account. The food figure beside it is
+    # **THE TRADE TOTAL IS RETIRED** (arc #527) with the account it summed. Its argument survives in
+    # the fodder total below, which is the same argument in the account that remains.
+    # THE FODDER TOTAL IS A SIBLING, NEVER A SUMMAND (issue #449). The food figure beside it is
     # `actual_yield`-denominated because that is the sim's larder identity, and fodder credits the
     # band's FODDER store and never the larder, so folding it in would break exactly that identity.
     # But leaving it out entirely made the header visibly not add up on a band working a sown hay
@@ -1301,18 +1293,17 @@ func _build_work_chips(models: Array) -> HFlowContainer:
             HudWorkVocab.WORK_CHIP_READY_FORMAT % ready.size(), false))
     return chips
 
-## A filter chip's rate face: this kind's food, trade and fodder totals, each rendered only when
-## non-zero. A forage chip covering only hay-bearing patches states their feed rather than a `0.00`
-## claiming the kind produces nothing (issue #449).
+## A filter chip's rate face: this kind's food and fodder totals, each rendered only when non-zero. A
+## forage chip covering only hay-bearing patches states their feed rather than a `0.00` claiming the
+## kind produces nothing (issue #449).
 func _work_chip_rate_text(models: Array) -> String:
     return SourceForecast.magnitude_components(
-        _work_component_sum(models, "rate"), _work_component_sum(models, "trade_rate"),
-        _work_component_sum(models, "fodder_rate"))
+        _work_component_sum(models, "rate"), _work_component_sum(models, "fodder_rate"))
 
 ## Σ of ONE yield component over a model set — the zone's single summing primitive, so the head's
 ## three totals and every chip's three totals are added up the same way over the same rows and cannot
-## drift. `key` names a model's yield component (`"rate"` = food, `"trade_rate"`, `"fodder_rate"`),
-## never a rate itself.
+## drift. `key` names a model's yield component (`"rate"` = food, `"fodder_rate"`), never a rate
+## itself.
 func _work_component_sum(models: Array, key: String) -> float:
     var total := 0.0
     for m in models:
@@ -1383,10 +1374,8 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var rate := Label.new()
     # ONE COMPONENT in this fixed-width column (issue #337): a board row has a single narrow rate slot
     # beside the marks and the stepper, so it shows the product the source actually PAYS — food when
-    # there is food (every forage patch and every edible quarry, so this is unchanged for them), else
-    # the trade rate marked with `FoodIcons.TRADE_GOODS_GLYPH`. A wolf row therefore reads `⇄+0.22`
-    # rather than the `+0.00` that said the hunt was worth nothing. The inspector strip below states
-    # BOTH components in full, which is where a deer's trade shows.
+    # there is food (every forage patch and every edible quarry), else its FODDER rate. The inspector
+    # strip below states both components in full.
     rate.text = _work_row_rate_text(model)
     rate.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_RATE_WIDTH, 0.0)
     rate.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -1578,38 +1567,47 @@ func _work_inspector_height(_model: Dictionary) -> float:
     return HudWorkVocab.WORK_INSPECTOR_POLICY_HEIGHT if _work_floor_open \
         else HudWorkVocab.WORK_INSPECTOR_HEIGHT
 
-## The board row's single-slot rate string — food when the source pays food, else its trade rate with
-## the trade glyph, else its FODDER rate spelled with the word (issue #449), and "" when the row
-## carries no confirmed yield at all. One definition, since the row and its severity reading must
-## agree on which number is being shown.
+## The board row's single-slot rate string — food when the source pays food, else its FODDER rate
+## spelled with the word (issue #449), and "" when the row carries no confirmed yield at all. One
+## definition, since the row and its severity reading must agree on which number is being shown.
 ##
-## Fodder is the LAST fallback because it is the last account the wire states, and it wears the word
-## rather than a glyph for the reason `SourceForecast.yield_components` gives: fodder has none, and
-## borrowing another account's mark would say the wrong thing. A sown hay Field pays neither food nor
-## trade, so without this branch its row headlined `+0.00` while it fed the band's pens every turn.
+## Fodder wears the word rather than a glyph for the reason `SourceForecast.yield_components` gives:
+## fodder has none, and borrowing another account's mark would say the wrong thing. A sown hay Field
+## pays no food, so without this branch its row headlined `+0.00` while it fed the band's pens every
+## turn. (A trade branch sat between the two until arc #527 retired that account.)
+## **THE ONE-SLOT FALL-THROUGH: food → fodder → materials**, in the wire's own order. The column is
+## one fixed width, so it states the account the source actually PAYS rather than a food zero on a
+## source that pays no food.
+##
+## **THE MATERIAL ARM STATES EVERY MATERIAL, NOT THE FIRST ONE** (arc #527 follow-up). Picking one of
+## a vector would name a winner the sim does not name, and summing them is the retired trade axis
+## under a new name; a species pays few materials, and the column's width is a MINIMUM rather than a
+## clip, so the honest reading is the one that fits. The inspector strip beside the row states the
+## whole vector too, in full.
 func _work_row_rate_text(model: Dictionary) -> String:
     if not bool(model.get("has_yield", false)):
         return ""
     var food := float(model.get("rate", 0.0))
-    var trade := float(model.get("trade_rate", 0.0))
     var fodder := float(model.get("fodder_rate", 0.0))
-    if not SourceForecast.has_component(food):
-        if SourceForecast.has_component(trade):
-            return FoodIcons.TRADE_GOODS_GLYPH + SourceForecast.format_signed(trade)
-        if SourceForecast.has_component(fodder):
-            return SourceForecast.PICKER_FODDER_PRODUCT_FORMAT % SourceForecast.format_signed(fodder)
+    if not SourceForecast.has_component(food) and SourceForecast.has_component(fodder):
+        return SourceForecast.PICKER_FODDER_PRODUCT_FORMAT % SourceForecast.format_signed(fodder)
+    if not SourceForecast.has_component(food) and not SourceForecast.has_component(fodder):
+        # `""` is "this source pays no material", so a source that genuinely produced nothing in
+        # every account still falls through to its honest food zero.
+        var materials := SourceForecast.signed_material_components(model.get("material_rows", []))
+        if materials != "":
+            return materials
     return SourceForecast.format_signed(food)
 
 ## The inspector's one-sentence readout: rate · the floor in WORDS · status · assigned workers.
 func _work_inspector_sentence(model: Dictionary) -> String:
     var parts: Array[String] = []
     if bool(model.get("has_yield", false)):
-        # All three products, each only when non-zero (issues #337 / #449): an inedible quarry's
-        # sentence leads with its trade rate and a hay Field's with its fodder rate, instead of either
-        # asserting "+0.00 /turn".
+        # Both products, each only when non-zero (issue #449): a hay Field's sentence leads with its
+        # fodder rate instead of asserting "+0.00 /turn".
         parts.append(SourceForecast.yield_components(
-            float(model.get("rate", 0.0)), float(model.get("trade_rate", 0.0)),
-            float(model.get("fodder_rate", 0.0))))
+            float(model.get("rate", 0.0)), float(model.get("fodder_rate", 0.0)),
+            SourceForecast.YIELD_ACCOUNT_FOOD, model.get("material_rows", [])))
     # The floor as the player set it — `50% left standing`, the same phrasing the picker's tooltips
     # and the slider caption use, so one number is never worded two ways.
     parts.append(HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(
@@ -1737,13 +1735,15 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "key": String(key), "kind": kind, "icon": icon, "icon_texture": icon_texture,
             "label": label,
             "rate": float(yld.get("rate", 0.0)),
-            # The row's TRADE component (issue #337), 0 when the source pays none. Carried so the
-            # inspector sentence states the same two products the row headline does.
-            "trade_rate": float(yld.get("trade_rate", 0.0)),
-            # Its FODDER twin (issue #449), 0 on every hunt row and on any patch that grows no feed.
+            # The row's FODDER component (issue #449), 0 on every hunt row and on any patch that
+            # grows no feed.
             # Carried so the row's one-slot rate, the header total and the inspector sentence all state
             # a hay Field's whole product instead of reading it as a dead tile.
             "fodder_rate": float(yld.get("fodder_rate", 0.0)),
+            # …and its MATERIAL component, a VECTOR (arc #527 follow-up). Empty on every row that
+            # pays no material; an inedible quarry's whole product is here, which is what stops a
+            # hunted wolf pack reading `+0.00 /turn` on the board it is commanded from.
+            "material_rows": yld.get("material_rows", []),
             "has_yield": bool(m.get("has_yield", false)),
             "workers": workers, "pending": pending, "warn": bool(yld.get("warn", false)),
             "under_herded": under_herded,
@@ -1868,33 +1868,22 @@ func _work_name_sorts_before(a: Dictionary, b: Dictionary) -> bool:
         return by_label < 0
     return String(a.get("key", "")) < String(b.get("key", ""))
 
-## "Sort by yield", in THREE TIERS (issues #337 / #449) — the account order the rest of the arc uses:
-## every FOOD-paying source first, ordered by its food figure descending; then the sources paying
-## TRADE and no food, by their trade figure descending; then the rest by their FODDER figure
-## descending.
+## "Sort by yield", in TWO TIERS (issues #337 / #449) — the account order the rest of the arc uses:
+## every FOOD-paying source first, ordered by its food figure descending; then the rest by their
+## FODDER figure descending.
 ##
-## **THIS IS NOT A RAW MAGNITUDE SORT, AND MUST NOT BE "FIXED" INTO ONE.** Ranking a wolf's 0.22 trade
-## above a patch's 0.15 food compares two quantities the sim publishes NO exchange rate between, and
-## under a control labelled "sort by yield" that ordering asserts the wolf is the more productive
-## source — a claim the game does not make and the player cannot check. Tiering asserts nothing about
-## an exchange rate; it only fixes the ORDER OF ATTENTION.
+## **THIS IS NOT A RAW MAGNITUDE SORT, AND MUST NOT BE "FIXED" INTO ONE.** Ranking a hay Field's 0.40
+## fodder above a patch's 0.15 food compares two quantities the sim publishes NO exchange rate
+## between, and under a control labelled "sort by yield" that ordering asserts the meadow is the more
+## productive source — a claim the game does not make and the player cannot check. Tiering asserts
+## nothing about an exchange rate; it only fixes the ORDER OF ATTENTION.
 ##
 ## Why food takes the first tier is NOT "food is worth more per unit". It is that the larder is the
-## live survival constraint the player is deciding against every turn, while trade is still
-## economically thin — the design doc's own Deferred section says trade goods do little yet, and this
-## arc commits only to PRODUCING them honestly. Revisit the tiering when trade acquires a sink, not
-## before. (Sorting on food ALONE was the original bug: it interleaved trade-only sources among the
-## zero-food rows at the bottom of the board, off page one on a busy band, which is the same "an
-## inedible quarry is worth nothing" reading the per-row work removed.)
-##
-## **THE THIRD TIER IS NOT DECORATION.** A sown hay Field publishes `rate == 0.0` AND
-## `trade_rate == 0.0`, so under the two-tier rule it landed in the trade tier at 0.0, tied with every
-## source paying nothing at all and separated from them only by the `key` tiebreak — i.e. below every
-## trade-only wolf and among the dead rows. That is verbatim the failure the tiering was introduced to
-## remove, one account further out: on a busy band the one source feeding the pens sat at the bottom
-## of the board, off page one. Fodder ranks THIRD for the same reason food ranks first and for no
-## other: it is the account furthest from the survival constraint the player decides against, feeding
-## the pens rather than the people. It is not a claim that a bale is worth less than a hide.
+## live survival constraint the player is deciding against every turn, while fodder feeds the pens
+## rather than the people. (Sorting on food ALONE was the original bug: it interleaved non-food
+## sources among the zero-food rows at the bottom of the board, off page one on a busy band, which is
+## the same "a source that pays no calories is worth nothing" reading the per-row work removed. A
+## THIRD tier stood between these two for the trade account until arc #527 retired it.)
 ##
 ## A source paying into NO account has a fodder figure of 0.0 and therefore sorts to the BOTTOM of the
 ## fodder tier, i.e. last overall — unchanged in every board that grows no hay.
@@ -1915,14 +1904,6 @@ func _work_sorts_before(a: Dictionary, b: Dictionary) -> bool:
     if a_pays_food:
         if float(a.get("rate", 0.0)) != float(b.get("rate", 0.0)):
             return float(a.get("rate", 0.0)) > float(b.get("rate", 0.0))
-        return String(a.get("key", "")) < String(b.get("key", ""))
-    var a_pays_trade := SourceForecast.has_component(float(a.get("trade_rate", 0.0)))
-    var b_pays_trade := SourceForecast.has_component(float(b.get("trade_rate", 0.0)))
-    if a_pays_trade != b_pays_trade:
-        return a_pays_trade
-    if a_pays_trade:
-        if float(a.get("trade_rate", 0.0)) != float(b.get("trade_rate", 0.0)):
-            return float(a.get("trade_rate", 0.0)) > float(b.get("trade_rate", 0.0))
         return String(a.get("key", "")) < String(b.get("key", ""))
     if float(a.get("fodder_rate", 0.0)) != float(b.get("fodder_rate", 0.0)):
         return float(a.get("fodder_rate", 0.0)) > float(b.get("fodder_rate", 0.0))

@@ -104,9 +104,8 @@ const NEAR_HERD_ID := "game_deer_07"
 const FAR_HERD_ID := "game_boar_04"
 const FAR_HERD_X := 52
 const FAR_HERD_Y := 20
-## One Wild Boar's worth of food, and of trade goods — the quanta the raid table is built from.
+## One Wild Boar's worth of food — the quantum the raid table is built from.
 const FOOD_PER_ANIMAL := 4.0
-const TRADE_PER_ANIMAL := 0.5
 ## The raid table's fixed shape: every party size takes this many animals over this many turns. Flat
 ## on purpose — this harness asserts a HANDLE, not a forecast, so the numbers only have to be
 ## coherent enough that the compose sheet renders a viable raid with an enabled Send.
@@ -546,8 +545,7 @@ func _far_herd_fixture() -> Dictionary:
 		"population": 140, "ecology_phase": "thriving", "huntable": true,
 		"per_worker_yield": 0.8, "food_per_animal": FOOD_PER_ANIMAL,
 		"biomass": 90.0, "carrying_capacity": 100.0,
-		"provisions_per_biomass": 0.0075, "trade_per_biomass": 0.00125,
-		"per_worker_trade": 0.12, "trade_per_animal": TRADE_PER_ANIMAL,
+		"provisions_per_biomass": 0.0075,
 	}
 	herd["hunt_trip_estimates"] = _raid_table()
 	return herd
@@ -568,10 +566,8 @@ func _raid_table() -> Dictionary:
 				"party_workers": workers,
 				"turns_to_fill": RAID_TURNS,
 				"delivers_food": true,
-				"delivers_trade": true,
 				"animals_taken": RAID_ANIMALS,
 				"delivered_food": float(RAID_ANIMALS) * FOOD_PER_ANIMAL,
-				"delivered_trade": float(RAID_ANIMALS) * TRADE_PER_ANIMAL,
 				"wasted_food": 0.0,
 			}
 	return table

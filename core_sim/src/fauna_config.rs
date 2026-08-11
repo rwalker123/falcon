@@ -784,7 +784,6 @@ fn default_raid_yield_forfeit_fraction() -> f32 {
 #[serde(default)]
 pub struct HuntConfig {
     pub provisions_per_biomass: f32,
-    pub trade_goods_per_biomass: f32,
     pub pursuit_radius: u32,
     pub pursuit_tiles_per_turn: u32,
     pub max_pursuit_turns: u32,
@@ -794,7 +793,6 @@ impl Default for HuntConfig {
     fn default() -> Self {
         Self {
             provisions_per_biomass: 0.02,
-            trade_goods_per_biomass: 0.005,
             pursuit_radius: 1,
             pursuit_tiles_per_turn: 3,
             max_pursuit_turns: 12,
@@ -814,23 +812,25 @@ impl Default for HuntConfig {
 /// Mirrors the flora roster's per-species vector (`FloraSpecies::yield`), so the two food webs stay
 /// the same shape.
 ///
-/// Each component is `None` ⇒ *"use the global default"* ([`HuntConfig::provisions_per_biomass`] /
-/// [`HuntConfig::trade_goods_per_biomass`]), which is what keeps every species that omits the block
+/// The rate component is `None` ⇒ *"use the global default"*
+/// ([`HuntConfig::provisions_per_biomass`]), which is what keeps every species that omits the block
 /// byte-identical on its FOOD component. An explicit **`0.0` is a real, meaningful value** — it is
-/// how a wolf says *"you do not eat me"*. That distinction is why the fields are `Option`, not bare
-/// floats with a `0` sentinel.
+/// how a wolf says *"you do not eat me"*. That distinction is why the field is `Option`, not a bare
+/// float with a `0` sentinel.
+///
+/// **`trade_goods_per_biomass` is RETIRED** (arc #527) — a wolf's pelt is `materials`, and already
+/// was, on the row below.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct HuntYieldDef {
     pub provisions_per_biomass: Option<f32>,
-    pub trade_goods_per_biomass: Option<f32>,
     /// **What the carcass is MADE OF** — hide, bone, sinew — per unit of biomass carried home
     /// (`docs/plan_crafting_and_materials.md` §2). Authored per row and tunable, and **the same
     /// shape the flora roster's `yield.materials` carries**: nothing in the materials model is
     /// fauna-shaped, so a plant and a deposit state their yield the same way.
     ///
-    /// An empty list is the ordinary case for a species nothing is made out of. Unlike the two rate
-    /// components above there is **no global to fall back to**: a material is a *thing*, and there
+    /// An empty list is the ordinary case for a species nothing is made out of. Unlike the rate
+    /// component above there is **no global to fall back to**: a material is a *thing*, and there
     /// is no species-blind statement of which thing an animal gives.
     ///
     /// Validated against the materials table at load
@@ -845,36 +845,48 @@ pub struct HuntYieldDef {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HuntYield {
     pub provisions_per_biomass: f32,
-    pub trade_goods_per_biomass: f32,
+    /// **Does a carcass of this species give any MATERIAL at all** — the one thing the roster's
+    /// `materials` list can say that a per-biomass *rate* cannot. It is carried here because this
+    /// type is the resolved vector every take and every forecast reads, and it has to be able to
+    /// answer [`HuntYield::yields_nothing`] without holding the roster.
+    ///
+    /// A `bool` rather than the list itself for the same reason the rate beside it is a bare float:
+    /// this vector is `Copy` and is threaded through every take path, and *"is there anything here
+    /// at all"* is the only question asked of it. Resolved once, at [`FaunaConfig::hunt_yield_for`]
+    /// — derived from the roster row, never authored beside it.
+    pub yields_materials: bool,
 }
 
 impl HuntYield {
-    /// **Is this species food?** `edible` and `tradeable` are **DERIVED, never stored** — one source
-    /// of truth (the vector), and the flags are a comparison against it. A stored `edible: bool`
-    /// beside a `provisions_per_biomass` is two statements of one fact that can drift.
+    /// **Is this species food?** `edible` is **DERIVED, never stored** — one source of truth (the
+    /// vector), and the flag is a comparison against it. A stored `edible: bool` beside a
+    /// `provisions_per_biomass` is two statements of one fact that can drift.
     pub fn edible(self) -> bool {
         self.provisions_per_biomass > 0.0
     }
 
-    /// **Is this species worth taking for trade?** See [`HuntYield::edible`] for why this is derived.
-    pub fn tradeable(self) -> bool {
-        self.trade_goods_per_biomass > 0.0
-    }
-
-    /// **The degenerate species: a pure pest, worth neither meat nor pelt.** No shipped species is
-    /// this today — the wolf trades even though it is inedible — but the picker rule
-    /// ([`crate::fauna::hunt_policies_for`]) is stated in terms of it so it derives correctly the day
-    /// one arrives, instead of being retro-fitted then.
-    pub fn yields_nothing(self) -> bool {
-        !self.edible() && !self.tradeable()
-    }
-
-    /// **THE conversion — one call that yields BOTH products.** Converting one product and forgetting
-    /// the other is the precise failure mode this arc risks across ~20 readout sites, so the two
-    /// components are never available separately from a take: you get the pair or nothing.
+    /// **The degenerate species: a pure pest, worth neither meat nor hide.** No shipped species is
+    /// this today — a wolf is inedible and is still a pelt and a bone — but the picker rule
+    /// ([`crate::fauna::species_requires_denial`]) is stated in terms of it so it derives correctly
+    /// the day one arrives, instead of being retro-fitted then.
     ///
-    /// `output_multiplier` is the acting band's productivity (a linear factor), applied to both
-    /// components exactly as the retired `hunt_provisions` applied it to food.
+    /// **The materials half is what keeps the wolf huntable.** Until arc #527 this read *"neither
+    /// edible nor tradeable"* and the wolf's whole payload was the retired trade scalar, so testing
+    /// food alone would prune every rung but denial off a species a band genuinely hunts for hides.
+    pub fn yields_nothing(self) -> bool {
+        !self.edible() && !self.yields_materials
+    }
+
+    /// **THE conversion — one call for the whole take.** Converting one account and forgetting
+    /// another is the precise failure mode this model risks across ~20 readout sites, so the
+    /// components are never available separately from a take: you get the vector or nothing.
+    ///
+    /// `output_multiplier` is the acting band's productivity (a linear factor), applied exactly as
+    /// the retired `hunt_provisions` applied it to food.
+    ///
+    /// **The MATERIALS a carcass gives are NOT here**, and cannot be: they are per-material batches
+    /// with a characteristic vector each, credited off `take.carried` at the take site
+    /// (`systems::labor`'s `credit_material_yield`). This type is the flat, addable half.
     ///
     /// **Do NOT invert this to count animals.** Whole-animal quantisation stays in *biomass* space —
     /// see [`crate::fauna::quantise_animal_take`], which spells out why (`provisions_per_biomass ==
@@ -882,8 +894,7 @@ impl HuntYield {
     pub fn apply(self, biomass_take: f32, output_multiplier: f32) -> YieldAccounts {
         YieldAccounts {
             provisions: biomass_take * self.provisions_per_biomass * output_multiplier,
-            trade_goods: biomass_take * self.trade_goods_per_biomass * output_multiplier,
-            // **An animal pays no fodder.** The third account is the PLANT web's (`hay_grass` pays
+            // **An animal pays no fodder.** The second account is the PLANT web's (`hay_grass` pays
             // fodder and nothing else); no species' `HuntYield` has a fodder rate to apply, so this is
             // a structural zero rather than an unprojected gap.
             fodder: 0.0,
@@ -891,24 +902,22 @@ impl HuntYield {
     }
 }
 
-/// **What one take actually pays, in every account.** The return of [`HuntYield::apply`] — food
-/// (fully fractional, banked on the larder's `Scalar` grid), trade goods (`TRADE_GOODS` on the same
-/// store), and fodder (the plant web's animal feed, `FODDER` on a band's `LocalStore`). All three land
-/// on the producing band's `LocalStore`.
+/// **What one take actually pays, in every SCALAR account.** The return of [`HuntYield::apply`] —
+/// food (fully fractional, banked on the larder's `Scalar` grid) and fodder (the plant web's animal
+/// feed, `FODDER` on a band's `LocalStore`). Both land on the producing band's `LocalStore`.
 ///
-/// **Three accounts, not two, since #426.** A harvest of `B` biomass pays `B × yield.*` into all
-/// three, and `forage_take` already credits all three — so a two-component forecast could not pin
-/// the third, and `forecast == actual` is an invariant this model rests on *per component*. Widening
-/// is bit-identical for the animal web: no `HuntYield` carries a fodder rate, so every animal reads
-/// `fodder == 0` and every existing answer is unchanged.
+/// **Two accounts, not three, since arc #527.** The trade-goods component was written by every take
+/// site and read by none — there was no `take(TRADE_GOODS)` anywhere in the workspace — while the
+/// **materials** credited beside it named the same take's actual stuff. Materials cannot live here:
+/// they are batches keyed by a characteristic vector, and this type is the part that adds, scales
+/// and `min`s componentwise.
 ///
 /// **Not to be confused with [`crate::flora_config::YieldVector`]**, which is the per-*biomass* RATE
-/// triple (`provisions_per_biomass` / `fodder_per_biomass` / `trade_goods_per_biomass`). This type is
-/// a per-turn AMOUNT — the rate times a biomass take. The field names are the tell.
+/// pair (`provisions_per_biomass` / `fodder_per_biomass`). This type is a per-turn AMOUNT — the rate
+/// times a biomass take. The field names are the tell.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct YieldAccounts {
     pub provisions: f32,
-    pub trade_goods: f32,
     pub fodder: f32,
 }
 
@@ -921,15 +930,13 @@ pub struct YieldAccounts {
 /// asks [`YieldAccounts::ratio_axis`] which one is legal.
 ///
 /// This is the operational form of `quantise_animal_take`'s warning: **never divide by a food number
-/// you have not established is positive.** A wolf counts its animals on `TradeGoods`; every edible
-/// species counts on `Provisions`, exactly as before this arc.
+/// you have not established is positive.**
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum YieldAxis {
     Provisions,
-    TradeGoods,
     /// **Plant-only in practice** — no animal pays fodder, so this is never selected on the hunt
     /// path. It exists because [`YieldAccounts::is_zero`] is defined through [`YieldAccounts::ratio_axis`],
-    /// and a hay-only patch (food `0`, trade `0`, fodder `> 0`) must not read as paying nothing.
+    /// and a hay-only patch (food `0`, positive fodder) must not read as paying nothing.
     Fodder,
 }
 
@@ -937,7 +944,6 @@ impl YieldAccounts {
     /// A source that pays nothing in any account.
     pub const ZERO: Self = Self {
         provisions: 0.0,
-        trade_goods: 0.0,
         fodder: 0.0,
     };
 
@@ -946,7 +952,6 @@ impl YieldAccounts {
     pub fn scale(self, factor: f32) -> Self {
         Self {
             provisions: self.provisions * factor,
-            trade_goods: self.trade_goods * factor,
             fodder: self.fodder * factor,
         }
     }
@@ -954,11 +959,10 @@ impl YieldAccounts {
     /// Component-wise sum — accumulating a projection turn by turn. (Named `plus`, not `add`, so it
     /// cannot be confused with `std::ops::Add::add`, which this type deliberately does not implement:
     /// these are *amounts in different currencies*, and blanket arithmetic on them invites summing
-    /// food into trade.)
+    /// bread into hay.)
     pub fn plus(self, other: Self) -> Self {
         Self {
             provisions: self.provisions + other.provisions,
-            trade_goods: self.trade_goods + other.trade_goods,
             fodder: self.fodder + other.fodder,
         }
     }
@@ -969,7 +973,6 @@ impl YieldAccounts {
     pub fn min(self, other: Self) -> Self {
         Self {
             provisions: self.provisions.min(other.provisions),
-            trade_goods: self.trade_goods.min(other.trade_goods),
             fodder: self.fodder.min(other.fodder),
         }
     }
@@ -978,25 +981,21 @@ impl YieldAccounts {
     pub fn component(self, axis: YieldAxis) -> f32 {
         match axis {
             YieldAxis::Provisions => self.provisions,
-            YieldAxis::TradeGoods => self.trade_goods,
             YieldAxis::Fodder => self.fodder,
         }
     }
 
     /// **The axis a ratio against these accounts may be counted on** — the first component with a
     /// strictly positive value, preferring `Provisions` so every edible species keeps *exactly* the
-    /// arithmetic it had before this arc (bit-identical, not merely equivalent). `None` when every
+    /// arithmetic it had before the vector (bit-identical, not merely equivalent). `None` when every
     /// account is empty: nothing to count, and nothing may divide by it.
     ///
-    /// **`Fodder` is tested LAST, and that ordering is load-bearing.** Inserting it ahead of
-    /// `TradeGoods` would re-point any source paying both — so appending it preserves every answer
-    /// this function gave before #426, exactly as preferring `Provisions` preserved every answer from
-    /// before #337.
+    /// **`Fodder` is tested LAST, and that ordering is load-bearing** — it preserves every answer
+    /// this function gave before #426, exactly as preferring `Provisions` preserved every answer
+    /// from before #337.
     pub fn ratio_axis(self) -> Option<YieldAxis> {
         if self.provisions > 0.0 {
             Some(YieldAxis::Provisions)
-        } else if self.trade_goods > 0.0 {
-            Some(YieldAxis::TradeGoods)
         } else if self.fodder > 0.0 {
             Some(YieldAxis::Fodder)
         } else {
@@ -1009,10 +1008,10 @@ impl YieldAccounts {
         self.ratio_axis().is_none()
     }
 
-    /// **Rebuild a whole pair from a value measured on ONE axis**, using `self` as the reference mix:
-    /// the result reads exactly `value` on `axis` (bit-identical — no divide-then-multiply round
-    /// trip on the axis that was actually computed) and carries the other component at the same
-    /// proportion.
+    /// **Rebuild the whole vector from a value measured on ONE axis**, using `self` as the reference
+    /// mix: the result reads exactly `value` on `axis` (bit-identical — no divide-then-multiply
+    /// round trip on the axis that was actually computed) and carries the other component at the
+    /// same proportion.
     ///
     /// This is how a quantised take crosses back from the single axis it was counted on: the animal
     /// count is one number, and it values the same in every currency.
@@ -1027,17 +1026,10 @@ impl YieldAccounts {
         match axis {
             YieldAxis::Provisions => Self {
                 provisions: value,
-                trade_goods: self.trade_goods * share,
-                fodder: self.fodder * share,
-            },
-            YieldAxis::TradeGoods => Self {
-                provisions: self.provisions * share,
-                trade_goods: value,
                 fodder: self.fodder * share,
             },
             YieldAxis::Fodder => Self {
                 provisions: self.provisions * share,
-                trade_goods: self.trade_goods * share,
                 fodder: value,
             },
         }
@@ -1378,13 +1370,11 @@ const DEFAULT_PEN_UPKEEP_PER_BIOMASS: f32 = 0.002;
 const DEFAULT_PEN_STARVE_SHRINK_RATE: f32 = 0.10;
 
 // **RETIRED: the `market` block and its `trade_goods_multiplier`** (`docs/plan_hunt_yield_model.md`
-// §3, issue #337). It paid the `Deplete` rung 4× the base trade rate, which **re-welds product to
-// policy** — exactly what this arc removes. `Deplete` already earns more trade than `Sustain`
-// because it *takes* 2.5× more biomass: that is the intensity ladder doing the work, and the
-// per-species [`HuntYieldDef`] is the only thing that decides what a take is worth.
-//
-// **A deliberate rebalance, not a no-op:** a `Deplete` hunt's trade-per-biomass drops 4×, while
-// `Sustain`/`Surplus`/`Eradicate` gain a trade component they never had.
+// §3, issue #337), and since arc #527 **the trade-goods axis it multiplied**. The multiplier paid the
+// deepest rung 4× the base rate, re-welding product to policy; the rate itself was then written by
+// every take site and read by nobody, while the `materials` list beside it named the same take's
+// actual hides and bone. What a take is worth is now the per-species [`HuntYieldDef`]'s food rate
+// plus its material rows, and nothing else.
 //
 // `take_fraction` stayed retired before this and is gone with the block.
 
@@ -1687,12 +1677,6 @@ impl FaunaConfig {
                 require_non_negative_finite(
                     species_field("hunt_yield.provisions_per_biomass"),
                     provisions,
-                )?;
-            }
-            if let Some(trade_goods) = def.hunt_yield.trade_goods_per_biomass {
-                require_non_negative_finite(
-                    species_field("hunt_yield.trade_goods_per_biomass"),
-                    trade_goods,
                 )?;
             }
             if let Some(regrowth_rate) = def.regrowth_rate {
@@ -2011,9 +1995,9 @@ impl FaunaConfig {
 
     /// **The species' resolved hunt-yield vector** ([`SpeciesDef::hunt_yield`]) — *what* a take of this
     /// species pays, per unit of biomass. **THE single seam**: no call site may read
-    /// `hunt.provisions_per_biomass` / `hunt.trade_goods_per_biomass` for a *take* directly, because the
-    /// `None ⇒ global` fallback must be stated exactly once (a second copy is how a wolf starts paying
-    /// meat on one path and pelts on another).
+    /// `hunt.provisions_per_biomass` for a *take* directly, because the `None ⇒ global` fallback must
+    /// be stated exactly once (a second copy is how a wolf starts paying meat on one path and nothing
+    /// on another).
     ///
     /// Resolved **live** by display name, the [`FaunaConfig::taming_rate_for`] path, so a retune reaches
     /// herds already on the map and it needs no snapshot field.
@@ -2028,9 +2012,11 @@ impl FaunaConfig {
             provisions_per_biomass: configured
                 .and_then(|def| def.provisions_per_biomass)
                 .unwrap_or(self.hunt.provisions_per_biomass),
-            trade_goods_per_biomass: configured
-                .and_then(|def| def.trade_goods_per_biomass)
-                .unwrap_or(self.hunt.trade_goods_per_biomass),
+            // **Derived here, at the same seam, so the two halves of "is this worth hunting" cannot
+            // be resolved from different rows.** Unlike the rate above there is no global to fall
+            // back to, so an unresolvable species reads *no materials* — the same answer an omitted
+            // list gives.
+            yields_materials: configured.is_some_and(|def| !def.materials.is_empty()),
         }
     }
 
@@ -2766,7 +2752,6 @@ mod tests {
     fn the_hunt_block_carries_no_take_multiplier() {
         let HuntConfig {
             provisions_per_biomass: _,
-            trade_goods_per_biomass: _,
             pursuit_radius: _,
             pursuit_tiles_per_turn: _,
             max_pursuit_turns: _,
@@ -2846,10 +2831,10 @@ mod tests {
         }
     }
 
-    /// **The per-species hunt-yield vector is REJECTED per component** (`docs/plan_hunt_yield_model.md`
-    /// §3) — one rejection per component, in the `validate_rejects_a_non_positive_body_mass` style,
-    /// because a negative or non-finite rate would pay a negative take or NaN the larder and neither
-    /// shows up as a compile error.
+    /// **The per-species hunt-yield rate is REJECTED when it is not a rate**
+    /// (`docs/plan_hunt_yield_model.md` §3), in the `validate_rejects_a_non_positive_body_mass`
+    /// style, because a negative or non-finite rate would pay a negative take or NaN the larder and
+    /// neither shows up as a compile error.
     #[test]
     fn validate_rejects_a_negative_species_hunt_yield_provisions() {
         let err = reject(|json| {
@@ -2859,18 +2844,13 @@ mod tests {
         assert_rejects_field(err, "species.deer.hunt_yield.provisions_per_biomass");
     }
 
-    #[test]
-    fn validate_rejects_a_negative_species_hunt_yield_trade_goods() {
-        let err = reject(|json| {
-            json["species"]["deer"]["hunt_yield"] =
-                serde_json::json!({ "trade_goods_per_biomass": -0.01 })
-        });
-        assert_rejects_field(err, "species.deer.hunt_yield.trade_goods_per_biomass");
-    }
-
     /// **ZERO IS LEGAL, and it is the whole point** — it is how a wolf says *"you do not eat me"*, and
-    /// the reason the components are `Option<f32>` rather than floats with a `0` sentinel. A
+    /// the reason the component is `Option<f32>` rather than a float with a `0` sentinel. A
     /// `> 0` bound here would make the inedible species unrepresentable.
+    ///
+    /// **And the wolf is still worth hunting**, on its hide and its bone: `yields_nothing` counts
+    /// materials since arc #527, so retiring the trade axis did not prune every rung but denial off
+    /// the one shipped species that reads `0` food.
     #[test]
     fn a_zero_hunt_yield_component_is_accepted_and_reads_as_inedible() {
         let config = FaunaConfig::builtin();
@@ -2878,12 +2858,32 @@ mod tests {
         let wolf = config.hunt_yield_for("Grey Wolf Pack");
         assert_eq!(wolf.provisions_per_biomass, 0.0);
         assert!(!wolf.edible(), "a wolf is not food");
-        assert!(wolf.tradeable(), "a wolf is a pelt");
+        assert!(wolf.yields_materials, "a wolf is a pelt and a bone");
         assert!(!wolf.yields_nothing());
     }
 
-    /// **An omitted block falls back to the globals, on BOTH components** — the property that keeps
-    /// every species but the wolf byte-identical across this arc.
+    /// **A species worth neither meat nor material is the ONE degenerate case**, and no shipped row
+    /// is it — pinned on a synthetic species so the branch is exercised rather than assumed, the
+    /// treatment `hunt_yield_vector.rs` gives the picker rule it feeds.
+    #[test]
+    fn a_species_with_no_food_and_no_materials_yields_nothing() {
+        let pest = HuntYield {
+            provisions_per_biomass: 0.0,
+            yields_materials: false,
+        };
+        assert!(pest.yields_nothing());
+        let config = FaunaConfig::builtin();
+        for (key, def) in &config.species {
+            let resolved = config.hunt_yield_for(&def.display_name);
+            assert!(
+                !resolved.yields_nothing(),
+                "shipped species '{key}' is worth neither meat nor material"
+            );
+        }
+    }
+
+    /// **An omitted block falls back to the global rate**, which is the property that keeps every
+    /// species but the wolf byte-identical across the yield-vector arc.
     #[test]
     fn an_omitted_hunt_yield_reads_the_globals() {
         let config = FaunaConfig::builtin();
@@ -2892,48 +2892,26 @@ mod tests {
             deer.provisions_per_biomass,
             config.hunt.provisions_per_biomass
         );
-        assert_eq!(
-            deer.trade_goods_per_biomass,
-            config.hunt.trade_goods_per_biomass
-        );
-        // An unresolvable name (a synthetic test fixture) reads the same globals rather than zeroing
-        // a herd's yield — the `taming_rate_for`/`animals_per_herder_for` contract.
-        assert_eq!(config.hunt_yield_for("No Such Beast"), deer);
+        // An unresolvable name (a synthetic test fixture) reads the same global rather than zeroing
+        // a herd's yield — the `taming_rate_for`/`animals_per_herder_for` contract. It carries no
+        // materials, because there is no global list to fall back to.
+        let unknown = config.hunt_yield_for("No Such Beast");
+        assert_eq!(unknown.provisions_per_biomass, deer.provisions_per_biomass);
+        assert!(!unknown.yields_materials);
     }
 
-    /// **The wolf's `0.02` is ANCHORED, not arbitrary** — it is exactly what the retired commercial
-    /// rate paid (`hunt.trade_goods_per_biomass` 0.005 × the retired `market.trade_goods_multiplier`
-    /// 4.0), so one unit of wolf biomass is worth what one unit of commercially-hunted biomass was
-    /// worth before this arc. Pinned against the *live* base rate so a retune of the base is a
-    /// deliberate decision here rather than a silent drift.
+    /// **`apply` converts the whole take in one call** — the property that makes it impossible to
+    /// convert one account and forget another across ~20 readout sites.
     #[test]
-    fn the_wolf_pelt_rate_is_the_retired_commercial_rate() {
-        /// The retired `market.trade_goods_multiplier` the anchor is derived from.
-        const RETIRED_TRADE_GOODS_MULTIPLIER: f32 = 4.0;
-        let config = FaunaConfig::builtin();
-        let wolf = config.hunt_yield_for("Grey Wolf Pack");
-        assert!(
-            (wolf.trade_goods_per_biomass
-                - config.hunt.trade_goods_per_biomass * RETIRED_TRADE_GOODS_MULTIPLIER)
-                .abs()
-                < 1e-9,
-            "the wolf pelt rate must stay anchored to the retired commercial rate: {} vs {}",
-            wolf.trade_goods_per_biomass,
-            config.hunt.trade_goods_per_biomass * RETIRED_TRADE_GOODS_MULTIPLIER
-        );
-    }
-
-    /// **`apply` converts BOTH products in one call** — the property that makes it impossible to
-    /// convert the meat and forget the pelt across ~20 readout sites.
-    #[test]
-    fn apply_scales_both_components_by_the_take_and_the_output_multiplier() {
+    fn apply_scales_every_component_by_the_take_and_the_output_multiplier() {
         let hy = HuntYield {
             provisions_per_biomass: 0.02,
-            trade_goods_per_biomass: 0.005,
+            yields_materials: true,
         };
         let paid = hy.apply(100.0, 2.0);
         assert!((paid.provisions - 4.0).abs() < 1e-6, "{paid:?}");
-        assert!((paid.trade_goods - 1.0).abs() < 1e-6, "{paid:?}");
+        // An animal pays no fodder — a structural zero, not an unprojected gap.
+        assert_eq!(paid.fodder, 0.0, "{paid:?}");
         assert_eq!(hy.apply(0.0, 1.0), YieldAccounts::default());
     }
 

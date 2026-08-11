@@ -14,20 +14,21 @@ extends RefCounted
 ## state it needs threaded in as a PARAMETER: the `HudBandLaborState` model itself, which is where
 ## every per-snapshot fact this page sums already lives.
 ##
-## **IT IS THE BAND PAGE'S VITALS BLOCK, ONE SCALE UP.** The same five rows in the same order through
-## the same `DetailFormat.detail_bbcode` renderer — Food, Trade, Kit, Morale, Growth — so the two
-## pages cannot drift into different vocabularies for the same facts. What the faction page spends its
+## **IT IS THE BAND PAGE'S VITALS BLOCK, ONE SCALE UP.** The same rows in the same order through the
+## same `DetailFormat.detail_bbcode` renderer — Food, Kit, Morale, Growth — so the two pages cannot
+## drift into different vocabularies for the same facts. (A Trade row stood between Food and Kit until
+## arc #527 retired the account it summed.) What the faction page spends its
 ## disclosures on is the thing only it can answer: **which band each total came from**, one clickable
 ## row per band.
 ##
-## **AN AGGREGATE WHERE ONE IS MEANINGFUL, AN ALERT WHERE IT IS NOT.** A larder and a trade stock sum,
-## so those rows carry numbers. A RUNWAY does not — it is one larder against one band's drain — and a
-## KIT does not either, being three durabilities per band; so those rows carry `⚠ N bands` and the
-## drill-down carries which. Morale and Growth are percentages and go through `FactionAggregate`.
+## **AN AGGREGATE WHERE ONE IS MEANINGFUL, AN ALERT WHERE IT IS NOT.** A larder sums, so that row
+## carries numbers. A RUNWAY does not — it is one larder against one band's drain — and a KIT does not
+## either, being three durabilities per band; so those rows carry `⚠ N bands` and the drill-down
+## carries which. Morale and Growth are percentages and go through `FactionAggregate`.
 ##
 ## **IT RE-DERIVES NOTHING.** Every figure is a SUM or a weighted mean over answers the per-band
-## surfaces already give — `DetailFormat.band_net_food` / `band_provisions` / `band_trade_stock` /
-## `band_fertility` / `kit_condition_face`, `HudBandLaborState.effective_idle` — so a band's own page
+## surfaces already give — `DetailFormat.band_net_food` / `band_provisions` / `band_fertility` /
+## `kit_condition_face`, `HudBandLaborState.effective_idle` — so a band's own page
 ## and this one can never disagree about a number. A rollup that computed its own food ledger would be
 ## a second source of truth for the identity
 ## `larder_delta == income − consumption − pen_feed − raid_forfeit` the whole food arc keeps closed.
@@ -40,7 +41,7 @@ extends RefCounted
 const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 
 ## **A ROW ON THIS PAGE IS THE SIZE THE FACTION TAB'S OWN ROWS ARE.** The `band` zone's vitals — Food,
-## Trade, Kit, Morale, Growth — are the page's reference row, and every other zone's rows match them,
+## Kit, Morale, Growth — are the page's reference row, and every other zone's rows match them,
 ## so a player moving between the four tabs is reading one list at one size.
 ##
 ## **THIS REVERSES AN EARLIER RULE, and the reversal was reported by eye.** The rows were pinned to the
@@ -103,10 +104,10 @@ static func build_band_zone(labor: HudBandLaborState, disclosures: DisclosureCon
 ## as the popover's anchor), exactly as `BandPanelController._build_vitals_label` does.
 ##
 ## **AN AGGREGATE WHERE ONE IS MEANINGFUL, AN ALERT WHERE IT IS NOT.** That is the rule the whole page
-## is built on, and it is why the rows are not uniform: a larder and a trade stock genuinely SUM, so
-## those rows carry numbers; a runway is one larder against one band's drain and a kit condition is
-## three durabilities per band, so neither has a faction value to state and those rows carry the
-## ALERT instead. The detail is one click away in every case.
+## is built on, and it is why the rows are not uniform: a larder genuinely SUMS, so that row carries
+## numbers; a runway is one larder against one band's drain and a kit condition is three durabilities
+## per band, so neither has a faction value to state and those rows carry the ALERT instead. The
+## detail is one click away in every case.
 static func _build_vitals_label(bands: Array, disclosures: DisclosureController) -> RichTextLabel:
     var label := RichTextLabel.new()
     label.bbcode_enabled = true
@@ -124,11 +125,10 @@ static func _build_vitals_label(bands: Array, disclosures: DisclosureController)
     label.text = DetailFormat.detail_bbcode(lines, ctx)
     return label
 
-## The five rows, in the band page's order, registering each row's per-band drill-down as it goes.
+## The rows, in the band page's order, registering each row's per-band drill-down as it goes.
 static func _faction_summary_lines(bands: Array, disclosures: DisclosureController) -> Array[String]:
     var lines: Array[String] = []
     lines.append(_food_line(bands, disclosures))
-    lines.append(_trade_line(bands, disclosures))
     lines.append(_kit_line(bands, disclosures))
     lines.append(_morale_line(bands, disclosures))
     var growth := _growth_line(bands, disclosures)
@@ -166,26 +166,10 @@ static func _food_line(bands: Array, disclosures: DisclosureController) -> Strin
         SourceForecast.format_yield(net),
         _alert_clause(starving, HudStyle.DANGER_HEX)]
 
-## `Trade: 15.6 · +0.39 /turn`. Both terms sum and nothing consumes trade goods, so this is the one
-## row with no alert to carry — the same reason a band's Trade row is never concerning.
-static func _trade_line(bands: Array, disclosures: DisclosureController) -> String:
-    var stock := 0.0
-    var rate := 0.0
-    var rows: Array[String] = []
-    for i in range(bands.size()):
-        var band: Dictionary = bands[i]
-        stock += DetailFormat.band_trade_stock(band)
-        rate += DetailFormat.band_trade_income(band)
-        rows.append(_band_row(band, i, "%s · %s" % [
-            HudWorkVocab.FACTION_TRADE_STOCK_FORMAT % DetailFormat.band_trade_stock(band),
-            SourceForecast.format_signed(DetailFormat.band_trade_income(band))], ""))
-    disclosures.register_faction(HudDisclosureVocab.DETAIL_ROW_TRADE,
-        HudDisclosureVocab.BREAKDOWN_KIND_TRADE, rows, false)
-    return "%s%s%s · [color=#%s]%s[/color]" % [
-        HudDisclosureVocab.DETAIL_ROW_TRADE, DetailFormat.DETAIL_KV_SEPARATOR,
-        HudWorkVocab.FACTION_TRADE_STOCK_FORMAT % stock,
-        HudStyle.HEALTHY_HEX if SourceForecast.has_component(rate) else HudStyle.INK_DIM_HEX,
-        SourceForecast.format_yield(rate)]
+## **THE `Trade: 15.6 · +0.39 /turn` ROW IS RETIRED** (arc #527) with the account it summed. A faction's
+## materials do not roll up into one figure — that is the flattening the materials model exists to
+## refuse — so nothing replaces it here, and a per-material faction total would need a surface of its
+## own rather than a vitals row.
 
 ## `Kit: ⚠ 2 bands` / `Kit: all equipped`. **THE DURABILITIES DO NOT AGGREGATE AT ALL** — three per
 ## band, and a mean of them describes no band that exists — so this row is the alert and nothing else.

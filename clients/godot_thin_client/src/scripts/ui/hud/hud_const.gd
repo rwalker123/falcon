@@ -23,12 +23,10 @@ const LAND_SUBJECT_ID := -1
 # Provisions is the food item under a band's larder `stores`.
 const STORE_ITEM_PROVISIONS := "provisions"
 
-# Trade goods — the THIRD key on the same band-local `stores` map as provisions and fodder. It moved
-# there from the faction-global `FactionInventory` (issue #381): a band holds what it produces until a
-# trade network reaches it, and `balance_supply_networks` then pools it with same-faction bands inside
-# `SupplyNetworkConfig.reach_tiles`. Must match `TRADE_GOODS` in `core_sim/src/components.rs`; the sim
-# writes that string onto the wire and nothing translates it.
-const STORE_ITEM_TRADE_GOODS := "trade_goods"
+# **`STORE_ITEM_TRADE_GOODS` IS RETIRED** (arc #527) along with the `TRADE_GOODS` commodity itself:
+# the sim writes no such key onto a band's `stores` map any more. What a harvest pays beyond food and
+# fodder is MATERIALS, which are batches on the cohort (`material_batches`) rather than a scalar in
+# the larder, and which the Crafting panel reads.
 
 # Early-Game Labor (docs/plan_early_game_labor.md, slice 3b). Assignment kinds mirror
 # the sim's LaborAssignment.kind; the source-centric allocation targets the single

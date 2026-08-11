@@ -88,13 +88,16 @@ const WORK_FLOOR_MARKS_MIN := 2
 # agrees with whatever that code emits.
 const YIELD_LABEL_FOOD_RATE := 0.31
 const YIELD_LABEL_FOOD_FACE := "+0.31"
-const YIELD_LABEL_TRADE_RATE := 0.22
-const YIELD_LABEL_TRADE_FACE := "+0.22"
 const YIELD_LABEL_FODDER_RATE := 0.40
 const YIELD_LABEL_FODDER_FACE := "+0.40 fodder"
 # What a source paying into NO account still prints: the food zero, which is the honest reading of a
 # worked tile that produced nothing this turn and is what this label has always said.
 const YIELD_LABEL_EMPTY_FACE := "+0.00"
+# ---- …AND ITS THIRD ARM, THE MATERIALS (arc #527 follow-up) -------------------------------------
+# What an INEDIBLE quarry pays: a vector, not a scalar, so the probe drives it with a row of the
+# wire's own shape. The face is written out rather than composed, for the reason the two above are.
+const YIELD_LABEL_MATERIAL_ROWS := [{"material_id": "hide", "amount": 0.22}]
+const YIELD_LABEL_MATERIAL_FACE := "+0.22 hide"
 # Canned settlement-stage tokens (the native bridge doesn't run here, so preview band dicts must
 # carry settlement_stage_* directly). Icons are opaque sim strings — the emoji here just mirror the
 # current config so the map token glyphs render. EMPTY exercises the neutral non-circular fallback marker (square).
@@ -367,38 +370,12 @@ const RIVERINE_FISH_X := 6             # column of the open-water (fish) site
 const RIVERINE_REED_X := 10            # column of the dry-floodplain (reed) site
 const RIVERINE_SITE_Y := 6            # shared row so both markers sit at the same height, easy to compare
 
-# --- The ANNOTATION states (trade / crisis / terrain highlight / routes) -------------------------
-# These four cover the `AnnotationRenderer` family, which had NO fixture at all before. They were
+# --- The ANNOTATION states (crisis / terrain highlight / routes) ---------------------------------
+# These three cover the `AnnotationRenderer` family, which had NO fixture at all before. They were
 # written AFTER the code they cover, so they encode CURRENT BEHAVIOUR — bugs included. They prove
 # "this refactor changed nothing", NOT "this rendering is correct"; do not read a passing byte-diff
 # as a correctness result.
 #
-# State "trade overlay". Trade links address their endpoints by TILE ENTITY id, which MapView resolves
-# through `tile_lookup` (built from `tiles[].entity`) — so this is the one flat-backdrop fixture that
-# has to publish a `tiles` array at all. The three link entities exist to fan the draw's branches out
-# across one frame: the SELECTED one (green + widened), a busy open one, and a thin closed one whose
-# leak is imminent (a red midpoint dot).
-const TRADE_SELECTED_ENTITY := 4201    # the caravan TradePanel reports as selected → the selection branch
-const TRADE_BUSY_ENTITY := 4202        # high throughput + openness → the widest, most opaque amber line
-const TRADE_LEAKING_ENTITY := 4203     # low throughput + openness → thin/faint, and its leak fires
-# `leak_timer <= 1` is the draw's own test for "this link leaks knowledge NOW" (the red midpoint dot).
-const TRADE_LEAK_QUIET := 5            # above the test → no dot
-const TRADE_LEAK_IMMINENT := 0         # at/below it → dot
-# A link whose endpoints are NOT in `tile_lookup` — the draw skips it. Present so the guard is
-# EXERCISED by the reference frame; a refactor that dropped it would start drawing a line here.
-const TRADE_UNRESOLVED_TILE := -1
-# Link endpoints (col, row) on the flat GRID_W×GRID_H backdrop, spread so no two lines overlap.
-const TRADE_SELECTED_FROM := Vector2i(2, 2)
-const TRADE_SELECTED_TO := Vector2i(13, 3)
-const TRADE_BUSY_FROM := Vector2i(3, 9)
-const TRADE_BUSY_TO := Vector2i(12, 8)
-const TRADE_LEAKING_FROM := Vector2i(7, 1)
-const TRADE_LEAKING_TO := Vector2i(6, 10)
-const TRADE_BUSY_THROUGHPUT := 8.0     # ≫ the draw's 2.5 intensity clamp → full width
-const TRADE_BUSY_OPENNESS := 0.9       # → the opacity clamp's top end
-const TRADE_QUIET_THROUGHPUT := 1.0    # → a barely-thickened line
-const TRADE_QUIET_OPENNESS := 0.05     # → the opacity clamp's floor
-
 # State "crisis annotations". The draw is gated on the `crisis` overlay channel being ACTIVE, so the
 # fixture publishes that channel (a west→east pressure ramp, so the backdrop isn't a flat wash) and
 # selects it after the snapshot lands — `display_snapshot` clears the active overlay every time.
@@ -432,8 +409,8 @@ const ROUTE_UNKNOWN_FACTION := "Wayfarers"  # absent from faction_colors → the
 const ROUTE_PLAYER_PATH := [[1, 2], [3, 3], [5, 3], [7, 4], [9, 4], [11, 5]]
 const ROUTE_RIVAL_PATH := [[2, 10], [4, 9], [6, 9], [8, 8], [10, 8]]
 const ROUTE_UNKNOWN_PATH := [[1, 5], [3, 6], [2, 8]]   # left of the other two, and inside the cover-fit crop
-# A one-waypoint order — the draw bails at `points.size() < 2`. Present for the same reason as
-# TRADE_UNRESOLVED_TILE: a guard only guards the reference frame if the frame exercises it.
+# A one-waypoint order — the draw bails at `points.size() < 2`. Present because a guard only guards
+# the reference frame if the frame exercises it.
 const ROUTE_DEGENERATE_PATH := [[5, 11]]
 
 # State "max zoom". How far the achieved hex radius may sit from `base_hex_radius × MAX_ZOOM_FACTOR`
@@ -1283,41 +1260,19 @@ func _ready() -> void:
 	await _save_crop_rect("map_rivers_web", RIVER_WEB_CROP)
 
 	# === THE ANNOTATION STATES ===================================================================
-	# Trade overlay / crisis annotations / terrain highlight / routes — the four overlays that had no
-	# fixture at all, so no refactor of them could be pixel-checked. They run LAST and each CLEARS its
-	# own state afterwards, so a leak here can only ever show up in the annotation frames themselves.
+	# Crisis annotations / terrain highlight / routes — the three overlays that had no fixture at all,
+	# so no refactor of them could be pixel-checked. They run LAST and each CLEARS its own state
+	# afterwards, so a leak here can only ever show up in the annotation frames themselves.
 	# They restore the default canvas (the river states above left the pasture aspect pinned) because
 	# their fixtures are authored against the GRID_W×GRID_H grid the earlier states use.
-	# **They prove UNCHANGED, not CORRECT** — see the comment on TRADE_SELECTED_ENTITY.
+	# **They prove UNCHANGED, not CORRECT.**
+	#
+	# There was a FOURTH, `map_trade_overlay`, and it went with the trade-link substrate itself: the
+	# sim publishes no link network, so the overlay it drove drew the empty set on every frame
+	# (`docs/plan_contact_and_logistics.md`). Issue #232's route-network overlay is what earns a
+	# frame back here.
 	await _set_canvas(DEFAULT_CANVAS_SIZE)
 	await _settle()
-
-	# State "trade overlay" — the diffusion overlay, pushed through the same three seams the live
-	# client uses (update_trade_overlay → set_trade_overlay_enabled → set_trade_overlay_selection, all
-	# three reached BY NAME through has_method/call). In the client the link array comes from the
-	# snapshot's `trade_links` section; the Map tab's toggle only pushes the enabled flag. Three links
-	# fan the draw's branches across one frame: the SELECTED caravan (green, widened — the branch an unselected-only fixture would leave
-	# unproven), a busy open link (widest amber), and a thin closed one whose leak is imminent (the red
-	# midpoint dot). A fourth link addresses tiles that don't exist, so the skip guard is exercised too.
-	_map.set_fow_enabled(false)
-	_map.set_labor_pending({})
-	_map.enable_terrain_textures(false)
-	_map._map_cache_enabled = false
-	_map.selected_unit_id = -1
-	_map.selected_herd_id = ""
-	_map.selected_tile = Vector2i(-1, -1)
-	_map.display_snapshot(_snapshot_trade_overlay())
-	_map.update_trade_overlay(_trade_links(), true)
-	_map.set_trade_overlay_enabled(true)
-	_map.set_trade_overlay_selection(TRADE_SELECTED_ENTITY)
-	_map._fit_map_to_view()
-	await _settle()
-	await _save("map_trade_overlay")
-	# Clear it: the overlay is only re-ingested by a snapshot that CARRIES `trade_links`, so without
-	# this the links would persist into every following state.
-	_map.set_trade_overlay_selection(-1)
-	_map.update_trade_overlay([], false)
-	_map.set_trade_overlay_enabled(false)
 
 	# State "crisis annotations" — the Crisis overlay's map annotations, which draw ONLY while the
 	# `crisis` channel is the active one. All four shapes the draw can produce in one frame: a
@@ -1527,8 +1482,9 @@ func _assert_work_floor_marks() -> void:
 	_assert_map("worked-band floor marks — every floored assignment resolves to a mark (no blank zone)",
 		not marks.has(""))
 
-## **THE ONE-SLOT FALL-THROUGH, food → trade → FODDER** (issue #449). A map label has room for exactly
-## one rate, so which account it states is the whole claim — and a PNG cannot carry it: `+0.00` and
+## **THE ONE-SLOT FALL-THROUGH, food → FODDER** (issue #449; a trade branch stood between the two
+## until arc #527 retired that account). A map label has room for exactly one rate, so which account
+## it states is the whole claim — and a PNG cannot carry it: `+0.00` and
 ## `+0.40 fodder` are the same badge at map scale, and every fall-through renders a perfectly plausible
 ## label. So the CHOICE is asked of the renderer directly (`_yield_label_rate_text`), over values rather
 ## than over a fixture, and each case is paired with the one that must NOT change: a source paying food
@@ -1539,15 +1495,26 @@ func _assert_work_floor_marks() -> void:
 func _assert_yield_label_component() -> void:
 	var overlays: BandOverlayRenderer = _map._band_overlays
 	_assert_map("yield label — a fodder-only source states its feed rate, not +0.00",
-		overlays._yield_label_rate_text(0.0, 0.0, YIELD_LABEL_FODDER_RATE) == YIELD_LABEL_FODDER_FACE)
+		overlays._yield_label_rate_text(0.0, YIELD_LABEL_FODDER_RATE) == YIELD_LABEL_FODDER_FACE)
 	_assert_map("yield label — food still leads wherever there is food",
-		overlays._yield_label_rate_text(YIELD_LABEL_FOOD_RATE, 0.0, YIELD_LABEL_FODDER_RATE)
+		overlays._yield_label_rate_text(YIELD_LABEL_FOOD_RATE, YIELD_LABEL_FODDER_RATE)
 			== YIELD_LABEL_FOOD_FACE)
-	_assert_map("yield label — trade still wins the slot ahead of fodder",
-		overlays._yield_label_rate_text(0.0, YIELD_LABEL_TRADE_RATE, YIELD_LABEL_FODDER_RATE)
-			== FoodIcons.TRADE_GOODS_GLYPH + YIELD_LABEL_TRADE_FACE)
+	_assert_map("yield label — an inedible quarry states its material, not +0.00",
+		overlays._yield_label_rate_text(0.0, 0.0, YIELD_LABEL_MATERIAL_ROWS)
+			== YIELD_LABEL_MATERIAL_FACE)
+	_assert_map("yield label — food still leads a source that pays food AND a material",
+		overlays._yield_label_rate_text(YIELD_LABEL_FOOD_RATE, 0.0, YIELD_LABEL_MATERIAL_ROWS)
+			== YIELD_LABEL_FOOD_FACE)
+	_assert_map("yield label — fodder still beats a material, in the wire's own order",
+		overlays._yield_label_rate_text(0.0, YIELD_LABEL_FODDER_RATE, YIELD_LABEL_MATERIAL_ROWS)
+			== YIELD_LABEL_FODDER_FACE)
 	_assert_map("yield label — a source paying nothing still prints its food zero",
-		overlays._yield_label_rate_text(0.0, 0.0, 0.0) == YIELD_LABEL_EMPTY_FACE)
+		overlays._yield_label_rate_text(0.0, 0.0) == YIELD_LABEL_EMPTY_FACE
+			and overlays._yield_label_rate_text(0.0, 0.0, []) == YIELD_LABEL_EMPTY_FACE)
+	_assert_map("yield label — the material vector is read off the entry, empty when absent",
+		overlays._entry_materials({SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY:
+			YIELD_LABEL_MATERIAL_ROWS}).size() == YIELD_LABEL_MATERIAL_ROWS.size()
+		and overlays._entry_materials({}).is_empty())
 	_assert_map("yield label — the feed rate is read off the entry with no realized fallback",
 		is_equal_approx(overlays._entry_fodder({"fodder_yield": YIELD_LABEL_FODDER_RATE}),
 			YIELD_LABEL_FODDER_RATE)
@@ -2022,8 +1989,10 @@ func _deer_herd() -> Dictionary:
 	# Well outside the work-range ring (Chebyshev distance 5 from the band).
 	return {"id": "game_deer_07", "label": "Red Deer (game_deer_07)", "x": 13, "y": 6, "biomass": 800.0, "huntable": true}
 
-## The INEDIBLE quarry (issue #337) — a wolf pack whose hunt pays trade goods only, so its yield label
-## must fall through to the trade component instead of announcing a `+0.00` food rate.
+## The INEDIBLE quarry (issue #337, arc #527) — a wolf pack whose hunt pays no food at all. Its label
+## used to fall through to a trade rate; that account is retired and a herd's materials carry no
+## per-turn figure, so what it prints now is the honest `+0.00` of a hunt that banks no commodity the
+## one-slot label can name.
 func _pelt_only_wolf_herd() -> Dictionary:
 	return {"id": "game_wolf_03", "label": "Grey Wolf (game_wolf_03)", "x": 11, "y": 4,
 		"biomass": 240.0, "huntable": true, "prey_sense_radius": 4}
@@ -2134,20 +2103,19 @@ func _snapshot_work() -> Dictionary:
 		{"kind": "forage", "workers": 5, "target_x": FORAGE_A_X, "target_y": FORAGE_A_Y, "floor": WORK_PEAK_FLOOR, "actual_yield": 0.48, "sustainable_yield": 0.48, "overdraws": false},
 		{"kind": "forage", "workers": 3, "target_x": 9, "target_y": 8, "floor": WORK_DRAWDOWN_FLOOR, "actual_yield": 0.27, "sustainable_yield": 0.20, "overdraws": true},
 		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "floor": WORK_PEAK_FLOOR, "target_x": 13, "target_y": 6, "actual_yield": 0.46, "sustainable_yield": 0.20, "overdraws": false},
-		# THE INEDIBLE QUARRY's label (issue #337): a hunted wolf pack pays trade goods and NO food, so
-		# every food field here is honestly 0. A one-slot map label has no room for two rates, so it
-		# shows the product the species PAYS — `⇄+0.22` — rather than the `+0.00` that said the pack
-		# was worth nothing. The deer label beside it is the control: it still reads its food rate.
-		{"kind": "hunt", "workers": 2, "fauna_id": "game_wolf_03", "floor": WORK_DRAWDOWN_FLOOR, "target_x": 11, "target_y": 4, "actual_yield": 0.0, "sustainable_yield": 0.0, "realized_trade_yield": 0.22, "trade_yield": 0.22, "overdraws": false},
+		# THE INEDIBLE QUARRY's label (issue #337, arc #527): a hunted wolf pack pays NO food, so every
+		# food field here is honestly 0. It used to fall through to a `⇄+0.22` trade rate; with that
+		# account retired and no per-turn material figure on the wire, the label reads `+0.00` — the
+		# honest statement that this hunt banks no commodity a one-slot label can name. The deer label
+		# beside it is the control: it still reads its food rate.
+		{"kind": "hunt", "workers": 2, "fauna_id": "game_wolf_03", "floor": WORK_DRAWDOWN_FLOOR, "target_x": 11, "target_y": 4, "actual_yield": 0.0, "sustainable_yield": 0.0, "overdraws": false},
 		# THE SOWN HAY FIELD's label (issue #449), the same argument one account further out: a Field
-		# pays FEED and neither provisions nor trade, so every food and trade field here is honestly 0
-		# and the label falls through to `+0.40 fodder`. Both trade keys are present and zero, the way
-		# the wire ships them, so the fall-through is reached through the ordinary
-		# render-only-when-non-zero gate rather than through absence. It is also the only rendered
+		# pays FEED and no provisions, so every food field here is honestly 0 and the label falls
+		# through to `+0.40 fodder`. It is also the only rendered
 		# fodder label in either preview harness — `_assert_yield_label_component` pins WHICH account
 		# fills the one slot, and only a frame can say whether the chosen string FITS beside its
 		# neighbours (the widest run this plate has ever drawn).
-		{"kind": "forage", "workers": 2, "target_x": FODDER_FIELD_X, "target_y": FODDER_FIELD_Y, "floor": WORK_PEAK_FLOOR, "actual_yield": 0.0, "sustainable_yield": 0.0, "realized_yield": 0.0, "trade_yield": 0.0, "realized_trade_yield": 0.0, "fodder_yield": FODDER_FIELD_RATE, "overdraws": false},
+		{"kind": "forage", "workers": 2, "target_x": FODDER_FIELD_X, "target_y": FODDER_FIELD_Y, "floor": WORK_PEAK_FLOOR, "actual_yield": 0.0, "sustainable_yield": 0.0, "realized_yield": 0.0, "fodder_yield": FODDER_FIELD_RATE, "overdraws": false},
 		{"kind": "warrior", "workers": 2},
 	]
 	# work_range 2 (forage green), scout radius 4 (azure) → three DISTINCT nested range borders in one
@@ -3143,65 +3111,9 @@ func _snapshot_sites_fogged() -> Dictionary:
 	}
 	return snap
 
-# --- The ANNOTATION fixtures (see the TRADE_* / CRISIS_* / ROUTE_* consts) -----------------------
+# --- The ANNOTATION fixtures (see the CRISIS_* / ROUTE_* consts) ---------------------------------
 # Written AFTER the code they cover: they encode CURRENT behaviour, so they prove "unchanged", not
 # "correct".
-
-## Row-major tile ENTITY id on the flat GRID_W×GRID_H backdrop. Trade links address their endpoints by
-## entity and MapView resolves them through `tile_lookup`, which is built from `tiles[].entity` — so
-## the trade fixture is the one flat-backdrop state that has to publish a `tiles` array.
-func _tile_entity(x: int, y: int) -> int:
-	return y * GRID_W + x
-
-func _entity_tiles() -> Array:
-	var tiles: Array = []
-	for y in GRID_H:
-		for x in GRID_W:
-			tiles.append({"entity": _tile_entity(x, y), "x": x, "y": y, "terrain": TERRAIN_ID})
-	return tiles
-
-## One trade link in the shape the snapshot's `trade_links` section hands to `update_trade_overlay`:
-## endpoints as tile entities, a throughput (drives line width) and a knowledge sub-dict (openness drives opacity,
-## leak_timer arms the red midpoint dot).
-func _trade_link(entity: int, from_tile: Vector2i, to_tile: Vector2i,
-		throughput: float, openness: float, leak_timer: int) -> Dictionary:
-	return {
-		"entity": entity,
-		"from_tile": _tile_entity(from_tile.x, from_tile.y),
-		"to_tile": _tile_entity(to_tile.x, to_tile.y),
-		"throughput": throughput,
-		"knowledge": {"openness": openness, "leak_timer": leak_timer},
-	}
-
-func _trade_links() -> Array:
-	return [
-		_trade_link(TRADE_SELECTED_ENTITY, TRADE_SELECTED_FROM, TRADE_SELECTED_TO,
-			TRADE_BUSY_THROUGHPUT, TRADE_BUSY_OPENNESS, TRADE_LEAK_QUIET),
-		_trade_link(TRADE_BUSY_ENTITY, TRADE_BUSY_FROM, TRADE_BUSY_TO,
-			TRADE_BUSY_THROUGHPUT, TRADE_BUSY_OPENNESS, TRADE_LEAK_QUIET),
-		_trade_link(TRADE_LEAKING_ENTITY, TRADE_LEAKING_FROM, TRADE_LEAKING_TO,
-			TRADE_QUIET_THROUGHPUT, TRADE_QUIET_OPENNESS, TRADE_LEAK_IMMINENT),
-		# Endpoints that are not in `tile_lookup` — the draw skips this link. Kept so the guard is
-		# exercised by the reference frame rather than merely present in the source.
-		{
-			"entity": TRADE_SELECTED_ENTITY,
-			"from_tile": TRADE_UNRESOLVED_TILE,
-			"to_tile": TRADE_UNRESOLVED_TILE,
-			"throughput": TRADE_BUSY_THROUGHPUT,
-			"knowledge": {"openness": TRADE_BUSY_OPENNESS, "leak_timer": TRADE_LEAK_IMMINENT},
-		},
-	]
-
-## The trade backdrop: the flat terrain every band state uses, PLUS the per-tile entity table the link
-## endpoints resolve through. No units or herds — the frame is about the links.
-func _snapshot_trade_overlay() -> Dictionary:
-	return {
-		"grid": {"width": GRID_W, "height": GRID_H, "wrap_horizontal": false},
-		"overlays": {"terrain": _terrain_array()},
-		"tiles": _entity_tiles(),
-		"populations": [],
-		"herds": [],
-	}
 
 ## The four annotation SHAPES the crisis draw can produce, in the order it walks them:
 ##   1. a multi-hop path in the PackedInt32Array (flattened col,row) form → polyline + head/tail discs

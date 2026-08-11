@@ -26,7 +26,7 @@ const POLICY_PICKER_COLUMNS := 3
 
 # **A THIRD ACCOUNT ON LINE 2 DID NOT MOVE THIS** (#426), and that is a measurement rather than an
 # assumption: a wide-face ceiling of 2 was written for the three-account forage face and the rendered
-# frame refuted it — `0.60 food · 0.01 trade · 0.20 fodder` three abreast comes out 555px against the
+# frame refuted it — `0.60 food · 0.20 fodder` three abreast comes out 555px against the
 # deer hunt picker's long-standing 546, with nothing clipped, and 3 + 3 reads better than 2 + 2 + 2.
 
 # The inset between a rung's box and its two-line face, vertical and horizontal. Sized well under
@@ -57,7 +57,7 @@ const POLICY_PICKER_FACE_SEPARATION := 1
 const POLICY_PICKER_NAME_FONT_SIZE := 12
 
 # The metric line's type, ONE STEP under the rung name's. The name LEADS and the numbers SUPPORT: at a
-# single size `0.32 food · 0.08 trade` competed with `♻ Sustain` for the same glance instead of
+# single size `0.32 food · 0.08 fodder` competed with `♻ Sustain` for the same glance instead of
 # answering it.
 const POLICY_PICKER_METRIC_FONT_SIZE := 11
 
@@ -305,8 +305,7 @@ const FACTION_PARTY_PHASE := "Phase"
 ## faction row above the list has already said it).
 const FACTION_PERCENT_FORMAT := "%d%%"
 
-## The faction's trade STOCK, at the one decimal the per-band Trade row already prints it at.
-const FACTION_TRADE_STOCK_FORMAT := "%.1f"
+## **`FACTION_TRADE_STOCK_FORMAT` IS RETIRED** (arc #527) with the faction page's Trade row.
 
 ## The PEOPLE key's trailing chip on the faction page, where a band's page carries its dependency
 ## count: how many bands the bar is summed over, so a total is never read as one band's.
@@ -612,14 +611,9 @@ const WORK_SOURCES_FORMAT := "%d sources"
 
 const WORK_TOTAL_TOOLTIP := "Total food per turn from every worked source."
 
-# The TRADE total's tooltip (issue #337). It is a SIBLING of the food total, never part of it: trade
-# goods credit the faction stockpile and never the larder, so folding them into the food figure would
-# break the identity the Food line is denominated in. Shown only when a worked source actually pays
-# trade, so a band with none reads exactly as it did before the two-product model.
-const WORK_TRADE_TOTAL_TOOLTIP := "Total trade goods per turn from every worked source. Trade goods are stockpiled for exchange — they are not food, so they are counted beside the food total, not in it."
+# **`WORK_TRADE_TOTAL_TOOLTIP` IS RETIRED** (arc #527) with the head's trade total.
 
-# The FODDER total's tooltip (issue #449), the third account's twin of the line above and a SIBLING for
-# the same reason: fodder credits the band's fodder store to feed its penned animals and never the
+# The FODDER total's tooltip (issue #449), a SIBLING of the food total rather than part of it: fodder credits the band's fodder store to feed its penned animals and never the
 # larder, so folding it into the food figure would break the identity the Food line is denominated in.
 # Shown only when a worked source actually pays fodder, so a band growing no feed reads exactly as it
 # did before the third account.
@@ -629,7 +623,7 @@ const WORK_FODDER_TOTAL_TOOLTIP := "Total fodder per turn from every worked sour
 # this board is ALREADY scaled by, which is why it reads here rather than as a band-zone vitals row:
 # the head is where its consequence is. Rendered ONLY below full output (`SourceForecast.OUTPUT_FULL`)
 # — a permanent "Output 100%" is noise on a row that is otherwise live summary, the same rule the
-# trade total follows.
+# fodder total follows.
 const WORK_OUTPUT_FORMAT := "Output %d%%"
 
 const WORK_OUTPUT_TOOLTIP := "Discontent is holding this band below full productivity, and every rate on this board is already scaled by it. Raise morale to restore full output."

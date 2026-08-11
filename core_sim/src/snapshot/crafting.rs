@@ -810,7 +810,9 @@ pub(crate) fn material_catalogue(
         .materials()
         .map(|(id, def)| MaterialDefState {
             id: id.to_string(),
-            craft: def.craft.clone(),
+            // `""` = **nothing works this material yet** (the `displayName` convention), never a
+            // craft the client should look up. See `MaterialDef::craft`.
+            craft: def.craft.clone().unwrap_or_default(),
             axes: def.characteristics.clone(),
             hand_workable: def.is_hand_workable(),
             hand_working_rate: def.hand_working_rate(),

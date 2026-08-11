@@ -13,7 +13,7 @@ use crate::dict::culture::{
     axis_bias_to_dict, culture_layers_to_array, culture_tensions_to_array, influencers_to_array,
     sentiment_to_dict,
 };
-use crate::dict::economy::{faction_inventory_to_array, trade_links_to_array};
+use crate::dict::economy::faction_inventory_to_array;
 use crate::dict::governance::{
     corruption_to_dict, crisis_overlay_to_dict, crisis_telemetry_to_dict, power_metrics_to_dict,
     power_nodes_to_array,
@@ -37,7 +37,7 @@ use crate::snapshot::cache::{
     RasterCache, SectionCaches, SectionSpec, WorldCache, SECTION_CULTURE_LAYERS,
     SECTION_DISCOVERY_PROGRESS, SECTION_GENERATIONS, SECTION_GREAT_DISCOVERIES,
     SECTION_GREAT_DISCOVERY_PROGRESS, SECTION_INFLUENCERS, SECTION_POPULATIONS,
-    SECTION_POWER_NODES, SECTION_TILES, SECTION_TRADE_LINKS,
+    SECTION_POWER_NODES, SECTION_TILES,
 };
 use crate::snapshot::delta::DeltaAggregator;
 use crate::snapshot::snapshot_to_dict;
@@ -103,7 +103,6 @@ const SECTION_OVERLAY_CULTURE: &str = "overlays.culture";
 const SECTION_OVERLAY_SENTIMENT: &str = "overlays.sentiment";
 const SECTION_OVERLAY_CORRUPTION: &str = "overlays.corruption";
 const SECTION_OVERLAY_MILITARY: &str = "overlays.military";
-const SECTION_OVERLAY_LOGISTICS: &str = "overlays.logistics";
 const SECTION_OVERLAY_CRISIS: &str = "overlays.crisis";
 const SECTION_CLIMATE_BANDS: &str = "climate_bands";
 
@@ -442,7 +441,6 @@ fn decode_delta_against(
             agg.update_tile(
                 tile.x(),
                 tile.y(),
-                tile.temperature(),
                 tile.grazeCapacity(),
                 tile.forageCapacity(),
             );
@@ -451,10 +449,6 @@ fn decode_delta_against(
     if let Some(layer) = delta.map().and_then(|s| s.terrainOverlay()) {
         agg.apply_terrain_overlay(layer);
         changed_channels.push(SECTION_OVERLAY_TERRAIN);
-    }
-    if let Some(raster) = delta.economy().and_then(|s| s.logisticsRaster()) {
-        agg.apply_logistics_raster(raster);
-        changed_channels.push(SECTION_OVERLAY_LOGISTICS);
     }
     if let Some(raster) = delta.culture().and_then(|s| s.sentimentRaster()) {
         agg.apply_sentiment_raster(raster);
@@ -535,16 +529,6 @@ fn decode_delta_against(
         RemovedIds::narrow(u32_vector_to_packed_int32(
             delta.culture().and_then(|s| s.removedCultureLayers()),
         )),
-    );
-    merge_section(
-        &mut frame,
-        &mut sections,
-        &SECTION_TRADE_LINKS,
-        delta
-            .economy()
-            .and_then(|s| s.tradeLinks())
-            .map(trade_links_to_array),
-        RemovedIds::wide(delta.economy().and_then(|s| s.removedTradeLinks())),
     );
     merge_section(
         &mut frame,

@@ -247,12 +247,12 @@ fn a_field_is_entirely_its_own_crop() {
     );
 }
 
-/// **A wild patch pays its OWN basket's average, in all three currencies.**
+/// **A wild patch pays its OWN basket's average, in every account.**
 ///
 /// Two tiles of one biome realize different baskets (§10), so they pay **different** food rates —
 /// which the flat `provisions_per_biomass` could not express in either direction. And a basket that
-/// happens to contain a cash crop pays **trade** under `Sustain`, because you gathered the grapes;
-/// that account read exactly zero on a wild patch before #433.
+/// happens to contain a cash crop banks that crop's **material** under `Sustain`, because you
+/// gathered the grapes; that account read exactly zero on a wild patch before #433.
 #[test]
 fn a_wild_patch_pays_its_own_baskets_average_in_every_currency() {
     let labor = labor();
@@ -276,15 +276,15 @@ fn a_wild_patch_pays_its_own_baskets_average_in_every_currency() {
          {min} vs {max}"
     );
 
-    // A basket holding a cash crop pays trade under Sustain — you gathered them.
+    // A basket holding a cash crop banks that crop's material under Sustain — you gathered them.
     let mut app = spawn_standard_world();
     let (tile_entity, coord) = a_patch_tile_growing(&mut app, Some("grapevine"));
     seat_patch(&mut app, coord, None);
     let band = spawn_forager(&mut app, tile_entity, coord, 0.5);
     app.world.run_system_once(advance_labor_allocation);
     assert!(
-        published_trade(&app, band) > 0.0,
-        "a Sustain gather of wild ground holding a vine must return trade goods — you gathered them"
+        band_materials(&app, band) > 0.0,
+        "a Sustain gather of wild ground holding a vine must bank grapes — you gathered them"
     );
 }
 
@@ -335,14 +335,15 @@ fn the_conversion_gain_is_on_the_favored_term_only() {
     );
 }
 
-/// **A deep gather sells at the BASKET RATE at both drawn-down rungs, and credits exactly once.**
+/// **THE ONE MATERIAL RULE AT EVERY DRAWN-DOWN RUNG** (#433, restated on the account that survived
+/// arc #527).
 ///
-/// There is exactly one expression — `take × the patch basket's trade rate` — at rung 1 and rung 2
-/// alike, and **no factor of any kind** rides the depth of the draw
+/// There is exactly one expression — `take × the patch basket's material rows` — at rung 1 and rung
+/// 2 alike, and **no factor of any kind** rides the depth of the draw
 /// (`docs/plan_harvest_floor.md` §4; the retired `market.trade_goods_multiplier` used to pay one
 /// depth 4×). Landing on that expression exactly is also the "no double credit" pin.
 #[test]
-fn a_deep_gather_sells_at_the_basket_rate_at_both_drawn_down_rungs() {
+fn a_deep_gather_banks_the_baskets_materials_at_both_drawn_down_rungs() {
     let labor = labor();
     let flora = FloraConfig::builtin();
 
@@ -363,25 +364,120 @@ fn a_deep_gather_sells_at_the_basket_rate_at_both_drawn_down_rungs() {
             .patch(coord)
             .expect("patch exists")
             .clone();
-        let bare = core_sim::tended_take_trade_goods(
-            take,
-            &patch,
-            &composition,
-            &flora,
-            &labor.forage,
-            NEUTRAL_MULTIPLIER,
-        );
-        assert!(bare > 0.0, "the fixture's basket must carry a trade rate");
-        let published = published_trade(&app, band);
+        // The sim's own per-species material rows for this patch, summed — the expression the
+        // credit site puts `take` through.
+        let bare: f32 =
+            core_sim::patch_material_yields(&patch, &composition, &flora, &labor.forage)
+                .iter()
+                .map(|row| row.per_biomass * take * NEUTRAL_MULTIPLIER)
+                .sum();
+        assert!(bare > 0.0, "the fixture's basket must carry a material row");
+        let banked = band_materials(&app, band);
         assert!(
-            (published - bare).abs() <= EPSILON,
-            "{crop:?}: a deep gather sells at the basket rate on its take: {published} vs {bare}"
+            (banked - bare).abs() <= EPSILON * bare.max(1.0),
+            "{crop:?}: a deep gather banks the basket's rows on its take: {banked} vs {bare}"
         );
         assert!(
-            published < 2.0 * bare - EPSILON,
-            "{crop:?}: and is credited ONCE — {published} against a double credit of {bare}"
+            banked < 2.0 * bare - EPSILON,
+            "{crop:?}: and is credited ONCE — {banked} against a double credit of {bare}"
         );
     }
+}
+
+/// **THE PUBLISHED WILD MATERIAL RATE IS WHAT THE GATHER BANKS** (arc #527) — the rung-1 twin of the
+/// wolf guard, and the close on the third instance of one mistake.
+///
+/// `ForagePatchState.tradePerBiomass` was `(deprecated)` with **no replacement**: the crop picker's
+/// quotes cover a *commitment* at rungs 2 and 3, and a **wild gather had nothing at all**. A tile
+/// whose basket carries a cash crop read food-and-fodder-only while the turn banked its fibre.
+///
+/// **The mixed basket is the case that matters, and the fixture insists on it.** A herd is one
+/// species; a patch is a basket, and two species that both give fibre must sum into **one** fibre
+/// rate — which is what a rate means, and what `LocalStore::material_total` sums the same way. A
+/// per-species rate that forgot to merge would pass a single-species fixture and fail here. Their
+/// **characteristic readings** are never merged: those ride the batches the take creates, which is
+/// why this asserts the *total* and `materials.rs` asserts the *batches*.
+///
+/// Asserted against what the band's store actually **holds** after a real turn, not a re-derivation.
+#[test]
+fn a_wild_gathers_published_material_rate_is_what_the_band_banks() {
+    let labor = labor();
+    let flora = FloraConfig::builtin();
+    let mut app = spawn_standard_world();
+    let (tile_entity, coord) = a_patch_tile_growing(&mut app, Some("cotton"));
+    seat_patch(&mut app, coord, None); // WILD — no commitment, which is the rung under test
+
+    let composition = tile_composition(&app, coord);
+    // **The merge case, insisted on rather than hoped for**: at least one material must be named by
+    // two different species of this basket, or the assertion below cannot distinguish a merged rate
+    // from a per-species one.
+    let mut contributors: std::collections::BTreeMap<&str, usize> =
+        std::collections::BTreeMap::new();
+    for entry in &composition {
+        for row in &flora.species[&entry.species].yield_.materials {
+            *contributors.entry(row.material.as_str()).or_insert(0) += 1;
+        }
+    }
+    let shared = contributors
+        .iter()
+        .find(|(_, count)| **count > 1)
+        .map(|(material, _)| (*material).to_string());
+    assert!(
+        shared.is_some(),
+        "the fixture tile's basket must name one material from TWO species, or the merge is \
+         untested: {contributors:?} over {:?}",
+        composition
+            .iter()
+            .map(|entry| entry.species.as_str())
+            .collect::<Vec<_>>()
+    );
+
+    let before = standing_crop(&app, coord);
+    let band = spawn_forager(&mut app, tile_entity, coord, 0.15);
+    app.world.run_system_once(advance_labor_allocation);
+    let take = before - standing_crop(&app, coord);
+    assert!(take > 0.0, "the gather must draw the stand down");
+
+    // **THE PUBLISHED RATE**, through the very seam the capture publishes verbatim — the patch's
+    // decomposed rows merged by material id, per unit of biomass.
+    let patch = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("patch exists")
+        .clone();
+    let rows = core_sim::patch_material_yields(&patch, &composition, &flora, &labor.forage);
+    let published = core_sim::material_yield_totals(&rows, 1.0, NEUTRAL_MULTIPLIER);
+    assert!(
+        !published.is_empty(),
+        "a basket carrying a cash crop must publish a material rate"
+    );
+
+    let cohort = app
+        .world
+        .get::<core_sim::PopulationCohort>(band)
+        .expect("the foraging band still exists");
+    for rate in &published {
+        let held = cohort.stores.material_total(&rate.material).to_f32();
+        let expected = rate.amount * take * NEUTRAL_MULTIPLIER;
+        assert!(
+            (held - expected).abs() <= EPSILON * expected.max(1.0),
+            "the published {} rate composes to {expected} over a {take}-biomass gather, and the \
+             band holds {held}",
+            rate.material
+        );
+        assert!(rate.amount > 0.0, "a published rate is a rate that pays");
+    }
+    // …and the shared material really did come out as ONE row, not two.
+    let shared = shared.expect("checked above");
+    assert_eq!(
+        published
+            .iter()
+            .filter(|rate| rate.material == shared)
+            .count(),
+        1,
+        "two species giving {shared} must merge into ONE rate: {published:?}"
+    );
 }
 
 /// **A WILD patch's fodder credit is gated on Foddering; a COMMITTED one is not.**
@@ -758,8 +854,6 @@ fn the_map_wide_wild_income_is_unmoved_and_the_basket_is_alive() {
 
     let mut old_food = 0.0_f64;
     let mut new_food = 0.0_f64;
-    let mut old_trade = 0.0_f64;
-    let mut new_trade = 0.0_f64;
     let mut ratios: Vec<f32> = Vec::new();
 
     let mut query = app.world.query::<(&Tile, &FoodModuleTag)>();
@@ -796,18 +890,9 @@ fn the_map_wide_wild_income_is_unmoved_and_the_basket_is_alive() {
         if old_tile <= 0.0 {
             continue; // a collapsed/zero-capacity stand offers no skim to compare.
         }
-        // The MSY weight this tile carries, recovered from the flat-rate side rather than re-spelled.
-        let msy = old_tile / f64::from(flat);
         let food_rate = patch_provisions_per_biomass(&wild, &composition, &flora, &labor.forage);
-        let trade_rate: f32 = composition
-            .iter()
-            .map(|entry| entry.share * flora.species[&entry.species].yield_.trade_goods_per_biomass)
-            .sum();
-
         old_food += old_tile;
         new_food += new_tile;
-        old_trade += msy * f64::from(RETIRED_FLAT_TRADE_RATE);
-        new_trade += msy * f64::from(trade_rate);
         ratios.push(food_rate / flat);
     }
 
@@ -817,7 +902,6 @@ fn the_map_wide_wild_income_is_unmoved_and_the_basket_is_alive() {
         ratios.len()
     );
     let food_ratio = new_food / old_food;
-    let trade_ratio = new_trade / old_trade;
     let min = ratios.iter().copied().fold(f32::MAX, f32::min);
     let max = ratios.iter().copied().fold(f32::MIN, f32::max);
     let mean = ratios.iter().copied().sum::<f32>() / ratios.len() as f32;
@@ -847,9 +931,6 @@ fn the_map_wide_wild_income_is_unmoved_and_the_basket_is_alive() {
     println!("map-wide food/turn old:  {old_food:.3}");
     println!("map-wide food/turn new:  {new_food:.3}");
     println!("food ratio (new/old):    {food_ratio:.5}");
-    println!("map-wide trade/turn old: {old_trade:.3}");
-    println!("map-wide trade/turn new: {new_trade:.3}");
-    println!("trade ratio (new/old):   {trade_ratio:.5}");
     println!(
         "basket_rate / flat  min: {min:.5}  max: {max:.5}  mean: {mean:.5}  \
          (min over feeding tiles: {min_feeding:.5})"
@@ -896,12 +977,6 @@ const LIVENESS_DEVIATION: f32 = 0.01;
 /// rates run from `arctic_greens` 0.040 to `wild_emmer` 0.080, so an honestly-averaged map cannot be
 /// flat.
 const LIVENESS_SPREAD: f32 = 1.3;
-
-/// **The retired species-blind trade rate** (`forage.market.trade_goods_per_biomass`, 0.005) — the
-/// old-side denominator of the trade census. It is a *historical* number now, so it is stated here
-/// rather than read from a config it no longer lives in. Every staple carries exactly this in its own
-/// vector, which is why the trade ratio comes out near `1` and only cash-crop baskets move it.
-const RETIRED_FLAT_TRADE_RATE: f32 = 0.005;
 
 // ---------------------------------------------------------------------------------------------
 // Fixture.
@@ -1056,20 +1131,22 @@ fn standing_crop(app: &App, coord: UVec2) -> f32 {
         .biomass
 }
 
-/// The published per-source trade quote (`SourceYield::trade`) — asserted instead of the integer
-/// faction stockpile wherever the honest credit is a fraction of a trade good.
-fn published_trade(app: &App, band: bevy::prelude::Entity) -> f32 {
+/// **Every material on the band's own store, summed** — what a harvest banks beyond food and hay.
+/// A bare total is the right shape here: these tests ask *how much stuff* a take produced, and which
+/// material it is (and what its characteristics read) is `materials.rs`'s subject.
+fn band_materials(app: &App, band: bevy::prelude::Entity) -> f32 {
     app.world
-        .get::<LaborAllocation>(band)
-        .expect("the band forages")
-        .last_yields
-        .first()
-        .expect("the forage assignment has a yield row")
-        .trade
+        .get::<core_sim::PopulationCohort>(band)
+        .expect("the foraging band still exists")
+        .stores
+        .materials()
+        .flat_map(|(_, batches)| batches.values())
+        .map(|batch| batch.amount.to_f32())
+        .sum()
 }
 
 /// The published per-source **fodder** quote (`SourceYield::fodder`, issue #449) — the twin of
-/// [`published_trade`] in the feed currency, and what the compact yield readouts render.
+/// [`band_materials`] in the feed currency, and what the compact yield readouts render.
 fn published_fodder(app: &App, band: bevy::prelude::Entity) -> f32 {
     app.world
         .get::<LaborAllocation>(band)

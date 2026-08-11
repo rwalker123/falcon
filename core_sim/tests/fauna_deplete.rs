@@ -20,7 +20,7 @@ use core_sim::{
     LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig,
     SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
     StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
-    WellbeingConfigHandle, TRADE_GOODS,
+    WellbeingConfigHandle,
 };
 
 /// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
@@ -210,16 +210,23 @@ fn biomass_ratio(app: &App, id: &str) -> Option<f32> {
         .map(|h| h.biomass / h.carrying_capacity)
 }
 
-/// Trade goods sitting in ONE BAND's own store. Every ongoing harvest credits `TRADE_GOODS` on the
-/// producing cohort's `LocalStore` (the `FOOD`/`FODDER` treatment) — `FactionInventory` now only ever
-/// holds the start profile's opening grant, so reading it here would report `0` forever.
-fn trade_goods(app: &App, band: bevy::prelude::Entity) -> f32 {
+/// **Every material sitting in ONE BAND's own store, summed.** The non-food half of a hunt's take
+/// is hide and bone, credited as [`core_sim::MaterialBatch`]es on the producing cohort's
+/// `LocalStore` off the biomass it carried home (the retired `TRADE_GOODS` scalar credited the same
+/// take, flatly, and is gone with arc #527).
+///
+/// A bare sum across materials is the right shape *for this assertion only*: it asks whether a
+/// deeper draw brings home more stuff, which is a question about quantity rather than about which
+/// hide.
+fn materials_held(app: &App, band: bevy::prelude::Entity) -> f32 {
     app.world
         .get::<PopulationCohort>(band)
         .expect("the hunting band still exists")
         .stores
-        .get(TRADE_GOODS)
-        .to_f32()
+        .materials()
+        .flat_map(|(_, batches)| batches.values())
+        .map(|batch| batch.amount.to_f32())
+        .sum()
 }
 
 fn has_hunt_assignment(app: &App, band: bevy::prelude::Entity) -> bool {
@@ -307,12 +314,18 @@ fn deplete_and_surplus_decline_faster_than_sustain_holds() {
         sustain > 0.5,
         "Sustain holds the herd at/above its K/2 operating point: {sustain}"
     );
-    // Commercial harvest: bigger take + boosted trade rate → far more trade goods.
-    let deplete_trade = trade_goods(&app, deplete_band);
-    let surplus_trade = trade_goods(&app, surplus_band);
+    // **A deeper draw brings home more STUFF, because it takes more biomass** — no factor rides the
+    // depth of the draw, and the material rows are what a take pays beyond meat.
+    let deplete_materials = materials_held(&app, deplete_band);
+    let surplus_materials = materials_held(&app, surplus_band);
     assert!(
-        deplete_trade > surplus_trade,
-        "deplete should out-earn surplus on trade: deplete {deplete_trade} vs surplus {surplus_trade}"
+        deplete_materials > 0.0,
+        "the fixture must bank real hide and bone, or the ordering below compares two zeros"
+    );
+    assert!(
+        deplete_materials > surplus_materials,
+        "deplete should out-earn surplus on materials: deplete {deplete_materials} vs surplus \
+         {surplus_materials}"
     );
 }
 

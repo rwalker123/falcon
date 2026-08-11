@@ -103,7 +103,7 @@ of nobody is not a band, so `min_founding_workers ≥ 1` is validated.
   since both halves are co-located, and wrong the moment the new band moves before the reconcile runs.
 
 **There is deliberately NO breeding stock**, and the reason is structural rather than a balance call:
-a band's stores hold `provisions` and `trade_goods` and nothing else; a corralled `Herd` carries
+a band's stores hold `provisions`, `fodder` and material batches and nothing else; a corralled `Herd` carries
 `corralled_at` and a `pen_radius`, so it is fenced land and neither it nor a fraction of it travels;
 and `Herd::owner` is a **`FactionId`**, so both halves of a same-faction split already co-own every
 pen. **What a band loses by walking away is reach, not title** — labor assignments lapse with

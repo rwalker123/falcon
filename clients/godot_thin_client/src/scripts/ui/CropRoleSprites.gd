@@ -5,12 +5,16 @@ class_name CropRoleSprites
 ## `CROP_ROLE_ICONS` vocabulary, and the fifth art family behind `IconSprites`.
 ##
 ## WHY sprites at all: the three marks it replaces were BORROWED — 🌾 is the HUD's food/forage
-## mark, ⇄ is `FoodIcons.TRADE_GOODS_GLYPH` itself, and 🐄 is `POLICY_CORRAL`'s penned-livestock
-## mark. The last two still mean those things elsewhere in this HUD (trade goods on every yield
-## readout; a penned herd on the work board and the map), so a reader who learns one meaning meets
-## it saying something else here. That collision — not legibility — is what this art removes
-## (issue #463). The emoji path's usual complaint applies too: it draws through
-## `ThemeDB.fallback_font`, so the OS emoji font owned the look.
+## mark, 🐄 is `POLICY_CORRAL`'s penned-livestock mark (still, on the work board and the map), and
+## the cash fallback was `⇄`, the trade-goods glyph that marked every non-food yield component. A
+## reader who learns one meaning met it saying something else here. That collision — not legibility —
+## is what this art removes (issue #463). The emoji path's usual complaint applies too: it draws
+## through `ThemeDB.fallback_font`, so the OS emoji font owned the look.
+##
+## **THE `cash` ART OUTLIVED THE ACCOUNT IT WAS DRAWN BESIDE** (arc #527). The trade axis is retired
+## and a cash crop pays a NAMED MATERIAL now, so the ⇄ fallback went (🧵 replaced it) — but the bolt
+## of dyed cloth was always drawing the PRODUCT rather than the account, which is why the art needed
+## no change at all.
 ##
 ## HOW THIS FAMILY DIFFERS FROM THE OTHER FOUR — two ways, and both change how it is used:
 ##

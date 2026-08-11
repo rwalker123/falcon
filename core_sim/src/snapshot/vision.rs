@@ -4,7 +4,6 @@ pub(crate) fn military_raster_from_state(
     tiles: &[TileState],
     populations: &[PopulationCohortState],
     power_nodes: &[PowerNodeState],
-    logistics_raster: &ScalarRasterState,
     grid_size: UVec2,
     overlays: &SnapshotOverlaysConfig,
 ) -> ScalarRasterState {
@@ -13,7 +12,6 @@ pub(crate) fn military_raster_from_state(
     let presence_clamp_max = config.presence_clamp_max();
     let heavy_size_threshold = config.heavy_size_threshold();
     let heavy_size_bonus = config.heavy_size_bonus();
-    let support_clamp_max = config.support_clamp_max();
     let power_margin_max = config.power_margin_max();
     let presence_weight = config.presence_weight();
     let support_weight = config.support_weight();
@@ -59,33 +57,10 @@ pub(crate) fn military_raster_from_state(
         presence[idx] += contribution;
     }
 
-    if logistics_raster.width > 0
-        && logistics_raster.height > 0
-        && !logistics_raster.samples.is_empty()
-    {
-        let src_width = logistics_raster.width as usize;
-        let src_height = logistics_raster.height as usize;
-        let min_height = src_height.min(height as usize);
-        let min_width = src_width.min(width as usize);
-        for y in 0..min_height {
-            let src_row = y * src_width;
-            let dst_row = y * width as usize;
-            for x in 0..min_width {
-                let src_idx = src_row + x;
-                if src_idx >= logistics_raster.samples.len() {
-                    break;
-                }
-                let dst_idx = dst_row + x;
-                if dst_idx >= support.len() {
-                    break;
-                }
-                let value = Scalar::from_raw(logistics_raster.samples[src_idx]).abs();
-                let clamped = value.clamp(Scalar::zero(), support_clamp_max);
-                support[dst_idx] += clamped;
-            }
-        }
-    }
-
+    // `support` used to start from the logistics flow raster, which measured the tile-pair mass
+    // network demolished in `docs/plan_contact_and_logistics.md` §As-built. Power margin is what
+    // remains of "how well supplied is this tile"; a real supply term returns when the
+    // contact/logistics substrate has a network to measure.
     for node in power_nodes {
         let Some(&(x, y)) = tile_positions.get(&node.entity) else {
             continue;

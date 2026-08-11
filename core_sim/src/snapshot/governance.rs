@@ -75,10 +75,8 @@ pub(crate) struct CorruptionSignals<'a> {
 
 pub(crate) struct CorruptionRasterInputs<'a> {
     pub(crate) tiles: &'a [TileState],
-    pub(crate) trade_links: &'a [TradeLinkState],
     pub(crate) populations: &'a [PopulationCohortState],
     pub(crate) power_nodes: &'a [PowerNodeState],
-    pub(crate) logistics_raster: &'a ScalarRasterState,
     pub(crate) corruption_signals: CorruptionSignals<'a>,
     pub(crate) grid_size: UVec2,
     pub(crate) overlays: &'a SnapshotOverlaysConfig,
@@ -89,18 +87,16 @@ pub(crate) fn corruption_raster_from_simulation(
 ) -> ScalarRasterState {
     let CorruptionRasterInputs {
         tiles,
-        trade_links,
         populations,
         power_nodes,
-        logistics_raster,
         corruption_signals,
         grid_size,
         overlays,
     } = inputs;
     let CorruptionSignals { ledger, telemetry } = corruption_signals;
     let overlay_cfg = overlays.corruption();
-    let mut width = logistics_raster.width.max(grid_size.x).max(1);
-    let mut height = logistics_raster.height.max(grid_size.y).max(1);
+    let mut width = grid_size.x.max(1);
+    let mut height = grid_size.y.max(1);
 
     for tile in tiles {
         width = width.max(tile.x.saturating_add(1));
@@ -121,40 +117,15 @@ pub(crate) fn corruption_raster_from_simulation(
         }
     }
 
-    let mut logistics_weights = vec![0i64; total];
-    if logistics_raster.width > 0
-        && logistics_raster.height > 0
-        && !logistics_raster.samples.is_empty()
-    {
-        let src_width = logistics_raster.width as usize;
-        let src_height = logistics_raster.height as usize;
-        let min_height = src_height.min(height_usize);
-        let min_width = src_width.min(width_usize);
-        for y in 0..min_height {
-            let src_row = y * src_width;
-            let dst_row = y * width_usize;
-            for x in 0..min_width {
-                let src_idx = src_row + x;
-                let dst_idx = dst_row + x;
-                if src_idx < logistics_raster.samples.len() && dst_idx < logistics_weights.len() {
-                    logistics_weights[dst_idx] = logistics_raster.samples[src_idx].abs();
-                }
-            }
-        }
-    }
-
-    let mut trade_weights = vec![0i64; total];
-    for link in trade_links {
-        let throughput = link.throughput.abs();
-        if throughput <= 0 {
-            continue;
-        }
-        for tile_id in [link.from_tile, link.to_tile] {
-            if let Some(&idx) = tile_indices.get(&tile_id) {
-                trade_weights[idx] = trade_weights[idx].saturating_add(throughput);
-            }
-        }
-    }
+    // The logistics and trade subsystems have no spatial signal to spread their corruption over.
+    // They used to be weighted by the tile-pair mass network's flow raster and by `TradeLink`
+    // throughput; both went with the dead trade slice (`docs/plan_contact_and_logistics.md`
+    // §As-built), and `TradeLink` never existed at runtime at all, so the trade weights were
+    // already uniformly zero. Kept as explicit all-zero vectors rather than dropped: the four
+    // subsystems are one enum, and a `CorruptionSubsystem::Logistics` exposure still has to land
+    // somewhere the moment the substrate gives it a network again.
+    let logistics_weights = vec![0i64; total];
+    let trade_weights = vec![0i64; total];
 
     let mut military_weights = vec![0i64; total];
     for node in power_nodes {

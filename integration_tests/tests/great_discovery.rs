@@ -2,13 +2,11 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use bevy::prelude::Entity;
 use core_sim::{
-    build_headless_app, run_turn, scalar_from_f32, scalar_one, scalar_zero,
-    ConstellationRequirement, DiscoveryProgressLedger, FactionId, FactionRegistry,
-    GreatDiscoveryDefinition, GreatDiscoveryId, GreatDiscoveryLedger, GreatDiscoveryRegistry,
-    GreatDiscoveryTelemetry, KnowledgeFragment, LogisticsLink, ObservationLedger, Scalar,
-    SimulationConfig, SnapshotHistory, TradeLink, TradeTelemetry,
+    build_headless_app, run_turn, scalar_one, scalar_zero, ConstellationRequirement,
+    DiscoveryProgressLedger, FactionId, FactionRegistry, GreatDiscoveryDefinition,
+    GreatDiscoveryId, GreatDiscoveryLedger, GreatDiscoveryRegistry, GreatDiscoveryTelemetry,
+    ObservationLedger, SnapshotHistory,
 };
 use sim_runtime::KnowledgeField;
 
@@ -180,8 +178,15 @@ fn gds_snapshot_stream_carries_resolved_records() {
     );
 }
 
+/// **Forced publication marks the ledger entry deployed.** The rest of what this test used to
+/// assert — that the published discovery then leaked to a second faction over a `TradeLink` — went
+/// with the link-driven diffusion system itself (`docs/plan_contact_and_logistics.md` §As-built).
+/// `TradeLink` was never inserted by any system, so the assertion only ever passed because the test
+/// hand-built the component the sim never built; there is no surviving link-driven diffusion driver
+/// to point it at. Migration-carried diffusion is a different path with a different driver and gets
+/// its own test when the connection primitive lands.
 #[test]
-fn gds_forced_publication_accelerates_trade_leaks() {
+fn gds_forced_publication_marks_discovery_deployed() {
     common::ensure_test_config();
     let mut app = build_headless_app();
 
@@ -234,64 +239,5 @@ fn gds_forced_publication_accelerates_trade_leaks() {
     assert!(
         resolved_record.publicly_deployed,
         "forced publication should mark the ledger entry as deployed"
-    );
-
-    // Spawn a LogisticsLink + TradeLink for testing knowledge diffusion.
-    // TradeLinks are now only created when trade routes are established.
-    app.world.spawn((
-        LogisticsLink {
-            from: Entity::PLACEHOLDER,
-            to: Entity::PLACEHOLDER,
-            capacity: Scalar::one(),
-            flow: scalar_zero(),
-        },
-        TradeLink {
-            from_faction: FactionId(0),
-            to_faction: FactionId(1),
-            throughput: scalar_zero(),
-            tariff: scalar_zero(),
-            openness: scalar_one(),
-            decay: scalar_zero(),
-            leak_timer: 0,
-            last_discovery: None,
-            pending_fragments: vec![KnowledgeFragment::new(
-                resolved_record.id.0 as u32,
-                scalar_from_f32(0.4),
-                scalar_one(),
-            )],
-        },
-    ));
-
-    run_turn(&mut app);
-
-    let discovery = app.world.resource::<DiscoveryProgressLedger>();
-    let leaked_progress = discovery.get_progress(FactionId(1), resolved_record.id.0 as u32);
-    assert!(
-        leaked_progress > scalar_zero(),
-        "knowledge diffusion should grant progress to the receiving faction"
-    );
-
-    let telemetry = app.world.resource::<TradeTelemetry>();
-    assert!(
-        telemetry
-            .records
-            .iter()
-            .any(|entry| entry.to == FactionId(1)
-                && entry.discovery_id == resolved_record.id.0 as u32),
-        "trade telemetry should log the leaked discovery"
-    );
-
-    let leak_timer_after = {
-        let mut query = app.world.query::<&TradeLink>();
-        let trade = query
-            .iter(&app.world)
-            .next()
-            .expect("trade link should still exist");
-        trade.leak_timer
-    };
-    let config = app.world.resource::<SimulationConfig>();
-    assert_eq!(
-        leak_timer_after, config.trade_leak_min_ticks,
-        "leak timer should reset according to the configured minimum after diffusion"
     );
 }

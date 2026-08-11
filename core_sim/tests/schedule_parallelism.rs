@@ -50,8 +50,8 @@ const MUST_BE_CONCURRENT: [(&str, &str); 6] = [
 const MUST_BE_ORDERED: [(&str, &str); 3] = [
     // Documented in `lib.rs`: the band's `current_tile` must be fresh before labor reads it.
     ("advance_band_movement", "advance_labor_allocation"),
-    // Declared via `.after(simulate_logistics)` — an edge through a type set.
-    ("simulate_logistics", "advance_forage_regrowth"),
+    // Declared via `.after(simulate_materials)` — an edge through a type set.
+    ("simulate_materials", "advance_forage_regrowth"),
     // Declared via `.after(resolve_great_discovery)` — likewise.
     ("resolve_great_discovery", "apply_capability_effects"),
 ];

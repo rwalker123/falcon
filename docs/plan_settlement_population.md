@@ -154,9 +154,11 @@ held until the prior merges (small, focused PRs, matching the Wildlife & Hunting
   turn, **throughput-limited** with friction (`supply_network_config.json`). So you can specialize a
   gatherer band to feed a nearby scout band, while a band beyond reach lives off its own larder.
   "Logistics from turn 0, scaled by config" — the same engine grows into settlement/city
-  distribution, and its connected-components pass is what Phase 4 uses to derive settlements. A
-  future **trade policy** adds a consent gate + priced return flow on cross-faction edges (retiring
-  the dormant `TradeLink`/`trade_knowledge_diffusion`). Client readout deferred.
+  distribution, and its connected-components pass is what Phase 4 uses to derive settlements. The
+  cross-faction half is now `docs/plan_contact_and_logistics.md` §Q4, which **re-founds this network
+  on a connection primitive** rather than adding a trade policy to it; the dormant `TradeLink` /
+  `trade_knowledge_diffusion` it was going to retire were demolished in arc #527. Client readout
+  deferred.
 - **Phase 2 — Labor pool + hybrid allocation.** Working-age → a local labor supply; a
   demand/allocation system (auto by priority + player override); client labor readout.
   **Brought forward and concretized for the early game by `docs/plan_early_game_labor.md`** —

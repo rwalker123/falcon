@@ -1,5 +1,12 @@
 # The Harvest Floor — one dial replaces the four-stance axis
 
+> **The trade account this document weighs against food is RETIRED** (arc #527,
+> `docs/plan_contact_and_logistics.md`). The floor mechanism is untouched — what changed is that the
+> vector it pays into no longer has a trade component, so passages reasoning about a deeper floor
+> "selling more" now read on **food and materials**. The two tests that measured the trade rate are
+> gone; the structural guard on the deleted levers survives and was extended to assert
+> `trade_goods_per_biomass` is absent from both webs' config.
+
 **Status:** ALL FOUR SLICES LANDED (#452, #453, #454, #455). The Sustain / Surplus / Deplete /
 Eradicate axis is **deleted on both food webs**; `FollowPolicy` no longer exists; learning and build
 accrual ride the floor, the `Thriving` gates are gone, and the build dip multiplies crew throughput

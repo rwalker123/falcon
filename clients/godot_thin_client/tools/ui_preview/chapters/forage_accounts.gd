@@ -26,8 +26,6 @@ const PLANT_NO_BODY := 0.0
 # `0..1` range, since every real floor including `0` is a value a frame may want to dial.
 const HAY_MEADOW_FODDER_PER_BIOMASS := 0.005
 
-const HAY_MEADOW_TRADE_PER_BIOMASS := 0.00025
-
 # ---- THE FLOOR CHART's five cases (docs/plan_harvest_floor.md §7.3) -----------------------------
 # A floor ABOVE a nearly-full patch's stock, so nothing stands above the line and the flag has to flip
 # below it — the two things `floor_chart_full` is judged on.
@@ -58,16 +56,17 @@ const FLOOR_CHART_HELD_FLOOR := 0.20
 
 ## The three forage-rung faces `_hay_meadow_tile_fixture` / `_dead_season_tile_fixture` are judged on
 ## (issue #426), spelled out as literals for the same reason as the boar pair above. The first two are
-## the THREE-account line the plant web grew a column for, in wire order (provisions · trade goods ·
-## fodder) and ascending on food and fodder between them. The third is the one surviving zero: a rung
-## whose ceiling EXISTS and is empty says so, which is the whole difference between "pays nothing this
-## season" and "the wire never described this patch".
+## the TWO-account line the plant web grew a column for, in wire order (provisions · fodder) and
+## ascending on both between them. The third is the one surviving zero: a rung whose ceiling EXISTS
+## and is empty says so, which is the whole difference between "pays nothing this season" and "the
+## wire never described this patch". (A trade-goods clause stood between the two until arc #527.)
 # The preset metric as the TOOLTIP spells it (`SourceForecast.extractive_take_pair`'s `full`), which
 # is where it lives now that the button face states the intent alone. The face's compact spelling
-# (`0.60 food · 0.01 trade · 0.20 fodder`) has no surface left to be read from.
-const HAY_PEAK_TOOLTIP := "up to +0.60/turn · ⇄ +0.01 trade goods/turn · +0.20 fodder/turn"
+# (`0.60 food · 0.20 fodder`) has no surface left to be read from.
+const HAY_PEAK_TOOLTIP := "up to +0.60/turn · +0.20 fodder/turn"
 
-const HAY_STRIP_TOOLTIP := "up to +1.35/turn · ⇄ +0.02 trade goods/turn · +0.45 fodder/turn"
+const HAY_STRIP_TOOLTIP := "up to +1.35/turn · +0.45 fodder/turn"
+
 
 const DEAD_SEASON_TOOLTIP := "up to +0.00/turn"
 
@@ -84,16 +83,37 @@ const HAY_OVERDRAW_FORAGERS := 8
 ## overdraw verdict is deliberately unmoved by the lock.
 const FODDER_LOCK_FORAGERS := 3
 
+## ---- THE NO-FOOD BASKET (the tile the worker cap was reported on) -----------------------------
+## What one gatherer moves off this ground per turn, in BIOMASS — the term every crew answer divides
+## by. Stated here rather than left to the seeder's food-derived recovery, which cannot run on a patch
+## whose food rate is zero.
+const NO_FOOD_BASKET_CARRY := 4.0
+## Hay pays feed; tobacco and hay's stalks pay two materials. Deliberately UNEQUAL amounts, the
+## cash-crop tile's rule: a vector summed into one figure is visibly neither of them.
+const NO_FOOD_BASKET_FODDER_PER_BIOMASS := 0.012
+const NO_FOOD_BASKET_TOBACCO_PER_BIOMASS := 0.020
+const NO_FOOD_BASKET_FIBRE_PER_BIOMASS := 0.008
+## Real `materials.json` ids, and the catalogue ships no display name — so the id IS the display word,
+## exactly as it is on the crop picker's basket rows and on the wolf's readout.
+const NO_FOOD_BASKET_TOBACCO_ID := "tobacco"
+const NO_FOOD_BASKET_FIBRE_ID := "fibre"
+## The crew the frame is composed at — deliberately BELOW the crew that clears the patch's room in one
+## turn, so the take's `min` binds on the CREW arm. At the clearing crew the two arms are equal by
+## construction and a readout that never read the per-worker rate would print the same number; the
+## frame asserts the relation rather than trusting this comment.
+const NO_FOOD_BASKET_QUOTE_CREW := 4
+
 ## The faction's Foddering, dialed as a PART-LEARNED meter rather than a bare 0 in the locked state:
 ## it is a 0..1 learning track like every other, and only `KNOWLEDGE_COMPLETE` opens the credit, so a
 ## fixture at 0 could not tell "unlearned" from "partly learned but still refused".
 const FODDER_LOCK_PROGRESS := 0.42
 
-## The peak preset's TOOLTIP with the hay locked — `HAY_PEAK_TOOLTIP` minus its third clause, and
+## The peak preset's TOOLTIP with the hay locked — `HAY_PEAK_TOOLTIP` minus its fodder clause, and
 ## NOTHING in its place: a tooltip is one flat string with nowhere to hang the reason, so a refused
 ## ceiling is dropped rather than dashed or zeroed. Written out rather than sliced off that constant,
 ## for the reason every literal in this file is: a derived needle passes on whatever the code emits.
-const HAY_PEAK_TOOLTIP_FODDER_LOCKED := "up to +0.60/turn · ⇄ +0.01 trade goods/turn"
+const HAY_PEAK_TOOLTIP_FODDER_LOCKED := "up to +0.60/turn"
+
 
 ## Which line of a rung's two-line face carries the metric: line 0 is the rung NAME
 ## (`HudFormat.policy_face`), line 1 the products (`HudWidgets._policy_rung_cell` builds them in that
@@ -157,7 +177,7 @@ const BUILD_DIP_CREW_NEEDED := 2
 
 const BUILD_DIP_IDLE_WORKERS := 9
 
-## The METRIC line of a policy rung's two-line face — `→ 1.48 food · 0.37 trade`, the products line
+## The METRIC line of a policy rung's two-line face — `0.24 food · 0.40 fodder`, the products line
 ## the payoff/cap assertions read. The rung is found by `HudWidgets.POLICY_RUNG_META`, its identity,
 ## and NEVER by button text: the face lives on a two-Label stack beside an empty-`text` Button, so
 ## `Q.find_button_by_text` finds nothing at all here. "" when the rung is absent from the picker or
@@ -277,7 +297,7 @@ func _yield_now_after(yields_text: String, account: String) -> Array:
 ## weight, which worldgen fixes at `INITIAL_SEASONAL_WEIGHT` 1.0 and nothing ever moves; the plant
 ## rungs' `yield_fraction_while_building` 0.25; and a basket of Wild Tubers 35% · Cotton 30% · Flax 20%
 ## · Wild Rice 15%, of which only the two staples pay food — 0.35 × 0.065 + 0.15 × 0.070 — so the patch
-## converts at `STALE_VERB_FOOD_PER_BIOMASS` and the two cash crops carry the trade rate beside it.
+## converts at `STALE_VERB_FOOD_PER_BIOMASS`, the two cash crops paying materials rather than meals.
 ##
 ## **It states its own stock and capacity, so it deliberately does NOT go through `BaseFx.seed_forage_rows`**,
 ## which pins every fixture it touches to one `FIXTURE_CAPACITY`/`FIXTURE_STOCK_FRACTION` pair. This
@@ -306,7 +326,6 @@ func _stale_verb_tile_fixture() -> Dictionary:
 		"patch_is_field": false,
 		"patch_field_progress": 0.0,
 		"patch_provisions_per_biomass": ForageFx.STALE_VERB_FOOD_PER_BIOMASS,
-		"patch_trade_per_biomass": ForageFx.STALE_VERB_TRADE_PER_BIOMASS,
 		"patch_fodder_per_biomass": 0.0,
 		"patch_per_worker_biomass": ForageFx.STALE_VERB_PER_WORKER_BIOMASS,
 		"patch_per_worker_yield": ForageFx.STALE_VERB_PER_WORKER_BIOMASS * ForageFx.STALE_VERB_FOOD_PER_BIOMASS,
@@ -406,7 +425,6 @@ func _building_patch_tile_fixture() -> Dictionary:
 		# The stale-verb patch's basket, verbatim: only the two staples pay food, so the patch converts
 		# at well under a pure-staple rate and the ⚠ has a real take to fire on.
 		"patch_provisions_per_biomass": ForageFx.STALE_VERB_FOOD_PER_BIOMASS,
-		"patch_trade_per_biomass": ForageFx.STALE_VERB_TRADE_PER_BIOMASS,
 		"patch_fodder_per_biomass": 0.0,
 		"patch_per_worker_biomass": ForageFx.STALE_VERB_PER_WORKER_BIOMASS,
 		"patch_per_worker_yield": ForageFx.STALE_VERB_PER_WORKER_BIOMASS * ForageFx.STALE_VERB_FOOD_PER_BIOMASS,
@@ -479,21 +497,22 @@ func _wild_sown_field_tile_fixture() -> Dictionary:
 	tile["patch_is_cultivated"] = false
 	return tile
 
-## **A TILE THAT PAYS ALL THREE ACCOUNTS — the frame face treatment A is judged on (#426).** A hay
-## meadow: thin human food, a token of trade, and real FODDER, which is the account the whole plant
-## web grew a third column for. Every other forage fixture pays provisions alone, so until this one
-## existed the picker's three-account face and the column ceiling it triggers had NO frame at all.
+## **A TILE THAT PAYS BOTH ACCOUNTS — the frame face treatment A is judged on (#426).** A hay meadow:
+## thin human food and real FODDER, which is the account the whole plant web grew a column for. Every
+## other forage fixture pays provisions alone, so until this one existed the picker's two-account face
+## and the column ceiling it triggers had NO frame at all. (It paid a third, trade-goods account until
+## arc #527 retired that axis.)
 ##
-## **The rows are written out rather than derived.** `BaseFx.seed_forage_rows` seeds trade and fodder to 0
-## by design (so a reseeding pass leaves every existing frame byte-identical), which is exactly the
-## thing under test here — so this fixture overwrites the three account dicts afterwards, the
-## "genuinely non-derivable row" case that helper's docstring names.
+## **The rows are written out rather than derived.** `BaseFx.seed_forage_rows` seeds fodder to 0 by
+## design (so a reseeding pass leaves every existing frame byte-identical), which is exactly the thing
+## under test here — so this fixture overwrites the account dicts afterwards, the "genuinely
+## non-derivable row" case that helper's docstring names.
 ##
-## **EVERY ACCOUNT DESCENDS WITH THE FLOOR NOW, and that is a real simplification.** The trade column
-## used to be non-monotone: `Deplete` alone carried `market.trade_goods_multiplier` (x4), a POLICY
-## markup on stripping the patch for sale, so its cell sat above Eradicate's. The harvest-floor arc
-## retired that markup — a deeper floor earns more trade only because it takes more BIOMASS — so all
-## three accounts are one stock through three fixed rates and no column can invert.
+## **EVERY ACCOUNT DESCENDS WITH THE FLOOR, and that is a real simplification.** A non-food column used
+## to be non-monotone: `Deplete` alone carried `market.trade_goods_multiplier` (x4), a POLICY markup on
+## stripping the patch for sale, so its cell sat above Eradicate's. The harvest-floor arc retired that
+## markup — a deeper floor earns more only because it takes more BIOMASS — so both accounts are one
+## stock through fixed rates and no column can invert.
 func _hay_meadow_tile_fixture() -> Dictionary:
 	var tile := ForageFx.fodder_basket_tile_fixture()
 	tile["x"] = 65
@@ -513,24 +532,83 @@ func _hay_meadow_tile_fixture() -> Dictionary:
 	tile["patch_ceiling_eradicate"] = 2.10
 	tile["patch_ceiling_cultivate"] = 0.06
 	tile["patch_ceiling_sow"] = 0.02
-	# The species-BLIND patch payoffs. A crop the player picks substitutes its own three (Hay Grass
-	# pays 0.72 fodder at rung 2, 1.80 at rung 3), so these are what a COMMITTED patch quotes.
+	# The species-BLIND patch payoffs. A crop the player picks substitutes its own (Hay Grass pays 0.72
+	# fodder at rung 2, 1.80 at rung 3), so these are what a COMMITTED patch quotes.
 	tile["patch_tended_yield"] = 0.30
-	tile["patch_tended_trade"] = 0.02
 	tile["patch_tended_fodder"] = 0.72
 	tile["patch_field_yield"] = 0.60
-	tile["patch_field_trade"] = 0.04
 	tile["patch_field_fodder"] = 1.80
-	# **THE NON-FOOD ACCOUNTS ARE THE PATCH'S OWN RATES, stated directly.** `BaseFx.seed_forage_rows` derives
+	# **THE FODDER ACCOUNT IS THE PATCH'S OWN RATE, stated directly.** `BaseFx.seed_forage_rows` derives
 	# each account's per-biomass rate from the food-peak ceiling the fixture names, which is the right
-	# reversal for a food account; the two non-food ones are independent facts about what GROWS here,
-	# so they are authored as the rates the wire actually carries and the seeder is told the peak
-	# ceilings they stand for. A patch's per-worker term for these two is NOT on the wire at all — the
-	# client recovers it from `per_worker_yield / provisions_per_biomass`, one biomass throughput
-	# serving all three accounts — so there is nothing per-account left to author here.
-	tile["patch_trade_per_biomass"] = HAY_MEADOW_TRADE_PER_BIOMASS
+	# reversal for a food account; the non-food one is an independent fact about what GROWS here, so it
+	# is authored as the rate the wire actually carries and the seeder is told the peak ceiling it
+	# stands for. A patch's per-worker term for it is NOT on the wire at all — the client composes it
+	# from the one biomass throughput both accounts share — so there is nothing per-account left to
+	# author here.
 	tile["patch_fodder_per_biomass"] = HAY_MEADOW_FODDER_PER_BIOMASS
 	tile = BaseFx.seed_forage_rows(tile)
+	return tile
+
+## **THE TILE FROM THE REPORT: Tobacco 56% + Hay Grass 44%, and it pays NO FOOD AT ALL.** Tobacco pays
+## its own material; hay pays fodder and fibre. Neither pays a calorie, which is a perfectly ordinary
+## thing for a wild patch to be and which nothing else in this harness stages.
+##
+## **IT IS THE CONTRAST TO `_dead_season_tile_fixture`, and the pair is the whole claim.** Both answer
+## `0` on the food axis; one is barren and one is a stand of two crops the band actually wants. The cap
+## read `max 1 worker useful here` on BOTH — `max_useful_workers` divided by the food term alone, and
+## once arc #527 made the axis triple a plain alias of that term, the widening that used to rescue an
+## inedible source was gone. So the sheet printed that 1 beneath its own `13 clear it now` and
+## `2 hold it after`, with the `+` dead at 1.
+##
+## **THE ACCOUNTS ARE AUTHORED AS THE WIRE STATES THEM** — a per-biomass rate per account, and a
+## per-worker term that is the crew's biomass throughput through that same rate. Holding that relation
+## is what makes every account's saturating crew agree on a WILD patch, which is the property the cap's
+## off-axis arm leans on; a fixture that broke it would be testing arithmetic no sim produces.
+func _no_food_basket_tile_fixture() -> Dictionary:
+	var tile := _hay_meadow_tile_fixture()
+	tile["x"] = 65
+	tile["y"] = 10
+	# **THE FOOD ACCOUNT IS A STRUCTURAL ZERO, NOT A SEASONAL ONE** — these two plants pay no calories
+	# at any stock, so the rate goes to zero while the stock and the throughput stay real. That is
+	# exactly the opposite of the dead season, which keeps its rates and loses its crop.
+	tile["patch_provisions_per_biomass"] = 0.0
+	tile["patch_per_worker_yield"] = 0.0
+	# The two rungs' food payoffs go with it: committing to tobacco does not make it edible.
+	tile["patch_tended_yield"] = 0.0
+	tile["patch_field_yield"] = 0.0
+	# **STATED, NOT SEEDED.** `ForageFx.seed_growth_terms` recovers the throughput from the food pair
+	# where it can and falls back to a config number where it cannot — which is here — so the term the
+	# whole crew side divides by would be an implementation detail of the seeder rather than a fact
+	# this frame authored.
+	tile["patch_per_worker_biomass"] = NO_FOOD_BASKET_CARRY
+	tile["patch_fodder_per_biomass"] = NO_FOOD_BASKET_FODDER_PER_BIOMASS
+	tile["patch_material_per_biomass"] = [
+		{"material_id": NO_FOOD_BASKET_TOBACCO_ID, "amount": NO_FOOD_BASKET_TOBACCO_PER_BIOMASS},
+		{"material_id": NO_FOOD_BASKET_FIBRE_ID, "amount": NO_FOOD_BASKET_FIBRE_PER_BIOMASS},
+	]
+	tile["patch_per_worker_material"] = [
+		{"material_id": NO_FOOD_BASKET_TOBACCO_ID,
+			"amount": NO_FOOD_BASKET_CARRY * NO_FOOD_BASKET_TOBACCO_PER_BIOMASS},
+		{"material_id": NO_FOOD_BASKET_FIBRE_ID,
+			"amount": NO_FOOD_BASKET_CARRY * NO_FOOD_BASKET_FIBRE_PER_BIOMASS},
+	]
+	tile["patch_composition"] = [
+		{"species": "tobacco", "role": "cash", "display_name": "Tobacco", "share": 0.56,
+			"can_cultivate": true, "can_sow": true,
+			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.0, "sow_payoff": 0.0,
+			"cultivate_fodder_payoff": 0.0, "sow_fodder_payoff": 0.0,
+			"cultivate_material_payoff": [
+				{"material_id": NO_FOOD_BASKET_TOBACCO_ID, "amount": 0.31}],
+			"sow_material_payoff": [{"material_id": NO_FOOD_BASKET_TOBACCO_ID, "amount": 0.78}]},
+		{"species": "hay_grass", "role": "fodder", "display_name": "Hay Grass", "share": 0.44,
+			"can_cultivate": true, "can_sow": true,
+			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.0, "sow_payoff": 0.0,
+			"cultivate_fodder_payoff": 0.72, "sow_fodder_payoff": 1.80,
+			"cultivate_material_payoff": [{"material_id": NO_FOOD_BASKET_FIBRE_ID, "amount": 0.09}],
+			"sow_material_payoff": [{"material_id": NO_FOOD_BASKET_FIBRE_ID, "amount": 0.22}]},
+	]
 	return tile
 
 ## **A DESCRIBED PATCH THAT PAYS NOTHING — the state issue #426 is named after.** Deep winter on the
@@ -551,10 +629,8 @@ func _dead_season_tile_fixture() -> Dictionary:
 	# Nothing grows, so nothing is worth committing to either — the investment rungs' payoffs go with
 	# the harvest. The basket stays: which plants LIVE here is not a seasonal fact.
 	tile["patch_tended_yield"] = 0.0
-	tile["patch_tended_trade"] = 0.0
 	tile["patch_tended_fodder"] = 0.0
 	tile["patch_field_yield"] = 0.0
-	tile["patch_field_trade"] = 0.0
 	tile["patch_field_fodder"] = 0.0
 	tile["patch_per_worker_yield"] = 0.0
 	# **THE CREW THROUGHPUT IS HONESTLY ZERO, AND IT IS STATED RATHER THAN SEEDED.** The wire's
@@ -584,7 +660,7 @@ func _committed_hay_meadow_tile_fixture() -> Dictionary:
 
 ## ---- THE FODDER-ONLY WORKED SOURCE (issue #449) ------------------------------------------------
 ## What the sim pays this crew per turn. It is the ONLY account the assignment carries, which is the
-## whole point: a sown hay Field publishes zero provisions and zero trade, and the compact readouts
+## whole point: a sown hay Field publishes zero provisions, and the compact readouts
 ## rendered that as `+0.00 /turn` — a tile that reads as dead while it fills the band's fodder store.
 const FODDER_STANDING_RATE := 0.40
 ## The crew on it. Three rather than one, so the summary's `N foragers` is plural and the row cannot be
@@ -598,7 +674,7 @@ const FODDER_STANDING_SUFFIX := " 0.40 fodder"
 ## The same clause as the rendered drawer line carries it.
 const FODDER_STANDING_CLAUSE := "0.40 fodder"
 ## The tooltip's fodder clause, which reuses the rung tooltips' own wording rather than spelling the
-## account a fourth way — hence the sign and the unit that the compact face does without.
+## account a third way — hence the sign and the unit that the compact face does without.
 const FODDER_STANDING_TOOLTIP_CLAUSE := "+0.40 fodder/turn"
 
 ## THE ASSIGNMENT ITSELF, so the band fixture and the readout assertion cannot describe two different
@@ -612,9 +688,6 @@ func _fodder_field_assignment() -> Dictionary:
 		"target_x": int(_hay_meadow_tile_fixture()["x"]), "target_y": int(_hay_meadow_tile_fixture()["y"]),
 		"floor": SourceForecast.FLOOR_FOOD_PEAK,
 		"actual_yield": 0.0, "sustainable_yield": 0.0, "realized_yield": 0.0,
-		# Both trade keys present and zero, the way the wire ships them, so the fodder term is reached
-		# through the ordinary render-only-when-non-zero gate rather than through an absent key.
-		"trade_yield": 0.0, "realized_trade_yield": 0.0,
 		"fodder_yield": FODDER_STANDING_RATE,
 		"overdraws": false, "has_yield": true,
 	}
@@ -910,10 +983,10 @@ func run(harness) -> void:
 		"foddering": 1.0,
 	}])
 	# State forage_three_accounts — THE FRAME THIS PASS IS JUDGED ON. Every other forage fixture pays
-	# provisions alone, so the picker's three-account face had no frame at all and a hay meadow was
-	# indistinguishable from barren prairie. The extractive rungs must now read
-	# `0.24 food · 0.01 trade · 0.40 fodder` and ascend on food and fodder — while TRADE does not,
-	# `Deplete` alone carrying the ×4 market markup, which is the sim's ladder and not a fixture typo.
+	# provisions alone, so the picker's multi-account face had no frame at all and a hay meadow was
+	# indistinguishable from barren prairie. The extractive rungs must read `0.24 food · 0.40 fodder`
+	# and ascend on both. (A trade clause stood between them, non-monotone because `Deplete` alone
+	# carried the ×4 market markup; the account and the markup are both retired — arc #527.)
 	# **THE PICKER STAYS THREE ABREAST, and this frame is why that is a measurement and not a guess.**
 	# A wide-face column ceiling of 2 was built for exactly this face and then refuted here: at three
 	# columns the sheet comes out 555px — against the deer hunt picker's long-standing 546 — nothing
@@ -1183,7 +1256,7 @@ func run(harness) -> void:
 	# chart must SURVIVE, and the verdict must have re-read against the new floor.
 	var live_chart = Q.find_meta_node(h._hud._drawercompose._compose_sheet, HudWidgets.FLOOR_CHART_META)
 	# **AND SO MUST THE YIELDS — the reading the drag is AIMED at.** Reported from play: the verdict
-	# followed the drag while the food/trade numbers sat frozen, catching up only on release when the
+	# followed the drag while the account numbers sat frozen, catching up only on release when the
 	# rebuild lands. Captured BEFORE the emit, because the only assertion that can see that bug is a
 	# CHANGE: the stale row is a perfectly valid, perfectly findable node, so "the yields row is still
 	# there" passes with the defect fully restored.
@@ -1265,8 +1338,8 @@ func run(harness) -> void:
 	var wild_hay := _hay_meadow_tile_fixture()
 
 	# State forage_fodder_locked — a WILD hay meadow worked by a band that cannot bank hay. The fodder
-	# row keeps its FODDER unit and loses its number; the food and trade rows beside it stay live
-	# numbers, which is what scopes the lock to ONE account rather than to the readout.
+	# row keeps its FODDER unit and loses its number; the food row beside it stays a live number, which
+	# is what scopes the lock to ONE account rather than to the readout.
 	#
 	# **Foddering is dialed PART-LEARNED, not 0.** It is a 0..1 track like every other and only
 	# `KNOWLEDGE_COMPLETE` opens the credit, so a fixture at 0 could not tell "unlearned" from "partly
@@ -1289,8 +1362,7 @@ func run(harness) -> void:
 		locked_fodder == HudComposeVocab.YIELD_LOCKED_GLYPH)
 	# THE LOCK IS SCOPED TO ONE ACCOUNT. Without this the frame passes on a readout that went silent —
 	# which is exactly the hidden gate the surviving unit exists to refuse. Asked of FOOD, the account
-	# this crew genuinely banks; TRADE is deliberately not named, this crew's trade rate landing under
-	# the readout's own display floor, so a claim about it would be a claim about `has_component`.
+	# this crew genuinely banks.
 	var locked_food := Readout.yields_account_number(
 		h._hud._drawercompose._compose_sheet, SourceForecast.YIELD_ACCOUNT_FOOD)
 	h._assert_hud("…while the account this band CAN bank still reads as a live number",
@@ -1419,8 +1491,8 @@ func run(harness) -> void:
 	h._hud._compose.set_forage_species("")
 
 	# State forage_fodder_standing — THE COMPACT READOUT ON A FODDER-ONLY SOURCE (issue #449), i.e. the
-	# state every surface in this arc exists for: a WORKED hay meadow whose take is feed and neither
-	# provisions nor trade. The drawer's closed standing summary composes from the SAME
+	# state every surface in this arc exists for: a WORKED hay meadow whose take is feed and not
+	# provisions. The drawer's closed standing summary composes from the SAME
 	# `SourceForecast.source_yield_readout` the Band panel's work rows do, so this frame and that board
 	# cannot state different products for one assignment — and before this it read `+0.00 /turn` on a
 	# tile that was filling the band's fodder store every turn.
@@ -1450,6 +1522,104 @@ func run(harness) -> void:
 	# band and the tile this block borrowed rather than against a hay Field nobody after it works.
 	h._hud._band_labor._player_bands = standing_roster
 	h._hud._band_labor._player_band = standing_band
+	h._hud._compose.reset_forage_source()
+	h._show_tile(committed_hay)
+	await h._settle()
+
+	# State forage_no_food_basket — **THE TILE FROM THE REPORT: Tobacco 56% + Hay Grass 44%, and not a
+	# calorie between them.** The sheet read `max 1 worker useful here — more would be idle` with 17
+	# workers standing idle, directly beneath its own `13 clear it now` / `2 hold it after` and a
+	# verdict naming 2 foragers as the remedy — and the `+` was dead at 1, so none of those three
+	# numbers could be acted on. `max_useful_workers` divides by the FOOD term, and arc #527 made the
+	# axis triple an alias of it, so the barren branch came to fire on every source that pays no food.
+	var no_food := _no_food_basket_tile_fixture()
+	h._hud._compose.reset_forage_source()
+	h._show_tile(no_food)
+	h._compose_forage(no_food)
+	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
+	h._hud._compose.set_forage_count(NO_FOOD_BASKET_QUOTE_CREW)
+	h._compose_forage(no_food)
+	await h._settle()
+	await h._save("forage_no_food_basket")
+	h._assert_compose_sheet_fits("forage_no_food_basket")
+	var no_food_sheet = h._hud._drawercompose._compose_sheet
+	# (0) THE FIXTURE REALLY IS THE REGIME. Without this every claim below is about an ordinary patch:
+	# the whole point is a source whose FOOD account is a structural zero while two other accounts pay.
+	var no_food_forecast := SourceForecast.forecast_inputs(
+		ForageFx.floorify(no_food, HudComposeVocab.FORAGE_FORECAST_PREFIX),
+		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+		SourceForecast.FLOOR_FOOD_PEAK)
+	h._assert_hud("the fixture pays no food and still pays its other accounts",
+		float(no_food_forecast["per_worker"]) == 0.0
+			and float(no_food_forecast["per_worker_fodder"]) > 0.0
+			and not (no_food_forecast[SourceForecast.FORECAST_PER_WORKER_MATERIAL_KEY] as Array).is_empty())
+	# (1) **THE CAP IS NOT THE BARREN ONE.** Stated as the relation rather than as the number it
+	# happens to produce, and paired below with the dead season so the widening cannot have been a
+	# deletion of the guard.
+	var no_food_cap := SourceForecast.max_useful_workers(no_food_forecast)
+	h._assert_hud("a patch paying fodder and materials is not barren (cap %d)" % no_food_cap,
+		no_food_cap > SourceForecast.MAX_USEFUL_BARREN)
+	# (2) **AND THE PAIRING**: a genuinely dead-season patch still caps at one worker. Asked of the
+	# fixture the issue is named after, in the same frame, because "not barren" is trivially satisfied
+	# by a cap that stopped answering at all.
+	h._assert_hud("…while a patch that pays nothing anywhere still caps at one worker",
+		SourceForecast.max_useful_workers(SourceForecast.forecast_inputs(
+			ForageFx.floorify(_dead_season_tile_fixture(), HudComposeVocab.FORAGE_FORECAST_PREFIX),
+			SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+			SourceForecast.FLOOR_FOOD_PEAK)) == SourceForecast.MAX_USEFUL_BARREN)
+	# (3) **THE CAP REACHES THE CREW THE SHEET'S OWN TARGETS NAME** (§7.6) — read off the rendered
+	# pills, not recomputed, since the defect was the panel disagreeing with itself. Both must be
+	# PRESENT: an absent target passes a `>=` for free.
+	var no_food_clear := Readout.crew_target_count(no_food_sheet, HudWidgets.CREW_TARGET_CLEAR)
+	var no_food_hold := Readout.crew_target_count(no_food_sheet, HudWidgets.CREW_TARGET_HOLD)
+	h._assert_hud("the sheet prices a crew at all — both targets render (%d / %d)"
+		% [no_food_clear, no_food_hold],
+		no_food_clear > 0 and no_food_hold > 0)
+	h._assert_hud("…and the cap (%d) reaches both of them" % no_food_cap,
+		no_food_cap >= no_food_clear and no_food_cap >= no_food_hold)
+	# (4) **THE MATERIAL ROW RENDERS** — the other half of the report: the PER TURN box showed
+	# `— FODDER` and no material row at all on a tile 56% tobacco. Each material as its OWN row, never
+	# summed, and the FODDER row still reading beside them.
+	var no_food_yields := Readout.yields_text(no_food_sheet)
+	var no_food_crew: int = h._hud._compose.forage_count()
+	# **THE CREW ARM OF THE `min` IS WHAT THIS FRAME READS**, which is why the composed crew sits below
+	# the saturating one: at the clearing crew the two arms are equal by construction, and a producer
+	# that never read the per-worker rate would render the same string. The band's own
+	# `output_multiplier` is folded in because it is a FIXTURE fact (0.9 on this roster's band) rather
+	# than part of the model under test.
+	var no_food_output := float(h._hud._band_labor.player_band().get(
+		"output_multiplier", SourceForecast.OUTPUT_FULL))
+	var tobacco_take := float(no_food_crew) * NO_FOOD_BASKET_CARRY \
+		* NO_FOOD_BASKET_TOBACCO_PER_BIOMASS * no_food_output
+	h._assert_hud("the crew stays below the saturating one, so the CREW arm is what binds (%d < %d)"
+		% [no_food_crew, no_food_clear], no_food_crew > 0 and no_food_crew < no_food_clear)
+	h._assert_hud("the sheet quotes the tobacco this gather banks (got \"%s\")" % no_food_yields,
+		no_food_yields.contains(NO_FOOD_BASKET_TOBACCO_ID.to_upper()))
+	h._assert_hud("…and the fibre beside it, as two SEPARATE rows",
+		Readout.yields_account_number(no_food_sheet, NO_FOOD_BASKET_TOBACCO_ID)
+			!= Readout.YIELDS_ACCOUNT_ABSENT
+		and Readout.yields_account_number(no_food_sheet, NO_FOOD_BASKET_FIBRE_ID)
+			!= Readout.YIELDS_ACCOUNT_ABSENT)
+	h._assert_hud("…at the CREW arm of the clamp, so the per-worker rate is read (%.2f tobacco)"
+		% tobacco_take,
+		tobacco_take > 0.0 and no_food_yields.contains(SourceForecast.format_magnitude(tobacco_take)))
+	h._assert_hud("…and the FODDER row still reads, so the materials did not replace it",
+		Readout.yields_account_number(no_food_sheet, SourceForecast.YIELD_ACCOUNT_FODDER)
+			!= Readout.YIELDS_ACCOUNT_ABSENT)
+	# (5) …AND NO `0.00 FOOD`. A patch that pays no calories states no food row rather than an empty
+	# one — the §7.7 rule, which this tile is the plant-web case of.
+	h._assert_hud("…and states NO food row, these two plants being no one's dinner",
+		not no_food_yields.contains(SourceForecast.YIELD_ACCOUNT_UNITS[
+			SourceForecast.YIELD_ACCOUNT_FOOD].to_upper()))
+	# (6) **THE STEPPER GOES WHERE THE TARGET SAYS**, driven through the REAL button, because the clamp
+	# lives in the press handler rather than in the arithmetic. This is the claim the reported
+	# screenshot fails: the press landed on 1. Taken LAST, after the frame is saved, since it moves the
+	# crew off the one the readout claims above were composed at.
+	Q.find_crew_target(no_food_sheet, HudWidgets.CREW_TARGET_CLEAR).pressed.emit()
+	h._assert_hud("…so pressing *clear it now* lands the stepper on the crew it names",
+		h._hud._compose.forage_count() == no_food_clear)
+	# Hand the chapter's subject back, so the states after this one open on the tile they were written
+	# against rather than on a patch nobody after them works.
 	h._hud._compose.reset_forage_source()
 	h._show_tile(committed_hay)
 	await h._settle()

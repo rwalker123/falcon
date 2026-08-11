@@ -50,8 +50,9 @@ under the `*_updates` key and the BASE key kept the baseline snapshot's array **
 world**. Measured on `tiles`: `graze_biomass` summed over `tiles` was byte-identical across nine
 consecutive turns while `tile_updates` carried 400–600 moved tiles per turn. It was **nine sections,
 not one** — `Main`'s band alerts read `populations` (so food warnings, idle workers and
-predator-nearby were frozen — a player-visible gameplay bug), and `MapView` reads `populations`,
-`culture_layers` and `trade_links`.
+predator-nearby were frozen — a player-visible gameplay bug), and `MapView` reads `populations`
+and `culture_layers` (it read `trade_links` too, until that section and the overlay it fed were
+retired — `.claude/rules/client/overlay-channels.md`).
 
 `SectionCache` fixes the whole class with one mechanism: an identity → slot index built when a full
 snapshot establishes the baseline, then per delta a shallow duplicate of the cached array (**pointer
@@ -65,8 +66,8 @@ are normalised to `i64` for the index while `RemovedIds` still publishes each at
 Removals rebuild the index from scratch rather than repairing shifted slots — removals are
 structurally rare, and a shifted-index repair is wrong exactly once and then silently forever. The
 `*_updates` keys still ride the frame unchanged, because `TerrainPanel` and the inspector panels
-branch on them. `WorldDelta` also diffs `logistics` and `knowledge_ledger`; they are absent from the
-registry because the client decoder never converts either, so there is no base key to keep honest.
+branch on them. `WorldDelta` also diffs `knowledge_ledger`; it is absent from the registry because
+the client decoder never converts it, so there is no base key to keep honest.
 
 **Two whole-section fields were never read on the delta path at all**, which is the same staleness
 reached a different way: `decode_delta_against` passed `None` for `food_modules` and
@@ -91,7 +92,7 @@ name is the dictionary KEY the frame carried the section under, so a consumer lo
 already reads — and for a keyed section that is the COMPLETE key (`populations`), never the sparse
 `*_updates` twin. The exceptions are the channels with no key of their own:
 `overlays.{terrain, elevation, moisture, visibility, culture, sentiment, corruption, military,
-logistics, crisis}` and `climate_bands`, which `DeltaAggregator` re-derives from cache and therefore
+crisis}` and `climate_bands`, which `DeltaAggregator` re-derives from cache and therefore
 publishes on every merged frame (presence cannot be the signal, so the name is pushed at the
 `apply_*` call site), plus `tiles.rivers` / `tiles.culture_layer` — `WatchGroup`s, derived by
 comparing each changed tile against the entry it replaced so a turn that only moved graze biomass
@@ -101,6 +102,24 @@ costs no splatmap rebuild.
 sections' vectors unconditionally — empty when nothing changed — so presence is no signal at all;
 every keyed section is named from its diff being non-empty. A steady-state delta on the decode
 fixture names five things, not thirteen.
+
+**THE `logistics` CHANNEL IS GONE, AND SO IS ITS DIMENSION SIDE EFFECT.** `OverlaySlices.logistics`
+/ `RasterCache.logistics` / `DeltaAggregator::apply_logistics_raster` / the `overlays.logistics`
+manifest name and the top-level `contrast` alias were all removed when the sim stopped publishing a
+`logisticsRaster` (`docs/plan_contact_and_logistics.md`). Two things about the removal are worth
+knowing before touching `snapshot_to_dict`:
+
+- **The logistics grid was the GRID-EXTENT source for every other channel.** Its absent-raster
+  fallback walked `MapSection.tiles` for `max(x + 1, y + 1)` — filling the plane with tile
+  TEMPERATURE on the way, which is what made the channel meaningless long before the raster went —
+  and every other channel's fallback dimensions plus `final_width`/`final_height` were taken over
+  `logistics_dims`. That measurement survives as **`tile_dims`**, read straight off the tiles with
+  no plane behind it. Delete it and a snapshot whose only grid-shaped evidence is its tile list
+  renders at 1×1.
+- **`DeltaAggregator::tile_updates` went with it.** That `HashMap<(u32, u32), f32>` of tile
+  temperature existed solely to feed the delta path's copy of the same fallback, so `update_tile`
+  no longer takes a `temperature` at all. Tile temperature still reaches the client the ordinary
+  way, on the tile row (`dict/map.rs`).
 
 ## Each delta merges into the frame BEFORE it, not into the baseline
 
@@ -210,11 +229,32 @@ band's three consumable kits and the tiers they resolve to: `hunting_kit_durabil
 `sled_kit_durability` / `basket_kit_durability` (condition on equipment.json's 0-100 scale, `0` = dry)
 plus `hunter_attack` / `hunt_carry_per_worker_biomass` / `forage_carry_per_worker_biomass`. All six
 shipped on the wire with **no consumer here at all** — the third time this arc reproduced this crate's
-most-repeated bug — as did the labor assignment's forecast BAND (`actual_yield_low`/`_high`,
-`trade_yield_low`/`_high`, §6.4) and `HerdTelemetryState.durability` (§4.2/§6.5, the last term the
+most-repeated bug — as did the labor assignment's forecast BAND (`actual_yield_low`/`_high`, plus a
+`trade_yield_low`/`_high` pair arc #527 has since retired with its account, §6.4) and `HerdTelemetryState.durability` (§4.2/§6.5, the last term the
 combat gate needed). Eleven fields, thirty golden lines, no fixture edit: `decode_fixture.rs`'s
 SATURATION reaches an appended scalar automatically, so the only step an appended scalar needs here is
 the converter and a re-record.
+
+**A VECTOR FIELD IS NOT AN APPENDED SCALAR, and the three material fields are the worked example**
+(arc #527 follow-up): `HerdTelemetryState.materialPerBiomass` / `perWorkerMaterial` →
+`material_per_biomass` / `per_worker_material` on the herd dict, and `LaborAssignment.materialYield` →
+`material_yield` on the assignment, each an `Array` of `{material_id, amount}` dicts. Saturation still
+reaches them, so the re-record is still the only golden step — but a consumer that treats one like a
+scalar fails LOUDLY and at a distance: `HudBandLaborState.OPTIONAL_YIELD_KEYS` coerces every entry
+through `float()`, and an `Array` through that constructor is `Invalid call. Nonexistent 'float'
+constructor` raised inside `effective_worker_map`, which surfaces as a work board with **zero rows**
+rather than as a bad number. The vector is copied beside that list, verbatim; normalizing is
+`SourceForecast.material_payoff_rows`' job, beside the readouts that spend it.
+
+**THE EXPEDITION HALF ADDS ONE MORE VECTOR AND NEEDED NO NEW DECODER AT ALL.**
+`HuntTripRow.delivered_material` → `delivered_material` on every row of the `HuntTripForecast` QUERY
+reply (`bridge/query.rs`, not the snapshot path) — the trip's whole payload per material, which is
+what makes an inedible quarry's raid legible. Beside it, **`PopulationCohortState.materialBatches` is
+resolved from `cohort.stores` with NO resident-band gate**, so a detached party's carried materials
+were already decoded onto the cohort dict as `material_batches` and had simply never been rendered
+for a party. **That is the failure worth remembering here**: a field the decoder emits correctly and
+no surface reads is invisible to every guard in the tree — the golden asserts it decoded, and nothing
+asserts anyone looked.
 
 **ONE KIT, ONE JOB, and the two carry tiers are not two readings of one number.** A band can be out of
 baskets with its sled untouched, so `hunt_carry_per_worker_biomass` and
@@ -250,11 +290,13 @@ than a signal off the worker, so a render never observes a half-applied answer.
 nothing, and that recapture is the expensive half of a turn. Nothing downstream may wait on a frame
 to render an answer; the reply is the whole of it.
 
-**THE WASTE IS A PAIR, AND BOTH HALVES ARE DECODED** — `wasted_trade` is the twin `delivered_trade`
-already had, and it rides `DenialRow` on the reply for the reason it rode the retired table: the sim
-prices both out of ONE `HuntYield::apply` over the wasted biomass, so a kill left on the range takes
-its hides with it. Decoding the food half alone reported a raid whose quarry pays pelts as wasting
-nothing — on the one mission whose entire readout is what it destroys and does not bring home.
+**RETIRED — the waste PAIR.** `wasted_trade` rode `DenialRow` as the twin `delivered_trade` already
+had, because the sim priced both out of ONE `HuntYield::apply` over the wasted biomass and decoding
+the food half alone reported a raid whose quarry pays pelts as wasting nothing — on the one mission
+whose entire readout is what it destroys and does not bring home. **Arc #527 retired the account**, so
+the reply carries `wasted_food` alone and the client's waste clause is a single figure. **The rule
+that put the pair there survives it**: an appended field that is one half of a sim-side pair must be
+decoded with its sibling, or a readout states half a fact and reads as a zero.
 
 **A `0` ON ANY TURN FIELD MEANS "not within the horizon on that end", never "immediately"**, and
 `outcome` is what the client renders instead of a blank — decode them together or the consumer cannot

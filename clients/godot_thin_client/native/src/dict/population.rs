@@ -442,41 +442,44 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // agree and a range only when they differ — slice 7 authors wariness and the same
             // readout turns on with no further change here.
             //
-            // BOTH CURRENCIES, read as one vector beside their scalars: a wolf's food band is
-            // honestly all-zero, so a food-only range could not state its take at all. Undecoded
-            // until now — see the kit block in `population_to_dict` for the class of bug.
+            // Undecoded until now — see the kit block in `population_to_dict` for the class of bug.
             let _ = entry.insert("actual_yield_low", assignment.actualYieldLow() as f64);
             let _ = entry.insert("actual_yield_high", assignment.actualYieldHigh() as f64);
-            let _ = entry.insert("trade_yield_low", assignment.tradeYieldLow() as f64);
-            let _ = entry.insert("trade_yield_high", assignment.tradeYieldHigh() as f64);
             // The per-source STEADY average: the honest long-run average of this source's lumpy
             // `actual_yield`. Headlines the Band panel row + map label so they don't swing turn-to-turn.
             let _ = entry.insert("realized_yield", assignment.realizedYield() as f64);
-            // The TRADE twins (issue #337): `trade_yield` is this turn's actual trade from the source,
-            // `realized_trade_yield` its steady forward-projected rate — the same actual/steady split
-            // as the food pair above, in the currency a wolf hunt pays exclusively. They are NOT food
-            // income (the cohort's `food_income` stays Σ actual_yield, which is what keeps the larder
-            // identity closed for an inedible quarry); the client renders a trade component ONLY when
-            // it is > 0. `realized_trade_yield` is 0 on every FORAGE source — the plant web's trade
-            // PROJECTION is a documented sim-side gap, while the trade a gather actually earned does
-            // ship in `trade_yield`.
-            let _ = entry.insert("trade_yield", assignment.tradeYield() as f64);
-            let _ = entry.insert(
-                "realized_trade_yield",
-                assignment.realizedTradeYield() as f64,
-            );
-            // The FEED currency (issue #449) — the third account beside the food and trade pairs
-            // above, exactly the fodder the band's `FODDER` store was credited with. PLANT-ONLY:
-            // no animal pays fodder, so a hunt row's `0` here is a structural zero rather than a
-            // gap, and a sown hay Field (no provisions, no trade) states its whole product through
-            // this key alone instead of reading `+0.00`.
-            // **There is no `realized_fodder_yield` twin, deliberately.** `realized_trade_yield`
-            // exists because the ANIMAL web projects a steady rate; fodder is paid by the PLANT web
-            // alone, whose projection is the documented gap that already leaves `realized_trade_yield`
-            // at 0 on every forage source — so a projected-fodder field would be a constant zero on
-            // the only web that can pay it. This actual IS the honest rate, and the client reads it
-            // with no fallback (`SourceForecast.fodder_rate_of`).
+            // **RETIRED: `trade_yield` / `realized_trade_yield` / `trade_yield_low` /
+            // `trade_yield_high`** (arc #527), with the trade-goods yield axis they decoded. The
+            // wire slots are `(deprecated)` and the sim writes nothing to them. What a take pays
+            // beyond food is MATERIALS, which ride `material_batches` on the cohort dict.
+            //
+            // **The GDScript that reads these keys is a separate pass** — they simply stop appearing
+            // in the dict, so a reader falling back to `0` degrades to "no trade line", which is what
+            // it already rendered for a source with no trade.
+            // The FEED currency (issue #449) — the second account beside the food one above,
+            // exactly the fodder the band's `FODDER` store was credited with. PLANT-ONLY: no animal
+            // pays fodder, so a hunt row's `0` here is a structural zero rather than a gap, and a
+            // sown hay Field states its whole product through this key alone instead of `+0.00`.
+            //
+            // **There is no `realized_fodder_yield` twin, deliberately** — fodder is paid by the
+            // PLANT web alone, whose forward projection is food-only, so a projected-fodder field
+            // would be a constant zero on the only web that can pay it. This actual IS the honest
+            // rate, and the client reads it with no fallback (`SourceForecast.fodder_rate_of`).
             let _ = entry.insert("fodder_yield", assignment.fodderYield() as f64);
+            // THE MATERIAL ACCOUNT (arc #527) — the third, and the ONLY one a cash Field or an
+            // inedible quarry pays into at all: without it a wolf hunt's row and a cotton Field's
+            // row both publish their whole product as `+0.00`. An ARRAY of `{ material_id, amount }`
+            // dicts, holding what `credit_material_yield` actually deposited.
+            //
+            // **AN EMPTY ARRAY IS "NO ROW", NEVER "ZERO"** — most sources pay no material. A
+            // PRE-COMMIT (seeded) row is empty even where the turn will pay, because the forecast
+            // does not project materials; the compose-sheet number is the herd row's
+            // `material_per_biomass` / `per_worker_material`. **DO NOT SUM**, and never fold into
+            // `food_income`.
+            let _ = entry.insert(
+                "material_yield",
+                &crate::dict::subsistence::material_payoffs_to_array(assignment.materialYield()),
+            );
             // WHEN that steady average actually lands: index i = the food delivered i+1 turns from
             // now, length = arrivals_horizon_turns (20), 0.0 on a turn nothing arrives. A big-game
             // hunt reads lumpy (gaps between hauls); a forage patch is positive in every slot. EMPTY

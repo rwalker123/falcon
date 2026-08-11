@@ -38,7 +38,7 @@ use thiserror::Error;
 use crate::{
     components::LocalStore,
     config_load::{load_config_from_env, ConfigLoadError},
-    scalar::{scalar_from_f32, scalar_zero},
+    scalar::{scalar_from_f32, scalar_zero, Scalar},
 };
 
 pub const BUILTIN_MATERIALS_CONFIG: &str = include_str!("data/materials.json");
@@ -107,7 +107,19 @@ pub type VarietyReadings = BTreeMap<String, f32>;
 pub struct MaterialDef {
     /// The craft track that works this material — one craft per material (hide → tanning). The
     /// knowledge half of the ladder hangs off this id.
-    pub craft: String,
+    ///
+    /// **Absent ⇒ nothing works it** — the same statement [`Self::hand_working`] makes one level
+    /// down, one rung further out: `hand_working: None` says *"not by hand"*, `craft: None` says
+    /// *"not by anything, yet"*. A material with no craft has a **producer** but no bench: the yield
+    /// edge credits it, the store holds it, the catalogue publishes it, and no recipe can name it —
+    /// because [`crate::crafting::crafts_declared_by`] does not list a craft that is not there, and
+    /// a recipe's `craft` is validated against exactly that list.
+    ///
+    /// It is deliberately **not** a licence to ship an unreachable material. The three that use it
+    /// (`tobacco`, `tea`, `grape`) are *uncrafted*, not *unreachable*: a plant grows them and a band
+    /// banks them today; what does not exist yet is the craft that would turn them into something.
+    #[serde(default)]
+    pub craft: Option<String>,
     /// **The axes this material is rated on**, in the order a [`BandKey`] reads them. Order is part
     /// of the contract: it is what makes a key comparable between two batches.
     pub characteristics: Vec<String>,
@@ -374,9 +386,18 @@ impl MaterialsConfig {
             });
         }
         for (id, def) in &self.materials {
-            if def.craft.trim().is_empty() {
+            // **An ABSENT craft is legal; a BLANK one is not.** `None` is the deliberate statement
+            // *"nothing works this yet"* (see [`MaterialDef::craft`]); `""` is a typo that would
+            // put an unnameable craft in `crafts_declared_by` and let a recipe match it.
+            if def
+                .craft
+                .as_ref()
+                .is_some_and(|craft| craft.trim().is_empty())
+            {
                 return Err(MaterialsConfigError::InvalidTable {
-                    reason: format!("material '{id}' names no craft, so nothing could work it"),
+                    reason: format!(
+                        "material '{id}' states a blank craft - omit the key to say nothing works it"
+                    ),
                 });
             }
             if def.characteristics.is_empty() {
@@ -521,6 +542,64 @@ fn reading_in_range(value: f32) -> bool {
     value.is_finite() && (READING_MIN..=READING_MAX).contains(&value)
 }
 
+/// **How much of ONE material a source pays per turn** — the flat row every material readout in the
+/// sim is a vector of: the crop picker's cash quote ([`crate::forage::commit_material_payoff`]), the
+/// herd row's per-biomass rate, and what a resolved turn actually credited
+/// ([`credit_material_yield`]'s return).
+///
+/// **It names the material and nothing about its quality**, deliberately. A material's *rating* is a
+/// characteristic vector living on the batch the harvest creates ([`crate::components::MaterialBatch`]);
+/// a readout row asks the flat question *"how much of what"*, and answering it with a rating too
+/// would put the merge model in a preview.
+///
+/// **Never sum a vector of these into one number.** That is the retired trade-goods axis under a new
+/// name (arc #527), and it collapses the distinction the whole materials model exists to keep.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MaterialPayoff {
+    /// The `materials.json` id — `fibre`, `hide`, `tobacco`. Resolved client-side for display.
+    pub material: String,
+    /// Units of that material per turn.
+    pub amount: f32,
+}
+
+/// **What `biomass` of a source yields, per material** — the projection twin of
+/// [`credit_material_yield`], stating the same `biomass × per_biomass × output_multiplier`
+/// expression without depositing anything.
+///
+/// **Every material QUOTE in the sim goes through here**: the crop picker's cash rows
+/// ([`crate::forage::commit_material_payoff`]), the herd row's per-biomass and per-worker rates, and
+/// a raid's projected haul. One expression, so a quote cannot drift from the credit it is quoting —
+/// which is the whole reason a *resolved* row reports [`credit_material_yield`]'s own return instead
+/// of calling this.
+///
+/// **Merged per material id, in id order.** A basket can name one material twice; those land in two
+/// *batches* in the store (different readings), but a readout row says *"0.29 fibre"* and
+/// [`LocalStore::material_total`] sums the same way, which is what makes a quote and a credit
+/// comparable numbers.
+///
+/// **Empty in, empty out, and a non-positive row is dropped** — "no row", never a published zero.
+pub fn material_yield_totals(
+    rows: &[MaterialYieldDef],
+    biomass: f32,
+    output_multiplier: f32,
+) -> Vec<MaterialPayoff> {
+    let mut totals: BTreeMap<&str, f32> = BTreeMap::new();
+    for row in rows {
+        let amount = biomass * row.per_biomass * output_multiplier;
+        if amount <= 0.0 {
+            continue;
+        }
+        *totals.entry(row.material.as_str()).or_insert(0.0) += amount;
+    }
+    totals
+        .into_iter()
+        .map(|(material, amount)| MaterialPayoff {
+            material: material.to_string(),
+            amount,
+        })
+        .collect()
+}
+
 /// **Credit a take's material yield into a store** — the fourth account of the same harvest, on the
 /// same seam the provisions are credited on.
 ///
@@ -530,13 +609,24 @@ fn reading_in_range(value: f32) -> bool {
 ///
 /// A row naming a material the table does not carry is skipped rather than panicking; the loaders'
 /// [`MaterialsConfig::validate_yield`] is what makes that unreachable.
+///
+/// **It RETURNS what it credited, merged per material id and in id order**, so a telemetry row can
+/// report the deposit rather than recompute it — the discipline `SourceYield::fodder` already
+/// carries ("the credited value, not a recomputation"). Recomputing it at the readout is how a row
+/// starts disagreeing with the store it is describing: the skips above (a sub-quantum amount, an
+/// unknown material) are invisible to any second derivation.
+///
+/// **Merged per material id, not per band key.** Two rows of one material with different readings
+/// land in two *batches* — that is the merge model working — but a readout row says *"0.29 fibre"*,
+/// and `LocalStore::material_total` sums the same way, which is what makes the two comparable.
 pub fn credit_material_yield(
     store: &mut LocalStore,
     materials: &MaterialsConfig,
     rows: &[MaterialYieldDef],
     biomass: f32,
     output_multiplier: f32,
-) {
+) -> Vec<MaterialPayoff> {
+    let mut credited: BTreeMap<&str, Scalar> = BTreeMap::new();
     for row in rows {
         let amount = scalar_from_f32(biomass * row.per_biomass * output_multiplier);
         if amount <= scalar_zero() {
@@ -546,7 +636,19 @@ pub fn credit_material_yield(
             continue;
         };
         store.deposit_material(&row.material, band, amount, &row.characteristics);
+        *credited
+            .entry(row.material.as_str())
+            .or_insert(scalar_zero()) += amount;
     }
+    credited
+        .into_iter()
+        .map(|(material, amount)| MaterialPayoff {
+            material: material.to_string(),
+            // Reported in the store's own units — `Scalar` in, `f32` out, so a readout never
+            // re-derives the fixed-point rounding the deposit already did.
+            amount: amount.to_f32(),
+        })
+        .collect()
 }
 
 /// Why a materials table cannot be used.
@@ -673,6 +775,10 @@ mod tests {
     const HIDE: &str = "hide";
     const FIBRE: &str = "fibre";
     const BONE: &str = "bone";
+    /// The three **uncrafted** luxury crops (arc #527): a producer exists, a craft does not.
+    const GRAPE: &str = "grape";
+    const TEA: &str = "tea";
+    const TOBACCO: &str = "tobacco";
 
     fn builtin() -> MaterialsConfig {
         MaterialsConfig::from_json_str(BUILTIN_MATERIALS_CONFIG).expect("builtin parses")
@@ -695,16 +801,30 @@ mod tests {
             .expect_err("the mutated table must be rejected")
     }
 
+    /// **What ships, and the line between the two kinds of shipped material.**
+    ///
+    /// The three organics are **crafted** — each names a craft and yields to bare hands. The three
+    /// luxury crops are **uncrafted**: `craft` and `hand_working` are both absent, which is the
+    /// deliberate statement *nothing works this yet* (arc #527). Neither kind is *unreachable* —
+    /// every one of the six has a producer on the shipped rosters — and the rule this pins is that a
+    /// material with no craft is also a material with no bench, never one with a half-declared one.
     #[test]
     fn the_builtin_table_parses_and_validates() {
         let config = builtin();
-        // The three organic materials, and nothing that has no producer yet.
         let ids: Vec<&str> = config.materials().map(|(id, _)| id).collect();
-        assert_eq!(ids, vec![BONE, FIBRE, HIDE]);
+        assert_eq!(ids, vec![BONE, FIBRE, GRAPE, HIDE, TEA, TOBACCO]);
         for (id, def) in config.materials() {
-            assert!(
+            let crafted = [BONE, FIBRE, HIDE].contains(&id);
+            assert_eq!(
+                def.craft.is_some(),
+                crafted,
+                "{id}: only the three organics name a craft"
+            );
+            assert_eq!(
                 def.is_hand_workable(),
-                "{id} is organic, so it must be workable bare-handed"
+                crafted,
+                "{id}: a material nothing works is not workable bare-handed either — the absent \
+                 block is the refusal, with no branch anywhere"
             );
             assert!(
                 def.varieties.is_empty(),

@@ -691,10 +691,20 @@ impl RecipesConfig {
                     reason: format!("recipe '{id}' works no material"),
                 });
             };
-            let expected = materials
+            // **A craftless material has no bench, so no recipe may work it.** Caught here rather
+            // than falling through the equality below as an empty `expected`, because *"the craft
+            // is ''"* is not the fact — the fact is that nothing works this material yet.
+            let Some(expected) = materials
                 .material(bench_material)
-                .map(|def| def.craft.as_str())
-                .unwrap_or_default();
+                .and_then(|def| def.craft.as_deref())
+            else {
+                return Err(RecipesConfigError::InvalidBook {
+                    reason: format!(
+                        "recipe '{id}' works '{bench_material}', which names no craft - nothing \
+                         works that material yet, so no recipe can be written against it"
+                    ),
+                });
+            };
             if recipe.craft != expected {
                 return Err(RecipesConfigError::InvalidBook {
                     reason: format!(
@@ -719,7 +729,7 @@ impl RecipesConfig {
                 let from_an_input = recipe.inputs.iter().any(|input| {
                     materials
                         .material(&input.material)
-                        .is_some_and(|def| def.craft == *craft)
+                        .is_some_and(|def| def.craft.as_deref() == Some(craft.as_str()))
                 });
                 if !from_an_input {
                     return Err(RecipesConfigError::InvalidBook {

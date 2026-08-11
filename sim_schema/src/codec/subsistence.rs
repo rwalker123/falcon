@@ -4,7 +4,7 @@ use crate::codec::FbBuilder;
 use crate::state::subsistence::{
     CharacteristicBandState, CraftKnowledgeState, FloraShareInfo, FoodModuleState,
     ForagePatchState, HerdTelemetryState, IntensificationKnowledgeState, KitOptionState,
-    MaterialDefState, RecipeDefState, SedentarizationState,
+    MaterialDefState, MaterialPayoff, RecipeDefState, SedentarizationState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -366,6 +366,11 @@ fn create_herds<'a>(
 ) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::HerdTelemetryState<'a>>>> {
     let mut entries = Vec::with_capacity(herds.len());
     for herd in herds {
+        // **Built before the parent table opens**, the ordinary FlatBuffers rule.
+        let material_per_biomass = create_material_payoffs(builder, &herd.material_per_biomass);
+        let per_worker_material = create_material_payoffs(builder, &herd.per_worker_material);
+        let corral_material = create_material_payoffs(builder, &herd.corral_material);
+        let pastoral_material = create_material_payoffs(builder, &herd.pastoral_material);
         let id = builder.create_string(herd.id.as_str());
         let label = builder.create_string(herd.label.as_str());
         let species = builder.create_string(herd.species.as_str());
@@ -403,11 +408,7 @@ fn create_herds<'a>(
                 corralled: herd.corralled,
                 corralProgress: herd.corral_progress,
                 perWorkerYield: herd.per_worker_yield,
-                perWorkerTrade: herd.per_worker_trade,
-                tradePerAnimal: herd.trade_per_animal,
                 corralYield: herd.corral_yield,
-                // The Corral rung's trade half (issue #397) — appended last (append-only wire).
-                corralTrade: herd.corral_trade,
                 penUpkeep: herd.pen_upkeep,
                 penFedFraction: herd.pen_fed_fraction,
                 // Appended after every earlier-shipped field (append-only wire discipline).
@@ -415,7 +416,6 @@ fn create_herds<'a>(
                 // composes any floor's ceiling from `biomass`/`carryingCapacity`/`*PerBiomass`.
                 provisionsPerBiomass: herd.provisions_per_biomass,
                 fodderPerBiomass: herd.fodder_per_biomass,
-                tradePerBiomass: herd.trade_per_biomass,
                 // Ecological K + grazing range (Grazing Phase 2b-iii) — appended last.
                 carryingCapacity: herd.carrying_capacity,
                 grazeRangeRadius: herd.graze_range_radius,
@@ -435,8 +435,6 @@ fn create_herds<'a>(
                 herdedFraction: herd.herded_fraction,
                 // The Tame rung's payoff — appended last (append-only wire).
                 pastoralYield: herd.pastoral_yield,
-                // The Tame rung's trade half (issue #397) — appended last (append-only wire).
-                pastoralTrade: herd.pastoral_trade,
                 // Hay this pen drew last turn (F3) — appended last (append-only wire).
                 fodderDraw: herd.fodder_draw,
                 // The render-ready feed split (F3) — appended last (append-only wire).
@@ -478,6 +476,14 @@ fn create_herds<'a>(
                 stayFraction: herd.stay_fraction,
                 // The quarry's own default kit — appended last, so the slot stays positional.
                 defaultKitId: Some(default_kit_id),
+                // **What a hunt of this herd is MADE OF** — appended last (append-only wire, arc
+                // #527), the replacement for the retired `tradePerBiomass`/`perWorkerTrade`. An
+                // EMPTY vector is "no row", never "zero".
+                materialPerBiomass: Some(material_per_biomass),
+                perWorkerMaterial: Some(per_worker_material),
+                // The two investment rungs' material payoffs — appended last (append-only wire).
+                corralMaterial: Some(corral_material),
+                pastoralMaterial: Some(pastoral_material),
             },
         );
         entries.push(entry);
@@ -491,6 +497,9 @@ fn create_forage_patches<'a>(
 ) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::ForagePatchState<'a>>>> {
     let mut entries = Vec::with_capacity(patches.len());
     for patch in patches {
+        // **Built before the parent table opens**, the ordinary FlatBuffers rule.
+        let material_per_biomass = create_material_payoffs(builder, &patch.material_per_biomass);
+        let per_worker_material = create_material_payoffs(builder, &patch.per_worker_material);
         let ecology_phase = builder.create_string(patch.ecology_phase.as_str());
         let sow_site_refusal = builder.create_string(patch.sow_site_refusal.as_str());
         let composition = create_flora_shares(builder, &patch.composition);
@@ -529,10 +538,7 @@ fn create_forage_patches<'a>(
                 // RETIRED: see the herd twin above.
                 provisionsPerBiomass: patch.provisions_per_biomass,
                 fodderPerBiomass: patch.fodder_per_biomass,
-                tradePerBiomass: patch.trade_per_biomass,
-                tendedTrade: patch.tended_trade,
                 tendedFodder: patch.tended_fodder,
-                fieldTrade: patch.field_trade,
                 fieldFodder: patch.field_fodder,
                 // The two build dips as FRACTIONS (issue #442) — appended last.
                 cultivateBuildFraction: patch.cultivate_build_fraction,
@@ -551,6 +557,11 @@ fn create_forage_patches<'a>(
                 // The phase bands this patch's own rung cuts on — appended last (append-only wire).
                 collapseFraction: patch.collapse_fraction,
                 stressedFraction: patch.stressed_fraction,
+                // **What a gather of this patch is MADE OF** — appended last (append-only wire, arc
+                // #527), the replacement for the retired `tradePerBiomass` and the RUNG-1 half of
+                // the material story. An EMPTY vector is "no row", never "zero".
+                materialPerBiomass: Some(material_per_biomass),
+                perWorkerMaterial: Some(per_worker_material),
             },
         );
         entries.push(entry);
@@ -569,6 +580,11 @@ fn create_flora_shares<'a>(
         let species = builder.create_string(share.species.as_str());
         let display_name = builder.create_string(share.display_name.as_str());
         let role = builder.create_string(share.role.as_str());
+        // **Built before the parent table opens**, the ordinary FlatBuffers rule: a nested vector
+        // cannot be written while `FloraShareInfo` is under construction.
+        let sow_materials = create_material_payoffs(builder, &share.sow_material_payoff);
+        let cultivate_materials =
+            create_material_payoffs(builder, &share.cultivate_material_payoff);
         let entry = fb::FloraShareInfo::create(
             builder,
             &fb::FloraShareInfoArgs {
@@ -586,14 +602,38 @@ fn create_flora_shares<'a>(
                 sowPayoff: share.sow_payoff,
                 // The fodder a hay Field would pay — appended last (append-only wire, F3).
                 sowFodderPayoff: share.sow_fodder_payoff,
-                // The trade goods a cash Field would pay — appended last (append-only wire, F4).
-                sowTradePayoff: share.sow_trade_payoff,
                 // The same two accounts at the TENDED rung — appended last (append-only wire, #419).
                 cultivateFodderPayoff: share.cultivate_fodder_payoff,
-                cultivateTradePayoff: share.cultivate_trade_payoff,
                 // What the plant is FOR — a display tag off the roster, appended last (append-only
                 // wire). `""` is "unstated", never "staple".
                 role: Some(role),
+                // **What a cash crop would pay, per material** — appended last (append-only wire,
+                // arc #527), replacing the retired `sowTradePayoff`/`cultivateTradePayoff`. An EMPTY
+                // vector is "no row", never "zero": a food crop yields no material and must render
+                // nothing at all.
+                sowMaterialPayoff: Some(sow_materials),
+                cultivateMaterialPayoff: Some(cultivate_materials),
+            },
+        );
+        entries.push(entry);
+    }
+    builder.create_vector(&entries)
+}
+
+/// One rung's per-material quote, as a wire vector. Empty in, empty out — the "no row" reading the
+/// field's own contract rests on, so an absent quote never becomes a zero-valued one.
+pub(crate) fn create_material_payoffs<'a>(
+    builder: &mut FbBuilder<'a>,
+    payoffs: &[MaterialPayoff],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::MaterialPayoff<'a>>>> {
+    let mut entries = Vec::with_capacity(payoffs.len());
+    for payoff in payoffs {
+        let material_id = builder.create_string(payoff.material_id.as_str());
+        let entry = fb::MaterialPayoff::create(
+            builder,
+            &fb::MaterialPayoffArgs {
+                materialId: Some(material_id),
+                amount: payoff.amount,
             },
         );
         entries.push(entry);

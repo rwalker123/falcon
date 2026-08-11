@@ -320,7 +320,6 @@ fn build_breakdown_row() {
 struct Denominators {
     tiles: u32,
     populations: u32,
-    logistics: u32,
     power_nodes: u32,
     herds: u32,
     forage_patches: u32,
@@ -338,12 +337,11 @@ type DenominatorColumn = (&'static str, fn(&Denominators) -> u32);
 
 impl Denominators {
     /// The printed census, in the order the sections that consume them appear in the capture.
-    const COLUMNS: [DenominatorColumn; 10] = [
+    const COLUMNS: [DenominatorColumn; 9] = [
         ("tiles", |d| d.tiles),
         ("food_modules", |d| d.food_modules),
         ("forage_patches", |d| d.forage_patches),
         ("flora shares (patch x species)", |d| d.flora_shares),
-        ("logistics links", |d| d.logistics),
         ("power nodes", |d| d.power_nodes),
         ("population cohorts", |d| d.populations),
         ("herds", |d| d.herds),
@@ -372,7 +370,6 @@ fn denominators_of(grid: (u32, u32)) -> Denominators {
     let counts = Denominators {
         tiles: snapshot.tiles.len() as u32,
         populations: snapshot.populations.len() as u32,
-        logistics: snapshot.logistics.len() as u32,
         power_nodes: snapshot.power.len() as u32,
         herds: snapshot.herds.len() as u32,
         forage_patches: snapshot.forage_patches.len() as u32,
@@ -394,7 +391,7 @@ fn denominators_of(grid: (u32, u32)) -> Denominators {
 ///
 /// Each of these costs an unconditional clone of the whole section before the comparison that
 /// usually finds it unchanged, which is what makes the count worth having.
-fn changed_sections_of(delta: &WorldDelta) -> [(&'static str, bool); 38] {
+fn changed_sections_of(delta: &WorldDelta) -> [(&'static str, bool); 37] {
     [
         ("power_metrics", delta.power_metrics.is_some()),
         (
@@ -439,7 +436,6 @@ fn changed_sections_of(delta: &WorldDelta) -> [(&'static str, bool); 38] {
         ("sentiment", delta.sentiment.is_some()),
         ("corruption", delta.corruption.is_some()),
         ("terrain", delta.terrain.is_some()),
-        ("logistics_raster", delta.logistics_raster.is_some()),
         ("sentiment_raster", delta.sentiment_raster.is_some()),
         ("corruption_raster", delta.corruption_raster.is_some()),
         ("culture_raster", delta.culture_raster.is_some()),

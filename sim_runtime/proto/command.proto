@@ -551,6 +551,20 @@ message QueryError {
 // One answered forecast. `floor` / `party_workers` are ECHOED back deliberately: it makes the row
 // self-describing, so a client can assert the answer is for what it asked rather than trusting
 // position in a list.
+// ONE MATERIAL A PROJECTION LANDS, AND HOW MUCH OF IT (arc #527) - the proto twin of the snapshot's
+// MaterialPayoff table, and the shape every material readout in this arc uses.
+//
+// It carries NO quality reading, deliberately: a rating is a characteristic vector on the batch the
+// take really creates, and a launch-sheet row asks the flat question "how much of what". The
+// readings are not lost - they ride the batches, which is where merging belongs.
+//
+// NEVER sum a repeated field of these into one figure: that is the retired trade-goods axis under a
+// new name, and it collapses the distinction the materials model exists to keep.
+message MaterialPayoff {
+  string material_id = 1;
+  float amount = 2;
+}
+
 message HuntTripRow {
   float floor = 1;
   uint32 party_workers = 2;
@@ -561,14 +575,30 @@ message HuntTripRow {
   // A `HuntTripBound` key: which stop ended the trip.
   string bound = 4;
   bool delivers_food = 5;
-  bool delivers_trade = 6;
+  // RETIRED (arc #527) with the trade-goods yield axis. RESERVED, never freed: concurrent branches
+  // append here, and a shipped field number is immutable.
+  reserved 6;
   // WHOLE animals killed, so uint32 — the same type the retired estimate tables published and the
   // same type `DenialRow.animals_killed` carries. A float here would let a client render "2.0
   // animals" and would type one quantity two ways inside a single reply.
   uint32 animals_taken = 7;
   float delivered_food = 8;
-  float delivered_trade = 9;
+  // RETIRED (arc #527) — see the note on 6. RESERVED, never freed. Its replacement is
+  // `delivered_material` below, which answers per material rather than flattening every one of them
+  // into a single number — which is the whole reason the scalar went.
+  reserved 9;
   float wasted_food = 10;
+  // WHAT THE TRIP LANDS, PER MATERIAL — and on an INEDIBLE quarry (a wolf) the entire payload, since
+  // `delivered_food` is 0 there and nothing else on this row can state what comes home.
+  //
+  // Projected off the SAME carried biomass `delivered_food` is projected from, turn by turn through
+  // one accumulator, so the two readouts of one trip cannot disagree about it — and through the same
+  // expression the live arm's `credit_material_yield` is paid on, so the promise is checkable
+  // against what the home band ends up holding.
+  //
+  // EMPTY MEANS "NO ROW", NEVER "ZERO": most quarries are made of nothing anyone builds with, and a
+  // published 0 would read as a raid that pays badly rather than one that pays in meat alone.
+  repeated MaterialPayoff delivered_material = 11;
 }
 
 message HuntTripForecastReply {
@@ -605,8 +635,17 @@ message DenialRow {
   uint32 animals_killed = 6;
   float delivered_food = 7;
   float wasted_food = 8;
-  float delivered_trade = 9;
-  float wasted_trade = 10;
+  // WHAT THE RAID LANDS, PER MATERIAL - the same haul `delivered_food` converts, and on an inedible
+  // quarry the whole of it. Projected off the same carried-biomass accumulator. EMPTY means "no
+  // row", never "zero"; never summed.
+  repeated MaterialPayoff delivered_material = 11;
+  // RETIRED (arc #527) with the trade-goods yield axis. RESERVED, never freed: concurrent branches
+  // append here, and a shipped field number is immutable. `delivered_trade`'s replacement is
+  // `delivered_material` below; `wasted_trade` has none, and NOT for the reason it was retired for —
+  // a per-material vector states a projection fine (this row proves it). The waste line is out of
+  // scope by decision: it is already legible as a percentage. Do NOT add a flat "wasted materials"
+  // scalar, which would be the retired axis under a new name.
+  reserved 9, 10;
 }
 
 message DenialRaidForecastReply {

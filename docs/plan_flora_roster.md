@@ -1,5 +1,13 @@
 # Flora Roster & Ecology — Named Plants, and the Yield Vector They Carry
 
+> **The yield vector's trade component is RETIRED** (arc #527,
+> `docs/plan_contact_and_logistics.md`). Everywhere this document says a species pays
+> `trade_goods_per_biomass`, read: **it pays materials**. The scalar was written on every harvest and
+> read by nothing — no `take(TRADE_GOODS)` ever existed — while the `materials` list beside it
+> carried the same yield with the quality axes that make a mammoth hide and a hare pelt different
+> things. The five species that paid trade and nothing else now pay materials: cotton and flax fibre,
+> tobacco / tea / grape their own. The rest of this document stands.
+
 **Status:** design. Opens the flora content arc (issue #202, *Flora Roster & Ecology*), the plant
 twin of the shipped fauna roster.
 

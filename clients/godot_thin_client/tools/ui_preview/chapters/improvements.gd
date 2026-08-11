@@ -27,7 +27,7 @@ const GATED_OFFER_NEEDLE := "Cultivate this patch"
 ## floats drew an arrow between two identical strings.
 const ARROW_ROUNDING_NOW := 0.2612
 const ARROW_ROUNDING_HOLD := 0.2588
-## The trade account standing beside it on that same frame, and correctly arrowed: a pair that
+## The FODDER account standing beside it on that same frame, and correctly arrowed: a pair that
 ## differs at the readout's own resolution keeps its transition.
 const ARROW_VISIBLE_NOW := 0.90
 const ARROW_VISIBLE_HOLD := 0.87
@@ -475,8 +475,8 @@ func run(harness) -> void:
 
 	_arrow_is_gated_on_what_is_SHOWN()
 
-## **AN ARROW BETWEEN TWO IDENTICAL NUMBERS** — `0.26 → 0.26 FOOD`, reported from play beside a trade
-## account correctly reading `0.90 → 0.87`. The `after` reading is attached where it DIFFERS from the
+## **AN ARROW BETWEEN TWO IDENTICAL NUMBERS** — `0.26 → 0.26 FOOD`, reported from play beside a
+## second account correctly reading `0.90 → 0.87`. The `after` reading is attached where it DIFFERS from the
 ## take, and "differs" was asked of the raw floats while the reading renders through
 ## `format_magnitude` at two decimals — so any pair closer than the display's own resolution drew a
 ## transition from a number to itself.
@@ -488,10 +488,10 @@ func run(harness) -> void:
 ## negative. The PRECONDITION is the other half: the two food values must be genuinely different
 ## floats that format alike, or the claim is about equality rather than about precision.
 func _arrow_is_gated_on_what_is_SHOWN() -> void:
-	var rows := SourceForecast.yield_rows(ARROW_ROUNDING_NOW, ARROW_VISIBLE_NOW, 0.0,
+	var rows := SourceForecast.yield_rows(ARROW_ROUNDING_NOW, ARROW_VISIBLE_NOW,
 		SourceForecast.YIELD_ACCOUNT_FOOD, {
 			SourceForecast.YIELD_ACCOUNT_FOOD: ARROW_ROUNDING_HOLD,
-			SourceForecast.YIELD_ACCOUNT_TRADE: ARROW_VISIBLE_HOLD,
+			SourceForecast.YIELD_ACCOUNT_FODDER: ARROW_VISIBLE_HOLD,
 		})
 	h._assert_hud("the rounding pair is two DIFFERENT rates that print as one reading",
 		not is_equal_approx(ARROW_ROUNDING_NOW, ARROW_ROUNDING_HOLD)
@@ -500,7 +500,7 @@ func _arrow_is_gated_on_what_is_SHOWN() -> void:
 	h._assert_hud("…so its account states ONE number and no arrow, the transition being invisible",
 		not _row_for(rows, SourceForecast.YIELD_ACCOUNT_FOOD).has(SourceForecast.YIELD_ROW_AFTER))
 	h._assert_hud("…while the account beside it, which the readout CAN tell apart, keeps its arrow",
-		_row_for(rows, SourceForecast.YIELD_ACCOUNT_TRADE).has(SourceForecast.YIELD_ROW_AFTER))
+		_row_for(rows, SourceForecast.YIELD_ACCOUNT_FODDER).has(SourceForecast.YIELD_ROW_AFTER))
 
 ## One account's row out of a `yield_rows` answer — `{}` when that account states none, which fails a
 ## `has()` claim rather than satisfying it.

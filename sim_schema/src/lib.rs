@@ -298,27 +298,21 @@ mod tests {
     /// **The pen-as-a-managed-population fields survive the wire.** `penUpkeep` (what the pen eats
     /// each turn) and `penFedFraction` (`< 1` = starving) are appended to `HerdTelemetryState`
     /// (append-only discipline), and the client renders the feed as a negative row against the
-    /// **gross** `corralYield`. The two investment rungs' payoffs are **pairs**, so their trade
-    /// halves (`pastoralTrade` / `corralTrade`) ride the same fixture — the sim held both on a
-    /// `YieldAccounts` while the wire carried only the provisions half. Encode → decode with the
-    /// generated reader, so a field that silently failed to serialize cannot pass.
+    /// **gross** `corralYield`. Encode → decode with the generated reader, so a field that silently
+    /// failed to serialize cannot pass.
     #[test]
     fn herd_pen_upkeep_and_fed_fraction_round_trip_on_the_wire() {
         const UPKEEP: f32 = 1.2;
         const FED: f32 = 0.25;
         const CORRAL_YIELD: f32 = 3.6;
-        const CORRAL_TRADE: f32 = 0.9;
         const PASTORAL_YIELD: f32 = 1.8;
-        const PASTORAL_TRADE: f32 = 0.45;
 
         let snapshot = snapshot_with_herd(HerdTelemetryState {
             id: "herd_pen".to_string(),
             species: "Red Deer".to_string(),
             corralled: true,
             corral_yield: CORRAL_YIELD,
-            corral_trade: CORRAL_TRADE,
             pastoral_yield: PASTORAL_YIELD,
-            pastoral_trade: PASTORAL_TRADE,
             pen_upkeep: UPKEEP,
             pen_fed_fraction: FED,
             ..Default::default()
@@ -336,9 +330,7 @@ mod tests {
             .get(0);
         assert!(herd.corralled());
         assert!((herd.corralYield() - CORRAL_YIELD).abs() < 1e-6);
-        assert!((herd.corralTrade() - CORRAL_TRADE).abs() < 1e-6);
         assert!((herd.pastoralYield() - PASTORAL_YIELD).abs() < 1e-6);
-        assert!((herd.pastoralTrade() - PASTORAL_TRADE).abs() < 1e-6);
         assert!((herd.penUpkeep() - UPKEEP).abs() < 1e-6);
         assert!((herd.penFedFraction() - FED).abs() < 1e-6);
     }
@@ -426,12 +418,12 @@ mod tests {
     ///
     /// It is what makes the floor draggable (`docs/plan_harvest_floor.md` §5): with `biomass`, the
     /// carrying capacity and a rate, the client evaluates `max(0, B − f·K) × rate` at any floor,
-    /// which the retired four ceiling rows could not express. **An inedible species is the case that
-    /// proves it must be a vector** — a wolf reads `0` food with real trade, which a food scalar
-    /// could not state at all.
+    /// which the retired four ceiling rows could not express. **An inedible species is the case the
+    /// pair still has to answer for** — a wolf reads `0` food, and what it is really worth is
+    /// material batches this table does not carry, so the honest reading is a published zero rather
+    /// than a missing field.
     #[test]
     fn the_per_biomass_yield_vector_rides_the_wire_on_both_webs() {
-        const WOLF_TRADE_RATE: f32 = 0.02;
         const PATCH_FOOD_RATE: f32 = 0.058;
         const PATCH_FODDER_RATE: f32 = 0.004;
 
@@ -439,7 +431,6 @@ mod tests {
             herds: vec![HerdTelemetryState {
                 id: "herd_wolf".to_string(),
                 provisions_per_biomass: 0.0,
-                trade_per_biomass: WOLF_TRADE_RATE,
                 ..Default::default()
             }],
             forage_patches: vec![ForagePatchState {
@@ -462,9 +453,8 @@ mod tests {
         assert_eq!(
             herd.provisionsPerBiomass(),
             0.0,
-            "a wolf is not food, and the vector is the only shape that can say so"
+            "a wolf is not food, and the wire says so rather than omitting the row"
         );
-        assert!((herd.tradePerBiomass() - WOLF_TRADE_RATE).abs() < 1e-6);
 
         let patch = subsistence.foragePatches().expect("patches present").get(0);
         assert!((patch.provisionsPerBiomass() - PATCH_FOOD_RATE).abs() < 1e-6);
@@ -528,9 +518,6 @@ mod tests {
         const HUNTER_CARRY: f32 = 40.0;
         /// One gatherer's biomass carry at full season — `per_worker_biomass_capacity × 1.0`.
         const GATHERER_CARRY: f32 = 8.0;
-        /// What a flax Field pays in trade goods per unit of standing crop — non-zero, so the source
-        /// is genuinely productive while paying no food whatever.
-        const FIELD_TRADE_RATE: f32 = 0.03;
 
         let snapshot = WorldSnapshot {
             herds: vec![HerdTelemetryState {
@@ -543,10 +530,10 @@ mod tests {
                 ..Default::default()
             }],
             forage_patches: vec![ForagePatchState {
-                // A sown flax Field: pays trade goods and nothing else.
+                // A sown flax Field: pays fibre and nothing else, so every food term is zero while
+                // the crew's throughput is real.
                 per_worker_yield: 0.0,
                 provisions_per_biomass: 0.0,
-                trade_per_biomass: FIELD_TRADE_RATE,
                 per_worker_biomass: GATHERER_CARRY,
                 ..Default::default()
             }],
@@ -640,7 +627,7 @@ mod tests {
         );
     }
 
-    /// **THE FORECAST'S BAND CROSSES THE WIRE, IN BOTH CURRENCIES**
+    /// **THE FORECAST'S BAND CROSSES THE WIRE**
     /// (`docs/plan_hunt_through_combat.md` §6.4).
     ///
     /// A forecast has no event seed, so `actualYield` is the take's **expectation** and the band is
@@ -652,16 +639,11 @@ mod tests {
     /// `wariness 0` and `hit_chance 1.0` make the band a point — and a reader must render one number
     /// there rather than a range of zero width.
     #[test]
-    fn the_forecast_band_rides_the_wire_in_both_currencies() {
+    fn the_forecast_band_rides_the_wire() {
         /// A stochastic hunt: the point estimate with a band either side of it.
         const LIKELY_FOOD: f32 = 9.0;
         const LOW_FOOD: f32 = 6.0;
         const HIGH_FOOD: f32 = 11.0;
-        /// The trade half of the same take — a wolf's whole payload, and the reason the band is a
-        /// pair rather than a food scalar (#337).
-        const LIKELY_TRADE: f32 = 1.5;
-        const LOW_TRADE: f32 = 1.0;
-        const HIGH_TRADE: f32 = 2.0;
         /// The shipped case: no stochastic stage, so the band is the point estimate.
         const CERTAIN_FOOD: f32 = 4.0;
 
@@ -674,9 +656,6 @@ mod tests {
                         actual_yield: LIKELY_FOOD,
                         actual_yield_low: LOW_FOOD,
                         actual_yield_high: HIGH_FOOD,
-                        trade_yield: LIKELY_TRADE,
-                        trade_yield_low: LOW_TRADE,
-                        trade_yield_high: HIGH_TRADE,
                         ..Default::default()
                     },
                     LaborAssignmentState {
@@ -715,15 +694,6 @@ mod tests {
             (LOW_FOOD, LIKELY_FOOD, HIGH_FOOD),
             "the FOOD band and its point estimate must survive the codec"
         );
-        assert_eq!(
-            (
-                stochastic.tradeYieldLow(),
-                stochastic.tradeYield(),
-                stochastic.tradeYieldHigh()
-            ),
-            (LOW_TRADE, LIKELY_TRADE, HIGH_TRADE),
-            "…and so must the TRADE band, which is a wolf's whole payload"
-        );
 
         let certain = rows.get(1);
         assert_eq!(
@@ -734,22 +704,19 @@ mod tests {
         );
     }
 
-    /// **`fodderYield` crosses the wire** (issue #449) — the third account beside `actualYield` and
-    /// `tradeYield`, without which a sown hay Field publishes its whole product as `+0.00`.
+    /// **`fodderYield` crosses the wire** (issue #449) — the second account beside `actualYield`,
+    /// without which a sown hay Field publishes its whole product as `+0.00`.
     ///
     /// Asserted on the **decoded** FlatBuffers rather than the in-process struct, for the reason
     /// `IntensificationKnowledgeState::foddering` already records: a field that never reached the
-    /// codec still passes an in-process assertion. Pinned **beside** the two currencies it must not
-    /// be confused with — a codec that read fodder off the trade slot would pass a single-field
-    /// check — and against a **hunt** row, whose `0.0` is structural (no animal pays fodder).
+    /// codec still passes an in-process assertion. Pinned **beside** the food account it must not be
+    /// confused with — a codec that read fodder off the food slot would pass a single-field check —
+    /// and against a **hunt** row, whose `0.0` is structural (no animal pays fodder).
     #[test]
-    fn the_feed_currency_rides_the_wire_beside_the_other_two_accounts() {
-        /// A sown hay Field's whole product: no provisions, no trade, real fodder.
+    fn the_feed_currency_rides_the_wire_beside_the_food_account() {
+        /// A sown hay Field's whole product: no provisions, real fodder.
         const HAY_FODDER: f32 = 3.25;
-        /// A cash crop beside it, so the trade slot is non-zero and cannot silently absorb the
-        /// fodder value.
-        const CASH_TRADE: f32 = 1.5;
-        /// The hunt's food, likewise non-zero so the food slot is distinguishable too.
+        /// The hunt's food, non-zero so the food slot is distinguishable too.
         const HUNT_FOOD: f32 = 9.0;
 
         let snapshot = WorldSnapshot {
@@ -759,7 +726,6 @@ mod tests {
                     LaborAssignmentState {
                         kind: "forage".to_string(),
                         fodder_yield: HAY_FODDER,
-                        trade_yield: CASH_TRADE,
                         ..Default::default()
                     },
                     LaborAssignmentState {
@@ -788,9 +754,9 @@ mod tests {
 
         let hay = rows.get(0);
         assert_eq!(
-            (hay.actualYield(), hay.fodderYield(), hay.tradeYield()),
-            (0.0, HAY_FODDER, CASH_TRADE),
-            "the three accounts must survive the codec in their own slots"
+            (hay.actualYield(), hay.fodderYield()),
+            (0.0, HAY_FODDER),
+            "the two accounts must survive the codec in their own slots"
         );
 
         let hunt = rows.get(1);
@@ -1032,6 +998,91 @@ mod tests {
                 "{species} must ship its own role, not a neighbour's"
             );
         }
+    }
+
+    /// **THE PER-MATERIAL CASH QUOTE SURVIVES THE WIRE, and EMPTY stays EMPTY** (arc #527).
+    ///
+    /// `sowMaterialPayoff` / `cultivateMaterialPayoff` replaced the retired `sowTradePayoff` /
+    /// `cultivateTradePayoff` with a **vector**, because a material yield is *which material and how
+    /// much*, not one number. Two properties have to survive the codec and neither is checkable in
+    /// process:
+    ///
+    /// 1. **Each rung carries its OWN rows** — the two fields exist precisely because a Field's
+    ///    managed rate and a tended patch's MSY skim are different harvests, so a codec that wrote
+    ///    one vector into both slots would silently quote a Field's number on the Cultivate row,
+    ///    which is the exact defect issue #419 fixed for the fodder account.
+    /// 2. **An empty quote decodes as empty** — the "no row" reading the field's contract rests on.
+    ///    A nested vector that failed to serialize decodes as *absent*, which is the same shape, so
+    ///    the populated row beside it is what keeps this from passing blind.
+    #[test]
+    fn the_per_material_cash_quote_survives_the_wire_per_rung() {
+        /// A Field is 100% its crop; the tended patch beside it is a weeded basket, so the two rungs
+        /// legitimately quote different amounts of the same material.
+        const SOW_FIBRE: f32 = 4.28;
+        const CULTIVATE_FIBRE: f32 = 0.29;
+
+        let snapshot = WorldSnapshot {
+            forage_patches: vec![ForagePatchState {
+                composition: vec![
+                    FloraShareInfo {
+                        species: "cotton".to_string(),
+                        sow_material_payoff: vec![MaterialPayoff {
+                            material_id: "fibre".to_string(),
+                            amount: SOW_FIBRE,
+                        }],
+                        cultivate_material_payoff: vec![MaterialPayoff {
+                            material_id: "fibre".to_string(),
+                            amount: CULTIVATE_FIBRE,
+                        }],
+                        ..FloraShareInfo::default()
+                    },
+                    // A grain Field beside it: no material at all, and it must stay that way.
+                    FloraShareInfo {
+                        species: "wild_emmer".to_string(),
+                        ..FloraShareInfo::default()
+                    },
+                ]
+                .into(),
+                ..ForagePatchState::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("a decodable snapshot envelope");
+        let composition = envelope
+            .payload_as_snapshot()
+            .expect("a snapshot payload")
+            .subsistence()
+            .expect("a subsistence section")
+            .foragePatches()
+            .expect("the forage patches")
+            .get(0)
+            .composition()
+            .expect("the patch's composition");
+
+        let cotton = composition.get(0);
+        let sow = cotton
+            .sowMaterialPayoff()
+            .expect("the Sow quote survives the codec");
+        let cultivate = cotton
+            .cultivateMaterialPayoff()
+            .expect("the Cultivate quote survives the codec");
+        assert_eq!((sow.len(), cultivate.len()), (1, 1));
+        assert_eq!(sow.get(0).materialId(), Some("fibre"));
+        assert_eq!(cultivate.get(0).materialId(), Some("fibre"));
+        assert!((sow.get(0).amount() - SOW_FIBRE).abs() < 1e-6);
+        assert!(
+            (cultivate.get(0).amount() - CULTIVATE_FIBRE).abs() < 1e-6,
+            "each rung must carry its OWN rows — a Field's number on the Cultivate row is the \
+             defect the two fields exist to prevent"
+        );
+
+        let grain = composition.get(1);
+        assert!(
+            grain.sowMaterialPayoff().is_none_or(|rows| rows.is_empty()),
+            "a food crop quotes NO ROW — never a zero-valued one"
+        );
     }
 
     /// A species the roster does not name ships `""` — **unstated**, which a client must not read as

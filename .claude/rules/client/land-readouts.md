@@ -42,7 +42,7 @@ paths:
   Height     5  ▬▭▭▭▭▭▭▭▭▭
   Foraging   205 / 205 · Thriving
      🌾 Wild Tubers    38%  (77)
-     ⇄ Cotton Fields   31%  (64)
+     🧵 Cotton Fields   31%  (64)
      🐄 Hay Grass      31%  (64)
   Grazing    130 / 130 · Thriving
   ```
@@ -101,7 +101,7 @@ paths:
     patch rather than of how hard it has lately been worked.
   - **EACH ROW LEADS WITH ITS CROP ROLE** (`FoodIcons.for_crop_role`, from `FloraShareInfo.role`):
     staple / fodder / cash. The marks are **BUNDLED ART** (`CropRoleSprites`, issue #463) rendered as
-    `[img]` BBCode, with the three borrowed emoji (🌾 / 🐄 / ⇄) as a live fallback — see
+    `[img]` BBCode, with the three borrowed emoji (🌾 / 🐄 / 🧵) as a live fallback — see
     `sprites-widgets.md` → the `CropRoleSprites` row for why the art replaced them (COLLISION: two of
     the three still mean something else elsewhere in this HUD) and for the sub-style ~13px forced.
     **The BOX SIZE is threaded in from the host label's own font size** — `flora_composition_lines`
@@ -258,31 +258,104 @@ paths:
   100% its crop, so a cash crop's `sow_payoff` is exactly `0` — and zero is the honest answer there.
   **A ROW STATES EVERY ACCOUNT IT PAYS, NOT ONE** (issue #419; `.claude/rules/client/labor-ui.md` → "A
   hunt pays TWO products" is the shared rule, and `SourceForecast.has_component` the shared gate). The
-  face is COMPOSED — `FLORA_SHARE_FORMAT` base plus a ratio / hay / trade clause each rendered only where
-  its component exists (`_flora_row_face`), and the tooltip composed the same way — so a staple reads
-  `Wild Emmer 70% · 2.7× · 0.11 trade` and a cash crop `Flax 30% · 0.3× · 0.95 trade`.
+  face is COMPOSED — `FLORA_SHARE_FORMAT` base plus a ratio clause, a hay clause and ONE CLAUSE PER
+  MATERIAL, each rendered only where its component exists (`_flora_row_face`), and the tooltip composed
+  the same way — so a tended staple reads `Wild Emmer 70% · 2.7× · 0.04 fibre` and a cash crop
+  `Flax 30% · 0.3× · 0.29 fibre`.
   - **It was three mutually exclusive whole-row formats picked by an if/elif chain**, so a row could
-    state exactly ONE account, and the chain detected "cash crop" from `trade_payoff > 0`. **Every
-    staple carries `trade_goods_per_biomass: 0.005`**, so that test fired on all 27 of them and printed
-    every crop as trade-only — `Wild Emmer 39% · 0.4 trade`, with the ratio the rung exists to compare
+    state exactly ONE account, and the chain detected "cash crop" from the then-live
+    `trade_payoff > 0`. **Every staple carried `trade_goods_per_biomass: 0.005`**, so that test fired on
+    all 27 of them and printed every crop as trade-only — `Wild Emmer 39% · 0.4 trade`, with the ratio the rung exists to compare
     nowhere on the row. There is deliberately **no `role` on the wire and no threshold**: the components
     self-route, which is the client twin of the sim's own "the vector is the behaviour, the role is a
     display tag never branched on" (`flora_config.rs`). A payoff being non-zero says an account is
     *paid*, never which account *dominates*.
-  - **THE TWO NON-FOOD PAYOFFS ARE PER RUNG** — `_flora_entry_fodder_payoff` / `_flora_entry_trade_payoff`
-    take the `policy` and read `cultivate_*` or `sow_*`, exactly as `_flora_entry_ratio` already did.
-    They read `sow_*` unconditionally before, so the Cultivate row quoted a *sown Field's* number. The
-    tooltips name the rung's own noun (`FLORA_CROP_RUNG_NOUNS`) for the same reason.
+  - **THE NON-FOOD PAYOFFS ARE PER RUNG** — `_flora_entry_fodder_payoff` /
+    `_flora_entry_material_payoff` take the `policy` and read `cultivate_*` or `sow_*`, exactly as
+    `_flora_entry_ratio` already did. They read `sow_*` unconditionally before, so the Cultivate row
+    quoted a *sown Field's* number. The tooltips name the rung's own noun (`FLORA_CROP_RUNG_NOUNS`) for
+    the same reason.
   - **TWO decimals on the absolute accounts, one on the ratio.** The ratio's single decimal is the
     deliberate "no second significant figure" choice; the non-food clauses are absolute rates spanning
-    two orders of magnitude within one basket (0.11 trade for a staple's token beside 4.28 for cotton on
-    the same ground), and one decimal flattens the small end to `0.1` and loses exactly the comparison
-    the row exists for. It is also `SourceForecast.picker_products`' precision.
+    two orders of magnitude within one basket (0.04 fibre for a tended grain's volunteers beside 1.08
+    for a sown cotton Field on the same ground), and one decimal flattens the small end to `0.0` and
+    loses exactly the comparison the row exists for. It is also `SourceForecast.picker_products`'
+    precision.
   - **A cash crop's food ratio is a WARN-inked LOSS at rung 2, and must not be exempted.** The old chain
-    let a trade payoff suppress the food verdict entirely; but rung 2 *weeds* rather than replaces, so a
-    tended cotton patch really does keep paying its volunteers' calories at a rate below gathering the
-    tile wild. That surrendered calorie is the cost its trade clause is the benefit of — the land-use
-    tension, rendered.
+    let a non-food payoff suppress the food verdict entirely; but rung 2 *weeds* rather than replaces,
+    so a tended cotton patch really does keep paying its volunteers' calories at a rate below gathering
+    the tile wild. That surrendered calorie is the cost its material clause is the benefit of — the
+    land-use tension, rendered.
+  ### THE PATCH'S OWN MATERIAL RATES ARE A DIFFERENT QUESTION FROM THE PICKER'S
+
+  Two surfaces on this card quote a plant's materials and they answer different questions. Confusing
+  them is the easiest mistake here, because both are `{material_id, amount}` rows.
+
+  | | asks | reads | renders on |
+  |---|---|---|---|
+  | **the CROP PICKER's rows** | what would ONE SPECIES pay if you built on it? | `sow_material_payoff` / `cultivate_material_payoff`, per composition entry, per RUNG | each basket row of the picker |
+  | **the PATCH's rates** | what does THIS GROUND pay the crew standing on it now? | `patch_material_per_biomass` / `patch_per_worker_material` | the compose sheet's yields row |
+
+  **THE COMPOSE SHEET'S ROW WAS MISSING FOR A RELEASE, and the client half was one argument.** A tile
+  32% cotton and 26% tobacco composed a forage sheet reading `0.24 → 0.18 FOOD · — FODDER` and never
+  mentioned the fibre and tobacco the gather actually banks (reported from a screenshot):
+  `_forage_yield_model` passed FOUR arguments to `yield_rows` where its hunt twin passed five. Now it
+  reads `0.32 → 0.15 FOOD · 0.09 FIBRE · 0.06 TOBACCO`, one row per material beside the food and the
+  feed, through the same `forecast_inputs` composition the animal web uses — the keys are
+  prefix-aware, so a patch and a herd are one derivation. `labor-ui.md` → "THE PLANT WEB GOT THE SAME
+  ARGUMENT" owns the mechanism; **`forage_cash_crop_gather` is the frame.**
+
+  **A TILE-LEVEL RUNG FIGURE WOULD BE WRONG, not merely redundant** — it would sum across the basket,
+  and summing is the retired trade axis under a new name. That is why `FORECAST_PAYOFF_MATERIAL_KEYS`
+  has HERD rungs only and the plant web is deliberately absent from it.
+
+  ### WHAT A CASH CROP PAYS, PER MATERIAL (arc #527)
+
+  The row's non-food clause used to be a single `trade` scalar. **That account is retired** — the sim
+  wrote it on every harvest and read it nowhere, while a `credit_material_yield` beside every credit
+  site already accounted the same take's concrete materials — so the row states MATERIALS now, and it
+  states them **one clause per material**.
+
+  - **`FloraShareInfo.sowMaterialPayoff` / `cultivateMaterialPayoff`** decode as
+    `sow_material_payoff` / `cultivate_material_payoff` on each `composition` entry: an `Array` of
+    `Dictionary`, each `{material_id: String, amount: float}` in units per turn, merged by id and
+    ordered by the sim. `SourceForecast._material_payoff_rows` normalizes them (dropping a row that
+    names no material — an id is what a row is FOR) and `flora_basket_entries` carries them through;
+    `DrawerComposeController._flora_entry_material_payoff` picks the rung's own vector.
+  - **NEVER SUM THEM INTO ONE FIGURE.** A "materials/turn" total is the retired trade axis under a new
+    name, and it re-collapses the very distinction the materials model exists to keep — a mammoth hide
+    and a hare pelt are both `hide` and are not the same thing.
+  - **THE KEY IS ALWAYS PRESENT, AN EMPTY ARRAY INCLUDED, AND EMPTY IS A REAL ANSWER.** It means *this
+    plant pays no material*, which must render as **no clause** — never as a `0.00`. That is the
+    render-only-when-non-zero rule reaching one account further out, and it is why the fixture that
+    carries it (`fodder_basket_tile_fixture`, both plants, both rungs) states `[]` EXPLICITLY rather
+    than omitting the key.
+  - **THE TWO RUNGS LEGITIMATELY DIFFER, and the picker renders each rung's own vector.** A sown Field
+    is 100% its crop, so a grain Field quotes nothing; a *tended* patch keeps its neighbours as
+    volunteers and honestly quotes the fibre they pay. On the reference tile that reads
+    `Wild Emmer 70% · 3.2×` under Sow beside `Wild Emmer 70% · 2.7× · 0.04 fibre` under Cultivate —
+    the same plant, two rungs, and the tended one is the one with the flax in it.
+  - **THE MATERIAL NAMES ITSELF, AND THAT IS THE MARK IT WEARS.** `⇄` earned its job by being ONE mark
+    for a whole scalar product; a material has a NAME (`fibre`, `hide`, `tobacco` — the catalogue ships
+    no display name, so the id IS the display word), and a name is a better mark than an arrow saying
+    only "not food". So a clause reads `0.29 fibre`, exactly as its neighbour reads `1.80 hay`, and
+    there is no generic account left for a generic glyph to stand for. **Do not add one.**
+  - **A ZERO FOOD SURVIVES BESIDE A MATERIAL CLAUSE, and that pairing is the whole land-use bargain.**
+    `_crop_payoff_terms` renders the deal row's food figure through `picker_products`, whose
+    `zero_account` keeps the honest `0.00 food` — so a sown cotton Field reads `0.00 food · 0.29 fibre`,
+    which is exactly the trade the player is making.
+  - **CROP_ROLE_CASH SURVIVES; only what it SAYS changed.** The role is still on the wire and still
+    leads its basket row; its mark is `🧵` (`FoodIcons.CROP_ROLE_ICONS`, with `CropRoleSprites`' bundled
+    art in front of it), and it now means *this plant pays a material, not calories* rather than *this
+    plant pays trade goods*.
+
+  **Frames:** `forage_crop_picker_cash` (Sow — the grain quoting nothing beside `Flax 30% · 0.72 fibre`)
+  · `forage_crop_picker_cash_cultivate` (Cultivate — the SAME basket, the grain now quoting
+  `0.04 fibre`, which is the two-rungs-differ pair and neither half is a claim alone) ·
+  `forage_crop_committed` (the TWO-MATERIAL case: `Flax Fields 21% · 1.42 fibre · 0.31 grape`, which is
+  the one frame a summed figure could not fake) · `forage_crop_picker_fodder` (the empty-array case —
+  both plants, both rungs, and no material clause anywhere on the list).
+
   **SIZING — the picker's LIST scrolls within itself, and the cap is MEASURED**
   (`FLORA_CROP_LIST_MAX_HEIGHT`, derived as `FLORA_CROP_LIST_VISIBLE_ROWS × row + separations`, with the
   rows on the work board's compact idiom via `HudWidgets.compact` — default button chrome pads 9px top AND

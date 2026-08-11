@@ -1,17 +1,4 @@
 {
-  "logistics": {
-    "flow_gain_min": 0.02,
-    "flow_gain_max": 0.5,
-    "effective_gain_min": 0.005,
-    "penalty_min": 0.05,
-    "penalty_scalar_min": 0.1,
-    "capacity_min": 0.05,
-    "attrition_max": 0.95
-  },
-  "trade": {
-    "tariff_min": 0.0,
-    "tariff_max_scalar": 1.0
-  },
   "population": {
     "attrition_penalty_scale": 0.2,
     "hardness_penalty_scale": 0.05,

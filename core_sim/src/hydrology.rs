@@ -3051,7 +3051,6 @@ mod tests {
                     .spawn(Tile {
                         position: UVec2::new(x, y),
                         element: ElementKind::Ferrite,
-                        mass: scalar_zero(),
                         temperature: scalar_zero(),
                         terrain,
                         terrain_tags: terrain_definition(terrain).tags,

@@ -80,6 +80,7 @@ use crate::{
         NEGLECT_NONE, RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED, RUNG_UNSTARTED,
     },
     labor_config::{ForageLaborConfig, LaborConfigHandle, NO_FORAGE_CAPACITY},
+    materials_config::MaterialPayoff,
     orders::FactionId,
     resources::{CommandEventEntry, CommandEventKind, CommandEventLog, SimulationTick},
     scalar::{scalar_from_f32, Scalar},
@@ -1242,23 +1243,32 @@ fn rung_fodder_payoff(
     }
 }
 
-/// **The TRADE GOODS committing this tile to THIS plant would credit per turn, on `rung`** (Flora
-/// Roster F4, §6) — the exact trade twin of [`commit_fodder_payoff`], routing the yield vector's
-/// `trade_goods_per_biomass` component instead of its `fodder_per_biomass` one. Built through the
-/// *same* `hypothetical_patch` construction and the *same* payoff functions the sim pays with (the
-/// §4.3 "assert the quote against the payoff function" rule), so the picker's cash-crop row and the
-/// payout cannot drift. `cultivatePayoff`/`sowPayoff` read `0` for a cash crop — it is worthless as
-/// food — so this is the number that lets the picker show its real value instead of a bare `0×`.
-/// `0.0` for HAY — whose vector pays no trade at all — or a plant that cannot climb `rung`. A
-/// STAPLE reads the small flat token (`trade_goods_per_biomass` 0.005), never `0`, which is exactly
-/// why no surface may read "trade > 0" as "cash crop".
+// **RETIRED: `commit_trade_payoff` / `rung_trade_payoff`** (arc #527), with the trade-goods axis
+// they quoted. What a cash crop actually pays is **materials** — see `commit_material_payoff`
+// below, which is the replacement rather than a restoration: it answers per material instead of
+// flattening every one of them into a single number, which is the whole reason the scalar went.
+
+/// **The MATERIALS committing this tile to THIS plant would pay per turn, on `rung`** — the
+/// replacement for the retired `commit_trade_payoff` (arc #527), and the number the crop picker's
+/// cash-crop row states.
 ///
-/// **The rung parameter closes a real hole, not a symmetry gap.** #433 made a tended cash crop *pay*
-/// trade ([`tended_take_trade_goods`]); this is what makes it *quote* it. Until now the Cultivate row
-/// of the picker printed the Field number — off by the whole difference between a managed rate and an
-/// MSY skim, on a rung the player was about to commit 25 turns to.
+/// **A VECTOR, not a scalar, and that is the whole difference.** The retired quote answered "how
+/// much trade", which a market could total but a player could not act on; this answers "0.29 fibre"
+/// or "0.21 tobacco", which is what a cash crop *is*. Totalling it back into one number would be the
+/// retired axis under a new name.
+///
+/// Built through the *same* `hypothetical_patch` construction and the *same* per-rung harvest
+/// expressions the sim pays with — [`field_harvest_production`] at rung 3, [`tended_msy_take`] at
+/// rung 2 — so the published number and the payout cannot drift (the §4.3 "assert the quote against
+/// the payoff function" rule). **Empty** for a plant that pays no material or cannot climb `rung`
+/// here, which a client must render as *no row*, never as a zero.
+///
+/// **Rows are merged per material id, in id order.** A mixed rung-2 basket can name one material
+/// twice (cotton fibre beside hay straw), and those land in *different* batches in the store because
+/// their readings differ — but `LocalStore::material_total` sums exactly this way, which is what
+/// makes the quote checkable against what the band ends up holding.
 #[allow(clippy::too_many_arguments)]
-pub fn commit_trade_payoff(
+pub fn commit_material_payoff(
     tile: UVec2,
     tile_capacity: f32,
     species: &str,
@@ -1267,34 +1277,39 @@ pub fn commit_trade_payoff(
     forage: &ForageLaborConfig,
     output_multiplier: f32,
     rung: RungKey,
-) -> f32 {
+) -> Vec<MaterialPayoff> {
     if !species_climbs(species, share_of(composition, species), flora, rung) {
-        return 0.0;
+        return Vec::new();
     }
     let patch = hypothetical_patch(tile, tile_capacity, Some(species), rung);
-    rung_trade_payoff(&patch, composition, forage, flora, output_multiplier, rung)
+    rung_material_payoff(&patch, composition, forage, flora, output_multiplier, rung)
 }
 
-/// **What a patch pays in TRADE GOODS, standing on `rung`** — the trade arm of [`rung_payoff`], the
-/// exact twin of [`rung_fodder_payoff`]: [`field_trade_goods`] at rung 3, [`tended_trade_goods`] at
-/// rung 2, `0` below.
-fn rung_trade_payoff(
+/// **What a patch pays in MATERIALS, standing on `rung`** — the material arm of [`rung_payoff`],
+/// dispatching to the *same* harvest each rung is paid on: [`field_harvest_production`] at rung 3 (a
+/// managed rate on the standing crop) and [`tended_msy_take`] at rung 2 (the MSY skim, because rung
+/// 2 is drawn down). Rung 1 pays no *committed* quote — a wild gather's fibre is not a commitment's
+/// payoff — so it is empty, the same "cannot climb this rung" sentinel the ratios use.
+fn rung_material_payoff(
     patch: &ForagePatch,
     tile_composition: &[FloraShare],
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
     output_multiplier: f32,
     rung: RungKey,
-) -> f32 {
-    match rung {
-        RungKey::PlantField => {
-            field_trade_goods(patch, tile_composition, forage, flora, output_multiplier)
-        }
-        RungKey::PlantTended => {
-            tended_trade_goods(patch, tile_composition, forage, flora, output_multiplier)
-        }
-        _ => 0.0,
-    }
+) -> Vec<MaterialPayoff> {
+    let harvest_biomass = match rung {
+        RungKey::PlantField => field_harvest_production(patch, forage),
+        RungKey::PlantTended => tended_msy_take(patch, forage),
+        _ => return Vec::new(),
+    };
+    // **The same rows `credit_material_yield` is handed, through the same expression** — the quote is
+    // the payout's own arithmetic rather than a re-derivation of it.
+    crate::materials_config::material_yield_totals(
+        &patch_material_yields(patch, tile_composition, flora, forage),
+        harvest_biomass,
+        output_multiplier,
+    )
 }
 
 /// **What this tile pays per turn left WILD** — the denominator of [`commit_yield_ratio`], and the
@@ -1815,29 +1830,6 @@ pub(crate) fn tended_fodder(
     )
 }
 
-/// **What a patch would pay in TRADE GOODS as a TENDED patch** — the exact trade twin of
-/// [`tended_fodder`], and the quote a rung-2 **cash crop** never had. A tended cotton patch has been
-/// *paid* trade since #433 ([`tended_take_trade_goods`]) while being *previewed* as `0`, because the
-/// only trade quote on the wire was `sowTradePayoff`, a Field number.
-///
-/// **No `market.trade_goods_multiplier`.** That markup is a `Deplete`-*policy* concept applied at the
-/// credit site; a crop-picker row states what the *crop* pays on this ground, so it is quoted
-/// policy-blind at the Sustain skim — the same rule [`field_trade_goods`] states one rung up, and the
-/// same convention [`tended_provisions`] already answers the food question under.
-pub(crate) fn tended_trade_goods(
-    patch: &ForagePatch,
-    tile_composition: &[FloraShare],
-    forage: &ForageLaborConfig,
-    flora: &FloraConfig,
-    output_multiplier: f32,
-) -> f32 {
-    forage_provisions(
-        tended_msy_take(patch, forage),
-        rung_trade_per_biomass(patch, tile_composition, flora, forage, RungKey::PlantTended),
-        output_multiplier,
-    )
-}
-
 /// **THE ecology a patch actually lives under** — the plant twin of `fauna::herd_ecology`, and the one
 /// place the plant ladder's rung → growth-rate mapping lives. Tending buys a *growth rate*, and
 /// nothing else:
@@ -1900,27 +1892,38 @@ pub(crate) fn field_provisions(
         * output_multiplier
 }
 
-/// **What a sown Field hands over each turn, stated in BIOMASS** — the managed harvest before it is
-/// routed into any one currency, capped by what the crew can carry.
+/// **What a sown Field OFFERS each turn, stated in BIOMASS, before any crew is counted** — the
+/// production half of [`field_harvest_biomass`], and the basis every rung-3 *quote* is priced on.
 ///
-/// The three scalar accounts each convert this through their own rate, so none of them ever needs
-/// the biomass itself. The **material** account does: a material's `per_biomass` is a rate on the
-/// crop rather than on the currency it would otherwise have been sold as, and a cash Field's
-/// provisions are `0`, so there is no currency to scale off. Same `min(production, collection)` shape
-/// the other three run — an understaffed Field brings home less of everything, in step.
+/// Split out for the reason [`tended_msy_take`] is: the picker's material quote
+/// ([`commit_material_payoff`]) and the payout must describe the same harvest, and a second copy of
+/// `biomass × field_provisions_per_biomass` is exactly how they would start to disagree. It is the
+/// production term of the same `min(production, collection)` the payout runs, which is why a Field
+/// staffed past its collection cap quotes and pays the identical number.
 ///
 /// A Field is never drawn down, so this is a *rate on the standing crop* and `patch.biomass` is
 /// unchanged by it.
+pub(crate) fn field_harvest_production(patch: &ForagePatch, forage: &ForageLaborConfig) -> f32 {
+    patch.biomass * forage.cultivation.field_provisions_per_biomass
+}
+
+/// **What a sown Field hands over each turn, stated in BIOMASS** — the managed harvest before it is
+/// routed into any one currency, capped by what the crew can carry.
+///
+/// The scalar accounts each convert this through their own rate, so neither of them ever needs the
+/// biomass itself. The **material** account does: a material's `per_biomass` is a rate on the crop
+/// rather than on a currency it would otherwise have been sold as, and a cash Field's provisions are
+/// `0`, so there is no currency to scale off. Same `min(production, collection)` shape the others
+/// run — an understaffed Field brings home less of everything, in step.
 pub(crate) fn field_harvest_biomass(
     patch: &ForagePatch,
     forage: &ForageLaborConfig,
     equipped_gather_rate: f32,
     workers: u32,
 ) -> f32 {
-    let production = patch.biomass * forage.cultivation.field_provisions_per_biomass;
     let collection =
         workers as f32 * forage_per_worker_biomass(equipped_gather_rate, MANAGED_HARVEST_SEASON);
-    production.min(collection)
+    field_harvest_production(patch, forage).min(collection)
 }
 
 /// The **projected** fodder conversion rate — the projected basket's `yield.fodder_per_biomass`
@@ -1994,83 +1997,15 @@ pub(crate) fn managed_per_worker_fodder(
     )
 }
 
-/// The **projected** trade conversion rate — the projected basket's `yield.trade_goods_per_biomass`
-/// average once the improvement completes (the trade twin of [`projected_fodder_per_biomass`],
-/// `docs/plan_flora_roster.md` §6). A sown Field's basket is 100% its crop, so a cash Field reads its
-/// crop's rate and a hay Field `0`, with **no `role` branch** — the vector does the routing. Used by
-/// the managed-trade payout and forecast so a cash Field being sown quotes the trade goods it *will*
-/// pay.
-fn field_trade_per_biomass(
-    patch: &ForagePatch,
-    tile_composition: &[FloraShare],
-    flora: &FloraConfig,
-    forage: &ForageLaborConfig,
-) -> f32 {
-    rung_rate(
-        patch,
-        tile_composition,
-        flora,
-        forage,
-        RungKey::PlantField,
-        |def| def.yield_.trade_goods_per_biomass,
-        NO_UNCOMMITTED_YIELD_RATE,
-    )
-}
+// **RETIRED: `field_trade_per_biomass` / `field_trade_goods` / `managed_per_worker_trade`**
+// (arc #527). A sown cash Field's product is its **materials** — cotton fibre, tobacco leaf — banked
+// as batches by `credit_material_yield` off the same `field_harvest_biomass` these three converted,
+// and it always was. The trade scalar beside them was the flattened duplicate.
 
-/// The place-local managed **trade goods** a sown cash-crop **Field** (rung 3) credits to the
-/// faction `trade_goods` stockpile each turn — the exact trade twin of [`field_fodder`], routed by
-/// the yield vector's trade component instead of its fodder component. Same shape
-/// (`biomass × field_provisions_per_biomass × trade_quality`, no biomass drawn down), so a cash
-/// Field and a grain Field of the same standing crop harvest the same *fraction* of their biomass —
-/// they differ only in which account it lands in. `0` for any patch not committed to a cash crop, so
-/// a grain Field credits no trade, with no role branch.
-///
-/// `trade_quality` = the committed crop's `trade_goods_per_biomass` relative to the **wild provisions
-/// baseline** — the same normalization [`patch_species_quality`] uses for the food account, so the
-/// field rung's one rate dial (`field_provisions_per_biomass`) prices all three accounts
-/// consistently. **No `market.trade_goods_multiplier` is applied**: that markup is a `Deplete`-*policy*
-/// concept for wild commercial gathering; a managed Field harvest does not carry it.
-pub(crate) fn field_trade_goods(
-    patch: &ForagePatch,
-    tile_composition: &[FloraShare],
-    forage: &ForageLaborConfig,
-    flora: &FloraConfig,
-    output_multiplier: f32,
-) -> f32 {
-    if forage.provisions_per_biomass <= 0.0 {
-        return 0.0;
-    }
-    let trade_quality = field_trade_per_biomass(patch, tile_composition, flora, forage)
-        / forage.provisions_per_biomass;
-    patch.biomass
-        * forage.cultivation.field_provisions_per_biomass
-        * trade_quality
-        * output_multiplier
-}
-
-/// **What one worker can carry home from a cash-crop Field**, in trade-goods/turn — the trade twin of
-/// [`managed_per_worker_fodder`]. The crew carries the cash crop exactly as it carries grain, at the
-/// same per-worker throughput, so the collection cap on a cash Field is this, in trade units. `0` for
-/// a non-cash crop (a grain Field's trade collection is moot).
-pub(crate) fn managed_per_worker_trade(
-    patch: &ForagePatch,
-    tile_composition: &[FloraShare],
-    forage: &ForageLaborConfig,
-    equipped_gather_rate: f32,
-    flora: &FloraConfig,
-    output_multiplier: f32,
-) -> f32 {
-    forage_provisions(
-        forage_per_worker_biomass(equipped_gather_rate, MANAGED_HARVEST_SEASON),
-        field_trade_per_biomass(patch, tile_composition, flora, forage),
-        output_multiplier,
-    )
-}
-
-/// **The rate a basket the roster cannot decompose pays in the two non-food accounts** — nothing. It
-/// is the [`basket_rate`] fallback for fodder and trade, where the food account falls back to
+/// **The rate a basket the roster cannot decompose pays in the non-food accounts** — nothing. It
+/// is the [`basket_rate`] fallback for fodder, where the food account falls back to
 /// `forage.provisions_per_biomass` instead: a stand nobody can name pays *some* food (it is food, that
-/// is why the tile has a capacity at all) but no hay and no cash. Named rather than a bare `0.0`
+/// is why the tile has a capacity at all) but no hay. Named rather than a bare `0.0`
 /// because at these call sites the zero is a *statement about an undecomposable basket*, not an absent
 /// value.
 const NO_UNCOMMITTED_YIELD_RATE: f32 = 0.0;
@@ -2115,40 +2050,10 @@ fn rung_fodder_per_biomass(
     )
 }
 
-/// **THE trade conversion seam** — the trade twin of [`patch_fodder_per_biomass`], routing the yield
-/// vector's `trade_goods_per_biomass` component. Since #433 it is the **one** trade rate at every
-/// drawn-down rung: the species-blind flat `market.trade_goods_per_biomass` sale is retired, and
-/// `Deplete` is a *markup* on this rate rather than a separate route (see the Forage arm of
-/// `advance_labor_allocation`).
-pub fn patch_trade_per_biomass(
-    patch: &ForagePatch,
-    tile_composition: &[FloraShare],
-    flora: &FloraConfig,
-    forage: &ForageLaborConfig,
-) -> f32 {
-    rung_trade_per_biomass(patch, tile_composition, flora, forage, standing_rung(patch))
-}
-
-/// The trade rate this patch would convert at **standing on `rung`** — the exact trade twin of
-/// [`rung_fodder_per_biomass`], and what lets a rung-2 quote price a cash crop the Cultivate rung
-/// really will pay for.
-fn rung_trade_per_biomass(
-    patch: &ForagePatch,
-    tile_composition: &[FloraShare],
-    flora: &FloraConfig,
-    forage: &ForageLaborConfig,
-    rung: RungKey,
-) -> f32 {
-    rung_rate(
-        patch,
-        tile_composition,
-        flora,
-        forage,
-        rung,
-        |def| def.yield_.trade_goods_per_biomass,
-        NO_UNCOMMITTED_YIELD_RATE,
-    )
-}
+// **RETIRED: `patch_trade_per_biomass` / `rung_trade_per_biomass`** (arc #527) — the conversion
+// seam for an account that no longer exists. A drawn-down patch's non-food product is the material
+// rows its basket names, credited per species by `patch_material_yields` so a mixed tile's readings
+// are never averaged into a plant that is not growing there.
 
 /// **The FODDER a completed Tended Patch (rung 2) harvest pays** into the working band's `FODDER`
 /// store — `take × the committed crop's fodder_per_biomass`, the fodder twin of the provisions
@@ -2180,34 +2085,11 @@ pub fn tended_take_fodder(
     )
 }
 
-/// **The TRADE GOODS a completed Tended Patch (rung 2) harvest credits** to the *faction*
-/// `trade_goods` stockpile — the exact trade twin of [`tended_take_fodder`], take-driven for the same
-/// reason, and the fix for a tended cash crop (`grapevine`/`cotton`/`flax`/`tobacco`/`tea`,
-/// `provisions_per_biomass: 0`) producing nothing in any currency while being drawn down at full MSY.
-///
-/// **THE one trade rate at every drawn-down rung** (#433). The species-blind flat `market.*` sale is
-/// retired, so there is no committed-vs-wild branch left to get wrong: rungs 1 and 2 both credit
-/// `take × patch_trade_per_biomass`, and the caller multiplies by
-/// `market.trade_goods_multiplier` **iff the policy is `Deplete`** — a *policy* markup ("sell
-/// harder") on goods you were already producing, not a rung concept. The markup lives at the credit
-/// site rather than here because this function is the *rate*, and the rate does not know the policy.
-///
-/// (Rung 3 keeps its own no-markup rule — see [`field_trade_goods`]: a Field is never drawn down and
-/// has no policy axis at all.)
-pub fn tended_take_trade_goods(
-    take_biomass: f32,
-    patch: &ForagePatch,
-    tile_composition: &[FloraShare],
-    flora: &FloraConfig,
-    forage: &ForageLaborConfig,
-    output_multiplier: f32,
-) -> f32 {
-    forage_provisions(
-        take_biomass,
-        patch_trade_per_biomass(patch, tile_composition, flora, forage),
-        output_multiplier,
-    )
-}
+// **RETIRED: `tended_take_trade_goods`** (arc #527). #433 added it because a tended cash crop
+// (`provisions_per_biomass: 0`) was being drawn down at full MSY and producing nothing in any
+// currency — a real bug, fixed with the currency that existed at the time. The five cash crops are
+// paid in **materials** now, credited off the same `forage_take` biomass by `credit_material_yield`
+// at rungs 1, 2 and 3 alike, so the hole this closed stays closed without the scalar.
 
 // **RETIRED: `field_yield_fraction_while_building`** — the `plant:field` rung's dip, looked up here
 // because two plant sites needed it and only one of them went through the shared ceiling helper. It has
@@ -2223,33 +2105,27 @@ pub fn tended_take_trade_goods(
 /// differ* — the same reason seed travels and a herd doesn't (`docs/plan_intensification_ladder.md`).
 const PLANTS_DO_NOT_QUANTISE: YieldAccounts = YieldAccounts::ZERO;
 
-/// **The plant web's forecast trade component — a KNOWN GAP, not a claim that plants sell nothing**
-/// (`docs/plan_hunt_yield_model.md` §8, issue #337).
+/// **The plant web's forecast FODDER component — a KNOWN GAP, not a claim that plants grow no hay**
+/// (`docs/plan_hunt_yield_model.md` §8, issue #426).
 ///
-/// The `Deplete` gather really does sell its take (`labor_config`'s `forage.market.*`, credited by
-/// `advance_labor_allocation`), so a patch's honest trade forecast is **not** zero — the sim simply
-/// has not projected it yet, exactly as it did not before this arc. #337 vectorised the *animal* web;
-/// the plant web's trade forecast is its own arc.
-///
-/// It is safe to ship as `0.0` because of the client-side rule the animal side introduced: a trade
-/// line renders **only when `trade_goods > 0`** — flora's cash-crop rule — so a patch shows *no trade
-/// line* rather than a false "0 trade goods/turn". Do not let a reader treat this as "plants have no
-/// trade value".
-pub(crate) const PLANT_TRADE_FORECAST_NOT_YET_PROJECTED: f32 = 0.0;
+/// A hay Field really does credit its band's `FODDER` store every turn, so a patch's honest fodder
+/// forecast is **not** zero — the sim simply has not projected it yet. The client renders a fodder
+/// line only when the component is `> 0`, so a patch shows *no* fodder line rather than a false
+/// "0 fodder/turn". Do not let a reader treat this as "plants pay no fodder".
+pub(crate) const PLANT_FODDER_FORECAST_NOT_YET_PROJECTED: f32 = 0.0;
 
 /// A plant source's provisions-only forecast component: the food number the plant web computes, with
-/// its trade **and fodder** components the [`PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`] gap.
+/// its fodder component the [`PLANT_FODDER_FORECAST_NOT_YET_PROJECTED`] gap.
 ///
-/// **This helper is the remaining half of #426 and is meant to disappear.** Projecting the other two
-/// accounts needs each component built from the rung's *biomass* ceiling times that rung's own rate
-/// (`rung_provisions_per_biomass` / `rung_trade_per_biomass` / `rung_fodder_per_biomass`), which is a
-/// restructure of [`forage_forecast`] rather than a wider return type here: this signature takes an
-/// already-converted food number and so has nothing left to convert the other accounts *from*.
+/// **This helper is the remaining half of #426 and is meant to disappear.** Projecting the fodder
+/// account needs it built from the rung's *biomass* ceiling times that rung's own rate
+/// (`rung_provisions_per_biomass` / `rung_fodder_per_biomass`), which is a restructure of
+/// [`forage_forecast`] rather than a wider return type here: this signature takes an
+/// already-converted food number and so has nothing left to convert the other account *from*.
 fn plant_food_only(provisions: f32) -> YieldAccounts {
     YieldAccounts {
         provisions,
-        trade_goods: PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
-        fodder: PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
+        fodder: PLANT_FODDER_FORECAST_NOT_YET_PROJECTED,
     }
 }
 
@@ -2362,6 +2238,12 @@ pub(crate) fn forage_forecast(
         // `Tame` is hunt-only — a patch has no pastoral rung — so it advertises no Tame payoff (the
         // plant twin of `ceiling_tame: 0`).
         pastoral_yield: NO_PASTORAL_YIELD,
+        // **The plant web quotes no investment payoff in BIOMASS.** Rung 2's own harvest is
+        // `tended_msy_take` and the crop picker prices its material quote on that directly
+        // (`commit_material_payoff`), so nothing reads these here — and a patch offers no `Tame`
+        // rung at all. Stated as the "no such rung" zero rather than a measurement.
+        managed_yield_biomass: crate::fauna::NO_INVESTMENT_RUNG_BIOMASS,
+        pastoral_yield_biomass: crate::fauna::NO_INVESTMENT_RUNG_BIOMASS,
     }
 }
 
@@ -2671,10 +2553,6 @@ pub fn forage_source_yield_preview(
         floor,
         improvement,
         realized,
-        // The plant web's steady TRADE projection is the same gap the forecast carries — see
-        // [`PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`]. The trade a Deplete gather *actually* earns is
-        // reported (the resolved row fills `SourceYield::trade`); only the projection is missing.
-        PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
         arrivals,
         range_sigmas,
     )

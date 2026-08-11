@@ -205,6 +205,11 @@ fn create_populations<'a>(
                         // role, matching how `improvement`/`faunaId` treat an empty value — the
                         // FlatBuffers default for an absent string is `""`, so the two readings
                         // coincide for a consumer.
+                        // **Built before the parent table opens**, the ordinary FlatBuffers rule.
+                        let material_yield = crate::codec::subsistence::create_material_payoffs(
+                            builder,
+                            &assignment.material_yield,
+                        );
                         let kit_id = if assignment.kit_id.is_empty() {
                             None
                         } else {
@@ -225,14 +230,10 @@ fn create_populations<'a>(
                                 overdraws: assignment.overdraws,
                                 realizedYield: assignment.realized_yield,
                                 arrivalSchedule: arrival_schedule,
-                                tradeYield: assignment.trade_yield,
-                                realizedTradeYield: assignment.realized_trade_yield,
                                 // The band the two scalars above sit in the middle of — appended
                                 // last, after `floor`, so the slots stay positional.
                                 actualYieldLow: assignment.actual_yield_low,
                                 actualYieldHigh: assignment.actual_yield_high,
-                                tradeYieldLow: assignment.trade_yield_low,
-                                tradeYieldHigh: assignment.trade_yield_high,
                                 // The improvement axis — appended (append-only wire).
                                 improvement,
                                 // THE HARVEST FLOOR — where this crew stops, as a fraction of `K`.
@@ -240,10 +241,14 @@ fn create_populations<'a>(
                                 floor: assignment.floor,
                                 // THE KIT this crew is working under — appended last.
                                 kitId: kit_id,
-                                // THE FEED CURRENCY (#449) — the third account beside
-                                // actual/trade, carried so a hay Field stops reading `+0.00`.
+                                // THE FEED CURRENCY (#449) — the second account beside
+                                // `actualYield`, carried so a hay Field stops reading `+0.00`.
                                 // Appended last.
                                 fodderYield: assignment.fodder_yield,
+                                // THE MATERIAL ACCOUNT (arc #527) — the third, and the only one a
+                                // cash Field or an inedible quarry pays into. Appended last. An
+                                // EMPTY vector is "no row", never "zero".
+                                materialYield: Some(material_yield),
                             },
                         )
                     })

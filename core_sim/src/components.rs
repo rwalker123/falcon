@@ -14,7 +14,7 @@ use crate::{
     mapgen::MountainType,
     orders::FactionId,
     power::PowerNodeId,
-    scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar},
+    scalar::{scalar_from_f32, scalar_zero, Scalar},
 };
 
 /// Represents a discrete tile in the simulation grid.
@@ -22,7 +22,6 @@ use crate::{
 pub struct Tile {
     pub position: UVec2,
     pub element: ElementKind,
-    pub mass: Scalar,
     pub temperature: Scalar,
     pub terrain: TerrainType,
     pub terrain_tags: TerrainTags,
@@ -192,15 +191,6 @@ impl ElementKind {
         }
     }
 
-    pub fn mass_flux(self) -> Scalar {
-        match self {
-            ElementKind::Ferrite => scalar_from_f32(0.8),
-            ElementKind::Arborite => scalar_from_f32(0.4),
-            ElementKind::Zephyrite => scalar_from_f32(0.6),
-            ElementKind::Lumina => scalar_from_f32(0.5),
-        }
-    }
-
     pub fn power_profile(self) -> (Scalar, Scalar, Scalar) {
         match self {
             ElementKind::Ferrite => (
@@ -252,15 +242,6 @@ impl From<ElementKind> for u8 {
     }
 }
 
-/// Directed link representing logistics throughput between two tiles.
-#[derive(Component, Debug, Clone)]
-pub struct LogisticsLink {
-    pub from: Entity,
-    pub to: Entity,
-    pub capacity: Scalar,
-    pub flow: Scalar,
-}
-
 /// Commodity key for a band's food larder. `"provisions"` is the reward name foraging, hunt, and
 /// husbandry income deposit into the band's local `stores` — provisions left `FactionInventory`
 /// entirely; kept as a stable constant.
@@ -273,21 +254,16 @@ pub const FOOD: &str = "provisions";
 /// and the two stores **never convert** — feeding a pen bread ([`FOOD`]) stays as lossy as ever.
 pub const FODDER: &str = "fodder";
 
-/// Commodity key for a band's **trade goods** store — pelts, hides, ivory, the tradeable half of every
-/// yield vector. A **third key on the same [`LocalStore`]** as [`FOOD`]/[`FODDER`], and band-local for
-/// the same reason grain is: goods sit where they were produced until a trade network reaches them, so
-/// `balance_supply_networks` — which is commodity-generic — shares them between same-faction bands
-/// inside `SupplyNetworkConfig.reach_tiles` and *not* beyond it. A faction's total is therefore a
-/// **derived sum over bands**, never a stored number.
-///
-/// `FactionInventory` still carries a `trade_goods` stockpile, but only on the **start-profile** path:
-/// `seed_starting_inventory` writes a profile's grant into it and the Startup-only
-/// `apply_trade_goods_bonus` drains it into the opening trade-link openness bonus. Nothing ongoing
-/// credits or reads it.
-///
-/// Named for the same reason the other two are: every producer (band hunt, pen, gather, expedition)
-/// and every consumer must agree on one string.
-pub const TRADE_GOODS: &str = "trade_goods";
+// **`TRADE_GOODS` is RETIRED** (arc #527). It was a third commodity key on this store — pelts, hides,
+// ivory, "the tradeable half of every yield vector" — and every producer wrote it while **no consumer
+// ever read it**: there was no `take(TRADE_GOODS)` anywhere in the workspace. Beside every one of
+// those credits sat a `credit_material_yield` banking the *same* take's concrete hide, bone and fibre
+// as [`MaterialBatch`]es, which is the real resource model. A flat scalar collapses exactly the
+// distinction the crafting arc exists to preserve — a mammoth hide and a hare pelt are both `hide`
+// and are not the same thing — so the duplicate went and the vector-valued account stayed.
+//
+// The three luxury crops that paid the scalar and nothing else (tobacco, tea, grapevine) carry
+// materials of their own now; see `materials.json`'s `_comment_roster`.
 
 /// **One pile of a material at one rating** — a quantity plus the exact reading it stands for.
 ///
@@ -1325,18 +1301,11 @@ pub struct Expedition {
     /// Observed-but-unreported tile coordinates (deduped). Flushed to the faction map as
     /// `Discovered` when the party is within comm range of its home band, then cleared.
     pub pending_reveal: Vec<UVec2>,
-    /// **Trade goods the party is carrying home** — the pelts/hides/ivory half of every kill's
-    /// [`crate::HuntYield`], accrued off the biomass it actually *hauled* (never what it left on the
-    /// range) and settled into the **home band's** `stores[TRADE_GOODS]` on arrival (a `Delivering`
-    /// drop-off or a `Returning` fold-back). It is the trade twin of the provisions in `stores[FOOD]`,
-    /// and lands in the same store they do.
-    ///
-    /// **Banked rather than paid per kill, deliberately** (`docs/plan_hunt_yield_model.md`, issue
-    /// #337): a raid's promised `HuntTripForecast::delivered_trade` is the *sum over the whole trip*,
-    /// and the pack has to reach the band before anyone can hold what is in it. Nothing rounds at
-    /// either end any more — the band's store is fixed-point — so the exact carried fraction settles
-    /// and `forecast == actual` holds without a remainder being dropped per trip.
-    pub carried_trade: f32,
+    // **`carried_trade` is RETIRED** (arc #527) with the trade-goods axis it banked. What a raid
+    // physically carries home is provisions in `stores[FOOD]` and **material batches** in that same
+    // `LocalStore`, moved by `LocalStore::drain_materials_into` batch by batch — so a mammoth hide
+    // is never averaged into a hare pelt on the walk home. There is nothing left to flatten onto a
+    // scalar. `PopulationCohortState.expedition_carried_trade` went with it.
     /// **The kit this party was SENT OUT WITH**, resolved from the roster at launch and carried for
     /// the party's whole life (`equipment.json`'s `kits`).
     ///
@@ -1592,33 +1561,14 @@ pub struct SourceYield {
     /// `labor_config.arrivals_horizon_turns` entries long, `0.0` on a turn nothing lands. See the
     /// struct-level doc above.
     ///
-    /// **There is deliberately NO trade arrivals schedule.** `arrivals` is a *larder* concept — it
+    /// **There is deliberately NO fodder arrivals schedule.** `arrivals` is a *larder* concept — it
     /// answers *"when does food land so my people eat"*, a question with a consumption clock ticking
-    /// against it. Trade goods sit in the band's store with nothing consuming them per turn, so a
-    /// per-turn arrival timetable for them would answer a question nobody is asking. The omission is
+    /// against it. Nothing consumes the fodder store on a per-turn clock the way people eat, so a
+    /// per-turn arrival timetable for it would answer a question nobody is asking. The omission is
     /// a decision, not an oversight (`docs/plan_hunt_yield_model.md` §9).
     pub arrivals: Vec<f32>,
-    /// **Trade goods this source actually produced this turn** — the twin of [`SourceYield::actual`],
-    /// in the *other* currency (`docs/plan_hunt_yield_model.md`, issue #337). Every harvesting policy
-    /// now sells the species' trade component, so this is non-zero on rungs that earned nothing before
-    /// the arc, and it is the ONLY thing a wolf hunt produces.
-    ///
-    /// **It is NOT food income.** `PopulationCohortState.food_income` stays `Σ actual` and must never
-    /// include this — that sum is one side of the larder identity
-    /// `larder_delta == food_income − food_consumption − pen_feed_upkeep`, and trade goods never touch
-    /// the larder (they credit `FactionInventory`). Pinned by
-    /// `core_sim/tests/hunt_yield_vector.rs`.
-    pub trade: f32,
-    /// **The steady forward-projected trade/turn** — the twin of [`SourceYield::realized`], from the
-    /// same forward simulation (`project_realized_hunt` returns both components), so the smooth trade
-    /// headline can't drift from the smooth food one.
-    ///
-    /// **`0.0` on every forage source**, and that is a known gap rather than a claim: the plant web's
-    /// trade forecast is a separate arc (#337 covers the animal web). The `actual` trade a Deplete
-    /// gather earns *is* reported — only the projection is missing.
-    pub realized_trade: f32,
-    /// **Fodder this source produced this turn** — the feed-currency twin of [`SourceYield::actual`]
-    /// and [`SourceYield::trade`], and *literally* the `min(production, collection)` the band's
+    /// **Fodder this source produced this turn** — the feed-currency twin of [`SourceYield::actual`],
+    /// and *literally* the `min(production, collection)` the band's
     /// `FODDER` [`LocalStore`] was credited with on this turn's resolution (issue #449). Reported,
     /// never recomputed: a readout that re-derived its own number would drift from what the band was
     /// actually paid, and the knowledge gate on the wild credit (`FODDERING_DISCOVERY_ID`) is part of
@@ -1627,33 +1577,48 @@ pub struct SourceYield {
     /// **Plant-only, and that is structural rather than a gap**: no animal pays fodder
     /// ([`crate::fauna_config::YieldAccounts`] carries the component, the roster never populates it),
     /// so every hunt row reports an honest `0.0`. What this field exists for is the opposite case — a
-    /// **sown hay Field** (`flora_config.json`'s `hay_grass`: no provisions, no trade, positive
-    /// fodder) whose compact readout said `+0.00` while it fed the band's herds every turn.
+    /// **sown hay Field** (`flora_config.json`'s `hay_grass`: no provisions, positive fodder) whose
+    /// compact readout said `+0.00` while it fed the band's herds every turn.
     ///
     /// **It is NOT food income.** `PopulationCohortState.food_income` stays `Σ actual` and must never
     /// include this — fodder credits the band's `FODDER` store and never touches the larder, so
     /// folding it in would break the larder identity
-    /// `larder_delta == food_income − food_consumption − pen_feed_upkeep`, exactly as
-    /// [`SourceYield::trade`] already states.
+    /// `larder_delta == food_income − food_consumption − pen_feed_upkeep`.
     ///
-    /// **There is deliberately NO `realized_fodder` twin.** [`SourceYield::realized_trade`] exists
-    /// because the *animal* web projects a steady trade rate; the plant web's forward projection is
-    /// the known gap [`crate::forage::PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`] names, and fodder is
-    /// paid by the plant web **alone** — so a projected-fodder field would be a constant zero on the
-    /// only web that can pay it, i.e. dead weight the client would have to fall back off anyway. The
-    /// client reads the actual, exactly as it already falls back to `trade` on every forage source.
+    /// **There is deliberately NO `realized_fodder` twin.** The plant web's forward projection is
+    /// food-only ([`crate::forage::plant_food_only`]) and fodder is paid by the plant web **alone**,
+    /// so a projected-fodder field would be a constant zero on the only web that can pay it — dead
+    /// weight the client would have to fall back off anyway. The client reads the actual.
     ///
     /// **No [`YieldRange`] fodder bounds either**, for a sharper reason: every forage row reports
     /// [`YieldRange::certain`] — no engagement, no retreat, no fight, nothing stochastic anywhere on
     /// the plant web — so a fodder band would be a point at every source that could ever carry one.
     pub fodder: f32,
-    /// **The band around [`SourceYield::actual`] / [`SourceYield::trade`]** — *"6–11, likely 9"*
+    /// **The MATERIALS this source credited this turn**, one entry per material id (arc #527) — the
+    /// account a cash crop and an inedible quarry are paid *entirely* in, and the third thing a
+    /// harvest of `B` biomass pays.
+    ///
+    /// **Reported, never recomputed.** It is exactly what
+    /// [`crate::materials_config::credit_material_yield`] returned at the credit site, so a readout
+    /// states the deposit rather than re-deriving it — the same discipline [`Self::fodder`] carries,
+    /// and it matters more here: the credit skips a sub-quantum amount and an unknown material, and
+    /// neither skip is visible to a second derivation.
+    ///
+    /// **EMPTY IS "NO ROW", NOT ZERO.** Most sources pay no material at all, and a client renders one
+    /// row per entry — a published `0` would read as a source that pays badly rather than one that
+    /// pays in something else. It is why this is a vector of named amounts and not a scalar.
+    ///
+    /// **Never summed into one number**, on any surface: that is the retired trade-goods axis under a
+    /// new name. And never into `food_income` — a material is not food, exactly as [`Self::fodder`]
+    /// is not.
+    pub materials: Vec<crate::materials_config::MaterialPayoff>,
+    /// **The band around [`SourceYield::actual`]** — *"6–11, likely 9"*
     /// (`docs/plan_hunt_through_combat.md` §6.4). See [`YieldRange`].
     pub range: YieldRange,
 }
 
-/// **The distribution a [`SourceYield`]'s `actual` / `trade` sit in the middle of**, in the same two
-/// currencies and the same units (`docs/plan_hunt_through_combat.md` §6.4).
+/// **The distribution a [`SourceYield`]'s `actual` sits in the middle of**, in the same currency and
+/// the same units (`docs/plan_hunt_through_combat.md` §6.4).
 ///
 /// A hunt has two stochastic stages — the quarry's retreat (`fauna::animals_that_stay`) and the
 /// fight's per-unit attack rolls — so a **pre-commit** row states an expectation, not a promise, and
@@ -1674,21 +1639,13 @@ pub struct YieldRange {
     pub low: f32,
     /// The optimistic bound on the provisions component.
     pub high: f32,
-    /// The pessimistic bound on the trade-goods component — carried because the forecast is a
-    /// **pair** everywhere else (issue #337): a wolf's food range is honestly all-zero, and a
-    /// food-only band could not state its take at all.
-    pub trade_low: f32,
-    /// The optimistic bound on the trade-goods component.
-    pub trade_high: f32,
 }
 
 impl YieldRange {
-    /// A row that produced nothing in either currency.
+    /// A row that produced nothing.
     pub const ZERO: Self = Self {
         low: 0.0,
         high: 0.0,
-        trade_low: 0.0,
-        trade_high: 0.0,
     };
 
     /// **A range that is a point** — what a *resolved* row reports (the take happened; there is
@@ -1697,12 +1654,10 @@ impl YieldRange {
     /// held at `wariness 0`. Since slice 7 authored the roster's wariness
     /// (`docs/plan_hunt_through_combat.md` §3.1) a **wild hunt's** forecast is no longer one of
     /// them.
-    pub fn certain(provisions: f32, trade_goods: f32) -> Self {
+    pub fn certain(provisions: f32) -> Self {
         Self {
             low: provisions,
             high: provisions,
-            trade_low: trade_goods,
-            trade_high: trade_goods,
         }
     }
 }
@@ -1719,12 +1674,14 @@ impl SourceYield {
         workers_needed: 0,
         // Nothing was taken, so nothing was overdrawn.
         overdraws: false,
-        // Nothing was taken, so the steady average is zero too — in either currency.
+        // Nothing was taken, so the steady average is zero too.
         realized: 0.0,
-        trade: 0.0,
-        realized_trade: 0.0,
         // …nor in the feed currency: nothing was harvested, so nothing was foddered.
         fodder: 0.0,
+        // Nothing was harvested, so nothing was made of anything. An **empty** list, not a row of
+        // zeros — see [`SourceYield::materials`]. `Vec::new` allocates nothing, so this stays a
+        // `const`.
+        materials: Vec::new(),
         // Nothing is coming either. An **empty** schedule, not a run of zeros: a source with no row
         // has not been projected at all, and the client renders "no data" rather than "famine".
         // `Vec::new` allocates nothing, so this stays a `const`.
@@ -2954,37 +2911,7 @@ impl Default for PowerNode {
     }
 }
 
-/// Trade link metadata attached to logistics edges.
-#[derive(Component, Debug, Clone)]
-pub struct TradeLink {
-    pub from_faction: FactionId,
-    pub to_faction: FactionId,
-    pub throughput: Scalar,
-    pub tariff: Scalar,
-    pub openness: Scalar,
-    pub decay: Scalar,
-    pub leak_timer: u32,
-    pub last_discovery: Option<u32>,
-    pub pending_fragments: Vec<KnowledgeFragment>,
-}
-
-impl Default for TradeLink {
-    fn default() -> Self {
-        Self {
-            from_faction: FactionId(0),
-            to_faction: FactionId(0),
-            throughput: scalar_zero(),
-            tariff: scalar_zero(),
-            openness: scalar_from_f32(0.25),
-            decay: scalar_from_f32(0.01),
-            leak_timer: 0,
-            last_discovery: None,
-            pending_fragments: Vec::new(),
-        }
-    }
-}
-
-/// Knowledge fragment payload carried by trade leaks or migrations.
+/// Knowledge fragment payload carried between factions by migration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct KnowledgeFragment {
     pub discovery_id: u32,
@@ -3045,7 +2972,6 @@ impl Default for Tile {
         Self {
             position: UVec2::ZERO,
             element: ElementKind::Ferrite,
-            mass: scalar_one(),
             temperature: scalar_zero(),
             terrain: TerrainType::AlluvialPlain,
             terrain_tags: TerrainTags::empty(),

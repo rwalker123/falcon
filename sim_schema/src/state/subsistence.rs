@@ -70,27 +70,16 @@ pub struct HerdTelemetryState {
     /// [`Self::hunt_policy_ceilings`].
     #[serde(default)]
     pub per_worker_yield: f32,
-    /// **The same per-worker rate in TRADE GOODS/turn** (appended, issue #337). Read this and
-    /// [`Self::per_worker_yield`] as one vector: a resident-band preview clamps
-    /// `min(workers × per-worker, ceiling)` **per component**. An inedible species (a wolf) reads
-    /// `per_worker_yield == 0` with this positive.
-    ///
-    /// **THIS is the rate a band preview uses, not `PopulationCohortState::hunt_per_worker_provisions`**
-    /// — that one is a species-blind global echo (see its doc).
-    pub per_worker_trade: f32,
+    // **RETIRED: `per_worker_trade`** (arc #527). The wire slot `perWorkerTrade` is `(deprecated)`
+    // in place. A band preview that needs a *crew* number on an inedible species reads
+    // [`Self::per_worker_biomass`], which is positive there and always was.
     /// Food/turn the herd will pay **once penned** (the corral's managed harvest at its current
     /// biomass). With the `corral` row of [`Self::hunt_policy_ceilings`] (what the herd pays *while*
     /// the pen is being built), lets the client show "preparing X → then Y" pre-commit.
     /// **Gross** — the pen's feed (`pen_upkeep`) is a separate debit.
     #[serde(default)]
     pub corral_yield: f32,
-    /// **The Corral rung's payoff in TRADE GOODS/turn** (appended, issue #397) — the trade half of
-    /// the same `managed_yield` `YieldAccounts` [`Self::corral_yield`] reads its provisions from. Read
-    /// the two as one vector, rendering each component only when non-zero.
-    /// **Gross** like its food sibling: the pen's feed (`pen_upkeep`) is a *provisions* debit and
-    /// never touches this. `0` on a herd that never offers Corral.
-    #[serde(default)]
-    pub corral_trade: f32,
+    // **RETIRED: `corral_trade`** (arc #527). The wire slot `corralTrade` is `(deprecated)` in place.
     /// **The feed this pen demands — or WOULD demand once built** — at the herd's CURRENT biomass
     /// (`pen.upkeep_per_biomass × biomass`), because a confined herd cannot graze. A **projection**
     /// for an unpenned herd, the **live** demand for a penned one: always meaningful, never
@@ -164,11 +153,9 @@ pub struct HerdTelemetryState {
     /// unknown.
     #[serde(default)]
     pub food_per_animal: f32,
-    /// **One animal's worth of TRADE GOODS** (appended, issue #337) — the twin of
-    /// [`Self::food_per_animal`], and the only quantum an *inedible* species has: a wolf's
-    /// `food_per_animal` is honestly `0`, so a client rendering a kill rhythm from food alone would
-    /// divide by zero. The animal COUNT is the same on either component (a ratio is unit-free).
-    pub trade_per_animal: f32,
+    // **RETIRED: `trade_per_animal`** (arc #527). The wire slot `tradePerAnimal` is `(deprecated)`
+    // in place. A kill rhythm on an inedible species divides body mass by the herd's own biomass
+    // terms, never by a currency that may be zero.
     /// **How many herders this managed herd owes this turn** (`fauna::herd_herders_needed` =
     /// `ceil((biomass / body_mass) / animals_per_herder)`) to hold its tameness. `0` for a
     /// wild/unmanaged herd (nobody to staff). The client pairs it with [`Self::herded_fraction`] for an
@@ -190,12 +177,8 @@ pub struct HerdTelemetryState {
     /// penned, or a `wild`-ceiling species). Appended last (append-only).
     #[serde(default)]
     pub pastoral_yield: f32,
-    /// **The Tame rung's payoff in TRADE GOODS/turn** (appended, issue #397) — the trade half of the
-    /// same `pastoral_yield` `YieldAccounts` [`Self::pastoral_yield`] reads its provisions from. Read the
-    /// two as one vector, rendering each component only when non-zero. `0` on a herd that never
-    /// offers Tame (already penned, or a `wild`-ceiling species).
-    #[serde(default)]
-    pub pastoral_trade: f32,
+    // **RETIRED: `pastoral_trade`** (arc #527). The wire slot `pastoralTrade` is `(deprecated)` in
+    // place.
     /// The hay this pen drew from its keeper band's FODDER store last turn (Flora Roster F3), in
     /// fodder units. `0` for an unpenned herd, a keeper that has not learned Foddering, or a pen its
     /// own footprint already fed. Lets the client show "fed by hay" beside the `pen_upkeep` bread bill.
@@ -281,17 +264,16 @@ pub struct HerdTelemetryState {
     pub neglect_grace_remaining: u32,
     /// **What ONE UNIT of this herd's biomass is worth**, in each account — the species' own
     /// `HuntYield`. The animal twin of `ForagePatchState::provisions_per_biomass`; an **inedible**
-    /// species reads `0` here with a positive [`Self::trade_per_biomass`]. Appended (append-only).
+    /// species honestly reads `0` here, and what it is really worth is material batches this table
+    /// cannot state. Appended (append-only).
     #[serde(default)]
     pub provisions_per_biomass: f32,
     /// No animal pays fodder, so this is `0` on every herd — present so both food webs publish the
-    /// same triple and a reader needs one code path. Appended (append-only).
+    /// same pair and a reader needs one code path. Appended (append-only).
     #[serde(default)]
     pub fodder_per_biomass: f32,
-    /// The trade half of the same vector — the only positive account on an inedible species.
-    /// Appended (append-only).
-    #[serde(default)]
-    pub trade_per_biomass: f32,
+    // **RETIRED: `trade_per_biomass`** (arc #527). The wire slot `tradePerBiomass` on this table is
+    // `(deprecated)` in place.
     /// **What ONE hunter moves this turn, in BIOMASS** — `labor_config.hunt.per_worker_biomass_capacity`,
     /// the term `systems::hunt_take`'s collection multiplies by the head-count. No seasonal factor
     /// (the animal web has none), so it is never `0` for a live source.
@@ -383,6 +365,43 @@ pub struct HerdTelemetryState {
     /// `SubsistenceSection::default_hunt_kit_id`" reading every other unresolved row gives.
     #[serde(default)]
     pub default_kit_id: String,
+    /// **What ONE UNIT of this herd's biomass is MADE OF** (arc #527) — the material twin of
+    /// [`Self::provisions_per_biomass`], and the replacement for the retired `trade_per_biomass`.
+    ///
+    /// It composes at **any** floor by the same rule the scalar rates do —
+    /// `ceiling(floor) = max(0, B − floor·K) × rate` — which is what lets a client draw an inedible
+    /// quarry's payoff curve at all: a wolf's food rate is honestly `0`, and this is its whole
+    /// payload.
+    ///
+    /// **Empty is "no row", never zero.** Most species are made of nothing anyone builds with.
+    /// **Never summed** into one figure — that is the retired trade axis under a new name. Appended
+    /// (append-only).
+    #[serde(default)]
+    pub material_per_biomass: Vec<MaterialPayoff>,
+    /// **What ONE HUNTER brings home per turn, per material** — the material twin of
+    /// [`Self::per_worker_yield`], so a band preview clamps
+    /// `min(workers × per_worker_material, ceiling)` per material exactly as it does for food.
+    ///
+    /// **THIS is the rate a per-herd preview uses**, not the cohort's species-blind
+    /// `hunt_per_worker_provisions`. Same shape and same caveats as
+    /// [`Self::material_per_biomass`]. Appended (append-only).
+    #[serde(default)]
+    pub per_worker_material: Vec<MaterialPayoff>,
+    /// **What the Corral rung would pay, per material** (arc #527) — the material twin of
+    /// [`Self::corral_yield`] and the replacement for the retired `corral_trade`. Without it an
+    /// **inedible** quarry's Corral rung quotes nothing at all: a wolf's `corral_yield` is honestly
+    /// `0`, so the compose sheet's *"→ then +Y"* had no number.
+    ///
+    /// Priced on the **same** pen MSY biomass its food sibling is, so a rung's two readouts cannot
+    /// describe different harvests. **Gross** like `corral_yield` — the pen's feed is a provisions
+    /// debit and never touches it. **Empty is "no row"**, including on a herd that never offers the
+    /// rung. Appended (append-only).
+    #[serde(default)]
+    pub corral_material: Vec<MaterialPayoff>,
+    /// The **Tame** rung's twin of [`Self::corral_material`], priced on the pastoral MSY biomass
+    /// [`Self::pastoral_yield`] reads its provisions from. Appended (append-only).
+    #[serde(default)]
+    pub pastoral_material: Vec<MaterialPayoff>,
 }
 
 impl Default for HerdTelemetryState {
@@ -404,10 +423,7 @@ impl Default for HerdTelemetryState {
             corralled: false,
             corral_progress: 0.0,
             per_worker_yield: 0.0,
-            per_worker_trade: 0.0,
-            trade_per_animal: 0.0,
             corral_yield: 0.0,
-            corral_trade: 0.0,
             pen_upkeep: 0.0,
             pen_fed_fraction: pen_fully_fed(),
             carrying_capacity: 0.0,
@@ -422,7 +438,6 @@ impl Default for HerdTelemetryState {
             herders_needed: 0,
             herded_fraction: fully_herded(),
             pastoral_yield: 0.0,
-            pastoral_trade: 0.0,
             fodder_draw: 0.0,
             pen_larder_bill: 0.0,
             pen_hay_food: 0.0,
@@ -438,7 +453,6 @@ impl Default for HerdTelemetryState {
             neglect_grace_remaining: 0,
             provisions_per_biomass: 0.0,
             fodder_per_biomass: 0.0,
-            trade_per_biomass: 0.0,
             per_worker_biomass: 0.0,
             regrowth_samples: Vec::new(),
             collapse_fraction: 0.0,
@@ -454,6 +468,11 @@ impl Default for HerdTelemetryState {
             // A herd nothing has described names no kit — the same "fall back to the hunt job's
             // default" reading the capture publishes for a species the roster cannot resolve.
             default_kit_id: String::new(),
+            // No material — the ordinary case, and an EMPTY list rather than a row of zeros.
+            material_per_biomass: Vec::new(),
+            per_worker_material: Vec::new(),
+            corral_material: Vec::new(),
+            pastoral_material: Vec::new(),
         }
     }
 }
@@ -557,18 +576,13 @@ pub struct ForagePatchState {
     /// species key. Appended (append-only).
     #[serde(default)]
     pub committed_display_name: String,
-    /// Trade goods/turn a **completed tended patch** would pay — the twin of [`Self::tended_yield`],
-    /// as `pastoral_trade` is of `pastoral_yield`. Rung 2 is drawn down, so this rides the take.
-    #[serde(default)]
-    pub tended_trade: f32,
+    // **RETIRED: `tended_trade`** (arc #527). The wire slot `tendedTrade` is `(deprecated)` in place.
     /// Fodder/turn a **completed tended patch** would pay. `0` unless its basket holds a fodder crop.
     #[serde(default)]
     pub tended_fodder: f32,
-    /// Trade goods/turn a **completed Field** would pay — the twin of [`Self::field_yield`]. A Field
-    /// is one plant at 100% share, so this is that crop's own rate; for a cash crop it is the whole
-    /// yield and [`Self::field_yield`] is `0`.
-    #[serde(default)]
-    pub field_trade: f32,
+    // **RETIRED: `field_trade`** (arc #527). The wire slot `fieldTrade` is `(deprecated)` in place.
+    // A cash Field's whole product is **material batches**, which this table cannot quote as a
+    // per-turn number — see `MaterialBatchState`, which is what the band actually holds.
     /// Fodder/turn a **completed Field** would pay — the whole yield of a `hay_grass` Field.
     #[serde(default)]
     pub field_fodder: f32,
@@ -617,9 +631,8 @@ pub struct ForagePatchState {
     /// The fodder half of the same vector — see [`Self::provisions_per_biomass`].
     #[serde(default)]
     pub fodder_per_biomass: f32,
-    /// The trade half of the same vector — see [`Self::provisions_per_biomass`].
-    #[serde(default)]
-    pub trade_per_biomass: f32,
+    // **RETIRED: `trade_per_biomass`** (arc #527). The wire slot `tradePerBiomass` on this table is
+    // `(deprecated)` in place.
     /// **What ONE gatherer moves this turn, in BIOMASS** — `per_worker_biomass_capacity ×
     /// seasonal_weight` (`forage::forage_per_worker_biomass`), the term `forage_take`'s worker cap
     /// multiplies by the head-count. It folds in the tile's seasonal weight, so it is **`0` in a dead
@@ -652,6 +665,47 @@ pub struct ForagePatchState {
     /// `thriving`) — see [`Self::collapse_fraction`].
     #[serde(default)]
     pub stressed_fraction: f32,
+    /// **What ONE UNIT of this patch's biomass is MADE OF** (arc #527) — the material twin of
+    /// [`Self::provisions_per_biomass`], and the replacement for the retired `trade_per_biomass`.
+    ///
+    /// It is the **rung-1** half of the material story: `FloraShareInfo`'s two payoffs quote a
+    /// commitment at rungs 2 and 3, and a *wild* gather had nothing at all — a tile whose basket
+    /// carries a cash crop read food-and-fodder-only while the turn banked fibre. Composes at any
+    /// floor by the rule the scalar rates use.
+    ///
+    /// **A patch is a MIXED basket.** The rows are decomposed per species
+    /// ([`crate::ForagePatchState`]'s composition keeps each one's own reading) and merged **by
+    /// material id** for the rate; the *readings* are never averaged. Appended (append-only).
+    #[serde(default)]
+    pub material_per_biomass: Vec<MaterialPayoff>,
+    /// **What ONE GATHERER brings home per turn, per material** — the twin of
+    /// [`Self::per_worker_yield`], so a sheet clamps `min(workers × rate, ceiling)` per material.
+    ///
+    /// Folds in the tile's **seasonal weight** exactly as [`Self::per_worker_yield`] does, so it is
+    /// honestly **empty in a dead season**. Appended (append-only).
+    #[serde(default)]
+    pub per_worker_material: Vec<MaterialPayoff>,
+}
+
+/// **One material a commitment would pay, and how much of it per turn** — a row of
+/// [`FloraShareInfo::sow_material_payoff`] / [`FloraShareInfo::cultivate_material_payoff`].
+///
+/// **A vector of these rather than one scalar is the whole point.** It replaced
+/// `sow_trade_payoff` / `cultivate_trade_payoff` (arc #527), which answered *"how much trade"* — a
+/// number a market could total and a player could not act on. This answers *"0.29 fibre"*, which is
+/// what a cash crop **is**. Do not sum them back into one figure for display: that is the retired
+/// trade axis under a new name.
+///
+/// It carries **no quality reading**, deliberately: a rating is a characteristic vector on the batch
+/// the harvest creates ([`MaterialBatchState`](crate::MaterialBatchState)), and a picker row asks the
+/// flat question *"how much of what"*.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct MaterialPayoff {
+    /// The `materials.json` id — `fibre`, `tobacco`, `grape`. Resolved for display against the
+    /// material catalogue this snapshot already ships.
+    pub material_id: String,
+    /// Units of that material per turn, at this rung, on this tile.
+    pub amount: f32,
 }
 
 /// One named plant's share of a tile's forage capacity — see [`ForagePatchState::composition`].
@@ -730,12 +784,10 @@ pub struct FloraShareInfo {
     /// plant that cannot climb to the Field rung here. Appended (append-only).
     #[serde(default)]
     pub sow_fodder_payoff: f32,
-    /// Trade goods/turn a sown Field of this plant would credit to the faction `trade_goods` stockpile
-    /// on this tile (Flora Roster F4). A cash crop's payoff is in this account, not provisions, so the
-    /// picker can show a cash crop's value instead of the bare `0×` its `sow_yield_ratio` reads. `0`
-    /// for a staple/hay or a plant that cannot climb to the Field rung here. Appended (append-only).
-    #[serde(default)]
-    pub sow_trade_payoff: f32,
+    // **RETIRED: `sow_trade_payoff`** (arc #527). The wire slot `sowTradePayoff` is `(deprecated)`
+    // in place. **The gap it leaves is real:** the crop picker's cash-crop row was the one surface
+    // that told a player what sowing cotton is *for*, and a material yield cannot be quoted as one
+    // per-turn number. Replacing it is client-side work with a per-material shape.
     /// The **tended-rung** twin of [`Self::sow_fodder_payoff`] — fodder/turn a completed tended patch
     /// of this plant would pay here (issue #419). Its own field for the reason
     /// [`Self::cultivate_payoff`] is: rung 2 is a drawn-down MSY skim and rung 3 a managed rate, so one
@@ -744,11 +796,8 @@ pub struct FloraShareInfo {
     /// (append-only).
     #[serde(default)]
     pub cultivate_fodder_payoff: f32,
-    /// The **tended-rung** twin of [`Self::sow_trade_payoff`] — trade goods/turn a completed tended
-    /// patch of this plant would credit here (issue #419). The quote a rung-2 cash crop never had: it
-    /// has been *paid* trade since #433 while being *previewed* as `0`. Appended (append-only).
-    #[serde(default)]
-    pub cultivate_trade_payoff: f32,
+    // **RETIRED: `cultivate_trade_payoff`** (arc #527). The wire slot `cultivateTradePayoff` is
+    // `(deprecated)` in place — see `sow_trade_payoff` above for the gap.
     /// **What this plant is for** — the species' own `role` (`flora_config.json` → `species`):
     /// `"staple" | "fodder" | "cash"`. A **display tag**: nothing in the sim branches on it and
     /// nothing on a client may either — the yield vector is the behaviour, and this only names which
@@ -764,6 +813,24 @@ pub struct FloraShareInfo {
     /// true. Appended (append-only).
     #[serde(default)]
     pub role: String,
+    /// **What a sown Field of this plant would pay, per material** (arc #527) — the replacement for
+    /// the retired `sow_trade_payoff`, and the number the crop picker's cash-crop row states.
+    ///
+    /// **Empty means "no row", never "zero".** A food crop yields no material and must render
+    /// nothing here — a `0` would read as a cash crop that pays badly. Empty is also what a plant
+    /// that cannot climb the rung on this ground reports, the convention
+    /// [`Self::sow_payoff`]'s `0` follows.
+    ///
+    /// Produced by `forage::commit_material_payoff` off the same per-rung harvest
+    /// `credit_material_yield` is paid on, so the quote and the payout cannot drift. Appended
+    /// (append-only).
+    #[serde(default)]
+    pub sow_material_payoff: Vec<MaterialPayoff>,
+    /// The **tended-rung** twin of [`Self::sow_material_payoff`] — its own field for the reason
+    /// [`Self::cultivate_payoff`] is: rung 2 is a drawn-down MSY skim and rung 3 a managed rate on
+    /// the standing crop, so one number cannot answer both rungs. Appended (append-only).
+    #[serde(default)]
+    pub cultivate_material_payoff: Vec<MaterialPayoff>,
 }
 
 /// Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's

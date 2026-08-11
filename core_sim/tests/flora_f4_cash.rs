@@ -1,11 +1,16 @@
 //! **Cash crops — the F4 coupling** (Flora Roster F4, `docs/plan_flora_roster.md` §6).
 //!
-//! The yield vector's third and final account. A cash crop (`cotton`/`flax`) is a `field`-ceiling
-//! species whose vector is **trade-dominant** and whose `provisions_per_biomass` is `0`: harvesting
-//! it as a Field credits the band's `trade_goods` store and (near) zero food. F4 is the exact
-//! twin of F3's fodder work — the *same* managed harvest, routed by the vector's `trade_goods`
-//! component with **no `role` branch**. This file pins that routing against the **loaded** configs,
-//! never a literal, so a retune of a table fails the test instead of agreeing with a stale copy.
+//! **The rung still exists; its payment changed** (arc #527). A cash crop (`cotton`/`flax`/
+//! `tobacco`/`tea`/`grapevine`) is a `field`-ceiling species whose `provisions_per_biomass` is `0`
+//! and which is paid entirely in **materials**: harvesting it as a Field credits the band's
+//! **material batches** and (near) zero food. The abstract `trade_goods` scalar this file was
+//! written around is retired — it was written by every take site and read by none, while the
+//! material rows beside it named the same take's actual fibre and leaf — so the routing assertions
+//! below read that account instead.
+//!
+//! F4 remains the exact twin of F3's fodder work: the *same* managed harvest, routed by the vector
+//! with **no `role` branch**. This file pins that routing against the **loaded** configs, never a
+//! literal, so a retune of a table fails the test instead of agreeing with a stale copy.
 
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
@@ -13,17 +18,16 @@ use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_labor_allocation, commit_fodder_payoff, commit_payoff, commit_trade_payoff,
-    generate_hydrology, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
-    spawn_initial_world, tile_forage_capacity, CommandEventLog, CultureManager,
-    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FloraConfig,
-    ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    LaborAllocation, LaborAssignment, LaborConfig, LaborConfigHandle, LaborTarget,
-    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
-    RungKey, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle,
-    BUILTIN_LABOR_CONFIG, FODDER, FOOD, TRADE_GOODS,
+    advance_labor_allocation, commit_fodder_payoff, commit_payoff, generate_hydrology,
+    scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_world,
+    tile_forage_capacity, CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId,
+    FactionInventory, FaunaConfigHandle, FloraConfig, ForageRegistry, GenerationId,
+    GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
+    LaborAssignment, LaborConfig, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore,
+    MapPresets, MapPresetsHandle, MaterialPayoff, MoraleCause, PopulationCohort, RungKey,
+    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, Tile,
+    TileRegistry, WellbeingConfigHandle, BUILTIN_LABOR_CONFIG, FODDER, FOOD,
 };
 use sim_runtime::TerrainType;
 
@@ -48,24 +52,14 @@ fn labor() -> LaborConfig {
         .expect("builtin labor config should parse and validate")
 }
 
-/// The cotton share of `terrain`'s basket — cotton must actually grow there.
-fn cotton_share(flora: &FloraConfig, terrain: TerrainType) -> f32 {
-    flora
-        .composition(terrain)
-        .iter()
-        .find(|entry| entry.species == "cotton")
-        .unwrap_or_else(|| panic!("cotton must host {terrain:?}"))
-        .share
-}
-
 // ---------------------------------------------------------------------------------------------
 // Config-only: the vector routes with NO role branch (against the loaded roster).
 // ---------------------------------------------------------------------------------------------
 
-/// **A cash crop pays TRADE and nothing else; the vector routes.** On the same sowable ground, the
-/// three published Field payoffs split cleanly by account: a cash crop pays trade (dominant) and `0`
-/// food / `0` fodder; a grain pays food and only the flat trade *token*; hay pays fodder and `0`
-/// trade. All three go through the *same* commodity-generic payoff seams — the only thing that
+/// **A cash crop pays MATERIALS and nothing else; the vector routes.** On the same sowable ground,
+/// the published Field payoffs split cleanly by account: a cash crop pays `0` food / `0` fodder and
+/// names material rows; a grain pays food and no materials; hay pays fodder and (its straw aside) no
+/// food. The two scalar payoffs go through the *same* commodity-generic seams — the only thing that
 /// differs is which component of each species' vector is non-zero. Asserted against the LOADED
 /// config, so a retune moves the test.
 #[test]
@@ -107,21 +101,21 @@ fn the_yield_vector_routes_by_account_with_no_role_branch() {
             QUOTE_MULTIPLIER,
             RungKey::PlantField,
         );
-        let trade = commit_trade_payoff(
-            tile,
-            capacity,
-            species,
-            composition,
-            &flora,
-            forage,
-            QUOTE_MULTIPLIER,
-            RungKey::PlantField,
-        );
-        (food, fodder, trade)
+        // **The material account has no per-turn QUOTE**, and that is a fact about the account
+        // rather than a gap in this test: a material is a batch carrying a characteristic vector, so
+        // there is no scalar for a picker row to state. What the roster can say is *which* material
+        // and at what rate, which is what the third reading is.
+        let material: f32 = flora.species[species]
+            .yield_
+            .materials
+            .iter()
+            .map(|row| row.per_biomass)
+            .sum();
+        (food, fodder, material)
     };
 
-    // Cotton — the cash crop: worthless as food, no fodder, dominant trade.
-    let (cotton_food, cotton_fodder, cotton_trade) = payoffs("cotton");
+    // Cotton — the cash crop: worthless as food, no fodder, real fibre.
+    let (cotton_food, cotton_fodder, cotton_material) = payoffs("cotton");
     assert!(
         cotton_food.abs() <= EPSILON,
         "a cash Field pays no food: {cotton_food}"
@@ -131,12 +125,12 @@ fn the_yield_vector_routes_by_account_with_no_role_branch() {
         "a cash Field pays no fodder: {cotton_fodder}"
     );
     assert!(
-        cotton_trade > EPSILON,
-        "a cash Field's trade payoff is dominant: {cotton_trade}"
+        cotton_material > 0.0,
+        "a cash Field's whole payoff is what it is MADE OF: {cotton_material}/biomass"
     );
 
-    // Wild Emmer — a grain: real food, no fodder, only the flat trade TOKEN (the 0.005 baseline).
-    let (grain_food, grain_fodder, grain_trade) = payoffs("wild_emmer");
+    // Wild Emmer — a grain: real food, no fodder, nothing anyone builds with.
+    let (grain_food, grain_fodder, grain_material) = payoffs("wild_emmer");
     assert!(
         grain_food > EPSILON,
         "a grain Field pays food: {grain_food}"
@@ -145,14 +139,14 @@ fn the_yield_vector_routes_by_account_with_no_role_branch() {
         grain_fodder.abs() <= EPSILON,
         "a grain Field pays no fodder: {grain_fodder}"
     );
-    assert!(
-        grain_trade > 0.0 && grain_trade < cotton_trade,
-        "a grain Field's trade is the negligible token, far below a cash crop's \
-         ({grain_trade} vs {cotton_trade})"
+    assert_eq!(
+        grain_material, 0.0,
+        "a grain Field pays no material — its account is the larder"
     );
 
-    // Hay Grass — a fodder crop: no food, real fodder, no trade.
-    let (hay_food, hay_fodder, hay_trade) = payoffs("hay_grass");
+    // Hay Grass — a fodder crop: no food, real fodder. It *does* pay straw, which is the honest
+    // reading rather than an exception: hay straw is a real, poor fibre on the shipped roster.
+    let (hay_food, hay_fodder, _hay_material) = payoffs("hay_grass");
     assert!(
         hay_food.abs() <= EPSILON,
         "a hay Field pays no food: {hay_food}"
@@ -161,61 +155,12 @@ fn the_yield_vector_routes_by_account_with_no_role_branch() {
         hay_fodder > EPSILON,
         "a hay Field pays fodder: {hay_fodder}"
     );
-    assert_eq!(
-        hay_trade, 0.0,
-        "a hay Field's vector pays no trade at all: {hay_trade}"
-    );
 }
 
-/// **The token is exactly `K × field_dial × token_rate / wild_rate`.** Pin the grain Field's trade
-/// token against the loaded dials by name, so a change to `field_provisions_per_biomass`, the
-/// grain's `trade_goods_per_biomass`, or the wild `provisions_per_biomass` moves this number — this
-/// is the "assert the quote against the payoff function's inputs" discipline.
-///
-/// **The standing crop is the tile's whole `K`** (#433): a Field neither raises nor lowers the land's
-/// capacity, it only makes the whole of it one crop, so the crop's share of the wild basket does not
-/// appear here at all. It used to, as a concentration factor — that was the bug.
-#[test]
-fn the_grain_trade_token_carries_the_field_dial_and_the_wild_baseline() {
-    let labor = labor();
-    let flora = FloraConfig::builtin();
-    let forage = &labor.forage;
-
-    let terrain = TerrainType::Floodplain;
-    let tile = UVec2::new(terrain as u32, 0);
-    let capacity = forage.capacity_for(terrain);
-    let composition = flora.composition(terrain);
-    assert!(
-        composition
-            .iter()
-            .any(|entry| entry.species == "wild_emmer"),
-        "emmer hosts the plain"
-    );
-
-    // The hypothetical Field the quote builds: this tile's own K at the full standing crop, its
-    // basket forced to 100% the sown crop.
-    let expected = capacity
-        * forage.cultivation.field_provisions_per_biomass
-        * (flora.species["wild_emmer"].yield_.trade_goods_per_biomass
-            / forage.provisions_per_biomass)
-        * QUOTE_MULTIPLIER;
-
-    let quoted = commit_trade_payoff(
-        tile,
-        capacity,
-        "wild_emmer",
-        composition,
-        &flora,
-        forage,
-        QUOTE_MULTIPLIER,
-        RungKey::PlantField,
-    );
-    assert!(
-        (quoted - expected).abs() <= EPSILON * expected.max(1.0),
-        "the grain trade token must be biomass x field_dial x token_rate/wild_rate: \
-         {quoted} vs {expected}"
-    );
-}
+// **RETIRED: `the_grain_trade_token_carries_the_field_dial_and_the_wild_baseline`** (arc #527). It
+// pinned the flat `0.005` trade token every staple carried against the Field dial and the wild
+// baseline; the token went with the account, and a grain Field's whole payoff is now its larder
+// credit — which `a_hay_field_publishes_the_fodder_it_credits…` and the food half above already own.
 
 // ---------------------------------------------------------------------------------------------
 // Integration: the labor arm credits the BAND's own trade_goods store.
@@ -375,23 +320,25 @@ fn spawn_forager(
         .id()
 }
 
-/// Trade goods on the producing band's own `LocalStore` — the third key beside `FOOD`/`FODDER`.
-/// **Fractional**: a `LocalStore` is fixed-point, so a sub-unit harvest accumulates instead of
-/// rounding away (`FactionInventory`'s `i64` stockpile no longer sees ongoing income at all).
-fn band_trade_goods(app: &App, band: bevy::prelude::Entity) -> f32 {
+/// **Every material on the producing band's own `LocalStore`, summed** — batches beside the
+/// `FOOD`/`FODDER` keys. **Fractional**: the batch store is fixed-point, so a sub-unit harvest
+/// accumulates instead of rounding away.
+fn band_materials(app: &App, band: bevy::prelude::Entity) -> f32 {
     app.world
         .get::<PopulationCohort>(band)
         .expect("the keeper band still exists")
         .stores
-        .get(TRADE_GOODS)
-        .to_f32()
+        .materials()
+        .flat_map(|(_, batches)| batches.values())
+        .map(|batch| batch.amount.to_f32())
+        .sum()
 }
 
-/// **A cash Field credits the band's own `trade_goods` store and (near) zero food** — and no fodder
-/// at all. Trade goods are a third key on the *same* `LocalStore` as FOOD/FODDER: goods sit where
-/// they were produced until a supply network reaches them.
+/// **A cash Field credits the band's own MATERIAL store and (near) zero food** — and no fodder at
+/// all. The batches sit on the *same* `LocalStore` as FOOD/FODDER: what a band grows stays where it
+/// was grown until a supply network reaches it.
 #[test]
-fn a_cash_field_credits_trade_goods_and_leaves_food_and_fodder_alone() {
+fn a_cash_field_credits_its_materials_and_leaves_food_and_fodder_alone() {
     let mut app = spawn_world();
     let (tile, coord) = first_patch_tile(&app);
     let capacity = {
@@ -403,25 +350,15 @@ fn a_cash_field_credits_trade_goods_and_leaves_food_and_fodder_alone() {
     let keeper = spawn_forager(&mut app, tile, coord);
 
     assert_eq!(
-        band_trade_goods(&app, keeper),
+        band_materials(&app, keeper),
         0.0,
-        "no trade goods before the turn"
+        "no material before the turn"
     );
     app.world.run_system_once(advance_labor_allocation);
 
     assert!(
-        band_trade_goods(&app, keeper) > 0.0,
-        "a cotton Field must credit the keeper band's own trade_goods store"
-    );
-    assert_eq!(
-        app.world
-            .resource::<FactionInventory>()
-            .stockpile(FactionId(0))
-            .and_then(|items| items.get("trade_goods"))
-            .copied()
-            .unwrap_or(0),
-        0,
-        "ongoing harvest must NOT touch the start-profile faction stockpile"
+        band_materials(&app, keeper) > 0.0,
+        "a cotton Field must credit the keeper band's own material batches"
     );
     let cohort = app.world.get::<PopulationCohort>(keeper).unwrap();
     assert!(
@@ -485,26 +422,27 @@ fn a_hay_field_publishes_the_fodder_it_credits_and_nothing_in_the_other_two_acco
         row.fodder
     );
     assert_eq!(
-        (row.actual, row.trade),
-        (0.0, 0.0),
-        "hay is no food and no cash — this is the row that read +0.00"
-    );
-    assert!(
-        band_trade_goods(&app, keeper) <= EPSILON,
-        "and the fodder must not have leaked into the trade store: {}",
-        band_trade_goods(&app, keeper)
+        row.actual, 0.0,
+        "hay is no food — this is the row that read +0.00"
     );
 }
 
-/// **The picker quote is the number the sim pays.** The labor arm's `field_trade_goods` and the
-/// crop-picker's `commit_trade_payoff` are one seam: seed a Field at exactly the hypothetical patch
-/// the quote builds (this tile's own `K` for the biome, at full standing crop — a Field neither
-/// raises nor lowers it, #433) and the credited store equals the quote **exactly** — quote and payout
-/// cannot drift (the §4.3 "assert the quote against the payoff function" rule, extended to the trade
-/// account). It used to compare against `quoted.round()`, the integer stockpile's granularity; the
-/// band store is fixed-point, so the comparison is now the honest one.
+/// **THE PICKER'S MATERIAL QUOTE IS THE MATERIAL THE SIM CREDITS** (arc #527) — the material-side
+/// restoration of the retired `the_picker_trade_payoff_matches_the_credited_store`, and the §4.3
+/// "assert the quote against the payoff function" rule applied to the account a cash crop actually
+/// pays into.
+///
+/// The labor arm's `credit_material_yield` and the crop picker's `commit_material_payoff` are one
+/// seam: seed a Field at exactly the hypothetical patch the quote builds (this tile's own `K` for
+/// the biome, at full standing crop — a Field neither raises nor lowers it, #433), staff it past the
+/// collection cap so the quote's production basis and the payout's `min(production, collection)`
+/// coincide, and the **credited store** must equal the quote per material.
+///
+/// **A quote that disagrees with what lands in the band's store is worse than no quote**, which is
+/// why this is asserted against `LocalStore::material_total` — what the band ends up *holding* —
+/// rather than against a re-derivation of the credit's arithmetic.
 #[test]
-fn the_picker_trade_payoff_matches_the_credited_store() {
+fn the_picker_material_quote_is_the_material_the_sim_credits() {
     let mut app = spawn_world();
     let (tile, coord) = first_patch_tile(&app);
 
@@ -516,17 +454,12 @@ fn the_picker_trade_payoff_matches_the_credited_store() {
     let quote_tile = UVec2::new(terrain as u32, 0);
     let quote_capacity = labor.forage.capacity_for(terrain);
     let composition = flora.composition(terrain);
-    assert!(
-        cotton_share(&flora, terrain) > 0.0,
-        "cotton must host the quote biome"
-    );
-    let biomass = quote_capacity;
 
-    seat_cotton_field(&mut app, coord, biomass);
+    seat_cotton_field(&mut app, coord, quote_capacity);
     let keeper = spawn_forager(&mut app, tile, coord);
     app.world.run_system_once(advance_labor_allocation);
 
-    let quoted = commit_trade_payoff(
+    let quoted = core_sim::commit_material_payoff(
         quote_tile,
         quote_capacity,
         "cotton",
@@ -536,10 +469,109 @@ fn the_picker_trade_payoff_matches_the_credited_store() {
         QUOTE_MULTIPLIER,
         RungKey::PlantField,
     );
-    assert!(quoted > 0.0, "the fixture must quote a real cash payoff");
-    let paid = band_trade_goods(&app, keeper);
-    assert!(
-        (paid - quoted).abs() <= EPSILON * quoted.max(1.0),
-        "the credited trade goods must equal the picker's quote: paid {paid} vs quoted {quoted}"
+    assert_eq!(
+        quoted.len(),
+        1,
+        "a cotton Field's basket is 100% cotton, so it quotes exactly its one material: {quoted:?}"
     );
+    let fibre = &quoted[0];
+    assert_eq!(fibre.material, "fibre");
+    assert!(
+        fibre.amount > 0.0,
+        "the fixture must quote a real material payoff, or the comparison below is two zeros"
+    );
+
+    let cohort = app
+        .world
+        .get::<PopulationCohort>(keeper)
+        .expect("the keeper band still exists");
+    let credited = cohort.stores.material_total(&fibre.material).to_f32();
+    assert!(
+        (credited - fibre.amount).abs() <= EPSILON * fibre.amount.max(1.0),
+        "the credited {} must equal the picker's quote: credited {credited} vs quoted {}",
+        fibre.material,
+        fibre.amount
+    );
+}
+
+/// **"NOTHING" IS AN EMPTY VECTOR, NEVER A ZERO — and a FIELD is where a food crop says it.**
+///
+/// The distinction is the field's whole contract: a client renders one row per entry, so an empty
+/// quote is *no row* while a `0`-valued entry would read as a cash crop that pays badly.
+///
+/// **The rungs answer differently, and that is the model rather than an inconsistency.** A **Field**
+/// is 100% its crop (#433), so a grain Field quotes nothing at all. A **tended patch** is a *weeded
+/// basket* — the favored share rises but the volunteers are still standing — so committing to a
+/// grain still quotes whatever fibre and leaf its neighbours pay, which is exactly what the turn
+/// credits (`patch_material_yields` decomposes rather than averaging). That is the same fact the
+/// food account already records for a rung-2 cash crop paying non-zero calories, read from the other
+/// side.
+#[test]
+fn a_field_of_a_food_crop_quotes_an_empty_material_payoff_not_a_zero() {
+    let labor = labor();
+    let flora = FloraConfig::builtin();
+    let forage = &labor.forage;
+    let terrain = TerrainType::Floodplain;
+    let tile = UVec2::new(terrain as u32, 0);
+    let capacity = forage.capacity_for(terrain);
+    let composition = flora.composition(terrain);
+    let quote = |species: &str, rung| {
+        core_sim::commit_material_payoff(
+            tile,
+            capacity,
+            species,
+            composition,
+            &flora,
+            forage,
+            QUOTE_MULTIPLIER,
+            rung,
+        )
+    };
+
+    // A grain FIELD is one plant, and that plant is made of nothing anyone builds with.
+    let grain_field = quote("wild_emmer", RungKey::PlantField);
+    assert!(
+        grain_field.is_empty(),
+        "a grain Field names no material, so it must quote NO ROW rather than a zero: {grain_field:?}"
+    );
+    // …while the cash crop on the same ground at the same rung does quote one, or the assertion
+    // above would pass against a seam that never returns anything.
+    let cotton_field = quote("cotton", RungKey::PlantField);
+    assert_eq!(
+        cotton_field.len(),
+        1,
+        "a cotton Field is 100% cotton and quotes exactly its fibre: {cotton_field:?}"
+    );
+    assert!(cotton_field[0].amount > 0.0);
+
+    // **A TENDED grain still quotes its neighbours' materials**, because weeding does not evict
+    // them — and every row it does quote is strictly positive, never a published zero.
+    let grain_tended = quote("wild_emmer", RungKey::PlantTended);
+    assert!(
+        grain_tended.iter().all(|row| row.amount > 0.0),
+        "a quoted row is a row that pays: {grain_tended:?}"
+    );
+
+    // A plant that cannot climb the rung here quotes nothing either — the same "no row" reading,
+    // reached down a different branch, and the one that makes `empty` unambiguous.
+    let cannot_climb = quote_absent_species(&flora, tile, capacity);
+    assert!(
+        cannot_climb.is_empty(),
+        "a species absent from this tile's basket cannot climb here, so it quotes no row"
+    );
+}
+
+/// `commit_material_payoff` for a species this tile's basket does not carry — the `species_climbs`
+/// refusal branch, kept out of the test body so the point above stays one line.
+fn quote_absent_species(flora: &FloraConfig, tile: UVec2, capacity: f32) -> Vec<MaterialPayoff> {
+    core_sim::commit_material_payoff(
+        tile,
+        capacity,
+        "cotton",
+        &[],
+        flora,
+        &labor().forage,
+        QUOTE_MULTIPLIER,
+        RungKey::PlantField,
+    )
 }

@@ -2,31 +2,33 @@ class_name AnnotationRenderer
 extends RefCounted
 
 ## Renders MapView's ANNOTATION family — the overlays that draw *on top of* the map to say
-## something about it rather than to draw the world itself: the Trade tab's diffusion links, the
-## Crisis overlay's per-tile/per-path annotations, the Terrain tab's "highlight every tile of this
-## type" tool, the per-faction order ROUTES, and the command-TARGETING overlay (valid-target glow,
-## reticle, hover ETA label). Extracted from MapView (composition — MapView owns one and calls its
-## five entry points during its `_draw` pass). Behaviour — and every rendered pixel — is identical
-## to the old inlined code, verified by byte-diffing the `map_preview` frame set before and after.
+## something about it rather than to draw the world itself: the Crisis overlay's per-tile/per-path
+## annotations, the Terrain tab's "highlight every tile of this type" tool, the per-faction order
+## ROUTES, and the command-TARGETING overlay (valid-target glow, reticle, hover ETA label).
+## Extracted from MapView (composition — MapView owns one and calls its four entry points during its
+## `_draw` pass).
 ##
-## Owns this family's own state and nothing else: `_terrain_highlight_id`, the three trade-overlay
-## fields, `_crisis_annotations`, `_routes`, and the targeting dict + its animation clock. Every draw
+## Owns this family's own state and nothing else: `_terrain_highlight_id`,
+## `_crisis_annotations`, `_routes`, and the targeting dict + its animation clock. Every draw
 ## command plus the shared geometry/label primitives (`_hex_center` / `_hex_points` /
 ## `_hex_center_wrapped` / `_draw_label` / `_draw_reticle` / `_hex_distance` / `_wrapped_col_delta` /
 ## `_is_player_unit` / `_get_adjusted_viewport_size`) and the world state it reads (units, herds,
 ## terrain, `tile_lookup`, `faction_colors`, `active_overlay_key`, the hovered tile) stay on MapView
 ## and are reached through the `_view` back-ref.
 ##
-## FIVE PUBLIC SEAMS STAY ON MAPVIEW as thin same-named pass-throughs, because every one of them is
-## reached REFLECTIVELY — a rename would not error, it would silently do nothing:
+## TWO PUBLIC SEAMS STAY ON MAPVIEW as thin same-named pass-throughs, because both are reached
+## REFLECTIVELY — a rename would not error, it would silently do nothing:
 ##   * `set_targeting`            — Main.gd connects the HUD's `targeting_changed` signal by name
 ##                                  (`has_method` + `Callable(map_view, "set_targeting")`)
-##   * `update_trade_overlay` / `set_trade_overlay_enabled` / `set_trade_overlay_selection`
-##                                — MapPanel.gd pushes the first two via `has_method` + `call`
-##                                  (the Trade tab that owned them was retired, issue #381)
 ##   * `set_terrain_highlight`    — TerrainPanel.gd pushes it via `has_method` + `call`
 ## The pass-throughs store here and MapView owns the `queue_redraw` (the `set_labor_pending` idiom);
-## the two setters that only redrew CONDITIONALLY return a bool so that condition is preserved.
+## `set_terrain_highlight` returns a bool so its CONDITIONAL redraw is preserved.
+##
+## **The trade-link seam is gone with the substrate that fed it** (`update_trade_overlay` /
+## `set_trade_overlay_enabled` / `set_trade_overlay_selection`, and the `trade_links` snapshot
+## section behind them): the sim no longer publishes a link network at all, so the overlay drew the
+## empty set on every frame. Issue #232 rebuilds a route-network overlay against a network that
+## exists — see `docs/plan_contact_and_logistics.md`.
 ##
 ## `_targeting_time` is advanced from MapView's `_process` via `advance_targeting_time`, gated on
 ## `is_targeting_active()` — the same gate the inlined code used, so an idle client still does no
@@ -94,27 +96,6 @@ const CRISIS_LABEL_OFFSET_Y_FACTOR := -0.22
 const CRISIS_LABEL_UNWRAPPED := -1.0        # MapView._draw_label's "no max width" sentinel
 const CRISIS_LABEL_COLOR := Color(0.95, 0.96, 0.98, 0.95)
 
-# --- TRADE OVERLAY (Trade tab) ------------------------------------------------------------------
-# A link's WIDTH reads its throughput and its OPACITY reads its knowledge openness, so a busy open
-# route is a bold bright line and a quiet closed one a hairline.
-const TRADE_LINK_COLOR := Color(0.95, 0.74, 0.22, 1.0)   # alpha is computed per link (see opacity)
-const TRADE_INTENSITY_PER_THROUGHPUT := 0.25
-const TRADE_INTENSITY_MAX := 2.5
-const TRADE_OPACITY_BASE := 0.25
-const TRADE_OPACITY_PER_OPENNESS := 0.6
-const TRADE_OPACITY_MIN := 0.3
-const TRADE_OPACITY_MAX := 0.95
-const TRADE_LINK_BASE_WIDTH := 2.0
-# The link belonging to the entity the Trade tab has selected: a distinct green, and wider still.
-const TRADE_SELECTED_COLOR := Color(0.3, 0.95, 0.7, 0.95)
-const TRADE_SELECTED_WIDTH_BONUS := 2.0
-# A knowledge leak about to fire gets a red pip at the link's midpoint.
-const TRADE_LEAK_IMMINENT_TURNS := 1
-const TRADE_LEAK_DOT_T := 0.5              # midpoint of the link
-const TRADE_LEAK_DOT_RADIUS := 4.5
-const TRADE_LEAK_DOT_COLOR := Color(1.0, 0.35, 0.28, 0.85)
-const TRADE_NO_ENTITY := -1                # "no trade entity selected"
-
 # --- ROUTES (order paths) -----------------------------------------------------------------------
 const ROUTE_WIDTH := 3.0
 const ROUTE_MIN_POINTS := 2                # fewer than this is not a line
@@ -157,12 +138,6 @@ var _view: MapView = null
 
 # Terrain id highlighted by the Terrain tab's dropdown; -1 = off.
 var _terrain_highlight_id: int = -1
-# Trade-diffusion links pushed by the Trade tab, the toggle that shows them, and the link entity
-# the tab has selected (drawn in the selection colour). Only re-ingested by a snapshot that
-# actually carries `trade_links`, so it deliberately persists across snapshots that don't.
-var _trade_links_overlay: Array = []
-var _trade_overlay_enabled: bool = false
-var _selected_trade_entity: int = TRADE_NO_ENTITY
 # Crisis annotations and order routes, both re-ingested from every snapshot by MapView's
 # display_snapshot (so both are cleared by a snapshot that carries none).
 var _crisis_annotations: Array = []
@@ -186,26 +161,6 @@ func set_terrain_highlight(terrain_id: int) -> bool:
 		return false
 	_terrain_highlight_id = terrain_id
 	return true
-
-func update_trade_overlay(trade_links: Array, enabled: bool) -> void:
-	_trade_links_overlay = []
-	if trade_links is Array:
-		for entry in trade_links:
-			if entry is Dictionary:
-				_trade_links_overlay.append((entry as Dictionary).duplicate(true))
-	_trade_overlay_enabled = enabled
-
-func set_trade_overlay_enabled(enabled: bool) -> void:
-	_trade_overlay_enabled = enabled
-
-func is_trade_overlay_enabled() -> bool:
-	return _trade_overlay_enabled
-
-## Returns true when the overlay is actually showing — the selection only changes pixels then, and
-## the inlined setter's redraw was gated the same way.
-func set_trade_overlay_selection(entity_id: int) -> bool:
-	_selected_trade_entity = entity_id
-	return _trade_overlay_enabled
 
 ## Snapshot ingest (MapView.display_snapshot): the Crisis overlay's annotation list, deep-copied so
 ## a later snapshot mutating its own payload cannot reach into the drawn set.
@@ -232,17 +187,12 @@ func is_targeting_active() -> bool:
 
 ## WORLD BOUNDARY (`MapView.reset_world_state`): drop the annotations that describe a world we are
 ## about to stop showing. `_crisis_annotations` and `_routes` are refilled from every full snapshot,
-## but the trade pair is not — `update_trade_overlay` runs only when the snapshot CARRIES
-## `trade_links`, and `_selected_trade_entity` is pushed in from the Trade tab keyed by an entity id
-## the new world reuses.
+## so clearing them here only covers the gap between worlds.
 ## `_targeting` is deliberately NOT cleared here: it MIRRORS the HUD's pending command, and
 ## `HudLayer.reset_world_state` cancels that through the normal path, which pushes `{}` down to us.
 ## Clearing it here as well would let the two desync (a banner with no reticle) if that ever changed.
-## `_terrain_highlight_id` and `_trade_overlay_enabled` also stay — a terrain id is stable across
-## worlds and the toggle is a view preference.
+## `_terrain_highlight_id` also stays — a terrain id is stable across worlds.
 func reset_world_state() -> void:
-	_trade_links_overlay = []
-	_selected_trade_entity = TRADE_NO_ENTITY
 	_crisis_annotations = []
 	_routes = []
 
@@ -286,52 +236,6 @@ func draw_terrain_highlight(radius: float, origin: Vector2, viewport_size: Vecto
 			_view.draw_polygon(pts, fill_colors)
 			var outline := PackedVector2Array([pts[0], pts[1], pts[2], pts[3], pts[4], pts[5], pts[0]])
 			_view.draw_polyline(outline, TERRAIN_HIGHLIGHT_COLOR, TERRAIN_HIGHLIGHT_OUTLINE_WIDTH, true)
-
-## The Trade tab's diffusion links, drawn between the tiles their endpoints resolve to. A link whose
-## endpoints are not in `tile_lookup` (a tile the client has never seen) is skipped, not guessed at.
-func draw_trade_overlay(radius: float, origin: Vector2) -> void:
-	if not _trade_overlay_enabled:
-		return
-	if _trade_links_overlay.is_empty():
-		return
-	if _view.tile_lookup.is_empty():
-		return
-
-	for entry in _trade_links_overlay:
-		if not (entry is Dictionary):
-			continue
-		var link: Dictionary = entry
-		var from_tile: int = int(link.get("from_tile", -1))
-		var to_tile: int = int(link.get("to_tile", -1))
-		if not _view.tile_lookup.has(from_tile) or not _view.tile_lookup.has(to_tile):
-			continue
-		var from_pos: Vector2i = _view.tile_lookup[from_tile]
-		var to_pos: Vector2i = _view.tile_lookup[to_tile]
-		var start: Vector2 = _view._hex_center(from_pos.x, from_pos.y, radius, origin)
-		var end: Vector2 = _view._hex_center(to_pos.x, to_pos.y, radius, origin)
-		var knowledge_variant: Variant = link.get("knowledge", {})
-		var openness: float = 0.0
-		var leak_timer: int = 0
-		if knowledge_variant is Dictionary:
-			var knowledge_dict: Dictionary = knowledge_variant
-			openness = float(knowledge_dict.get("openness", 0.0))
-			leak_timer = int(knowledge_dict.get("leak_timer", 0))
-		var throughput: float = float(link.get("throughput", 0.0))
-		var intensity: float = clamp(abs(throughput) * TRADE_INTENSITY_PER_THROUGHPUT, 0.0, TRADE_INTENSITY_MAX)
-		var opacity: float = clamp(TRADE_OPACITY_BASE + openness * TRADE_OPACITY_PER_OPENNESS,
-			TRADE_OPACITY_MIN, TRADE_OPACITY_MAX)
-		var base_color: Color = Color(TRADE_LINK_COLOR.r, TRADE_LINK_COLOR.g, TRADE_LINK_COLOR.b, opacity)
-		var width: float = TRADE_LINK_BASE_WIDTH + intensity
-		var entity_id: int = int(link.get("entity", -1))
-		if entity_id == _selected_trade_entity:
-			base_color = TRADE_SELECTED_COLOR
-			width += TRADE_SELECTED_WIDTH_BONUS
-
-		_view.draw_line(start, end, base_color, width)
-
-		if leak_timer <= TRADE_LEAK_IMMINENT_TURNS:
-			var midpoint: Vector2 = start.lerp(end, TRADE_LEAK_DOT_T)
-			_view.draw_circle(midpoint, TRADE_LEAK_DOT_RADIUS, TRADE_LEAK_DOT_COLOR)
 
 ## The Crisis overlay's annotations: a single tile draws as a halo+core disc ("here"), a path draws
 ## as a tail→head polyline ("moving this way"). Both forms of the wire `path` payload are accepted.

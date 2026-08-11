@@ -29,7 +29,12 @@ signal targeting_cancel_requested()
 ## resetting zoom + pan, so a fit re-syncs the readout even when already at 1.0×.
 signal zoom_changed(zoom_factor: float)
 
-const LOGISTICS_COLOR := Color(0.15, 0.45, 1.0, 1.0)
+## Tint for an overlay channel with no row in OVERLAY_COLORS — a channel the native decoder
+## publishes that this table has never heard of still ramps in SOMETHING rather than reading as
+## unpainted. (It was `LOGISTICS_COLOR` until the logistics channel was removed with the rest of the
+## trade substrate — see `docs/plan_contact_and_logistics.md`; the colour was always doing this
+## second job.)
+const OVERLAY_FALLBACK_COLOR := Color(0.15, 0.45, 1.0, 1.0)
 const SENTIMENT_COLOR := Color(1.0, 0.35, 0.25, 1.0)
 const CORRUPTION_COLOR := Color(0.92, 0.58, 0.18, 1.0)
 const CULTURE_COLOR := Color(0.72, 0.36, 0.88, 1.0)
@@ -285,8 +290,12 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# forecast field is — each describes live patch state a remembered tile does not know — and
 	# redacting them is also what keeps a remembered tile reading "no forecast" rather than a stale
 	# one: `SourceForecast.forecast_is_known` reads the vector's PRESENCE, so the answer comes for free.
-	"patch_provisions_per_biomass", "patch_trade_per_biomass", "patch_fodder_per_biomass",
-	"patch_tended_trade", "patch_tended_fodder", "patch_field_trade", "patch_field_fodder",
+	"patch_provisions_per_biomass", "patch_fodder_per_biomass",
+	# The MATERIAL account's two vectors ride with the two scalars above, under the one rule the
+	# whole patch payload follows: they are per-biomass rates read only to compose a forecast at the
+	# patch's CURRENT stock, which a hex the player cannot see does not render.
+	"patch_material_per_biomass", "patch_per_worker_material",
+	"patch_tended_fodder", "patch_field_fodder",
 	# The two build DIPS, as fractions (#442). They are patch CONFIG rather than patch state — the
 	# fraction does not move with biomass — but they are redacted with the rest of the payload for the
 	# reason `patch_sow_site_refusal` is: they are only ever read to compose the improvement forecast,
@@ -404,7 +413,6 @@ const SUPPLY_LINK_WIDTH := 2.0
 const SUPPLY_NETWORK_SOLO := 0  # supply_network_id 0 == not in a shared network
 
 const OVERLAY_COLORS := {
-	"logistics": LOGISTICS_COLOR,
 	"sentiment": SENTIMENT_COLOR,
 	"corruption": CORRUPTION_COLOR,
 	"culture": CULTURE_COLOR,
@@ -689,7 +697,7 @@ var _secondary_markers: SecondaryMarkerRenderer = null
 # pending overlay, the travel destination, the graze-range + pen-footprint rings, and the deferred
 # yield-label batch (owned by BandOverlayRenderer — see ui/BandOverlayRenderer.gd).
 var _band_overlays: BandOverlayRenderer = null
-# Map ANNOTATIONS — the trade-diffusion links, crisis annotations, the Terrain-tab highlight, order
+# Map ANNOTATIONS — crisis annotations, the Terrain-tab highlight, order
 # routes and the command-targeting overlay, plus that family's own state (owned by AnnotationRenderer
 # — see ui/AnnotationRenderer.gd). Its five PUBLIC seams keep same-named pass-throughs on MapView
 # because every one of them is reached reflectively; see the header of that file.
@@ -729,7 +737,7 @@ const PROFILE_SITES_POPULATIONS := "sites.populations"    # the populations harv
 const PROFILE_TILES := "tiles"         # the full-grid per-tile GDScript loop
 const PROFILE_SHADER := "shader"       # the six full-grid splatmap rebuilds
 const PROFILE_MARKERS := "markers"     # province overlay + unit + herd markers
-const PROFILE_TAIL := "tail"           # trade overlay, layout/clamp/redraw, legend, minimap, metrics
+const PROFILE_TAIL := "tail"           # layout/clamp/redraw, legend, minimap, metrics
 
 # ---------------------------------------------------------------------------
 # Change-manifest sections `display_snapshot` gates its blocks on
@@ -748,7 +756,6 @@ const SECTION_FOOD_MODULES := "food_modules"
 const SECTION_DISCOVERED_SITES := "discovered_sites"
 const SECTION_FORAGE_PATCHES := "forage_patches"
 const SECTION_POPULATIONS := "populations"
-const SECTION_TRADE_LINKS := "trade_links"
 const SECTION_OVERLAY_TERRAIN := "overlays.terrain"
 const SECTION_OVERLAY_VISIBILITY := "overlays.visibility"
 const SECTION_OVERLAY_ELEVATION := "overlays.elevation"
@@ -1147,13 +1154,6 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	profile.end(PROFILE_MARKERS, t_markers)
 
 	var t_tail: int = profile.begin(PROFILE_TAIL)
-	# `has()` stays as the outer guard — an absent key means the frame never carried the section at
-	# all — with the manifest deciding whether the (now always-present) key actually moved.
-	if snapshot.has("trade_links") and SnapshotSections.changed(snapshot, SECTION_TRADE_LINKS):
-		var trade_variant: Variant = snapshot.get("trade_links")
-		if trade_variant is Array:
-			update_trade_overlay(trade_variant, _annotations.is_trade_overlay_enabled())
-
 	if dimensions_changed:
 		zoom_factor = 1.0
 		pan_offset = Vector2.ZERO
@@ -1167,11 +1167,10 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	_emit_overlay_legend()
 	_minimap.update()
 
-	# Built into a local first so the six `_average_overlay` full-grid passes land inside the tail
+	# Built into a local first so the five `_average_overlay` full-grid passes land inside the tail
 	# measurement rather than escaping it after the last `profile.end`.
 	var metrics: Dictionary = {
 		"unit_count": units.size(),
-		"avg_logistics": _average_overlay("logistics"),
 		"avg_sentiment": _average_overlay("sentiment"),
 		"avg_corruption": _average_overlay("corruption"),
 		"avg_culture": _average_overlay("culture"),
@@ -1560,7 +1559,6 @@ func _draw() -> void:
 	# === OVERLAYS (always drawn fresh) ===
 	# These need to respond to hover, selection, and other dynamic state
 	_annotations.draw_terrain_highlight(radius, origin, viewport_size)
-	_annotations.draw_trade_overlay(radius, origin)
 	# (No river draw here: Minor/Major rivers are painted by terrain_blend.gdshader's river pass, off the
 	# per-tile river-edge mask — the water is drawn exactly on the edge the future crossing cost applies to.)
 	_annotations.draw_crisis_annotations(radius, origin)
@@ -1693,26 +1691,6 @@ func _draw_terrain_direct(radius: float, origin: Vector2, viewport_size: Vector2
 	# Draw grid lines on top of all terrain (batched, shared with the shader path).
 	_draw_hex_grid_overlay(radius, origin, col_start, col_end, row_start, row_end)
 
-
-
-## The trade-overlay pushes. THIN PASS-THROUGHS to AnnotationRenderer, and none of these THREE NAMES
-## can move: `MapPanel.gd` reaches them via has_method/call, so a rename would silently do nothing
-## rather than error. (They were the retired Trade tab's until issue #381; `set_trade_overlay_selection`
-## has NO caller now — the per-link selection went with that tab — but it stays because the overlay's
-## selection state is still real and the seam is reflective either way.)
-func update_trade_overlay(trade_links: Array, enabled: bool = _annotations.is_trade_overlay_enabled()) -> void:
-	_annotations.update_trade_overlay(trade_links, enabled)
-	queue_redraw()
-
-func set_trade_overlay_enabled(enabled: bool) -> void:
-	_annotations.set_trade_overlay_enabled(enabled)
-	queue_redraw()
-
-## Only redraws when the overlay is actually showing — a selection change is invisible otherwise, and
-## the renderer reports that condition back.
-func set_trade_overlay_selection(entity_id: int) -> void:
-	if _annotations.set_trade_overlay_selection(entity_id):
-		queue_redraw()
 
 func set_culture_layer_highlight(layer_ids: PackedInt32Array, context_label: String = "") -> void:
 	highlighted_culture_layer_ids = PackedInt32Array(layer_ids)
@@ -1973,7 +1951,7 @@ func set_labor_pending(pending: Dictionary) -> void:
 ##     respectively, both keyed by ids the new world reuses.
 ##   • the annotation family's world-keyed draw caches (`AnnotationRenderer.reset_world_state`).
 ##
-## Not cleared, deliberately: `active_overlay_key`, the trade-overlay toggle, the terrain highlight id
+## Not cleared, deliberately: `active_overlay_key`, the terrain highlight id
 ## and the texture/grid toggles are VIEW preferences (or keyed on stable terrain ids), not world data.
 func reset_world_state() -> void:
 	# PUSHED IN from the HUD and keyed by tracks the new world reuses — the third shape
@@ -2749,12 +2727,23 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# `SourceForecast` "the wire describes this source" apart from "the source pays nothing at this
 		# floor" — the #426 distinction, now answered by a rate rather than a row.
 		info["patch_provisions_per_biomass"] = float(patch.get("provisions_per_biomass", 0.0))
-		info["patch_trade_per_biomass"] = float(patch.get("trade_per_biomass", 0.0))
 		info["patch_fodder_per_biomass"] = float(patch.get("fodder_per_biomass", 0.0))
-		# The two investment rungs' non-food payoff twins, each quoted at ITS OWN rung (#433).
-		info["patch_tended_trade"] = float(patch.get("tended_trade", 0.0))
+		# THE THIRD ACCOUNT, AS A VECTOR — what one unit of this patch's crop is made of, and what one
+		# gatherer brings home per turn, per material. They are the plant twins of the herd's pair and
+		# they cross here for the reason `patch_per_worker_biomass` does: the compose sheet composes
+		# `min(workers × per_worker, ceiling(floor))` per material off `tile_info`, so a decoded field
+		# this list omits is silently absent on the PLANT web while the animal web reads it fine (a
+		# herd dict travels whole). Reported from play on a 56% tobacco tile whose PER TURN box named
+		# the fodder and never the tobacco — the third time an appended patch field reached the panel
+		# through only one of its two wirings. `patch_crossref_guard` is what makes it the last.
+		# Never summed into one "materials/turn" figure: that is the retired trade axis under a new
+		# name (`SourceForecast.material_rows_of`).
+		info["patch_material_per_biomass"] = patch.get("material_per_biomass", [])
+		info["patch_per_worker_material"] = patch.get("per_worker_material", [])
+		# The two investment rungs' FODDER payoff twins, each quoted at ITS OWN rung (#433). Their
+		# `*_trade` siblings went with arc #527's yield axis; a cash crop's payoff is now a per-material
+		# vector on the COMPOSITION entry, which travels whole in `patch_composition`.
 		info["patch_tended_fodder"] = float(patch.get("tended_fodder", 0.0))
-		info["patch_field_trade"] = float(patch.get("field_trade", 0.0))
 		info["patch_field_fodder"] = float(patch.get("field_fodder", 0.0))
 		# THE TWO BUILD DIPS, AS FRACTIONS (#442) — the factor applied while a crew builds that rung.
 		# **It multiplies the CREW, not the ceiling** (docs/plan_harvest_floor.md §3.1): dipping the
@@ -3032,7 +3021,7 @@ func _tile_color(x: int, y: int) -> Color:
 		var tag_color: Color = _tag_color_for_mask(mask)
 		return GRID_COLOR.lerp(tag_color, 0.92)
 	var overlay_value: float = _value_at_overlay(active_overlay_key, x, y)
-	var overlay_color: Color = OVERLAY_COLORS.get(active_overlay_key, LOGISTICS_COLOR)
+	var overlay_color: Color = OVERLAY_COLORS.get(active_overlay_key, OVERLAY_FALLBACK_COLOR)
 	if active_overlay_key == "culture" and not highlighted_culture_layer_set.is_empty():
 		var layer_id: int = _culture_layer_at(x, y)
 		if not _is_culture_layer_highlighted(layer_id):
@@ -3574,7 +3563,7 @@ func _build_scalar_overlay_legend(
 	var stats: Dictionary = stats_override
 	if stats_override.is_empty():
 		stats = _overlay_stats(normalized, raw)
-	var overlay_color: Color = OVERLAY_COLORS.get(key, LOGISTICS_COLOR)
+	var overlay_color: Color = OVERLAY_COLORS.get(key, OVERLAY_FALLBACK_COLOR)
 	var label: String = String(overlay_channel_labels.get(key, key.capitalize()))
 	var description: String = String(overlay_channel_descriptions.get(key, ""))
 	var placeholder: bool = bool(overlay_placeholder_flags.get(key, false))

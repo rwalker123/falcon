@@ -269,7 +269,7 @@ const CONFIG_RESOURCES_CONT: [&str; 19] = [
 /// Component state on entities. Omitting one of these is exactly the failure `PowerNode`'s missing
 /// `base_generation` / `base_demand` already is, which is why this table exists alongside the
 /// resource one: a resource-only guard would have missed the bug that motivated the guard.
-const SIM_STATE_COMPONENTS: [&str; 18] = [
+const SIM_STATE_COMPONENTS: [&str; 16] = [
     "Tile",
     // A band's durable identity — the thing `Entity` could not be across a restore.
     "BandId",
@@ -295,8 +295,6 @@ const SIM_STATE_COMPONENTS: [&str; 18] = [
     // dropped it would re-fix it against different stock.
     "BandBench",
     "Expedition",
-    "LogisticsLink",
-    "TradeLink",
     // Carries `base_generation` / `base_demand`, which no checkpoint has ever recorded.
     "PowerNode",
     "ResidentBand",
@@ -471,9 +469,9 @@ fn every_registered_component_is_classified() {
     let world = &app.world;
 
     // `Components` holds resources too (bevy stores them in the same registry), so the resource
-    // ids are subtracted. Registered rather than *live* components on purpose: `Expedition` and
-    // `TradeLink` have no instances in a freshly-generated world, and a walk over archetypes would
-    // quietly miss exactly the state a rollback is most likely to drop.
+    // ids are subtracted. Registered rather than *live* components on purpose: `Expedition` has no
+    // instances in a freshly-generated world, and a walk over archetypes would quietly miss exactly
+    // the state a rollback is most likely to drop.
     let resource_ids: BTreeSet<_> = world
         .storages()
         .resources
@@ -585,13 +583,12 @@ fn every_band_has_a_unique_durable_id() {
 #[test]
 fn capture_sees_every_sim_state_entity() {
     use core_sim::sim_state::capture_sim_state;
-    use core_sim::{BandId, LogisticsLink, PopulationCohort, PowerNode, Settlement, Tile};
+    use core_sim::{BandId, PopulationCohort, PowerNode, Settlement, Tile};
 
     let mut app = build_headless_app();
     run_turn(&mut app);
 
     let tiles = app.world.query::<&Tile>().iter(&app.world).count();
-    let links = app.world.query::<&LogisticsLink>().iter(&app.world).count();
     let powered = app.world.query::<&PowerNode>().iter(&app.world).count();
     let bands = app
         .world
@@ -603,7 +600,6 @@ fn capture_sees_every_sim_state_entity() {
     let state = capture_sim_state(&app.world);
 
     assert_eq!(state.tiles.len(), tiles, "captured tile count");
-    assert_eq!(state.links.len(), links, "captured logistics link count");
     assert_eq!(state.bands.len(), bands, "captured band count");
     assert_eq!(
         state.settlements.len(),
@@ -615,7 +611,7 @@ fn capture_sees_every_sim_state_entity() {
         powered,
         "captured power node count"
     );
-    assert!(tiles > 0 && links > 0 && bands > 0, "world was not built");
+    assert!(tiles > 0 && bands > 0, "world was not built");
 
     // Every reference must be a stable sim id. A live `Entity` in here would resolve to a different
     // thing after a restore, silently.
@@ -641,11 +637,6 @@ fn capture_sees_every_sim_state_entity() {
             );
         }
     }
-    for link in &state.links {
-        assert_eq!(link.link.from, Entity::PLACEHOLDER, "link leaked `from`");
-        assert_eq!(link.link.to, Entity::PLACEHOLDER, "link leaked `to`");
-    }
-
     // Bands are keyed by id, so the ids must be unique within a checkpoint.
     let unique: BTreeSet<u64> = state.bands.iter().map(|band| band.id.0).collect();
     assert_eq!(unique.len(), state.bands.len(), "duplicate BandId captured");

@@ -62,10 +62,15 @@ pub fn craft_discovery_id(craft: &str) -> Option<u32> {
 /// **Every craft the loaded materials table declares, in material-id order.** The candidate set a
 /// recipe's `craft` and `requires_knowledge` are validated against — asked of the table rather than
 /// listed here a second time, so a material retired from the roster retires its craft with it.
+///
+/// **A material with no craft contributes nothing**, which is what makes
+/// [`crate::materials_config::MaterialDef::craft`]'s `None` safe: the absent craft is not in the
+/// candidate set, so no recipe can declare it and no tier can gate on it. There is no *"unknown
+/// craft"* branch anywhere — the material simply has no bench.
 pub fn crafts_declared_by(materials: &MaterialsConfig) -> Vec<&str> {
     let mut crafts: Vec<&str> = materials
         .materials()
-        .map(|(_, def)| def.craft.as_str())
+        .filter_map(|(_, def)| def.craft.as_deref())
         .collect();
     crafts.sort_unstable();
     crafts.dedup();

@@ -400,7 +400,7 @@ the frame does not carry them, so absence means unchanged instead of "the world 
 Where a batch came from and what it earns per turn — *Hunted — Mammoth, 8 turns ago · +0.42/turn* —
 is a second question, and putting it on the rail row made the rail a wall of prose that buried the
 numbers a recipe actually reads. It belongs in a `DisclosureController`-style popover off the
-material row, the idiom this client already has for Food / Morale / Growth / Trade / Kit.
+material row, the idiom this client already has for Food / Morale / Growth / Kit.
 
 **It must be a popover rather than an inline expansion, and `band-readouts.md` records that as a
 correctness rule rather than a style one**: expanding inline grew a label *after* its zone had picked

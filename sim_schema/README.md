@@ -16,7 +16,7 @@ item is still reachable as `sim_schema::Foo` — consumers never name a submodul
 | Path | Contents |
 |---|---|
 | `src/state/map.rs` | `TileState`, `TerrainType`/`TerrainTags`/`TerrainSample`, `MountainKind`, terrain & elevation overlays, `ClimateBandsState`, `StartMarkerState`, `RiverClass`/`RiverChannel`, `ScalarRasterState`/`FloatRasterState` |
-| `src/state/economy.rs` | logistics links, trade links + knowledge, faction inventories |
+| `src/state/economy.rs` | faction inventories, `KnownTechFragment` (the logistics/trade-link states were demolished in arc #527 — `docs/plan_contact_and_logistics.md` §As-built; their `.fbs` tables survive as `(deprecated)` slots) |
 | `src/state/population.rs` | cohorts, demographics, generations, labor assignments, harvest/scout tasks, stockpiles |
 | `src/state/subsistence.rs` | herds + herd telemetry, forage/graze registries, forage patches, food modules, sedentarization, intensification knowledge, `GRAZE_PHASE_*` |
 | `src/state/knowledge.rs` | the leak ledger + countermeasures/infiltrations/modifiers, knowledge timeline & metrics, great discoveries, discovered sites |

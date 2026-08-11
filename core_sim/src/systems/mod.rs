@@ -24,10 +24,9 @@ use crate::{
         raid_is_recurring, BandEquipment, BandId, BandTravel, DeathCause,
         DemographicFlowAccumulator, ElementKind, Expedition, ExpeditionMission, ExpeditionPhase,
         Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
-        LogisticsLink, MoraleCause, MoraleContributions, MountainMetadata, PendingMigration,
-        PopulationCohort, PowerNode, ResidentBand, SourceYield, StartingUnit, Tile, TradeLink,
-        YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
-        TRADE_GOODS,
+        MoraleCause, MoraleContributions, MountainMetadata, PendingMigration, PopulationCohort,
+        PowerNode, ResidentBand, SourceYield, StartingUnit, Tile, YieldRange,
+        DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
     },
     creatures_config::CreaturesConfigHandle,
     culture::{
@@ -41,17 +40,16 @@ use crate::{
     expedition_config::ExpeditionConfig,
     fauna::{
         self, herd_capacity, herd_ecology, herd_hunt_yield, pen_upkeep, sustainable_yield, Herd,
-        HerdDensityMap, HerdRegistry, FODDERING_DISCOVERY_ID,
+        HerdRegistry, FODDERING_DISCOVERY_ID,
     },
     fauna_config::{Diet, FaunaConfig, FaunaConfigHandle, HuntYield},
     flora_config::FloraConfigHandle,
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
     forage::{
-        field_fodder, field_provisions, field_trade_goods, forage_escapement_ceiling,
-        forage_per_worker_biomass, forage_provisions, forage_take, managed_per_worker_fodder,
-        managed_per_worker_trade, managed_per_worker_yield, patch_ecology,
-        patch_provisions_per_biomass, patch_rung, resolve_committed_species, rung_site_refusal,
-        tended_take_fodder, tended_take_trade_goods, tile_flora_composition, tile_forage_capacity,
+        field_fodder, field_provisions, forage_escapement_ceiling, forage_per_worker_biomass,
+        forage_provisions, forage_take, managed_per_worker_fodder, managed_per_worker_yield,
+        patch_ecology, patch_provisions_per_biomass, patch_rung, resolve_committed_species,
+        rung_site_refusal, tended_take_fodder, tile_flora_composition, tile_forage_capacity,
         tile_is_fresh_watered, ForagePatch, ForageRegistry, NO_FORAGE_SEASON,
     },
     generations::GenerationRegistry,
@@ -88,12 +86,8 @@ use crate::{
     turn_pipeline_config::TurnPipelineConfigHandle,
     wellbeing_config::{ProductivityConfig, WellbeingConfig, WellbeingConfigHandle},
 };
-use sim_runtime::{
-    apply_openness_decay, merge_fragment_payload, scale_migration_fragments, CorruptionSubsystem,
-    TradeLeakCurve,
-};
+use sim_runtime::{merge_fragment_payload, scale_migration_fragments, CorruptionSubsystem};
 
-const HERD_TRADE_DIFFUSION_BONUS: f32 = 0.25;
 const PLAYER_FACTION: FactionId = FactionId(0);
 const BUCKET_COLS: u32 = 6;
 const BUCKET_ROWS: u32 = 6;

@@ -766,6 +766,13 @@ pub fn simulate_population(
     mut migration_events: EventWriter<MigrationKnowledgeEvent>,
     tick: Res<SimulationTick>,
 ) {
+    // `TradeTelemetry` is a PER-TURN accumulator, so someone has to clear it before the turn's
+    // records go in. That used to be `trade_knowledge_diffusion`, which ran a stage earlier and
+    // died with the rest of the link-driven trade slice
+    // (`docs/plan_contact_and_logistics.md` §As-built). The migration path below is now its only
+    // writer, so the reset moves here — still ahead of every write, and still ahead of
+    // `publish_trade_telemetry`, which is ordered after this system.
+    telemetry.reset_turn();
     let population_cfg = pipeline_config.config().population();
     let demo = demographics.get();
     let wellbeing = wellbeing_config.get();

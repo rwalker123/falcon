@@ -45,12 +45,12 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 use bevy::prelude::*;
-use sim_runtime::{FloraShareInfo, TerrainType};
+use sim_runtime::{FloraShareInfo, MaterialPayoff, TerrainType};
 
 use crate::components::Tile;
 use crate::flora_config::{FloraConfig, FloraShare};
 use crate::forage::{
-    commit_fodder_payoff, commit_payoff, commit_trade_payoff, commit_yield_ratio,
+    commit_fodder_payoff, commit_material_payoff, commit_payoff, commit_yield_ratio,
     tile_flora_composition, tile_forage_capacity, wild_payoff,
 };
 use crate::intensification::RungKey;
@@ -304,8 +304,10 @@ fn derive_tile_quotes(
                     rung,
                 )
             };
-            let trade_payoff = |rung| {
-                commit_trade_payoff(
+            // The MATERIAL account, same shape again — and the one that answers per material rather
+            // than with a single number, because that is what a material yield *is* (arc #527).
+            let material_payoff = |rung| {
+                commit_material_payoff(
                     tile.position,
                     tile_capacity,
                     &share.species,
@@ -315,6 +317,12 @@ fn derive_tile_quotes(
                     FORECAST_OUTPUT_MULTIPLIER,
                     rung,
                 )
+                .into_iter()
+                .map(|payoff| MaterialPayoff {
+                    material_id: payoff.material,
+                    amount: payoff.amount,
+                })
+                .collect()
             };
             FloraShareInfo {
                 species: share.species.clone(),
@@ -339,23 +347,28 @@ fn derive_tile_quotes(
                 // so the picker can show hay's value where `sow_yield_ratio` reads 0×. `0` for a
                 // staple (no fodder in its vector) or a plant that cannot Sow here.
                 sow_fodder_payoff: fodder_payoff(RungKey::PlantField),
-                // **What a cash-crop Field of this plant would pay into the TRADE account** (F4) —
-                // the exact trade twin, through the same `commit_trade_payoff` seam the sim's
-                // `field_trade_goods` pays with, so the picker can show a cash crop's value where
-                // `sow_yield_ratio` reads 0×. `0` for hay (no trade in its vector) or a plant that
-                // cannot Sow here — a staple reads the small flat token, never `0`.
-                sow_trade_payoff: trade_payoff(RungKey::PlantField),
-                // **The same two accounts one rung down** (#419) — what a completed TENDED PATCH of
-                // this plant would pay, through `tended_fodder`/`tended_trade_goods`. The Cultivate
-                // row of the picker had only the Field figures above and quoted those, which is a
-                // managed rate standing in for an MSY skim on a rung the player commits 25 turns to.
+                // **The same account one rung down** (#419) — what a completed TENDED PATCH of
+                // this plant would pay, through `tended_fodder`. The Cultivate row of the picker had
+                // only the Field figure above and quoted that, which is a managed rate standing in
+                // for an MSY skim on a rung the player commits 25 turns to.
+                //
+                // A cash crop quotes nothing *here* — its account is the material one below.
                 cultivate_fodder_payoff: fodder_payoff(RungKey::PlantTended),
-                cultivate_trade_payoff: trade_payoff(RungKey::PlantTended),
                 // **What this plant is FOR** — the roster's own `role`, shipped verbatim as the
                 // display tag it is. Taken off `def` rather than re-read from the yield vector here,
                 // because a tag whose whole purpose is to be ONE definition must have exactly one
                 // place that decides it (`FloraRole`). Nothing in the sim branches on it.
                 role: def.role.as_str().to_string(),
+                // **What a cash crop would pay, PER MATERIAL** (arc #527) — the replacement for the
+                // retired `sow_trade_payoff` / `cultivate_trade_payoff`, and the only thing on this
+                // row that can state a cotton Field's whole product. Through the same
+                // `commit_material_payoff` seam the sim's `credit_material_yield` is paid off, at
+                // each rung's own harvest, so quote and payout cannot drift.
+                //
+                // **Empty is "no row", never "zero"** — a food crop yields no material, and a `0`
+                // would read as a cash crop that pays badly.
+                sow_material_payoff: material_payoff(RungKey::PlantField),
+                cultivate_material_payoff: material_payoff(RungKey::PlantTended),
             }
         })
         .collect();
@@ -554,6 +567,88 @@ mod tests {
         cache.sweep(&flora, &labor, 6, UVec2::new(32, 32));
         assert_eq!(cache.len(), 0, "a resized map left entries behind");
     }
+
+    /// **THE CAPTURE STAMPS THE PER-MATERIAL QUOTE, at each rung, from the sim's own seam** (arc
+    /// #527) — the row-level half of `flora_f4_cash::the_picker_material_quote_is_the_material_the_
+    /// sim_credits`, which pins the seam against what a real turn credits.
+    ///
+    /// What this adds is that the **capture** carries it: a quote computed correctly and then not
+    /// written onto the row is exactly the shape the retired trade quote's absence has, and the
+    /// client cannot tell the two apart. Asserted as a *relation* against `commit_material_payoff`
+    /// rather than a recorded number, so a rate retune moves both sides at once.
+    ///
+    /// **The empty half is the liveness half.** A staple must publish *no row*, and a capture that
+    /// wrote an empty vector unconditionally would satisfy that everywhere — so the cash crop beside
+    /// it has to be non-empty on the same tile.
+    #[test]
+    fn every_quoted_plant_carries_its_own_per_rung_material_payoff() {
+        let (flora, labor) = configs();
+        let forage = &labor.forage;
+        // **Swept over several tiles, not pinned to one.** Per-tile realization (§10) draws a
+        // different subset per coordinate, so whether any one tile happens to carry both a
+        // material-bearing plant and a bare staple is a property of the seed rather than of the code
+        // under test. The relation below holds per plant on every tile; the two liveness flags
+        // accumulate across the sweep.
+        let capacity_of = |tile: &Tile| tile_forage_capacity(forage, tile);
+        let tiles: Vec<Tile> = (0..12)
+            .map(|x| tile_at(UVec2::new(x, 3), TerrainType::Floodplain))
+            .collect();
+
+        let mut saw_a_material = false;
+        let mut saw_a_bare_staple = false;
+        for tile in &tiles {
+            let (composition, quotes) = derive_tile_quotes(&flora, forage, tile, SWEEP_SEED);
+            let capacity = capacity_of(tile);
+            for quote in &quotes {
+                for (rung, published) in [
+                    (RungKey::PlantField, &quote.sow_material_payoff),
+                    (RungKey::PlantTended, &quote.cultivate_material_payoff),
+                ] {
+                    let expected = commit_material_payoff(
+                        tile.position,
+                        capacity,
+                        &quote.species,
+                        &composition,
+                        &flora,
+                        forage,
+                        FORECAST_OUTPUT_MULTIPLIER,
+                        rung,
+                    );
+                    assert_eq!(
+                        published.len(),
+                        expected.len(),
+                        "{} @ {rung:?}: the row must carry the seam's own rows",
+                        quote.species
+                    );
+                    for (row, want) in published.iter().zip(expected.iter()) {
+                        assert_eq!(row.material_id, want.material);
+                        assert_eq!(row.amount, want.amount);
+                        assert!(
+                            row.amount > 0.0,
+                            "{} @ {rung:?}: a published row is a row that pays",
+                            quote.species
+                        );
+                    }
+                    saw_a_material |= !published.is_empty();
+                }
+                saw_a_bare_staple |= quote.sow_material_payoff.is_empty();
+            }
+        }
+        assert!(
+            saw_a_material,
+            "the sweep must name at least one material-bearing plant, or every comparison above was \
+             between two empty vectors"
+        );
+        assert!(
+            saw_a_bare_staple,
+            "…and at least one plant whose Field pays no material, or 'empty means no row' is \
+             untested here"
+        );
+    }
+
+    /// The seed the material-quote fixture sweeps under — any fixed value; realization is a pure
+    /// function of it, and the assertions above are relations rather than recorded numbers.
+    const SWEEP_SEED: u64 = 99;
 
     /// A coord the sweep never visited names no plants. The readout relies on this for a patch whose
     /// tile is absent from the map — an empty basket, never a fabricated one. The empty basket is

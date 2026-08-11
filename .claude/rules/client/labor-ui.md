@@ -52,7 +52,7 @@ the player nothing and looks like a rendering bug rather than a contract break.
 
 There is no per-stance ceiling row on either web. What ships instead is the **terms**: `biomass` (B),
 `carryingCapacity` (K) and the source's **per-biomass yield vector** (`provisionsPerBiomass` /
-`tradePerBiomass` / `fodderPerBiomass`, published identically by `HerdTelemetryState` and
+`fodderPerBiomass`, published identically by `HerdTelemetryState` and
 `ForagePatchState`). `SourceForecast.escapement_room` + `forecast_inputs` evaluate
 
 ```text
@@ -165,6 +165,18 @@ while both preview harnesses passed, because their fixture adapter seeds that pa
 `FOW_DISCOVERED_HIDDEN_KEYS` under the one rule the whole patch payload follows. **Appending a source
 field is TWO wirings on the plant web**, and only the second is visible in the panel.
 
+**IT HAPPENED A THIRD TIME, and that is why the list is now GUARDED rather than merely documented.**
+`material_per_biomass` / `per_worker_material` reached `ForagePatchState` and the decoder with the
+follow-up that gave a patch its material account, and the cross-ref took neither — so a wild stand of
+56% tobacco rendered a PER TURN box naming the fodder and never the tobacco, on a client whose
+`_forage_yield_model` was already composing the vector correctly. Both preview harnesses passed for
+the same structural reason they passed the first time: their fixtures seed `tile_info` themselves, so
+**no frame in either harness exercises the cross-ref at all**, and a second seeded frame never can.
+`tools/patch_crossref_guard.gd` closes it from the other end — it decodes the real fixture envelope
+and asserts a PARTITION over `_tile_info_at`'s output, so a newly appended wire field fails at the
+wiring instead of in a panel weeks later (`harness-headless-guards.md` has its claims and its
+mutations).
+
 **THE POINTER IS THE DRAG'S ONLY AFFORDANCE, so the whole plot wears `CURSOR_VSIZE`.** The chart is
 drawn, not assembled from grabbable widgets, and the drag target is the entire plot rather than the
 floor line — grabbing a 1px line would be unusable, and the line is where the value IS, not where you
@@ -191,7 +203,7 @@ flag, the preset test and the command cannot disagree.
 
 **THE LIVE SET IS A REGISTRY, AND WHAT IT LEFT OUT WAS THE POINT OF THE PANEL.** It began as two named
 keys, the crew targets and the verdict — and the **YIELDS ROW was outside it**, so a player dragging
-the floor watched the verdict move while the food and trade numbers *they were dragging toward* sat
+the floor watched the verdict move while the yield numbers *they were dragging toward* sat
 frozen until release. Reported from play. `_register_live(hosts, host, model, workers, fill)` now takes
 any container plus the `fill(host, model, workers)` that refills it, and `_refresh_floor_live` walks
 the list, so the rule is stated once: **anything whose value — or whose PRESENCE — depends on the
@@ -671,22 +683,24 @@ about the take above it. The absence needle is retired.
 | **verdict** | which of the crew and the floor is binding | 12px + the severity dot, colour by severity |
 | **aside** | the floor's zone hint and its teaching line | 11px `INK_FAINT` under a dashed rule |
 
-**A reading states its unit and NO destination.** All three accounts land in the working band's own
-stores — provisions feed the band, fodder feeds the pens it keeps, and #381 moved trade goods
-band-local too. A `→ CAMP` tail earned its width only while trade was the odd account out, banked to
-the faction-wide stockpile; once every account routed alike it was three identical words on the
-readout's widest line, so the suffix is gone rather than made uniformly true.
+**A reading states its unit and NO destination.** Both accounts land in the working band's own
+stores — provisions feed the band, fodder feeds the pens it keeps. A `→ CAMP` tail earned its width
+only while the retired trade account was the odd one out, banked to the faction-wide stockpile; once
+every account routed alike it was identical words on the readout's widest line, so the suffix is gone
+rather than made uniformly true.
 
 **THE RENDER-ONLY-WHERE-THE-VECTOR-PAYS RULE SURVIVED THE RESIZE, because the row set is not composed
 here.** `SourceForecast.yield_rows` is the STRUCTURAL half of that rule and is now its one definition —
 `yield_components`, `picker_products` and `extractive_take_pair` differ only in how they SPELL a
-component and all three iterate it. So a cash crop still shows no food row and a wolf shows none
-either, and the single surviving zero is still `zero_account`'s. A widget that synthesised a row would
-put the false `0.00 food` straight back on the loudest line of the panel.
+component and all three iterate it. So a sown hay Field still shows no food row and an inedible quarry
+shows no row at all, and the single surviving zero is still `zero_account`'s. A widget that synthesised
+a row would put the false `0.00 food` straight back on the loudest line of the panel.
 
-**THE HUNT WEB'S PER-TURN ROW IS AN ACCOUNT, LIKE EVERY OTHER RATE ON THIS READOUT** — `0.58 → 0.02
-TRADE` on a wolf, `1.23 → 0.07  FOOD   0.18 → 0.01  TRADE` on a deer, through
-`SourceForecast.yield_rows` and `YIELD_ACCOUNT_UNITS`. **The
+**THE HUNT WEB'S PER-TURN ROW IS AN ACCOUNT, LIKE EVERY OTHER RATE ON THIS READOUT** — `1.23 → 0.07
+FOOD` on a deer, and `0.11 HIDE` on an inedible quarry, both through `SourceForecast.yield_rows` and
+`YIELD_ACCOUNT_UNITS` — a material's account IS its id, so the table's fallback yields the id as the
+unit. (The wolf read nothing at all for the one release between the trade account's retirement and
+`material_per_biomass` reaching the wire.) **The
 whole-animal reading belongs to the CHART above it** — the escapement curve and its `leave 50% · ≈1
 Grey Wolf` handle — and to the raid's whole-trip payload, which has no `/turn` and no `now → after`;
 a per-turn row wearing `WILD FOWL/TURN` states a rate in a currency the band's stores do not keep,
@@ -698,19 +712,19 @@ flag and the waste note, and `_local_*_preview_bbcode` is a thin formatter over 
 two surfaces.
 
 **A HUNT IS COUNTED ON ONE AXIS AND CREDITED IN EVERY ACCOUNT IT PAYS, and the two halves of that
-sentence belong to different functions.** `herd_axis_rates` mirrors the sim's `ratio_axis` and
-resolves ONE component (provisions preferred, trade for an inedible quarry) — it has to, because the
-whole-animal quantiser divides by a per-animal quantum and a wolf's food quantum is `0`. But that
-constrains the **count**, not the credit: a ratio is unit-free, so the sim values one quantised take
-in both currencies through `YieldPair::rescaled_to`, and `SourceForecast.rescaled_accounts` is that
-crossing client-side — the per-biomass vector as the reference mix, the counted axis coming back
-bit-identical. A Wild Boar's local sheet therefore reads `FOOD` **and** `TRADE`, exactly as the same
-species raided by an expedition always did (`_trip_yield_rows`), rather than the axis alone.
+sentence belong to different functions.** `herd_axis_rates` resolves the axis a quantised take is
+counted on — it has to, because the whole-animal quantiser divides by a per-animal quantum. **Since
+arc #527 that axis is PROVISIONS and nothing else**, there being no second scalar account left to fall
+back to for an inedible quarry, so the resolution is an alias rather than a choice. But it constrains
+the **count**, not the credit: a ratio is unit-free, so the sim values one quantised take through
+`YieldPair::rescaled_to`, and `SourceForecast.rescaled_accounts` is that crossing client-side — the
+per-biomass vector as the reference mix, the counted axis coming back bit-identical.
 
-- **`yield_rows` still decides which rows EXIST**, so this is not "credit every account": a wolf's
-  provisions rate is a structural `0`, the crossing answers a structural zero, and no `0.00 FOOD`
-  appears. `herd_hunt_pelts_only` is the frame that pins it and `herd_hunt_both_products` its
-  positive twin — asserted as a pair, since the negative alone passes on a readout that lost both.
+- **`yield_rows` still decides which rows EXIST**, so this is not "credit every account": an inedible
+  quarry's provisions rate is a structural `0`, the crossing answers a structural zero, and no
+  `0.00 FOOD` appears — while the MATERIAL rows beside it state what the take is actually worth.
+  `herd_hunt_pelts_only` is the frame that pins it and `herd_hunt_both_products` its positive twin —
+  asserted as a pair, since the negative alone passes on a readout that lost every account.
 - **The `after` reading rescales the same way**, or an arrowed row would key one account's holding
   rate beside another account with none.
 - **BOTH branches of `_hunt_yield_model` cross the same way** — the quantised take and the smoothed
@@ -735,13 +749,13 @@ container has laid it out, so the only pass runs at `size.x == 0` and the dash l
 
 **THE EXPEDITION BRANCH TAKES THE SAME READOUT BOX, RE-KEYED FROM A RATE TO A TRIP.** It answered with
 one wrapped sentence carrying five facts — *delivers ≈1 Wild Boar over ≈18 turns (2 hunting + 16
-travel) · ~1 food · ⇄ ~0 trade goods · ⚠ 20% wasted* — beside a local sheet that laid the same kinds of
+travel) · ~1 food · ⚠ 20% wasted* — beside a local sheet that laid the same kinds of
 fact out in a bounded well, so one panel read two ways. `_mount_trip_readout` composes the same three
 registers:
 
 | register | the raid's version |
 |---|---|
-| **yields** | header `THIS TRIP`, the ANIMAL count leading in the local hunt row's own idiom (its `YIELD_ROW_NUMBER`/`UNIT` overrides, the quarry as the unit, `YIELD_ACCOUNT_NONE` as the account), then food and trade through `SourceForecast.yield_rows`, and the waste on the row's own `waste` slot |
+| **yields** | header `THIS TRIP`, the ANIMAL count leading in the local hunt row's own idiom (its `YIELD_ROW_NUMBER`/`UNIT` overrides, the quarry as the unit, `YIELD_ACCOUNT_NONE` as the account), then the yield accounts through `SourceForecast.yield_rows`, and the waste on the row's own `waste` slot |
 | **verdict** | `SourceForecast.hunt_trip_verdict` — how long the party is away and where those turns go, `slow` past the band's warn line and on an unbounded raid |
 | **aside** | the floor-zone hint alone |
 
@@ -792,8 +806,8 @@ card left usable (its 13+13 stylebox margins and the scroll gutter):
 | forage, three accounts (`forage_three_accounts`, `floor_chart_full`) | **529** | 563 |
 
 The binding row is the **intent-preset grid** in every one of them — three cells abreast, each a
-preset name over its product line, and a hunt preset carries two accounts (`0.67 food · 0.10 trade`)
-where a staple forage preset carries one. That is the content's honest demand at those faces, so the
+preset name over its product line, and a hay-meadow preset carries two accounts
+(`0.24 food · 0.40 fodder`) where a staple forage preset carries one. That is the content's honest demand at those faces, so the
 card grows to it: `_fit_width` measures the body's rows AND the header row beside them (the header is
 outside the scroll and carries the subject's name), and the ceiling is the **viewport** — declared per
 fit, for the same reason the height ceiling is (`refit`).
@@ -919,7 +933,7 @@ Four things follow, and each is load-bearing:
   `yield_rows` drops the second reading where the two are equal — an arrow to itself is noise — and
   that test read `is_equal_approx` on the raw floats while the row renders through `format_magnitude`
   at `YIELD_DECIMALS`. Any pair closer than the display's own resolution therefore drew `0.26 → 0.26
-  FOOD`, reported from play beside a trade account correctly reading `0.90 → 0.87`. It is the same
+  FOOD`, reported from play beside a second account correctly reading `0.90 → 0.87`. It is the same
   mistake `COMPONENT_RENDER_MIN` records one function along: **a gate finer than its formatter's
   resolution admits exactly what it exists to stop.** Driven, PNG-less, in `chapters/improvements.gd`
   — a rounding pair and a visible pair asserted together, since suppressing every arrow satisfies the
@@ -934,7 +948,7 @@ Four things follow, and each is load-bearing:
 **THE PRESET FACES STATE NO NUMBER**, only the intent (`♻ Best harvest`); the metric kept its tooltip.
 Nine numbers stood across the top of the sheet and every one misled: they are the ROOM (one-off) over a
 row of per-turn rates; they rank the presets BACKWARDS from the decision (`Take everything` reads twice
-`Best harvest` while paying ~nothing forever); they are in food/trade/fodder units directly above a
+`Best harvest` while paying ~nothing forever); they are in food/fodder units directly above a
 chart whose axis is BIOMASS; and they are worker-independent, so they alone sat still while the sheet
 under them moved with the stepper.
 
@@ -1017,6 +1031,43 @@ carry what grows back` was arithmetic over two numbers a centimetre above it: th
 the *hold it after* pill's. That pill is also a BUTTON that sets the count, so the remedy was never a
 sentence away either. The cap still floors on the same number, so "idle" still means *above the hold
 crew* wherever it is computed.
+
+### BARREN MEANS BARREN ON EVERY ACCOUNT — and the axis alias is what broke that
+
+`max_useful_workers` divides by the axis pair and returns `MAX_USEFUL_BARREN` (1) when the axis prices
+no crew. **That test was written when the axis was a CHOICE** (issue #337: `axis_per_worker` resolved
+to whichever of provisions/trade the species actually paid, so an inedible quarry was capped on the
+account it pays), and **arc #527 retired the trade half without the test noticing** — the axis triple
+became a plain alias of the food pair, so "the axis prices nothing" quietly became "this source pays
+no food", and the barren branch began firing on every hay meadow, flax stand and tobacco patch in the
+game. Reported from play on a wild basket of Tobacco 56% + Hay Grass 44%: `max 1 worker useful here —
+more would be idle`, printed beneath that same sheet's `13 clear it now`, its `2 hold it after` and a
+verdict naming 2 foragers as the remedy, with the `+` dead at 1. Four numbers, no two agreeing, and
+the one the stepper obeyed was the wrong one.
+
+**So the branch asks the other accounts first.** `off_axis_useful_workers` is the same saturating
+quotient asked of the FODDER pair and of the per-material vector row by row, and it answers
+`NO_CREW_ANSWER` only when nothing off-axis prices a crew either — which is the one reading that means
+*barren*. Three properties are load-bearing:
+
+- **The MAX across accounts, never the min or the first.** The cap says *beyond this crew nobody adds
+  anything*, so it is the largest crew any single account can still use. On a wild source every
+  account is one biomass flow through a fixed per-biomass vector, so the quotients agree and the `max`
+  is free; on a rung-3 managed source the payoffs are independent and it is doing real work.
+- **The material vector is asked ROW BY ROW and unioned BY ID**, the standing rule for that account —
+  a summed materials/turn figure is the retired trade axis under a new name.
+- **The two projection-derived crew floors resolve ABOVE the branch**, so a no-food source keeps §7.6's
+  promise that neither crew-target pill may name a crew the stepper refuses. They are denominated in
+  BIOMASS, so they answer for a hay meadow exactly as for a wheat one. **The barren answer itself takes
+  no floors** — a source can price a crew (`per_worker_biomass > 0`) while paying into nothing at all,
+  and flooring that on the targets would staff hands against a take of zero, which is the parking
+  `MAX_USEFUL_BARREN` exists to refuse.
+
+**The pair is the assertion, and both halves live in `ui_preview`**: `forage_no_food_basket` (the
+reported tile — the cap clears 1, reaches both rendered targets, and the *clear it now* press lands
+the stepper there) and `forage_dead_season` beside it in the same frame's claims, still capped at 1.
+"Not barren" is trivially satisfied by a cap that stopped answering at all, so neither claim is worth
+anything without the other.
 
 ### ONE HINT RULE, NOT TWELVE ROWS
 
@@ -1170,7 +1221,12 @@ claim the wire contradicts: a wolf's `provisionsPerBiomass` is `0`, it pays pelt
 the per-biomass vector (a structural fact, not this turn's ceiling) and `picker_products` /
 `yield_components` / `extractive_take_pair` take it as `zero_account`. A source with no positive rate
 in any account answers `YIELD_ACCOUNT_NONE` and its caller renders **no line at all**. Frame:
-`herd_hunt_pelts_only` — three presets reading `2.03 / 0.90 / 0.22 trade`, no food line, no zeros.
+`herd_hunt_pelts_only` — an inedible quarry whose presets quote **hide and no food**, and no zeros.
+`zero_account_of` still answers `NONE` for it (it names which SCALAR zero to print, and a material has
+none to nominate), and the material rows are what make the readout non-empty anyway — which is why
+`forecast_is_known` takes the material vector as a witness of its own. Asserted as a PAIR with
+`herd_hunt_both_products`, whose deer prints a live FOOD line: "renders nothing" and "is correctly
+silent" are one picture, and only the paired frame separates them.
 
 ### Per-account divergence is GONE on the plant web, and that is the model
 
@@ -1567,6 +1623,20 @@ capped at 0) and nothing else in the run does.
 substitutions, so every consumer downstream — the take, the waste, the crew targets, the chart —
 picks the kit up without knowing it exists. `DrawerComposeController._kit_priced_source` is the only
 caller, and `_hunt_priced_herd` / `_forage_priced_patch` are the only two doors onto it.
+
+**THE PER-WORKER SUBSTITUTION IS TWO LOOPS, BECAUSE ONE ACCOUNT IS A VECTOR.**
+`SOURCE_PER_WORKER_KEYS` is the SCALAR list (`per_worker_biomass`, `per_worker_yield`) and
+`SOURCE_PER_WORKER_VECTOR_KEYS` is `per_worker_material`, scaled row by row through
+`SourceForecast.scaled_material_rows` — **one ratio for every row**, the materials being one biomass
+flow through a fixed per-biomass vector exactly as the two scalars are. The vector sat UNREPRICED for
+the whole life of this seam, and "just add the key" was never the repair: `float(out[key]) * ratio`
+throws on an `Array`, so the list could not simply grow. What the player saw was a correctly reduced
+FOOD line beside an unmoved HIDE line — a worse kit over-stating the materials it would bring home, a
+better one under-stating them — on BOTH webs, since `expected_materials` clamps
+`min(workers × per_worker_material, ceiling)` off whatever rate reaches it. `band_panel_preview`'s
+`_assert_kit_reprices_the_source` asserts the RATE by ratio, its no-op twin at the reference tier,
+and the take through `expected_materials` itself, at a crew deliberately below the saturating one so
+the CREW arm binds — plus the plant-web half on the no-retreat patch beside it.
 
 **THE DENOMINATOR IS THE ROSTER'S OWN EQUIPPED TIER, NOT THE SOURCE'S `perWorkerBiomass`.** The ratio
 is `effective_carry / KitRoster.equipped_tier(kits, axis)` — the maximum across the roster on that
@@ -2847,16 +2917,18 @@ discard is precisely what this axis split removed.
     HERD: Sustain → take only the renewable yield, it stays healthy; Surplus → more food now, pushes
     settling; Deplete → draws the herd down hard, much more food now and a fast decline it will not
     recover from while it lasts — deliberately not oversold; Eradicate → **the last hunt**: the whole
-    standing stock in one haul, the biggest payoff of any rung, in whatever the species pays (meat, ⇄
-    trade goods, or both), and the herd gone for good — denial is the END STATE, not a promise that the
-    carcasses were thrown away (#337)). **They no longer teach the LADDER** — see "The two compose sheets
-    read in ONE grammar" above. **These are
-    NOT the expedition hints** (`SEND_HUNT_POLICY_HINTS`): an expedition's Hunting arm banks **both
-    products** since #337 (one `HuntYield::apply` per kill — provisions into the party's larder, trade
-    goods onto `Expedition::carried_trade` and into the HOME BAND's `stores` at the drop-off/fold-back —
-    the faction stockpile until issue #381 moved trade goods band-local), but
+    standing stock in one haul, the biggest payoff of any rung, in whatever the species pays, and the
+    herd gone for good — denial is the END STATE, not a promise that the carcasses were thrown away
+    (#337). **The `⇄ trade goods` half of that sentence went with the account (arc #527)**: the rung
+    names the meat and the end state, and what an inedible species pays is quoted by the rung's own
+    METRIC line rather than by the hint — the floor presets state its materials off
+    `material_per_biomass`, which is a number and not a noun the prose has to carry). **They no longer
+    teach the LADDER** — see
+    "The two compose sheets read in ONE grammar" above. **These are
+    NOT the expedition hints** (`SEND_HUNT_POLICY_HINTS`): an expedition's Hunting arm banks the kill's
+    provisions into the party's larder and into the HOME BAND's `stores` at the drop-off/fold-back, but
     accrues **no husbandry** (a known v1 gap, tracked server-side) — so the expedition set may state a
-    trade payoff, never a craft, and the two sets must stay separate. `LOCAL_HUNT_POLICY_HINTS`
+    payoff, never a craft, and the two sets must stay separate. `LOCAL_HUNT_POLICY_HINTS`
     also owns the **`corral`** hint (Corral is a local-hunt-only rung) — which must carry all three
     halves of that bargain: the ~25-turn half-yield build, the ladder's best payoff, and the fact that
     **penned animals can't graze, so you feed them from your larder every turn and an underfed herd
@@ -2901,9 +2973,9 @@ discard is precisely what this axis split removed.
     see `SourceForecast.hunt_forecast_line_bbcode`'s `total > warn_turns`, so a distant herd is "slow" on travel
     alone) or a **long** raid (`turnsToFill == 0` — ran the whole horizon still
     delivering) is a real tradeoff, so it is WARN-amber `"armed"` + `Send Anyway (≈54 turns)` /
-    `Send Anyway (long raid)` and stays **enabled**. A **denial** mission — a quarry that pays NEITHER
-    product (`delivers_food == false` **and** `delivers_trade == false`; never the Eradicate rung, which
-    delivers) — likewise stays enabled (`SEND_HUNT_DENIAL_BUTTON`, "Send (brings nothing home)"). The ONE blocked case is **no surplus**
+    `Send Anyway (long raid)` and stays **enabled**. A **denial** mission — a raid that brings NOTHING
+    home (`delivers_food == false` **and** an empty `delivered_material`; never the Eradicate rung,
+    which delivers, and never an inedible quarry whose hides land) — likewise stays enabled (`SEND_HUNT_DENIAL_BUTTON`, "Send (brings nothing home)"). The ONE blocked case is **no surplus**
     (`SourceForecast.hunt_trip_no_surplus`: **`deliveredFood == 0`**) — the herd is at/below the policy's floor, so the raid
     would return empty at every party size: a mistake with no upside, so the button is **DISABLED**
     (`Herd too lean to raid`). This is `deliveredFood == 0`, **NOT `animalsTaken == 0`** — a small party on
@@ -2984,39 +3056,41 @@ discard is precisely what this axis split removed.
     `herd_hunt_raid_travel` (the SAME boar 8 tiles from a band carrying a move rate → the client adds the
     round trip: "delivers ≈8 Wild Boar over ≈16 turns (8 hunting + 8 travel) · ~32 food", cap still 2) /
     `herd_hunt_no_surplus` (a herd stripped to its floor → 0 animals at every size → disabled "Herd too
-    lean to raid") / `herd_hunt_eradicate` (the boar on Eradicate → the whole-stock windfall in both products, ordinary
+    lean to raid") / `herd_hunt_eradicate` (the boar on Eradicate → the whole-stock windfall, ordinary
     Send), and
     `herd_hunt_local_sustain` /
     `herd_hunt_local_overdraw` (local branch, animals-first: green `≈0.14 Red Deer/turn · renewable` vs
     amber `⚠ ≈0.27 Red Deer/turn — overdraws the herd`) /
     **`herd_hunt_local_eradicate`** (the frame the LOCAL Eradicate hint is judged on: the rung's picker face
-    reads the ladder's top take `💀 Eradicate / 2.40 food · 0.36 trade`, and the hint below describes the one-haul windfall +
-    the permanent end state — never "no food, no trade"), and the carry-aware set
+    reads the ladder's top take `💀 Eradicate / 2.40 food`, and the hint below describes the one-haul
+    windfall + the permanent end state — never "no food"), and the carry-aware set
     `herd_hunt_delivered_clean` / `herd_hunt_delivered_waste` / `herd_hunt_automax` /
     `herd_hunt_big_game_window` (see the animals-first preview + "up to X/turn" cap notes above).
   - **`%ForageAssignControls`** (Tile card, food-module tiles, `_build_forage_assign_controls`): the
     band-picker, then a sustain/surplus/deplete/eradicate **policy picker** (`HudWidgets.build_policy_picker`,
     `_forage_assign_policy`, `LABOR_HUNT_POLICIES`, default `sustain`) — carrying the SAME ascending
     per-policy **COMPACT** button metric the local-hunt picker does, over **every account the patch
-    pays** since #426 (`[♻ Sustain / 0.60 food · 0.01 trade · 0.20 fodder]` on a hay meadow).
+    pays** since #426 (`[♻ Sustain / 0.60 food · 0.20 fodder]` on a hay meadow).
     **Each button is TWO LINES, ONE PER
     AXIS — the rung's glyph + NAME over its product line** (`[♻ Sustain / 0.96 food]
     [⬆ Surplus / 1.92 food] [⇊ Deplete / 2.88 food] [💀 Eradicate / 4.80 food] [🌱 Cultivate / → 1.20 food]
-    [▦ Sow]`), a hunt rung carrying both products (`[⇊ Deplete / 2.70 food · 0.41 trade]`). **THE ONE-LINE
+    [▦ Sow]`), a hay-meadow rung carrying both accounts (`[⇊ Deplete / 2.70 food · 0.90 fodder]`).
+    **THE ONE-LINE
     `<glyph> <metric>` FACE IT REPLACED WAS AN AXIS COLLISION** (playtest, issue #337 follow-up): the rung
-    glyph (`♻ ⬆ ⇊ 💀`) and the trade-goods glyph `⇄` sat adjacent in one line at one weight saying
-    different things — *which rung* vs *which product* — and dropping the rung NAME left `⬆` beside `⇊`
-    reading as good-vs-bad rather than as neighbouring rungs of one ladder. Naming the rung in text is
-    what defuses that, so `POLICY_ICONS` is UNCHANGED; the products move to words
-    (`SourceForecast.picker_products`) because trade goods have no tintable pictogram (see
+    glyph (`♻ ⬆ ⇊ 💀`) and the then-live trade-goods glyph `⇄` sat adjacent in one line at one weight
+    saying different things — *which rung* vs *which product* — and dropping the rung NAME left `⬆`
+    beside `⇊` reading as good-vs-bad rather than as neighbouring rungs of one ladder. Naming the rung
+    in text is what defuses that, so `POLICY_ICONS` is UNCHANGED; the products stay in words
+    (`SourceForecast.picker_products`) because an account other than food has no tintable pictogram —
+    fodder never had one, and arc #527 retired the `⇄` that was the argument's original subject (see
     `sprites-widgets.md`). **Line 2 renders one step SMALLER and one step quieter than line 1**
     (`POLICY_PICKER_METRIC_FONT_SIZE` 13 against the default control size line 1 keeps by carrying NO
     override, and `POLICY_PICKER_METRIC_ALPHA` 0.72): the name leads the glance and the numbers answer
-    it — at one size `0.32 food · 0.08 trade` competed with `♻ Sustain` instead of supporting it. **No `+`
+    it — at one size `0.32 food · 0.08 fodder` competed with `♻ Sustain` instead of supporting it. **No `+`
     sign on these numbers**: every rung
     is a gain, so a sign carries no information here (it stays on the work rows and map labels, where it
-    contrasts against consumption), and the render-only-when-non-zero rule still governs — a wolf rung
-    reads `2.70 trade` alone, never `0.00 food · 2.70 trade`.
+    contrasts against consumption), and the render-only-when-non-zero rule still governs — a sown hay
+    Field's rung reads `0.90 fodder` alone, never `0.00 food · 0.90 fodder`.
     **TWO FONT SIZES CANNOT LIVE IN ONE `Button.text`, so a rung is a CELL, not a button**
     (`HudWidgets._policy_rung_cell`): a zero-margin `MarginContainer` holding the `Button` (empty `text`,
     but still the box, the click, the disabled state, the focus and the tooltip) with the two-Label stack
@@ -3058,17 +3132,16 @@ discard is precisely what this axis split removed.
     retired (see `band-city-panel.md`). It existed because the long faces overran the L/R dock's ~354px
     zone at 3 abreast; the faces are one word each now and the grid measures 234px of a 356px column. Each `*_policy_takes` helper emits a **`{compact, full}` pair** per policy: the
     compact string is the face's SECOND LINE, the verbose full string moves to the tooltip. Extractive rungs →
-    compact `0.96 food` (`SourceForecast.picker_products(ceiling, trade)`, fed by `_forage_policy_takes` off `SourceForecast.forecast_inputs`),
+    compact `0.96 food` (`SourceForecast.picker_products(ceiling, fodder)`, fed by `_forage_policy_takes` off `SourceForecast.forecast_inputs`),
     full `up to +0.96/turn` (`POLICY_CAP_FORMAT` — the tooltip keeps the sign and the unit, being the one
-    place that says "up to"). INVESTMENT rungs on BOTH pickers → compact `→ 1.48 food · 0.37 trade`
+    place that says "up to"). INVESTMENT rungs on BOTH pickers → compact `→ 1.48 food`
     (`POLICY_PAYOFF_COMPACT` over the SAME `SourceForecast.picker_products` the extractive rungs use, so
-    the payoff obeys the render-only-when-non-zero rule too: a boar's Tame names both products, a
-    pure-meat species' names food alone, a plant rung is always food-only; the arrow is what keeps it
-    from reading as a take today), full `builds toward +1.48/turn · ⇄ +0.37 trade goods/turn`
-    (`POLICY_PAYOFF_FULL_FORMAT` joined to the shared `POLICY_CAP_TRADE_FORMAT` clause by
-    `TRADE_COMPONENT_SEPARATOR`, the same shape `extractive_take_pair` builds) — the
-    `tended_yield`/`field_yield` (forage) or `pastoral_yield`+`pastoral_trade` /
-    `corral_yield`+`corral_trade` (hunt) they build toward, NOT
+    the payoff obeys the render-only-when-non-zero rule too: a plant rung may name food and fodder, a
+    herd rung names food alone; the arrow is what keeps it
+    from reading as a take today), full `builds toward +1.48/turn`
+    (`POLICY_PAYOFF_FULL_FORMAT`, the same shape `extractive_take_pair` builds) — the
+    `tended_yield`/`field_yield` (forage) or `pastoral_yield` / `corral_yield` (hunt) they build toward,
+    NOT
     the prep dip, which reads below Sustain and was identical for both hunt rungs (quoting it made
     taming/penning look worse than hunting); a locked rung may still show its payoff, the gate-reason line
     (under the picker) explains the lock. **The tooltip carries the VERBOSE metric the face compacts** —
@@ -3078,12 +3151,13 @@ discard is precisely what this axis split removed.
     with **no** metric (the work inspector's picker, which passes no `takes`; a metric-less gated rung) is
     **line 1 alone** — glyph + name — so a button is never a lone glyph and never a lone number. The three
     pickers — forage / local hunt / expedition — wear an **identical** face: `<glyph> <Name>` over
-    `X food[ · Y trade][ · Z fodder]` (extractive, `up to X/turn` in the tooltip via
+    `X food[ · Z fodder]` (extractive, `up to X/turn` in the tooltip via
     `POLICY_CAP_FORMAT` / `SourceForecast.extractive_take_pair`) or over
-    `→ X food[ · Y trade][ · Z fodder]` (investment, Cultivate/Sow AND Tame/Corral). **Trade reaches
-    all four rungs and fodder the two PLANT ones** — the old "trade only ever appears on the two HERD
-    rungs" was true of a wire that no longer exists (#426); fodder's herd-side absence is structural,
-    no animal being harvested for feed. **The expedition picker no longer shows raid animals** (`≈N` / `EXPEDITION_TAKE_COMPACT`
+    `→ X food[ · Z fodder]` (investment, Cultivate/Sow AND Tame/Corral). **Fodder reaches the two PLANT
+    rungs only**, and that absence is structural rather than unfinished — no animal is harvested for
+    feed. (A third account, `trade`, reached all four until arc #527 retired it; the crop picker's own
+    per-material clauses are a BASKET-ROW readout and never reach a rung face — see `land-readouts.md`
+    → "WHAT A CASH CROP PAYS, PER MATERIAL".) **The expedition picker no longer shows raid animals** (`≈N` / `EXPEDITION_TAKE_COMPACT`
     is retired) — `SourceForecast.expedition_policy_takes` now emits each policy's **MAX obtainable food/turn**, the max
     over party sizes of `deliveredFood / trip_turns` (`trip_turns = turnsToFill + round-trip travel`), so it
     is **worker-independent** (never blinks as the Party stepper steps) and the four read ASCENDING Sustain <
@@ -3346,10 +3420,10 @@ discard is precisely what this axis split removed.
       **`bodyMass` → `body_mass`** (a real appended field, the 4th drop; BIOMASS, surfaced for
       completeness — it **cannot** drive the rhythm, see below) and **`foodPerAnimal` →
       `food_per_animal`** (slot 72, the food-unit quantity the rhythm actually divides by) and
-      **`pastoralYield` → `pastoral_yield`** (Tame's payoff, the pastoral twin of `corralYield`) and
-      the trade halves of both payoffs, **`pastoralTrade` → `pastoral_trade`** / **`corralTrade` →
-      `corral_trade`** (the newest slots, appended after `tradePerAnimal`; each is read as ONE pair
-      with its food sibling, so a prepared herd's rung face names both products) → bare keys
+      **`pastoralYield` → `pastoral_yield`** (Tame's payoff, the pastoral twin of `corralYield`).
+      **The trade halves of both payoffs are RETIRED with the account (arc #527)** — `pastoralTrade` /
+      `corralTrade` are gone from the wire and `pastoral_trade` / `corral_trade` from the decoder, so a
+      prepared herd's rung face names food alone → bare keys
       on the herd dict. `LaborAssignment`: `actualYield` / `sustainableYield` / `workersNeeded` +
       **`wastedYield` → `wasted_yield`** (the understaffing signal, also dropped) +
       **`overdraws` → `overdraws`** (the sim-answered overhunting ⚠ for the confirmed rows/map labels,
@@ -3375,16 +3449,19 @@ discard is precisely what this axis split removed.
       whose `foodPerAnimal` is 0/unknown → no cadence drawn (the honest rate still shows). The **hunt policy
       picker** (`HudWidgets.build_policy_picker(…, takes)`, fed
       `_hunt_policy_takes` off `huntPolicyCeilings`) shows each rung's **CAP** as the product line on the
-      button face's second row (`2.70 food · 0.41 trade`; full `up to X/turn` — `POLICY_CAP_FORMAT` — in the tooltip; the shared const also
+      button face's second row (`2.70 food`; full `up to X/turn` — `POLICY_CAP_FORMAT` — in the tooltip; the shared const also
       used by the forage picker — the source's worker-independent ceiling, FOOD units, distinct from the
       crew's carry-aware per-turn preview line below the picker) so Sustain < Surplus < Deplete < Eradicate
-      reads as ASCENDING. **THE ASCENT IS PER ACCOUNT, AND ONLY THE FOOD AND FODDER COLUMNS HOLD IT.**
-      `Deplete` alone carries `market.trade_goods_multiplier` (×4) — a POLICY markup on stripping a
-      source for sale — so its trade cell can sit ABOVE Eradicate's while the food cells still ascend
-      (measured on a live patch: Deplete 3.24 against Eradicate 1.21). A reader comparing the trade
-      column expecting a ladder is reading the wrong invariant, and a fixture that quietly sorted it
-      would misrepresent what the player sees; `ui_preview forage_three_accounts` ships the
-      non-monotone trade column deliberately. `wasted_yield > 0` renders a muted "· N.N wasted" understaffing note (the low-key
+      reads as ASCENDING. **THE ASCENT IS PER ACCOUNT**, and both surviving columns hold it.
+      The one column that did NOT was the retired trade account: `Deplete` alone carried
+      `market.trade_goods_multiplier` (×4) — a POLICY markup on stripping a source for sale — so its
+      trade cell could sit ABOVE Eradicate's while the food cells still ascended (measured on a live
+      patch: Deplete 3.24 against Eradicate 1.21), and `forage_three_accounts` shipped that
+      non-monotone column deliberately. The harvest-floor arc retired the markup (a deeper floor earns
+      more only by taking more BIOMASS) and arc #527 retired the account itself, so the frame carries
+      food and fodder alone. **The rule survives the exception**: a future account with a policy markup
+      on it would break the ladder again, and a fixture that quietly sorted it would misrepresent what
+      the player sees. `wasted_yield > 0` renders a muted "· N.N wasted" understaffing note (the low-key
       mirror of the WARN overstaff note). A MANAGED
       (corralled/pastoral, owed a herder crew, or composing-Corral) herd's local crew are **Herders**,
       not Hunters (`SourceForecast.is_managed_hunt_source` → the stepper + "Assign …" title noun; the
@@ -3546,42 +3623,259 @@ discard is precisely what this axis split removed.
 
 ---
 
-## A source pays a VECTOR OF ACCOUNTS — the render-only-when-non-zero rule (issues #337 / #426, `docs/plan_hunt_yield_model.md`)
+## A source pays a VECTOR OF ACCOUNTS — the render-only-when-non-zero rule (issues #337 / #426 / #527)
 
-A yield routes by ACCOUNT: provisions, trade goods, fodder. A hunt's is the species' own `HuntYield`
-times the policy's intensity; a patch's is its per-policy row. The client read only the food account,
-so an **inedible** species — a wolf, which pays pelts and no meat — rendered `+0.00` on every rung and
-looked like a source worth nothing. **#426 found the same lie on the plant side**, one account further
-out: a flax patch and a hay meadow rendered `0.00 food` on every rung for the same reason.
+A yield routes by ACCOUNT: **provisions and fodder**. A hunt's is the species' own `HuntYield` times
+the crew's take; a patch's is its per-biomass vector. The client read only the food account, so a hay
+meadow rendered `0.00 food` on every rung and looked like a source worth nothing.
 
 **THE ONE RULE, and it is applied at every surface: render a component only when it is non-zero.**
 
 | source | reads |
 |---|---|
-| deer (`provisions > 0`, `trade > 0`) | food **and** trade, **food leading** |
-| wolf (`provisions == 0`, `trade > 0`) | trade only — **never** a "0 food" line |
-| a staple patch | food only — **never** a "0 trade" line |
-| flax (a cash crop) | trade only |
-| a hay meadow | food · trade · **fodder** — all three, in wire order |
+| a deer | food only |
+| a staple patch | food only |
+| a hay meadow | food **and** fodder, **food leading** |
+| a sown hay Field | fodder only — **never** a "0 food" line |
+| an inedible quarry | its **MATERIALS**, each naming itself — and never a "0 food" line |
 
 A `0` printed as a number for a component the source does not produce is the false precision this
 whole arc exists to remove; it is not "more complete", it is wrong. The one place a zero survives is a
 component the source genuinely HAS and did not pay this turn (a worked row's `+0.00 /turn`, a rung
 whose ceiling exists and is empty).
 
-**THE ACCOUNT ORDER IS THE WIRE'S, NOT A RANKING** — provisions, trade goods, fodder — so a source
-paying two of the three reads the same left-to-right whichever two they are, and the eye finds an
-account by position rather than by re-reading the words.
+**THE ACCOUNT ORDER IS THE WIRE'S, NOT A RANKING** — provisions, then fodder — so a source reads the
+same left-to-right whichever accounts it pays, and the eye finds an account by position rather than by
+re-reading the words.
 
 **FODDER IS PLANT-ONLY, and that asymmetry is structural rather than unfinished work.** Fodder is feed
 grown for penned animals; `fauna_config::YieldAccounts` fills a structural zero there for every
 species, so no herd rung has a fodder term and none ever will. Do not "complete" the herd side by
 appending one — there is nothing on the sim side to put in it.
 
-**Trade is stated GENERICALLY** — `FoodIcons.TRADE_GOODS_GLYPH` (`⇄`) plus the words "trade goods". The
-sim models a **scalar**, so the client says so: there is deliberately **no per-species noun** (pelt /
-ivory / hide). A named good per species is a flavor layer on top of the scalar, explicitly deferred by
-the design doc, and inventing one here would put words on the wire's behalf the sim cannot back.
+### THE THIRD ACCOUNT WAS TRADE GOODS, AND IT IS RETIRED (arc #527)
+
+`trade_goods` was written on every harvest and read by nothing: every credit site already had a
+`credit_material_yield` beside it accounting the SAME take's concrete materials, so the scalar was a
+flattened duplicate of the model the crafting arc exists to protect — a mammoth hide and a hare pelt
+are both `hide` and are not the same thing. The sim retired the axis; **every client surface that
+spelled it is gone with it**, and this is the list, because each one is a place where "put the number
+back" looks like the obvious repair:
+
+| retired | what it was |
+|---|---|
+| `FoodIcons.TRADE_GOODS_GLYPH` (`⇄`) | the mark every non-food component of a yield wore |
+| `SourceForecast.YIELD_ACCOUNT_TRADE`, `format_trade`, `trade_rate_of`, `PICKER_TRADE_PRODUCT_FORMAT`, `POLICY_CAP_TRADE_FORMAT`, `TRADE_TOOLTIP_FORMAT`, `TRADE_RANGE_*_KEY`, `YIELD_RANGE_TRADE_CLAUSE_FORMAT`, `HUNT_FORECAST_TRADE_FORMAT`, `DENIAL_TAKE_TRADE_FORMAT`, `DENIAL_TAKE_LEFT_TRADE_FORMAT`, `DENIAL_TAKE_LEFT_JOIN` | the account's whole vocabulary |
+| `FORECAST_PAYOFF_TRADE_KEYS`, `FORECAST_TRADE_PER_BIOMASS_KEY`, `FORECAST_PER_WORKER_TRADE_KEY`, `FORECAST_TRADE_PER_ANIMAL_KEY` | its wire keys |
+| `YIELD_AXIS_PROVISIONS` / `YIELD_AXIS_TRADE`, `herd_yield_axis` | the axis CHOICE (below) |
+| `HudConst.STORE_ITEM_TRADE_GOODS`; `DetailFormat.band_trade_stock` / `sum_realized_trade` / `band_trade_income` / `band_has_trade_flow`; `DisclosureController.trade_breakdown_lines`; `HudDisclosureVocab.BREAKDOWN_KIND_TRADE` / `DETAIL_ROW_TRADE`; `HudWorkVocab.WORK_TRADE_TOTAL_TOOLTIP` / `FACTION_TRADE_STOCK_FORMAT` | the band's Trade row, its breakdown, the faction rollup's row and the work head's total |
+| `FaunaPanel.HERD_TRADE_GOODS_YIELD_PER_BIOMASS` | a hardcoded client-side copy of a sim rate |
+
+**WHAT REPLACES IT IS A VECTOR, AND ONLY ON THE CROP PICKER.** A harvest's non-food, non-feed product
+is MATERIALS — `fibre`, `hide`, `tobacco` — and the wire states them **per material**
+(`FloraShareInfo.sowMaterialPayoff` / `cultivateMaterialPayoff`, decoded as `sow_material_payoff` /
+`cultivate_material_payoff` on each `composition` entry). **Never sum them into one materials/turn
+figure, anywhere**: that is the retired axis under a new name, and it re-collapses the distinction the
+materials model exists to keep. The one surface that quotes them is the crop picker, one clause per
+material — `land-readouts.md` → "WHAT A CASH CROP PAYS, PER MATERIAL".
+
+**A MATERIAL NEEDS NO GLYPH, AND MUST NOT BE GIVEN ONE.** `⇄` earned its job by being ONE mark for a
+whole product, because the sim modelled a scalar; a material has a NAME, and a name is a better mark
+than an abstract arrow saying only "not food". So a material row reads `0.29 fibre`, exactly as its
+neighbour reads `1.80 hay`, and there is no generic account left for a generic mark to stand for.
+
+### AN INEDIBLE QUARRY QUOTES WHAT IT PAYS, IN THREE FIELDS
+
+A wolf's `provisionsPerBiomass` is `0` and it used to pay `trade_goods_per_biomass: 0.02`, so it had
+a rate. Retiring the axis took that away and nothing replaced it for one release: the compose sheet
+quoted no rate, the board row and the map label read `+0.00`, and the pelts still landed in the
+band's `MaterialStore` every turn. **Three wire fields close it**, and which one a surface reads is
+the whole of the rule:
+
+| field | on | what it is | who reads it |
+|---|---|---|---|
+| `material_per_biomass` | a herd **and a patch** | what ONE UNIT of its biomass is MADE OF, per material | the ceiling, composed at the dragged floor |
+| `per_worker_material` | a herd **and a patch** | what ONE WORKER brings home per turn, per material | the crew term of the preview's `min` |
+| `corral_material` / `pastoral_material` | a herd | what the built RUNG pays once it stands | the two investment rungs' payoff faces |
+| `material_yield` | a labor assignment | what the source actually CREDITED this turn | the board row, the map label, the inspector strip |
+| `delivered_material` | a `HuntTripForecast` row | what a whole TRIP lands, per material | the launch sheet's raid line, its readout box, its preset faces |
+| `material_batches` | a cohort (`PopulationCohortState`) | what is IN THE PACK right now, per pile | the in-flight party's `Carried:` row |
+| `delivered_material` | a `DenialRow` too | what a DENIAL raid salvages, per material | the denial sheet's take line |
+
+- **THE TWO RATES ARE THE FOOD SIDE'S OWN TERMS, ONE ACCOUNT OUT.** `material_per_biomass` is the
+  twin of `provisionsPerBiomass`, so `forecast_inputs` composes `ceiling(floor) = max(0, B − floor·K)
+  × rate` per material through the identical `escapement_room` the two scalars go through — which is
+  why it is a per-biomass RATE and not a pre-composed ceiling: it has to answer at whatever floor the
+  player has dragged to. `per_worker_material` is the twin of `perWorkerYield` and carries the build
+  DIP for the same reason `per_worker` does. `SourceForecast.expected_materials` is the `min` over
+  the pair, unioned BY ID rather than zipped by position: a rate with no ceiling is a herd standing at
+  its floor, which takes nothing and correctly renders no row.
+- **THERE IS ONE MATERIAL CEILING, NOT THE SCALARS' ROOM/HOLD PAIR.** `forecast_inputs` publishes
+  `material_ceiling` and no `hold_material_ceiling`, and `expected_materials` takes no ceiling
+  selector. It had both for a release and the hold arm was **unreachable** — its one caller passed the
+  room at every call site — so a ceiling was computed on every forecast for a reader that did not
+  exist. **A per-material `after` reading is not something any surface states**: the sheet's
+  `now → after` is food and fodder alone. The selector was also a way to be wrong quietly, an unknown
+  key reading as *every ceiling is zero*, i.e. a silent empty take. The pair comes back the day a
+  surface genuinely wants the material `after`, with that surface as its caller.
+- **`material_yield` IS NOT A FORECAST, AND READING IT AS ONE IS THE TRAP.** The sim seeds it EMPTY
+  on a pre-commit row **by design** — projecting materials needs the take in BIOMASS while the
+  forecast resolves in currency space, where an inedible species has no positive axis. So an empty
+  answer means either "pays no material" or "no take has resolved yet", and both render as no row.
+  **A compose sheet must therefore read the two RATES**, and `_hunt_material_rows` is the one place
+  that composition lives (`DrawerComposeController`). `SourceForecast.material_rows_of` is the
+  resolved reader, the material twin of `fodder_rate_of`, and it likewise has no
+  realized/projected sibling to fall back from.
+- **THE MATERIAL ARM IS INDEPENDENT OF THE FOOD AXIS, and that independence is the whole point.**
+  Both food paths in `_hunt_yield_model` bail on an inedible quarry — its per-animal quantum is
+  honestly `0`, so there is nothing to quantise and nothing to smooth — and the model returned `{}`
+  there, which is what left the sheet quoting nothing. The material branch answers on its own, with
+  **no overdraw verdict**: the sustainability bar is the food peak's ceiling in the account the take
+  is measured in, and this take is measured in none of it. The drawdown is real; the client has no
+  material sustainable-yield to judge it against and must not invent one.
+- **A MATERIAL VECTOR IS A `forecast_is_known` WITNESS.** `zero_account_of` cannot answer this — it
+  names which SCALAR zero is worth printing, and a material's empty answer renders as no row, so it
+  has no zero to nominate. Without the extra arm a wolf reads `known == false` everywhere: no
+  floor-preset caps, no compose readout, no worker cap. That is the client calling a fully-described
+  herd undescribed because the one account it pays is not a scalar.
+- **MATERIALS ARE ROWS OF `yield_rows`' OWN VECTOR**, appended after the two scalars under the
+  identical non-zero gate, so `yield_components` / `picker_products` / `magnitude_components` /
+  `extractive_take_pair` gained the account without a second code path to spell it. **A material
+  row's ACCOUNT IS ITS OWN ID** — the material names itself, `YIELD_ACCOUNT_UNITS` has no entry for
+  it, and the unit falls back to the id, which is the display word. (That fallback used to be `""`,
+  which printed a bare `0.22` with nothing saying what it was.) **They also answer the ZERO
+  question**: a source paying a material pays SOMETHING, so no zero survives beside it, and a wolf
+  never reads `0.00 food · 0.22 hide`.
+### THE PLANT WEB GOT THE SAME ARGUMENT, ONE RELEASE LATE (the cash-crop compose sheet)
+
+A tile 32% cotton and 26% tobacco composed a forage sheet reading `0.24 → 0.18 FOOD · — FODDER` and
+never mentioned the fibre and tobacco the gather actually banks. Reported from a screenshot. The
+client half was **one argument**: `_forage_yield_model` ended with
+
+```gdscript
+var rows := SourceForecast.yield_rows(actual, actual_fodder, zero_account, after)
+```
+
+— four arguments, where its hunt twin already passed five. **The bug is worth naming precisely,
+because "the plant web has no materials" was never true and nothing in the code said it was**: the
+composition was shared, the keys were prefix-aware, and the only thing missing was the call.
+
+- **ONE COMPOSITION SERVES BOTH WEBS, which is why this was a call and not a derivation.**
+  `forecast_inputs` reads `prefix + FORECAST_MATERIAL_PER_BIOMASS_KEY` and
+  `prefix + FORECAST_PER_WORKER_MATERIAL_KEY`; a patch spells them `patch_`-prefixed on `tile_info`
+  and bare in `forage_patch_lookup()`, a herd spells them bare. So the patch's ceiling composes at the
+  dragged floor by the same `max(0, B − floor·K) × rate` rule, and `expected_materials` clamps
+  `min(workers × rate, ceiling)` per material exactly as the hunt sheet does.
+- **THE PATCH'S PER-WORKER TERM HAS THE SEASONAL WEIGHT ALREADY FOLDED IN**, as `per_worker_biomass`
+  does — so it is honestly EMPTY in a dead season and **nothing may divide by it**. A client that
+  re-applied the weight would double it; one that recovered a rate by dividing by it would divide by
+  zero on the very tile the emptiness describes.
+- **THE FLOOR PRESETS QUOTE IT TOO, and the wild-fodder LOCK does not reach it.** That gate is
+  Foddering's — a claim about FEED and about whether the faction has learned to keep a pen — and a
+  gatherer banks a cash crop's fibre whether or not it ever has.
+- **THE CROP PICKER IS A DIFFERENT QUESTION AND STAYS ONE.** Its `sow_material_payoff` /
+  `cultivate_material_payoff` are per PLANT and per RUNG — what one species would pay if you built on
+  it. These two are the PATCH's rates for the wild rung being gathered right now. A tile-level rung
+  figure would sum across the basket, and summing is the retired axis under a new name.
+
+**THE TWO INVESTMENT RUNGS ON THE ANIMAL WEB WERE THE OTHER MISS.** `corral_yield` /
+`pastoral_yield` are PROVISIONS, so an inedible quarry's are honestly `0` and both rungs advertised
+`0.00 food` or nothing at all — the two rungs a player would actually take on such a species offering
+no reason to take them. `FORECAST_PAYOFF_MATERIAL_KEYS` (`corral_material` / `pastoral_material`) is
+the material half of that payoff, read by `improvement_forecast` into `payoff_material` and by
+`forecast_inputs`' MANAGED branch into the built rung's ceiling. **The plant web is deliberately
+absent from that table**, for the crop-picker reason above.
+
+**AND THE DENIAL ROW.** A denial raid on an inedible quarry stated its kills and stopped — a mission
+that destroys and salvages nothing, which is false: the party hauls every pelt (`carry_room_biomass`
+answers `NO_CARRY_BOUND` for a species paying no provisions, so the pack never fills). `DenialRow`'s
+own `delivered_material` is what it brings home, one ` · brings home 22.00 hide` clause per material.
+**The verb is repeated rather than shared with the food clause**, because that clause is optional and
+a shared verb would strand the materials on a quarry that pays no meat — precisely the quarry the
+clause exists for. The sim states no per-material WASTE for a denial row, so the waste clause stays
+food alone while the haul clause beside it is a vector.
+
+**Frames.** **`forage_cash_crop_gather`** — the screenshot's tile, on the WILD rung with no
+improvement composed, reading `0.32 → 0.15 FOOD · 0.09 FIBRE · 0.06 TOBACCO`. Five claims: the crew
+composes at all, each material is quoted, **each has a ROW OF ITS OWN** (a structural claim, not a
+needle for the sum's digits — that needle collided with the food row's `after` reading exactly once),
+and the FOOD row still reads, or "quote the materials" would be satisfied by a sheet that stopped
+quoting the food. `herd_hunt_pelts_only` gained the two rung payoffs, asserted PNG-less through
+`improvement_forecast` → `_payoff_terms`: that wolf's `husbandry_ceiling` is `wild`, so the sheet
+renders no Tame or Corral rung to read a face off, which is correct behaviour and exactly why the
+claim cannot be made on the render. `band_panel_compose_deny`'s edible boar is the live control for
+the denial take, whose inedible half is likewise asserted on the producer.
+
+### THE EXPEDITION HALF: what a raid LANDS, and what is in the pack on the way home
+
+A raid on an inedible quarry read as a DENIAL MISSION — "brings nothing home" — for the release in
+which the trade account was gone and no per-trip material figure existed. It was false: the sim banks
+the hides. Two fields close it, at two different registers.
+
+**`delivered_material` — the LAUNCH sheet, and it is a PAYLOAD rather than a rate.** It rides every
+row of the `HuntTripForecast` reply (`at_composed` and each `per_preset`), projected off the same
+carried biomass `delivered_food` is, so the two readouts of one raid cannot disagree.
+
+- **THE DENIAL AND EMPTY TESTS BOTH HAD TO LEARN ABOUT IT, and forgetting the second is the subtle
+  bug.** `hunt_trip_forecast` resolves the payload FIRST, then: *denial* is `delivers_food == false`
+  **and no material** — a raid that hauls something is a real delivery whatever account that
+  something is in — and *empty* is `delivered_food <= 0` **and no material**. A food-only empty test
+  sends every material-landing raid down the returns-empty branch, printing a refusal at a party that
+  is walking home loaded. `herd_hunt_pelts_raid` asserts both negatives, because fixing only the
+  denial branch moves the frame from one wrong sentence to another.
+- **THE ONE-LINE FORM ROUNDS TO WHOLE UNITS, THE READOUT BOX DOES NOT, and that is the register
+  difference rather than a drift.** `_raid_payload_suffix` appends `· ~3 hide` beside `· ~20 food`:
+  this line quotes a TRIP, and a `0.22` beside a `~20 food` would read as a per-turn number smuggled
+  onto a per-trip line. It is the ONE place a material is rounded — every other material readout in
+  the client is a rate at `YIELD_DECIMALS`. The box (`HudWidgets._trip_yield_rows`) states the exact
+  magnitudes under the animal count, through `yield_rows` like every other readout, so an inedible
+  quarry's trip reads `≈5 GREY WOLF` over `2.75 HIDE` and nothing else.
+- **THE PRESET FACES DIVIDE BY THE TRIP** (`expedition_policy_takes`), because that metric is a
+  per-turn rate — the max obtainable over party sizes. Same payload, two spellings, one for each
+  register. A rung reaches the picker when it pays SOMETHING: gating on food alone left an inedible
+  quarry's rungs blank, which is the "worth nothing" reading this whole arc removes.
+
+**`material_batches` — the IN-FLIGHT pack, and it is a different SHAPE from everything else here.**
+`PopulationCohortState.materialBatches` is resolved from `cohort.stores` with **no resident-band
+gate**, so a detached party's carried materials were on the wire the whole time and nothing rendered
+them: a scout hauled a wolf home and the UI never mentioned the hide.
+
+- **A BATCH IS NOT A PAYOFF ROW.** Everything else in this arc is `{material_id, amount}` — one figure
+  per material. A batch is one pile of one material **AT ONE RATING**, carrying a characteristic
+  vector, so two piles of `hide` at different readings are **two terms and must not be merged**. That
+  distinction is the entire reason the trade scalar was retired; summing batches rebuilds it out of
+  its own replacement.
+- **IT IS A CLAUSE ON `Carried:`, NEVER AN EIGHTH LINE.** The parties inspector strip's budget is
+  fully spent at SEVEN lines in a ~300px clipping zone, and that section's own rule for a new fact is
+  the band zone's SHORT-tier idiom: two facts that read as one sentence cost one row. What the party
+  is carrying home IS the `Carried:` sentence. `band-city-panel.md` → "The parties strip's SEVEN
+  lines" owns the budget.
+- **THE PER-AXIS READINGS ARE THE CRAFTING PANEL'S REGISTER, deliberately not restated.** That panel
+  renders every batch's amount beside its `tough: excellent` chips for the band this party folds back
+  into; the strip answers *what is coming home and how much*, in a box that cannot afford a
+  characteristic vector per pile. **If piles of one material become common on a party, the fix is the
+  batch's band NAME inside its term — never a sum.**
+- **THE BATCH KEYS ARE `HudCraftingVocab`'s, read rather than re-declared**, and the amount wears its
+  `BATCH_AMOUNT_FORMAT`, so a pile reads the same to one decimal wherever it is quoted. **A SCOUT
+  CARRIES THE CLAUSE TOO** (on its `Provisions:` row): a scouting party that walks over a kill banks
+  its materials exactly as a raid does, and the mission it was sent on is no reason to hide its pack.
+
+**Frames.** `herd_hunt_pelts_raid` — the wolf as an expedition target, now a real delivery reading
+`≈5 GREY WOLF` over `2.75 HIDE` with an ordinary Send, asserted on three claims (not denial, not
+empty, names the hide). `band_panel_worst_case_party` — the strip's own worst case, whose
+`Carried: 18 / 18 (5 turns) · 4.5 hide · 1.2 hide · FULL` carries TWO piles of one material at two
+ratings; the third assertion there is that their SUM does not appear, which is the claim a fixture
+with one pile per material could not make.
+
+**Frames.** `herd_hunt_pelts_only` — the compose sheet reading `0.11 HIDE` at the crew the stepper
+landed on, with the floor presets quoting hide in their tooltips and `strip` quoting strictly more
+than `peak` (the claim that the ceiling composes AT a floor rather than being a constant repeated
+four times). It is asserted as a PAIR with `herd_hunt_both_products` and carries BOTH halves: no
+`0.00 FOOD`, **and** a live hide rate — the negative alone is satisfied by a readout that prints
+nothing. `band_panel_work_trade_rows` — the resolved row, `+0.22 hide` beside the deer's `+0.20`,
+with the deer as the control that must be UNCHANGED. `map_preview`'s `_assert_yield_label_component`
+drives the full fall-through, including the two negatives (food still leads a source paying food AND
+a material; fodder still beats a material).
 
 ### The shared layer (`SourceForecast`)
 
@@ -3590,99 +3884,71 @@ the design doc, and inventing one here would put words on the wire's behalf the 
   half of the smallest quantity `YIELD_DECIMALS` can show). It read `>= FOOD_FLOW_MIN` (0.001) until
   #426 — the *food-flow* floor, which is a claim about the SIM — while every caller renders at two
   decimals, so a rate in between PASSED the gate and then printed as `0.00`: a single forager on a
-  staple patch earns ~0.003 trade goods a turn, and the preview line read `+0.08 /turn · ⇄ +0.00 ·
-  0.13 fodder`. **A gate finer than its formatter's resolution admits the very thing it exists to
-  stop.** `FOOD_FLOW_MIN` keeps its own separate job — whether the BAND has a food flow at all is a
-  question about the sim, not about how many decimals a label shows.
-- `format_trade(v)` → `⇄ +0.35`; **`yield_components(food, trade, fodder = 0)`** → `+0.31 /turn · ⇄
-  +0.12`, `+0.08 /turn · 0.13 fodder` — the ONE joiner every per-turn readout goes through, so no two
-  surfaces can word the vector differently. The fodder term wears the WORD (fodder has no glyph);
-  every hunt-side caller leaves it defaulted and reads exactly as before.
-- **`magnitude_components(food, trade, fodder = 0)`** → `0.20 ⇄ 0.22`, `0.40 fodder` — its COMPACT
-  twin for a surface that supplies its own framing and states levels rather than deltas (the work
-  zone's filter chips). Same rule, same food-leads order, bare magnitudes joined by
-  `COMPACT_COMPONENT_SEPARATOR` (a space, since those chips already spend their `·` separating a count
-  from its total). The fodder term wears the WORD for `yield_components`' reason, and a chip covering
-  only hay-bearing patches states their feed rather than a `0.00` denying the kind produces anything.
-- **`extractive_take_pair(food, trade, fodder = 0)`** — the rung metric `{compact, full}` for ALL
-  THREE pickers. The food-only `extractive_take` the forage picker used is **deleted**, not kept as an
-  alias: its justification ("the plant web projects no trade rate") described a wire that no longer
-  exists, and one joiner is what keeps the three pickers wearing one face.
+  staple patch earned ~0.003 of the then-third account a turn, and the preview line read
+  `+0.08 /turn · ⇄ +0.00 · 0.13 fodder`. **A gate finer than its formatter's resolution admits the very
+  thing it exists to stop.** `FOOD_FLOW_MIN` keeps its own separate job — whether the BAND has a food
+  flow at all is a question about the sim, not about how many decimals a label shows.
+- **`yield_components(food, fodder = 0)`** → `+0.31 /turn`, `+0.08 /turn · 0.13 fodder` — the ONE
+  joiner every per-turn readout goes through, so no two surfaces can word the vector differently. The
+  fodder term wears the WORD (fodder has no glyph); every hunt-side caller leaves it defaulted.
+- **`magnitude_components(food, fodder = 0)`** → `0.40 fodder` — its COMPACT twin for a surface that
+  supplies its own framing and states levels rather than deltas (the work zone's filter chips). Same
+  rule, same food-leads order, bare magnitudes joined by `COMPACT_COMPONENT_SEPARATOR` (a space, since
+  those chips already spend their `·` separating a count from its total).
+- **`extractive_take_pair(food, fodder = 0)`** — the rung metric `{compact, full}` for ALL THREE
+  pickers. The food-only `extractive_take` the forage picker used is **deleted**, not kept as an
+  alias: one joiner is what keeps the three pickers wearing one face.
 - **The rule reaches the INVESTMENT payoffs too**, not just the extractive caps.
-  `SourceForecast.FORECAST_PAYOFF_TRADE_KEYS` now spans **all four rungs, both webs** (`corral` →
-  `corral_trade`, `tame` → `pastoral_trade`, `cultivate` → `tended_trade`, `sow` → `field_trade`), and
-  `FORECAST_PAYOFF_FODDER_KEYS` covers the **plant pair only** (`tended_fodder` / `field_fodder`).
-  Together they give `forecast_inputs` a **`payoff_trade`** and **`payoff_fodder`** beside `payoff`,
-  and `DrawerComposeController._payoff_take(payoff, payoff_trade, payoff_fodder = 0)` builds the same
-  shape `extractive_take_pair` does: `picker_products` on the face,
-  the `POLICY_PAYOFF_FULL_FORMAT` food clause joined to the shared `POLICY_CAP_TRADE_FORMAT` trade
-  clause in the tooltip, each half only when `has_component`. `POLICY_CAP_TRADE_FORMAT` is bare
-  wording with no "up to" in it, which is why it serves both the cap and the payoff despite its name.
-  Both `_hunt_policy_takes` and `_forage_policy_takes` emit a face when ANY account is non-zero, so a
-  trade-only or fodder-only payoff still gets one rather than falling back to a bare glyph + name.
-  **A resolved crop substitutes all three of its own together** — `_flora_entry_payoff` /
-  `_flora_entry_trade_payoff` / `_flora_entry_fodder_payoff` in one branch — so a face can never mix
-  one crop's food with another's fodder; with no crop resolved the patch's species-BLIND quotes stand,
-  which is the right answer for a COMMITTED patch rather than a fallback.
-- **`picker_products(food, trade, fodder = 0)`** → `0.60 food · 0.01 trade · 0.20 fodder` — the same
-  rule and the same food-leads order **in WORDS and without the sign**, for the ONE surface that has room to name its products: the
-  policy picker's two-line rung face (`compact` above is written in terms of it). The picker names
-  rather than marks because its line 1 already carries a glyph naming the RUNG, and two glyph families
-  in one line at one weight is the axis collision this treatment removed — see the picker notes above
-  and `sprites-widgets.md`. **The word is the ACCOUNT's, not the commodity's**: this line says `fodder`
-  while the crop-basket rows below it say `hay` (`HudFloraVocab.FLORA_CROP_HAY_CLAUSE_FORMAT`),
-  because a basket row names one PLANT and what that plant pays, and hay is what hay grass pays.
-  **A three-account face did NOT change the picker's column ceiling, and that is a measurement rather
-  than an assumption**: a wide-face ceiling of 2 was written for exactly this face and the rendered
-  frame refuted it — three abreast comes out ~555px against the deer hunt picker's long-standing ~546,
-  and 3 + 3 reads better than 2 + 2 + 2. **"Nothing clips" was the weak half of that measurement and
-  has since been made real**: those widths were never compared against the compose card, which was
-  pinned at a nominal 340 and let its inner `PanelContainer` grow out of it, so a frame looked right
-  at any picker width. The card now fits its content and `_assert_compose_sheet_fits` compares the two
-  — so re-adding a column ceiling needs a row that overruns the card, and the harness can now say
-  whether one does.- **`trade_rate_of(source)`** — the ONE per-source trade rate, and the owner of the
-  `realized_trade_yield` → `trade_yield` fallback. **The sentinel is the VALUE `0`, not an absent
-  key**: forage's projection is the documented `PLANT_TRADE_FORECAST_NOT_YET_PROJECTED` zero, and the
-  decoder inserts the key unconditionally — so the `has("realized_trade_yield")` spelling both readers
-  used to carry never once fired, and every forage source's trade read as nothing (a work row with no
-  `⇄`, a band Trade row at `+0.00`). `source_yield_readout` and `DetailFormat.sum_realized_trade` both
-  call it, which is what keeps a per-source row and the band's headline in agreement by construction.
-- **`fodder_rate_of(source)`** — the ONE per-source FEED rate (issue #449), and the contrast with the
-  bullet above is the point. That one must test the VALUE `> 0` because it has a sentinel to dodge;
-  fodder has none, so a plain read of `fodder_yield` is complete. **There is deliberately no
-  `realized_fodder_yield`**: a realized rate is a forward PROJECTION and only the animal web makes
-  one, while fodder is paid by the plant web alone — whose projection is the very gap that leaves
-  `realized_trade_yield` at `0.0` there — so a projected-fodder field would be a constant zero on the
-  only web that can pay it. The actual IS the honest rate, which is exactly where `trade_rate_of`'s
-  fallback already lands for every forage source. **It reaches the work board only because
-  `fodder_yield` is in `HudBandLaborState.OPTIONAL_YIELD_KEYS`** — a key not copied through
-  `effective_worker_map` does not exist as far as the board, its chips and its header totals are
-  concerned, whatever the decoder published.
-- `hunt_policy_trade_ceiling` reads **`hunt_policy_trade_ceilings`**, the trade twin of
-  `hunt_policy_ceilings`. Two dicts keyed by the same policy strings rather than one dict of pairs:
-  the decoder fills both in ONE pass over the single wire list, so they cannot drift, and every
-  existing food-only reader is untouched.
+  `FORECAST_PAYOFF_FODDER_KEYS` covers the **plant pair only** (`tended_fodder` / `field_fodder`) and
+  gives `forecast_inputs` a **`payoff_fodder`** beside `payoff`; `DrawerComposeController._payoff_take`
+  builds the same shape `extractive_take_pair` does. **A resolved crop substitutes all of its own
+  together** — `_flora_entry_payoff` / `_flora_entry_fodder_payoff` / `_flora_entry_material_payoff` in
+  one branch — so a face can never mix one crop's food with another's fodder.
+- **`picker_products(food, fodder = 0)`** → `0.60 food · 0.20 fodder` — the same rule and the same
+  food-leads order **in WORDS and without the sign**, for the ONE surface with room to name its
+  products: the policy picker's two-line rung face (`compact` above is written in terms of it). The
+  picker names rather than marks because line 1 already carries a glyph naming the RUNG, and two glyph
+  families in one line at one weight is the axis collision that treatment removed. **The word is the
+  ACCOUNT's, not the commodity's**: this line says `fodder` while the crop-basket rows below it say
+  `hay`, because a basket row names one PLANT and what that plant pays.
+- **`fodder_rate_of(source)`** — the ONE per-source FEED rate (issue #449). **A plain read is the whole
+  of it**: there is deliberately no `realized_fodder_yield`, a realized rate being a forward PROJECTION
+  only the animal web makes while fodder is paid by the plant web alone, so a projected-fodder field
+  would be a constant zero on the only web that can pay it. Its retired sibling `trade_rate_of` had a
+  `realized_trade_yield` sentinel to dodge and needed a `> 0` test; nothing here does. **It reaches the
+  work board only because `fodder_yield` is in `HudBandLaborState.OPTIONAL_YIELD_KEYS`** — a key not
+  copied through `effective_worker_map` does not exist as far as the board, its chips and its header
+  totals are concerned, whatever the decoder published.
+- **`MATERIAL_PAYOFF_ID_KEY` / `MATERIAL_PAYOFF_AMOUNT_KEY` + `material_payoff_rows`** — the two keys
+  of one per-material row and the normalizer every material vector runs through. A row naming no
+  material is dropped: an id is what a row is FOR, and a nameless amount could only be rendered as the
+  summed scalar this arc refuses. Beside it: **`scaled_material_rows`** (one vector times a scalar —
+  the room, the dip, the band's output multiplier; every material scales by the SAME factor, because
+  they are one biomass flow through a fixed per-biomass vector), **`expected_materials`** (the
+  `min(workers × per_worker, ceiling)` clamp), **`material_rows_of`** (the RESOLVED yield off an
+  assignment) and **`signed_material_components`** (every material, signed, joined — and `""` when
+  there is nothing to say, which is the gate both one-slot surfaces test).
 
-### THE AXIS — what a divide-by-a-quantum consumer must use
+### THE AXIS IS PROVISIONS, AND IT IS NO LONGER A CHOICE
 
-`herd_yield_axis` / `herd_axis_rates` are the client mirror of the sim's `ratio_axis()`: the first
-component with a POSITIVE rate, **provisions preferred** so every edible species divides exactly as it
-did before this arc, trade for an inedible one. `forecast_inputs` returns the resolved triple
-(`axis_per_worker` / `axis_ceiling` / `axis_per_animal`) beside the raw per-component fields, and
-**everything that divides by a per-animal quantum reads the triple** — the kill rhythm, the
-carry-aware delivered take (`_hunt_delivered_and_waste`), the averaging window
-(`_hunt_avg_window_turns`), and the whole-animal worker cap in `max_useful_workers`. A wolf's
-`food_per_animal` is honestly `0`, so a food-only derivation divides by zero and silently produces
-nothing at all. The animals-per-turn line needs no currency word either way: **an animal count is a
+`herd_axis_rates` resolves the per-worker rate, the ceiling and the one-animal quantum a quantised take
+divides by. It used to pick between provisions and trade (the sim's `ratio_axis()` rule: the first
+component with a positive rate) because an inedible quarry's food quantum is honestly `0` and a
+food-only derivation divides by zero. **With the trade account retired there is no second scalar to
+fall back to**, so `herd_yield_axis` and `YIELD_AXIS_*` are deleted and the `axis_*` keys on
+`forecast_inputs` are aliases of the food terms rather than a resolution — kept under their own names
+because they mark WHICH question a consumer is asking. An inedible quarry answers zeros there, and every
+consumer's own guard (`per_animal > 0`, `has_component`) turns its readouts off rather than quoting a
+false food rate. The animals-per-turn line needs no currency word either way: **an animal count is a
 ratio, and a ratio is unit-free.**
 
 ### NEVER clamp a per-herd preview with `huntPerWorkerProvisions`
 
 `PopulationCohortState.hunt_per_worker_provisions` is a **species-BLIND** per-cohort echo of the global
 `hunt.provisions_per_biomass` — the cohort has no herd in scope, so it cannot know the quarry is
-inedible, and quoting its positive food rate against a wolf's all-zero food ceilings is exactly what
-manufactures phantom food. The species-aware per-herd rates are `HerdTelemetryState.perWorkerYield` /
-**`perWorkerTrade`**, and the local-hunt preview clamps with THOSE, per component. (The cohort field
+inedible, and quoting its positive food rate against an inedible species' all-zero food ceilings is
+exactly what manufactures phantom food. The species-aware per-herd rate is
+`HerdTelemetryState.perWorkerYield`, and the local-hunt preview clamps with THAT. (The cohort field
 survives as the expedition **outfit** lever, before a target is chosen.)
 
 ### `deliversFood` WAS REDEFINED — re-read every branch that keys off it
@@ -3692,14 +3958,18 @@ all of them live in `hunt_trip_forecast` / `hunt_forecast_line_bbcode` / `expedi
 
 - **Eradicate DELIVERS.** It banks a whole-stock windfall like every other rung, and its raid line
   quotes that payload instead of "denial mission, delivers no food".
-- A **denial** raid is now one that lands NOTHING IN EITHER CURRENCY (`delivers_food == false` **and**
-  `delivers_trade == false`) — a property of the QUARRY, never inferred from the policy string.
-- **"Too lean to raid"** tests `delivered_food <= 0 **and** delivered_trade <= 0`; reading food alone
-  would call every wolf raid empty.
-- `expedition_policy_takes` gates each component on its OWN `delivers_*` flag, and
-  `expedition_useful_cap` scans the plateau on the component the quarry pays (an inedible species
-  delivers 0 food at every party size, so a food-only scan finds no plateau and the party stepper
-  loses its cap).
+- A **denial** raid is one that **brings nothing home** — `delivers_food == false` **and** an empty
+  `delivered_material`. Its `delivers_trade` half went with the axis (arc #527), which briefly made
+  every inedible quarry a denial mission; `delivered_material` is what took it back out, because a
+  raid that hauls hides is a real delivery whatever account that something is in. Still a property of
+  the QUARRY and its payload, never inferred from the policy string.
+- **"Too lean to raid"** tests `delivered_food <= 0` **and** an empty `delivered_material` — a
+  food-only test sends every material-landing raid down that branch and prints a refusal at a party
+  walking home loaded.
+- `expedition_policy_takes` gates the food component on `delivers_food` and reaches the picker when a
+  rung pays food **or** a material; `expedition_useful_cap` scans the plateau on food alone — an
+  inedible species delivers 0 food at every party size, so the scan finds no
+  plateau, which is the honest reading of a raid with nothing to bring home.
 
 ### The one-slot surfaces show the product the species PAYS
 
@@ -3707,78 +3977,64 @@ Two readouts have a single narrow slot and cannot carry a pair — the **work-bo
 rate column (`BandPanelController._work_row_rate_text`) and the **map's** on-tile yield label
 (`BandOverlayRenderer._draw_yield_label`, whose choice is split out as `_yield_label_rate_text` so a
 harness can ask it — a draw call renders to a canvas and no assertion can read a glyph back off one).
-Both fall through **food → trade → fodder**, in the wire's own order: food when there is food (so
-every forage patch and edible quarry is unchanged), else the trade rate marked with the glyph
-(`⇄+0.22`), else the fodder rate spelled with the WORD (`+0.40 fodder`) — fodder has no glyph, and
-borrowing another account's would say the wrong thing. The work **inspector strip** beside the row
-states every component in full, which is where a deer's trade shows.
+Both fall through **food → fodder → materials**, in the wire's own order: food when there is food (so
+every forage patch and edible quarry is unchanged), else the fodder rate spelled with the WORD
+(`+0.40 fodder`) — fodder has no glyph, and borrowing another account's would say the wrong thing —
+else the MATERIALS, each naming itself (`+0.22 hide`). A trade branch stood between food and fodder
+until arc #527; the material arm is what replaced it, one release later. The work **inspector strip**
+beside the row states the whole vector in full.
+
+**THE MATERIAL ARM STATES EVERY MATERIAL, NOT THE FIRST ONE.** Naming one of a vector picks a winner
+the sim does not name, and summing them is the retired trade axis under a new name. A species pays
+few materials; the board column's width is a MINIMUM rather than a clip and the map plate sizes to
+its measured run, so a two-material label is wide rather than truncated — which is a legibility
+question for `map_band_label_overlap`, not a reason to state less than the truth. Both surfaces gate
+on `SourceForecast.signed_material_components` answering `""`, so "pays no material" is one call
+rather than a condition each re-derives, and a source that genuinely produced nothing in every
+account still falls through to its honest food zero.
 
 **The fodder rung is the one this pair was reported on** (issue #449): a sown hay Field pays no
-provisions and no trade, so with only two options both surfaces read `+0.00` on a tile that was
-filling the band's fodder store every turn. Its own threshold is the trade branch's
-(`YIELD_LABEL_COMPONENT_MIN` on the map, `SourceForecast.has_component` on the row), so no account can
-be shown at a magnitude another would have been hidden at.
+provisions, so with only one option both surfaces read `+0.00` on a tile that was filling the band's
+fodder store every turn. Its own threshold is the food branch's (`YIELD_LABEL_COMPONENT_MIN` on the
+map, `SourceForecast.has_component` on the row), so neither account can be shown at a magnitude the
+other would have been hidden at.
 
 **A HUNT call site passes NO fodder argument, and that is a decision rather than an omission.** No
 animal is harvested for feed, so a hunt row's fodder is a structural zero and passing it would only
-offer the label a fall-through it can never take.
+offer the label a fall-through it can never take. **It DOES pass the materials**, which is the arm
+that closes an inedible quarry's `+0.00` — see "AN INEDIBLE QUARRY QUOTES WHAT IT PAYS" above.
 
-**`trade_yield` IS NOT FOOD INCOME.** The Food line's Gathered/Hunted breakdown and the band's
-`food_income` (`DetailFormat.band_food_income` / `sum_realized_yield` / `band_net_food` /
-`band_has_food_flow`, and the arrivals schedule) still sum `actual_yield` alone — trade goods credit
-the band's `stores[trade_goods]` and never its larder — so a trade-only hunt must not move the Food
-line. (That credit was the FACTION stockpile until issue #381; the account is still separate from the
-larder, which is the whole point.) That is
-what keeps the larder identity closed for an inedible quarry, and it is why the answer for an
-AGGREGATE is never "add trade to the food total".
+**AN AGGREGATE STATES EVERY ACCOUNT ITS ROWS PAY, and that rule outlived the account it was written
+for.** The work zone's header once read `3 sources +0.35 /turn` with a `⇄+0.22` wolf row directly
+beneath it — the arithmetic visibly did not add up. The cure was a SIBLING total rather than a folded-in
+one, and the fodder sibling is what survives of it: a band that grows hay heads `+0.40 fodder` beside
+the food figure and chips `🌿 1 · 0.40 fodder`, under the same non-zero gate. **A sibling, never a
+summand** — fodder credits the band's FODDER store and never the larder, so folding it into the food
+figure would break the identity the Food line is denominated in
+(`larder_delta == income − consumption − pen_feed − raid_forfeit`). Details in `band-city-panel.md`.
 
-**But an aggregate that omits an account entirely is the same lie one level up.** The work zone's header
-read `3 sources +0.35 /turn` with a `⇄+0.22` wolf row directly beneath it — the arithmetic visibly did
-not add up, and the one source paying only trade read as contributing nothing to the band. So the
-render-only-when-non-zero rule applies to totals too, as a **SIBLING**: `3 sources +0.35 /turn ⇄
-+0.22`, and `🦌 2 · 0.20 ⇄ 0.22` on the per-kind chips (`SourceForecast.magnitude_components`, the
-bare-magnitude twin of `yield_components` — a chip states levels, not deltas). A band with no
-trade-paying source renders exactly as before. **FODDER is the third sibling on both** (issue #449),
-under the identical gate: a band that grows hay heads `+0.40 fodder` beside the other two and chips
-`🌿 1 · 0.40 fodder`, and `magnitude_components` takes all three. Details in `band-city-panel.md`.
+**When you add an aggregate, ask which KIND it is** — a *larder* figure (food alone, by the identity
+above) or a *productivity* figure (**every** account the sources pay, each when non-zero). Nothing else
+in the client currently sums or counts across sources: the parties header counts parties and workers,
+and the attention producers key off `idle_workers` / `turns_of_food` / pen status. **Do not add a
+"produces nothing" empty-state that tests food alone.**
 
-**When you add an aggregate, ask which KIND it is** — a *larder* figure (food alone, by the
-identity above) or a *productivity* figure (**every** account the sources pay, each when non-zero;
-there are three, and a two-account sum reproduces the exact `0.00` this rule exists to prevent, one
-surface along). Nothing else in the
-client currently sums or counts across sources: the parties header counts parties and workers, and the
-attention producers key off `idle_workers` / `turns_of_food` / pen status, never "this source yields
-no food", so a trade-only source is already productive to them. **Do not add a "produces nothing"
-empty-state that tests food alone.**
-
-**Frames.** `ui_preview`: **`herd_hunt_pelts_only`** (the frame the arc is judged on — a wolf's four
-rungs read `0.90 / 1.35 / 1.95 / 2.70 trade`, no food line, no zeros, and the animals-first preview +
-averaging-window disclaimer — in the rung tooltips — still derive off the TRADE quantum) · **`herd_hunt_both_products`** (the
-same picker on a deer: `2.33 food · 0.34 trade`, food leading) · **`herd_investment_both_products`**
-(its INVESTMENT twin — a Wild Boar whose Tame reads `→ 1.48 food · 0.37 trade` and whose greyed Corral
-reads `→ 2.95 food · 0.74 trade`, asserted as literal strings against the rungs found by
-`HudWidgets.POLICY_RUNG_META`; `herd_tame`'s food-only deer is the companion showing no `0 trade` is
-printed) · **`herd_hunt_pelts_raid`** (the wolf as an
-expedition target: `delivers ≈3 Grey Wolf over ≈9 turns · ⇄ ~4 trade goods`, primary Send — NOT a
-denial) · `herd_hunt_eradicate` (an Eradicate boar raid now delivers `~40 food · ⇄ ~5 trade goods`) ·
-`hunt_picker_ascending` (the drawer's standing summary `+0.84 /turn · ⇄ +0.12`) · `food_tile` (the
-forage control — food only, no "0 trade") · **`forage_three_accounts`** (the PLANT frame the rule is
-judged on since #426 — a hay meadow whose rungs read `0.60 food · 0.01 trade · 0.20 fodder`, and the
-frame the picker's three-column ceiling was MEASURED against rather than assumed) ·
-**`forage_three_accounts_overdraw`** (the same meadow, Eradicate, three foragers — the fodder account
-ALONE carries the warning while the food take sits inside the patch's own regrowth; the crew size is
-load-bearing, since one forager overdraws nothing and would pass the claim vacuously) ·
-**`forage_dead_season`** (a patch the wire fully DESCRIBES whose every cell is zero — the rungs still
-render, they state `0.00 food`, the preview line still speaks and the worker cap stays live at
-`MAX_USEFUL_BARREN`. Not `tile_panel_no_forage`, which has no food module and hence correctly no
-compose block at all; the difference between "pays nothing this season" and "the wire never described
-this patch" is the whole of issue #426). `band_panel_preview`:
-**`band_panel_work_trade_rows`** / **`band_panel_work_trade_inspector`** (a food row, a food+trade row
-and a trade-only wolf row on one board; the inspector sentence reads `⇄ +0.22 · Deplete · Working`) ·
-**`band_panel_work_trade_totals`** (the aggregates — the same band with the deer unassigned, so its
-sole hunt pays trade: header `2 sources +0.15 /turn ⇄ +0.22`, chip `🦌 1 · ⇄ 0.22` with the food term
-suppressed).
-`map_preview`: `map_band_work` (the hunted wolf labels `⇄+0.22 ⇊` beside the deer's `+0.20`).
+**Frames.** `ui_preview`: **`herd_hunt_pelts_only`** (the inedible quarry, quoting `0.11 HIDE` — and
+still asserted as a PAIR with `herd_hunt_both_products`, whose deer prints a live FOOD row, because
+"prints nothing" and "is correctly silent" are the same picture and only a frame that still prints
+tells them apart) · **`herd_hunt_pelts_raid`** (the same wolf as an expedition target — a REAL
+delivery now, reading `≈5 GREY WOLF` over `2.75 HIDE`, asserted on three claims: not denial, not
+empty, names the hide) · `hunt_picker_ascending` · `food_tile` ·
+**`forage_three_accounts`** (the PLANT frame the rule is judged on since #426 — a hay meadow whose
+rungs read `0.24 food · 0.40 fodder`, and the frame the picker's three-column ceiling was MEASURED
+against rather than assumed) · **`forage_three_accounts_overdraw`** (the same meadow, three foragers —
+the fodder account ALONE carries the warning while the food take sits inside the patch's own regrowth)
+· **`forage_dead_season`** (a patch the wire fully DESCRIBES whose every cell is zero — the rungs still
+render, they state `0.00 food`, and the worker cap stays live at `MAX_USEFUL_BARREN`).
+`band_panel_preview`: **`band_panel_work_trade_rows`** / **`band_panel_work_trade_inspector`** /
+**`band_panel_work_trade_totals`** (the board and its aggregates with an inedible quarry on it — the
+frames keep their names and their subject moved: the wolf row reads `+0.00 /turn` because the wire
+states no rate for it, not because the client dropped one). `map_preview`: `map_band_work`.
 
 ---
 
@@ -3905,8 +4161,8 @@ exactly the locked state's three assertions — no state passes under both.
 **The PRESET TOOLTIPS ride the same three frames, asserted as a PAIR** (reached by
 `HudWidgets.POLICY_RUNG_META` through the chapter's `_policy_rung_tooltip`, never by face text, since a
 preset's face carries no metric at all): the locked frame's `♻ Best harvest` quotes no fodder clause
-AND still quotes the food + trade ceilings it can bank (`HAY_PEAK_TOOLTIP_FODDER_LOCKED`), while the
-known and committed frames quote all three (`HAY_PEAK_TOOLTIP`). Sabotage-verified three ways, each
+AND still quotes the food ceiling it can bank (`HAY_PEAK_TOOLTIP_FODDER_LOCKED`), while the
+known and committed frames quote both (`HAY_PEAK_TOOLTIP`). Sabotage-verified three ways, each
 failing a DISJOINT set: restoring the refused clause fails the locked negative alone; dropping the
 fodder clause unconditionally fails the known and committed twins (plus `forage_three_accounts`' two
 wire-order claims, which stand on the same tooltip); and blanking the locked tooltip outright fails the
@@ -4236,7 +4492,8 @@ passing.
 ## AN EMPTY RAID IS EMPTY FOR ONE OF TWO REASONS (`docs/plan_hunt_through_combat.md` §4)
 
 **This section supersedes every passage above that calls the blocked raid "no surplus".** The
-arithmetic is unchanged — `delivered_food <= 0 and delivered_trade <= 0`, still the one blocked case,
+arithmetic is unchanged — `delivered_food <= 0`, still the one blocked case (its
+`delivered_trade <= 0` conjunct went with arc #527's retired account),
 still not `animals_taken == 0` — and what changed is the SENTENCE it renders.
 
 That branch used to assert the herd was at its floor, and before the take resolved through the fight

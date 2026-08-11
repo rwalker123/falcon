@@ -8,7 +8,7 @@ pub(crate) mod raster;
 
 use godot::prelude::*;
 use shadow_scale_flatbuffers::shadow_scale::sim as fb;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 
 use crate::dict::campaign::{
     campaign_label_to_dict, campaign_profiles_to_array, command_events_to_array,
@@ -18,7 +18,7 @@ use crate::dict::culture::{
     axis_bias_to_dict, culture_layers_to_array, culture_tensions_to_array, influencers_to_array,
     sentiment_to_dict,
 };
-use crate::dict::economy::{faction_inventory_to_array, trade_links_to_array};
+use crate::dict::economy::faction_inventory_to_array;
 use crate::dict::fixed64_to_f32;
 use crate::dict::governance::{
     corruption_to_dict, crisis_annotation_to_dict, crisis_overlay_to_dict,
@@ -42,6 +42,17 @@ use crate::snapshot::raster::{
     insert_overlay_channel, normalize_overlay, packed_from_slice, GridSize, OverlayChannelParams,
     OverlaySlices, TerrainSlices, FOG_ENABLED_WHEN_ABSENT,
 };
+
+/// The overlay channel the Inspector's Overlays selector opens on when the player has not chosen
+/// one (`overlays.default_channel`, read by `OverlayPanel`).
+///
+/// **Elevation, because a default has to be REAL on every map.** It rides `MapSection.elevationOverlay`,
+/// which worldgen publishes for every world, so the channel is never a placeholder — and relative
+/// height is legible without any knowledge of the simulation's vocabulary. Its predecessor was
+/// `logistics`, whose raster the sim stopped publishing when the trade/logistics substrate was
+/// removed (`docs/plan_contact_and_logistics.md`), so the map opened on a channel derived from tile
+/// temperature and labelled "Logistics Throughput".
+const DEFAULT_OVERLAY_CHANNEL: &str = "elevation";
 
 #[allow(clippy::too_many_arguments)]
 fn snapshot_dict(
@@ -81,7 +92,6 @@ fn snapshot_dict(
         dest
     };
 
-    let logistics_base = copy_into(overlays.logistics);
     let sentiment_base = copy_into(overlays.sentiment);
     let corruption_base = copy_into(overlays.corruption);
     let visibility_base = copy_into(overlays.visibility);
@@ -95,8 +105,6 @@ fn snapshot_dict(
     let pasture_base = copy_into(overlays.pasture_capacity);
     let forage_base = copy_into(overlays.forage_capacity);
 
-    let mut logistics_normalized = logistics_base.clone();
-    normalize_overlay(&mut logistics_normalized);
     let mut sentiment_normalized = sentiment_base.clone();
     normalize_overlay(&mut sentiment_normalized);
     let mut corruption_normalized = corruption_base.clone();
@@ -216,12 +224,6 @@ fn snapshot_dict(
     let hunt_danger_normalized = normalize_channel(&hunt_danger_base, hunt_danger_max);
     let threat_normalized = normalize_channel(&threat_base, threat_max);
 
-    let mut logistics_contrast_vec = logistics_normalized.clone();
-    for value in logistics_contrast_vec.iter_mut() {
-        let v = *value;
-        *value = v * (1.0 - v);
-    }
-
     let mut sentiment_contrast_vec = sentiment_normalized.clone();
     for value in sentiment_contrast_vec.iter_mut() {
         *value = ((*value - 0.5).abs() * 2.0).clamp(0.0, 1.0);
@@ -248,9 +250,6 @@ fn snapshot_dict(
     let military_placeholder = overlays.military.is_empty();
     let crisis_placeholder = overlays.crisis.is_empty();
 
-    let logistics_array = packed_from_slice(&logistics_normalized);
-    let logistics_raw_array = packed_from_slice(&logistics_base);
-    let logistics_contrast_array = packed_from_slice(&logistics_contrast_vec);
     let sentiment_array = packed_from_slice(&sentiment_normalized);
     let sentiment_raw_array = packed_from_slice(&sentiment_base);
     let sentiment_contrast_array = packed_from_slice(&sentiment_contrast_vec);
@@ -295,21 +294,6 @@ fn snapshot_dict(
         &mut channels,
         &mut channel_order,
         OverlayChannelParams {
-            key: "logistics",
-            label: "Logistics Throughput",
-            description: Some(
-                "Sum of supply flow touching the tile after current corruption multipliers.",
-            ),
-            normalized: &logistics_array,
-            raw: &logistics_raw_array,
-            contrast: &logistics_contrast_array,
-            placeholder: false,
-        },
-    );
-    insert_overlay_channel(
-        &mut channels,
-        &mut channel_order,
-        OverlayChannelParams {
             key: "crisis",
             label: "Crisis Stress",
             description: Some(
@@ -343,7 +327,7 @@ fn snapshot_dict(
             key: "corruption",
             label: "Corruption Pressure",
             description: Some(
-                "Composite pressure mixing active incidents with logistics, trade, military, and governance risk at each tile.",
+                "Composite pressure mixing active incidents with military and governance risk at each tile.",
             ),
             normalized: &corruption_array,
             raw: &corruption_raw_array,
@@ -512,7 +496,7 @@ fn snapshot_dict(
 
     let _ = overlays.insert("channels", &channels);
     let _ = overlays.insert("channel_order", &channel_order.clone());
-    let _ = overlays.insert("default_channel", "logistics");
+    let _ = overlays.insert("default_channel", DEFAULT_OVERLAY_CHANNEL);
 
     if corruption_placeholder
         || culture_placeholder
@@ -543,10 +527,6 @@ fn snapshot_dict(
         let _ = overlays.insert("placeholder_channels", &placeholder_keys);
     }
 
-    let _ = overlays.insert("logistics", &logistics_array.clone());
-    let _ = overlays.insert("logistics_raw", &logistics_raw_array.clone());
-    let _ = overlays.insert("logistics_contrast", &logistics_contrast_array.clone());
-    let _ = overlays.insert("contrast", &logistics_contrast_array.clone());
     let _ = overlays.insert("sentiment", &sentiment_array.clone());
     let _ = overlays.insert("sentiment_raw", &sentiment_raw_array.clone());
     let _ = overlays.insert("sentiment_contrast", &sentiment_contrast_array.clone());
@@ -692,8 +672,6 @@ pub(crate) fn snapshot_to_dict(
 ) -> Option<(VarDictionary, RasterCache)> {
     let header = snapshot.header()?;
 
-    let mut logistics_grid: Vec<f32> = Vec::new();
-    let mut logistics_dims = (0u32, 0u32);
     let mut corruption_grid: Vec<f32> = Vec::new();
     let mut corruption_dims = (0u32, 0u32);
     let mut visibility_grid: Vec<f32> = Vec::new();
@@ -710,49 +688,22 @@ pub(crate) fn snapshot_to_dict(
     let mut moisture_grid: Vec<f32> = Vec::new();
     let mut moisture_dims = (0u32, 0u32);
     let mut crisis_annotations: Vec<CrisisAnnotationRecord> = Vec::new();
-    if let Some(raster) = snapshot.economy().and_then(|s| s.logisticsRaster()) {
-        let width = raster.width();
-        let height = raster.height();
-        if width > 0 && height > 0 {
-            let total = (width as usize).saturating_mul(height as usize);
-            logistics_grid = vec![0.0f32; total];
-            if let Some(samples) = raster.samples() {
-                for (idx, value) in samples.iter().enumerate() {
-                    if idx >= total {
-                        break;
-                    }
-                    logistics_grid[idx] = fixed64_to_f32(value);
-                }
-            }
-            logistics_dims = (width, height);
+    // The TILE EXTENT — the largest `(x + 1, y + 1)` any `TileState` names. Every raster channel
+    // below falls back to it (and to `terrain_*`) when the snapshot carries no raster of its own,
+    // and it is the floor `final_width`/`final_height` are taken over, so a world whose only
+    // grid-shaped evidence is its tile list still renders at the right size.
+    //
+    // It used to be a side effect of the LOGISTICS grid, whose absent-raster fallback happened to
+    // walk the tiles (filling itself with tile TEMPERATURE, which is what made the "Logistics
+    // Throughput" channel meaningless long before the raster stopped being published at all —
+    // `docs/plan_contact_and_logistics.md`). Reading the extent directly is the same measurement
+    // without the dead channel under it.
+    let mut tile_dims = (0u32, 0u32);
+    if let Some(tiles) = snapshot.map().and_then(|s| s.tiles()) {
+        for tile in tiles {
+            tile_dims.0 = tile_dims.0.max(tile.x() + 1);
+            tile_dims.1 = tile_dims.1.max(tile.y() + 1);
         }
-    }
-
-    if logistics_grid.is_empty() {
-        let mut width = 0u32;
-        let mut height = 0u32;
-        let mut fallback: HashMap<(u32, u32), f32> = HashMap::new();
-        if let Some(tiles) = snapshot.map().and_then(|s| s.tiles()) {
-            for tile in tiles {
-                let x = tile.x();
-                let y = tile.y();
-                width = width.max(x + 1);
-                height = height.max(y + 1);
-                fallback.insert((x, y), fixed64_to_f32(tile.temperature()));
-            }
-        }
-        let width = width.max(1);
-        let height = height.max(1);
-        let total = (width as usize).saturating_mul(height as usize);
-        logistics_grid = vec![0.0f32; total];
-        for ((x, y), value) in fallback.into_iter() {
-            if x >= width || y >= height {
-                continue;
-            }
-            let idx = (y as usize) * (width as usize) + x as usize;
-            logistics_grid[idx] = value;
-        }
-        logistics_dims = (width, height);
     }
 
     let mut terrain_width = 0u32;
@@ -788,8 +739,8 @@ pub(crate) fn snapshot_to_dict(
     }
 
     if corruption_grid.is_empty() {
-        let fallback_width = logistics_dims.0.max(terrain_width).max(1);
-        let fallback_height = logistics_dims.1.max(terrain_height).max(1);
+        let fallback_width = tile_dims.0.max(terrain_width).max(1);
+        let fallback_height = tile_dims.1.max(terrain_height).max(1);
         let total = (fallback_width as usize)
             .saturating_mul(fallback_height as usize)
             .max(1);
@@ -818,15 +769,15 @@ pub(crate) fn snapshot_to_dict(
     }
 
     if sentiment_grid.is_empty() {
-        let fallback_width = if logistics_dims.0 > 0 {
-            logistics_dims.0
+        let fallback_width = if tile_dims.0 > 0 {
+            tile_dims.0
         } else if terrain_width > 0 {
             terrain_width
         } else {
             1
         };
-        let fallback_height = if logistics_dims.1 > 0 {
-            logistics_dims.1
+        let fallback_height = if tile_dims.1 > 0 {
+            tile_dims.1
         } else if terrain_height > 0 {
             terrain_height
         } else {
@@ -858,12 +809,8 @@ pub(crate) fn snapshot_to_dict(
     }
 
     if visibility_grid.is_empty() {
-        let fallback_width = logistics_dims
-            .0
-            .max(corruption_dims.0)
-            .max(terrain_width)
-            .max(1);
-        let fallback_height = logistics_dims
+        let fallback_width = tile_dims.0.max(corruption_dims.0).max(terrain_width).max(1);
+        let fallback_height = tile_dims
             .1
             .max(corruption_dims.1)
             .max(terrain_height)
@@ -894,12 +841,8 @@ pub(crate) fn snapshot_to_dict(
     }
 
     if culture_grid.is_empty() {
-        let fallback_width = logistics_dims
-            .0
-            .max(terrain_width)
-            .max(corruption_dims.0)
-            .max(1);
-        let fallback_height = logistics_dims
+        let fallback_width = tile_dims.0.max(terrain_width).max(corruption_dims.0).max(1);
+        let fallback_height = tile_dims
             .1
             .max(terrain_height)
             .max(corruption_dims.1)
@@ -1011,16 +954,8 @@ pub(crate) fn snapshot_to_dict(
     }
 
     if military_grid.is_empty() {
-        let fallback_width = logistics_dims
-            .0
-            .max(culture_dims.0)
-            .max(terrain_width)
-            .max(1);
-        let fallback_height = logistics_dims
-            .1
-            .max(culture_dims.1)
-            .max(terrain_height)
-            .max(1);
+        let fallback_width = tile_dims.0.max(culture_dims.0).max(terrain_width).max(1);
+        let fallback_height = tile_dims.1.max(culture_dims.1).max(terrain_height).max(1);
         let total = (fallback_width as usize)
             .saturating_mul(fallback_height as usize)
             .max(1);
@@ -1029,13 +964,13 @@ pub(crate) fn snapshot_to_dict(
     }
 
     if crisis_grid.is_empty() {
-        let fallback_width = logistics_dims
+        let fallback_width = tile_dims
             .0
             .max(military_dims.0)
             .max(culture_dims.0)
             .max(terrain_width)
             .max(1);
-        let fallback_height = logistics_dims
+        let fallback_height = tile_dims
             .1
             .max(military_dims.1)
             .max(culture_dims.1)
@@ -1049,13 +984,13 @@ pub(crate) fn snapshot_to_dict(
     }
 
     if elevation_grid.is_empty() {
-        let fallback_width = logistics_dims
+        let fallback_width = tile_dims
             .0
             .max(sentiment_dims.0)
             .max(corruption_dims.0)
             .max(terrain_width)
             .max(1);
-        let fallback_height = logistics_dims
+        let fallback_height = tile_dims
             .1
             .max(sentiment_dims.1)
             .max(corruption_dims.1)
@@ -1068,7 +1003,7 @@ pub(crate) fn snapshot_to_dict(
         elevation_dims = (fallback_width, fallback_height);
     }
 
-    let final_width = logistics_dims
+    let final_width = tile_dims
         .0
         .max(sentiment_dims.0)
         .max(terrain_width)
@@ -1079,7 +1014,7 @@ pub(crate) fn snapshot_to_dict(
         .max(elevation_dims.0)
         .max(moisture_dims.0)
         .max(1);
-    let final_height = logistics_dims
+    let final_height = tile_dims
         .1
         .max(sentiment_dims.1)
         .max(terrain_height)
@@ -1093,23 +1028,6 @@ pub(crate) fn snapshot_to_dict(
     let total = (final_width as usize)
         .saturating_mul(final_height as usize)
         .max(1);
-
-    let mut logistics_resized = vec![0.0f32; total];
-    if logistics_dims.0 > 0 && logistics_dims.1 > 0 {
-        for y in 0..logistics_dims.1 {
-            for x in 0..logistics_dims.0 {
-                let src_idx = (y as usize) * (logistics_dims.0 as usize) + x as usize;
-                if src_idx >= logistics_grid.len() {
-                    break;
-                }
-                if x >= final_width || y >= final_height {
-                    continue;
-                }
-                let dst_idx = (y as usize) * (final_width as usize) + x as usize;
-                logistics_resized[dst_idx] = logistics_grid[src_idx];
-            }
-        }
-    }
 
     let mut sentiment_resized = vec![0.0f32; total];
     if sentiment_dims.0 > 0 && sentiment_dims.1 > 0 {
@@ -1346,7 +1264,6 @@ pub(crate) fn snapshot_to_dict(
             wrap_horizontal: header.wrapHorizontal(),
         },
         OverlaySlices {
-            logistics: &logistics_resized,
             sentiment: &sentiment_resized,
             corruption: &corruption_resized,
             culture: &culture_resized,
@@ -1537,10 +1454,6 @@ pub(crate) fn snapshot_to_dict(
         let _ = dict.insert("crisis_overlay", &crisis_overlay_to_dict(crisis_overlay));
     }
 
-    if let Some(trade_links) = snapshot.economy().and_then(|s| s.tradeLinks()) {
-        let _ = dict.insert("trade_links", &trade_links_to_array(trade_links));
-    }
-
     if let Some(definitions) = snapshot
         .knowledge()
         .and_then(|s| s.greatDiscoveryDefinitions())
@@ -1605,7 +1518,6 @@ pub(crate) fn snapshot_to_dict(
         width: final_width,
         height: final_height,
         wrap_horizontal: header.wrapHorizontal(),
-        logistics: logistics_resized,
         sentiment: sentiment_resized,
         corruption: corruption_resized,
         culture: culture_resized,

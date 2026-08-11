@@ -144,7 +144,6 @@ pub(crate) fn tile_state(
         x: tile.position.x,
         y: tile.position.y,
         element: u8::from(tile.element),
-        mass: tile.mass.raw(),
         temperature: tile.temperature.raw(),
         terrain: tile.terrain,
         terrain_tags: tile.terrain_tags,

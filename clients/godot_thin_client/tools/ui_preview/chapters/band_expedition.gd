@@ -158,11 +158,10 @@ func _starving_pen_band_fixture() -> Dictionary:
 	band["pen_feed_upkeep"] = 0.70      # PAID, not demanded — the herd starves for the difference
 	band["labor_assignments"] = [
 		{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18, "floor": 0.5, "actual_yield": 0.48, "sustainable_yield": 0.48, "workers_needed": 1, "overdraws": false},
-		# BOTH PRODUCTS on the drawer's standing summary (issue #337): the hide sells beside the meat,
-		# so the one-line summary must read `+0.84 /turn · ⇄ +0.12` — food leading, trade only because
-		# it is non-zero. It comes from the SAME `SourceForecast.source_yield_readout` the Band panel's
-		# rows use, so the two surfaces cannot state different products for one assignment.
-		{"kind": "hunt", "workers": 1, "fauna_id": "game_deer_07", "floor": 0.5, "improvement": "corral", "target_x": 70, "target_y": 17, "actual_yield": 0.84, "sustainable_yield": 0.84, "workers_needed": 1, "overdraws": false, "trade_yield": 0.12, "realized_trade_yield": 0.12},
+		# The drawer's standing summary comes from the SAME `SourceForecast.source_yield_readout` the
+		# Band panel's rows use, so the two surfaces cannot state different products for one
+		# assignment. (It carried a second, trade-goods clause until arc #527 retired that account.)
+		{"kind": "hunt", "workers": 1, "fauna_id": "game_deer_07", "floor": 0.5, "improvement": "corral", "target_x": 70, "target_y": 17, "actual_yield": 0.84, "sustainable_yield": 0.84, "workers_needed": 1, "overdraws": false},
 		{"kind": "scout", "workers": 2},
 	]
 	return band
@@ -699,7 +698,7 @@ func run(harness) -> void:
 	# there, so a turn count would be a promise the sim did not make.
 	var repelled := {
 		"available": true, "outcome": SourceForecast.DENIAL_OUTCOME_REPELLED,
-		"turns": 4, "low": 3, "high": 5, "animals": 0, "food": 0.0, "trade": 0.0, "wasted": 0.0,
+		"turns": 4, "low": 3, "high": 5, "animals": 0, "food": 0.0, "wasted": 0.0,
 	}
 	h._assert_hud("a repelled verdict names the PARTY's problem and quotes no turn count",
 		SourceForecast.denial_verdict_text(repelled, DENIAL_TARGET_QUARRY)
@@ -710,7 +709,7 @@ func run(harness) -> void:
 	# whole reason the outcome LEADS the sentence and the number is a clause on it.
 	var unbounded := {
 		"available": true, "outcome": SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY,
-		"turns": 0, "low": 0, "high": 0, "animals": 0, "food": 0.0, "trade": 0.0, "wasted": 0.0,
+		"turns": 0, "low": 0, "high": 0, "animals": 0, "food": 0.0, "wasted": 0.0,
 	}
 	h._assert_hud("a collapse the forecast cannot bound still names its outcome, with no bare number",
 		SourceForecast.denial_verdict_text(unbounded, DENIAL_TARGET_QUARRY)
@@ -732,7 +731,7 @@ func run(harness) -> void:
 	# the first alone, and one that always shifted satisfies the second alone.
 	var horizon_in_flight := {
 		"available": true, "outcome": SourceForecast.DENIAL_OUTCOME_HORIZON,
-		"turns": 0, "low": 0, "high": 0, "animals": 0, "food": 0.0, "trade": 0.0, "wasted": 0.0,
+		"turns": 0, "low": 0, "high": 0, "animals": 0, "food": 0.0, "wasted": 0.0,
 		SourceForecast.DENIAL_TRAVEL_KEY: SourceForecast.DENIAL_TRAVEL_UNKNOWN,
 		SourceForecast.DENIAL_HORIZON_TURNS_KEY: DENIAL_HORIZON_TURNS,
 	}
@@ -757,8 +756,8 @@ func run(harness) -> void:
 	# State 1k — the hunt launch policy picker: an idle band (short allocation panel) showing the
 	# "Send expedition" outfit block — the party stepper, the scout + hunt send buttons, and the hunt
 	# POLICY radio (DEPLETE selected) with its EXPEDITION hint. The expedition hints must never promise
-	# HUSBANDRY — the Hunting arm accrues none, though since #337 it does bank the trade half of the
-	# kill — so Deplete's line frames the rung by the PRESSURE it applies (relaunching trip after trip)
+	# HUSBANDRY — the Hunting arm accrues none — so Deplete's line frames the rung by the PRESSURE it
+	# applies (relaunching trip after trip)
 	# rather than by a craft the party cannot teach. The outfit block sits below the left dock's fold,
 	# so scroll to see the hint.
 	var launch_band := BandFx.band_fixture()
@@ -776,8 +775,7 @@ func run(harness) -> void:
 	# State 1k-sustain — the SUSTAIN launch hint, which had to be rewritten when Sustain became the
 	# maximum-sustainable-yield FLOW (it used to promise "one conservative harvest", a model that no
 	# longer exists). It also must NOT mention domestication: only a RESIDENT band's Sustain hunt
-	# builds husbandry — an expedition accrues none (the one payoff half still missing from a raid,
-	# now that #337 banks its trade goods).
+	# builds husbandry — an expedition accrues none.
 	h._hud._bandpanel._send_hunt_floor = SourceForecast.FLOOR_FOOD_PEAK
 	h._hud.show_unit_selection(launch_band)
 	await h._settle()

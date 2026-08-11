@@ -17,7 +17,7 @@ use bevy::prelude::{Entity, With};
 use core_sim::{
     available_workers, split_band_from_parent, split_refusals, BandEquipment, BandId,
     DemographicFlowAccumulator, ExpeditionConfigHandle, FactionId, PopulationCohort, ResidentBand,
-    Scalar, SettleConfig, SimulationConfig, Tile, FOOD, TRADE_GOODS,
+    Scalar, SettleConfig, SimulationConfig, Tile, FODDER, FOOD,
 };
 
 /// Tolerance for a fixed-point round trip through a fractional share. `Scalar` carries far more
@@ -109,7 +109,7 @@ fn stock_the_parent(app: &mut App, parent: Entity) -> (f32, f32, f32) {
     cohort.working = Scalar::from_f32(16.5);
     cohort.elders = Scalar::from_f32(4.5);
     cohort.stores.set(FOOD, Scalar::from_f32(96.0));
-    cohort.stores.set(TRADE_GOODS, Scalar::from_f32(8.0));
+    cohort.stores.set(FODDER, Scalar::from_f32(8.0));
     cohort.sync_size();
     (9.0, 16.5, 4.5)
 }
@@ -212,7 +212,7 @@ fn stores_divide_on_the_same_share_and_conserve() {
     let share = asked as f32 / working;
     let child_entity = entity_for_band(&mut app, split.band);
 
-    for (item, whole) in [(FOOD, 96.0_f32), (TRADE_GOODS, 8.0_f32)] {
+    for (item, whole) in [(FOOD, 96.0_f32), (FODDER, 8.0_f32)] {
         let kept = app
             .world
             .get::<PopulationCohort>(parent)

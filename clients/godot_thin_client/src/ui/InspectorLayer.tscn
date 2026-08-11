@@ -319,17 +319,6 @@ size_flags_horizontal = 3
 text = "Regenerate map"
 button_pressed = true
 
-[node name="LogisticsSection" type="HBoxContainer" parent="RootPanel/TabContainer/Map/MapVBox"]
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/separation = 6
-
-[node name="LogisticsOverlayToggle" type="CheckButton" parent="RootPanel/TabContainer/Map/MapVBox/LogisticsSection"]
-unique_name_in_owner = true
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Show logistics overlay"
-
 [node name="HydrologySection" type="HBoxContainer" parent="RootPanel/TabContainer/Map/MapVBox"]
 layout_mode = 2
 size_flags_horizontal = 3

@@ -149,7 +149,6 @@ const SNAPSHOT_DELTA_FIELDS := [
     "influencer_updates",
     "population_updates",
     "tile_updates",
-    "trade_link_updates",
     "influencer_removed",
     "population_removed"
 ]
@@ -2133,7 +2132,7 @@ func _ensure_action_binding(action_name: String, keycode: Key) -> void:
 ## payload discriminant — the authoritative answer, not an inference.
 ##
 ## The `SNAPSHOT_DELTA_FIELDS` fallback below is for a native extension built before `frame_kind`
-## existed (the same staleness the `has_method` probes elsewhere tolerate). It guesses from six
+## existed (the same staleness the `has_method` probes elsewhere tolerate). It guesses from the
 ## delta-only keys and is only correct by accident: the delta codec emits an EMPTY vector rather
 ## than omitting an untouched section, so `tile_updates` rides every delta including one that
 ## changed no tile. Misclassifying a delta as a full snapshot resets the command feed and can trip

@@ -340,7 +340,6 @@ fn spawn_party(
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
                 pending_reveal: Vec::new(),
-                carried_trade: 0.0,
                 kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Hunt),
                 // Derived per-turn telemetry; a raid never reaches `AwaitingOrders`, so it stays
                 // empty for the party's whole life.
@@ -846,10 +845,19 @@ fn pack_biomass(app: &App, id: &str, workers: u32) -> f32 {
     workers as f32 * expedition_cfg(app).hunt.per_worker_carry / yields.provisions_per_biomass
 }
 
-fn carried_trade(app: &App, party: bevy::prelude::Entity) -> f32 {
+/// **Every material in the party's own pack, summed** — the non-food half of what a raid hauls,
+/// held as batches on the party's `LocalStore` (the retired `Expedition::carried_trade` banked the
+/// same haul as a flat scalar).
+fn carried_materials(app: &App, party: bevy::prelude::Entity) -> f32 {
     app.world
-        .get::<Expedition>(party)
-        .map(|e| e.carried_trade)
+        .get::<core_sim::PopulationCohort>(party)
+        .map(|c| {
+            c.stores
+                .materials()
+                .flat_map(|(_, batches)| batches.values())
+                .map(|batch| batch.amount.to_f32())
+                .sum()
+        })
         .unwrap_or(0.0)
 }
 
@@ -859,15 +867,15 @@ fn carried_trade(app: &App, party: bevy::prelude::Entity) -> f32 {
 /// A floor-`0` raid used to pass `f32::INFINITY` as its carry room on the premise that driving a herd
 /// extinct makes the meat incidental. With an infinite pack `carried = killed × body_mass`, so the
 /// party was recorded hauling home **everything it killed**: its hunt report published
-/// `wasted_biomass = 0` for a raid that left a range of carcasses, and `Expedition::carried_trade`
-/// accrued pelts off the whole kill rather than off the load. *When* a party stops engaging and *how
-/// much* it can haul are separate questions — that is what [`ExpeditionMission::Deny`] is for — and
-/// carry is never unbounded for a real party.
+/// `wasted_biomass = 0` for a raid that left a range of carcasses, and its hides accrued off the
+/// whole kill rather than off the load. *When* a party stops engaging and *how much* it can haul are
+/// separate questions — that is what [`ExpeditionMission::Deny`] is for — and carry is never
+/// unbounded for a real party.
 ///
 /// Three claims, each paired with the liveness assertion that makes it mean something:
 /// 1. the raid reports **non-zero waste** — and still delivers something;
 /// 2. its total haul is bounded by the **pack** — and the pack is not empty;
-/// 3. its **trade accrues off `carried`, not off `killed`** — and it is non-zero.
+/// 3. its **materials accrue off `carried`, not off `killed`** — and they are non-zero.
 #[test]
 fn a_floor_zero_hunt_hauls_only_its_pack_and_reports_the_waste() {
     let mut app = placid_world();
@@ -916,25 +924,31 @@ fn a_floor_zero_hunt_hauls_only_its_pack_and_reports_the_waste() {
         "…and the fixture must actually exceed it, or the bound above is untested"
     );
 
-    // 3. The pelts ride on what was CARRIED. Both products come out of one conversion of the same
-    //    carried biomass, so the trade banked is the carried biomass through the trade rate — and
-    //    strictly less than the whole kill's worth.
-    let trade_rate = {
+    // 3. The hides ride on what was CARRIED. Every account comes out of one conversion of the same
+    //    carried biomass, so the material banked is the carried biomass through the species' own
+    //    per-biomass rates — and strictly less than the whole kill's worth.
+    let material_rate: f32 = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         let registry = app.world.resource::<HerdRegistry>();
-        herd_hunt_yield(registry.find(&id).expect("herd present"), &fauna).trade_goods_per_biomass
+        let species = registry.find(&id).expect("herd present").species.clone();
+        fauna
+            .hunt_materials_for(&species)
+            .iter()
+            .map(|row| row.per_biomass)
+            .sum()
     };
-    let banked = carried_trade(&app, party);
+    let banked = carried_materials(&app, party);
     assert!(
-        (banked - ledger.carried_biomass * trade_rate).abs() <= TRADE_TOLERANCE,
-        "trade accrues off the CARRIED biomass: banked {banked} against carried {} × {trade_rate}",
+        (banked - ledger.carried_biomass * material_rate).abs() <= MATERIAL_TOLERANCE,
+        "materials accrue off the CARRIED biomass: banked {banked} against carried {} × \
+         {material_rate}",
         ledger.carried_biomass
     );
     assert!(
-        banked > 0.0 && banked < ledger.killed_biomass() * trade_rate,
+        banked > 0.0 && banked < ledger.killed_biomass() * material_rate,
         "…and that is strictly less than the whole kill's worth ({}), which is what an unbounded \
          carry used to pay",
-        ledger.killed_biomass() * trade_rate
+        ledger.killed_biomass() * material_rate
     );
 }
 
@@ -942,9 +956,9 @@ fn a_floor_zero_hunt_hauls_only_its_pack_and_reports_the_waste() {
 /// report's `carried_biomass` is an `f32` printed to 3 dp, so the two agree to about a quantum.
 const CARRY_TOLERANCE_BIOMASS: f32 = 1.0;
 
-/// The same allowance on the trade account, which is a bare `f32` accumulator against a sum of
+/// The same allowance on the material account, which is a fixed-point batch total against a sum of
 /// 3-dp-rounded report values.
-const TRADE_TOLERANCE: f32 = 0.01;
+const MATERIAL_TOLERANCE: f32 = 0.01;
 
 /// **Denial is unchanged by the carry fix, and the two missions now differ only where they should.**
 ///
@@ -968,16 +982,17 @@ fn denial_and_a_floor_zero_hunt_account_carry_identically() {
         (
             ledger,
             carried_food(&app, party),
-            carried_trade(&app, party),
+            carried_materials(&app, party),
         )
     };
 
-    let (denial, denial_food, denial_trade) = ledger_for(&deny);
-    let (raid, raid_food, raid_trade) = ledger_for(&|id| hunt(id, STRIP_IT_BARE));
+    let (denial, denial_food, denial_materials) = ledger_for(&deny);
+    let (raid, raid_food, raid_materials) = ledger_for(&|id| hunt(id, STRIP_IT_BARE));
 
     assert!(
-        denial_food > 0.0 && denial_trade > 0.0,
-        "the denial fixture must actually haul something ({denial_food} food, {denial_trade} trade)"
+        denial_food > 0.0 && denial_materials > 0.0,
+        "the denial fixture must actually haul something ({denial_food} food, {denial_materials} \
+         of material)"
     );
     assert_eq!(
         denial_food, raid_food,
@@ -985,8 +1000,8 @@ fn denial_and_a_floor_zero_hunt_account_carry_identically() {
          does"
     );
     assert_eq!(
-        denial_trade, raid_trade,
-        "…and the same pelts, off the same carried biomass"
+        denial_materials, raid_materials,
+        "…and the same hides, off the same carried biomass"
     );
     assert!(
         (denial.carried_biomass - raid.carried_biomass).abs() <= CARRY_TOLERANCE_BIOMASS,
@@ -1243,8 +1258,6 @@ struct ExportedDenialRow {
     animals_killed: u32,
     delivered_food: f32,
     wasted_food: f32,
-    delivered_trade: f32,
-    wasted_trade: f32,
 }
 
 /// **The working-age head count every fixture band in this file carries** — named because the band's
@@ -1281,8 +1294,6 @@ fn denial_answer(app: &mut App, id: &str, party_workers: u32) -> ExportedDenialR
         animals_killed: row.animals_killed,
         delivered_food: row.delivered_food,
         wasted_food: row.wasted_food,
-        delivered_trade: row.delivered_trade,
-        wasted_trade: row.wasted_trade,
     }
 }
 
@@ -1818,91 +1829,22 @@ fn a_denial_raid_that_loses_its_herd_reports_a_win_and_a_hunt_reports_a_loss() {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// THE WASTE IS REPORTED IN BOTH PRODUCTS
+// RETIRED: THE WASTE IS REPORTED IN BOTH PRODUCTS
 // ---------------------------------------------------------------------------------------------------
 
-/// **The party the waste is measured with** — small enough that its pack binds hard against a herd
-/// standing at full stock, which is the regime where a denial raid's waste is the bulk of its take.
-const WASTEFUL_PARTY_WORKERS: u32 = PARTY_WORKERS;
-
-/// **A DENIAL RAID'S WASTE IS PUBLISHED IN BOTH PRODUCTS, OFF ONE CONVERSION OF ONE BIOMASS**
-/// (issue #337, `docs/plan_denial_raid.md` §3).
-///
-/// The waste line is denial's entire readout — what the raid destroys and does not bring home — and
-/// the projection accumulated only the **food** half of it. Every carcass the party leaves on the
-/// range is a pelt it also did not take, and the wire never said so.
-///
-/// **The third assertion is the one that makes this a regression guard rather than a tautology**: it
-/// ties the exported `wastedTrade` to the exported `wastedFood` through the species' own
-/// [`core_sim::HuntYield`], so the two components must be one conversion of one wasted biomass. An
-/// accumulator that summed a different quantity would still be positive and would fail here.
-///
-/// **Note for anyone reaching for a wolf here** — an inedible quarry is the wrong fixture for this,
-/// and not for the obvious reason: `carry_room_biomass` answers `NO_CARRY_BOUND` for a species that
-/// pays no provisions, so a wolf raid's pack cannot bind, it hauls every pelt it takes, and its
-/// waste is honestly `0` in **both** products. The blindness this closes lives on an **edible**
-/// quarry, where the pack binds hard and the meat left behind takes the hides with it.
-#[test]
-fn a_denial_raids_waste_is_reported_in_both_products() {
-    let mut app = placid_world();
-    let (id, herd_pos) = pin_raid_herd(&mut app, PLACID_HERD);
-    reveal_herd(&mut app, herd_pos);
-    recapture_snapshot_in_place(&mut app.world);
-
-    let row = denial_answer(&mut app, &id, WASTEFUL_PARTY_WORKERS);
-
-    // Liveness — a raid that killed nothing, or one whose pack never bound, would satisfy every
-    // comparison below without exercising the waste at all.
-    assert!(
-        row.animals_killed > 0 && row.wasted_food > 0.0,
-        "liveness: the fixture must be in the regime where the pack binds (killed {}, wasted food \
-         {})",
-        row.animals_killed,
-        row.wasted_food
-    );
-
-    // **THE CLAIM.** The pelts left on the range are on the wire.
-    assert!(
-        row.wasted_trade > 0.0,
-        "the raid wasted {} of food and reported no wasted trade at all — a carcass left on the \
-         range takes its hide with it",
-        row.wasted_food
-    );
-
-    // The pack still banks the hides of what it *did* haul, and the waste is the bulk of it — the
-    // same shape the food pair reports, which is the point of stating the waste per product.
-    assert!(
-        row.delivered_trade > 0.0,
-        "a raid banks the hides of what it carries home; a zero here means the carry half broke"
-    );
-    assert!(
-        row.wasted_trade > row.delivered_trade,
-        "waste is the bulk of a raid's take in trade as in food: {} wasted vs {} delivered",
-        row.wasted_trade,
-        row.delivered_trade
-    );
-
-    // **…and it is the SAME biomass, through the species' own vector.** Both components come out of
-    // one `HuntYield::apply`, so their ratio is the vector's ratio and nothing else.
-    let vector = {
-        let fauna = app.world.resource::<FaunaConfigHandle>().get();
-        let registry = app.world.resource::<HerdRegistry>();
-        herd_hunt_yield(registry.find(&id).expect("the herd is on the map"), &fauna)
-    };
-    let expected = row.wasted_food / vector.provisions_per_biomass * vector.trade_goods_per_biomass;
-    assert!(
-        (row.wasted_trade - expected).abs() <= expected * WASTE_VECTOR_TOLERANCE,
-        "the two waste components must be one conversion of one biomass: wire {} vs the vector's \
-         {expected}",
-        row.wasted_trade
-    );
-}
-
-/// **The relative slack the waste-vector identity allows.** Both sides are `f32` sums accumulated
-/// over the projection's turns and then divided and re-multiplied by two per-biomass rates, so they
-/// take a handful of roundings each; a thousandth is orders of magnitude below any real disagreement
-/// (a mis-accumulated component would be off by a whole term, not by a rounding).
-const WASTE_VECTOR_TOLERANCE: f32 = 1e-3;
+// **`a_denial_raids_waste_is_reported_in_both_products` is DELETED with the account it was about**
+// (arc #527). It pinned `DenialForecast::wasted_trade` — *a carcass left on the range takes its hide
+// with it* — against `wasted_food` through the species' own vector, and the trade axis it measured
+// no longer exists.
+//
+// **THE GAP IT NAMED IS REAL AND IS DELIBERATELY LEFT OPEN.** A denial raid's whole readout is what
+// it destroys and does not bring home, and the forecast now states only the **food** half of that:
+// on an edible quarry whose pack binds hard, the hides left on the range are invisible to the
+// launch sheet again. Closing it needs a **per-material** projection — a material carries a
+// characteristic vector, so it cannot be summed into `DenialForecast` the way `wasted_food` is —
+// which is a shape neither `HuntTripForecast` nor `DenialForecast` has today. Do not reintroduce a
+// flat "wasted materials" scalar to fill it: that is the retired trade axis under a new name, and
+// it would collapse exactly the distinction the crafting arc exists to keep.
 
 // ---------------------------------------------------------------------------------------------------
 // …and the report names the party's OWN throughput, never the herd's floor
