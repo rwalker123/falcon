@@ -301,6 +301,80 @@ const KIT_ITEM_HUSBANDRY_GEAR := "husbandry_gear"
 const KIT_ITEM_WAYFINDING := "wayfinding"
 const KIT_ITEM_CLUBS := "clubs"
 
+## **THE BAND'S HUNT HEAD COUNT** (issue #520) — the denominator `hunt_crews` sums to and the number
+## every coverage reading on these fixtures is quoted out of. Named because it appears in the crew
+## rows, in each item's `workers_holding` and in the sentences the harness asserts by equality.
+const KIT_HUNT_HEADCOUNT := 17.0
+
+## **THE PARTLY-EQUIPPED SPLIT.** Four spears among seventeen hunters, so four clear a defence the
+## other thirteen cannot touch at any headcount. The two DO sum to the head count above — a fixture
+## whose parts did not would make the apportionment's whole reason unobservable — and they are
+## deliberately unlike each other, so a readout quoting the wrong side reads as a different number.
+##
+## **THE ARMED RUN IS DELIBERATELY SMALLER THAN A COMPOSE SHEET'S PARTY.** A hunt sheet's split line
+## is about the party being SENT, so a party that fits inside the armed run has no split to state —
+## and the harness bands here can field ~6–10 hunters. An armed run above that would make every
+## compose frame silent and the positive claim unreachable, which is the shape this arc shipped with
+## first. The BAND-level readouts (the Gear row, the popover) quote `4 of 17` off the same rows.
+const KIT_SHORT_SPEARS_ARMED := 4.0
+const KIT_SHORT_SPEARS_BARE := KIT_HUNT_HEADCOUNT - KIT_SHORT_SPEARS_ARMED
+
+## **THE HEAD COUNT OF THE JOB EACH NON-HUNT ITEM IS QUOTED AT.** They are three DIFFERENT numbers,
+## and none of them is the hunt's: the wire quotes every row at its own job, so a fixture that gave
+## the four jobs one denominator would pass a client that read the hunt's head count for all of them —
+## which is exactly the private path this arc removed.
+const KIT_FORAGE_HEADCOUNT := 4.0
+const KIT_SCOUT_HEADCOUNT := 2.0
+const KIT_WARRIOR_HEADCOUNT := 3.0
+
+## **NOBODY IS STAFFED ON THE JOB, which is NOT a shortfall.** `0 of 0` — the band assigned no keepers,
+## so no handling gear was needed and none went unheld, and it must render quietly. Named rather than
+## inlined because it is a rendering CONTRACT, not an incidental zero.
+const KIT_UNSTAFFED_HEADCOUNT := 0.0
+
+## One `KitItemCondition` row. **NEITHER WORKER FIGURE IS DERIVABLE FROM `remaining`** — the condition
+## says how much life is left in the item, `workers_holding` how many people it reaches and
+## `workers_on_quoted_job` how many are on the job that wanted it. All three are stated outright,
+## because a fixture letting one imply another passes a client that reads the wrong one.
+static func kit_condition_row(item_id: String, remaining: float, workers_holding: float,
+		workers_on_quoted_job: float) -> Dictionary:
+	return {"item_id": item_id, "remaining": remaining, "workers_holding": workers_holding,
+		"workers_on_quoted_job": workers_on_quoted_job}
+
+## The seven item rows a kitted band publishes — **each quoted at ITS OWN job's head count**, which is
+## the shape the wire really has: spears and the sled at the hunt, baskets at the forage default,
+## wayfinding at the scout's, clubs at the warrior's. Everything reaches its whole job unless a caller
+## says otherwise.
+##
+## **THE HANDLING GEAR'S JOB IS UNSTAFFED**, and it is the fixture's quiet-zero case: this band keeps
+## no pen, so its keeper head count is `0` and a live item reaching nobody must render as nothing at
+## all rather than as `0 of 0`. It is deliberately the item with a healthy condition, so a reader
+## that mistook the quiet zero for a shortfall would light up a perfectly good piece of gear.
+static func kit_condition_rows(spears_holding: float = KIT_HUNT_HEADCOUNT,
+		baskets_holding: float = KIT_FORAGE_HEADCOUNT) -> Array:
+	return [
+		kit_condition_row(KIT_ITEM_SPEARS, KIT_CONDITION_SPEARS, spears_holding,
+			KIT_HUNT_HEADCOUNT),
+		kit_condition_row(KIT_ITEM_SLED, KIT_CONDITION_SLED, KIT_HUNT_HEADCOUNT,
+			KIT_HUNT_HEADCOUNT),
+		kit_condition_row(KIT_ITEM_BASKETS, KIT_CONDITION_BASKETS, baskets_holding,
+			KIT_FORAGE_HEADCOUNT),
+		kit_condition_row(KIT_ITEM_TRAPS, KIT_CONDITION_TRAPS, KIT_HUNT_HEADCOUNT,
+			KIT_HUNT_HEADCOUNT),
+		kit_condition_row(KIT_ITEM_HUSBANDRY_GEAR, KIT_CONDITION_HUSBANDRY_GEAR,
+			KIT_UNSTAFFED_HEADCOUNT, KIT_UNSTAFFED_HEADCOUNT),
+		kit_condition_row(KIT_ITEM_WAYFINDING, KIT_CONDITION_WAYFINDING, KIT_SCOUT_HEADCOUNT,
+			KIT_SCOUT_HEADCOUNT),
+		kit_condition_row(KIT_ITEM_CLUBS, KIT_CONDITION_CLUBS, KIT_WARRIOR_HEADCOUNT,
+			KIT_WARRIOR_HEADCOUNT),
+	]
+
+## **A UNIFORMLY-EQUIPPED BAND PUBLISHES EXACTLY ONE CREW, NEVER AN EMPTY LIST.** The sim's own rule,
+## and the reason no client reader needs a "no crews" branch — so a fixture that omitted the field
+## would be a band no server can produce, and would leave every uniform case untested.
+static func hunt_crews_uniform(attack: float, item_ids: Array) -> Array:
+	return [{"workers": KIT_HUNT_HEADCOUNT, "hunter_attack": attack, "item_ids": item_ids}]
+
 # ---- THE KIT ROSTER (`docs/plan_denial_raid.md`, `SubsistenceSection.kits`) -----------------------
 # The ids the wire carries and the two job defaults. Named because the `kit <id>` COMMAND token is
 # asserted against them and because "which id is the default" is half of what the picker's frames
@@ -477,7 +551,13 @@ static func kit_tiers_rows(attack: float, hunt_carry: float, forage_carry: float
 ## assertable against the sled's 40 rather than agreeing with it by construction. The per-kit rows
 ## beside it say the same thing kit by kit, which is what a picker reads.
 static func with_equipped_kit(band: Dictionary) -> Dictionary:
-	band["kit_item_conditions"] = [{"item_id": KIT_ITEM_SPEARS, "remaining": KIT_CONDITION_SPEARS}, {"item_id": KIT_ITEM_SLED, "remaining": KIT_CONDITION_SLED}, {"item_id": KIT_ITEM_BASKETS, "remaining": KIT_CONDITION_BASKETS}, {"item_id": KIT_ITEM_TRAPS, "remaining": KIT_CONDITION_TRAPS}, {"item_id": KIT_ITEM_HUSBANDRY_GEAR, "remaining": KIT_CONDITION_HUSBANDRY_GEAR}, {"item_id": KIT_ITEM_WAYFINDING, "remaining": KIT_CONDITION_WAYFINDING}, {"item_id": KIT_ITEM_CLUBS, "remaining": KIT_CONDITION_CLUBS}]
+	band["kit_item_conditions"] = kit_condition_rows()
+	# The uniform case, and it is the NORMAL one — every hunter on the same gear, so the band publishes
+	# ONE crew and no readout has a split to state. It is what makes the partly-armed fixture below a
+	# contrast rather than the only shape the crew field is ever seen in.
+	band["hunt_crews"] = hunt_crews_uniform(KIT_ATTACK_EQUIPPED,
+		[KIT_ITEM_SPEARS, KIT_ITEM_SLED])
+	band[DetailFormat.BAND_QUOTED_KIT_ID_KEY] = KIT_ID_BIG_GAME
 	band["kit_tiers"] = kit_tiers_rows(KIT_ATTACK_EQUIPPED, KIT_HUNT_CARRY_EQUIPPED,
 		KIT_FORAGE_CARRY_EQUIPPED, KIT_ATTACK_CLUBS, KIT_SCOUT_VANTAGE_EQUIPPED)
 	band["hunter_attack"] = KIT_ATTACK_EQUIPPED
@@ -494,7 +574,12 @@ static func with_equipped_kit(band: Dictionary) -> Dictionary:
 ## This is the frame a readout rendering one carry on the other's row fails.
 static func with_baskets_dry(band: Dictionary) -> Dictionary:
 	band = with_equipped_kit(band)
-	band["kit_item_conditions"] = [{"item_id": KIT_ITEM_SPEARS, "remaining": KIT_CONDITION_SPEARS}, {"item_id": KIT_ITEM_SLED, "remaining": KIT_CONDITION_SLED}, {"item_id": KIT_ITEM_BASKETS, "remaining": 0.0}, {"item_id": KIT_ITEM_TRAPS, "remaining": KIT_CONDITION_TRAPS}, {"item_id": KIT_ITEM_HUSBANDRY_GEAR, "remaining": KIT_CONDITION_HUSBANDRY_GEAR}, {"item_id": KIT_ITEM_WAYFINDING, "remaining": KIT_CONDITION_WAYFINDING}, {"item_id": KIT_ITEM_CLUBS, "remaining": KIT_CONDITION_CLUBS}]
+	# The baskets have run out — a DRY item is one the band owns none of, so nobody is holding one —
+	# **and the forage job is still STAFFED**, which is what makes the loss sayable: four gatherers are
+	# working with their hands. The dry face and the `0 of 4` are different facts about one item (the
+	# tier stepped down; four people feel it), so the row states both.
+	band["kit_item_conditions"] = kit_condition_rows(KIT_HUNT_HEADCOUNT, 0.0)
+	band["kit_item_conditions"][2]["remaining"] = 0.0
 	# The gathering kit's own row steps down and the two hunt kits' do not — the whole claim of this
 	# fixture, stated where the client now reads it rather than left to be inferred from the conditions.
 	# The WAYFINDING gear is untouched here, so the scout's reach is unmoved too: a band that has worn
@@ -508,7 +593,18 @@ static func with_baskets_dry(band: Dictionary) -> Dictionary:
 ## replenishment path, so every role has stepped down and stays there. Its `hunter_attack` of 1 is
 ## what the combat gate refuses megafauna on.
 static func with_bare_hands(band: Dictionary) -> Dictionary:
-	band["kit_item_conditions"] = [{"item_id": KIT_ITEM_SPEARS, "remaining": 0.0}, {"item_id": KIT_ITEM_SLED, "remaining": 0.0}, {"item_id": KIT_ITEM_BASKETS, "remaining": 0.0}, {"item_id": KIT_ITEM_TRAPS, "remaining": 0.0}, {"item_id": KIT_ITEM_HUSBANDRY_GEAR, "remaining": 0.0}, {"item_id": KIT_ITEM_WAYFINDING, "remaining": 0.0}, {"item_id": KIT_ITEM_CLUBS, "remaining": 0.0}]
+	# Every item spent and nobody holding anything — **but each job keeps its own head count**, which is
+	# the whole reading: these are staffed people working bare-handed, not empty rosters. The keeper
+	# row stays quietly at `0 of 0`, so even here the unstaffed job says nothing.
+	var rows: Array = []
+	for row in kit_condition_rows():
+		rows.append(kit_condition_row(String(row["item_id"]), 0.0, 0.0,
+			float(row["workers_on_quoted_job"])))
+	band["kit_item_conditions"] = rows
+	# **A WHOLLY BARE PARTY IS ONE CREW HOLDING NOTHING**, not an absent one — the sim's own rule, so
+	# nothing here reads as a split and the gate's plain refusal is the whole of what renders.
+	band["hunt_crews"] = hunt_crews_uniform(KIT_ATTACK_BARE, [])
+	band[DetailFormat.BAND_QUOTED_KIT_ID_KEY] = KIT_ID_BIG_GAME
 	band["kit_tiers"] = kit_tiers_rows(KIT_ATTACK_BARE, KIT_HUNT_CARRY_BARE, KIT_FORAGE_CARRY_BARE,
 		KIT_ATTACK_BARE, KIT_SCOUT_VANTAGE_BARE)
 	band["hunter_attack"] = KIT_ATTACK_BARE
@@ -519,4 +615,44 @@ static func with_bare_hands(band: Dictionary) -> Dictionary:
 	# A camp with nothing left fights a raid with hands, i.e. the SAME creature `attack` a bare-handed
 	# hunter has — one number, reached from two roles, and the row must still name which fight it is.
 	band["warrior_attack"] = KIT_ATTACK_BARE
+	return band
+
+
+## **TEN SPEARS AMONG SEVENTEEN HUNTERS** (issue #520) — the band whose gear works perfectly and does
+## not go round. Every kit is live and none is worn out, so it is INDISTINGUISHABLE from
+## `with_equipped_kit` on every readout that reads a condition: the only thing that separates them is
+## how far each item REACHES, which is the whole of what this arc put on the wire.
+##
+## **TWO CREWS, and the second holds the SLED.** A sled goes round and the spears do not, so the bare
+## run is not empty-handed — it is under-equipped, which is the clause the split line has to pick over
+## "bare-handed" and which a fixture with an empty second crew could not test. It also keeps the two
+## crews holding DIFFERENT sets, so a reader that took the first crew's items for the party's fails.
+##
+## `hunter_attack` stays the EQUIPPED tier: the sim reads it off the best-equipped crew, so a band-level
+## reading that spoke for everybody is exactly the reassuring half this fixture exists to catch.
+## **BASKETS SHORT OF GATHERERS — the shortfall on a job that is not the hunt.** Two baskets among four
+## gatherers, so two gather at the equipped rate and two with their hands.
+##
+## **IT IS THE FRAME THE FOUR-JOB DENOMINATOR EXISTS FOR.** While `Σ huntCrews.workers` was the only
+## job head count on the wire this band was unreadable: its baskets are live and at full condition, its
+## hunt is perfectly equipped, and every readout in the client called it fully geared. Nothing about the
+## HUNT moves here, deliberately — a client that had quietly kept the hunt's head count as everybody's
+## denominator states this band's spears as short and its baskets as fine, i.e. exactly backwards.
+const KIT_SHORT_BASKETS_HOLDING := 2.0
+
+static func with_short_baskets(band: Dictionary) -> Dictionary:
+	band = with_equipped_kit(band)
+	band["kit_item_conditions"] = kit_condition_rows(KIT_HUNT_HEADCOUNT,
+		KIT_SHORT_BASKETS_HOLDING)
+	return band
+
+static func with_short_spears(band: Dictionary) -> Dictionary:
+	band = with_equipped_kit(band)
+	band["kit_item_conditions"] = kit_condition_rows(KIT_SHORT_SPEARS_ARMED)
+	band["hunt_crews"] = [
+		{"workers": KIT_SHORT_SPEARS_ARMED, "hunter_attack": KIT_ATTACK_EQUIPPED,
+			"item_ids": [KIT_ITEM_SPEARS, KIT_ITEM_SLED]},
+		{"workers": KIT_SHORT_SPEARS_BARE, "hunter_attack": KIT_ATTACK_BARE,
+			"item_ids": [KIT_ITEM_SLED]},
+	]
 	return band

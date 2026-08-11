@@ -152,7 +152,11 @@ func _is_concerning(kind: String, band: Dictionary) -> bool:
             # replenishment path, so the step down is permanent — the caret is the one warning the
             # player gets, and gating it on a remaining-condition threshold would either cry wolf
             # every turn or fire after the loss it was meant to announce.
-            return DetailFormat.band_kit_is_dry(band)
+            #
+            # **A SHORTFALL COUNTS TOO** (issue #520). A band holding ten spears for seventeen
+            # hunters has no dry item and is still fighting with half a party; the caret is the
+            # invitation to open the popover that says which item and by how many.
+            return DetailFormat.band_kit_is_dry(band) or DetailFormat.band_kit_is_short(band)
         _:
             return DetailFormat.morale_is_concerning(band)
 

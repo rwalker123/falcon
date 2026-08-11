@@ -261,6 +261,9 @@ each one's section:
 | `PopulationCohortState.kitId` | `kit_id` on the band dict | `dict/population.rs` |
 | `LaborAssignment.kitId` | `kit_id` on the assignment entry | `dict/population.rs` |
 | `PopulationCohortState.kitTiers:[BandKitTiers]` | `kit_tiers` on the band dict — per kit id, that band's tiers resolved against its LIVE equipment wear | `dict/population.rs` |
+| `PopulationCohortState.huntCrews:[BandKitCrew]` | `hunt_crews` on the band dict — one `{workers, hunter_attack, item_ids}` row per run of hunters holding identical gear, best-equipped first, `Σ workers` = the hunt head count. **Never empty**, so no reader needs a "no crews" branch; a band with nobody on the hunt publishes one row at `workers 0`. Its inner `item_ids` is a repeated field inside a repeated one, which is the shape a decoder is most likely to drop or flatten | `dict/population.rs` |
+| `KitItemCondition.workersHolding` | `workers_holding` beside `count` and `remaining` — **`count` is UNITS, this is PEOPLE**, and the two differ whenever the band is short or holds the spawn's reserve. A `0` is three sentences (nobody staffed, owns none, no quoted kit carries it), which is why `count` rides beside it | `dict/population.rs` |
+| `KitItemCondition.workersOnQuotedJob` | `workers_on_quoted_job` — **its DENOMINATOR, and the pair is one sentence**: the head count of the job the row is quoted at, off the same coverage the numerator came from, so the two can never describe different jobs. It is what makes a BASKET / CLUB / WAYFINDING shortfall sayable at all — before it, `Σ huntCrews.workers` was the only job head count on the wire. **A `0` here means NOBODY IS STAFFED, not a shortfall**, and nothing may divide by it | `dict/population.rs` |
 
 **The roster, its two defaults and the serialized config are WHOLE-SECTION fields, so they are
 decoded on BOTH paths** — `snapshot_to_dict` and `decode_delta_against` — which is the rule the

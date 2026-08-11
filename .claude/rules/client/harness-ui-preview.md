@@ -551,7 +551,27 @@ built from the code under test can only agree with itself. **They are the SIM's 
 from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
 payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-**A clean run is 296 frames / 827 `PASS`, exit 0.** **Twelve** of those frames are the Materials &
+**A clean run is 299 frames / 841 `PASS`, exit 0.** The partly-equipped arc (issue #520) is worth
+**three frames and fourteen `PASS`** of that, in three groups:
+
+- **`band_kit_short` carries seven** — the row's fraction on the spears' own face, the popover's
+  sentence on the SPEARS' line and not the SLED's, a short kit never called bare hands, the UNSTAFFED
+  job's two (it states no shortfall and keeps the sound ▲, asserted on the same frame as a live
+  shortfall because the two zeros are one glance apart), and the driven faction-rollup pair.
+- **`band_kit_forage_short` carries three** — the FOUR-JOB denominator (`workersOnQuotedJob`): two
+  baskets among four gatherers, asserted beside the claim that the perfectly-equipped SPEARS on the
+  same band say nothing, which is what pins that the two rows were divided by different numbers.
+- **`herd_hunt_gate_split` carries four**, counting the two negatives that each cover a different way
+  the split line can be wrong: the UNIFORM control appended to `herd_hunt_gate_effort` (without which
+  the claim passes on a sheet that annotates every band) and the PNG-less re-compose at a party that
+  fits inside the armed run.
+
+**THREE existing frames moved, and none is a regression**: `band_kit` / `band_kit_expanded` /
+`band_kit_bare` now sit over a STAFFED forage job, so their dry baskets read `(0/4)` and the popover
+says *"— bare hands · none of your 4 workers carry one"*. Nothing else in either harness moved —
+`band_panel_preview` is unchanged at 91 frames / 233 `assert OK` / 313 `: PASS`, which is the check
+that the shared `fixtures_band.gd` additions are inert there (its own kit fixtures publish neither
+worker field, which is the whole-row-absent case). **Twelve** of those frames are the Materials &
 Crafting chapter's: the ledger's own frame, its reserved-edge / event-bar / band-dock / co-edge /
 collapsed variants, the two-tier and folded group heads, and the two stopped benches — the crew that
 walked off and the store that cannot cover the next draw. **The figure is
