@@ -169,8 +169,17 @@ in-process assertion, and this one has no client reader yet to notice.
 ## Metrics
 
 `SimulationMetrics` carries `connections_live` / `connections_formed` / `connections_reaped`, written
-by `advance_connections`. They are the non-client observer of a subsystem whose first client reader
-arrives with the logistics slice.
+by `advance_connections` (not by `collect_metrics` — only that system knows which edges *formed* and
+which were *reaped*, and both are differences that cannot be re-derived from the ledger afterwards).
+
+**They ride the `turn.completed` log line**, which is what makes them an observer rather than three
+numbers nobody reads: until a client consumes the `connections` section, a tie forming or being
+reaped is otherwise invisible in a running game, and a subsystem you cannot watch is one you cannot
+play-test.
+
+The other live surface is **`export_map`**, whose JSON carries the whole `WorldSnapshot` — including
+`snapshot.connections` for the viewer faction, with each edge's strength, remembered position and
+three turn stamps.
 
 ## See Also
 
