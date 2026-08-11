@@ -87,9 +87,9 @@ which is a property of the tier and not of the merge.
   block — **`Hud.update_demographics`, the `FactionReadouts` ingest and `Main`'s dispatch are all
   gone**, so the section joins `accessibleStockpile` as a wire table the client no longer reads.
   **The faction page's PEOPLE bar is what replaced it, and it is a better answer to the same
-  question**: it sums the BANDS and apportions the fractional brackets ONCE across the roster
-  (`FactionRollup._build_people_block`), so the head count cannot disagree with the bands it is made
-  of — where a per-faction total beside it would have been a second source of truth.
+  question**: it sums the BANDS' own whole brackets (`FactionRollup._build_people_block`), so the
+  head count cannot disagree with the bands it is made of — where a per-faction total beside it
+  would have been a second source of truth.
   The **dependency ratio** had already left this line before that (a faction average hides the band
   that is in trouble — see the PEOPLE block in `band-city-panel.md`), which left it stating a
   composition the bar draws. See `core_sim` Campaign Loop — Population & Demographics.
@@ -504,10 +504,12 @@ row says *how long have I got and which side of the line am I on*, and only the 
   single most important reading on the row, so only an ABSENT field may suppress it; a `> 0` gate
   would hide the loss it exists to announce, and a defaulted `Spears 0` on a pre-TOE cohort would
   report equipment destroyed that was never there.
-- **The caret is WARN only once a kit has RUN OUT** (`DetailFormat.band_kit_is_dry`). Wearing down is
-  not a fact to shout about — nothing the player does changes its rate — while the step down is
-  permanent, so a remaining-condition threshold would either cry wolf every turn or fire after the
-  loss.
+- **The caret is WARN once a kit has RUN OUT — or once one does not go round**
+  (`DetailFormat.band_kit_is_dry` **or `band_kit_is_short`**). Wearing down is not a fact to shout
+  about — nothing the player does changes its rate — while the step down is permanent, so a
+  remaining-condition threshold would either cry wolf every turn or fire after the loss. A SHORTFALL
+  is the second permanent-feeling state: a band holding ten spears for seventeen hunters has no dry
+  item at all and is still fighting with half a party.
 - **All three are listed even on a band that neither hunts nor forages today.** Each wears on its own
   quantum (spears per animal killed, the sled per biomass hauled, baskets per biomass gathered), so
   this turn's activity does not predict which kit is closest to running out.
@@ -526,6 +528,81 @@ unequipped tier) · plus the PNG-less negative that a band stating no kit render
 without which the three frames above pass on a row that renders unconditionally. The fixtures' three
 conditions are deliberately three DIFFERENT numbers (`fixtures_band.gd`), because two kits sharing one
 value would pass every assertion with their accessors swapped.
+
+### A partly-armed band must stop reading as a fully-armed one (issue #520)
+
+`remaining` says how much LIFE is left in an item and nothing said how many PEOPLE it reaches, so a
+band holding four spears for seventeen hunters rendered **byte-identically** to one holding seventeen.
+`KitItemCondition.workersHolding` / `workersOnQuotedJob` are the sim's answer and
+`DetailFormat.kit_coverage` is the one reading of them: `{stated, holding, short, headcount}`, all
+three WHOLE PEOPLE.
+
+- **THE DENOMINATOR IS PUBLISHED, AND ALL FOUR JOBS COME THROUGH ONE PATH.** `workersOnQuotedJob` is
+  the head count of the job the row is quoted at, resolved off the SAME coverage that produced
+  `workersHolding`, so the pair provably describes ONE job. The hunt had a private path
+  (`Σ hunt_crews.workers`) for as long as that was the only job head count on the wire, and it does
+  not any more — **it must not grow one back**, because a second denominator is a second answer: a
+  client that kept it reports this band's spears as short and its baskets as fine, exactly backwards.
+- **THE TWO ZEROS ARE A RENDERING CONTRACT, and the guard is in `kit_coverage` alone.**
+  `workersOnQuotedJob == 0` is *nobody is staffed on that job* — `0 of 0`, nothing was needed, not a
+  warning — and a POSITIVE denominator with `workersHolding == 0` is the sharpest shortfall there is,
+  every worker on a staffed job at the unequipped tier. **The early return is belt-and-braces rather
+  than load-bearing** (the apportionment already answers `short 0` for `0/0`, so deleting it moves
+  nothing), and the failure it documents is the one that IS observable: a "helpful" fallback to the
+  hunt head count for an unstaffed job lights a perfectly sound piece of gear.
+- **THE COUNTS ARE APPORTIONED, NOT ROUNDED APART** (`HudFormat.apportion_people`). Both halves are
+  fractional, and rounding each on its own gives a `4 of 17` whose remainder is 13.
+- **THE NOUN IS `workers`, NOT `hunters`.** One path for four jobs means one clause, and it cannot
+  name the job: the row carries a head count, and which job produced it is resolved sim-side. Nobody
+  holding a live item takes its OWN sentence (`KIT_COVERAGE_BREAKDOWN_NONE_FORMAT`) because
+  *"only 0 of 4"* is the arithmetic where *"none of your 4"* is the fact — and that reading is
+  reachable with the item LIVE, an item needing a full crew (`workers_per_unit > 1`) equipping nobody
+  until the job is staffed to it. Both clauses are spelled from one shared tail
+  (`KIT_COVERAGE_SHORT_NEEDLE`, the `RECOVERY_GUIDANCE_TEXT` idiom) so a harness needle finds either.
+- **THREE INKS ON THE ROW, NOT TWO** (`_band_kit_line`): neutral INK for a live item that reaches
+  everybody, DANGER for one that has run out, **WARN for one that is live but short** — its gear works
+  perfectly for whoever holds it, which is why it must not read as the cliff and equally why it must
+  not read as fine. The face takes a bare fraction (`Spears 87 (10/17)`), the row being a
+  height-capped summary that already names the item in front of it.
+- **SHORT ITEMS LEAD, after dry ones.** Both are decisions and the row shows only
+  `BAND_KIT_ROW_MAX_ENTRIES` of them, so a shortfall must not be the thing pushed off.
+- **A SHORT ITEM'S POPOVER ROW TAKES ▼, and that generalises the glyph rather than overloading it.**
+  The two-tone rule was `equipped ? ▲ : ▼`; it asks whether the item is SOUND now, so the whole row
+  tints WARN and the words say which state it is in — `— bare hands` for the cliff,
+  `· only 10 of 17 hunters carry one` for the shortfall. A green row carrying an amber clause is what
+  it replaces, and that read as fine.
+- **THE FACTION PAGE COUNTS A SHORT BAND TOO, and `all equipped` means it** (`FactionRollup._kit_line`).
+  The tally was dry bands alone, so a band holding ten spears for seventeen hunters was reported as
+  equipped on the one surface a player uses to find WHICH band needs gear — the same reassuring-direction
+  error one scope up. The two states share ONE count deliberately (the row is a count of bands worth
+  opening, not a diagnosis) and the drill-down row's note says which: `FACTION_KIT_DRY_NOTE` leads
+  `FACTION_KIT_SHORT_NOTE` on a band in both states, because the step down is permanent and a shortfall
+  is the band outgrowing its gear, which crafting can answer.
+
+**The faction claim is DRIVEN and PNG-LESS**, on `FactionRollup._kit_line` with two band lists
+(`_assert_faction_kit_counts_the_short_band`). That page is `band_panel_preview`'s to render and
+staging a short band in its roster would move a frame for a claim that is one string, while the rollup
+is a pure function of the list. Asserted as a PAIR — the alert alone passes on a rollup that flags
+every band — and sabotage-verified against the dry-only tally, which fails exactly the short half.
+
+**Frames + assertions (`chapters/band_expedition.gd`):** `band_kit_short` — the same seven items at
+the same wear as `with_equipped_kit`, so the ONLY thing that can move this frame is the coverage. The
+row states the fraction on the spears' own face; the popover states the sentence on the SPEARS' line
+and **not on the SLED's** (both are hunt items and only one is short, so a clause rendered per BAND
+rather than per ITEM fails here); a short kit is never called bare hands; and **the unstaffed job is
+asserted on that same frame**, the band keeping no pen, since the two zeros are one glance apart and
+only a frame carrying both can show the readout telling them apart.
+
+**`band_kit_forage_short` is the four-job frame** — two baskets among four gatherers, with the hunt
+perfectly equipped and every item at full condition, i.e. the band that was unreadable while the hunt
+owned the only denominator. **The claim that the SPEARS say nothing is the load-bearing half**: a
+client still dividing everything by the hunt's 17 states the baskets as short too, so asserting the
+basket fraction alone passes on the wrong denominator.
+
+`band_kit` / `band_kit_expanded` / `band_kit_bare` moved with this arc and are now sharper: the dry
+baskets sit over a STAFFED forage job, so they read `Baskets dry (0/4)` and *"— bare hands · none of
+your 4 workers carry one"* — the tier stepped down, and four people feel it, stated as the two facts
+they are. Their handling-gear row is the quiet zero in every one of them.
 
 ### The other three tiers, and the kit each is quoted at (`.claude/rules/core_sim/equipment.md`)
 

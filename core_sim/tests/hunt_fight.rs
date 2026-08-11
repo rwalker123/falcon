@@ -88,13 +88,15 @@ fn herd_of(fauna: &FaunaConfig, species: &str) -> Herd {
 /// used to pin how the model *responds* to the weapon.
 fn party_at(attack: f32) -> HuntingParty {
     let base = HuntingParty::builtin_equipped();
-    HuntingParty {
-        hunter: CombatStats {
+    HuntingParty::uniform(
+        CombatStats {
             attack,
-            ..base.hunter
+            ..base.best_equipped_hunter()
         },
-        ..base
-    }
+        base.tuning,
+        base.crews[0].injury_damage_per_animal,
+        base.dispersion,
+    )
 }
 
 /// One turn of a resident band's hunt: the animals killed, and what the fight cost the party.
@@ -546,7 +548,8 @@ fn a_sub_threshold_party_kills_after_enough_turns() {
     let party = HuntingParty::builtin_equipped();
     let threshold = {
         let quarry = fauna.species_by_display(MAMMOTH).expect("shipped species");
-        let per_hunter = core_sim::strike_damage(party.hunter.attack, quarry.combat.defense);
+        let per_hunter =
+            core_sim::strike_damage(party.best_equipped_hunter().attack, quarry.combat.defense);
         (quarry.combat.durability / per_hunter).ceil()
     };
     assert!(
@@ -761,7 +764,7 @@ fn hunt_ordering_does_not_change_outcomes() {
             hit_chance: 0.5,
             ..base.tuning
         },
-        ..base
+        ..base.clone()
     };
     let quarry = fauna.quarry_fight_for(DEER);
 
@@ -908,13 +911,12 @@ fn the_passive_device_beats_spears_on_every_small_game_row_and_takes_no_large_ga
 
     let party_for = |kit_id: &str, body_mass: f32| {
         let kit = equipment.kit(kit_id).expect("the roster ships this kit");
-        HuntingParty {
-            hunter: equipment.hunter_profile_against(intrinsic, &kit, &fresh, body_mass),
-            tuning: combat.tuning(),
-            injury_damage_per_animal: combat.hunt_injury_damage_per_animal
-                * equipment.exposure(&kit, &fresh),
-            dispersion: equipment.dispersion(&kit, &fresh),
-        }
+        HuntingParty::uniform(
+            equipment.hunter_profile_against(intrinsic, &kit, &fresh, body_mass),
+            combat.tuning(),
+            combat.hunt_injury_damage_per_animal * equipment.exposure(&kit, &fresh),
+            equipment.dispersion(&kit, &fresh),
+        )
     };
 
     // **A REAL PARTY, not one hunter.** `brought_down` is floored to WHOLE animals, and one hunter
@@ -1007,4 +1009,241 @@ fn the_passive_device_beats_spears_on_every_small_game_row_and_takes_no_large_ga
             "the speared arm must take {species}, or the trapping claim above is vacuous"
         );
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// #520 — THE PARTLY-EQUIPPED PARTY: a party's gear divides it, and the fight sees the division
+// ---------------------------------------------------------------------------------------------
+
+/// The two items the coverage fixtures below stock. The sim never spells an item; a test driving a
+/// band short of one has to.
+const SPEARS: &str = "spears";
+const SLED: &str = "sled";
+/// Half a party armed, half not — the smallest fixture that has two crews in it.
+const HALF_ARMED_PARTY: u32 = 20;
+const HALF_ARMED_SPEARS: u32 = 10;
+/// Red Deer's authored `defense` — the number the bare hand's `attack 1` exactly fails to clear.
+const RED_DEER_DEFENSE: f32 = 1.0;
+
+/// **A party of `workers` holding only `spears_owned` spears**, resolved through the shipped seams —
+/// `EquipmentConfig::coverage` divides the people, `PartyResolution` turns each run into a crew.
+///
+/// Sleds for everybody, so the **spears** are the only thing short and the haul never enters.
+fn partly_speared(workers: f32, spears_owned: u32, body_mass: f32) -> HuntingParty {
+    let equipment = EquipmentConfig::builtin();
+    let combat = CombatConfig::builtin();
+    let kit = equipment.default_kit(core_sim::KitJob::Hunt);
+    let mut wear = BandEquipment::default();
+    for (item, count) in [(SPEARS, spears_owned), (SLED, workers.ceil() as u32)] {
+        let tier = equipment
+            .item(item)
+            .expect("the shipped roster carries it")
+            .default_tier()
+            .id
+            .clone();
+        wear.stock(item, count, &tier, None);
+    }
+    let coverage = equipment.coverage(&kit, workers, &wear);
+    core_sim::PartyResolution {
+        equipment: &equipment,
+        coverage: &coverage,
+        wear: &wear,
+        intrinsic: CreaturesConfig::builtin().person(),
+        tuning: combat.tuning(),
+        hunt_injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
+    }
+    .party_against(core_sim::Quarry::Mass(body_mass))
+}
+
+fn deer_body_mass() -> f32 {
+    deterministic_fauna()
+        .species_by_display(DEER)
+        .expect("the roster ships Red Deer")
+        .body_mass
+}
+
+/// **A PARTY SHORT OF SPEARS RESOLVES AS TWO CONTINGENTS, AND THE BARE HALF TAKES NOTHING**
+/// (issue #520).
+///
+/// Red Deer carry `defense 1` and the bare hand is `attack 1`, so `max(0, 1 − 1)` is **exactly
+/// zero** for the unarmed run — the gate the whole arc turns on, now applied per *crew* rather than
+/// per party. Before this a party resolved uniformly off the serving batch, so ten spears armed
+/// twenty hunters.
+#[test]
+fn a_party_short_of_spears_fights_as_two_crews_and_the_bare_half_clears_no_defence() {
+    let party = partly_speared(HALF_ARMED_PARTY as f32, HALF_ARMED_SPEARS, deer_body_mass());
+
+    assert_eq!(
+        party.crews.len(),
+        2,
+        "two loadouts, so two crews: {party:?}"
+    );
+    assert_eq!(
+        party.crews[0].share, 0.5,
+        "ten of twenty hold a spear — best-equipped crew first"
+    );
+    assert_eq!(party.crews[1].share, 0.5);
+    assert!(
+        party.crews[0].hunter.attack > party.crews[1].hunter.attack,
+        "the armed crew swings the spear's tier and the other the bare hand's: {party:?}"
+    );
+    assert_eq!(
+        core_sim::strike_damage(party.crews[1].hunter.attack, RED_DEER_DEFENSE),
+        0.0,
+        "the bare-handed crew must land EXACTLY nothing through a defence it cannot clear"
+    );
+}
+
+/// **THE TAKE IS THE SUM OF THE CREWS, NOT A SCALED SINGLE PROFILE** (issue #520).
+///
+/// Twenty hunters with ten spears take what **ten speared hunters** take, because the other ten
+/// contribute a hard zero against Red Deer. Both wrong answers are excluded on the same fixture: it
+/// is not twenty speared hunters' take (the old uniform reading), and it is not zero.
+#[test]
+fn a_partly_speared_partys_take_is_the_sum_of_its_crews() {
+    let mass = deer_body_mass();
+    let mixed = partly_speared(HALF_ARMED_PARTY as f32, HALF_ARMED_SPEARS, mass);
+    // The two halves on their own, resolved through the same seam so nothing is hand-built.
+    let armed_half = partly_speared(HALF_ARMED_SPEARS as f32, HALF_ARMED_SPEARS, mass);
+    let bare_half = partly_speared(HALF_ARMED_SPEARS as f32, 0, mass);
+    let fully_armed = partly_speared(HALF_ARMED_PARTY as f32, HALF_ARMED_PARTY, mass);
+
+    let (mixed_kill, _, _) = hunt_once(DEER, HALF_ARMED_PARTY, &mixed);
+    let (armed_kill, _, _) = hunt_once(DEER, HALF_ARMED_SPEARS, &armed_half);
+    let (bare_kill, _, _) = hunt_once(DEER, HALF_ARMED_SPEARS, &bare_half);
+    let (whole_kill, _, _) = hunt_once(DEER, HALF_ARMED_PARTY, &fully_armed);
+
+    assert_eq!(
+        bare_kill, 0,
+        "the bare half alone takes nothing — the gate, which is what makes the sum below legible"
+    );
+    assert_eq!(
+        mixed_kill,
+        armed_kill + bare_kill,
+        "the partly-armed party takes exactly what its crews take separately"
+    );
+    // **Neither wrong answer**: the old uniform reading, and one that drops the bare crew's people
+    // from the fight entirely.
+    assert!(
+        mixed_kill < whole_kill,
+        "ten spears must not arm twenty hunters ({mixed_kill} vs {whole_kill})"
+    );
+    assert!(
+        armed_kill > 0,
+        "liveness — the armed half really takes deer, or every equality above is about zero"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// WEAR FOLLOWS THE WORK ACTUALLY DONE — `WearQuantum::Strike`
+// ---------------------------------------------------------------------------------------------
+
+/// **TEN HUNTERS, ENOUGH DAMAGE FOR FIVE DEER, TWO STANDING: FOUR SPEARS' WORTH OF WEAR.**
+///
+/// The rule, not an illustration of it — `charged = strikes_landed × (absorbed / dealt)`, where
+/// `absorbed` is what the standing bodies could take (`crate::damage_absorbed`, the same clamp the
+/// damage ledger applies). Overkill against a thin herd is not free, but neither is it billed as if
+/// every blow found a body: two-fifths of the party's damage went into an animal, so two-fifths of
+/// its swing is charged.
+///
+/// The quarry is synthetic so the arithmetic is exact and legible: `durability 20`, `defense 10`
+/// against the spear's `attack 20` ⇒ **10 damage a blow**, so ten hunters deal `100` — five bodies —
+/// with **two** standing.
+#[test]
+fn the_strike_charge_is_the_share_of_the_blow_the_bodies_could_absorb() {
+    const HUNTERS: f32 = 10.0;
+    const STANDING: f32 = 2.0;
+    /// `attack 20 − defense 10`, so ten hunters deal exactly five bodies' worth.
+    const DAMAGE_PER_BLOW: f32 = 10.0;
+    const BODY_DURABILITY: f32 = 20.0;
+    /// Two bodies of the five the party paid for — Ray's `2/5`.
+    const ABSORBED_SHARE: f32 = STANDING * BODY_DURABILITY / (HUNTERS * DAMAGE_PER_BLOW);
+    const CHARGED_STRIKES: f32 = HUNTERS * ABSORBED_SHARE;
+
+    let deer_defense = 20.0 - DAMAGE_PER_BLOW;
+    // A fully-speared party, so every one of the ten swings and there is exactly one crew to bill.
+    let party = partly_speared(HUNTERS, HUNTERS as u32, /* unbounded */ 1.0);
+    let quarry = QuarryFight {
+        profile: CombatStats {
+            attack: 0.0,
+            defense: deer_defense,
+            durability: BODY_DURABILITY,
+            range: core_sim::RangeBand::Melee,
+            wariness: 0.0,
+        },
+        // **Both arms, because they are two code paths to one answer.** `0` takes the one-sided fast
+        // path (§4.5), anything positive takes `combat::resolve_fight`; a charge that differed
+        // between them would be a second wear model.
+        ferocity: 0.0,
+        wounds: DamageLedger::default(),
+    };
+
+    for ferocity in [0.0, 0.5] {
+        let fight = resolve_hunt_fight(
+            STANDING,
+            HUNTERS,
+            &party,
+            &QuarryFight { ferocity, ..quarry },
+            FIXED_SEED,
+        );
+        assert_eq!(
+            fight.strike_charges.len(),
+            1,
+            "one crew, one charge (ferocity {ferocity})"
+        );
+        assert!(
+            (fight.strike_charges[0].strikes - CHARGED_STRIKES).abs() < 1e-4,
+            "ten hunters with five deer's worth of damage and two standing must be charged \
+             {CHARGED_STRIKES} strikes, not {} (ferocity {ferocity})",
+            fight.strike_charges[0].strikes
+        );
+        // Liveness: they really did bring the two down, so this is a charge for work performed.
+        assert_eq!(fight.brought_down, STANDING, "ferocity {ferocity}");
+    }
+}
+
+/// **A BARE-HANDED CREW IS CHARGED NOTHING, BECAUSE IT HOLDS NOTHING AND LANDED NOTHING**
+/// (issue #520 + the strike quantum).
+///
+/// The two halves are separate guarantees and both are asserted: the run's strikes are **zero**
+/// (the gate skips a pairing it cannot clear, so no blow is drawn), and its narrowed kit carries no
+/// spears, so even a non-zero count would charge nothing. A speared party short of spears therefore
+/// spends its gear at the rate of the people actually holding it.
+#[test]
+fn a_bare_handed_crew_is_charged_no_strikes() {
+    let mass = deer_body_mass();
+    let party = partly_speared(HALF_ARMED_PARTY as f32, HALF_ARMED_SPEARS, mass);
+    let fauna = deterministic_fauna();
+    let quarry = fauna.quarry_fight_for(DEER);
+
+    let fight = resolve_hunt_fight(
+        HALF_ARMED_PARTY as f32,
+        HALF_ARMED_PARTY as f32,
+        &party,
+        &quarry,
+        FIXED_SEED,
+    );
+
+    assert_eq!(
+        fight.strike_charges.len(),
+        2,
+        "two crews, two charges: {:?}",
+        fight.strike_charges
+    );
+    assert!(
+        fight.strike_charges[0].strikes > 0.0,
+        "the speared crew really swung: {:?}",
+        fight.strike_charges
+    );
+    assert_eq!(
+        fight.strike_charges[1].strikes, 0.0,
+        "the bare-handed crew cleared no defence, so it landed nothing to be charged for"
+    );
+    assert!(
+        !fight.strike_charges[1]
+            .kit
+            .uses()
+            .any(|item| item == SPEARS),
+        "...and its kit holds no spears either, so a non-zero count still could not blunt one"
+    );
 }

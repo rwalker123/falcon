@@ -963,6 +963,108 @@ func _kit_states() -> void:
 		Readout.detail_excerpt(h._hud.occupant_detail.text, HudDisclosureVocab.DETAIL_ROW_KIT)
 			== Readout.DETAIL_EXCERPT_ABSENT)
 
+	# State kit-d — **TEN SPEARS AMONG SEVENTEEN HUNTERS** (issue #520). Every item is live and at the
+	# same wear as the equipped band far above, so a readout that only ever asks how much LIFE is left
+	# renders this band and a fully-armed one identically — which is exactly what shipped. What
+	# separates them is how far each item REACHES.
+	var short := BandFx.with_short_spears(BandFx.band_fixture())
+	h._hud._band_labor._player_band = short
+	h._hud.show_unit_selection(short)
+	await h._settle()
+	_click_disclosure(BAND_DISCLOSURE_KIT)
+	await h._settle()
+	await h._save("band_kit_short")
+	# **THE ROW STATES THE FRACTION AND THE POPOVER STATES THE SENTENCE**, the split the whole Kit
+	# readout is built on — the row says which side of a line the item is on, the popover has room to
+	# say what that costs. Asserted as a pair, because a row that lost its marker still leaves a
+	# perfectly plausible popover behind it and vice versa.
+	var short_face := DetailFormat.KIT_COVERAGE_ROW_FORMAT % [
+		String.num(BandFx.KIT_CONDITION_SPEARS, DetailFormat.KIT_CONDITION_DECIMALS),
+		int(BandFx.KIT_SHORT_SPEARS_ARMED), int(BandFx.KIT_HUNT_HEADCOUNT)]
+	h._assert_hud("the Gear row states the SPEARS' shortfall on their own face: %s" % short_face,
+		String(h._hud.occupant_detail.get_parsed_text()).contains(short_face))
+	# **AND THE SLED, WHICH GOES ROUND, STATES NOTHING.** Both items are held by the hunt crews and
+	# only one is short, so a coverage clause rendered unconditionally — or one keyed on the band
+	# rather than on the item — fails here and nowhere else.
+	var short_popover := _kit_popover_text()
+	var short_spears_line := _kit_breakdown_line(short_popover, DetailFormat.KIT_LABEL_SPEARS)
+	var short_sled_line := _kit_breakdown_line(short_popover, DetailFormat.KIT_LABEL_SLED)
+	var coverage_clause := DetailFormat.KIT_COVERAGE_BREAKDOWN_FORMAT % [
+		int(BandFx.KIT_SHORT_SPEARS_ARMED), int(BandFx.KIT_HUNT_HEADCOUNT)]
+	h._assert_hud("…and the popover says how few of them carry one:%s" % coverage_clause,
+		short_spears_line.contains(coverage_clause)
+			and not short_sled_line.contains(coverage_clause))
+	# **A SHORT ITEM IS NOT A SPENT ONE.** The spears work perfectly for whoever holds them, so the row
+	# must not borrow the cliff's wording — that word means the role has stepped down for good.
+	h._assert_hud("…and a SHORT kit is never called bare hands — it works for whoever holds it",
+		not short_spears_line.contains(DetailFormat.KIT_BARE_HANDS_SUFFIX))
+	# **THE UNSTAFFED JOB SAYS NOTHING, and it is asserted on the SAME frame as a live shortfall** —
+	# the two zeros are one glance apart and only a frame carrying both can show the readout telling
+	# them apart. This band keeps no pen, so its handling gear reaches nobody because nobody needed
+	# it; a reader that divided by that head count, or read the numerator alone, would light up a
+	# perfectly sound item at `0 of 0`.
+	var keeper_line := _kit_breakdown_line(short_popover, DetailFormat.KIT_LABEL_HUSBANDRY_GEAR)
+	h._assert_hud("a job NOBODY is staffed on states no shortfall — 0 of 0 is not a warning",
+		not keeper_line.contains(DetailFormat.KIT_COVERAGE_SHORT_NEEDLE)
+			and keeper_line.contains(String.num(BandFx.KIT_CONDITION_HUSBANDRY_GEAR,
+				DetailFormat.KIT_CONDITION_DECIMALS)))
+	h._assert_hud("…and it keeps the SOUND glyph, where the short spears wear the warning one",
+		keeper_line.contains(DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH)
+			and short_spears_line.contains(DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH))
+	_click_disclosure(BAND_DISCLOSURE_KIT)
+	_assert_faction_kit_counts_the_short_band(short)
+
+	# State kit-e — **TWO BASKETS AMONG FOUR GATHERERS** (issue #520, the four-job denominator). The
+	# hunt is perfectly equipped here and every item is at full condition, so until each row carried
+	# its OWN job's head count this band was unreadable: `Σ huntCrews.workers` is the hunt's number and
+	# says nothing whatever about a basket.
+	var forage_short := BandFx.with_short_baskets(BandFx.band_fixture())
+	h._hud._band_labor._player_band = forage_short
+	h._hud.show_unit_selection(forage_short)
+	await h._settle()
+	_click_disclosure(BAND_DISCLOSURE_KIT)
+	await h._settle()
+	await h._save("band_kit_forage_short")
+	var forage_face := DetailFormat.KIT_COVERAGE_ROW_FORMAT % [
+		String.num(BandFx.KIT_CONDITION_BASKETS, DetailFormat.KIT_CONDITION_DECIMALS),
+		int(BandFx.KIT_SHORT_BASKETS_HOLDING), int(BandFx.KIT_FORAGE_HEADCOUNT)]
+	h._assert_hud("the BASKETS state their shortfall against the FORAGE head count: %s" % forage_face,
+		String(h._hud.occupant_detail.get_parsed_text()).contains(forage_face))
+	# **AND THE HUNT IS NOT DRAGGED IN WITH IT.** A client that kept the hunt's head count as every
+	# job's denominator states this band's spears as `17 of 17` — silent — and its baskets as `2 of 17`,
+	# so asserting the basket fraction alone would pass on the wrong denominator too. The spears
+	# saying NOTHING is what pins that the two rows were divided by different numbers.
+	var forage_popover := _kit_popover_text()
+	h._assert_hud("…and the perfectly-equipped SPEARS say nothing on the same band",
+		not _kit_breakdown_line(forage_popover, DetailFormat.KIT_LABEL_SPEARS).contains(
+			DetailFormat.KIT_COVERAGE_SHORT_NEEDLE))
+	h._assert_hud("…and the popover states it in the four-job wording, never 'hunters'",
+		_kit_breakdown_line(forage_popover, DetailFormat.KIT_LABEL_BASKETS).contains(
+			DetailFormat.KIT_COVERAGE_BREAKDOWN_FORMAT % [
+				int(BandFx.KIT_SHORT_BASKETS_HOLDING), int(BandFx.KIT_FORAGE_HEADCOUNT)]))
+	_click_disclosure(BAND_DISCLOSURE_KIT)
+	h._hud._band_labor._player_band = BandFx.band_fixture()
+
+## **THE FACTION PAGE COUNTED DRY BANDS ALONE, so a partly-armed band read as equipped there** — the
+## reassuring-direction error this whole issue exists to remove, on the surface a player uses to find
+## WHICH band needs gear (issue #520).
+##
+## **DRIVEN AND PNG-LESS, on `FactionRollup._kit_line` directly.** That page is `band_panel_preview`'s
+## to render, and staging a short band in its roster would move a frame for a claim that is one string
+## — while the rollup itself is a pure function of the band list, so the honest test is to hand it two
+## lists. **Asserted as a PAIR**: the alert alone passes on a rollup that flags every band, and
+## `all equipped` alone passes on the bug fully restored.
+func _assert_faction_kit_counts_the_short_band(short: Dictionary) -> void:
+	var sound := BandFx.with_equipped_kit(BandFx.band_fixture())
+	var sound_line := FactionRollup._kit_line([sound], h._hud._disclosures)
+	var short_line := FactionRollup._kit_line([short], h._hud._disclosures)
+	h._assert_hud("a faction of soundly-equipped bands still reads '%s'"
+		% HudWorkVocab.FACTION_KIT_ALL_EQUIPPED,
+		sound_line.contains(HudWorkVocab.FACTION_KIT_ALL_EQUIPPED))
+	h._assert_hud("…and a band SHORT of a kit is counted, not reported as equipped",
+		short_line.contains(HudWorkVocab.FACTION_ALERT_GLYPH)
+			and not short_line.contains(HudWorkVocab.FACTION_KIT_ALL_EQUIPPED))
+
 ## The open breakdown popover's text — the RENDERED disclosure, not the producer's return, so the
 ## assertions above cover the click, the payload stash and the popover's own restate.
 func _kit_popover_text() -> String:

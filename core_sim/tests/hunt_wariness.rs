@@ -340,11 +340,15 @@ fn seed_the_forecast(app: &mut App, band: bevy::prelude::Entity, fauna_id: &str,
 /// The shipped, fully-kitted party fighting at `combat`'s tuning — the composition
 /// `server::seed_source_yield` builds for a band whose spears are whole.
 fn party_at(combat: &CombatConfig) -> HuntingParty {
-    HuntingParty {
-        tuning: combat.tuning(),
-        injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
-        ..HuntingParty::builtin_equipped()
-    }
+    // **Uniform** — a fully-covered party is one crew, which is what the builtin fixture is; only
+    // the resolver dials are restated, because this suite installs its own `combat` config.
+    let base = HuntingParty::builtin_equipped();
+    HuntingParty::uniform(
+        base.best_equipped_hunter(),
+        combat.tuning(),
+        combat.hunt_injury_damage_per_animal,
+        base.dispersion,
+    )
 }
 
 /// The **exported** assignment row — the shipped artifact the client reads, not the in-process

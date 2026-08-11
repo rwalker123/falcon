@@ -51,7 +51,7 @@ use sim_runtime::commands::{
 use crate::combat_config::CombatConfigHandle;
 use crate::components::{floor_is_valid, BandEquipment, BandId};
 use crate::creatures_config::CreaturesConfigHandle;
-use crate::equipment_config::{EquipmentConfig, EquipmentConfigHandle, KitChoice, KitJob};
+use crate::equipment_config::{EquipmentConfig, EquipmentConfigHandle, KitJob};
 use crate::expedition_config::{ExpeditionConfig, ExpeditionConfigHandle};
 use crate::fauna::{Herd, HerdRegistry, HuntingParty};
 use crate::fauna_config::{FaunaConfig, FaunaConfigHandle};
@@ -128,8 +128,12 @@ fn resolve_ask(
         }
     };
 
-    let party = query_hunting_party(world, &equipment, &kit, &wear, herd.body_mass);
-    let per_worker_haul = query_per_worker_haul(world, &equipment, &kit, &wear);
+    // **How this band's gear divides the party it is asking about** — resolved once and read by
+    // both halves below, so the fight it is quoted and the haul it is quoted describe the same
+    // people (`equipment.md` → "the partly-equipped party").
+    let coverage = equipment.coverage(&kit, party_workers as f32, &wear);
+    let party = query_hunting_party(world, &equipment, &coverage, &wear, herd.body_mass);
+    let per_worker_haul = query_per_worker_haul(world, &equipment, &coverage, &wear);
     Ok(ResolvedAsk {
         herd,
         party,
@@ -191,19 +195,21 @@ fn band_equipment(world: &mut World, faction: FactionId, band_id: u64) -> Option
 fn query_hunting_party(
     world: &World,
     equipment: &EquipmentConfig,
-    kit: &KitChoice,
+    coverage: &crate::equipment_config::KitCoverage,
     wear: &BandEquipment,
     quarry_body_mass: f32,
 ) -> HuntingParty {
     let combat = world.resource::<CombatConfigHandle>().get();
     let intrinsic = world.resource::<CreaturesConfigHandle>().get().person();
-    HuntingParty {
-        hunter: equipment.hunter_profile_against(intrinsic, kit, wear, quarry_body_mass),
+    crate::fauna::PartyResolution {
+        equipment,
+        coverage,
+        wear,
+        intrinsic,
         tuning: combat.expedition_tuning(),
-        injury_damage_per_animal: combat.hunt_injury_damage_per_animal
-            * equipment.exposure(kit, wear),
-        dispersion: equipment.dispersion(kit, wear),
+        hunt_injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
     }
+    .party_against(crate::equipment_config::Quarry::Mass(quarry_body_mass))
 }
 
 /// The haul half of [`query_hunting_party`] — the kit's *sled* tier at the band's live wear. Both
@@ -212,7 +218,7 @@ fn query_hunting_party(
 fn query_per_worker_haul(
     world: &World,
     equipment: &EquipmentConfig,
-    kit: &KitChoice,
+    coverage: &crate::equipment_config::KitCoverage,
     wear: &BandEquipment,
 ) -> f32 {
     let equipped_rate = world
@@ -220,7 +226,10 @@ fn query_per_worker_haul(
         .get()
         .hunt
         .per_worker_biomass_capacity;
-    equipment.hunt_per_worker_biomass_capacity(equipped_rate, kit, wear)
+    // **Weighted across the crews** — a party short of sleds hauls at the mean of what its people
+    // are actually dragging, not at the tier the best-equipped of them has.
+    coverage
+        .weighted_rate(|kit| equipment.hunt_per_worker_biomass_capacity(equipped_rate, kit, wear))
 }
 
 /// Answer a hunt-trip forecast: the composed floor, then every preset floor, at the same party.
@@ -625,6 +634,21 @@ mod tests {
     /// A floor mid-range, deliberately **not** one of `RAID_FORECAST_FLOOR_SAMPLES` in the fidelity
     /// test's usage — the point of the query is that it answers the floor it is asked for.
     const A_FLOOR: f32 = 0.30;
+    /// **One worker against the one-unit reference ledger**, which is exactly covered — so the
+    /// coverage below is a single fully-armed crew and the party it builds is `uniform`, the shape
+    /// every fixture in this module assumed before the partly-equipped party landed. The party is
+    /// scale-free (its crews carry *shares*), so quoting it at one worker and then projecting a
+    /// party of four is the same party.
+    const ONE_FULLY_ARMED_WORKER: f32 = 1.0;
+
+    /// The coverage of a party whose gear reaches everybody — see [`ONE_FULLY_ARMED_WORKER`].
+    fn fully_armed(
+        equipment: &EquipmentConfig,
+        kit: &crate::equipment_config::KitChoice,
+        wear: &BandEquipment,
+    ) -> crate::equipment_config::KitCoverage {
+        equipment.coverage(kit, ONE_FULLY_ARMED_WORKER, wear)
+    }
 
     /// Wild Boar's shipped shape, big enough that a party of four lands a real payload.
     fn test_herd() -> Herd {
@@ -904,8 +928,19 @@ mod tests {
             .resolve_kit_for_job(Some(DEFAULT_HUNT_KIT), KitJob::Hunt)
             .expect("the shipped default hunt kit resolves");
         let fresh = BandEquipment::start_stocked(&EquipmentConfig::builtin());
-        let party = query_hunting_party(&world, &equipment, &kit, &fresh, herd.body_mass);
-        let per_worker_haul = query_per_worker_haul(&world, &equipment, &kit, &fresh);
+        let party = query_hunting_party(
+            &world,
+            &equipment,
+            &fully_armed(&equipment, &kit, &fresh),
+            &fresh,
+            herd.body_mass,
+        );
+        let per_worker_haul = query_per_worker_haul(
+            &world,
+            &equipment,
+            &fully_armed(&equipment, &kit, &fresh),
+            &fresh,
+        );
         let resolved = ResolvedAsk {
             herd: herd.clone(),
             party,
@@ -975,11 +1010,12 @@ mod tests {
             .resolve_kit_for_job(Some(DEFAULT_HUNT_KIT), KitJob::Hunt)
             .expect("the shipped default hunt kit resolves");
 
+        let fresh = BandEquipment::start_stocked(&EquipmentConfig::builtin());
         let party = query_hunting_party(
             &world,
             &equipment,
-            &kit,
-            &BandEquipment::start_stocked(&EquipmentConfig::builtin()),
+            &fully_armed(&equipment, &kit, &fresh),
+            &fresh,
             test_herd().body_mass,
         );
 
@@ -1056,8 +1092,19 @@ mod tests {
             .resolve_kit_for_job(Some(DEFAULT_HUNT_KIT), KitJob::Hunt)
             .expect("the shipped default hunt kit resolves");
         let fresh = BandEquipment::start_stocked(&EquipmentConfig::builtin());
-        let party = query_hunting_party(&world, &equipment, &kit, &fresh, herd.body_mass);
-        let per_worker_haul = query_per_worker_haul(&world, &equipment, &kit, &fresh);
+        let party = query_hunting_party(
+            &world,
+            &equipment,
+            &fully_armed(&equipment, &kit, &fresh),
+            &fresh,
+            herd.body_mass,
+        );
+        let per_worker_haul = query_per_worker_haul(
+            &world,
+            &equipment,
+            &fully_armed(&equipment, &kit, &fresh),
+            &fresh,
+        );
         let range_sigmas = combat.forecast_range_sigmas;
 
         let succeeds = |party_workers: u32| {
@@ -1119,8 +1166,19 @@ mod tests {
             .resolve_kit_for_job(Some(DEFAULT_HUNT_KIT), KitJob::Hunt)
             .expect("the shipped default hunt kit resolves");
         let fresh = BandEquipment::start_stocked(&EquipmentConfig::builtin());
-        let party = query_hunting_party(&world, &equipment, &kit, &fresh, herd.body_mass);
-        let per_worker_haul = query_per_worker_haul(&world, &equipment, &kit, &fresh);
+        let party = query_hunting_party(
+            &world,
+            &equipment,
+            &fully_armed(&equipment, &kit, &fresh),
+            &fresh,
+            herd.body_mass,
+        );
+        let per_worker_haul = query_per_worker_haul(
+            &world,
+            &equipment,
+            &fully_armed(&equipment, &kit, &fresh),
+            &fresh,
+        );
 
         let seed_at = |max_party_workers: u32| {
             seeded_denial_party_for(
@@ -1174,8 +1232,19 @@ mod tests {
         let fresh = BandEquipment::start_stocked(&EquipmentConfig::builtin());
         let resolved = ResolvedAsk {
             herd: herd.clone(),
-            party: query_hunting_party(&world, &equipment, &kit, &fresh, herd.body_mass),
-            per_worker_haul: query_per_worker_haul(&world, &equipment, &kit, &fresh),
+            party: query_hunting_party(
+                &world,
+                &equipment,
+                &fully_armed(&equipment, &kit, &fresh),
+                &fresh,
+                herd.body_mass,
+            ),
+            per_worker_haul: query_per_worker_haul(
+                &world,
+                &equipment,
+                &fully_armed(&equipment, &kit, &fresh),
+                &fresh,
+            ),
         };
 
         let delivered = |party_workers: u32| {
@@ -1230,8 +1299,19 @@ mod tests {
         let fresh = BandEquipment::start_stocked(&EquipmentConfig::builtin());
         let resolved = ResolvedAsk {
             herd: herd.clone(),
-            party: query_hunting_party(&world, &equipment, &kit, &fresh, herd.body_mass),
-            per_worker_haul: query_per_worker_haul(&world, &equipment, &kit, &fresh),
+            party: query_hunting_party(
+                &world,
+                &equipment,
+                &fully_armed(&equipment, &kit, &fresh),
+                &fresh,
+                herd.body_mass,
+            ),
+            per_worker_haul: query_per_worker_haul(
+                &world,
+                &equipment,
+                &fully_armed(&equipment, &kit, &fresh),
+                &fresh,
+            ),
         };
 
         assert_eq!(

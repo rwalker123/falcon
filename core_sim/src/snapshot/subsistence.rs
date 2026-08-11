@@ -300,7 +300,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 parties
             };
             let quoted = axis.get(&entry.species).unwrap_or(fallback_party);
-            let party = quoted.party;
+            let party = &quoted.party;
             let forecast = herd
                 .map(|herd| {
                     hunt_forecast(
@@ -308,7 +308,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                         fauna,
                         ladder,
                         equipped_haul_rate,
-                        &party,
+                        party,
                         FORECAST_OUTPUT_MULTIPLIER,
                     )
                 })

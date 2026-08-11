@@ -721,10 +721,12 @@ const SPLIT_BLOCKED_SEPARATOR := "\n"
 const SPLIT_MIN_WORKERS_KEY := "founding_min_workers"
 const SPLIT_PARENT_MIN_WORKERS_KEY := "founding_parent_min_workers"
 
-## The cohort dict's age brackets, fractional as the sim carries them.
-const SPLIT_AGE_CHILDREN_KEY := "age_children"
-const SPLIT_AGE_WORKING_KEY := "age_working"
-const SPLIT_AGE_ELDERS_KEY := "age_elders"
+## The cohort dict's age brackets, in WHOLE PEOPLE as the wire carries them. There are three, not
+## four: `working_age` IS the working bracket — the sim publishes no second worker number for a
+## reader to disagree with — and the three sum to the cohort's `size` by construction.
+const SPLIT_AGE_CHILDREN_KEY := "children"
+const SPLIT_WORKING_AGE_KEY := "working_age"
+const SPLIT_AGE_ELDERS_KEY := "elders"
 
 ## The parties inspector strip is DENSER than the work inspector (up to SEVEN detail lines vs ~1), and
 ## the T/B parties zone is height-capped at ~300px and CLIPS, so its detail lines are tightened well

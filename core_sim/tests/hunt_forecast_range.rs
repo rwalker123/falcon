@@ -263,11 +263,19 @@ const CONTENT_BAND_OUTPUT_MULTIPLIER: f32 = 1.0;
 /// The shipped, fully-kitted party fighting at `combat`'s tuning — the same composition
 /// `server::seed_source_yield` builds for a band whose spears are whole.
 fn party_at(combat: &CombatConfig) -> HuntingParty {
-    HuntingParty {
-        tuning: combat.tuning(),
-        injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
-        ..HuntingParty::builtin_equipped()
-    }
+    retuned(HuntingParty::builtin_equipped(), combat)
+}
+
+/// **The same uniform party at `combat`'s dials** — the builtin fixture carries the builtin config's
+/// tuning, and a test installing its own has to restate it. Uniform because every fixture here is:
+/// [`HuntingParty::uniform`] is the shape a fully-covered party resolves to.
+fn retuned(party: HuntingParty, combat: &CombatConfig) -> HuntingParty {
+    HuntingParty::uniform(
+        party.best_equipped_hunter(),
+        combat.tuning(),
+        combat.hunt_injury_damage_per_animal,
+        party.dispersion,
+    )
 }
 
 /// The **exported** assignment row — the shipped artifact, not the in-process `SourceYield`.
@@ -723,8 +731,12 @@ fn the_exported_terms_compose_the_gate_and_the_forecast_agrees() {
     assert!(herd.defense > 0.0 && herd.durability > herd.defense);
 
     // The gate, composed exactly as a client would — bare hands cannot hurt it, spears can.
-    let bare = HuntingParty::builtin_unequipped().hunter.attack;
-    let speared = HuntingParty::builtin_equipped().hunter.attack;
+    let bare = HuntingParty::builtin_unequipped()
+        .best_equipped_hunter()
+        .attack;
+    let speared = HuntingParty::builtin_equipped()
+        .best_equipped_hunter()
+        .attack;
     assert_eq!(
         (bare - herd.defense).max(0.0),
         0.0,
@@ -754,11 +766,7 @@ fn the_exported_terms_compose_the_gate_and_the_forecast_agrees() {
             &fauna,
             &ladder,
             equipped_haul_rate(),
-            &HuntingParty {
-                tuning: combat.tuning(),
-                injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
-                ..party
-            },
+            &retuned(party, &combat),
             CONTENT_BAND_OUTPUT_MULTIPLIER,
             workers,
             FOOD_PEAK,

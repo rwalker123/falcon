@@ -730,24 +730,16 @@ func _build_vitals_label(band: Dictionary) -> RichTextLabel:
 ## The palette is deliberately MUTED against the Workforce bar below: the two bars share a shape but
 ## answer different questions (composition vs allocation) and must not read as the same chart twice.
 func _build_people_block(band: Dictionary) -> VBoxContainer:
-    # The brackets arrive FRACTIONAL (Scalar) — a real band is 9.29 children, 16.54 workers, 4.64
-    # elders — so they are APPORTIONED to whole people rather than rounded one at a time. Rounding
-    # each independently is what made this panel read 9 + 17 + 5 = 31 beside a top bar reading 30:
-    # the same band, counted twice, disagreeing by a person.
-    var raw: Array[float] = [
-        float(band.get("age_children", 0.0)),
-        float(band.get("age_working", 0.0)),
-        float(band.get("age_elders", 0.0)),
-    ]
-    # `age_working` is the age COHORT; `working_age` is the count of ASSIGNABLE workers (a different
-    # quantity that happens to track it). Fall back to the latter when the cohort field is absent.
-    if raw[1] <= 0.0:
-        raw[1] = float(band.get("working_age", 0))
-    var whole := HudFormat.apportion_people(raw)
-    var children: int = whole[0]
-    var working: int = whole[1]
-    var elders: int = whole[2]
-    var total := children + working + elders
+    # **THE WIRE CARRIES WHOLE PEOPLE, AND THIS PANEL RENDERS THEM.** The sim keeps the brackets
+    # fractional internally (the fraction is a growth accumulator), rounds them ONCE, and publishes
+    # `children` + `working_age` + `elders == size`. Nothing here re-decides what a fraction means:
+    # a client that apportioned the raw Scalars for itself could round a 16.6-worker band UP to 17
+    # in this bar while the Workforce header below counted the sim's floored 16, the same frame.
+    var children := int(band.get("children", 0))
+    var working := int(band.get("working_age", 0))
+    var elders := int(band.get("elders", 0))
+    # The band's own head count is the header total — it IS the sum, by the sim's construction.
+    var total := int(band.get("size", 0))
     if total <= 0:
         return null
     var segments: Array = []
@@ -803,13 +795,15 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
     var scout_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_SCOUT)
     var warrior_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_WARRIOR)
     var role_workers := int(scout_eff.get("workers", 0)) + int(warrior_eff.get("workers", 0))
-    var party_workers := _band_labor.band_party_workers(band)
+    # Workers out with a party are NOT a segment — the sim already took them out of `working_age` on
+    # launch, so a slice for them overran the denominator the segments partition. They read as the
+    # header's "away" clause instead (`WORKFORCE_AWAY_FORMAT`).
+    var away_workers := _band_labor.band_party_workers(band)
     var segments: Array = []
     for spec in [
         [HudWorkVocab.WORKFORCE_KEY_FORAGE, forage_workers, HudStyle.HEALTHY],
         [HudWorkVocab.WORKFORCE_KEY_HUNT, hunt_workers, HudStyle.SIGNAL],
         [HudWorkVocab.WORKFORCE_KEY_ROLES, role_workers, HudStyle.VOICE_INK],
-        [HudWorkVocab.WORKFORCE_KEY_PARTIES, party_workers, HudStyle.WARN],
         # The bench's crew, between the work and the residual: `effective_idle` nets it out (a worker
         # at the bench is assigned labor), so without a segment of its own it would vanish from a bar
         # whose segments are supposed to partition the same `working_age` the header counts against.
@@ -819,10 +813,13 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
         if int(spec[1]) > 0:
             segments.append({"key": String(spec[0]), "count": int(spec[1]), "color": spec[2],
                 "tooltip": "%s: %d" % [String(spec[0]), int(spec[1])]})
+    var readout := HudWorkVocab.WORKFORCE_IDLE_FORMAT % [idle, int(band.get("working_age", 0))]
+    if away_workers > 0:
+        readout += HudWorkVocab.WORKFORCE_AWAY_FORMAT % away_workers
     var block := HudWidgets.make_zone_block()
-    block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_WORKFORCE,
-        HudWorkVocab.WORKFORCE_IDLE_FORMAT % [idle, int(band.get("working_age", 0))],
-        null, HudStyle.SIGNAL if idle > 0 else HudStyle.INK_DIM))
+    block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_WORKFORCE, readout,
+        null, HudStyle.SIGNAL if idle > 0 else HudStyle.INK_DIM,
+        HudWorkVocab.WORKFORCE_AWAY_TOOLTIP if away_workers > 0 else ""))
     if not segments.is_empty():
         block.add_child(HudWidgets.build_composition_bar(segments))
         block.add_child(HudWidgets.build_composition_key(segments))
@@ -2397,16 +2394,16 @@ func _fill_split_compose_sheet(sheet: VBoxContainer, band: Dictionary) -> void:
             _split_workers = clampi(n, HudConst.WORKER_STEP, pool)
             rerender(),
         HudComposeVocab.SPLIT_STEPPER_LABEL))
-    var working := _split_cohort_working(band)
-    var share := (float(_split_workers) / working) if working > 0.0 else 0.0
+    var share := (float(_split_workers) / float(pool)) if pool > 0 else 0.0
     sheet.add_child(HudWidgets.alloc_hint_label(
         HudComposeVocab.SPLIT_SHARE_FORMAT % int(round(share * 100.0))))
 
-    # **BOTH HALVES ARE APPORTIONED IN ONE PASS.** Running `apportion_people` separately over each
-    # half lets both round the same way and show 31 people leaving a band of 30 — precisely the bug
-    # that function exists to prevent (`_build_people_block`), reintroduced on a new surface. The
-    # chosen worker count is PINNED to the integer the player picked and left out of the
-    # apportionment, so the stepper can never disagree with the readout.
+    # **BOTH HALVES ARE APPORTIONED IN ONE PASS.** This is the client's OWN arithmetic — dividing
+    # whole people by a share the player chose genuinely needs rounding, unlike the brackets
+    # themselves, which arrive already whole. Running it separately over each half lets both round
+    # the same way and show 31 people leaving a band of 30. The chosen worker count is PINNED to the
+    # integer the player picked and left out of the apportionment, so the stepper can never disagree
+    # with the readout.
     var whole := _split_apportioned(band, share)
     var new_children: int = whole[0]
     var new_elders: int = whole[1]
@@ -2426,10 +2423,10 @@ func _fill_split_compose_sheet(sheet: VBoxContainer, band: Dictionary) -> void:
 
     sheet.add_child(HudWidgets.alloc_section_label(HudComposeVocab.SPLIT_HOME_AFTER_HEADER))
     # **EVERY `now` IS THE TWO HALVES ADDED BACK UP, NEVER A SECOND READING OF THE BAND.** `pool` is
-    # the ASSIGNABLE worker count — `floor()` of a fractional cohort — while the `after` side comes out
-    # of the apportionment, so quoting `pool` here rendered `16 → 12` beside a new band of 5 and
-    # invited the player to find the missing person. Composing it from the halves makes the row sum by
-    # construction, which is the same rule the PEOPLE block's apportionment exists to keep.
+    # the ASSIGNABLE worker count while the `after` side comes out of the apportionment, and the two
+    # readings can still drift by a body — quoting `pool` here rendered `16 → 12` beside a new band
+    # of 5 and invited the player to find the missing person. Composing it from the halves makes the
+    # row sum by construction.
     sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_WORKERS,
         HudComposeVocab.SPLIT_BEFORE_AFTER_FORMAT % [
             str(kept_working + _split_workers), str(kept_working)]))
@@ -2484,26 +2481,15 @@ func _split_row(key: String, value: String) -> HBoxContainer:
 ## the same quantity the sim bounds the command by (`available_workers`), so the stepper's ceiling
 ## and the server's refusal cannot disagree.
 func _split_worker_pool(band: Dictionary) -> int:
-    return int(floor(_split_cohort_working(band)))
-
-## The band's working-age cohort as the sim carries it — FRACTIONAL. A real band is 16.54 workers, and
-## the share has to divide by that rather than by the rounded count, or the new band would get a
-## slightly different slice of children than of workers.
-func _split_cohort_working(band: Dictionary) -> float:
-    var working := float(band.get(HudComposeVocab.SPLIT_AGE_WORKING_KEY, 0.0))
-    if working <= 0.0:
-        # `age_working` is the age COHORT; `working_age` is the count of ASSIGNABLE workers (a
-        # different quantity that happens to track it). Same fallback `_build_people_block` takes.
-        working = float(band.get("working_age", 0))
-    return working
+    return int(band.get(HudComposeVocab.SPLIT_WORKING_AGE_KEY, 0))
 
 ## Both halves' dependants as WHOLE BODIES, from one apportionment pass — see the call site for why
 ## it must be one. Returns `[new_children, new_elders, kept_children, kept_working, kept_elders]`.
 func _split_apportioned(band: Dictionary, share: float) -> Array[int]:
-    var children := float(band.get(HudComposeVocab.SPLIT_AGE_CHILDREN_KEY, 0.0))
-    var elders := float(band.get(HudComposeVocab.SPLIT_AGE_ELDERS_KEY, 0.0))
-    var working := _split_cohort_working(band)
-    var people := int(round(children + working + elders))
+    var children := float(band.get(HudComposeVocab.SPLIT_AGE_CHILDREN_KEY, 0))
+    var elders := float(band.get(HudComposeVocab.SPLIT_AGE_ELDERS_KEY, 0))
+    var working := float(band.get(HudComposeVocab.SPLIT_WORKING_AGE_KEY, 0))
+    var people := int(band.get("size", 0))
     var parts: Array[float] = [
         children * share,
         elders * share,
@@ -2769,7 +2755,17 @@ func _mount_kit_gate_line(sheet: VBoxContainer, kits: Array, kit_id: String, ban
     # **ONLY THE REFUSAL RENDERS.** The winnable branch used to state the effort in hunter-turns; that
     # face is retired (a species constant beside a forecast that already prices the trip), so a fight
     # this party CAN take says nothing here and the sheet's remaining lines are the answer.
+    #
+    # **…EXCEPT WHEN THE PARTY IS SPLIT** (issue #520). The gate answers at ONE tier and on a
+    # partly-equipped band that tier is the best-armed crew's, so a cleared gate here is the
+    # reassuring half. Same complement, same builder as the herd drawer's line.
+    #
+    # **ASKED ABOUT `_send_expedition_count`, because BOTH sheets that mount this line have a party
+    # stepper** — the hunting-party form and the denial form. The gear covers a prefix of whoever is
+    # sent, so quoting the band's whole hunt roster here would name more bare hands than the party
+    # has people the moment the party is smaller than the armed run.
     if not bool(gate["blocked"]):
+        HudWidgets.mount_hunt_crew_split(sheet, band, herd, quarry, kit_id, _send_expedition_count)
         return
     var gate_label := HudWidgets.forecast_label("[color=#%s]%s[/color]" % [
         HudStyle.DANGER_HEX, String(gate["text"])])

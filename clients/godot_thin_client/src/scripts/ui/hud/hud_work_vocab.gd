@@ -254,6 +254,11 @@ const FACTION_KIT_ALL_EQUIPPED := "all equipped"
 
 const FACTION_KIT_DRY_NOTE := "a kit has run out"
 
+## The SHORTFALL note (issue #520) — a band whose gear works and does not go round. It is worded away
+## from `FACTION_KIT_DRY_NOTE`'s finality on purpose: running out is permanent and a shortfall is the
+## band outgrowing its gear, which crafting can answer.
+const FACTION_KIT_SHORT_NOTE := "a kit does not go round"
+
 ## **THE SUMMARY TABS' VOCABULARY.** Work and Parties are one idea in two scopes — a row per thing,
 ## flagged when it wants attention — so they share every word below rather than each growing its own.
 ## The flag is the ORB's glyph and the orb's two severities; this page invents no third.
@@ -383,13 +388,20 @@ const BAND_ZONE_TIER_TALL := 2
 ## WORKFORCE readout + segment keys.
 const WORKFORCE_IDLE_FORMAT := "%d idle of %d"
 
+## Workers out with a party, appended to the idle readout and shown ONLY when there are any.
+## **They are a HEADER CLAUSE, not a bar segment.** The sim removes a party's members from the parent
+## band's working-age cohort the turn it launches, so they are not inside the `working_age` the bar's
+## segments partition — drawing them as a slice made the segments sum past their own denominator
+## ("4 idle of 16" over a bar totalling 22). The fact still has to be reachable, so it reads here.
+const WORKFORCE_AWAY_FORMAT := " · %d away"
+
+const WORKFORCE_AWAY_TOOLTIP := "Out with a party — no longer part of this band's workforce, and not counted in the bar below."
+
 const WORKFORCE_KEY_FORAGE := "Forage"
 
 const WORKFORCE_KEY_HUNT := "Hunt"
 
 const WORKFORCE_KEY_ROLES := "Roles"
-
-const WORKFORCE_KEY_PARTIES := "Parties"
 
 ## The crafting bench's crew. **The segments PARTITION the workforce**, so the bench needs one of its
 ## own the moment idle stops counting it: netting the crew out of idle without naming it here would

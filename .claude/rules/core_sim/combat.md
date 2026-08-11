@@ -91,6 +91,17 @@ the casualty math lives in a first-class module, never as a bespoke hunt formula
   `killed + wounded` has already been divided and clamped and therefore cannot be inverted, and a
   fight that spans turns has to bank what did not finish a body (below).
 
+  **And `strikes_landed` beside them, which faces the OTHER WAY.** `killed` / `wounded` /
+  `damage_dealt` are what happened *to* a contingent; `strikes_landed` is how many blows *it* landed
+  on the enemy — the count `landed_strikes` already drew, now handed back. **Equipment wears on the
+  swing**, so the number a wear charge needs has to be attributed to the striker; a row reporting
+  strikes *received* would make a bare-handed run pay for the spears beside it. It is `0` for a
+  contingent the gate refused, because no strike is drawn there at all.
+  `equipment.md` → "Wear follows the work actually done" owns the charge it feeds, and
+  **`combat::damage_absorbed`** — `min(damage, standing × durability)`, the clamp
+  [`DamageLedger::strike`] applies, stated once so the raid can scale a charge without a ledger — is
+  the other half of it.
+
   Unchanged from the placeholder: `power(side) = Σ count × attack`; `victor` = strictly-higher power
   (`None` on a tie); the kill/wound split `killed_frac = incoming_per_defender /
   (incoming_per_defender + own.defense)` with `incoming_per_defender = power_enemy / count_self` — so
@@ -303,8 +314,9 @@ ferocity alone — frail, still costs you people"*. `fauna::hunt_injuries` adds 
   - **A detached party fights at the `expedition_danger_multiplier`-scaled lethality** (that rides
     `HuntingParty::tuning`), and **now wears its own kit**: `advance_expeditions` queries
     `&mut BandEquipment`, resolves both tiers through the same `EquipmentConfig` seams a resident band
-    does, and charges `wear_hunting` per animal killed + `wear_carry` per biomass hauled. Before slice
-    4 a raid ran on free, immortal equipment.
+    does, and charges the weapon **per blow its crews landed** (`equipment.md` → "Wear follows the
+    work actually done") + the sled per biomass hauled. Before slice 4 a raid ran on free, immortal
+    equipment.
   - `killed` comes out of the cohort's **working-age** bracket via
     `PopulationCohort::apply_combat_casualties`; `wounded` is computed and surfaced but mechanically
     inert (recovery is a later slice). The `CommandEventKind::HuntDanger` feed line is unchanged —

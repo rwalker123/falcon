@@ -1876,11 +1876,17 @@ fn seed_source_yield(
                 .get::<BandEquipment>(band)
                 .cloned()
                 .unwrap_or_default();
-            let per_worker_biomass = equipment_cfg.forage_per_worker_biomass_capacity(
-                labor.forage.per_worker_biomass_capacity,
-                &crew_kit,
-                &band_wear,
-            );
+            // **Through the same coverage the turn resolves** (`equipment.md` → "the
+            // partly-equipped party"): baskets cover gatherers one unit at a time, so a seed priced
+            // at the whole crew's best tier would promise a basketful to people holding nothing.
+            let crew_coverage = equipment_cfg.coverage(&crew_kit, workers as f32, &band_wear);
+            let per_worker_biomass = crew_coverage.weighted_rate(|kit| {
+                equipment_cfg.forage_per_worker_biomass_capacity(
+                    labor.forage.per_worker_biomass_capacity,
+                    kit,
+                    &band_wear,
+                )
+            });
             forage_source_yield_preview(
                 patch,
                 &tile_composition,
@@ -1933,39 +1939,42 @@ fn seed_source_yield(
             // to arrive at that branch holding the rate the turn will pay it at. Pricing a pen at
             // the sled's tier is `yield-forecast.md`'s invariant broken on the one surface the
             // player commits from.
+            // **The same coverage the turn resolves** (`equipment.md` → "the partly-equipped
+            // party"): `advance_labor_allocation` divides this crew by the gear the band actually
+            // owns, so a seed priced at the whole party's best tier would promise a haul only the
+            // armed half can make.
+            let hunt_coverage = equipment_cfg.coverage(&crew_kit, workers as f32, &band_wear);
             let per_worker_biomass = if herd.is_corralled() {
-                equipment_cfg.pen_per_worker_biomass_capacity(
-                    labor.hunt.per_worker_biomass_capacity,
-                    &crew_kit,
-                    &band_wear,
-                )
+                hunt_coverage.weighted_rate(|kit| {
+                    equipment_cfg.pen_per_worker_biomass_capacity(
+                        labor.hunt.per_worker_biomass_capacity,
+                        kit,
+                        &band_wear,
+                    )
+                })
             } else {
-                equipment_cfg.hunt_per_worker_biomass_capacity(
-                    labor.hunt.per_worker_biomass_capacity,
-                    &crew_kit,
-                    &band_wear,
-                )
+                hunt_coverage.weighted_rate(|kit| {
+                    equipment_cfg.hunt_per_worker_biomass_capacity(
+                        labor.hunt.per_worker_biomass_capacity,
+                        kit,
+                        &band_wear,
+                    )
+                })
             };
             // **And at THIS band's FIGHTING tier**, for the same reason and through the same seam
             // (`docs/plan_hunt_through_combat.md` §4): the take now resolves through the combat
             // system, so a band whose spears are gone brings down less — or, past a quarry's
             // `defense`, nothing at all — and the seed has to say so.
-            let hunting_party = HuntingParty {
-                hunter: equipment_cfg.hunter_profile_against(
-                    app.world.resource::<CreaturesConfigHandle>().get().person(),
-                    &crew_kit,
-                    &band_wear,
-                    herd.body_mass,
-                ),
-                tuning: app.world.resource::<CombatConfigHandle>().get().tuning(),
-                injury_damage_per_animal: app
-                    .world
-                    .resource::<CombatConfigHandle>()
-                    .get()
-                    .hunt_injury_damage_per_animal
-                    * equipment_cfg.exposure(&crew_kit, &band_wear),
-                dispersion: equipment_cfg.dispersion(&crew_kit, &band_wear),
-            };
+            let combat_cfg = app.world.resource::<CombatConfigHandle>().get();
+            let hunting_party = core_sim::PartyResolution {
+                equipment: &equipment_cfg,
+                coverage: &hunt_coverage,
+                wear: &band_wear,
+                intrinsic: app.world.resource::<CreaturesConfigHandle>().get().person(),
+                tuning: combat_cfg.tuning(),
+                hunt_injury_damage_per_animal: combat_cfg.hunt_injury_damage_per_animal,
+            }
+            .party_against(core_sim::Quarry::Mass(herd.body_mass));
             hunt_source_yield_preview(
                 herd,
                 &fauna,
@@ -3001,7 +3010,7 @@ fn handle_send_expedition(
             // haul rate — a contradiction on the wire. **Stated rather than defaulted**: an absent
             // ledger entry means NOT OWNED since the count slice, so `Default` would send the party
             // out bare-handed.
-            outfitted_party_equipment(app),
+            outfitted_party_equipment(app, party_workers),
             StartingUnit::new(unit_kind, unit_tags),
             Expedition {
                 home_band: band.entity,
@@ -3053,6 +3062,12 @@ struct OutfittedParty {
     band: SelectedBand,
     /// The herd's live tile, captured as the party's initial travel target.
     herd_pos: UVec2,
+    /// **The herd's species display name**, captured in the same lookup that proved the herd live and
+    /// carried onto the mission (`ExpeditionMission::target_species`). This is the only moment the
+    /// name is guaranteed available — the gate below refuses a launch the registry cannot resolve, and
+    /// the herd may be gone from both the registry and the published telemetry long before the party
+    /// stops being bound to it (issue #378).
+    herd_species: String,
     /// The home band's cohort, cloned as the detached party's template.
     cohort: PopulationCohort,
     unit_kind: String,
@@ -3090,12 +3105,15 @@ fn outfit_raiding_party(
         return None;
     }
 
-    // The target must resolve to a live herd; capture its current tile as the initial travel target.
-    let herd_pos = {
+    // The target must resolve to a live herd; capture its current tile as the initial travel target
+    // and its species as the name the party will be known by for the rest of its life.
+    let target = {
         let registry = app.world.resource::<HerdRegistry>();
-        registry.find(fauna_id).map(|herd| herd.position())
+        registry
+            .find(fauna_id)
+            .map(|herd| (herd.position(), herd.species.clone()))
     };
-    let Some(herd_pos) = herd_pos else {
+    let Some((herd_pos, herd_species)) = target else {
         emit_command_failure(
             app,
             CommandEventKind::ExpeditionSent,
@@ -3144,6 +3162,7 @@ fn outfit_raiding_party(
     Some(OutfittedParty {
         band,
         herd_pos,
+        herd_species,
         cohort,
         unit_kind,
         unit_tags,
@@ -3156,11 +3175,16 @@ fn outfit_raiding_party(
 /// One helper for both outfitting paths, because *"a party leaves outfitted"* is one fact: two
 /// call sites reaching for the ledger separately is how one of them ends up sending a bare-handed
 /// raid out under a kitted forecast.
-fn outfitted_party_equipment(app: &bevy::prelude::App) -> BandEquipment {
+///
+/// **Sized to the party that leaves**, because a unit arms one person: a raid of ten sent out with
+/// one spear is nine bare hands, which is neither what the launch line quotes nor what "outfitted"
+/// means. Every worker in the party is a hunter, so the head count *is* the worker count here.
+fn outfitted_party_equipment(app: &bevy::prelude::App, party_workers: u32) -> BandEquipment {
     BandEquipment::start_stocked_owned(
         &app.world.resource::<EquipmentConfigHandle>().get(),
         &app.world.resource::<RecipesConfigHandle>().get(),
         &app.world.resource::<MaterialsConfigHandle>().get(),
+        party_workers as f32,
     )
 }
 
@@ -3185,18 +3209,21 @@ fn launch_forecast_party(
     // A fresh ledger: the launch line quotes the KIT the party is being sent with, before it has worn
     // any of it. The party's own wear then moves its tiers turn by turn once it is in flight.
     let fresh = BandEquipment::start_stocked(&equipment_cfg);
-    HuntingParty {
-        hunter: equipment_cfg.hunter_profile_against(
+    // **UNIFORM**: the party leaves *outfitted* — `outfitted_party_equipment` stocks a party's
+    // worth of each item, sized to the head count being sent — so every hunter is holding the kit
+    // the player named. Quoting coverage against the one-unit reference ledger would price a raid
+    // of ten at one armed hunter and nine bare hands, which is not the party that will leave.
+    HuntingParty::uniform(
+        equipment_cfg.hunter_profile_against(
             app.world.resource::<CreaturesConfigHandle>().get().person(),
             kit,
             &fresh,
             quarry_body_mass,
         ),
-        tuning: combat.expedition_tuning(),
-        injury_damage_per_animal: combat.hunt_injury_damage_per_animal
-            * equipment_cfg.exposure(kit, &fresh),
-        dispersion: equipment_cfg.dispersion(kit, &fresh),
-    }
+        combat.expedition_tuning(),
+        combat.hunt_injury_damage_per_animal * equipment_cfg.exposure(kit, &fresh),
+        equipment_cfg.dispersion(kit, &fresh),
+    )
 }
 
 /// **The per-hunter haul rate the same launch forecast is quoted at** — the chosen kit's *sled*
@@ -3349,6 +3376,9 @@ fn launch_detached_party(
     let OutfittedParty {
         band,
         herd_pos,
+        // Not read here: the caller has already spent it composing the `mission` argument, which is
+        // where the name lives for the party's life.
+        herd_species: _,
         mut cohort,
         unit_kind,
         unit_tags,
@@ -3382,7 +3412,7 @@ fn launch_detached_party(
             expedition_band_id,
             LaborAllocation::default(),
             // **Outfitted, stated rather than defaulted** — see the scout's spawn above.
-            outfitted_party_equipment(app),
+            outfitted_party_equipment(app, party_workers),
             StartingUnit::new(unit_kind, unit_tags),
             Expedition {
                 home_band: band.entity,
@@ -3558,18 +3588,22 @@ fn handle_send_hunt_expedition(
     };
 
     let band_label = outfit.band.label.clone();
+    // Read off the outfit BEFORE it is moved into the launch, for the same reason `band_label` is.
+    let target_species = outfit.herd_species.clone();
+    let mission = ExpeditionMission::Hunt {
+        fauna_id: fauna_id.clone(),
+        target_species,
+        floor,
+    };
+    // **The event line names the species; the `herd=` token below keeps the id.** Read off the
+    // mission rather than off `outfit.herd_species` so this line and every later line about the
+    // same party resolve the name one way (`ExpeditionMission::target_display`).
+    let target_display = mission.target_display().to_string();
     // **A launch that did not happen publishes a FAILURE, never an `applied` line** — see
     // `launch_detached_party`, which answers `None` rather than a placeholder entity.
-    let Some(expedition_entity) = launch_detached_party(
-        app,
-        outfit,
-        party_workers,
-        ExpeditionMission::Hunt {
-            fauna_id: fauna_id.clone(),
-            floor,
-        },
-        kit.clone(),
-    ) else {
+    let Some(expedition_entity) =
+        launch_detached_party(app, outfit, party_workers, mission, kit.clone())
+    else {
         emit_command_failure(
             app,
             CommandEventKind::ExpeditionSent,
@@ -3586,8 +3620,8 @@ fn handle_send_hunt_expedition(
         CommandEventKind::ExpeditionSent,
         faction,
         format!(
-            "{} hunting expedition (floor {:.2}·K) -> herd {}{}",
-            band_label, floor, fauna_id, viability_note
+            "{} hunting expedition (floor {:.2}·K) -> {}{}",
+            band_label, floor, target_display, viability_note
         ),
         Some(format!(
             "status=applied mission=hunt floor={} workers={} herd={} expedition={}{}",
@@ -3737,17 +3771,19 @@ fn handle_send_denial_raid(
     };
 
     let band_label = outfit.band.label.clone();
+    // Read off the outfit BEFORE it is moved into the launch, for the same reason `band_label` is.
+    let target_species = outfit.herd_species.clone();
+    let mission = ExpeditionMission::Deny {
+        fauna_id: fauna_id.clone(),
+        target_species,
+    };
+    // The species on the line, the id in the `herd=` token — as the hunt launch does.
+    let target_display = mission.target_display().to_string();
     // **A launch that did not happen publishes a FAILURE, never an `applied` line** — see
     // `launch_detached_party`, which answers `None` rather than a placeholder entity.
-    let Some(expedition_entity) = launch_detached_party(
-        app,
-        outfit,
-        party_workers,
-        ExpeditionMission::Deny {
-            fauna_id: fauna_id.clone(),
-        },
-        kit.clone(),
-    ) else {
+    let Some(expedition_entity) =
+        launch_detached_party(app, outfit, party_workers, mission, kit.clone())
+    else {
         emit_command_failure(
             app,
             CommandEventKind::ExpeditionSent,
@@ -3763,7 +3799,10 @@ fn handle_send_denial_raid(
         tick,
         CommandEventKind::ExpeditionSent,
         faction,
-        format!("{} denial raid -> herd {}{}", band_label, fauna_id, verdict),
+        format!(
+            "{} denial raid -> {}{}",
+            band_label, target_display, verdict
+        ),
         Some(format!(
             "status=applied mission=deny workers={} herd={} expedition={}{}",
             party_workers,
@@ -7545,9 +7584,9 @@ mod tests {
                 PopulationCohort {
                     home,
                     current_tile: home,
-                    size: 30,
+                    size: BAND_WORKING_AGE,
                     children: core_sim::scalar_zero(),
-                    working: scalar_from_f32(30.0),
+                    working: scalar_from_f32(BAND_WORKING_AGE as f32),
                     elders: core_sim::scalar_zero(),
                     stores: LocalStore::new(),
                     morale: core_sim::scalar_one(),
@@ -7576,8 +7615,14 @@ mod tests {
                     ..Default::default()
                 },
                 // A spawned band is KITTED, exactly as `spawn_profile_population` spawns one —
-                // **stated**, because an absent ledger entry means NOT OWNED since the count slice.
-                BandEquipment::start_stocked(&core_sim::EquipmentConfig::builtin()),
+                // **stated**, because an absent ledger entry means NOT OWNED since the count slice,
+                // and **sized to the band's workers**, because a spawn stocks a party's worth: one
+                // unit each would arm one of these thirty and leave the rest bare-handed
+                // (`equipment.md` → "the partly-equipped party").
+                BandEquipment::start_stocked_for(
+                    &core_sim::EquipmentConfig::builtin(),
+                    BAND_WORKING_AGE as f32,
+                ),
             ))
             .id()
     }
@@ -7604,6 +7649,9 @@ mod tests {
 
     /// Workers each test band staffs on its source.
     const BAND_WORKERS: u32 = 5;
+    /// Every fixture band's working-age head count — also what its start stock is sized against, so
+    /// the two cannot drift and leave a fixture band partly equipped for reasons no test is about.
+    const BAND_WORKING_AGE: u32 = 30;
 
     /// The biomass a **stocked patch** fixture is seeded at, as a fraction of `K` — deliberately
     /// **above** Sustain's escapement floor (`fauna::MSY_BIOMASS_FRACTION`, `0.5`), so a Sustain
@@ -8622,11 +8670,11 @@ mod tests {
     /// disagreeing, so a fixture that read the component would assert the two halves agree by
     /// construction and prove nothing.
     ///
-    /// **It publishes through `publish_full_frame`, not `StoredSnapshot::encode_flat`.** A recapture
-    /// refreshes the ring entry's `snapshot` but deliberately leaves its cached bytes alone (see
-    /// `.claude/rules/core_sim/turn-profiling.md`), so `encode_flat` on a recaptured entry hands back
-    /// the *world's first* frame — one that predates every command since. `publish_full_frame` is the
-    /// seam a `Resync` answers through, and it re-encodes.
+    /// **It publishes through `publish_full_frame`, not `StoredSnapshot::encode_flat`.** `encode_flat`
+    /// is a read of stored bytes, so its header carries the sequence number the entry was published
+    /// under — stale the moment anything else publishes, and a recapture publishes on every
+    /// world-mutating command. `publish_full_frame` is the seam a `Resync` answers through: it claims
+    /// a live number and re-encodes, which is the frame a client would actually be handed here.
     fn published_party_band_id(app: &mut bevy::prelude::App) -> u64 {
         use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 

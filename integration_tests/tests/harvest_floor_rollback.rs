@@ -20,6 +20,12 @@ const CAPTURED_FLOOR: f32 = 0.42;
 /// neither end of the comparison can be reached by a fallback.
 const DRAGGED_FLOOR: f32 = 0.07;
 
+/// The quarry's display name the checkpointed party carries. **Deliberately not a name any fauna
+/// roster holds**, for the same reason the floors are off-default: a restore that re-derived the name
+/// from the registry instead of restoring it would come back empty or come back something else, and
+/// either way could not accidentally equal this.
+const CAPTURED_SPECIES: &str = "Checkpointed Quarry";
+
 /// **A rollback rewinds the FLOOR** (`docs/plan_harvest_floor.md` §4).
 ///
 /// The floor is the whole of what the player decides about harvest pressure, so a rewind that
@@ -262,6 +268,7 @@ fn an_expedition_floor_round_trips_through_the_mission_and_the_rollback() {
                 home_band: home,
                 mission: ExpeditionMission::Hunt {
                     fauna_id: "game_raid_probe".to_string(),
+                    target_species: CAPTURED_SPECIES.to_string(),
                     floor: CAPTURED_FLOOR,
                 },
                 phase: ExpeditionPhase::Hunting,
@@ -291,18 +298,30 @@ fn an_expedition_floor_round_trips_through_the_mission_and_the_rollback() {
 
     restore_sim_state(&mut app.world, &checkpoint);
 
-    // A restore renumbers entities, so the floor is read off whichever party carries the mission.
+    // A restore renumbers entities, so the orders are read off whichever party carries the mission.
     let mut query = app.world.query::<&Expedition>();
     let restored = query
         .iter(&app.world)
         .find_map(|expedition| match &expedition.mission {
-            ExpeditionMission::Hunt { floor, .. } => Some(*floor),
+            ExpeditionMission::Hunt {
+                floor,
+                target_species,
+                ..
+            } => Some((*floor, target_species.clone())),
             _ => None,
         })
         .expect("the restored world carries the hunt mission");
     assert_eq!(
-        restored, CAPTURED_FLOOR,
+        restored.0, CAPTURED_FLOOR,
         "a rollback restores the raid's orders, not re-picked ones"
+    );
+    // **The quarry's NAME survives the round trip too.** It is resolved once at launch and can never
+    // be re-derived — the herd it names may be gone from the registry by now — so a checkpoint that
+    // dropped it would leave a restored party rendering its raw fauna id, which is the whole of issue
+    // #378 reintroduced by the persistence layer instead of by the wire.
+    assert_eq!(
+        restored.1, CAPTURED_SPECIES,
+        "a rollback restores the quarry's display name, which cannot be looked up again"
     );
 }
 

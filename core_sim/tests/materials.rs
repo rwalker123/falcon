@@ -461,19 +461,33 @@ fn equipment_batches_survive_a_checkpoint_round_trip() {
         id: FINE.to_string(),
         effects: Vec::new(),
     };
+    // A spawn stocks a party's worth, so the count this fixture asserts on is that stock plus what
+    // the bench added — read rather than written, because the stock is sized off the band's own
+    // head count.
+    let spawned = app
+        .world
+        .get::<core_sim::BandEquipment>(band)
+        .expect("a spawned band carries a ledger")
+        .count_of(SPEARS);
+    const MADE: u32 = 4;
     {
         let mut ledger = app
             .world
             .get_mut::<core_sim::BandEquipment>(band)
             .expect("a spawned band carries a ledger");
-        ledger.stock(SPEARS, 4, "flint", Some(graded.clone()));
+        ledger.stock(SPEARS, MADE, "flint", Some(graded.clone()));
     }
     let before = app
         .world
         .get::<core_sim::BandEquipment>(band)
         .expect("ledger")
         .clone();
-    assert_eq!(before.count_of(SPEARS), 5, "one spawned plus the four made");
+    assert!(spawned > 0, "the spawn really stocked spears");
+    assert_eq!(
+        before.count_of(SPEARS),
+        spawned + MADE,
+        "the spawned stock plus the four made"
+    );
 
     let checkpoint = capture_sim_state(&app.world);
 

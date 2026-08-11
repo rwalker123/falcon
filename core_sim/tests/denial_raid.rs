@@ -298,12 +298,18 @@ fn spawn_home_band(app: &mut App, herd_pos: UVec2) -> bevy::prelude::Entity {
     let tile = tile_at(app, far);
     app.world
         .spawn((
-            cohort(tile, 20),
+            cohort(tile, FIXTURE_BAND_WORKERS),
             ResidentBand,
             // Addressable + zero wear: the denial readouts are ASKED for now (the pre-launch table
             // is retired), and a query needs a band to price against.
             core_sim::BandId(FIXTURE_BAND_ID),
-            core_sim::BandEquipment::start_stocked(&core_sim::EquipmentConfig::builtin()),
+            // **OUTFITTED, sized to the band's workers** — a spawn stocks a party's worth
+            // (`equipment.md` → "the partly-equipped party"), and the one-unit reference ledger
+            // would arm one of these twenty and send nineteen out bare-handed.
+            core_sim::BandEquipment::start_stocked_for(
+                &core_sim::EquipmentConfig::builtin(),
+                FIXTURE_BAND_WORKERS as f32,
+            ),
         ))
         .id()
 }
@@ -326,7 +332,7 @@ fn spawn_party(
             // zero wear (`docs/plan_denial_raid.md` §1.2). Carried explicitly rather than left to
             // `advance_expeditions`' absent-component default, because these fixtures read the wear
             // back off it.
-            BandEquipment::start_stocked(&core_sim::EquipmentConfig::builtin()),
+            BandEquipment::start_stocked_for(&core_sim::EquipmentConfig::builtin(), workers as f32),
             StartingUnit::new("expedition".to_string(), Vec::new()),
             Expedition {
                 home_band,
@@ -342,15 +348,25 @@ fn spawn_party(
         .id()
 }
 
+/// The target species the mission builders below stamp on a fixture. **A NAMED CONSTANT RATHER THAN A
+/// REGISTRY LOOKUP**, unlike the sibling suites: `deny`/`hunt` are also called from closures
+/// (`|id| hunt(id, STRIP_IT_BARE)`) that have no world to resolve against, and threading an `&App`
+/// through sixteen call sites would buy nothing — the field is display-only, every raid mechanic
+/// resolving its herd through `fauna_id`. What production actually stamps is asserted in
+/// `expedition_hunt.rs`.
+const FIXTURE_TARGET_SPECIES: &str = "Red Deer";
+
 fn deny(fauna_id: &str) -> ExpeditionMission {
     ExpeditionMission::Deny {
         fauna_id: fauna_id.to_string(),
+        target_species: FIXTURE_TARGET_SPECIES.to_string(),
     }
 }
 
 fn hunt(fauna_id: &str, floor: f32) -> ExpeditionMission {
     ExpeditionMission::Hunt {
         fauna_id: fauna_id.to_string(),
+        target_species: FIXTURE_TARGET_SPECIES.to_string(),
         floor,
     }
 }
@@ -1244,6 +1260,10 @@ struct ExportedDenialRow {
     wasted_food: f32,
 }
 
+/// **The working-age head count every fixture band in this file carries** — named because the band's
+/// start stock is sized against it (`BandEquipment::start_stocked_for`), so the two must move
+/// together or the band goes out partly armed.
+const FIXTURE_BAND_WORKERS: u32 = 20;
 /// The `BandId` every fixture band in this file carries — the band a denial query is priced for.
 const FIXTURE_BAND_ID: u64 = 1;
 

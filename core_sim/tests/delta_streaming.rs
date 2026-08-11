@@ -376,6 +376,70 @@ fn a_recapture_advances_the_sequence_without_pushing_a_ring_entry() {
     );
 }
 
+/// **A RECAPTURED ENTRY'S TWO VIEWS AGREE.** `StoredSnapshot` exposes the same frame as a
+/// `WorldSnapshot` (`.snapshot`) and as encoded bytes (`.encode_flat()`), and a recapture refreshes
+/// the ring entry in place. Refreshing only the first left the entry self-contradictory: `.snapshot`
+/// carried the command's mutation while `.encode_flat()` — which returns the cached bytes when the
+/// entry has them, and a world's FIRST publication always does — still answered with the pre-command
+/// world.
+///
+/// **Nothing in the sim reads those bytes, which is exactly why it was invisible**: the callers are
+/// tests asserting on encoded content, so a wire-level assertion silently read a frame from before its
+/// fixture had finished building. Found while writing
+/// `expedition_hunt::a_party_names_its_quarry_when_the_herd_has_left_the_snapshot`, whose party had
+/// not been spawned yet in the bytes it was handed.
+#[test]
+fn a_recaptured_entry_encodes_the_world_it_was_refreshed_with() {
+    let mut history = SnapshotHistory::with_capacity(64);
+    let mut world = WorldSnapshot {
+        fog_enabled: true,
+        ..Default::default()
+    };
+    world.header.tick = 1;
+    // A DISTINCT value in each world, so neither read can accidentally equal the other's.
+    world.header.population_count = 7;
+    history.update(world.clone());
+
+    let published = history
+        .latest_entry()
+        .expect("the turn published a ring entry");
+    assert_eq!(
+        population_count_on_the_wire(&published.encode_flat()),
+        7,
+        "the first publication encodes its own world — otherwise the comparison below is vacuous"
+    );
+
+    // A command mutated the world mid-tick.
+    world.header.population_count = 42;
+    history.refresh_latest(world.clone());
+
+    let recaptured = history
+        .latest_entry()
+        .expect("a recapture re-baselines the current entry rather than dropping it");
+    assert_eq!(
+        recaptured.snapshot.header.population_count, 42,
+        "the entry's WorldSnapshot view carries the recapture"
+    );
+    assert_eq!(
+        population_count_on_the_wire(&recaptured.encode_flat()),
+        42,
+        "and so does its ENCODED view — a stale cached encoding here makes every wire-level \
+         assertion read the pre-command world and pass or fail on it"
+    );
+}
+
+/// The header `population_count` of an encoded full snapshot — a scalar off the wire, so the
+/// comparison above is against the bytes rather than against the struct that produced them.
+fn population_count_on_the_wire(bytes: &[u8]) -> u32 {
+    fb::root_as_envelope(bytes)
+        .expect("the frame is a valid envelope")
+        .payload_as_snapshot()
+        .expect("the envelope carries a full snapshot")
+        .header()
+        .expect("the snapshot carries a header")
+        .populationCount()
+}
+
 /// **Intra-turn recaptures are cumulative, so missing one is harmless.**
 ///
 /// `refresh_latest` does not commit the baseline, so each recapture delta is
@@ -485,11 +549,12 @@ fn a_rollback_frame_is_the_base_the_next_delta_names() {
 /// delta is rejected, and it resyncs again — the mechanism meant to close a sequence gap opens one.
 ///
 /// The window pinned here is a **mid-tick recapture**, which fires on every world-mutating command.
-/// A recapture claims a sequence number and refreshes `history.back().snapshot`, but **not** that
-/// entry's cached `encoded_snapshot_flat` — so the world's first ring entry still holds bytes
-/// stamped with the pre-recapture number, and republishing them as stored is exactly the bug. (An
-/// auxiliary delta — `update_axis_bias` and friends — opens the same window without touching the
-/// ring at all.)
+/// A recapture claims a sequence number and re-baselines `history.back()` in place, so the number
+/// stored on that entry is one publication behind the counter — and republishing a frame under it,
+/// rather than claiming a live one, is exactly the bug. (An auxiliary delta — `update_axis_bias` and
+/// friends — opens the same window without touching the ring at all.) What the refreshed entry
+/// *encodes* is a separate claim, pinned by
+/// [`a_recaptured_entry_encodes_the_world_it_was_refreshed_with`].
 #[test]
 fn a_resync_frame_is_the_base_the_next_delta_names_after_a_recapture() {
     let mut history = SnapshotHistory::with_capacity(64);

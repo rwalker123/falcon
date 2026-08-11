@@ -160,6 +160,25 @@ inline divide — and a new `Scalar` **cohort** field belongs in `CohortScalars`
 (`dict/population.rs`), which is the one part of this crate `cargo test` can reach
 (`VarDictionary` cannot be built outside a live engine).
 
+## THE AGE BRACKETS ARE WHOLE PEOPLE, AND THERE ARE ONLY THREE OF THEM
+
+`population_to_dict` publishes `children` ← `cohort.childrenCount()`, `working_age` ←
+`cohort.workingAge()` and `elders` ← `cohort.eldersCount()`, all plain `uint` counts cast to `i64`.
+**None of them is a `CohortScalars` member** — they are not fixed-point and take no divide.
+
+**`working_age` IS the working bracket.** There is deliberately no fourth `age_working`-style key
+beside it. This decoder used to carry both: `working_age` (the assignable workers) and an `age_*`
+trio decoded from `PopulationCohortState.children/working/elders`, which were raw `Scalar`s. The
+`age_*` prefix existed to keep the two apart, and the naming trap it guarded is gone with the second
+number — the deprecated Scalar slots are no longer written and their accessors are gone from the
+generated bindings. Two names for one number is how a band came to render "17" in the panel's PEOPLE
+bar beside "0 idle of 16" in the WORKFORCE header on the same frame.
+
+The fraction the sim keeps internally is a growth accumulator, not a fact about people. It rounds
+once, writes `size` as `childrenCount + workingAge + eldersCount`, and nothing here re-decides it.
+The neighbouring `PopulationDemographicsState` `children`/`working`/`elders` (the faction-wide
+figures) were always plain `uint` counts and are unaffected.
+
 `command_events_to_array` (`dict/campaign.rs`) carries **`seq`**, and the campaign section carries
 **`command_events_retention_turns`** — the two fields the event dock needs (issue #272,
 `.claude/rules/client/event-dock.md`). Two decode rules ride them, and both are about a FlatBuffers
@@ -303,6 +322,9 @@ each one's section:
 | `PopulationCohortState.kitId` | `kit_id` on the band dict | `dict/population.rs` |
 | `LaborAssignment.kitId` | `kit_id` on the assignment entry | `dict/population.rs` |
 | `PopulationCohortState.kitTiers:[BandKitTiers]` | `kit_tiers` on the band dict — per kit id, that band's tiers resolved against its LIVE equipment wear | `dict/population.rs` |
+| `PopulationCohortState.huntCrews:[BandKitCrew]` | `hunt_crews` on the band dict — one `{workers, hunter_attack, item_ids}` row per run of hunters holding identical gear, best-equipped first, `Σ workers` = the hunt head count. **Never empty**, so no reader needs a "no crews" branch; a band with nobody on the hunt publishes one row at `workers 0`. Its inner `item_ids` is a repeated field inside a repeated one, which is the shape a decoder is most likely to drop or flatten | `dict/population.rs` |
+| `KitItemCondition.workersHolding` | `workers_holding` beside `count` and `remaining` — **`count` is UNITS, this is PEOPLE**, and the two differ whenever the band is short or holds the spawn's reserve. A `0` is three sentences (nobody staffed, owns none, no quoted kit carries it), which is why `count` rides beside it | `dict/population.rs` |
+| `KitItemCondition.workersOnQuotedJob` | `workers_on_quoted_job` — **its DENOMINATOR, and the pair is one sentence**: the head count of the job the row is quoted at, off the same coverage the numerator came from, so the two can never describe different jobs. It is what makes a BASKET / CLUB / WAYFINDING shortfall sayable at all — before it, `Σ huntCrews.workers` was the only job head count on the wire. **A `0` here means NOBODY IS STAFFED, not a shortfall**, and nothing may divide by it | `dict/population.rs` |
 
 **The roster, its two defaults and the serialized config are WHOLE-SECTION fields, so they are
 decoded on BOTH paths** — `snapshot_to_dict` and `decode_delta_against` — which is the rule the

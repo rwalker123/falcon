@@ -121,7 +121,7 @@ zero in v1) + opportunistic replenish; **(d) phase transitions** — `Outbound` 
 all**, fold workers + leftover provisions back into the band + despawn (`ExpeditionReturned`, after
 the flush so the final findings report — see "One fold-back, two moments"); `AwaitingOrders` waits.
 
-**Hunt verb (PR 2)** — `ExpeditionMission::Hunt { fauna_id, floor: f32 }` on the
+**Hunt verb (PR 2)** — `ExpeditionMission::Hunt { fauna_id, target_species, floor: f32 }` on the
 same party; **the floor is chosen at launch** (`send_hunt_expedition <faction> <band>
 <party_workers> <fauna_id> [floor]`) and is not a config lever. It is a
 `0.0..=1.0` fraction of `K`, default `DEFAULT_ESCAPEMENT_FLOOR`. **The floor token is a NUMBER**: the
@@ -475,7 +475,9 @@ branches on mission:
 
 **Snapshot.** `PopulationCohortState` gains client discriminators `isExpedition` / `expeditionMission`
 (`"scout"`|`"hunt"`|`"deny"`) / `expeditionPhase` (`outbound`|`awaiting`|`returning`|`hunting`|`delivering`) /
-`expeditionTargetHerd` (hunt fauna_id — a **string**, since herd ids are non-numeric) /
+`expeditionTargetHerd` (hunt fauna_id — a **string**, since herd ids are non-numeric; the KEY, never
+rendered — its display twin `expeditionTargetSpecies` rides beside it, see "A raiding party carries
+its quarry's NAME, not just its key") /
 **`expeditionFloor:float`** (the raid's escapement floor as a fraction of `K` — the live
 discriminator, defaulting to `1` so an absent floor reads "take nothing" rather than "take
 everything"; `expeditionHuntPolicy` is the retired `(deprecated)` slot it replaced and has no
@@ -642,9 +644,44 @@ readout, `expedition_hunt::exported_snapshot_fields_reproduce_band_hunt_take` do
 policies × a unit and a discontent-reduced output multiplier). If either readout ever drifts from the
 sim, those tests fail.
 
+### A raiding party carries its quarry's NAME, not just its key
+
+`ExpeditionMission::Hunt`/`Deny` carry **`target_species`** — the herd's species display name
+(`"Red Deer"`) — beside the `fauna_id` that keys it. Published as `expeditionTargetSpecies`, and it is
+what the client renders; `expeditionTargetHerd` remains the key every command addresses the herd by,
+and a player never sees it.
+
+**The two are not redundant, because the party outlives the herd list.** Herd telemetry is fog-gated
+to hexes with `Active` visibility and pruned at local extinction, and a detached expedition is
+deliberately **not** a vision source (`calculate_visibility`, `Without<Expedition>` — comm-range gating
+means a party must not light up the faction map from wherever it stands). So a hunting party's own
+target routinely leaves the published list *while the party is still bound to it*, and a client joining
+the id against that list had nothing left to render but the raw id (issue #378).
+
+**Resolved at launch, in `outfit_raiding_party`** — the shared gate that already refuses a raid whose
+herd the registry cannot resolve, so a successful launch always has a name and both raiding verbs get
+it from one place. That is also the only moment the name is reliable: a capture-time registry lookup
+would survive fog and still go blank on extinction, which prunes the registry itself.
+
+**The sim's own event feed obeys the same rule, through `ExpeditionMission::target_display`** — the
+species when it resolved, the `fauna_id` only as a last resort, one definition so no call site
+re-implements the fallback. Every player-facing expedition line reads it: both launch lines
+(`ExpeditionSent`), the shared lost-herd guard, and all four completion lines in the `Hunting` arm.
+**The `detail` tokens are untouched** — `herd=<fauna_id>` is the key the client addresses the event by,
+so a line names the species and its detail names the herd. The id tier is reachable only from a mission
+built without a resolved name (a fixture, or a restore of a frame that carried none), since
+`outfit_raiding_party` guarantees one on every real launch.
+
+It rides `ExpeditionRecord` like the rest of the mission, so a rollback restores it — necessarily,
+since it cannot be re-derived once the herd is gone
+(`harvest_floor_rollback::an_expedition_floor_round_trips_through_the_mission_and_the_rollback`).
+`expedition_hunt::a_party_names_its_quarry_when_the_herd_has_left_the_snapshot`
+pins the whole chain on the encoded wire, with a positive control: the party's target is absent from
+the published herds while its hex is only `Discovered`, and present once the hex is `Active`.
+
 ## Denial is a MISSION, not a floor — and it changes ONE line
 
-`ExpeditionMission::Deny { fauna_id }`, wire key `"deny"`, launched by
+`ExpeditionMission::Deny { fauna_id, target_species }`, wire key `"deny"`, launched by
 `send_denial_raid <faction> <band> <party_workers> <fauna_id>` (`SendDenialRaidCommand`, proto field
 **49**). Authoritative design: `docs/plan_denial_raid.md`, which rides on
 `docs/plan_hunt_through_combat.md`.

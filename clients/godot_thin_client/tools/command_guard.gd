@@ -95,6 +95,9 @@ const BAND_HUNT_REACH := 3
 const BAND_IDLE_WORKERS := 6
 const BAND_WORKING_AGE := 16
 const BAND_SIZE := 30
+## The band's children; its elders are `BAND_SIZE − BAND_WORKING_AGE − BAND_CHILDREN`, since the
+## three whole brackets partition the head count.
+const BAND_CHILDREN := 9
 const PARTY_WORKERS := 2
 
 const NEAR_HERD_ID := "game_deer_07"
@@ -481,9 +484,11 @@ func _band_fixture() -> Dictionary:
 		"current_y": BAND_Y,
 		"working_age": BAND_WORKING_AGE,
 		"idle_workers": BAND_IDLE_WORKERS,
-		"age_children": 9.0,
-		"age_working": float(BAND_WORKING_AGE),
-		"age_elders": float(BAND_SIZE - BAND_WORKING_AGE - 9),
+		# The age brackets, in WHOLE PEOPLE. `working_age` above IS the working one, so only the two
+		# dependent brackets are stated and the elders are DERIVED — the three must sum to `size`,
+		# which is what the sim guarantees on the wire.
+		"children": BAND_CHILDREN,
+		"elders": BAND_SIZE - BAND_WORKING_AGE - BAND_CHILDREN,
 		"turns_of_food": 20.0,
 		"morale": 0.8,
 		"stores": {"provisions": 80.0},

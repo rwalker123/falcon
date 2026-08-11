@@ -263,7 +263,7 @@ ever removes the party is the wire.
 kept its home band (plus `population_removed` naming it — the wire half, and the only assertion that
 can see the decoder); `band_parties` / `player_expeditions` / `band_party_workers` drop it (asked of
 the MODEL, since a panel re-rendered from a stale grouping looks right this turn while the Workforce
-bar's Parties segment and the attention producers still count the ghost); the rendered header falls
+header's `away` clause and the attention producers still count the ghost); the rendered header falls
 from `1 out · 4 workers` to `0 out · 0 workers` (read off the panel's own Labels, never recomputed —
 the difference between *the model agrees* and *the player is told*); the row **and the parties
 inspector strip** leave the tree with no surviving control naming the quarry and `_party_open_key`
@@ -313,17 +313,19 @@ res://tools/marker_field_guard.tscn`. When the panel starts reading a new marker
 field the decoder emits as a float (a fixed-point Scalar through `fixed64_to_f64`, or a `float` wire
 field) that the marker copies with `int(...)`. Presence-only checks structurally cannot see it — the
 key is there, the value is merely truncated — yet it is live-visible, because the marker IS the
-selection payload for a band clicked ON THE MAP. That is how
-`age_children`/`age_working`/`age_elders` shipped truncated: 9.29 + 16.54 + 4.64 became 9 + 16 + 4,
-and with every remainder zeroed `HudFormat.apportion_people` had nothing to redistribute, so the
-PEOPLE header read **29** beside a top bar reading **30** until the next snapshot re-resolved it
-from the raw floats (indefinitely, while paused). Each key in that dict is fed a deliberately
-NON-INTEGER value (the dict IS the fixture's value for that key, merged over `FIXTURE_ENTRY`, so the
-two cannot drift) and must come back within `FRACTIONAL_EPSILON`.
+selection payload for a band clicked ON THE MAP. The age brackets are how it was found: they shipped
+as fixed-point Scalars, the marker copied them with `int(...)`, 9.29 + 16.54 + 4.64 became 9 + 16 +
+4, and with every remainder zeroed the PEOPLE header read **29** beside a top bar reading **30**
+until the next snapshot re-resolved it from the raw floats (indefinitely, while paused). Each key in
+that dict is fed a deliberately NON-INTEGER value (the dict IS the fixture's value for that key,
+merged over `FIXTURE_ENTRY`, so the two cannot drift) and must come back within
+`FRACTIONAL_EPSILON`.
 
-**Membership rule: continuous end to end** — integer counts (`size`, `working_age`, `idle_workers`),
-entity ids and coordinates are deliberately EXCLUDED, since a fractional assertion on one would be a
-false claim.
+**Membership rule: continuous end to end** — integer counts (`size`, `working_age`, `children`,
+`elders`, `idle_workers`), entity ids and coordinates are deliberately EXCLUDED, since a fractional
+assertion on one would be a false claim. **The age brackets left this list when the wire started
+carrying whole people**: they are counts now, covered by the guard's `_expect_int` round-trips
+instead, and a fractional assertion on one would today be the false claim this rule forbids.
 
 **`PANEL_CONSUMED_KEYS` IS GONE, replaced by an exhaustive PARTITION** now that `MapView` copies the
 cohort structurally: `marker.keys() == entry.keys() ∪ MARKER_STAMPED_KEYS − MARKER_OMITTED_KEYS`,

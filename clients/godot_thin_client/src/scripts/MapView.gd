@@ -2253,7 +2253,7 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 		# destroyed absence semantics, by dropping keys the cohort actually had.
 		#
 		# **NO COERCIONS RIDE THE COPY.** The literal wrapped every field in `int()` / `float()` / `String()`,
-		# which is where the `age_children` narrowing bug lived; a duplicate carries the decoder's own types,
+		# which is where the age-bracket narrowing bug lived; a duplicate carries the decoder's own types,
 		# so nothing can narrow in transit. The coercions that survive are on the STAMPS below, and they
 		# defend against a hand-built FIXTURE rather than against the decoder (see each one).
 		var marker := entry.duplicate()

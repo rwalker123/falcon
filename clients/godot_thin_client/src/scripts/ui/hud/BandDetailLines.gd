@@ -542,14 +542,15 @@ func _band_kit_line(unit_data: Dictionary) -> String:
     # item table is config, so the next item would do it again.
     #
     # So the row is a SUMMARY with a bounded budget: the items that need a decision first, then
-    # whatever fits. **Dry items lead**, because running dry is a permanent step down to bare hands
-    # and it is the only kit fact the player can still act on; the rest fill the remaining slots in
-    # roster order. The full per-item breakdown is the disclosure
-    # (`DisclosureController.kit_breakdown_lines`), which scrolls and therefore can carry them all.
+    # whatever fits. **Dry items lead, then SHORT ones** — running dry is a permanent step down to
+    # bare hands, and a shortfall is the other half of the party standing there with nothing; both
+    # are decisions, and the rest fill the remaining slots in roster order. The full per-item
+    # breakdown is the disclosure (`DisclosureController.kit_breakdown_lines`), which scrolls and
+    # therefore can carry them all.
     #
-    # Nothing is hidden silently: `DetailFormat.band_kit_is_dry` — what tints the caret WARN —
-    # sweeps EVERYTHING the server published, so an item pushed off this row still raises the
-    # warning that sends the player to the breakdown.
+    # Nothing is hidden silently: `DetailFormat.band_kit_is_dry` and `band_kit_is_short` — what
+    # together tint the caret WARN — sweep EVERYTHING the server published, so an item pushed off
+    # this row still raises the warning that sends the player to the breakdown.
     var conditions: Array = unit_data.get(DetailFormat.KIT_ITEM_CONDITIONS_KEY, [])
     var ordered: Array = []
     for row in conditions:
@@ -557,15 +558,29 @@ func _band_kit_line(unit_data: Dictionary) -> String:
                 <= DetailFormat.KIT_DRY:
             ordered.append(row)
     for row in conditions:
+        if not ordered.has(row) and int(DetailFormat.kit_coverage(unit_data,
+                String(row.get(DetailFormat.KIT_ITEM_ID_KEY, "")))["short"]) > 0:
+            ordered.append(row)
+    for row in conditions:
         if not ordered.has(row):
             ordered.append(row)
     for row in ordered.slice(0, BAND_KIT_ROW_MAX_ENTRIES):
         var item_id := String(row.get(DetailFormat.KIT_ITEM_ID_KEY, ""))
-        var hex := HudStyle.INK_HEX if DetailFormat.kit_is_equipped(unit_data, item_id) \
-            else HudStyle.DANGER_HEX
+        # **THREE STATES, NOT TWO** (issue #520). A live item that reaches everybody is neutral INK;
+        # one that has run out is DANGER, the permanent step down; one that is live but reaches only
+        # part of the party is WARN — its gear works perfectly for whoever holds it, which is exactly
+        # why it must not read as the cliff, and equally why it must not read as *fine*.
+        var coverage := DetailFormat.kit_coverage(unit_data, item_id)
+        var short := int(coverage["short"]) > 0
+        var face := DetailFormat.kit_condition_face(unit_data, item_id)
+        var hex := HudStyle.DANGER_HEX
+        if DetailFormat.kit_is_equipped(unit_data, item_id):
+            hex = HudStyle.WARN_HEX if short else HudStyle.INK_HEX
+        if short:
+            face = DetailFormat.KIT_COVERAGE_ROW_FORMAT % [
+                face, coverage["holding"], coverage["headcount"]]
         entries.append(BAND_KIT_ROW_ENTRY_FORMAT % [
-            DetailFormat.kit_item_label(item_id), hex,
-            DetailFormat.kit_condition_face(unit_data, item_id)])
+            DetailFormat.kit_item_label(item_id), hex, face])
     return BAND_KIT_ROW_PREFIX + BAND_KIT_ROW_SEPARATOR.join(entries)
 
 ## Selection-panel band morale row: "Morale: 41% ▼ — harsh terrain (Karst Cavern Mouth)".

@@ -220,24 +220,21 @@ static func progress_percent(progress: float) -> int:
 
 # ---- People: apportionment + the dependency vocabulary -------------------------------------------
 
-## Round fractional age brackets to whole people SO THEY STILL SUM TO THE WHOLE BAND — the
+## Divide whole people into fractional parts SO THEY STILL SUM TO AN EXPLICIT TOTAL — the
 ## largest-remainder method: floor every part, then hand the leftover people out to the biggest
-## fractions, biggest first. `round()` per part does NOT preserve the total (9.29 + 16.54 + 4.64 =
-## 30.47 rounds to 9 + 17 + 5 = 31), and a Band panel that disagrees with the top bar about how many
-## people are in the band reads as a bug in both.
-static func apportion_people(parts: Array[float]) -> Array[int]:
-    var total := 0.0
-    for part in parts:
-        total += maxf(part, 0.0)
-    return apportion_people_to(parts, roundi(total))
-
-## The same apportionment against an EXPLICIT total, for a caller that already knows what the parts
-## must sum to.
+## fractions, biggest first. `round()` per part does NOT preserve the total, and a panel that
+## disagrees with itself about how many people are in a band reads as a bug in both readouts.
 ##
-## **The split sheet is why this exists.** It apportions both halves of a band in ONE pass so their
-## displayed people sum to the band's own displayed total — and it holds the chosen worker count out
-## of the parts entirely, that being an integer the player picked rather than a fraction to round. So
-## the target is not `round(sum(parts))`; it is the band's people minus those pinned workers.
+## **This is the client's OWN arithmetic, never a second opinion on the sim's.** The age brackets
+## arrive as whole people already — the sim rounds them once and guarantees they sum to `size` — so
+## nothing rounds them here. What genuinely needs rounding is the SPLIT SHEET: 9 whole children
+## divided by a 40% share the player chose is 3.6 children, and somebody has to decide.
+##
+## **The split sheet is why this takes an explicit target.** It apportions both halves of a band in
+## ONE pass so their displayed people sum to the band's own displayed total — and it holds the chosen
+## worker count out of the parts entirely, that being an integer the player picked rather than a
+## fraction to round. So the target is not `round(sum(parts))`; it is the band's people minus those
+## pinned workers.
 static func apportion_people_to(parts: Array[float], target: int) -> Array[int]:
     var whole: Array[int] = []
     var assigned := 0

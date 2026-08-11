@@ -126,10 +126,10 @@ fn pin_herd_of(app: &mut App, species: &str, id: &str) -> String {
 /// `HerdTelemetryState.defaultKitId` read off the **encoded envelope**, through the client's own
 /// accessor chain — a field that never reached the codec still passes an in-process assertion.
 ///
-/// **Encoded here rather than read back off the ring entry.** `StoredSnapshot::encode_flat` hands
-/// back the bytes cached when the entry was *first* published, and a mid-tick recapture refreshes
-/// the entry's `snapshot` without refreshing them — so a fixture that pins a herd and recaptures
-/// would be decoding the frame from before it pinned anything.
+/// **Encoded here rather than through `StoredSnapshot::encode_flat`.** This asserts on frame
+/// *content*, and encoding the entry's snapshot directly says so: `encode_flat` is a read of stored
+/// bytes whose header carries whatever sequence number the entry was published under, which is a
+/// concern this fixture has no stake in.
 fn published_default_kit(app: &App, herd_id: &str) -> String {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
@@ -243,7 +243,10 @@ fn spawn_hunting_band(
         .spawn((
             cohort(tile, CREW),
             ResidentBand,
-            BandEquipment::start_stocked(&EquipmentConfig::builtin()),
+            // **Outfitted for the crew it staffs.** A spawn stocks a party's worth, and the one-unit
+            // reference ledger would arm one of these four and send three out bare-handed — a
+            // fixture about a shortfall, not about the kit these tests measure.
+            BandEquipment::start_stocked_for(&EquipmentConfig::builtin(), CREW as f32),
             LaborAllocation {
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -269,16 +272,26 @@ fn spawn_party(
     kit: KitChoice,
 ) -> bevy::prelude::Entity {
     let tile = tile_at(app, pos);
+    // The name a launched party would carry, resolved off the registry as `outfit_raiding_party` does.
+    // Display-only — every mechanic here resolves the herd through `fauna_id`.
+    let target_species = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(fauna_id)
+        .map(|herd| herd.species.clone())
+        .unwrap_or_default();
     app.world
         .spawn((
             cohort(tile, CREW),
             LaborAllocation::default(),
-            BandEquipment::start_stocked(&EquipmentConfig::builtin()),
+            // Outfitted, for the reason the resident band above is.
+            BandEquipment::start_stocked_for(&EquipmentConfig::builtin(), CREW as f32),
             StartingUnit::new("expedition".to_string(), Vec::new()),
             Expedition {
                 home_band,
                 mission: ExpeditionMission::Hunt {
                     fauna_id: fauna_id.to_string(),
+                    target_species,
                     floor: DEFAULT_ESCAPEMENT_FLOOR,
                 },
                 phase: ExpeditionPhase::Hunting,
@@ -419,9 +432,10 @@ fn a_crew_with_no_kit_takes_less_and_spends_no_durability_on_any_component() {
 
     assert_eq!(
         bare_wear,
-        BandEquipment::start_stocked(&EquipmentConfig::builtin()),
+        BandEquipment::start_stocked_for(&EquipmentConfig::builtin(), CREW as f32),
         "a crew using no component spends no durability on ANY of them — this is the pairing that \
-         makes a bare-handed comparison free to run"
+         makes a bare-handed comparison free to run (compared against the ledger the fixture band \
+         is OUTFITTED with, which is a party's worth)"
     );
     assert!(
         kitted_wear.wear_of("spears") > 0.0 && kitted_wear.wear_of("sled") > 0.0,
@@ -758,7 +772,11 @@ fn a_bands_published_tiers_step_down_per_kit_by_which_item_that_kit_actually_use
             .world
             .get_mut::<core_sim::BandEquipment>(band)
             .expect("a spawned band is kitted");
-        equipment_ledger.wear_item(&cfg, "spears", kills_to_expiry);
+        // **Every unit** — a spawn stocks a party's worth, so one unit's kills leave the rest of
+        // the stock standing and the kit would still be live.
+        while equipment_ledger.count_of("spears") > 0 {
+            equipment_ledger.wear_item(&cfg, "spears", kills_to_expiry);
+        }
     }
     recapture_snapshot_in_place(&mut app.world);
 
@@ -827,10 +845,8 @@ struct PublishedKitRow {
 /// One band's whole `kitTiers` table, **off the encoded envelope**, keyed by kit id.
 ///
 /// Encoded from the ring entry's *snapshot* rather than through `StoredSnapshot::encode_flat` for
-/// the reason [`published_default_kit`] states: the cached bytes are the ones published when the
-/// entry was first written, and a mid-tick recapture refreshes the snapshot without refreshing
-/// them — so a fixture that wears an item and recaptures would be decoding the frame from before it
-/// touched anything.
+/// the reason [`published_default_kit`] states: the claim here is about frame content, and
+/// `encode_flat` is a read of stored bytes carrying a stored sequence number.
 fn published_kit_tiers(
     app: &App,
     band: bevy::prelude::Entity,
@@ -874,11 +890,13 @@ fn published_kit_tiers(
         .collect()
 }
 
-/// **Wear one item to its durability cliff**, in the item's own use quantum.
+/// **Wear one item to its durability cliff**, in the item's own use quantum — **every unit of it**,
+/// because a spawn stocks a party's worth and one unit's life leaves the rest of the stock standing.
 ///
-/// `wear_item` charges `uses × the item's own wear amount`, so the count that empties it is
+/// `wear_item` charges `uses × the item's own wear amount`, so the count that empties **one unit** is
 /// `starting_durability / wear.amount` — derived from config rather than written as a number, or a
-/// retune of either dial silently stops a fixture reaching the cliff it is about.
+/// retune of either dial silently stops a fixture reaching the cliff it is about. It serves the most
+/// worn live batch, so charging that count once per unit owned empties the ledger.
 fn wear_to_the_cliff(app: &mut App, band: bevy::prelude::Entity, item_id: &str) {
     let cfg = equipment(app);
     let item = cfg
@@ -889,7 +907,9 @@ fn wear_to_the_cliff(app: &mut App, band: bevy::prelude::Entity, item_id: &str) 
         .world
         .get_mut::<BandEquipment>(band)
         .expect("a spawned band is kitted");
-    ledger.wear_item(&cfg, item_id, uses_to_expiry);
+    while ledger.count_of(item_id) > 0 {
+        ledger.wear_item(&cfg, item_id, uses_to_expiry);
+    }
 }
 
 /// **THE PEN AND THE VANTAGE STEP DOWN PER KIT TOO — the twin of the test above for the two axes
@@ -1682,4 +1702,349 @@ fn equipped_attack(cfg: &EquipmentConfig) -> f32 {
         Some(EffectTier::Equipped(value)) => value,
         other => panic!("spears must declare an equipped attack, got {other:?}"),
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// #520 on the wire — the composed party has to be EXPRESSIBLE
+// ---------------------------------------------------------------------------------------------
+
+/// **A resident band staffing GATHERERS, holding only `baskets_owned` baskets.**
+///
+/// The forage job is the one that had no head count on the wire, so this is the fixture the
+/// denominator is measured on. It never runs a turn — the published pair is resolved from the
+/// allocation and the ledger, so the patch only has to exist for the assignment to name.
+fn spawn_gathering_band(app: &mut App, baskets_owned: u32) -> (bevy::prelude::Entity, UVec2) {
+    let tile_pos = app
+        .world
+        .resource::<core_sim::ForageRegistry>()
+        .patches
+        .keys()
+        .copied()
+        .min_by_key(|p| (p.y, p.x))
+        .expect("the campaign map seeds forage patches");
+    let tile_entity = tile_at(app, tile_pos);
+    let mut wear = BandEquipment::start_stocked_for(&EquipmentConfig::builtin(), CREW as f32);
+    let tier = EquipmentConfig::builtin()
+        .item("baskets")
+        .expect("the roster ships baskets")
+        .default_tier()
+        .id
+        .clone();
+    wear.restore_batches("baskets", Vec::new());
+    wear.stock("baskets", baskets_owned, &tier, None);
+    let band = app
+        .world
+        .spawn((
+            cohort(tile_entity, CREW),
+            ResidentBand,
+            wear,
+            LaborAllocation {
+                assignments: vec![LaborAssignment {
+                    target: LaborTarget::Forage {
+                        tile: tile_pos,
+                        floor: DEFAULT_ESCAPEMENT_FLOOR,
+                        species: None,
+                    },
+                    workers: CREW,
+                    improvement: None,
+                    kit: None,
+                }],
+                ..Default::default()
+            },
+        ))
+        .id();
+    (band, tile_pos)
+}
+
+/// One `BandKitCrew` row, read off the **encoded** envelope.
+#[derive(Debug, Clone, PartialEq)]
+struct PublishedCrew {
+    workers: f32,
+    hunter_attack: f32,
+    item_ids: Vec<String>,
+}
+
+/// The three things this suite reads off one band's **encoded** cohort row — the crews, the flat
+/// `hunterAttack` beside them, and one item's `workersHolding`.
+///
+/// Encoded from the ring entry's *snapshot* rather than through `StoredSnapshot::encode_flat`, for
+/// the reason [`published_kit_tiers`] states.
+fn published_hunt_composition(
+    app: &App,
+    band: bevy::prelude::Entity,
+    item: &str,
+) -> (Vec<PublishedCrew>, f32, f32) {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.entity() == band.to_bits())
+        .expect("the band is on the wire");
+    let crews = cohort
+        .huntCrews()
+        .expect("a band always publishes at least one hunt crew")
+        .iter()
+        .map(|row| PublishedCrew {
+            workers: row.workers(),
+            hunter_attack: row.hunterAttack(),
+            item_ids: row
+                .itemIds()
+                .map(|ids| ids.iter().map(str::to_string).collect())
+                .unwrap_or_default(),
+        })
+        .collect();
+    let workers_holding = published_gear_pair(app, band, item).0;
+    (crews, cohort.hunterAttack(), workers_holding)
+}
+
+/// **One item's `(workersHolding, workersOnQuotedJob)` pair**, off the **encoded** envelope — read
+/// together, because the two fields are one sentence and a test that read them apart could not
+/// catch them describing two different jobs.
+fn published_gear_pair(app: &App, band: bevy::prelude::Entity, item: &str) -> (f32, f32) {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.entity() == band.to_bits())
+        .expect("the band is on the wire")
+        .kitItemConditions()
+        .expect("the band publishes a condition row per config item")
+        .iter()
+        .find(|row| row.itemId() == Some(item))
+        .map(|row| (row.workersHolding(), row.workersOnQuotedJob()))
+        .unwrap_or_else(|| panic!("the config carries '{item}', so it has a row"))
+}
+
+/// **A BAND SHORT OF SPEARS PUBLISHES ITS DIVISION** (issue #520) — two crews whose workers sum to
+/// the hunt head count, the armed one at the equipped tier and the bare one at the `person` row's
+/// intrinsic `1`.
+///
+/// The hunt gate `max(0, hunterAttack − defense)` is why one number per band is not enough: it
+/// decides whether a species can be taken **at all**, and a mixed band's honest answer is *"these
+/// can, those cannot"*. Read off the **encoded envelope** — a field that never reached the codec
+/// still satisfies an in-process assertion.
+#[test]
+fn a_band_short_of_spears_publishes_one_hunt_crew_per_run() {
+    /// Two of the four hunters hold a spear, so the two rows are the same size and neither can be
+    /// mistaken for the whole party.
+    const SPEARS_OWNED: u32 = 2;
+
+    let mut app = placid_world();
+    let (herd, pos) = pin_herd(&mut app);
+    let band = spawn_hunting_band(&mut app, pos, &herd, None);
+    {
+        let cfg = equipment(&app);
+        let tier = cfg
+            .item("spears")
+            .expect("the roster ships spears")
+            .default_tier()
+            .id
+            .clone();
+        let mut wear = app
+            .world
+            .get_mut::<BandEquipment>(band)
+            .expect("the fixture spawned a ledger");
+        wear.restore_batches("spears", Vec::new());
+        wear.stock("spears", SPEARS_OWNED, &tier, None);
+    }
+    recapture_snapshot_in_place(&mut app.world);
+
+    let (crews, hunter_attack, spears_holding) = published_hunt_composition(&app, band, "spears");
+    let cfg = equipment(&app);
+    let intrinsic = core_sim::CreaturesConfig::builtin().person().attack;
+
+    assert_eq!(
+        crews.len(),
+        2,
+        "two loadouts, so two published rows: {crews:?}"
+    );
+    assert_eq!(
+        crews.iter().map(|crew| crew.workers).sum::<f32>(),
+        CREW as f32,
+        "the rows must account for every hunter on the job, or a client cannot render a share"
+    );
+    assert_eq!(crews[0].workers, SPEARS_OWNED as f32);
+    assert_eq!(
+        crews[0].hunter_attack,
+        equipped_attack(&cfg),
+        "the best-equipped row comes first and carries the spear's tier"
+    );
+    assert!(
+        crews[0].item_ids.iter().any(|id| id == "spears"),
+        "…and says what it is holding: {crews:?}"
+    );
+    assert_eq!(crews[1].workers, (CREW - SPEARS_OWNED) as f32);
+    assert_eq!(
+        crews[1].hunter_attack, intrinsic,
+        "the rest are on the `person` roster row's own attack — the gate's losing side"
+    );
+    assert!(
+        !crews[1].item_ids.iter().any(|id| id == "spears"),
+        "…and hold no spear: {crews:?}"
+    );
+    assert_eq!(
+        hunter_attack, crews[0].hunter_attack,
+        "`hunterAttack` keeps its meaning: the BEST-equipped crew's tier, which is exactly why a \
+         client must read `huntCrews` for the rest of the party"
+    );
+    assert_eq!(
+        spears_holding, SPEARS_OWNED as f32,
+        "`workersHolding` counts the PEOPLE the spears reach, so a gear row reads '2 of 4' without \
+         dividing anything"
+    );
+}
+
+/// **A GEAR ROW CARRIES ITS OWN DENOMINATOR, on the jobs that are not the hunt** (issue #520).
+///
+/// `workersHolding` alone is only renderable where the wire also carries a head count, and only the
+/// hunt does (`Σ huntCrews.workers`) — so a spears shortfall could be stated and a **basket's** could
+/// not, which is the quiet half of the same reassuring-direction failure. `workersOnQuotedJob` is
+/// that denominator, off the same coverage the numerator came from.
+///
+/// The band below staffs **gatherers** and holds fewer baskets than it has of them, so the pair is a
+/// genuine shortfall on a job the hunt's head count says nothing about.
+#[test]
+fn a_gear_row_publishes_the_head_count_of_the_job_it_is_quoted_at() {
+    /// Fewer than the crew, so the pair is a real *"2 of 4"* rather than a full set.
+    const BASKETS_OWNED: u32 = 2;
+
+    let mut app = placid_world();
+    let (band, _patch) = spawn_gathering_band(&mut app, BASKETS_OWNED);
+    recapture_snapshot_in_place(&mut app.world);
+
+    let (holding, on_job) = published_gear_pair(&app, band, "baskets");
+    assert_eq!(
+        on_job, CREW as f32,
+        "the denominator is the FORAGE job's head count — the hunt's says nothing about baskets"
+    );
+    assert_eq!(
+        holding, BASKETS_OWNED as f32,
+        "and the numerator is the gatherers the baskets reach, so the row reads '2 of 4'"
+    );
+    assert!(
+        holding < on_job,
+        "liveness: this band really is short, or the pair is the trivial truth about a full set"
+    );
+
+    // The HUNT row is unaffected and still answers at its own job — nobody is staffed on it here,
+    // which is the other zero the schema separates.
+    let (spears_holding, spears_on_job) = published_gear_pair(&app, band, "spears");
+    assert_eq!(
+        (spears_holding, spears_on_job),
+        (0.0, 0.0),
+        "nobody hunts in this band, so the spear row is `0 of 0` — not a shortfall"
+    );
+}
+
+/// **A JOB NOBODY IS STAFFED ON PUBLISHES A ZERO DENOMINATOR, and the row is still there.**
+///
+/// `0 of 0` is *"nothing was needed"*; `0 of 4` is *"four people went without"*. Both are `0`
+/// numerators, and a client that could not tell them apart would render a warning on every band that
+/// simply is not gathering. Asserted against a real shortfall in the same world, so *"the row exists
+/// and reads zero"* cannot pass on a sim that publishes zeros everywhere.
+#[test]
+fn a_job_nobody_is_staffed_on_publishes_a_zero_denominator_rather_than_an_absent_row() {
+    let mut app = placid_world();
+    let (herd, pos) = pin_herd(&mut app);
+    let band = spawn_hunting_band(&mut app, pos, &herd, None);
+    {
+        // Strip the CLUBS so the warrior row would be a shortfall if anybody were on it.
+        let mut wear = app
+            .world
+            .get_mut::<BandEquipment>(band)
+            .expect("the fixture spawned a ledger");
+        wear.restore_batches("clubs", Vec::new());
+    }
+    recapture_snapshot_in_place(&mut app.world);
+
+    // Nobody on Warrior: `0 of 0`, and the row is present.
+    assert_eq!(
+        published_gear_pair(&app, band, "clubs"),
+        (0.0, 0.0),
+        "a band with no warriors needed no clubs — `0 of 0`, and the row must still be published"
+    );
+    // Nobody on Forage either, though the band owns baskets: the denominator, not the stock, is
+    // what makes this zero — which is exactly the distinction the pair exists to draw.
+    let (baskets_holding, baskets_on_job) = published_gear_pair(&app, band, "baskets");
+    assert_eq!((baskets_holding, baskets_on_job), (0.0, 0.0));
+    assert!(
+        app.world
+            .get::<BandEquipment>(band)
+            .expect("ledger")
+            .count_of("baskets")
+            > 0,
+        "…and the band DOES own baskets, so the zero is about the staffing and not the stock"
+    );
+    // LIVENESS, same frame: the job this band IS staffed on publishes a real denominator.
+    let (spears_holding, spears_on_job) = published_gear_pair(&app, band, "spears");
+    assert_eq!(
+        (spears_holding, spears_on_job),
+        (CREW as f32, CREW as f32),
+        "the hunt row is staffed and fully armed, so the pair is `4 of 4` — a zero everywhere would \
+         pass every assertion above"
+    );
+}
+
+/// **A UNIFORMLY-EQUIPPED BAND PUBLISHES EXACTLY ONE ROW, never an empty list** (issue #520).
+///
+/// The same rule `KitCoverage` follows sim-side: a client must not have to tell *"no crews"* from
+/// *"one crew holding nothing"*. Paired with the test above — asserting "one row" alone would pass
+/// on a sim that had stopped dividing anything at all.
+#[test]
+fn a_fully_armed_band_publishes_exactly_one_hunt_crew() {
+    let mut app = placid_world();
+    let (herd, pos) = pin_herd(&mut app);
+    let band = spawn_hunting_band(&mut app, pos, &herd, None);
+    recapture_snapshot_in_place(&mut app.world);
+
+    let (crews, hunter_attack, spears_holding) = published_hunt_composition(&app, band, "spears");
+    let cfg = equipment(&app);
+
+    assert_eq!(
+        crews.len(),
+        1,
+        "everybody holds the same thing, so there is one run — and it is a ROW, not an empty list: \
+         {crews:?}"
+    );
+    assert_eq!(
+        crews[0].workers, CREW as f32,
+        "the one row carries the whole hunt head count"
+    );
+    assert_eq!(crews[0].hunter_attack, equipped_attack(&cfg));
+    assert_eq!(
+        hunter_attack, crews[0].hunter_attack,
+        "`hunterAttack` is still the best crew's tier when there is only one crew"
+    );
+    assert_eq!(
+        spears_holding, CREW as f32,
+        "the spears reach every hunter — the reserve above the head count arms nobody extra"
+    );
 }

@@ -543,9 +543,14 @@ table PopulationCohortState {
   harvestTask:HarvestTask;
   scoutTask:ScoutTask;
   accessibleStockpile:AccessibleStockpile;
-  children:long = 0;
-  working:long = 0;
-  elders:long = 0;
+  // RETIRED: the age brackets as RAW fixed-point Scalars (1e6 = one person). The fraction is an
+  // internal growth accumulator, not a fact about people, and a client that rounded them for itself
+  // disagreed with the sim's own rounding. Replaced by the whole-people `childrenCount` /
+  // `workingAge` / `eldersCount` at the end of this table. Stopped being written; the slots stay
+  // (append-only discipline).
+  children:long (deprecated);
+  working:long (deprecated);
+  elders:long (deprecated);
   stores:[CohortStore];
   ageTurns:uint = 0;
   // TURNS until the larder is empty, INCOME INCLUDED: larder / (consumption + pen feed − income),
@@ -826,6 +831,10 @@ table PopulationCohortState {
   //     equipment.json hunting_kit.equipped_attack = 20 equipped). It is what the combat gate
   //     max(0, attack - defense) is compared against a herd's HerdTelemetryState.defense:
   //     BELOW a species' defense means that species CANNOT BE HUNTED AT ALL.
+  //     *** IT IS THE BEST-EQUIPPED CREW'S TIER, NOT THE WHOLE BAND'S. *** A band short of spears
+  //     arms some of its hunters and not the rest, and this field answers for the armed ones. The
+  //     division itself is `huntCrews` (appended at the tail of this table); read it before
+  //     rendering this number as a fact about everybody, or a mixed band reads as fully armed.
   //   - huntCarryPerWorkerBiomass: this band's per-worker HUNT haul rate, the term every hunt take,
   //     crew-size and hunt forecast is capped by. It is the BAND's rate; HerdTelemetryState's
   //     perWorkerBiomass stays the EQUIPPED reference rate (a herd has no band to resolve against).
@@ -955,6 +964,57 @@ table PopulationCohortState {
   bench:BenchState;
   craftOffers:[CraftOffer];
   equipmentBatches:[EquipmentBatchState];
+  // --- THE AGE BRACKETS, IN WHOLE PEOPLE (appended last) ----------------------------------------
+  //
+  // *** THE WIRE CARRIES WHOLE PEOPLE. *** A band's brackets are fixed-point inside the sim because
+  // the fraction is a GROWTH ACCUMULATOR — it exists so a slow birth rate does not round to zero
+  // every turn — and it has exactly ONE correct reading, which is the sim's. Publishing the raw
+  // Scalars let the client invent a second one: a band of 16.6 working-age people rendered "17" in
+  // the PEOPLE bar beside "0 idle of 16" in the WORKFORCE header, the same frame, off the same band.
+  // So `children`/`working`/`elders` above are deprecated slots and these are what a reader uses.
+  //
+  // INVARIANT: childrenCount + workingAge + eldersCount == size, always, by construction — `size`
+  // is written as that sum. `workingAge` (the whole assignable workers, already shipped) IS the
+  // working bracket; there is deliberately no `workingCount` twin, because two names for one
+  // number is how the two start disagreeing.
+  //
+  // Derivation (core_sim::snapshot::population::whole_age_brackets): workers are the floored
+  // `available_workers` the commands clamp against, dependents are `size − workers` split between
+  // children and elders in proportion to their fixed-point masses, round-half on children with
+  // elders taking the remainder. A cohort with NO dependent mass has no dependents at all, and its
+  // published head count is its workers — a rounded-up phantom is not a person.
+  childrenCount:uint = 0;
+  eldersCount:uint = 0;
+  // THE TARGET HERD'S SPECIES DISPLAY NAME ("Red Deer") for a hunt/deny party -- what the client
+  // RENDERS for the quarry. "" for a scout or a normal band. Appended last (append-only discipline).
+  //
+  // *** IT IS NOT A DUPLICATE OF expeditionTargetHerd, AND NOT A DUPLICATE OF THE HERD LIST. ***
+  //
+  // expeditionTargetHerd is the KEY: it addresses the herd in every command, and a player must never
+  // see it (a fauna id means nothing to anyone). The NAME used to be reached by joining that key
+  // against HerdTelemetryState, but that list is fog-filtered to tiles the viewer can see RIGHT NOW
+  // and pruned at local extinction -- and a detached expedition is deliberately not a vision source
+  // (visibility_systems.rs, Without<Expedition>). So a hunting party's own quarry routinely leaves the
+  // list while the party is still bound to it, and the client had nothing left to render but the raw
+  // id (issue #378).
+  //
+  // Resolved at LAUNCH, where the herd is in the registry by construction, and carried on the mission
+  // for the party's life -- so it survives BOTH ways the target can vanish. A capture-time registry
+  // lookup would have survived fog and still gone blank on extinction, which prunes the registry.
+  //
+  // The herd list is still joined for the target's LIVE POSITION, which genuinely needs live
+  // telemetry: its absence is what "target herd lost" reports, and that stays a separate statement
+  // from not knowing the animal's name.
+  expeditionTargetSpecies:string;
+  // --- THE PARTLY-EQUIPPED PARTY (appended last) ------------------------------------------------
+  // How this band's gear divides its HUNT workers - see BandKitCrew. Best-equipped first, workers
+  // summing to the hunt head count, and NEVER EMPTY: a uniformly-equipped band publishes exactly one
+  // row.
+  //
+  // hunterAttack above stays what it always was - THE BEST-EQUIPPED CREW'S TIER - and this is the
+  // rest of the party. A readout that shows only hunterAttack on a mixed band is right about the
+  // people holding spears and wrong, in the reassuring direction, about everybody else.
+  huntCrews:[BandKitCrew];
 }
 
 // What ONE kit would grant ONE band at its current wear - a row of
@@ -2891,6 +2951,73 @@ table KitItemCondition {
   // zero: `count > 0` means the band holds units of it, and `remaining` is then the life left on the
   // unit in hand. `count == 0` means it holds none, and `remaining` is 0 for that reason alone.
   count:uint = 0;
+  // --- HOW MANY WORKERS THIS ITEM ACTUALLY REACHES (appended) -----------------------------------
+  // *** A UNIT ARMS A PERSON, SO OWNING ONE IS NOT ARMING THE BAND. ***
+  //
+  // Workers holding this item, so a gear row can read "spears 87 · 10 of 17" without the client
+  // dividing anything. `count` says how many UNITS the band owns; this says how many PEOPLE they
+  // reach, and the two differ whenever the band is short (or holds a reserve above its head count,
+  // which is what a spawn stocks). The sim's answer, resolved through the same `coverage` seam the
+  // take uses — a client cannot compute it, because `workers_per_unit` and which job is staffed are
+  // both sim-side.
+  //
+  // A float because a forecast counts workers in fractions and this is the same head count.
+  //
+  // *** WHICH JOB IT IS QUOTED AT ***
+  // The job whose quoted kit carries this item, and — for an item several jobs' kits carry — the one
+  // `PopulationCohortState.kitId` names, exactly as `penCarryPerWorkerBiomass` is. So `spears` and
+  // `sled` are quoted at the hunt row, `baskets` at the forage default, `clubs` at the warrior
+  // default, `wayfinding` at the scout default. An item NO quoted kit carries reads 0 — including a
+  // bench tool, which no kit may name at all.
+  //
+  // 0 is therefore three different sentences (nobody staffed on the job, the band owns none, or no
+  // quoted kit carries it) and a readout that needs to tell them apart reads `count` beside it.
+  workersHolding:float = 0;
+  // --- ...AND ITS DENOMINATOR (appended) --------------------------------------------------------
+  // *** THE TWO FIELDS ARE ONE SENTENCE: `workersHolding` OF `workersOnQuotedJob`. ***
+  //
+  // The head count of the job this row is quoted at - the same number the sim divided against when
+  // it resolved `workersHolding`, published rather than re-derived. Without it only the HUNT has a
+  // denominator on the wire (Sigma huntCrews.workers), so a spears shortfall could be stated and a
+  // basket / club / wayfinding shortfall could not - the quiet half of the same "reassuring
+  // direction" failure `huntCrews` exists to remove.
+  //
+  // The job is the SAME one `workersHolding` names, by the same tie-break: whichever quoted kit
+  // carries the item, and `PopulationCohortState.kitId`'s for an item several jobs' kits carry. The
+  // pair therefore cannot disagree about which job it is describing.
+  //
+  // *** TWO ZEROS A READER MUST NOT CONFUSE ***
+  //   - workersOnQuotedJob == 0 -> NOBODY IS STAFFED on that job. "0 of 0" is not a shortfall; the
+  //     band has assigned no gatherers, so no basket was needed and none went unheld. Do not render
+  //     it as a warning, and do not divide by it.
+  //   - workersOnQuotedJob > 0 && workersHolding == 0 -> the job IS staffed and NOBODY is holding
+  //     the item. That is the real shortfall: every one of those workers is at the unequipped tier.
+  // (An item no quoted kit carries reads 0/0 for the third reason `workersHolding` documents, and
+  // `count` is what separates it from the two above.)
+  workersOnQuotedJob:float = 0;
+}
+
+// ONE RUN OF A BAND'S HUNT WORKERS HOLDING THE SAME GEAR - a row of
+// PopulationCohortState.huntCrews. THE SIM'S ANSWER, not an input to a client-side derivation.
+//
+// *** A PARTLY-EQUIPPED PARTY IS SEVERAL PARTIES, AND THE HUNT GATE IS WHY IT MATTERS. ***
+// max(0, hunterAttack - defense) decides whether a species can be taken AT ALL. A band with ten
+// spears and seventeen hunters can take a Red Deer with ten of them and not with the other seven,
+// and one number per band cannot say that - it says the reassuring half. So the sim publishes the
+// division it already resolved (EquipmentConfig::coverage, the same seam the take runs through).
+//
+// Best-equipped first, and the workers sum to the band's HUNT head count (its own workers for an
+// in-flight party, which is all on one kit). A UNIFORMLY-EQUIPPED BAND PUBLISHES ONE ROW, never an
+// empty list: a client must not have to tell "no crews" from "one crew holding nothing". A band with
+// nobody on the hunt job publishes one row at `workers 0` carrying the tier one hunter WOULD be at,
+// which is the same number hunterAttack states for that band.
+table BandKitCrew {
+  workers:float;       // how many of the band's hunters are in this run
+  // This run's own tier - FLAT, never a blend of two tiers. It is the gate's left-hand side for
+  // these workers: below a species' HerdTelemetryState.defense they cannot touch it, at any
+  // headcount, while a better-equipped row of the same band can.
+  hunterAttack:float;
+  itemIds:[string];    // what this run is holding, by equipment.json item id
 }
 
 table KitOption {

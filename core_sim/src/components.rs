@@ -1049,6 +1049,22 @@ pub enum ExpeditionMission {
     /// party's larder, and deliver it back to the band. `fauna_id` keys `HerdRegistry::find`.
     Hunt {
         fauna_id: String,
+        /// **The quarry's species display name, resolved ONCE at launch** — what the client names
+        /// this party's target on screen (`Red Deer`), never the `fauna_id` beside it.
+        ///
+        /// **It is carried rather than looked up because the herd is the one thing a party outlives**
+        /// (issue #378). Herd telemetry is fog-filtered to tiles the viewer can see *right now* and
+        /// pruned at local extinction, and a detached party is deliberately **not** a vision source
+        /// ([`crate::visibility_systems::calculate_visibility`], `Without<Expedition>`) — so a
+        /// party's own quarry routinely leaves the published herd list while the party is still bound
+        /// to it. A client joining `fauna_id` against that list had nothing left to join against and
+        /// fell back to rendering the raw id.
+        ///
+        /// **Launch is the moment the name is reliable**: the herd is in [`crate::fauna::HerdRegistry`]
+        /// by construction there (the command resolved it to forecast the trip), and it can never be
+        /// again once the herd is gone. Resolving at capture time instead would have survived fog and
+        /// still gone blank on extinction, which prunes the registry itself.
+        target_species: String,
         /// **WHERE THE RAID STOPS, as a fraction of the herd's `K`** — chosen at launch, and the
         /// whole of what the party's orders say about pressure (`docs/plan_harvest_floor.md` §1).
         /// The raid takes the stock standing above it as fast as it can carry it, then comes home;
@@ -1087,7 +1103,14 @@ pub enum ExpeditionMission {
     /// [`crate::fauna::AnimalTake`], which already models kill ≠ carry.
     ///
     /// **No target faction** (§2). Denial is aimed at a herd, not at a player.
-    Deny { fauna_id: String },
+    Deny {
+        fauna_id: String,
+        /// The quarry's species display name, resolved once at launch — see
+        /// [`ExpeditionMission::Hunt::target_species`]. A denial raid needs it *more* than a hunt
+        /// does: the mission's whole purpose is to drive the herd past recovery, so its target is
+        /// pruned from the herd list by the raid succeeding.
+        target_species: String,
+    },
 }
 
 /// **The orders a party works a herd under** — what [`ExpeditionMission::Hunt`] and
@@ -1114,17 +1137,19 @@ impl ExpeditionMission {
     }
 
     /// Parse a mission from its wire keys (snapshot restore). `"hunt"` reconstructs
-    /// `Hunt { fauna_id, floor }` from `target_herd` + `floor`; `"deny"` reconstructs
-    /// `Deny { fauna_id }` from `target_herd` alone — it carries no number; anything else is
-    /// `Scout`.
-    pub fn from_wire(kind: &str, target_herd: &str, floor: f32) -> Self {
+    /// `Hunt { fauna_id, target_species, floor }` from `target_herd` + `target_species` + `floor`;
+    /// `"deny"` reconstructs `Deny { fauna_id, target_species }` from the two strings alone — it
+    /// carries no number; anything else is `Scout`.
+    pub fn from_wire(kind: &str, target_herd: &str, target_species: &str, floor: f32) -> Self {
         match kind {
             "hunt" => ExpeditionMission::Hunt {
                 fauna_id: target_herd.to_string(),
+                target_species: target_species.to_string(),
                 floor,
             },
             "deny" => ExpeditionMission::Deny {
                 fauna_id: target_herd.to_string(),
+                target_species: target_species.to_string(),
             },
             _ => ExpeditionMission::Scout,
         }
@@ -1134,10 +1159,45 @@ impl ExpeditionMission {
     /// `expeditionTargetHerd`.
     pub fn target_herd(&self) -> &str {
         match self {
-            ExpeditionMission::Hunt { fauna_id, .. } | ExpeditionMission::Deny { fauna_id } => {
+            ExpeditionMission::Hunt { fauna_id, .. } | ExpeditionMission::Deny { fauna_id, .. } => {
                 fauna_id
             }
             ExpeditionMission::Scout => "",
+        }
+    }
+
+    /// The target herd's species display name for a `Hunt`/`Deny` mission (empty for `Scout`) — the
+    /// snapshot `expeditionTargetSpecies`. **This is the name the client renders**; `target_herd` is
+    /// the key it addresses commands by, and the two are not interchangeable.
+    ///
+    /// Empty is possible and means only "launched against a herd the registry could not resolve" —
+    /// the client keeps its own herd-list join for that, so an empty string here costs nothing that
+    /// was not already missing.
+    pub fn target_species(&self) -> &str {
+        match self {
+            ExpeditionMission::Hunt { target_species, .. }
+            | ExpeditionMission::Deny { target_species, .. } => target_species,
+            ExpeditionMission::Scout => "",
+        }
+    }
+
+    /// **The string a player is shown for this mission's quarry** — [`Self::target_species`] when it
+    /// resolved, else [`Self::target_herd`]. Every player-facing line about the target goes through
+    /// here (the sim's own event-feed prose included), so no call site re-implements the fallback and
+    /// none of them can reach for the raw id by accident.
+    ///
+    /// **The id tier is a last resort, not a normal path.** A launch resolves the species name from
+    /// [`crate::fauna::HerdRegistry`] before it builds the mission (`outfit_raiding_party`), so every
+    /// real party carries one; what falls through to the key is a mission hand-built without it — a
+    /// test fixture, or a snapshot restored from a frame that carried no species. That mirrors the
+    /// client's own last tier, which renders the id when neither the mission's name nor its herd-list
+    /// join has anything to show.
+    pub fn target_display(&self) -> &str {
+        let species = self.target_species();
+        if species.is_empty() {
+            self.target_herd()
+        } else {
+            species
         }
     }
 
@@ -1753,6 +1813,37 @@ impl BandEquipment {
         stocked
     }
 
+    /// **What an ABSENT COMPONENT reads as** — [`Self::start_stocked`] sized to a party of
+    /// `workers`, ungraded.
+    ///
+    /// A band with no `BandEquipment` at all has no ledger rather than an empty one, and the four
+    /// readers of that state (`advance_labor_allocation`, `advance_expeditions`,
+    /// `snapshot/capture.rs`, `snapshot/population.rs`) agree it reads as *outfitted* — **what every
+    /// spawn path inserts**. Since [`Self::start_stocked_owned`] began stocking a party's worth,
+    /// one unit each no longer says that: under
+    /// [`crate::equipment_config::EquipmentConfig::coverage`] it arms one person and sends the rest
+    /// of a hand-rolled fixture's band out bare-handed. This keeps the four fallbacks meaning what
+    /// they say.
+    ///
+    /// **The grades are still absent, and that is the split with `start_stocked_owned`**: a band
+    /// that never had a ledger has no craft history to name, so the fallback states the stock and
+    /// nothing about its quality.
+    pub fn start_stocked_for(
+        config: &crate::equipment_config::EquipmentConfig,
+        workers: f32,
+    ) -> Self {
+        let mut stocked = Self::default();
+        for (id, item) in config.start_stocked_items() {
+            stocked.stock(
+                id,
+                config.start_stock_units(item, workers),
+                &item.default_tier().id,
+                None,
+            );
+        }
+        stocked
+    }
+
     /// **What a band or a detached party actually OWNS at spawn** — [`Self::start_stocked`] with
     /// every batch stamped with the grade a bare-handed craft of that item comes out at
     /// ([`crate::recipes_config::RecipesConfig::anchor_grade_for_item`]).
@@ -1772,10 +1863,26 @@ impl BandEquipment {
     ///
     /// An item no recipe makes keeps `None`: there is no crafted equivalent to claim. Every shipped
     /// start-stocked item has a recipe, so that is unreachable today.
+    ///
+    /// # A PARTY'S WORTH, not one unit — and that is why this one takes a head count
+    ///
+    /// A unit arms `workers_per_unit` people
+    /// ([`crate::equipment_config::EquipmentConfig::coverage`]), so one unit of everything is one
+    /// armed hunter and sixteen bare hands on the shipped band. It stocks
+    /// `ceil(workers × start_stock_fraction / workers_per_unit)`
+    /// ([`crate::equipment_config::EquipmentConfig::start_stock_units`]) — a party's worth plus the
+    /// opening reserve that keeps the first break from disarming anyone.
+    ///
+    /// **[`Self::start_stocked`] takes no head count and still stocks one unit each**, deliberately:
+    /// it is the fresh *reference* ledger every quarry-scoring and roster-quoting surface resolves
+    /// against, where only liveness is read and a count would be noise.
     pub fn start_stocked_owned(
         equipment: &crate::equipment_config::EquipmentConfig,
         recipes: &crate::recipes_config::RecipesConfig,
         materials: &crate::materials_config::MaterialsConfig,
+        // **The party's WORKERS, not its head count.** Children and elders hold nothing; the people
+        // a kit has to reach are the ones who go out on a job.
+        workers: f32,
     ) -> Self {
         let mut stocked = Self::default();
         for (id, item) in equipment.start_stocked_items() {
@@ -1785,7 +1892,12 @@ impl BandEquipment {
                     id: band.to_string(),
                     effects: Vec::new(),
                 });
-            stocked.stock(id, ONE_UNIT, &item.default_tier().id, grade);
+            stocked.stock(
+                id,
+                equipment.start_stock_units(item, workers),
+                &item.default_tier().id,
+                grade,
+            );
         }
         stocked
     }
@@ -1859,6 +1971,34 @@ impl BandEquipment {
         self.batches
             .get(item)
             .map(|batches| batches.iter().map(|batch| batch.count).sum())
+            .unwrap_or(0)
+    }
+
+    /// **Whole units of `item` a party could actually be handed** — [`Self::count_of`] restricted to
+    /// batches with condition left.
+    ///
+    /// **This is what COVERAGE counts** ([`crate::equipment_config::EquipmentConfig::coverage`]):
+    /// how many people the band can arm is a question about units in usable condition, not about
+    /// units owned. The two agree for every batch the sim can currently produce — [`Self::wear_item`]
+    /// retires a unit the moment its condition is spent, so a batch with `count > 0` always has wear
+    /// left — and they are still written apart, because the predicate is the claim being made and a
+    /// future repair or salvage state that parked a spent unit in the ledger would silently arm
+    /// somebody with it.
+    pub fn live_units(&self, item: &str, config: &crate::equipment_config::EquipmentConfig) -> u32 {
+        let Some(def) = config.item(item) else {
+            return 0;
+        };
+        self.batches
+            .get(item)
+            .map(|batches| {
+                batches
+                    .iter()
+                    .filter(|batch| {
+                        batch.wear < def.tier_or_default(&batch.tier).starting_durability
+                    })
+                    .map(|batch| batch.count)
+                    .sum()
+            })
             .unwrap_or(0)
     }
 
@@ -2320,6 +2460,21 @@ impl LaborAllocation {
             .iter()
             .filter(|a| a.target.same_source(target))
             .map(|a| a.workers)
+            .sum()
+    }
+
+    /// **Total workers staffed on a JOB**, summed across every source of it — the head count a
+    /// job's gear has to cover ([`crate::equipment_config::EquipmentConfig::coverage`]).
+    ///
+    /// **A job rather than a source, because gear is owned by the BAND.** Two hunt assignments on
+    /// two herds draw their spears from one ledger, so *"how many of this band's hunters is there a
+    /// spear for"* is a question about the job's whole head count and not about either herd's crew.
+    /// [`Self::workers_on`] answers the per-source question and is not this.
+    pub fn workers_on_job(&self, job: crate::equipment_config::KitJob) -> u32 {
+        self.assignments
+            .iter()
+            .filter(|assignment| assignment.target.kit_job() == job)
+            .map(|assignment| assignment.workers)
             .sum()
     }
 

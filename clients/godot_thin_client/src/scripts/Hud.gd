@@ -866,6 +866,19 @@ func _hex_distance_wrapped(a_col: int, a_row: int, b_col: int, b_row: int) -> in
 ## A friendlier label for a herd id — the roster/selected herd's label when known, else the
 ## snapshot-wide herd list (a hunted herd usually sits on a DIFFERENT hex than the one selected,
 ## so the roster alone left those rows reading the raw `game_deer_07` id).
+##
+## **THE LAST TIER IS A PARTY'S OWN DECLARED NAME, AND IT IS WHY THE ID NO LONGER REACHES THE SCREEN.**
+## The three tiers above it all need the herd to be in a live array the player can currently see, and
+## the one case where that is *guaranteed to fail* is a hunting party's own quarry: herd telemetry is
+## fog-filtered to hexes lit right now, a detached party is deliberately not a vision source, and local
+## extinction prunes the herd outright — so the party outlives every array that could name its target
+## (issue #378). The sim resolves the species at launch and ships it on the party
+## (`expeditionTargetSpecies`), so the name survives the join failing.
+##
+## It is deliberately LAST: while the herd is visible, the live telemetry is the better answer (a
+## renamed or re-tagged species reads correctly), and the party's copy is a launch-time snapshot. The
+## bare id remains only for a herd nobody is bound to and nobody can see, which is not a state any row
+## renders.
 func _herd_label_for_id(herd_id: String) -> String:
     var herd := _selectioncard.find_roster_herd(herd_id)
     if not herd.is_empty():
@@ -875,6 +888,9 @@ func _herd_label_for_id(herd_id: String) -> String:
     var world_herd := _band_labor.find_world_herd(herd_id)
     if not world_herd.is_empty():
         return String(world_herd.get("species", world_herd.get("label", herd_id)))
+    var declared := _band_labor.expedition_target_label(herd_id)
+    if declared != "":
+        return declared
     return herd_id
 
 ## Emit an assign_labor request for the given band, and record it as an OPTIMISTIC pending

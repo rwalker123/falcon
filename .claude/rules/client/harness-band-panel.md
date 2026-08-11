@@ -118,10 +118,12 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 225 `assert OK` lines, 319 `: PASS` ones and ZERO `FAIL` ones, over
-88 frames.** (The five `PASS`es above 310 are `_assert_work_material_readouts`, the board half of
-closing the inedible quarry's `+0.00`; the four above 315 are the party PACK's, on
-`band_panel_worst_case_party`.)
+**A clean run exits 0 and prints 226 `assert OK` lines, 327 `: PASS` ones and ZERO `FAIL` ones, over
+89 frames.** (Five of those `PASS`es are `_assert_work_material_readouts`, the board half of closing
+the inedible quarry's `+0.00`; four more are the party PACK's, on `band_panel_worst_case_party`.
+**They are named rather than numbered from an offset** — this tally moved twice in one merge, once
+for arc #527 and once for the partly-equipped arc, and a claim of the form *"the five above 310"*
+survives neither.)
 
 **THE WORST-CASE PARTY CARRIES THE PACK CLAUSE, and its fixture holds TWO piles of one material at
 two ratings.** A batch is one pile at ONE RATING, so a fixture with one batch per material would pass

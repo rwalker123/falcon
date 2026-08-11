@@ -429,9 +429,8 @@ struct PublishedItem {
 }
 
 /// Recapture and decode. **Encoded from the ring entry's snapshot** rather than through
-/// `StoredSnapshot::encode_flat`, for the reason `kit_selection.rs` states: the cached bytes are the
-/// ones published when the entry was first written, so a fixture that banks material and recaptures
-/// would otherwise be decoding the frame from before it banked anything.
+/// `StoredSnapshot::encode_flat`, for the reason `kit_selection.rs` states: this file asserts on
+/// frame content, and `encode_flat` is a read of stored bytes carrying a stored sequence number.
 fn publish(app: &mut App, band: Entity) -> Published {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
@@ -879,9 +878,10 @@ fn a_never_made_item_is_distinguishable_from_one_worn_dry() {
     // is not simply what every row says.
     let owned = rows_for(&before, SPEARS_ITEM);
     assert_eq!(owned.len(), 1);
-    assert_eq!(
-        owned[0].count, 1,
-        "a spawn stocks one unit of every kit item"
+    assert!(
+        owned[0].count > 0,
+        "a spawn stocks a PARTY'S worth of every kit item — the count is the band's head count \
+         times `start_stock_fraction`, so what this half asserts is ownership, not a literal 1"
     );
     assert_eq!(owned[0].life, "Untouched");
     assert_eq!(owned[0].life_severity, "healthy");
@@ -908,7 +908,7 @@ fn a_never_made_item_is_distinguishable_from_one_worn_dry() {
     // And the ownership statement rides `kitItemConditions` too, so no client infers ownership from
     // a condition of zero.
     let (remaining, count) = before.kit_item_counts[SPEARS_ITEM];
-    assert!(remaining > 0.0 && count == 1, "owned and with life left");
+    assert!(remaining > 0.0 && count > 0, "owned and with life left");
     let (dry_remaining, dry_count) = after.kit_item_counts[SPEARS_ITEM];
     assert_eq!(
         (dry_remaining, dry_count),
@@ -937,20 +937,26 @@ fn the_life_wording_is_in_the_items_own_use_quanta_and_the_noun_comes_from_its_q
 
     let spears = rows_for(&published, SPEARS_ITEM);
     let clubs = rows_for(&published, "clubs");
+    let sled = rows_for(&published, SLED_ITEM);
     assert_eq!(
-        spears[0].quantum_noun, "kills",
-        "spears wear per animal killed"
+        spears[0].quantum_noun, "blows",
+        "spears wear per landed strike"
     );
     assert_eq!(
-        clubs[0].quantum_noun, "raids",
-        "clubs wear per fight resolved"
+        clubs[0].quantum_noun, "blows",
+        "and so does a club — a weapon is charged for what it SWINGS, whichever role swings it, \
+         which is why `Kill` and `Fight` collapsed into one quantum"
+    );
+    assert_eq!(
+        sled[0].quantum_noun, "biomass hauled",
+        "the sled is not swung, so it keeps its own quantum"
     );
     assert_ne!(
-        spears[0].quantum_noun, clubs[0].quantum_noun,
+        spears[0].quantum_noun, sled[0].quantum_noun,
         "the noun is the ITEM's, not one word for every row — that is what the client must not \
          re-derive"
     );
-    for row in [&spears[0], &clubs[0]] {
+    for row in [&spears[0], &clubs[0], &sled[0]] {
         assert!(
             row.life.ends_with(&format!(" {} left", row.quantum_noun)) || row.life.starts_with('~'),
             "a worn row reads in its own quanta — got {:?}",
