@@ -1072,6 +1072,18 @@ table BandKitTiers {
   //     axis is continuous and a designer must be able to tune it so.
   penCarryPerWorkerBiomass:float = 0;
   scoutVantageRange:float = 0;
+  // --- THE BUILD AXIS (appended last, issue #515) -----------------------------------------------
+  // What THIS kit would do to a rung's build meter for THIS band, at its live wear. A MULTIPLIER,
+  // neutral at 1.0.
+  //
+  // THERE IS NO FLAT PopulationCohortState TWIN, and that is deliberate rather than an omission. The
+  // flat per-band fields beside kitTiers exist for a readout with NO kit selected; a build always
+  // has one (the job's default), so a reader wanting this band's own reading takes the row whose
+  // kitId matches the band's, which is what the "quoting the FRESH tier" note above already
+  // prescribes. It is also the safe shape: PopulationCohortState derives Default, which answers 0 -
+  // and a buildRate of 0 says "this crew builds nothing at all", a field-not-arrived reading that is
+  // wrong in the direction that stops the game.
+  buildRate:float = 1;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
@@ -3135,6 +3147,17 @@ table KitOption {
   // The sight range each posted scout vantage reveals at under this kit — the wayfinding gear's
   // tier. How far the vantages are POSTED is not a kit axis (it is three labor_config dials).
   scoutVantageRange:float = 0;
+  // --- THE BUILD AXIS (appended, issue #515) ----------------------------------------------------
+  // How much faster a rung's per-source build meter fills for a party carrying this kit, at the
+  // FRESH tier. A MULTIPLIER, neutral at 1.0 - a kit declaring nothing that helps reads 1.0 and
+  // changes no build at all.
+  //
+  // IT IS WHAT MAKES THE HUSBANDRY KIT APPLICABLE BEFORE A PEN EXISTS. Its other axis, penCarry, is
+  // read on a corralled herd and nowhere else, so a picker testing that axis alone withholds the kit
+  // on the very herd the player is taming - which is the work the gear is physically for. A client
+  // deciding whether to offer a kit must ask what the kit can change on THIS source across EVERY
+  // axis it declares, never off one hardcoded key.
+  buildRate:float = 1;
 }
 
 // ==============================================================================================

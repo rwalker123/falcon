@@ -125,11 +125,21 @@ bespoke accrue/decay/dip levers, so the two ladders **cannot drift apart numeric
 whole reason the dials moved out of `labor_config`/`fauna_config` and into the ladder.
 
 - **`build_accrual`** returns
-  `progress_per_turn × learn_multiplier(floor) × timescale × crew_scale(workers)` **only** when
+  `progress_per_turn × learn_multiplier(floor) × timescale × crew_scale(workers) × build_rate`
+  **only** when
   `improvement` **is** the rung's own `verb` *and* the caller's rung-specific gates hold (`eligible` —
   knows the unlock knowledge, **the crew took something**, species ceiling allows, faction owns it);
   otherwise `0`. **A rung with `verb: null` is never driven** — which is what keeps the two `wild`
   rungs (nothing to build) out of the engine.
+- **`build_rate` — what the CREW BROUGHT** (issue #515, `equipment.md` → "The build axis"). The
+  crew's kit multiplies the accrual: `EquipmentConfig::build_rate`, `intensification::NO_BUILD_GEAR`
+  (`1.0`) for a crew carrying nothing that helps — which is every plant build today and every animal
+  one whose crew left the handling gear at camp. It **multiplies the accrual and not `build_decay`**,
+  the opposite of `timescale` and for `floor`'s reason: decay is what happens on turns nobody works
+  the source, so there is no crew and no kit to read. It does **not** touch
+  `yield_fraction_while_building` — a faster build already pays the dip for fewer turns, and a second
+  lever on the same turns would be a rate axis with nothing asking for one. It is resolved off the
+  crew's kit **without** the coverage averaging the carries take; the reason is on the stat.
 - **`learn_multiplier(floor)` — the same rate the lesson rides** (`docs/plan_harvest_floor.md` §3).
   See "The knowledge pattern" for the shape and both degenerate ends; what matters here is that it
   scales the **accrual only**. `build_decay` takes the same `timescale` and deliberately **not** the

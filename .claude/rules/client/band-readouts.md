@@ -639,6 +639,31 @@ what it must not (the pen never the sled's carry, the vantage never a per-worker
 quote one number. Sabotage-verified: pairing the clubs row with `hunter_attack` fails exactly the
 clubs assertion, naming `attack 20 defending the camp`.
 
+### The HANDLING GEAR's row says BOTH the jobs it does
+
+`husbandry_gear` bounds a slaughter at a pen **and** speeds the `Tame` and `Corral` builds (issue
+#515, `.claude/rules/core_sim/equipment.md` → "The build axis"), so a row quoting only the pen rate
+describes the payoff at the top of the ladder and says nothing about the climb that produces it. It
+reads `pen collection 40.0 per keeper · taming and penning ×1.5`.
+
+- **The clause is appended only ABOVE NEUTRAL, and its absence is a real reading.** A multiplier of
+  `1.0` means the gear is changing no build — because it is spent, or because this band's hunt job is
+  on a kit that does not carry it — and `× 1.0` costs a line's width to say *no*. The row's own
+  condition and its stepped-down pen rate already carry that news.
+- **THE VALUE COMES OFF THE BAND'S OWN `kit_tiers` ROW, not a flat cohort field**, and there is no
+  flat twin on the wire. The flat per-band fields answer for a readout with *no* kit selected; a build
+  always has one (its job's default), so `KitRoster.band_kit_tiers(band, band.kit_id)` is the honest
+  lookup — the same one the "quoting the FRESH tier" rule already prescribes. It is also the safe
+  shape: `PopulationCohortState` derives `Default`, which answers `0`, and a build rate of `0` says
+  *this crew builds nothing at all*.
+- **Resolved in `DisclosureController`, not `DetailFormat`**, so the pure format layer keeps
+  depending on nothing.
+- Pinned **three ways** (`ui_preview`, `compose_rungs`), because each alone passes on a broken
+  renderer: present on a band whose hunt kit carries the gear; **absent** on the same band reading a
+  kit that does not (or a suffix stamped on every row passes the first); **absent** again once the
+  gear is dry (or a clause read off the fresh roster rather than the band's worn row passes both) —
+  with a liveness assertion that all three really rendered the row.
+
 ## The forecast's BAND rides beside the expectation, never in place of it (§6.4)
 
 `LaborAssignment` gained `actualYieldLow`/`High` (and, until arc #527 retired the account,

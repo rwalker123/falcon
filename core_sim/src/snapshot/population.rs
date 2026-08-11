@@ -484,6 +484,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 // sim collected 12, and a vantage of 2 tiles against a reveal at 1.
                 pen_carry_per_worker_biomass: tiers.pen_carry_per_worker_biomass,
                 scout_vantage_range: tiers.scout_vantage_range,
+                build_rate: tiers.build_rate,
             })
         })
         .collect();

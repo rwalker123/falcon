@@ -25,7 +25,7 @@ use core_sim::{
     MapPresetsHandle, MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle,
-    CULTIVATION_DISCOVERY_ID, FOOD, RUNG_TIMESCALE_UNSCALED,
+    CULTIVATION_DISCOVERY_ID, FOOD, NO_BUILD_GEAR, RUNG_TIMESCALE_UNSCALED,
 };
 
 /// Grant faction-level **Cultivation** knowledge (Rung 1b) directly via the ledger — the gate the
@@ -353,6 +353,7 @@ fn cultivation_config(app: &App) -> (f32, f32, f32) {
             tended
                 .build_crew_needed()
                 .expect("the tended rung declares a crew"),
+            NO_BUILD_GEAR,
         ),
         tended.build_decay(RUNG_TIMESCALE_UNSCALED),
     )

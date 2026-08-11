@@ -1093,7 +1093,7 @@ fn a_denial_raid_burns_more_kit_than_a_hunt_and_only_for_kills() {
         equipment
             .item("spears")
             .expect("the roster ships spears")
-            .wear
+            .headline_wear()
             .amount
             > 0.0,
         "spears must actually wear per kill, or this whole fixture asserts nothing"

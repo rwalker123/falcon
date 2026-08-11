@@ -1903,6 +1903,7 @@ fn kit_roster_states(
                 // reach, exactly like the three above, so the picker renders the kit and not the
                 // band that happens to be selected.
                 scout_vantage_range: tiers.scout_vantage_range,
+                build_rate: tiers.build_rate,
                 // **The attack's size window**, so the client's pre-launch gate resolves this kit
                 // against the quarry in front of it rather than against the kit's best case. `0` on
                 // either end is unbounded, which every weapon but the passive device is.

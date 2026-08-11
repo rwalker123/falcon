@@ -227,8 +227,8 @@ pub use intensification::{
     knows, learn_multiplier, load_intensification_ladder_from_env, BuildDips, LadderConfig,
     LadderConfigHandle, LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef,
     RungFeeding, RungHarvest, RungKey, RungMovement, RungSiteRequirement, SiteRefusal,
-    BUILTIN_INTENSIFICATION_LADDER, MANAGED_SOURCE_FLOOR, NO_BUILD_UNDERWAY_DIP, RUNG_COMPLETE,
-    RUNG_TIMESCALE_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED,
+    BUILTIN_INTENSIFICATION_LADDER, MANAGED_SOURCE_FLOOR, NO_BUILD_GEAR, NO_BUILD_UNDERWAY_DIP,
+    RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED,
 };
 pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,

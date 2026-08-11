@@ -219,17 +219,7 @@ static func _next_rung(kind: String, source: Dictionary, prefix: String, improve
                 admitted.append(rung)
     elif kind == SourceForecast.LABOR_KIND_HUNT:
         gates = hunt_gates(source, knowledge)
-        # The husbandry CEILING says how far up the ladder this SPECIES can climb, and a rung above it
-        # is withheld OUTRIGHT rather than gated: no amount of knowledge or work will ever pen an
-        # aurochs whose ceiling is "pastoral", so offering it gated would imply a reachable prerequisite.
-        var ceiling := SourceForecast.husbandry_ceiling(source)
-        for rung in [SourceForecast.IMPROVEMENT_CORRAL, SourceForecast.IMPROVEMENT_TAME]:
-            var admits := ceiling == SourceForecast.HUSBANDRY_CEILING_PEN \
-                if rung == SourceForecast.IMPROVEMENT_CORRAL \
-                else ceiling != SourceForecast.HUSBANDRY_CEILING_WILD
-            if rung != current and admits \
-                    and not SourceForecast.improvement_is_done(source, prefix, rung):
-                admitted.append(rung)
+        admitted = hunt_rungs_admitted(source, prefix, current)
     for rung in admitted:
         if not gates.has(rung):
             return _ready(rung)
@@ -239,6 +229,42 @@ static func _next_rung(kind: String, source: Dictionary, prefix: String, improve
         answer["reasons"] = gate_reasons_for(gates, nearest)
         return answer
     return {}
+
+## **WHICH ANIMAL RUNGS THIS HERD COULD STILL CLIMB — highest first, knowledge NOT considered.**
+##
+## The husbandry CEILING says how far up the ladder this SPECIES can climb, and a rung above it is
+## withheld OUTRIGHT rather than gated: no amount of knowledge or work will ever pen an aurochs whose
+## ceiling is `"pastoral"`, so offering it gated would imply a reachable prerequisite. A rung already
+## *finished* is likewise not something left to climb.
+##
+## **`exclude` drops the rung a crew is already building**, which is what `_next_rung` wants — a herd
+## mid-Tame is progress, not an opportunity. Pass `""` to ask the plain question *"is there any rung
+## on this herd at all"*, which is what the KIT OFFER test wants: gear that speeds a build helps the
+## build **currently running** most of all, so excluding it there would withhold the handling kit on
+## exactly the herd it is doing its work on.
+##
+## **Extracted so the rung picker and `KitRoster.kit_offer` share ONE definition of "a rung remains".**
+## Two copies of a ceiling comparison is how the picker comes to offer a Corral the kit list has
+## already decided is impossible, or the reverse.
+static func hunt_rungs_admitted(source: Dictionary, prefix: String,
+        exclude: String = "") -> Array[String]:
+    var admitted: Array[String] = []
+    var ceiling := SourceForecast.husbandry_ceiling(source)
+    for rung in [SourceForecast.IMPROVEMENT_CORRAL, SourceForecast.IMPROVEMENT_TAME]:
+        var admits := ceiling == SourceForecast.HUSBANDRY_CEILING_PEN \
+            if rung == SourceForecast.IMPROVEMENT_CORRAL \
+            else ceiling != SourceForecast.HUSBANDRY_CEILING_WILD
+        if rung != exclude and admits \
+                and not SourceForecast.improvement_is_done(source, prefix, rung):
+            admitted.append(rung)
+    return admitted
+
+## **HAS THIS HERD ANY RUNG LEFT TO CLIMB?** — the question a build-speeding kit's applicability turns
+## on, asked through the same seam the picker admits rungs with. Knowledge-blind by construction, like
+## every other term in `KitRoster.kit_offer`: what a kit CAN change on a source is a property of the
+## pair, and a faction that has not learned Penning yet will learn it while still holding this herd.
+static func hunt_rung_remains(source: Dictionary, prefix: String) -> bool:
+    return not hunt_rungs_admitted(source, prefix).is_empty()
 
 ## The species-GLOBAL legality flag each plant rung reads off a composition entry — the one place that
 ## mapping is written down.

@@ -36,7 +36,8 @@ use core_sim::{
     MapPresetsHandle, MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick,
     SiteRefusal, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
     StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry,
-    WellbeingConfigHandle, FOOD, RUNG_TIMESCALE_UNSCALED, SEED_SELECTION_DISCOVERY_ID,
+    WellbeingConfigHandle, FOOD, NO_BUILD_GEAR, RUNG_TIMESCALE_UNSCALED,
+    SEED_SELECTION_DISCOVERY_ID,
 };
 
 /// Grant faction-level **Seed Selection** directly via the ledger — the gate the `Sow` policy checks.
@@ -443,6 +444,7 @@ fn field_build(app: &App) -> (f32, f32) {
             field
                 .build_crew_needed()
                 .expect("the field rung declares a crew"),
+            NO_BUILD_GEAR,
         ),
         field.build_decay(RUNG_TIMESCALE_UNSCALED),
     )

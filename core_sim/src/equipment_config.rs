@@ -122,6 +122,22 @@ pub enum EquipmentStat {
     /// one of them would be a fourth authority over the same line. What wayfinding gear buys is what
     /// an observer can make out once they are there.
     ScoutVantageRange,
+    /// **Multiplies the rate a rung's per-source build meter fills at** — the factor
+    /// [`crate::intensification::RungDef::build_accrual`] applies beside the floor, the species
+    /// timescale and the crew scale. Neutral at `1.0`; the handling gear ships `1.5`.
+    ///
+    /// **A multiplier rather than a two-tier rate, and that is what lets a SECOND item declare it.**
+    /// The [`Self::TWO_TIER`] stats find their other side by searching the whole item table and
+    /// taking the first match, so each of them may be declared by exactly one item or the answer
+    /// resolves alphabetically. A build tool for the plant web (issue #539) is a second declarer by
+    /// construction, so the stat has to be the kind a kit resolves as the **max of what its live
+    /// items declare** — the shape `dispersion` and `exposure` already run on.
+    ///
+    /// **It is deliberately NOT named for husbandry.** Both food webs' rungs read the one build
+    /// seam, so a stat keyed to the animal branch would have to be renamed the day a hoe ships. What
+    /// is animal-only today is the *content* — `husbandry_gear` is the only item declaring it, so
+    /// both plant rungs resolve the neutral `1.0` until an item names them.
+    BuildRate,
     /// **The rate a bench works at with this tool in hand** — the value
     /// `workers × progress_per_worker_turn ×` is multiplied by. Declared **equipped only**; the
     /// unequipped side is the MATERIAL's own [`crate::materials_config::HandWorking::rate`], which
@@ -145,7 +161,9 @@ impl EquipmentStat {
     /// for their neutral value is a category error the type refuses to answer.
     pub fn neutral(self) -> Option<f32> {
         match self {
-            EquipmentStat::Dispersion | EquipmentStat::Exposure => Some(1.0),
+            EquipmentStat::Dispersion | EquipmentStat::Exposure | EquipmentStat::BuildRate => {
+                Some(1.0)
+            }
             EquipmentStat::Attack
             | EquipmentStat::HuntCarry
             | EquipmentStat::ForageCarry
@@ -341,6 +359,27 @@ pub enum WearQuantum {
     /// like the six above it, not a clock: a bench standing idle wears nothing, and one that
     /// finished nothing this turn pays nothing.
     ItemCrafted,
+    /// Per **unit of build progress accrued** on a rung's per-source meter
+    /// ([`crate::intensification::RungDef::build_accrual`]). Handling gear on a `Tame` or a
+    /// `Corral`.
+    ///
+    /// **A build has no discrete event, so the quantum is the AMOUNT.** A kill, a hauled unit and a
+    /// finished craft are all things that either happened or did not; clearing ground and gentling a
+    /// herd is continuous work that shows up only as the meter moving. The meter's own increment is
+    /// therefore what a use *is* — the same treatment the two biomass quanta give a take.
+    ///
+    /// **Every build totals [`crate::intensification::RUNG_COMPLETE`] of progress, so a build costs
+    /// a FIXED amount of gear** whatever else is true of it. A Steppe Runner's 125-turn `Tame` and a
+    /// rabbit's 25-turn one burn identical hurdles, and a crew building at a shallow floor halves
+    /// its accrual and doubles its turns to arrive at the same total. That invariance is the reason
+    /// to prefer it over a per-worker-turn charge, which would be a clock in a per-use costume and
+    /// would additionally make the gear's cost track a species' `taming_rate` — the same
+    /// species-dependence `equipment.md` rejected for `body_mass` on the learning rate.
+    ///
+    /// **Still not a clock.** A stalled build accrues nothing and pays nothing: a crew below its
+    /// rung's knowledge gate, on a source it is not working, or holding no build verb at all moves
+    /// the meter by zero and the charge is zero with it — `docs/plan_denial_raid.md` §1.2 intact.
+    BuildProgress,
 }
 
 impl WearQuantum {
@@ -355,6 +394,14 @@ impl WearQuantum {
     /// A *count* quantum gets a count noun; a *continuous* one keeps its own unit, because a
     /// "biomass" is not a countable event and inventing a per-turn conversion here would need a
     /// forecast of what the band is about to do.
+    ///
+    /// **[`Self::BuildProgress`] reads as a count and is not an exception to that.** It is a
+    /// continuous quantum like the biomasses, but its unit is *already* the whole event: a rung
+    /// completes at [`crate::intensification::RUNG_COMPLETE`] `== 1.0`, so one unit of progress is
+    /// one finished build and "builds" is the unit rather than a conversion of it.
+    ///
+    /// **An item wearing on SEVERAL quanta is quoted on its FIRST** — see
+    /// [`ItemDefinition::headline_wear`], which is where that choice is argued.
     pub fn noun(self) -> &'static str {
         match self {
             Self::Strike => "blows",
@@ -363,6 +410,7 @@ impl WearQuantum {
             Self::BiomassCollected => "biomass butchered",
             Self::TileRevealed => "new tiles",
             Self::ItemCrafted => "crafts",
+            Self::BuildProgress => "builds",
         }
     }
 
@@ -377,6 +425,7 @@ impl WearQuantum {
             Self::BiomassCollected => "biomass butchered",
             Self::TileRevealed => "new tile",
             Self::ItemCrafted => "craft",
+            Self::BuildProgress => "build",
         }
     }
 }
@@ -449,10 +498,34 @@ pub struct EquipmentTier {
 /// gains an axis, which is the failure `equipmentConfigJson` exists to make impossible.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ItemDefinition {
-    /// The use quantum and its cost. **Shared across tiers** — how fast a thing is used up is a
-    /// property of the job, not of what it is made from; how long it survives that use is the tier's
+    /// **Every quantum this item is worn by, and what one use of each costs it.** Non-empty, and no
+    /// quantum may appear twice. **Shared across tiers** — how fast a thing is used up is a property
+    /// of the job, not of what it is made from; how long it survives that use is the tier's
     /// `starting_durability`.
-    pub wear: WearConfig,
+    ///
+    /// # A LIST, because an item may do more than one job
+    ///
+    /// It was a single [`WearConfig`], on the reasoning that one item does one job. That claim is
+    /// about the *stats* an item lifts — a sled drags and a basket contains, and neither reaches the
+    /// other's rate — and it survives. What it never covered is an item lifting **one** stat that
+    /// two different sites read.
+    ///
+    /// `husbandry_gear` is that item. Hurdles, halters and a butchering stone are worked on the
+    /// beast at a slaughter ([`WearQuantum::BiomassCollected`]) *and* on the animals being gentled
+    /// during a `Tame` or fenced during a `Corral` ([`WearQuantum::BuildProgress`], issue #515) —
+    /// the same physical bundle, two kinds of work. With one slot the second was unbillable, and
+    /// leaving it uncharged would have let a band tame every herd on the map for free, which is the
+    /// whole thing *wear follows the work actually done* exists to prevent.
+    ///
+    /// **The alternative was a second roster item**, which would have obeyed *one item, one job*
+    /// literally while splitting one physical bundle in two — and the roster is already the surface
+    /// issue #519 says does not scale. The list keeps the bundle whole and generalises: a bench tool
+    /// that also serves a party would want exactly this.
+    ///
+    /// **A charge site names its quantum and gets that entry or nothing**
+    /// ([`crate::components::BandEquipment::wear_kit`]), so two items on different quanta still
+    /// cannot cross-charge and an item is still never billed for work it did not do.
+    pub wear: Vec<WearConfig>,
     /// **The effects every tier of this item SHARES** — the multipliers, and the *unequipped* side
     /// of a rate whose equipped side lives elsewhere. Empty on an item whose whole payload is what
     /// the material buys.
@@ -503,6 +576,42 @@ fn one_worker() -> u32 {
 }
 
 impl ItemDefinition {
+    /// **What this item pays for one use of `quantum`**, or `None` if that quantum does not wear it
+    /// at all.
+    ///
+    /// **`None` is the whole cross-charging guarantee**, and it is why every charge site names its
+    /// quantum rather than handing over an amount: a hunt landing blows finds no entry on the
+    /// baskets, so a gather kit cannot be blunted by a fight it was not in.
+    pub fn wear_for(&self, quantum: WearQuantum) -> Option<&WearConfig> {
+        self.wear.iter().find(|wear| wear.per == quantum)
+    }
+
+    /// **Is this item worn by `quantum` at all?** The predicate
+    /// [`crate::components::BandEquipment::wear_kit`] filters its charge on.
+    pub fn wears_on(&self, quantum: WearQuantum) -> bool {
+        self.wear_for(quantum).is_some()
+    }
+
+    /// **The entry a LIFE READOUT quotes — the first, and the order is the model.**
+    ///
+    /// A fuel gauge reads in one unit ([`WearQuantum::noun`]), so an item worn by several quanta has
+    /// to pick one: `≈12 builds` and `≈2500 biomass butchered` are the same condition counted two
+    /// ways, and stating both would need the readout to know the usage mix it is precisely there to
+    /// let the player choose. So the item DECLARES its headline by writing that quantum first, the
+    /// same way `tiers[0]` declares the default tier.
+    ///
+    /// **The gauge is therefore accurate under one usage assumption, not unconditionally** — a band
+    /// splitting its handling gear between a pen and a `Tame` runs out sooner than the pen-only
+    /// count says. That is the same limit every rate-to-range conversion has, and the alternative —
+    /// a per-quantum row — is a wire and readout change this slice deliberately does not make.
+    ///
+    /// `validate` guarantees the list is non-empty, so there is always an answer.
+    pub fn headline_wear(&self) -> &WearConfig {
+        self.wear
+            .first()
+            .expect("validate guarantees every item declares at least one wear quantum")
+    }
+
     /// **The tier a spawn stocks and every reference rate resolves through** — the first, which
     /// `validate` guarantees exists and requires no knowledge.
     pub fn default_tier(&self) -> &EquipmentTier {
@@ -1629,6 +1738,20 @@ impl EquipmentConfig {
         kit.multiplier(EquipmentStat::Dispersion, wear, self)
     }
 
+    /// **How much faster a rung's build meter fills** for a crew carrying this kit — the factor
+    /// [`crate::intensification::RungDef::build_accrual`] applies, `1.0` for a kit carrying nothing
+    /// that helps. The maximum of what the live items declare, for
+    /// [`KitChoice::multiplier`]'s reason: two tools that both speed the work do not compound, you
+    /// simply use the better one.
+    ///
+    /// **It is resolved off the CREW'S kit, not the band's ownership**, like every other stat here —
+    /// so gear that could have sped a `Tame` and was left behind on another kit speeds nothing, and
+    /// choosing the handling kit for the climb costs the hunt job whatever that kit does not carry.
+    /// That trade is the decision the stat exists to create.
+    pub fn build_rate(&self, kit: &KitChoice, wear: &crate::components::BandEquipment) -> f32 {
+        kit.multiplier(EquipmentStat::BuildRate, wear, self)
+    }
+
     /// **The size window this kit's `attack` applies within**, as `(min, max)` body mass — the
     /// **widest** window its live weapons cover, because the kit can reach whatever its best weapon
     /// reaches. `None` on an end means unbounded there.
@@ -1748,6 +1871,7 @@ impl EquipmentConfig {
             attack_max_body_mass: attack_max_body_mass.unwrap_or(UNBOUNDED_BODY_MASS),
             dispersion: self.dispersion(kit, wear),
             exposure: self.exposure(kit, wear),
+            build_rate: self.build_rate(kit, wear),
         }
     }
 
@@ -1755,7 +1879,7 @@ impl EquipmentConfig {
     /// with no durability is born dry, so both are rejected rather than shipped as a silently eternal
     /// (or silently absent) item.
     ///
-    /// `Invalid` names a **dynamic** field path now (`items.spears.wear.amount`) rather than one of a
+    /// `Invalid` names a **dynamic** field path now (`items.spears.headline_wear().amount`) rather than one of a
     /// fixed nine, because the item table is open — a config that adds a bow gets the same checks with
     /// no edit here.
     pub fn validate(&self) -> Result<(), EquipmentConfigError> {
@@ -1766,7 +1890,7 @@ impl EquipmentConfig {
             });
         }
         for (id, item) in &self.items {
-            Self::require_positive(format!("items.{id}.wear.amount"), item.wear.amount)?;
+            Self::validate_wear(id, item)?;
             Self::validate_effect_layer(&format!("items.{id}.effects"), id, &item.effects)?;
             Self::validate_tiers(id, item)?;
             if item.every_effect().next().is_none() {
@@ -1894,6 +2018,44 @@ impl EquipmentConfig {
         Ok(())
     }
 
+    /// **AN ITEM'S WEAR ENTRIES.** Three checks, each closing a way for a charge to go missing:
+    ///
+    /// - **at least one entry** — an item nothing wears is not consumable, so its role never steps
+    ///   down and the whole durability cliff is absent for it;
+    /// - **a positive amount on every entry** — a `0` is an entry that looks live at the dials and
+    ///   bills nothing, the same "looks live but isn't" this file rejects everywhere else. It is
+    ///   checked per entry rather than once, because a second entry silently costing nothing is
+    ///   exactly the new failure the list makes possible;
+    /// - **no quantum twice** — [`ItemDefinition::wear_for`] answers the *first* match, so a
+    ///   duplicate is dead config whose amount a reader would reasonably assume was in play. It is
+    ///   `tiers`' unique-id rule, one field over.
+    fn validate_wear(id: &str, item: &ItemDefinition) -> Result<(), EquipmentConfigError> {
+        if item.wear.is_empty() {
+            return Err(EquipmentConfigError::Invalid {
+                field: format!("items.{id}.wear"),
+                constraint: "name at least one quantum - an item nothing wears is never consumed, \
+                             so its role could never step down"
+                    .to_string(),
+                value: "[]".to_string(),
+            });
+        }
+        let mut seen: Vec<WearQuantum> = Vec::with_capacity(item.wear.len());
+        for (index, wear) in item.wear.iter().enumerate() {
+            Self::require_positive(format!("items.{id}.wear[{index}].amount"), wear.amount)?;
+            if seen.contains(&wear.per) {
+                return Err(EquipmentConfigError::Invalid {
+                    field: format!("items.{id}.wear[{index}].per"),
+                    constraint: "name a quantum no earlier entry already names - `wear_for` \
+                                 answers the first match, so a duplicate is dead config"
+                        .to_string(),
+                    value: format!("{:?}", wear.per),
+                });
+            }
+            seen.push(wear.per);
+        }
+        Ok(())
+    }
+
     /// **AN ITEM'S QUALITY TIERS.** A tier is what the material bought, and every check here closes
     /// a way for that to be silently untrue:
     ///
@@ -2010,14 +2172,29 @@ impl EquipmentConfig {
                     });
                 }
             }
-            let charges_bench_wear = item.wear.per == WearQuantum::ItemCrafted;
+            // **A tool's bench quantum is its ONLY one, and the equality is what says so.** With
+            // `wear` a list the honest reading is per-quantum: a tool must wear on `item_crafted`
+            // (or it is immortal at the bench) and nothing else may (or it never wears at all,
+            // since the bench is the only site charging it) — and a tool carrying a *second*
+            // quantum would be a party item in a tool's clothing, which the kit ban below already
+            // says it is not.
+            let charges_bench_wear = item.wears_on(WearQuantum::ItemCrafted);
             if is_tool != charges_bench_wear {
                 return Err(EquipmentConfigError::InvalidRoster {
                     reason: format!(
                         "item '{id}' bounds a material: {is_tool}, but wears per {:?} - the bench \
                          is the only site that charges `item_crafted`, so a tool on another \
                          quantum is immortal and anything else on this one never wears at all",
-                        item.wear.per
+                        item.wear.iter().map(|wear| wear.per).collect::<Vec<_>>()
+                    ),
+                });
+            }
+            if is_tool && item.wear.len() > 1 {
+                return Err(EquipmentConfigError::InvalidRoster {
+                    reason: format!(
+                        "item '{id}' is a bench tool but wears on {} quanta - a tool serves the \
+                         bench alone, and no other charge site can reach one",
+                        item.wear.len()
                     ),
                 });
             }
@@ -2394,6 +2571,9 @@ pub struct ResolvedKitTiers {
     pub dispersion: f32,
     /// What this kit multiplies the hunt's baseline injury hazard by. `1.0` is neutral.
     pub exposure: f32,
+    /// What this kit multiplies a rung's build accrual by. `1.0` is neutral — the reading of every
+    /// kit but `husbandry` on the shipped roster.
+    pub build_rate: f32,
 }
 
 /// **"This end of the attack's mass window is not bounded"** — `0`, which is both the FlatBuffers
@@ -2624,7 +2804,8 @@ mod tests {
         wear.wear_item(
             &config,
             SPEARS,
-            spears.default_tier().starting_durability / spears.wear.amount,
+            WearQuantum::Strike,
+            spears.default_tier().starting_durability / spears.headline_wear().amount,
         );
 
         assert_eq!(wear.live_units(SPEARS, &config), 2, "one unit retired");
@@ -2733,11 +2914,11 @@ mod tests {
         let config = EquipmentConfig::builtin();
         assert_eq!(equipped_of(&config, SPEARS, EquipmentStat::Attack), 20.0);
         assert!(item(&config, SPEARS).default_tier().starting_durability > 0.0);
-        assert!(item(&config, SPEARS).wear.amount > 0.0);
+        assert!(item(&config, SPEARS).headline_wear().amount > 0.0);
         assert!(equipped_of(&config, SLED, EquipmentStat::HuntCarry) > 0.0);
-        assert!(item(&config, SLED).wear.amount > 0.0);
+        assert!(item(&config, SLED).headline_wear().amount > 0.0);
         assert!(equipped_of(&config, BASKETS, EquipmentStat::ForageCarry) > 0.0);
-        assert!(item(&config, BASKETS).wear.amount > 0.0);
+        assert!(item(&config, BASKETS).headline_wear().amount > 0.0);
     }
 
     /// **The equipped tier must beat the unequipped one on ALL THREE axes** — a "kit" that made you
@@ -2873,8 +3054,118 @@ mod tests {
         let err = EquipmentConfig::from_json_str(&kit_json("0.0", "0.02", "100.0"))
             .expect_err("a zero wear rate is invalid");
         assert!(
-            matches!(&err, EquipmentConfigError::Invalid { field, .. } if field == "items.spears.wear.amount"),
+            matches!(&err, EquipmentConfigError::Invalid { field, .. } if field == "items.spears.wear[0].amount"),
             "unexpected error: {err}"
+        );
+    }
+
+    /// **AN ITEM MAY WEAR ON SEVERAL QUANTA, and each is charged over its own number** (issue #515).
+    /// The handling gear is the case: it is worked on the beast at a slaughter and on the animals
+    /// being gentled during a `Tame`, and with one slot the second was unbillable.
+    #[test]
+    fn an_item_may_wear_on_more_than_one_quantum() {
+        let config = EquipmentConfig::builtin();
+        let gear = item(&config, "husbandry_gear");
+        assert!(
+            gear.wears_on(WearQuantum::BiomassCollected)
+                && gear.wears_on(WearQuantum::BuildProgress),
+            "the shipped handling gear must be charged for both the jobs it does"
+        );
+        // **The two rates are independent**, which is what lets either life be retuned without
+        // moving the other — the same reason the pen's two quanta were split in the first place.
+        assert!(
+            gear.wear_for(WearQuantum::BiomassCollected)
+                .expect("declared above")
+                .amount
+                > 0.0
+                && gear
+                    .wear_for(WearQuantum::BuildProgress)
+                    .expect("declared above")
+                    .amount
+                    > 0.0,
+            "every declared quantum must cost something, or it is a dial that bills nothing"
+        );
+        // **A quantum the item does NOT declare answers `None`, and that is the cross-charging
+        // guarantee**: a hunt landing blows finds no entry here, so a slaughter cannot blunt a spear.
+        assert!(
+            gear.wear_for(WearQuantum::Strike).is_none(),
+            "an item must not be billable on a quantum it does not declare"
+        );
+    }
+
+    /// **A QUANTUM DECLARED TWICE IS DEAD CONFIG** — `wear_for` answers the first match, so the
+    /// second entry's amount is a dial a reader would reasonably believe is in play. `tiers`' own
+    /// unique-id rule, one field over.
+    #[test]
+    fn validate_rejects_an_item_wearing_on_the_same_quantum_twice() {
+        let mut json: serde_json::Value =
+            serde_json::from_str(BUILTIN_EQUIPMENT_CONFIG).expect("the builtin parses");
+        json["items"]["husbandry_gear"]["wear"] = serde_json::json!([
+            { "per": "biomass_collected", "amount": 0.04 },
+            { "per": "biomass_collected", "amount": 9.0 },
+        ]);
+        let err = EquipmentConfig::from_json_str(&json.to_string())
+            .expect_err("a duplicate quantum is invalid");
+        assert!(
+            matches!(&err, EquipmentConfigError::Invalid { field, .. }
+                if field == "items.husbandry_gear.wear[1].per"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// **AN ITEM NOTHING WEARS IS NOT CONSUMABLE**, so its role never steps down and the whole
+    /// durability cliff is absent for it. The list made the empty case newly representable, so it is
+    /// newly rejectable.
+    #[test]
+    fn validate_rejects_an_item_with_no_wear_entry_at_all() {
+        let mut json: serde_json::Value =
+            serde_json::from_str(BUILTIN_EQUIPMENT_CONFIG).expect("the builtin parses");
+        json["items"]["spears"]["wear"] = serde_json::json!([]);
+        let err = EquipmentConfig::from_json_str(&json.to_string())
+            .expect_err("an item with no wear entry is invalid");
+        assert!(
+            matches!(&err, EquipmentConfigError::Invalid { field, .. }
+                if field == "items.spears.wear"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// **THE BUILD AXIS IS A MULTIPLIER RESOLVED LIKE THE OTHER TWO** — the max of what a kit's live
+    /// items declare, neutral when nothing does. Pinned here rather than only through a turn,
+    /// because *"the husbandry kit builds faster"* also passes for a resolver that answers the
+    /// husbandry kit's number for every kit.
+    #[test]
+    fn the_build_rate_is_neutral_unless_a_live_item_declares_it() {
+        let config = EquipmentConfig::builtin();
+        let wear = crate::components::BandEquipment::start_stocked(&config);
+        let husbandry = config
+            .kit("husbandry")
+            .expect("the shipped roster carries the husbandry kit");
+        let big_game = config
+            .kit("big_game")
+            .expect("the shipped roster carries the stalking kit");
+        assert!(
+            config.build_rate(&husbandry, &wear) > 1.0,
+            "the handling kit must declare a build rate above neutral"
+        );
+        assert_eq!(
+            config.build_rate(&big_game, &wear),
+            1.0,
+            "a kit carrying nothing that helps a build must be exactly neutral"
+        );
+        // **A SPENT ITEM STOPS CONTRIBUTING IT**, the rule every other axis follows: the cliff is
+        // flat-then-step-down, and for a multiplier the step down IS the neutral.
+        let mut dry = wear.clone();
+        dry.wear_item(
+            &config,
+            "husbandry_gear",
+            WearQuantum::BuildProgress,
+            f32::MAX / 2.0,
+        );
+        assert_eq!(
+            config.build_rate(&husbandry, &dry),
+            1.0,
+            "handling gear that has run dry must build no faster than bare hands"
         );
     }
 
@@ -2901,8 +3192,8 @@ mod tests {
         let json = format!(
             r#"{{
             "items": {{
-                "spears": {{ "wear": {{ "per": "strike", "amount": 0.4 }}, "effects": [], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": [{{ "stat": "attack", "equipped": 20.0 }}]}}] }},
-                "sled": {{ "wear": {{ "per": "biomass_hauled", "amount": 0.02 }}, "effects": [{{ "stat": "hunt_carry", "unequipped": 12.0 }}], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": []}}] }}
+                "spears": {{ "wear": [{{ "per": "strike", "amount": 0.4 }}], "effects": [], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": [{{ "stat": "attack", "equipped": 20.0 }}]}}] }},
+                "sled": {{ "wear": [{{ "per": "biomass_hauled", "amount": 0.02 }}], "effects": [{{ "stat": "hunt_carry", "unequipped": 12.0 }}], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": []}}] }}
             }},
             {ROSTER_JSON}
         }}"#
@@ -2921,9 +3212,9 @@ mod tests {
         format!(
             r#"{{
             "items": {{
-                "spears": {{ "wear": {{ "per": "strike", "amount": {spear_wear} }}, "tiers": [{{ "id": "flint", "starting_durability": 100.0, "effects": [{{ "stat": "attack", "equipped": 20.0 }}] }}] }},
-                "sled": {{ "wear": {{ "per": "biomass_hauled", "amount": {sled_wear} }}, "effects": [{{ "stat": "hunt_carry", "unequipped": 12.0 }}], "tiers": [{{ "id": "flint", "starting_durability": 100.0, "effects": [] }}] }},
-                "baskets": {{ "wear": {{ "per": "biomass_gathered", "amount": 0.04 }}, "effects": [{{ "stat": "forage_carry", "unequipped": 1.6 }}], "tiers": [{{"id": "flint", "starting_durability": {basket_durability}, "effects": []}}] }}
+                "spears": {{ "wear": [{{ "per": "strike", "amount": {spear_wear} }}], "tiers": [{{ "id": "flint", "starting_durability": 100.0, "effects": [{{ "stat": "attack", "equipped": 20.0 }}] }}] }},
+                "sled": {{ "wear": [{{ "per": "biomass_hauled", "amount": {sled_wear} }}], "effects": [{{ "stat": "hunt_carry", "unequipped": 12.0 }}], "tiers": [{{ "id": "flint", "starting_durability": 100.0, "effects": [] }}] }},
+                "baskets": {{ "wear": [{{ "per": "biomass_gathered", "amount": 0.04 }}], "effects": [{{ "stat": "forage_carry", "unequipped": 1.6 }}], "tiers": [{{"id": "flint", "starting_durability": {basket_durability}, "effects": []}}] }}
             }},
             {ROSTER_JSON}
         }}"#
@@ -3159,9 +3450,9 @@ mod tests {
         format!(
             r#"{{
             "items": {{
-                "spears": {{ "wear": {{ "per": "strike", "amount": 0.4 }}, "effects": [], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": [{{ "stat": "attack", "equipped": 20.0 }}]}}] }},
-                "sled": {{ "wear": {{ "per": "biomass_hauled", "amount": 0.02 }}, "effects": [{{ "stat": "hunt_carry", "unequipped": 12.0 }}], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": []}}] }},
-                "baskets": {{ "wear": {{ "per": "biomass_gathered", "amount": 0.04 }}, "effects": [{{ "stat": "forage_carry", "unequipped": 1.6 }}], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": []}}] }}
+                "spears": {{ "wear": [{{ "per": "strike", "amount": 0.4 }}], "effects": [], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": [{{ "stat": "attack", "equipped": 20.0 }}]}}] }},
+                "sled": {{ "wear": [{{ "per": "biomass_hauled", "amount": 0.02 }}], "effects": [{{ "stat": "hunt_carry", "unequipped": 12.0 }}], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": []}}] }},
+                "baskets": {{ "wear": [{{ "per": "biomass_gathered", "amount": 0.04 }}], "effects": [{{ "stat": "forage_carry", "unequipped": 1.6 }}], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": []}}] }}
             }},
             {roster}
         }}"#
@@ -3185,8 +3476,8 @@ mod tests {
         // first, which is a different check.
         let json = r#"{
             "items": {
-                "spears": { "wear": { "per": "strike", "amount": 0.4 }, "effects": [], "tiers": [{"id": "flint", "starting_durability": 100.0, "effects": [{ "stat": "attack", "equipped": 20.0 }]}] },
-                "snares": { "wear": { "per": "strike", "amount": 0.2 }, "effects": [], "tiers": [{"id": "flint", "starting_durability": 100.0, "effects": [{ "stat": "attack", "equipped": 20.0, "max_body_mass": 1.0 }]}] }
+                "spears": { "wear": [{ "per": "strike", "amount": 0.4 }], "effects": [], "tiers": [{"id": "flint", "starting_durability": 100.0, "effects": [{ "stat": "attack", "equipped": 20.0 }]}] },
+                "snares": { "wear": [{ "per": "strike", "amount": 0.2 }], "effects": [], "tiers": [{"id": "flint", "starting_durability": 100.0, "effects": [{ "stat": "attack", "equipped": 20.0, "max_body_mass": 1.0 }]}] }
             },
             "kits": [
                 { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": ["spears"] },

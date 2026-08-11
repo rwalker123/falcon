@@ -67,6 +67,16 @@ const KIT_PEN_CARRY_KEY := "pen_carry_per_worker_biomass"
 ## its live wear (`BAND_KIT_TIERS_KEY`), never the roster's fresh vantage.
 const KIT_SCOUT_VANTAGE_KEY := "scout_vantage_range"
 
+## **THE BUILD AXIS — how much faster a rung's per-source meter fills for a party on this kit.** A
+## MULTIPLIER, neutral at `1.0`, so `unequipped_tier` (the roster's MINIMUM on an axis) answers `1.0`
+## off the `none` kit and `kit_uses` reads *"declares more than neutral"* with no special case.
+##
+## **IT IS NOT A TIER AND HAS NO HINT-LINE HOME.** The four axes above are rates a readout can quote
+## per worker; this one multiplies a build the sheet is not otherwise talking about, and the surface
+## that states it is the band panel's gear row (`DisclosureController.kit_breakdown_lines`). What it
+## does HERE is decide applicability — see `kit_offer`.
+const KIT_BUILD_RATE_KEY := "build_rate"
+
 ## **WHAT THE KIT DOES TO THE QUARRY'S RETREAT** — a multiplier on the species' own wariness, so the
 ## SPECIES decides what a noisy approach costs (`equipment.md`). Neutral at `1.0`; a trap ships `0`.
 const KIT_DISPERSION_KEY := "dispersion"
@@ -664,6 +674,14 @@ static func kit_offer(kits: Array, kit: Dictionary, job: String, quarry: Diction
 	if not kit_supplies_any(kit):
 		return _kit_offered()
 	var penned := bool(quarry.get(QUARRY_CORRALLED_KEY, false))
+	# **THE BUILD AXIS IS ASKED FIRST, and it is what stopped the pen rule from lying.** Gear that
+	# speeds a rung's build meter is applicable to any herd with a rung left to climb — which is
+	# exactly the climb the handling kit was being withheld from, on the strength of its OTHER axis
+	# being pen-only. A kit that can change this source's outcome is offered whatever else it lacks,
+	# so the weapon rule below never runs on it either: hurdles do not have to bring a deer down to
+	# be the right thing to carry while you are gentling one.
+	if kit_uses(kits, kit, KIT_BUILD_RATE_KEY) and RungGates.hunt_rung_remains(quarry, prefix):
+		return _kit_offered()
 	if kit_uses(kits, kit, KIT_PEN_CARRY_KEY) and not penned:
 		return _kit_withheld(HudComposeVocab.KIT_WITHHELD_REASON_PEN_ONLY)
 	if penned:

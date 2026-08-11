@@ -954,10 +954,22 @@ pub struct KitOptionState {
     /// (`none` carries nothing and wears nothing), never "unknown".
     #[serde(default)]
     pub item_ids: Vec<String>,
+    /// **How much faster a rung's per-source build meter fills for a party carrying this kit**, at
+    /// the FRESH tier. `1.0` is neutral — a kit declaring nothing that helps changes no build at
+    /// all; the handling gear ships `1.5`.
+    ///
+    /// **IT IS WHAT MAKES THE HUSBANDRY KIT APPLICABLE BEFORE A PEN EXISTS.** Its other axis,
+    /// [`Self::pen_carry_per_worker_biomass`], is read on a corralled herd and nowhere else, so a
+    /// picker testing that axis alone withholds the kit on the very herd the player is taming —
+    /// which is the work hurdles and halters are physically for. A consumer deciding whether to
+    /// offer a kit must ask what the kit can change on *this* source across **every** axis it
+    /// declares, never off one hardcoded key.
+    #[serde(default = "multiplier_neutral")]
+    pub build_rate: f32,
 }
 
-/// **Hand-written rather than derived, for the same reason [`HerdTelemetryState`]'s is**: two of these
-/// fields are multipliers whose neutral is `1`, and a `#[derive(Default)]` would answer `0` — the
+/// **Hand-written rather than derived, for the same reason [`HerdTelemetryState`]'s is**: three of
+/// these fields are multipliers whose neutral is `1`, and a `#[derive(Default)]` would answer `0` — the
 /// value that means *this kit scares nothing and exposes nobody*, i.e. the passive device's entire
 /// advantage handed out by omission. `serde`'s missing-field default is spelled separately on each
 /// field, so this impl is what keeps the two agreeing with the schema's `= 1`.
@@ -982,6 +994,7 @@ impl Default for KitOptionState {
             // reading, and the only safe one: inventing an item here would attribute wear to gear
             // the kit does not hold.
             item_ids: Vec::new(),
+            build_rate: multiplier_neutral(),
         }
     }
 }

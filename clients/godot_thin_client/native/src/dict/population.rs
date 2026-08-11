@@ -304,6 +304,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 row.penCarryPerWorkerBiomass() as f64,
             );
             let _ = entry.insert("scout_vantage_range", row.scoutVantageRange() as f64);
+            let _ = entry.insert("build_rate", row.buildRate() as f64);
             kit_tiers.push(&entry.to_variant());
         }
     }

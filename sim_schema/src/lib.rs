@@ -76,6 +76,7 @@ mod tests {
                     attack_max_body_mass: 0.0,
                     dispersion: 1.0,
                     exposure: 1.0,
+                    build_rate: 1.0,
                     // Carrying nothing is a real answer, and an EMPTY vector is how it is said.
                     item_ids: Vec::new(),
                 },

@@ -690,7 +690,7 @@ fn equipment_batches(
                 let retired = wear.retired_of(item);
                 return vec![EquipmentBatchState {
                     item_id: item.to_string(),
-                    quantum_noun: def.wear.per.noun().to_string(),
+                    quantum_noun: def.headline_wear().per.noun().to_string(),
                     life: if retired > 0 {
                         LIFE_WORN_OUT.to_string()
                     } else {
@@ -714,13 +714,13 @@ fn equipment_batches(
                     // spear.
                     let condition_left =
                         (tier.starting_durability * batch.count as f32 - batch.wear).max(0.0);
-                    let quanta_left = if def.wear.amount > 0.0 {
-                        condition_left / def.wear.amount
+                    let quanta_left = if def.headline_wear().amount > 0.0 {
+                        condition_left / def.headline_wear().amount
                     } else {
                         0.0
                     };
-                    let full_unit_quanta = if def.wear.amount > 0.0 {
-                        tier.starting_durability / def.wear.amount
+                    let full_unit_quanta = if def.headline_wear().amount > 0.0 {
+                        tier.starting_durability / def.headline_wear().amount
                     } else {
                         0.0
                     };
@@ -740,8 +740,8 @@ fn equipment_batches(
                         count: batch.count,
                         remaining: (tier.starting_durability - batch.wear).max(0.0),
                         quanta_left,
-                        quantum_noun: def.wear.per.noun().to_string(),
-                        life: life_wording(batch.wear, quanta_left, def.wear.per),
+                        quantum_noun: def.headline_wear().per.noun().to_string(),
+                        life: life_wording(batch.wear, quanta_left, def.headline_wear().per),
                         life_severity: life_severity(fraction, equipment).to_string(),
                     }
                 })
