@@ -370,6 +370,7 @@ fn spawn_hunt_party_of(
                 pending_reveal: Vec::new(),
                 pending_contacts: Default::default(),
                 kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Hunt),
+                cargo: core_sim::LocalStore::new(),
             },
         ))
         .id()

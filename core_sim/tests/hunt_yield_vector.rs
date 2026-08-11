@@ -1606,6 +1606,7 @@ fn spawn_raid_party(
                 pending_reveal: Vec::new(),
                 pending_contacts: Default::default(),
                 kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Hunt),
+                cargo: core_sim::LocalStore::new(),
             },
         ))
         .id()

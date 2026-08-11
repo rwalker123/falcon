@@ -1100,3 +1100,180 @@ is"); it was merely unreachable. Guards:
 a_party_recalled_in_the_field_walks_home_and_folds_back}` — the pair, so "cancel at once" cannot
 become the only way a recall ever completes — and
 `expedition_hunt::a_returning_party_with_no_home_band_left_does_not_haunt_the_map`.
+
+---
+
+## A shipment is a party that WALKS IT — the trade verb (arc #527, issue #517)
+
+Design of record: `docs/plan_contact_and_logistics.md` §Q5. The **first rider on the connection
+primitive** #538 landed. `ExpeditionMission::Trade { destination_band, destination_name }` is the
+fourth verb on the one traveling-party system, launched by
+`send_trade_expedition <faction> <band> <party_workers> <destination_band_id> [food <amount>]
+[material <material_id> <amount>]... [kit <id>]` (`SendTradeExpeditionCommand`, proto field **55**).
+
+**There is deliberately NO persistent link component.** What maintains a link is a *route*, the route
+ladder (#532) is what will hold that state, and building link state before any route exists to hold
+it would be inventing the ladder's model in advance. So the rider is an expedition, and its state is
+`Expedition::cargo`.
+
+**`balance_supply_networks` is untouched.** Near same-faction bands keep auto-pooling exactly as they
+did; the shipment is what carries mass where proximity does not.
+
+### The connection gates the LAUNCH, and arrival is not re-gated
+
+`ConnectionLedger::get(ConnectionKey::new(home_band, destination_band))` must exist with
+`strength > NO_TIE` — the arc's *"at zero, nothing flows"*. A **parked** edge (strength `0`, meaning
+*"we know such a people exist and have no current dealings"*) refuses exactly as a missing one does.
+
+**If the tie decayed to nothing while the party walked, the shipment still lands.** The party is
+standing in their camp; presence beats the ledger, and the decision to send was made turns ago.
+
+**There is no same-faction check anywhere on this path** — not in the command, not in the arm that
+delivers. Faction is a property of the endpoint (`connections.md`), which is what makes #458
+(cross-faction trade) nearly free, and `trade_expedition.rs` delivers **cross-faction in every test**
+so the claim is exercised rather than asserted.
+
+### Cargo is a SEPARATE store on the party
+
+`Expedition::cargo: LocalStore`, never `cohort.stores`. The party eats out of its pack every turn
+(below), so a shipment parked there would be quietly eaten by the people hauling it, arriving short
+with nothing to notice.
+
+- **Carry cap** = `party_workers × trade.per_worker_carry`, where a shipment's mass is
+  `food + trade.material_carry_weight × Σ material amounts`. Both are config levers; neither is a
+  literal.
+- **Materials are peeled batch by batch** — `LocalStore::take_material_batches`, which walks the
+  store's own band-key order and splits only the last batch. **A split is not a merge**: an amount is
+  a quantity of one identical material, so each draw carries its source batch's readings verbatim and
+  two ratings of one material leave as two batches and arrive as two batches. It is deliberately
+  *not* `take_material`, which sorts worst-first on a named **axis** — that is the crafting bench's
+  question, and a trader says *"four hide"*, not *"four hide by suppleness"*.
+- **It rides the checkpoint whole**, the path `pending_contacts` took: `capture_sim_state` clones the
+  entire `Expedition` into `ExpeditionRecord` and restore clones it back. In-flight cargo is real
+  state — the goods have already left the sender's store — so a rollback that zeroed it would destroy
+  them.
+- **An undeliverable shipment comes home in it.** `fold_party_into_band` settles the cargo beside the
+  party's own pack and returns a `FoldBack { food, materials }`, so the feed line and the food ledger
+  cannot disagree about one arrival.
+
+### The phases are the ones that already exist
+
+`Outbound` → (arrive, deposit) → `Returning` → fold back. **No new `ExpeditionPhase`**: the party does
+exactly two things and both already have a phase.
+
+- **Retargets the destination's LIVE tile every turn**, mirroring the `Hunting` arm's herd retarget —
+  bands are nomadic, and a shipment aimed once at where a people were camped arrives nowhere.
+- **Arrival is the comm-range proximity** the hunt drop-off already uses (*"near enough to hand things
+  over"*), not exact co-location, so a chase between two moving bands converges.
+- **A destination that cannot be resolved turns the party for home CARRYING THE CARGO**, the twin of
+  the lost-herd guard. Its feed line rides `CommandEventKind::ExpeditionRecalled` — the kind that
+  means *"this party has been turned for home"*, the same state change the recall verb makes —
+  because `TradeDelivered` would be a lie about a shipment that has not been delivered.
+- **One-way in this slice.** The party walks home empty; a priced return flow is a later slice, not an
+  omission here.
+
+### A trade party is provisioned like a SCOUT, and that is where the trip's cost lives
+
+It takes the scout provisions arm **whole** rather than a trade-shaped copy: a launch draw of
+`party × distance × provision_draw_per_worker_per_tile`, `party × provision_upkeep_per_worker` per
+turn, and the same opportunistic replenish off passing game. It is a walking party carrying no
+quarry, which is the same two facts about a scout.
+
+**So there is deliberately no friction or loss lever on the `trade` block.** A farther destination
+already costs more, in food, and a percentage-lost-per-tile dial on top would price distance twice —
+once as something the player can provision for and once as goods vanishing for no stated reason.
+
+### Fails closed, on every axis
+
+Empty cargo, cargo the band does not hold, cargo over the carry cap, an unknown material id, a
+commodity key that is not the larder's, a destination that is not a resident band, and a destination
+with no tie are each a **command failure with a reason** — never a clamp and never a silently
+trimmed manifest. Every check runs before anything is drawn, so a refused shipment leaves the band
+exactly as it stood (asserted, not assumed).
+
+The band half of outfitting — the resident-band gate, the party bound, the cohort template — is
+`server::outfit_detached_party`, extracted out of `outfit_raiding_party` so a **fourth** verb could
+not acquire its own copy of them; the spawn is `launch_party_from_band`, which the raiding verbs now
+reach through a thin wrapper. `sim_runtime::FOOD_CARGO_KEY` restates this crate's `FOOD` because
+`sim_runtime` does not depend on the sim, and **the server does not trust it**: a non-material line
+whose id is not the larder's key is refused, so a drift fails loudly rather than shipping the wrong
+good.
+
+### The wire
+
+`expeditionMission` gains `"trade"`, and `PopulationCohortState` gains four appended fields on both
+`WorldSnapshot` and `WorldDelta` (one `PopulationSection` serves both):
+`expeditionDestinationBand` (the key every command addresses the destination by, never rendered) /
+`expeditionDestinationName` (its display twin, resolved at launch and carried, on exactly the
+`expeditionTargetHerd` / `expeditionTargetSpecies` rule — the party outlives its target's presence in
+the viewer's world) / `expeditionCargoFood` / `expeditionCargoMaterials`, which **reuses
+`MaterialPayoff`** rather than minting a second table and carries the same three contracts as every
+material readout in this arc: never summed, empty is *"no row"* not zero, key always present.
+
+`CommandEventKind::TradeDelivered` (`trade_delivered`) is the landing beat — its own kind, because it
+is the one expedition event that happens where *other people* live.
+
+**The pack is THREE fields, because the player asks about it twice and the mass rule takes two
+terms.**
+
+| field | answers | shape |
+|---|---|---|
+| `expeditionTradePerWorkerCarry` | *"how big a shipment can I send?"* — **before** there is a party | `expedition_config.trade.per_worker_carry`, echoed onto **every** cohort |
+| `expeditionTradeMaterialCarryWeight` | *"what does a unit of hide cost me in pack space?"* | `expedition_config.trade.material_carry_weight`, same every-cohort echo |
+| `expeditionCarryCap` | *"how full is this party?"* — a party already on the map | `party_workers ×` the per-worker carry of the pack **its mission** fills |
+
+The two levers are the sim's own mass expression, and the client holds it verbatim:
+
+```text
+mass = expeditionCargoFood + expeditionTradeMaterialCarryWeight × Σ material amounts
+cap  = party_workers × expeditionTradePerWorkerCarry
+```
+
+They have to be *global* echoes rather than per-party fields: the outfit UI prices a manifest for a
+party that does not exist yet, and `party_workers` is the number the stepper is *choosing*. Same
+idiom as `expeditionPerWorkerCarry` / `huntPerWorkerProvisions` / `expeditionForecastHorizonTurns`.
+
+> **THE MASS LEVER SHIPS BECAUSE THE SIM MUST NOT REFUSE ON A RULE THE CLIENT CANNOT EVALUATE.**
+>
+> It was first withheld on the reasoning that `material_carry_weight` is a v1 simplification — every
+> material weighs the same per unit until the materials arc gives mass a density axis — so a client
+> encoding it would encode an assumption rather than a rule. **That is true and it does not decide
+> the question**: `per_worker_carry` is no less provisional, and every lever this subsystem echoes is
+> a tuning that can move.
+>
+> What decides it is *"build it, send it, render the refusal"* — which makes the cargo picker a
+> guessing game. The player adds hide rows one at a time against a cap meter that cannot move and
+> finds out on submit. **A refusal tells the player what went wrong after they got it wrong; a live
+> meter stops them getting it wrong.** When the lever gains a real model it changes, the client's
+> expression changes with it, and both move in the same PR — the ordinary cost of a client-side
+> readout, not a new hazard.
+>
+> **The server-side refusal is unchanged and remains the authority.** The meter is a courtesy that
+> keeps the player from ever meeting it.
+
+**The two levers carry different wire bounds, deliberately.** `per_worker_carry` is asserted
+**positive** for the horizon's reason — a `0` lets a client render a zero cap and refuse every
+manifest a player could build. `material_carry_weight` is asserted only **finite and `>= 0`**,
+because `0` is a legitimate setting there (*"materials are weightless"*) and asserting positivity
+would pin a tuning as if it were a rule.
+
+**`expeditionCarryCap` resolves per mission**, and that is what stops a client reaching for the hunt
+lever: a raid's pack is the provisions ceiling it fills before delivering, a shipment's is what its
+people can carry out, and they are different numbers on different levers. `0` stays a scout's and a
+resident band's answer. Pinned by
+`trade_expedition::{every_cohort_publishes_the_shipment_mass_levers_on_the_wire,
+a_trade_partys_carry_cap_is_quoted_at_the_shipment_lever}` — the first composes a real shipment's
+mass out of nothing but wire fields and checks it against the published cap, the second asserts the
+cap is the trade lever's product **and not** the hunt lever's, after first asserting the two levers
+differ so "quoted at the right one" is falsifiable.
+
+### The food ledger gained two terms, and one of the holes was pre-existing
+
+A shipment moves food between larders through neither `foodIncome` nor `foodConsumption`, so
+`PopulationCohortState.transferReceived` / `transferSent` were added to close it — and the **same**
+pair closes `balance_supply_networks`, which had been moving food between larders untracked since
+turn one. The full argument, the identity and the reset window live in
+`.claude/rules/core_sim/campaign.md` → the transfer callout; what belongs here is which expedition
+seams write it: the launch draw (cargo **and** the walk's larder, for both this verb and the scout's),
+the shipment's arrival at the destination, the hunt drop-off, and every fold-back including the
+in-camp cancel.

@@ -52,6 +52,8 @@ pub struct ExpeditionConfig {
     pub provision_upkeep_per_worker: f32,
     /// Hunting-expedition (PR 2) tuning — how a party follows a herd, harvests, and delivers.
     pub hunt: HuntExpeditionConfig,
+    /// Trade-expedition tuning — how much a shipment party can carry (arc #527, slice #517).
+    pub trade: TradeExpeditionConfig,
     /// Scout opportunistic-replenish (PR 2) tuning — when/where a scout tops up off passing game.
     pub replenish: ReplenishConfig,
     /// Band-fission floors — the two worker counts a `split_band` must clear, one on each half
@@ -101,6 +103,34 @@ pub struct HuntExpeditionConfig {
     ///   (the floor is continuous, so the wire carries `RAID_FORECAST_FLOOR_SAMPLES` of it), so the
     ///   horizon bounds the per-snapshot work (`samples × max_party_size × this` turn-steps/herd).
     pub forecast_horizon_turns: u32,
+}
+
+/// **Trade-expedition levers** (`docs/plan_contact_and_logistics.md` §Q5) — a party that walks a
+/// shipment to another band. There are only two, and both answer the same question: *how much fits
+/// in the packs of the people you sent*.
+///
+/// **There is deliberately no friction or loss lever here.** What a long haul costs is already paid,
+/// and paid in the right currency: a trade party is provisioned like a scout, so a farther
+/// destination draws a bigger launch larder (`party × distance ×
+/// `[`ExpeditionConfig::provision_draw_per_worker_per_tile`]) and burns more upkeep on the road. A
+/// separate percentage-lost-per-tile dial on top of that would price distance twice, once as food
+/// and once as a vanishing fraction of the goods, and only one of those is something a player can do
+/// anything about.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TradeExpeditionConfig {
+    /// Cargo cap = `party_workers × this`. One person's pack space, in the same units the food
+    /// larder is counted in — a shipment is measured in what people can carry, not in what a route
+    /// can bear, because in this slice the party *is* the route.
+    pub per_worker_carry: f32,
+    /// **What one unit of a material costs in pack space, relative to one unit of food.** Cargo mass
+    /// is `food + this × Σ material amounts`, so at `1.0` a unit of hide and a unit of provisions
+    /// occupy the same pack.
+    ///
+    /// It is a v1 **simplification made tunable rather than hardcoded**: a material's real bulk is a
+    /// property of the material, and when `materials.json` grows a density axis this lever is the
+    /// seam that reads it. `0.0` is legal and means *"materials are weightless"* — a coherent
+    /// playtest setting, which is why it is bounded below at zero rather than above it.
+    pub material_carry_weight: f32,
 }
 
 /// Scout opportunistic-replenish levers: the scout's own use of the shared `hunt_take` primitive.
@@ -232,6 +262,17 @@ impl ExpeditionConfig {
             "hunt.forecast_horizon_turns",
             self.hunt.forecast_horizon_turns,
             self.hunt.viability_warn_turns,
+        )?;
+
+        // Cargo cap = `party × per_worker_carry`. At `0` no party can be given anything to carry, so
+        // every trade launch is refused over the cap — the verb silently ceases to exist, which is
+        // the same hole the hunt's carry lever is bounded against.
+        require_positive_finite("trade.per_worker_carry", self.trade.per_worker_carry)?;
+        // `0` is a real setting ("materials are weightless"), but a *negative* weight would let a
+        // party buy pack space by loading hides, so a big enough shipment would cost nothing.
+        require_non_negative_finite(
+            "trade.material_carry_weight",
+            self.trade.material_carry_weight,
         )?;
 
         // Scouts top up below `party × upkeep × low_turns`; `0` never triggers, and a `0` reach

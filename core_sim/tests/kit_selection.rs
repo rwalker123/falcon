@@ -299,6 +299,7 @@ fn spawn_party(
                 pending_reveal: Vec::new(),
                 pending_contacts: Default::default(),
                 kit,
+                cargo: LocalStore::new(),
             },
         ))
         .id()

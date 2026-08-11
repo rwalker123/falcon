@@ -19,7 +19,7 @@ use bevy::math::UVec2;
 use bevy::prelude::*;
 
 use crate::{
-    components::{MaterialBatch, PopulationCohort, ResidentBand, Tile},
+    components::{LaborAllocation, MaterialBatch, PopulationCohort, ResidentBand, Tile, FOOD},
     grid_utils::wrapped_distance_sq,
     materials_config::BandKey,
     orders::FactionId,
@@ -167,7 +167,14 @@ pub fn balance_supply_networks(
     tiles: Query<&Tile>,
     // `With<ResidentBand>`: an expedition manages its own larder — its drop-off is the explicit
     // fold-back on arrival, not a passive supply-network leak — so it is excluded here.
-    mut cohorts: Query<(Entity, &mut PopulationCohort), With<ResidentBand>>,
+    // **The food ledger's transfer terms ride here**, because this system is one of their writers:
+    // a balancing move crosses two larders through neither income nor consumption
+    // ([`LaborAllocation::last_transfer_received`]). `Option`, matching how the two sibling ledger
+    // terms are read at capture — a band without an allocation reports zero for all four.
+    mut cohorts: Query<
+        (Entity, &mut PopulationCohort, Option<&mut LaborAllocation>),
+        With<ResidentBand>,
+    >,
     mut membership: ResMut<SupplyNetworkMembership>,
 ) {
     // Recomputed from scratch every turn; a 0/1-band map (early return below) leaves it empty.
@@ -182,7 +189,7 @@ pub fn balance_supply_networks(
 
     // Pass 1: snapshot each band's position, population weight, and opening stores.
     let mut nodes: Vec<Node> = Vec::new();
-    for (entity, cohort) in cohorts.iter() {
+    for (entity, cohort, _) in cohorts.iter() {
         let Ok(tile) = tiles.get(cohort.current_tile) else {
             continue;
         };
@@ -373,13 +380,28 @@ pub fn balance_supply_networks(
     }
 
     for (entity, commodity, delta) in applied {
-        if let Ok((_, mut cohort)) = cohorts.get_mut(entity) {
+        if let Ok((_, mut cohort, allocation)) = cohorts.get_mut(entity) {
             cohort.stores.add(&commodity, delta);
+            // **Only the FOOD key enters the ledger.** The identity the two terms close is the food
+            // one; fodder and materials have their own accounts and deliberately no identity of
+            // their own (a material's account is the batch store itself).
+            if commodity == FOOD {
+                if let Some(mut allocation) = allocation {
+                    // **Added, never assigned** — a band can balance against several neighbours in
+                    // one pass, and the counter also carries what a command drew earlier in the same
+                    // snapshot window.
+                    if delta > scalar_zero() {
+                        allocation.last_transfer_received += delta.to_f32();
+                    } else {
+                        allocation.last_transfer_sent += (-delta).to_f32();
+                    }
+                }
+            }
         }
     }
 
     for (entity, (material, band), delta, reading) in applied_materials {
-        let Ok((_, mut cohort)) = cohorts.get_mut(entity) else {
+        let Ok((_, mut cohort, _)) = cohorts.get_mut(entity) else {
             continue;
         };
         if delta < scalar_zero() {

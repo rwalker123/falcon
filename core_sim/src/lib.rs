@@ -987,6 +987,10 @@ pub fn build_headless_app() -> App {
                 // re-publish frames the client already applied. Its stage-mates above are
                 // deliberately NOT gated — see `sim_state::Replaying`.
                 snapshot::capture_snapshot.run_if(sim_state::not_replaying),
+                // **After the capture has read them.** The band-to-band transfer counters accumulate
+                // across the whole snapshot window — commands included — so the one place they may
+                // be cleared is behind the publication that reports them.
+                systems::reset_transfer_ledger,
             )
                 // `SimulationTick` then `SimulationMetrics` — a genuine sequence, and the one
                 // stage where running out of order would publish the wrong tick.

@@ -524,6 +524,20 @@ fn create_populations<'a>(
             } else {
                 Some(builder.create_string(&cohort.expedition_target_species))
             };
+            // The destination NAME a shipment is bound for — absent rather than empty for every
+            // non-trade cohort, the same convention the quarry's name above follows.
+            let expedition_destination_name = if cohort.expedition_destination_name.is_empty() {
+                None
+            } else {
+                Some(builder.create_string(&cohort.expedition_destination_name))
+            };
+            // The shipment's material rows. **Built before the parent table opens**, the ordinary
+            // FlatBuffers rule; empty in, empty out, which is the "no row" reading the field's own
+            // contract rests on.
+            let expedition_cargo_materials = crate::codec::subsistence::create_material_payoffs(
+                builder,
+                &cohort.expedition_cargo_materials,
+            );
             // `""` = "not raiding" (a resident band, a scout, a party walking a load home) — absent
             // rather than an empty string, the convention every discriminator above follows.
             let expedition_trip_bound = if cohort.expedition_trip_bound.is_empty() {
@@ -683,6 +697,24 @@ fn create_populations<'a>(
                     // The partly-equipped party — appended last. Always written, and never empty:
                     // a client must not have to tell "no crews" from "one crew holding nothing".
                     huntCrews: Some(hunt_crews),
+                    // **The shipment a trade party is carrying** — appended last. The key and its
+                    // display twin, then the two accounts a band store holds. All four are the
+                    // absent/zero default for every other mission.
+                    expeditionDestinationBand: cohort.expedition_destination_band,
+                    expeditionDestinationName: expedition_destination_name,
+                    expeditionCargoFood: cohort.expedition_cargo_food,
+                    expeditionCargoMaterials: Some(expedition_cargo_materials),
+                    // The food ledger's transfer pair — appended last. Always written; a `0` is a
+                    // real reading ("nothing crossed"), not an absent one.
+                    transferReceived: cohort.transfer_received,
+                    transferSent: cohort.transfer_sent,
+                    // One person's shipment pack — appended last. Always written: it is a global
+                    // lever, so every cohort carries the same positive number.
+                    expeditionTradePerWorkerCarry: cohort.expedition_trade_per_worker_carry,
+                    // The other half of a shipment's mass — appended last, always written, and
+                    // legitimately `0` (weightless materials) unlike the pack lever above it.
+                    expeditionTradeMaterialCarryWeight: cohort
+                        .expedition_trade_material_carry_weight,
                 },
             )
         })

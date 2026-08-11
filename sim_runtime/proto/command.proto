@@ -333,6 +333,42 @@ message SendDenialRaidCommand {
   optional string kit_id = 5;
 }
 
+// ONE LINE OF A SHIPMENT — a quantity of one thing (arc #527, issue #517).
+//
+// `is_material` disambiguates two namespaces that share a string key space: `id` is either a FOOD
+// commodity key (the band larder's `provisions`) or a `materials.json` material id. A flag rather
+// than two repeated fields, so the order the player named the lines in survives, and so a third
+// account (fodder) is a value rather than a schema change.
+message TradeCargoItem {
+  string id = 1;
+  bool is_material = 2;
+  float amount = 3;
+}
+
+// Outfit and launch a TRADE EXPEDITION: draw party_workers off the home band, load them with cargo
+// out of that band's store, and send them to deliver it to another band
+// (docs/plan_contact_and_logistics.md Q5). The party walks home empty — a shipment is one-way in
+// this slice.
+//
+// IT IS GATED ON A CONNECTION, NOT ON A FACTION. The sending band must hold a live tie to the
+// destination band (ConnectionLedger strength > 0); there is deliberately NO same-faction check
+// anywhere, because faction is a property of the endpoint. A destination in another faction works by
+// construction.
+//
+// IT FAILS CLOSED, like its sibling verbs: empty cargo, cargo the band does not hold, cargo over the
+// party's carry cap, an unknown material id, a destination that is not a band, and a destination with
+// no tie are each a command failure with a reason — never a clamp and never a silent drop.
+message SendTradeExpeditionCommand {
+  uint32 faction_id = 1;
+  optional uint64 band_id = 2;
+  uint32 party_workers = 3;
+  // The destination's BandId — the durable id, never an entity.
+  uint64 destination_band_id = 4;
+  repeated TradeCargoItem cargo = 5;
+  // THE KIT the party is sent out with — same rule as SendHuntExpeditionCommand.kit_id.
+  optional string kit_id = 6;
+}
+
 // Ask the server to republish the world as a FULL snapshot.
 //
 // Client-initiated recovery for delta streaming: a client that cannot apply a delta (its
@@ -747,5 +783,7 @@ message CommandEnvelope {
     SetBenchCommand set_bench = 52;
     ClearBenchCommand clear_bench = 53;
     BenchCrewCommand bench_crew = 54;
+    // 54 is held by `bench_crew`, so the trade expedition takes 55 (append-only; never renumber).
+    SendTradeExpeditionCommand send_trade_expedition = 55;
   }
 }

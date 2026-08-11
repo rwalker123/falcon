@@ -1265,6 +1265,16 @@ pub enum CommandEventKind {
     ExpeditionArrived,
     ExpeditionRecalled,
     ExpeditionReturned,
+    /// **A shipment landed in another band's camp** — a trade expedition reached its destination and
+    /// handed its cargo over (`docs/plan_contact_and_logistics.md` §Q5, arc #527).
+    ///
+    /// **Its own kind rather than one of the expedition lines around it**, because it is the one
+    /// expedition event that happens somewhere *other people* live: goods crossing from one people
+    /// to another is a beat, where a party reaching a waypoint is progress. It is also, deliberately,
+    /// not gated on the two bands sharing a faction — faction is a property of the endpoint, so this
+    /// line reads the same for a lifeline to your own splinter and for a first exchange with
+    /// strangers.
+    TradeDelivered,
     /// **A band split in two where it stood** — the `split_band` verb
     /// (`docs/plan_band_fission.md`). It is also the failure channel for a refused split, so a band
     /// that cannot split says why on the same kind the success would have used.
@@ -1334,6 +1344,7 @@ impl CommandEventKind {
             CommandEventKind::ExpeditionArrived => "expedition_arrived",
             CommandEventKind::ExpeditionRecalled => "expedition_recalled",
             CommandEventKind::ExpeditionReturned => "expedition_returned",
+            CommandEventKind::TradeDelivered => "trade_delivered",
             CommandEventKind::BandFounded => "band_founded",
             CommandEventKind::NarrativeBeat => "narrative_beat",
             CommandEventKind::NarrativeFork => "narrative_fork",

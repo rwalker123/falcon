@@ -875,6 +875,93 @@ pub struct PopulationCohortState {
     /// See [`BandKitCrewState`].
     #[serde(default)]
     pub hunt_crews: Vec<BandKitCrewState>,
+    /// **The band a trade party's shipment is bound for** — the `BandId` every command addresses it
+    /// by, and a key the player never sees. `0` for every other mission and for a resident band.
+    ///
+    /// Its display twin is [`Self::expedition_destination_name`], on exactly the rule
+    /// [`Self::expedition_target_herd`] and [`Self::expedition_target_species`] follow: the party
+    /// outlives its target's presence in the viewer's world, so the name is resolved at launch and
+    /// carried rather than joined against a live list.
+    ///
+    /// **There is no faction beside it.** Faction is a property of the endpoint, never a branch, so
+    /// a shipment to your own splinter and a shipment to another people are the same row.
+    #[serde(default)]
+    pub expedition_destination_band: u64,
+    /// **The destination band's display name**, resolved at launch — what a client renders. Empty
+    /// for every non-trade party.
+    #[serde(default)]
+    pub expedition_destination_name: String,
+    /// **The FOOD the shipment holds.** It is a *separate* store from the party's own pack (which
+    /// rides `stores`), because a hungry party must not be able to eat the shipment it is hauling.
+    #[serde(default)]
+    pub expedition_cargo_food: f32,
+    /// **The shipment's materials, one row per material id.** Reuses [`MaterialPayoff`] rather than
+    /// minting a second table, and carries the same three contracts as every material readout in
+    /// this arc: **never summed**, **empty is "no row" not zero**, **key always present**.
+    ///
+    /// The per-material amount is the total over the batches the party holds; the *ratings* are not
+    /// flattened here — they ride the batches themselves, which move into the receiving band's store
+    /// unaveraged.
+    #[serde(default)]
+    pub expedition_cargo_materials: Vec<MaterialPayoff>,
+    /// **Food this band received from another band this turn** — supply-network balancing, a trade
+    /// shipment landing, or an expedition of its own handing its pack back.
+    ///
+    /// With [`Self::transfer_sent`] it completes the food-ledger identity
+    ///
+    /// ```text
+    /// larder_delta == food_income − food_consumption − pen_feed_upkeep − raid_forfeit
+    ///                 + transfer_received − transfer_sent
+    /// ```
+    ///
+    /// Food crossing between larders passes through neither `food_income` (what *this* band's
+    /// workers produced) nor `food_consumption` (what its people ate) — the same hole
+    /// `pen_feed_upkeep` and `raid_forfeit` were each minted for. **One pair for every producer**,
+    /// because they are all one fact; **two magnitudes rather than a signed net**, because a band
+    /// that both sends and receives in one turn is doing something.
+    #[serde(default)]
+    pub transfer_received: f32,
+    /// **Food this band gave up to another band this turn** — the other half of
+    /// [`Self::transfer_received`]. Its window is the *snapshot* window rather than the turn: a
+    /// `send_trade_expedition` command debits the larder between two published frames.
+    #[serde(default)]
+    pub transfer_sent: f32,
+    /// **One person's SHIPMENT pack** — `expedition_config.trade.per_worker_carry`, a global lever
+    /// echoed onto every cohort (the `expedition_per_worker_carry` / `hunt_per_worker_provisions`
+    /// idiom).
+    ///
+    /// **This is the one the outfit UI needs**, because the player prices a manifest for a party
+    /// that does not exist yet: the cap is `party_workers × this`, and `party_workers` is what the
+    /// stepper is choosing. A party already on the map publishes its own pack as
+    /// [`Self::expedition_carry_cap`].
+    ///
+    /// **It is not [`Self::expedition_per_worker_carry`]**, which is the *hunt* pack. Two packs, two
+    /// levers; a client composing a trade cap from the raid's is one config edit away from quoting a
+    /// cap the launch command will refuse.
+    ///
+    /// **Always positive** — the lever is validated `> 0` at load, and a `0` would let a client
+    /// render a zero cap and refuse every manifest.
+    #[serde(default)]
+    pub expedition_trade_per_worker_carry: f32,
+    /// **What one unit of a material costs in shipment pack space, relative to one unit of food** —
+    /// `expedition_config.trade.material_carry_weight`, the other half of a shipment's mass and the
+    /// same every-cohort lever echo as [`Self::expedition_trade_per_worker_carry`].
+    ///
+    /// Together they give a client the sim's own expression:
+    ///
+    /// ```text
+    /// mass = expedition_cargo_food + this × Σ material amounts
+    /// cap  = party_workers × expedition_trade_per_worker_carry
+    /// ```
+    ///
+    /// **It ships because the sim otherwise refuses a manifest on a rule the client cannot
+    /// evaluate.** The launch refusal is unchanged and remains the authority; without this lever the
+    /// cargo picker is a guessing game the player only loses on submit.
+    ///
+    /// **Finite and `>= 0`, not positive** — `0` is a legitimate setting ("materials are
+    /// weightless"), unlike the pack lever beside it.
+    #[serde(default)]
+    pub expedition_trade_material_carry_weight: f32,
 }
 
 /// **One run of a band's hunt workers holding the same gear** — a row of

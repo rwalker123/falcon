@@ -176,6 +176,22 @@ fn merged_arrival_schedule(allocation: Option<&LaborAllocation>) -> Vec<f32> {
 /// HERE"). The tables are gone and the ladder with them, so the echo went too.
 pub(crate) struct ExpeditionLevers {
     pub(crate) hunt_per_worker_carry: f32,
+    /// `expedition_config.trade.per_worker_carry` — one person's **shipment** pack, echoed per-cohort
+    /// so the outfit UI can price a manifest for a party that **does not exist yet**. That is why it
+    /// is a global echo and not a per-party field: the player builds the shipment *before* there is a
+    /// party to read a cap off. Same idiom as [`Self::hunt_per_worker_carry`] beside it, and a
+    /// deliberately **separate** number — a shipment's pack and a raid's are different packs, and a
+    /// client reaching for the hunt lever is one config edit away from quoting a cap the sim refuses.
+    pub(crate) trade_per_worker_carry: f32,
+    /// `expedition_config.trade.material_carry_weight` — what one unit of a material costs in pack
+    /// space relative to one unit of food, so the cargo picker can run the **same** mass expression
+    /// the launch command checks: `food + this × Σ material amounts`.
+    ///
+    /// **It ships because the sim otherwise refuses a manifest on a rule the client cannot
+    /// evaluate.** Without it the picker is a guessing game — the player adds hide rows one at a
+    /// time against a cap meter that cannot move, and finds out on submit. The refusal stays the
+    /// authority; the meter is what stops the player ever meeting it.
+    pub(crate) trade_material_carry_weight: f32,
     pub(crate) hunt_per_worker_provisions: f32,
     pub(crate) hunt_viability_warn_turns: u32,
     /// `expedition_config.hunt.forecast_horizon_turns` — how far *every* raid projection in the
@@ -631,20 +647,61 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         icon: stage.icon.clone(),
     })
     .unwrap_or_default();
-    // Hunt carry cap = party_workers × per_worker_carry (`0` for scouts + normal bands). The party's
-    // worker count is its working-age head-count.
+    // **THIS PARTY'S PACK** = `party_workers × the per-worker carry of the pack its MISSION fills`
+    // (`0` for a scout and for a normal band). The party's worker count is its working-age head-count.
+    //
+    // **Which lever fills it is a fact about the mission, not about expeditions.** A raid's pack is
+    // measured in food it can haul home; a shipment's is measured in what its people can carry out.
+    // They are different numbers on different levers, so the cap resolves per mission rather than
+    // quoting one of them at every party — a client reading the hunt lever for a trade party would be
+    // one config edit away from quoting a cap the launch command refuses.
+    //
     // **A denial party has a pack too** — it does not clamp to carry, but it still hauls home
     // whatever it can (`docs/plan_denial_raid.md` §1), so its cap is the hunt's.
-    let expedition_carry_cap = match expedition {
-        Some(exp)
-            if matches!(
-                exp.mission,
-                ExpeditionMission::Hunt { .. } | ExpeditionMission::Deny { .. }
-            ) =>
-        {
+    let expedition_carry_cap = match expedition.map(|exp| &exp.mission) {
+        Some(ExpeditionMission::Hunt { .. } | ExpeditionMission::Deny { .. }) => {
             working_age as f32 * expedition_levers.hunt_per_worker_carry
         }
-        _ => 0.0,
+        Some(ExpeditionMission::Trade { .. }) => {
+            working_age as f32 * expedition_levers.trade_per_worker_carry
+        }
+        // A scout hauls nothing it was sent for, and a resident band is not a party.
+        Some(ExpeditionMission::Scout) | None => 0.0,
+    };
+    // **The shipment a trade party is carrying** — read off `Expedition::cargo`, which is a store of
+    // its own and deliberately *not* the party's pack (`cohort.stores`, published as `stores` and
+    // `material_batches`): a hungry party must not be able to eat the goods it is hauling, and the
+    // two accounts must not be readable as one on the wire either.
+    //
+    // **The material rows are per material id, never one total** — the arc's contract: a sum of hide
+    // and bone is the retired trade axis under a new name. An empty vector is "no row", not zero.
+    let (
+        expedition_destination_band,
+        expedition_destination_name,
+        expedition_cargo_food,
+        expedition_cargo_materials,
+    ) = match expedition {
+        Some(exp) if exp.mission.destination_band().is_some() => (
+            exp.mission
+                .destination_band()
+                .map(|band| band.0)
+                .unwrap_or_default(),
+            exp.mission.destination_display(),
+            exp.cargo.get(FOOD).to_f32(),
+            exp.cargo
+                .materials()
+                .map(|(material, batches)| sim_runtime::MaterialPayoff {
+                    material_id: material.to_string(),
+                    amount: batches
+                        .values()
+                        .fold(crate::scalar::scalar_zero(), |total, batch| {
+                            total + batch.amount
+                        })
+                        .to_f32(),
+                })
+                .collect(),
+        ),
+        _ => (0, String::new(), 0.0, Vec::new()),
     };
     // **The crafting half of the row, resolved together** — the four readouts share this band's
     // store, its ledger and its bench tiers, so resolving them apart would walk the same three
@@ -744,6 +801,13 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_viability_warn_turns: expedition_levers.hunt_viability_warn_turns,
         expedition_forecast_horizon_turns: expedition_levers.hunt_forecast_horizon_turns,
         expedition_per_worker_carry: expedition_levers.hunt_per_worker_carry,
+        // **The SHIPMENT pack's lever, echoed onto every cohort** — the outfit UI prices a manifest
+        // for a party that does not exist yet, so no per-party field can serve that screen. Same
+        // idiom as the hunt lever above it.
+        expedition_trade_per_worker_carry: expedition_levers.trade_per_worker_carry,
+        // The second half of the mass expression, so the cargo picker runs the sim's own rule
+        // rather than watching a meter that cannot move.
+        expedition_trade_material_carry_weight: expedition_levers.trade_material_carry_weight,
         band_move_tiles_per_turn: expedition_levers.band_move_tiles_per_turn as f32,
         // In-flight hunt-party delivery forecast (`0`/false for a scout, a normal band, or a party
         // whose delivery can't be projected).
@@ -825,6 +889,16 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // herd's *live position*, which is the one fact that genuinely needs live telemetry.
         expedition_target_species,
         hunt_crews,
+        // **The shipment a trade party is carrying** (appended last). Zero/empty for every other
+        // mission, including a resident band — a band's own store is not a shipment.
+        expedition_destination_band,
+        expedition_destination_name,
+        expedition_cargo_food,
+        expedition_cargo_materials,
+        // The food ledger's last two terms — read off the allocation like `pen_feed_upkeep` and
+        // `raid_forfeit` beside them, and `0.0` for a band that has none.
+        transfer_received: allocation.map(|a| a.last_transfer_received).unwrap_or(0.0),
+        transfer_sent: allocation.map(|a| a.last_transfer_sent).unwrap_or(0.0),
     }
 }
 
@@ -993,6 +1067,8 @@ mod tests {
         let cfg = ExpeditionConfig::builtin();
         ExpeditionLevers {
             hunt_per_worker_carry: cfg.hunt.per_worker_carry,
+            trade_per_worker_carry: cfg.trade.per_worker_carry,
+            trade_material_carry_weight: cfg.trade.material_carry_weight,
             hunt_per_worker_provisions: 0.0,
             hunt_viability_warn_turns: cfg.hunt.viability_warn_turns,
             hunt_forecast_horizon_turns: cfg.hunt.forecast_horizon_turns,
@@ -1163,6 +1239,7 @@ mod tests {
             pending_contacts: Default::default(),
             kit: crate::equipment_config::EquipmentConfig::builtin()
                 .default_kit(crate::equipment_config::KitJob::Hunt),
+            cargo: LocalStore::new(),
         };
         let runway = captured_runway(&cohort, None, Some(&expedition));
         let historical = TEST_LARDER / demand_of(&cohort);
