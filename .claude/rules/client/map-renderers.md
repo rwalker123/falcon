@@ -168,6 +168,21 @@ through again. That is the state a player is in when they keep scrolling at the 
 drive the map"): every claim is a pairing, since a one-sided one passes on a map that has stopped
 answering gestures altogether.
 
+## `_tile_info_at`'s forage-patch cross-ref is a WIRING, and it is guarded
+
+The patch block in `_tile_info_at` copies the `forage_patches` row across key by key from an explicit
+list, `patch_`-prefixing each one, and every forage compose sheet reads its source out of that
+`tile_info` and nowhere else. **A key the decoder emits but this block omits is silently absent on the
+plant web** — no error, no zero to notice — and it has shipped that way three times
+(`perWorkerBiomass`/`regrowthSamples`, then `materialPerBiomass`/`perWorkerMaterial`). Adding a
+`ForagePatchState` field is therefore **two edits here**: the copy line, and an entry in
+`FOW_DISCOVERED_HIDDEN_KEYS` under the one rule the whole patch payload follows.
+
+`tools/patch_crossref_guard.gd` enforces both as a partition over this block's own output, so an
+omission fails at the wiring rather than in a panel. **Why the copy exists at all, and why no preview
+frame can see it break, are one home over in `.claude/rules/client/labor-ui.md`** → "THE PATCH'S
+FORECAST FIELDS REACH THE SHEET THROUGH `tile_info`"; do not restate them here.
+
 ## Fog of war
 
 `_fow_enabled`, `set_fow_enabled` and every downstream fog gate live in `MapView`, but the

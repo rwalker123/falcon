@@ -118,12 +118,17 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 226 `assert OK` lines, 328 `: PASS` ones and ZERO `FAIL` ones, over
+**A clean run exits 0 and prints 226 `assert OK` lines, 332 `: PASS` ones and ZERO `FAIL` ones, over
 89 frames.** (Five of those `PASS`es are `_assert_work_material_readouts`, the board half of closing
 the inedible quarry's `+0.00`; four more are the party PACK's, on `band_panel_worst_case_party`; one
-more is `_assert_denial_pelt_take`. **They are named rather than numbered from an offset** — this
-tally moved twice in one merge, once for arc #527 and once for the partly-equipped arc, and a claim
-of the form *"the five above 310"* survives neither.)
+more is `_assert_denial_pelt_take`; **four more are the KIT REPRICING's material arm**, inside
+`_assert_kit_reprices_the_source` — the per-material rate by RATIO, its no-op twin at the reference
+tier, the take through `expected_materials` at a crew below the saturating one, and the plant web's
+own row on the no-retreat patch beside it. **They are named rather than numbered from an offset** —
+this tally moved twice in one merge, once for arc #527 and once for the partly-equipped arc, and a
+claim of the form *"the five above 310"* survives neither. It was 328 before the material arm; the
+`assert OK` count is unchanged, those four riding an existing state's driven block rather than a new
+frame.)
 
 **`_assert_denial_pelt_take` IS PNG-LESS, AND THAT IS FORCED RATHER THAN CHOSEN.** An inedible
 quarry's denial take line is what the claim is about, but re-targeting the deny sheet to the

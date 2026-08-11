@@ -291,6 +291,10 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# redacting them is also what keeps a remembered tile reading "no forecast" rather than a stale
 	# one: `SourceForecast.forecast_is_known` reads the vector's PRESENCE, so the answer comes for free.
 	"patch_provisions_per_biomass", "patch_fodder_per_biomass",
+	# The MATERIAL account's two vectors ride with the two scalars above, under the one rule the
+	# whole patch payload follows: they are per-biomass rates read only to compose a forecast at the
+	# patch's CURRENT stock, which a hex the player cannot see does not render.
+	"patch_material_per_biomass", "patch_per_worker_material",
 	"patch_tended_fodder", "patch_field_fodder",
 	# The two build DIPS, as fractions (#442). They are patch CONFIG rather than patch state — the
 	# fraction does not move with biomass — but they are redacted with the rest of the payload for the
@@ -2724,6 +2728,18 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# floor" — the #426 distinction, now answered by a rate rather than a row.
 		info["patch_provisions_per_biomass"] = float(patch.get("provisions_per_biomass", 0.0))
 		info["patch_fodder_per_biomass"] = float(patch.get("fodder_per_biomass", 0.0))
+		# THE THIRD ACCOUNT, AS A VECTOR — what one unit of this patch's crop is made of, and what one
+		# gatherer brings home per turn, per material. They are the plant twins of the herd's pair and
+		# they cross here for the reason `patch_per_worker_biomass` does: the compose sheet composes
+		# `min(workers × per_worker, ceiling(floor))` per material off `tile_info`, so a decoded field
+		# this list omits is silently absent on the PLANT web while the animal web reads it fine (a
+		# herd dict travels whole). Reported from play on a 56% tobacco tile whose PER TURN box named
+		# the fodder and never the tobacco — the third time an appended patch field reached the panel
+		# through only one of its two wirings. `patch_crossref_guard` is what makes it the last.
+		# Never summed into one "materials/turn" figure: that is the retired trade axis under a new
+		# name (`SourceForecast.material_rows_of`).
+		info["patch_material_per_biomass"] = patch.get("material_per_biomass", [])
+		info["patch_per_worker_material"] = patch.get("per_worker_material", [])
 		# The two investment rungs' FODDER payoff twins, each quoted at ITS OWN rung (#433). Their
 		# `*_trade` siblings went with arc #527's yield axis; a cash crop's payoff is now a per-material
 		# vector on the COMPOSITION entry, which travels whole in `patch_composition`.

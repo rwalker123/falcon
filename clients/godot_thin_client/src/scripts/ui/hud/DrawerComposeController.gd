@@ -637,7 +637,7 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
 ## pre-commit by design; a compose sheet asks what a crew WOULD bring home, which is a question only
 ## the rates can answer.
 func _hunt_material_rows(herd: Dictionary, band: Dictionary, floor: float, workers: int,
-        improvement: String, holding: bool = false) -> Array:
+        improvement: String) -> Array:
     if workers <= 0:
         return []
     var forecast := SourceForecast.forecast_inputs(herd, SourceForecast.SOURCE_KIND_HERD,
@@ -645,8 +645,7 @@ func _hunt_material_rows(herd: Dictionary, band: Dictionary, floor: float, worke
     if not bool(forecast["known"]):
         return []
     return SourceForecast.scaled_material_rows(
-        SourceForecast.expected_materials(float(workers), forecast,
-            "hold_material_ceiling" if holding else "material_ceiling"),
+        SourceForecast.expected_materials(float(workers), forecast),
         float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL)))
 
 ## The hunt web's half of the overdraw GATE — `SourceForecast.take_draws_down` on a herd, asked at the
@@ -743,7 +742,7 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
     # under the same prefixed keys the herd does — which is why one composition serves both webs and
     # this is a call rather than a second derivation.
     var materials := SourceForecast.scaled_material_rows(
-        SourceForecast.expected_materials(float(workers), forecast, "material_ceiling"), output)
+        SourceForecast.expected_materials(float(workers), forecast), output)
     var zero_account := String(forecast["zero_account"])
     # THE STEADY-STATE TAKE, one `min` against a different ceiling — the SAME `expected_yield_account`,
     # reached by key, so the burst and the hold rate cannot be computed two ways. Composed only when

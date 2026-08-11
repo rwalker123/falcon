@@ -552,8 +552,11 @@ const FORECAST_FODDER_PER_BIOMASS_KEY := "fodder_per_biomass"
 # **AND WHAT THAT UNIT OF STOCK IS MADE OF, PER MATERIAL** — the vector that replaced the retired
 # `trade_per_biomass` scalar (arc #527 follow-up). It composes at any floor by the SAME rule the two
 # scalars do, `max(0, B − floor·K) × rate`, which is why it lives here beside them rather than in a
-# branch of its own. Herd-side today; a patch quotes its materials per RUNG on the crop picker
-# instead, because a plant's material payoff is a property of the rung you build, not of the stock.
+# branch of its own. **BOTH WEBS PUBLISH IT** — a patch's basket is made of something too, and a
+# stand of tobacco or flax pays that and no food at all — so one composition serves both and the
+# patch's copy reaches the sheet `patch_`-prefixed through `MapView._tile_info_at`. The crop picker's
+# per-RUNG material rows are a different question (what a COMMITTED patch would pay), not a
+# substitute for this one.
 const FORECAST_MATERIAL_PER_BIOMASS_KEY := "material_per_biomass"
 # The per-worker twin — what ONE HUNTER brings home per turn, per material. The material sibling of
 # `per_worker_yield`, so a band preview clamps `min(workers × rate, ceiling)` per material exactly as
@@ -898,8 +901,11 @@ const HUNT_FORECAST_FOOD_FORMAT := " · ~%d food"
 # the row's own id rather than a word baked in here; it is the same shape the food term wears because
 # it answers the same question about the same trip.
 const HUNT_FORECAST_MATERIAL_FORMAT := " · ~%d %s"
-# **ITS TRADE TWIN IS RETIRED** (arc #527): the wire no longer states a raid's non-food payload as a
-# scalar, and materials have no per-raid figure to put in its place.
+# **IT REPLACED A TRADE SCALAR WITH A VECTOR** (arc #527). The wire's single non-food payload figure
+# is retired; what stands in its place is `delivered_material`, one row per material, which
+# `_raid_payload_suffix` renders as one clause each — never summed, the standing rule for this
+# account. So a raid's payload line quotes `~12 food · ~3 hide` where it used to quote one trade
+# number, and an inedible quarry's line is the material clauses alone.
 # A finite raid past the band's `expedition_viability_warn_turns` — it still delivers, just slowly. A
 # real tradeoff (told, then trusted), so the line stays WARN-amber and the button stays enabled.
 const HUNT_FORECAST_SLOW_SUFFIX := " — a slow raid"
@@ -923,8 +929,10 @@ const HUNT_FORECAST_LONG_TRAVEL_SUFFIX := " (+%d travel)"
 # issue #337 `delivers_food` says the QUARRY IS INEDIBLE, and Eradicate banks a whole-stock windfall
 # like every other rung. The sim decides this — `delivers_food == false` — and the client never infers
 # it from the policy string. **The `delivers_trade` half of that test went with the trade axis**
-# (arc #527): an inedible quarry pays materials, which the raid wire states no figure for, so a raid
-# after one now reads as a denial mission (`.claude/rules/client/labor-ui.md`).
+# (arc #527), and what replaced it is the MATERIAL arm: `hunt_trip_forecast` takes this branch only
+# when the trip lands no material either, so a wolf raid hauling hides is a real delivery and reads
+# as one. A raid that brings something home is not denying anything, whatever account that something
+# is in (`.claude/rules/client/labor-ui.md`).
 const HUNT_FORECAST_DENIAL_FORMAT := "%s — denial mission: hunts the herd toward extinction, brings nothing home"
 const HUNT_FORECAST_WARN_GLYPH := "⚠ "
 # When a kill can't be fully carried (a big animal the crew is too small to haul) the surplus meat rots.
@@ -2816,10 +2824,11 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
     # REGROWS at that floor, which is why a big crew's headline take is a burst and not a rate.
     var hold_ceiling := 0.0
     var hold_ceiling_fodder := 0.0
-    # …AND THE SAME PAIR PER MATERIAL. It is a VECTOR rather than a third scalar, so it travels as
-    # `[{material_id, amount}]` all the way to the readout and is never summed on the way.
+    # …AND THE ROOM PER MATERIAL. It is a VECTOR rather than a third scalar, so it travels as
+    # `[{material_id, amount}]` all the way to the readout and is never summed on the way. **The two
+    # scalars' hold twins have no material sibling** — nothing states a per-material `after`, so the
+    # one that was computed here went out on every forecast for no reader (`expected_materials`).
     var ceiling_material: Array[Dictionary] = []
-    var hold_ceiling_material: Array[Dictionary] = []
     if source_is_managed(src, kind, prefix):
         var rung := String(FORECAST_MANAGED_IMPROVEMENTS[kind])
         ceiling = float(src.get(prefix + String(FORECAST_PAYOFF_KEYS[rung]), 0.0))
@@ -2838,9 +2847,6 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
                 src.get(prefix + String(FORECAST_PAYOFF_MATERIAL_KEYS[rung]), []))
         hold_ceiling = ceiling
         hold_ceiling_fodder = ceiling_fodder
-        # **A RUNG-3 MANAGED SOURCE HAS NO BURST TO SPEND**, in every account: its payoff IS its
-        # every-turn rate, so the hold vector is the room vector.
-        hold_ceiling_material = ceiling_material
     else:
         # ONE composition, both webs — the terms it reads are published identically by
         # `HerdTelemetryState` and `ForagePatchState`, which is what collapsed two branches into none.
@@ -2860,8 +2866,6 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         var growth := regrowth_at(regrowth_samples(src, prefix), clamp_floor(floor))
         hold_ceiling = growth * float(src.get(prefix + FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0))
         hold_ceiling_fodder = growth * float(src.get(prefix + FORECAST_FODDER_PER_BIOMASS_KEY, 0.0))
-        hold_ceiling_material = scaled_material_rows(
-            src.get(prefix + FORECAST_MATERIAL_PER_BIOMASS_KEY, []), growth)
     # ---- THE CREW'S THROUGHPUT, PER ACCOUNT, DIPPED ---------------------------------------------
     var per_worker := float(src.get(prefix + FORECAST_PER_WORKER_KEY, 0.0))
     var per_worker_fodder := 0.0
@@ -2910,9 +2914,14 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         # and the pair a compose sheet reads instead of the assignment's resolved `material_yield`
         # (which is empty pre-commit by design; `material_rows_of` says why). `expected_materials`
         # is the clamp over these two, and it is the food side's own `min` one account further out.
+        #
+        # **THERE IS NO `hold_material_ceiling` BESIDE IT, and the two scalars' hold twins below are
+        # not an argument for one.** It was published for a release and read by nobody: the only
+        # consumer's hold arm was unreachable, because a per-material `after` reading is not something
+        # any surface states (`expected_materials` carries the long form). A ceiling nothing clamps
+        # against is a wire-shaped invitation to clamp against it wrongly.
         FORECAST_PER_WORKER_MATERIAL_KEY: per_worker_material,
         "material_ceiling": ceiling_material,
-        "hold_material_ceiling": hold_ceiling_material,
         # The HOLD ceilings, keyed to match their room twins so `expected_yield_account` reaches either
         # by name and no second take function exists to drift from the first.
         "hold_ceiling": hold_ceiling,
@@ -3090,6 +3099,53 @@ static func improvement_progress(src: Dictionary, prefix: String, improvement: S
     return clampf(float(src.get(
         prefix + String(FORECAST_BUILD_METER_KEYS[improvement]), 0.0)), 0.0, 1.0)
 
+## **THE SAME SATURATING QUOTIENT, ASKED OF EVERY ACCOUNT THE AXIS IS NOT** — the crew past which this
+## source pays nothing MORE in fodder or in any one material. `NO_CREW_ANSWER` when no off-axis
+## account prices a crew at all, which is the only reading that means *barren*.
+##
+## **IT EXISTS BECAUSE THE AXIS STOPPED BEING A CHOICE.** `axis_per_worker` used to resolve to
+## whichever of provisions/trade the species actually paid, so an inedible quarry was priced on the
+## account it pays; arc #527 retired the trade half and left the triple a plain alias of the food
+## pair, which quietly turned the food-denominated barren test into a test on **every** source that
+## pays no food. A hay meadow and a tobacco stand are not dead-season patches.
+##
+## **THE MAX ACROSS ACCOUNTS, NOT THE MIN OR THE FIRST.** The cap answers "beyond this crew, nobody
+## adds anything", so it has to be the LARGEST crew any single account can still use — one that
+## saturated the fodder account while a material row was still short would call the hands taking that
+## material idle. On a wild source every account is one biomass flow through a fixed per-biomass
+## vector, so the quotients agree and the `max` is free; on a rung-3 managed source the payoffs are
+## independent per-turn figures and it is doing real work.
+##
+## Each account's arithmetic is the food side's, verbatim: a rate below `FORECAST_MIN_PER_WORKER` is
+## nothing to divide by and abstains, and a zero ceiling over a live rate is `0` — the source standing
+## at its floor, which §7.2's crew floors then answer for.
+static func off_axis_useful_workers(forecast: Dictionary) -> int:
+    var crew := NO_CREW_ANSWER
+    var per_worker_fodder := float(forecast.get("per_worker_fodder", 0.0))
+    if per_worker_fodder >= FORECAST_MIN_PER_WORKER:
+        crew = maxi(crew, ceili(float(forecast.get("ceiling_fodder", 0.0)) / per_worker_fodder))
+    # **THE MATERIAL ACCOUNT IS A VECTOR AND IS ASKED ROW BY ROW** — never summed, the standing rule
+    # for this account (`material_rows_of`). The two vectors are unioned BY ID exactly as
+    # `expected_materials` unions them, so a rate with no matching ceiling reads a `0` room rather
+    # than pairing itself with whatever row happens to sit at the same index.
+    var ceilings := {}
+    for row_variant in forecast.get("material_ceiling", []):
+        if not (row_variant is Dictionary):
+            continue
+        var ceiling_row: Dictionary = row_variant
+        ceilings[String(ceiling_row.get(MATERIAL_PAYOFF_ID_KEY, ""))] = \
+            float(ceiling_row.get(MATERIAL_PAYOFF_AMOUNT_KEY, 0.0))
+    for row_variant in forecast.get(FORECAST_PER_WORKER_MATERIAL_KEY, []):
+        if not (row_variant is Dictionary):
+            continue
+        var row: Dictionary = row_variant
+        var rate := float(row.get(MATERIAL_PAYOFF_AMOUNT_KEY, 0.0))
+        if rate < FORECAST_MIN_PER_WORKER:
+            continue
+        var room := float(ceilings.get(String(row.get(MATERIAL_PAYOFF_ID_KEY, "")), 0.0))
+        crew = maxi(crew, ceili(room / rate))
+    return crew
+
 ## Workers beyond this produce nothing at this source under the selected policy —
 ## ceil(ceiling / per_worker). A tended patch / corralled herd reports every ceiling == per_worker, so
 ## this collapses to 1 (policy irrelevant).
@@ -3118,26 +3174,51 @@ static func improvement_progress(src: Dictionary, prefix: String, improvement: S
 ##
 ## **Three outcomes, and telling them apart IS issue #426:**
 ## - `MAX_USEFUL_UNBOUNDED` — the wire describes no forecast, so there is no ceiling to impose.
-## - `MAX_USEFUL_BARREN` (1) — described, and it pays nothing in the account it is counted on. The cap
-##   stays LIVE, which is the fix: unbounded here let a worthless source absorb the whole idle crew
-##   (measured at 7 workers on a source that can use 1), because both cap twins read unbounded as
-##   "no ceiling".
-## - a real `ceil(ceiling / per_worker)`.
+## - `MAX_USEFUL_BARREN` (1) — described, and it pays nothing in ANY account. The cap stays LIVE,
+##   which is the fix: unbounded here let a worthless source absorb the whole idle crew (measured at
+##   7 workers on a source that can use 1), because both cap twins read unbounded as "no ceiling".
+## - a real `ceil(ceiling / per_worker)`, on the axis if the axis pays and off it if it does not.
 static func max_useful_workers(forecast: Dictionary) -> int:
     if not bool(forecast.get("known", false)):
         return MAX_USEFUL_UNBOUNDED
     # ON THE AXIS THE SPECIES PAYS (issue #337): a wolf's food per-worker and ceiling are both 0, so
-    # the food-denominated cap would read ceil(0/0) and cap the crew at nothing. The axis triple falls
-    # back to the food pair for every edible species and every forage patch, so this is a widening.
+    # the food-denominated cap would read ceil(0/0) and cap the crew at nothing.
+    #
+    # **THE AXIS TRIPLE IS A PLAIN ALIAS OF THE FOOD PAIR NOW** (arc #527 retired the trade account it
+    # could otherwise resolve to), so reading it is no longer a widening — it is the food question
+    # under another name, and the widening this branch used to get for free has to be written out
+    # below. `off_axis_useful_workers` is that, and it is why the barren test is no longer this
+    # quotient's `if`.
     var per_worker := float(forecast.get("axis_per_worker", forecast.get("per_worker", 0.0)))
     var ceiling := float(forecast.get("axis_ceiling", forecast.get("ceiling", 0.0)))
+    # BOTH PROJECTION-DERIVED FLOORS: the crew that takes the regrowth every turn, and the crew that
+    # draws the stock down to the floor at all (`reach_crew` — the number the *clear it now* target is
+    # floored on, and therefore the number the stepper has to be able to reach). Resolved ABOVE the
+    # off-axis branch, because a source that pays no food has the same two targets drawn beside it and
+    # the same §7.6 promise to keep: neither pill may name a crew the stepper refuses to reach. They
+    # are denominated in BIOMASS, so they answer for a hay meadow exactly as they do for a wheat one.
+    var hold := maxi(maxi(int(forecast.get("hold_crew", 0)), 0),
+        maxi(int(forecast.get("reach_crew", 0)), 0))
     if per_worker < FORECAST_MIN_PER_WORKER:
-        # **Described, and barren on every account it could be counted on** — a dead-season patch. Not
-        # unbounded: we know what this source pays, and it is nothing, so the honest ceiling is one
-        # worker. Returning UNBOUNDED here was the second half of #426 — it did not merely drop the
-        # "max N useful" note, it removed the ceiling from both cap twins, so the guard against parking
-        # a crew on a worthless source was disabled by precisely the sources it exists for.
-        return MAX_USEFUL_BARREN
+        # **THE AXIS IS SILENT — ASK THE OTHER ACCOUNTS BEFORE CALLING THE SOURCE BARREN.** Reported
+        # from play on a wild patch of 56% tobacco + 44% hay grass: it pays no food by construction
+        # (tobacco pays its own material, hay pays fodder and fibre), so this branch fired and printed
+        # `max 1 worker useful here — more would be idle` beneath the sheet's own `13 clear it now`
+        # and `2 hold it after`, with the `+` dead at 1. Three numbers, no two agreeing.
+        var off_axis := off_axis_useful_workers(forecast)
+        if off_axis == NO_CREW_ANSWER:
+            # **Described, and barren on every account it could be counted on** — a dead-season patch.
+            # Not unbounded: we know what this source pays, and it is nothing, so the honest ceiling is
+            # one worker. Returning UNBOUNDED here was the second half of #426 — it did not merely drop
+            # the "max N useful" note, it removed the ceiling from both cap twins, so the guard against
+            # parking a crew on a worthless source was disabled by precisely the sources it exists for.
+            #
+            # **NO FLOORS APPLY TO THIS ANSWER, and that is deliberate.** A source can price a crew
+            # (`per_worker_biomass > 0`, hence a positive hold/reach crew) while paying into nothing at
+            # all; flooring the barren cap on those targets would staff hands against a take of zero,
+            # which is the very parking this constant exists to refuse.
+            return MAX_USEFUL_BARREN
+        return maxi(off_axis, hold)
     # WHOLE-ANIMAL HUNT: the cap is the carriers needed to HAUL the animals that drop on the worst turn,
     # not ceil(smoothed-rate / per_worker). An 80-biomass aurochs drops all at once; one hunter carrying
     # <per_worker> food wastes the rest, so the smoothed rate under-counts. Worst case the kill-credit
@@ -3146,11 +3227,6 @@ static func max_useful_workers(forecast: Dictionary) -> int:
     # `haul_workers`, the ONE mirror of the sim's rounding, in the paid account's units rather than in
     # biomass (an animal count is a ratio, so either set of units gives the same crew).
     var per_animal := float(forecast.get("axis_per_animal", forecast.get("food_per_animal", 0.0)))
-    # BOTH PROJECTION-DERIVED FLOORS: the crew that takes the regrowth every turn, and the crew that
-    # draws the stock down to the floor at all (`reach_crew` — the number the *clear it now* target is
-    # floored on, and therefore the number the stepper has to be able to reach).
-    var hold := maxi(maxi(int(forecast.get("hold_crew", 0)), 0),
-        maxi(int(forecast.get("reach_crew", 0)), 0))
     if bool(forecast.get("whole_animal", false)) and per_animal > 0.0:
         # **TWO JOBS, ONE CREW, TWO UNITS** — reach the animals, then carry them home. This is the
         # sim's `fauna::hunt_take_workers`, `max(haul, engage)` and never `+`: one crew covering its
@@ -3677,19 +3753,26 @@ static func scaled_material_rows(rows: Array, factor: float) -> Array[Dictionary
         })
     return out
 
-## **WHAT A CREW OF `workers` TAKES, PER MATERIAL** — `min(workers × per_worker, ceiling)` evaluated
-## once per material, which is the food side's own clamp applied one account further out. `forecast`
-## is a `forecast_inputs` answer and `ceiling_key` picks the ROOM (`material_ceiling`) or the
-## every-turn regrowth (`hold_material_ceiling`), the same pair `expected_yield_account` chooses
-## between.
+## **WHAT A CREW OF `workers` TAKES, PER MATERIAL** — `min(workers × per_worker, material_ceiling)`
+## evaluated once per material, which is the food side's own clamp applied one account further out.
+## `forecast` is a `forecast_inputs` answer.
+##
+## **IT TAKES NO CEILING SELECTOR, and that is deliberate.** It had one, mirroring the pair
+## `expected_yield_account` chooses between — the ROOM and the every-turn regrowth — and the hold arm
+## was never reachable: its only caller passed the room at every call site, so `hold_material_ceiling`
+## was computed, published on every forecast, and read by nobody. A **per-material `after` reading is
+## not a thing any surface asks for** (the sheet's `now → after` is stated for food and fodder alone),
+## so the selector was a supported-looking path to an answer nothing wanted — and one a caller could
+## name wrong, since an unknown key reads as *every ceiling is zero*, i.e. a silent empty take. Add
+## the pair back the day a surface genuinely wants the material `after`, with that surface as its
+## caller.
 ##
 ## **The two vectors are unioned by id, never zipped by position.** They come off the same species so
 ## they list the same materials today, but a missing term must read as `0` — a rate with no ceiling is
 ## a herd standing at its floor, which takes nothing and correctly renders no row.
-static func expected_materials(workers: float, forecast: Dictionary,
-        ceiling_key: String) -> Array[Dictionary]:
+static func expected_materials(workers: float, forecast: Dictionary) -> Array[Dictionary]:
     var ceilings: Dictionary = {}
-    for row_variant in forecast.get(ceiling_key, []):
+    for row_variant in forecast.get("material_ceiling", []):
         var row: Dictionary = row_variant
         ceilings[String(row.get(MATERIAL_PAYOFF_ID_KEY, ""))] = \
             float(row.get(MATERIAL_PAYOFF_AMOUNT_KEY, 0.0))
@@ -4419,10 +4502,12 @@ static func expedition_useful_cap(band: Dictionary, herd: Dictionary, floor: flo
 ## buttons now move with the crew stepper, which is honest and is the visible behaviour change.
 ##
 ## The FOOD component rides the metric, read only when the quarry pays it — a preset that lands
-## nothing carries no rate and falls back to its name + glyph. (A second, trade-goods component rode
-## beside it until arc #527 retired that account; an inedible quarry's presets are consequently blank,
-## the raid wire stating no material payload for them to quote.) An UNBOUNDED raid has no length and
-## its travel is not one, so it is skipped outright rather than quoted as `delivered / travel`.
+## nothing carries no rate and falls back to its name + glyph. **The MATERIAL component rides beside
+## it**, `delivered_material` through the same divide, which is what stopped an inedible quarry's
+## presets rendering blank: the trade scalar that used to fill that slot went with arc #527, and for
+## one release a wolf's rungs quoted nothing at all because the gate below tested food alone. A rung
+## reaches the picker when it pays SOMETHING. An UNBOUNDED raid has no length and its travel is not
+## one, so it is skipped outright rather than quoted as `delivered / travel`.
 static func expedition_policy_takes(band: Dictionary, herd: Dictionary, per_preset: Array,
         grid_width: int, wrap_horizontal: bool) -> Dictionary:
     var takes := {}

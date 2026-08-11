@@ -165,6 +165,18 @@ while both preview harnesses passed, because their fixture adapter seeds that pa
 `FOW_DISCOVERED_HIDDEN_KEYS` under the one rule the whole patch payload follows. **Appending a source
 field is TWO wirings on the plant web**, and only the second is visible in the panel.
 
+**IT HAPPENED A THIRD TIME, and that is why the list is now GUARDED rather than merely documented.**
+`material_per_biomass` / `per_worker_material` reached `ForagePatchState` and the decoder with the
+follow-up that gave a patch its material account, and the cross-ref took neither — so a wild stand of
+56% tobacco rendered a PER TURN box naming the fodder and never the tobacco, on a client whose
+`_forage_yield_model` was already composing the vector correctly. Both preview harnesses passed for
+the same structural reason they passed the first time: their fixtures seed `tile_info` themselves, so
+**no frame in either harness exercises the cross-ref at all**, and a second seeded frame never can.
+`tools/patch_crossref_guard.gd` closes it from the other end — it decodes the real fixture envelope
+and asserts a PARTITION over `_tile_info_at`'s output, so a newly appended wire field fails at the
+wiring instead of in a panel weeks later (`harness-headless-guards.md` has its claims and its
+mutations).
+
 **THE POINTER IS THE DRAG'S ONLY AFFORDANCE, so the whole plot wears `CURSOR_VSIZE`.** The chart is
 drawn, not assembled from grabbable widgets, and the drag target is the entire plot rather than the
 floor line — grabbing a 1px line would be unusable, and the line is where the value IS, not where you
@@ -1020,6 +1032,43 @@ the *hold it after* pill's. That pill is also a BUTTON that sets the count, so t
 sentence away either. The cap still floors on the same number, so "idle" still means *above the hold
 crew* wherever it is computed.
 
+### BARREN MEANS BARREN ON EVERY ACCOUNT — and the axis alias is what broke that
+
+`max_useful_workers` divides by the axis pair and returns `MAX_USEFUL_BARREN` (1) when the axis prices
+no crew. **That test was written when the axis was a CHOICE** (issue #337: `axis_per_worker` resolved
+to whichever of provisions/trade the species actually paid, so an inedible quarry was capped on the
+account it pays), and **arc #527 retired the trade half without the test noticing** — the axis triple
+became a plain alias of the food pair, so "the axis prices nothing" quietly became "this source pays
+no food", and the barren branch began firing on every hay meadow, flax stand and tobacco patch in the
+game. Reported from play on a wild basket of Tobacco 56% + Hay Grass 44%: `max 1 worker useful here —
+more would be idle`, printed beneath that same sheet's `13 clear it now`, its `2 hold it after` and a
+verdict naming 2 foragers as the remedy, with the `+` dead at 1. Four numbers, no two agreeing, and
+the one the stepper obeyed was the wrong one.
+
+**So the branch asks the other accounts first.** `off_axis_useful_workers` is the same saturating
+quotient asked of the FODDER pair and of the per-material vector row by row, and it answers
+`NO_CREW_ANSWER` only when nothing off-axis prices a crew either — which is the one reading that means
+*barren*. Three properties are load-bearing:
+
+- **The MAX across accounts, never the min or the first.** The cap says *beyond this crew nobody adds
+  anything*, so it is the largest crew any single account can still use. On a wild source every
+  account is one biomass flow through a fixed per-biomass vector, so the quotients agree and the `max`
+  is free; on a rung-3 managed source the payoffs are independent and it is doing real work.
+- **The material vector is asked ROW BY ROW and unioned BY ID**, the standing rule for that account —
+  a summed materials/turn figure is the retired trade axis under a new name.
+- **The two projection-derived crew floors resolve ABOVE the branch**, so a no-food source keeps §7.6's
+  promise that neither crew-target pill may name a crew the stepper refuses. They are denominated in
+  BIOMASS, so they answer for a hay meadow exactly as for a wheat one. **The barren answer itself takes
+  no floors** — a source can price a crew (`per_worker_biomass > 0`) while paying into nothing at all,
+  and flooring that on the targets would staff hands against a take of zero, which is the parking
+  `MAX_USEFUL_BARREN` exists to refuse.
+
+**The pair is the assertion, and both halves live in `ui_preview`**: `forage_no_food_basket` (the
+reported tile — the cap clears 1, reaches both rendered targets, and the *clear it now* press lands
+the stepper there) and `forage_dead_season` beside it in the same frame's claims, still capped at 1.
+"Not barren" is trivially satisfied by a cap that stopped answering at all, so neither claim is worth
+anything without the other.
+
 ### ONE HINT RULE, NOT TWELVE ROWS
 
 `FORAGE_POLICY_HINTS` / `LOCAL_HUNT_POLICY_HINTS` / `SEND_HUNT_POLICY_HINTS` are **deleted**. A stance
@@ -1574,6 +1623,20 @@ capped at 0) and nothing else in the run does.
 substitutions, so every consumer downstream — the take, the waste, the crew targets, the chart —
 picks the kit up without knowing it exists. `DrawerComposeController._kit_priced_source` is the only
 caller, and `_hunt_priced_herd` / `_forage_priced_patch` are the only two doors onto it.
+
+**THE PER-WORKER SUBSTITUTION IS TWO LOOPS, BECAUSE ONE ACCOUNT IS A VECTOR.**
+`SOURCE_PER_WORKER_KEYS` is the SCALAR list (`per_worker_biomass`, `per_worker_yield`) and
+`SOURCE_PER_WORKER_VECTOR_KEYS` is `per_worker_material`, scaled row by row through
+`SourceForecast.scaled_material_rows` — **one ratio for every row**, the materials being one biomass
+flow through a fixed per-biomass vector exactly as the two scalars are. The vector sat UNREPRICED for
+the whole life of this seam, and "just add the key" was never the repair: `float(out[key]) * ratio`
+throws on an `Array`, so the list could not simply grow. What the player saw was a correctly reduced
+FOOD line beside an unmoved HIDE line — a worse kit over-stating the materials it would bring home, a
+better one under-stating them — on BOTH webs, since `expected_materials` clamps
+`min(workers × per_worker_material, ceiling)` off whatever rate reaches it. `band_panel_preview`'s
+`_assert_kit_reprices_the_source` asserts the RATE by ratio, its no-op twin at the reference tier,
+and the take through `expected_materials` itself, at a crew deliberately below the saturating one so
+the CREW arm binds — plus the plant-web half on the no-retreat patch beside it.
 
 **THE DENOMINATOR IS THE ROSTER'S OWN EQUIPPED TIER, NOT THE SOURCE'S `perWorkerBiomass`.** The ratio
 is `effective_carry / KitRoster.equipped_tier(kits, axis)` — the maximum across the roster on that
@@ -3647,6 +3710,14 @@ the whole of the rule:
   DIP for the same reason `per_worker` does. `SourceForecast.expected_materials` is the `min` over
   the pair, unioned BY ID rather than zipped by position: a rate with no ceiling is a herd standing at
   its floor, which takes nothing and correctly renders no row.
+- **THERE IS ONE MATERIAL CEILING, NOT THE SCALARS' ROOM/HOLD PAIR.** `forecast_inputs` publishes
+  `material_ceiling` and no `hold_material_ceiling`, and `expected_materials` takes no ceiling
+  selector. It had both for a release and the hold arm was **unreachable** — its one caller passed the
+  room at every call site — so a ceiling was computed on every forecast for a reader that did not
+  exist. **A per-material `after` reading is not something any surface states**: the sheet's
+  `now → after` is food and fodder alone. The selector was also a way to be wrong quietly, an unknown
+  key reading as *every ceiling is zero*, i.e. a silent empty take. The pair comes back the day a
+  surface genuinely wants the material `after`, with that surface as its caller.
 - **`material_yield` IS NOT A FORECAST, AND READING IT AS ONE IS THE TRAP.** The sim seeds it EMPTY
   on a pre-commit row **by design** — projecting materials needs the take in BIOMASS while the
   forecast resolves in currency space, where an inedible species has no positive axis. So an empty

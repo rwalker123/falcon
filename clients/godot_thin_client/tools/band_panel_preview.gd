@@ -8648,10 +8648,63 @@ func _assert_kit_reprices_the_source() -> void:
 			% [spear_cap, trap_cap],
 		spear_cap > trap_cap)
 
-	# --- A SOURCE WITH NO RETREAT STAGE (a patch, a pen) is untouched by that half.
+	# --- **THE MATERIAL ACCOUNT IS REPRICED TOO, AND IT IS THE ONE THAT TRAVELS AS A VECTOR.** It sat
+	# unrepriced for the whole life of this seam because `SOURCE_PER_WORKER_KEYS` is a list of SCALAR
+	# keys and `float(out[key]) * ratio` throws on an `Array` — so "add the key" was never the repair
+	# and nobody made it. The player saw a correctly reduced FOOD line beside an unmoved HIDE line: a
+	# worse kit over-stated the materials it would bring home, a better one under-stated them.
+	#
+	# **THE CLAIM IS THAT THE LINE MOVES BETWEEN TWO KITS, not that it has a value.** A same-kit or
+	# reference-tier fixture passes with the bug fully present, which is exactly why the block above
+	# asserts a RATIO between two kits rather than magnitudes — the same reason applies one account out.
+	const MATERIAL_ID := "hide"
+	const MATERIAL_PER_WORKER := 0.5
+	# Sized so the ROOM's ceiling is nowhere near binding at this crew (`0.02 x 300 biomass = 6.0`
+	# against a crew arm of `4 x 0.5 = 2.0`): the take's `min` has to land on the CREW arm, or both kits
+	# clamp to one ceiling and the comparison would be a comparison of two identical clamps.
+	const MATERIAL_PER_BIOMASS := 0.02
+	const MATERIAL_WORKERS := 4
+	var pelt_quarry: Dictionary = quarry.duplicate()
+	pelt_quarry[SourceForecast.FORECAST_MATERIAL_PER_BIOMASS_KEY] = [
+		{SourceForecast.MATERIAL_PAYOFF_ID_KEY: MATERIAL_ID,
+			SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY: MATERIAL_PER_BIOMASS},
+	]
+	pelt_quarry[SourceForecast.FORECAST_PER_WORKER_MATERIAL_KEY] = [
+		{SourceForecast.MATERIAL_PAYOFF_ID_KEY: MATERIAL_ID,
+			SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY: MATERIAL_PER_WORKER},
+	]
+	var lesser_kit := KitRoster.repriced_source(pelt_quarry, "", BARE_CARRY, PUBLISHED_CARRY, 1.0)
+	var equipped_kit := KitRoster.repriced_source(pelt_quarry, "", PUBLISHED_CARRY, PUBLISHED_CARRY,
+		1.0)
+	_assert_band_panel("a kit's carry reprices the per-material rate, row by row (%s)"
+			% str(_kit_material_rate(lesser_kit)),
+		is_equal_approx(_kit_material_rate(lesser_kit), MATERIAL_PER_WORKER * ratio))
+	# The no-op half, which is what makes the claim above about the RATIO rather than about the vector
+	# being overwritten with something.
+	_assert_band_panel("…and the kit the source was published at leaves the vector alone (%s)"
+			% str(_kit_material_rate(equipped_kit)),
+		is_equal_approx(_kit_material_rate(equipped_kit), MATERIAL_PER_WORKER))
+	# **AND IT REACHES THE SHEET'S OWN READING** — `expected_materials`, the `min(workers x rate,
+	# ceiling)` the yields row renders. Everything above is about one dict; this is the line the player
+	# reads, and the pairing (both takes live, and strictly ordered) is what stops a repricing that
+	# zeroed the account from satisfying it.
+	var lesser_take := _kit_material_take(lesser_kit, MATERIAL_WORKERS)
+	var equipped_take := _kit_material_take(equipped_kit, MATERIAL_WORKERS)
+	_assert_band_panel("…so the sheet's material line falls with the lesser kit (%s against %s)"
+			% [str(lesser_take), str(equipped_take)],
+		lesser_take > 0.0 and is_equal_approx(lesser_take, equipped_take * ratio)
+			and lesser_take < equipped_take - SourceForecast.COMPONENT_RENDER_MIN)
+
+	# --- A SOURCE WITH NO RETREAT STAGE (a patch, a pen) is untouched by that half. **Its material
+	# vector is repriced exactly as the herd's is**, which is the plant half of the same defect: a
+	# gathering kit that moves a fifth of the biomass banks a fifth of the fibre.
 	var patch := {
 		"patch_" + SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY: 8.0,
 		"patch_" + SourceForecast.FORECAST_PER_WORKER_KEY: 6.0,
+		"patch_" + SourceForecast.FORECAST_PER_WORKER_MATERIAL_KEY: [
+			{SourceForecast.MATERIAL_PAYOFF_ID_KEY: "fibre",
+				SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY: MATERIAL_PER_WORKER},
+		],
 	}
 	var gathered := KitRoster.repriced_source(patch, "patch_", 1.6, 8.0, 0.0)
 	_assert_band_panel("a source that publishes no retreat is repriced on carry alone",
@@ -8660,6 +8713,31 @@ func _assert_kit_reprices_the_source() -> void:
 			and is_equal_approx(
 				float(gathered["patch_" + SourceForecast.FORECAST_PER_WORKER_KEY]), 6.0 * 0.2)
 			and not gathered.has(KitRoster.SOURCE_STAY_FRACTION))
+	_assert_band_panel("…and its materials come down with the rest of its accounts (%s)"
+			% str(_kit_material_rate(gathered, "patch_")),
+		is_equal_approx(_kit_material_rate(gathered, "patch_"), MATERIAL_PER_WORKER * 0.2))
+
+## The FIRST material row's per-worker rate on an already-repriced source — the one place the vector is
+## unpacked, so no assertion above indexes into it twice and none of them can disagree about its shape.
+## `-1.0` when the row is missing, which fails every `is_equal_approx` above rather than reading as a
+## rate of nothing.
+func _kit_material_rate(src: Dictionary, prefix: String = "") -> float:
+	var rows: Variant = src.get(prefix + SourceForecast.FORECAST_PER_WORKER_MATERIAL_KEY, [])
+	if not (rows is Array) or (rows as Array).is_empty():
+		return -1.0
+	return float(((rows as Array)[0] as Dictionary).get(
+		SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY, -1.0))
+
+## …and what a crew of `workers` actually BANKS of it — `expected_materials`' own
+## `min(workers x rate, ceiling(floor))`, read through `forecast_inputs` exactly as the compose sheet's
+## yields row reads it. `src` is already repriced: the kit is the only thing differing between calls.
+func _kit_material_take(src: Dictionary, workers: int) -> float:
+	var forecast := SourceForecast.forecast_inputs(src, SourceForecast.SOURCE_KIND_HERD, "",
+		SourceForecast.floor_for_preset(SourceForecast.FLOOR_PRESET_STRIP),
+		SourceForecast.IMPROVEMENT_NONE)
+	var rows := SourceForecast.expected_materials(float(workers), forecast)
+	return float(rows[0].get(SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY, -1.0)) \
+		if not rows.is_empty() else -1.0
 
 ## The take a crew of `workers` lands on `quarry` under a kit of this `dispersion`, through the SAME
 ## `expected_yield_account` the compose sheet's readout reads.

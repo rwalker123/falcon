@@ -554,11 +554,29 @@ built from the code under test can only agree with itself. **They are the SIM's 
 from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
 payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-**A clean run is 300 frames / 853 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
+**A clean run is 301 frames / 867 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
 three times in one arc and once across a merge, and a running total kept by addition would be wrong
 by now.
 
-**`forage_cash_crop_gather` is the newest frame and carries five `PASS`**: the crew composes at all,
+**`forage_no_food_basket` is the newest frame** (`chapters/forage_accounts.gd`, appended last) and
+carries **fourteen** `PASS`, counting the two compose-sheet fit claims every state in that chapter
+takes. It is the reported tile — a wild basket of Tobacco 56% + Hay Grass 44%, which pays no calories
+at all — and it stands at the junction of the two defects arc #527's axis alias left behind: the
+worker cap read `max 1 worker useful here` beneath the sheet's own `13 clear it now` / `2 hold it
+after`, and the PER TURN box named the fodder and never the tobacco.
+
+**Its cap claim is a PAIR, and neither half is worth anything alone**: this patch clears
+`MAX_USEFUL_BARREN` while `_dead_season_tile_fixture` — asked in the same frame's assertions — still
+caps at 1, because "not barren" is trivially satisfied by a cap that stopped answering. The reach
+claim is read off the RENDERED pills and finished through a real press of *clear it now*, since the
+defect was the panel disagreeing with itself and the clamp lives in the press handler. The material
+claims are composed at a crew deliberately BELOW the saturating one: at the clearing crew the take's
+two arms are equal by construction, so a readout that never read the per-worker rate prints the same
+number. Sabotage-verified — stubbing `SourceForecast.off_axis_useful_workers` to `NO_CREW_ANSWER`
+fails exactly the three cap claims and leaves every material and fodder claim green, the two defects
+being independent.
+
+**`forage_cash_crop_gather` carries five `PASS`**: the crew composes at all,
 each of the tile's two materials is quoted, **each has a ROW OF ITS OWN**, and the FOOD row still
 reads. That last one is not padding — "quote the materials" is satisfied by a sheet that stopped
 quoting the food, and the frame exists because a cash-crop tile's sheet quoted neither. The

@@ -16,6 +16,8 @@ paths:
   - "clients/godot_thin_client/tools/snapshot_alias_guard.tscn"
   - "clients/godot_thin_client/tools/inspector_hidden_guard.gd"
   - "clients/godot_thin_client/tools/inspector_hidden_guard.tscn"
+  - "clients/godot_thin_client/tools/patch_crossref_guard.gd"
+  - "clients/godot_thin_client/tools/patch_crossref_guard.tscn"
   - "clients/godot_thin_client/tests/**"
 ---
 
@@ -347,6 +349,60 @@ map-click payload, and the structural copy carries it with no `MARKER_OMITTED_KE
 which the duplicate makes impossible for a plain copy but not for any field a later hand-stamp
 touches. Sabotage-verified in the new shape: `marker.erase("hunter_attack")` fails with `marker
 DROPPED source key`, and re-introducing a five-key allowlist fails 71 times naming every one.
+
+## `tools/patch_crossref_guard.gd` / `.tscn`
+
+Headless **regression guard for the "a decoded forage-patch field never reaches `tile_info`" bug
+class** — the plant web's second wiring, and the third time it shipped.
+
+**A herd dict travels whole; a forage patch does not.** `MapView._tile_info_at` copies the
+`forage_patches` row across key by key from an explicit list, `patch_`-prefixing each, and every
+forage compose sheet reads its source out of that `tile_info`. So a field the decoder emits and that
+list omits is silently absent on the plant web and fine on the animal one — first
+`perWorkerBiomass`/`regrowthSamples` (which removed the harvest-floor chart and both crew targets from
+every patch against a live sim), then `materialPerBiomass`/`perWorkerMaterial` (a tile 56% tobacco
+whose PER TURN box named the fodder and never the tobacco).
+
+**Both were structurally invisible to `ui_preview` and `band_panel_preview`**: their fixtures seed
+`tile_info` themselves, so no frame in either harness exercises the cross-ref, and a second seeded
+frame never could. That is why this is a guard over the REAL seam rather than another preview state.
+
+The run is *wire → `tile_info`*: the generated `snapshot_envelope.bin` → the real `SnapshotDecoder` →
+`_ingest_forage_patches` → `_tile_info_at` on a detached `MapView` (the `snapshot_alias_guard` idiom),
+with nothing hand-written in between. **Taking the raw patch from the DECODER is the whole design** —
+a literal fixture only carries the keys someone remembered to add, which is precisely the failure.
+Five claims:
+
+1. **the partition, forwards** — every wire key arrives as `patch_<key>` unless declared in
+   `UNCROSSED_KEYS` with a reason (the coordinates, which are the lookup key, and the three retired
+   `*_trade` slots arc #527 left on the wire);
+2. **the partition, backwards** — every `patch_`-prefixed key has a source key, so a misspelling has
+   nowhere to hide;
+3. **the value round-trips** by equality, which is what sees a narrowing `int(...)` copy or a vector
+   that lost its rows — a presence check structurally cannot;
+4. **the consumer pincer** — every `FORECAST_*_KEY` / `FORECAST_*_KEYS` name `SourceForecast` declares
+   (read reflectively off the script's constant map, so the list cannot drift) must be crossed if the
+   patch publishes it, which is what stops an `UNCROSSED_KEYS` entry being added for a field the
+   forecast layer reads;
+5. **the FoW redaction** — a crossed key belongs in `FOW_DISCOVERED_HIDDEN_KEYS` unless declared in
+   `FOW_EXEMPT_KEYS` as ground knowledge (the capacity, the basket, the committed species). That is
+   the THIRD wiring, and it fails as silently as the second, on a hex you cannot currently see.
+
+**Reflection over a `class_name`d script has one trap and it is a HANG, not an error.**
+`get_script_constant_map()` is an instance method on `Script`, so calling it on a `preload`ed const
+makes the compiler resolve the name to the CLASS and refuse it — *"Cannot call non-static function …
+directly"* — which is a load failure, so the scene comes up scriptless, `get_tree().quit()` never
+runs and the headless process idles forever (measured). Hence `SOURCE_FORECAST_PATH` + a
+`Script`-typed local.
+
+**Mutation-tested three ways, failing disjoint subsets**: dropping the two material cross-ref lines
+fails 4 (claims 1 and 4, naming both keys); narrowing `per_worker_biomass` with `int(...)` fails claim
+3 alone, naming `110.809997558594 → 110`; and removing the two material entries from
+`FOW_DISCOVERED_HIDDEN_KEYS` fails claim 5 alone. Its fixture is gitignored — write it first with
+`cargo xtask decode-fixture`. `godot --headless --path . res://tools/patch_crossref_guard.tscn`; exits
+0/1, CI-usable, no GPU. A clean run reads `34 wire keys cross onto tile_info intact (5 declared
+uncrossed)` — the count is printed for the reason `marker_field_guard` prints its own, a partition
+over an empty source being vacuously true and otherwise indistinguishable.
 
 ## `tools/snapshot_alias_guard.gd` / `.tscn`
 
