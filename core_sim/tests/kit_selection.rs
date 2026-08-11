@@ -1702,6 +1702,54 @@ fn equipped_attack(cfg: &EquipmentConfig) -> f32 {
 // #520 on the wire — the composed party has to be EXPRESSIBLE
 // ---------------------------------------------------------------------------------------------
 
+/// **A resident band staffing GATHERERS, holding only `baskets_owned` baskets.**
+///
+/// The forage job is the one that had no head count on the wire, so this is the fixture the
+/// denominator is measured on. It never runs a turn — the published pair is resolved from the
+/// allocation and the ledger, so the patch only has to exist for the assignment to name.
+fn spawn_gathering_band(app: &mut App, baskets_owned: u32) -> (bevy::prelude::Entity, UVec2) {
+    let tile_pos = app
+        .world
+        .resource::<core_sim::ForageRegistry>()
+        .patches
+        .keys()
+        .copied()
+        .min_by_key(|p| (p.y, p.x))
+        .expect("the campaign map seeds forage patches");
+    let tile_entity = tile_at(app, tile_pos);
+    let mut wear = BandEquipment::start_stocked_for(&EquipmentConfig::builtin(), CREW as f32);
+    let tier = EquipmentConfig::builtin()
+        .item("baskets")
+        .expect("the roster ships baskets")
+        .default_tier()
+        .id
+        .clone();
+    wear.restore_batches("baskets", Vec::new());
+    wear.stock("baskets", baskets_owned, &tier, None);
+    let band = app
+        .world
+        .spawn((
+            cohort(tile_entity, CREW),
+            ResidentBand,
+            wear,
+            LaborAllocation {
+                assignments: vec![LaborAssignment {
+                    target: LaborTarget::Forage {
+                        tile: tile_pos,
+                        floor: DEFAULT_ESCAPEMENT_FLOOR,
+                        species: None,
+                    },
+                    workers: CREW,
+                    improvement: None,
+                    kit: None,
+                }],
+                ..Default::default()
+            },
+        ))
+        .id();
+    (band, tile_pos)
+}
+
 /// One `BandKitCrew` row, read off the **encoded** envelope.
 #[derive(Debug, Clone, PartialEq)]
 struct PublishedCrew {
@@ -1753,14 +1801,40 @@ fn published_hunt_composition(
                 .unwrap_or_default(),
         })
         .collect();
-    let workers_holding = cohort
+    let workers_holding = published_gear_pair(app, band, item).0;
+    (crews, cohort.hunterAttack(), workers_holding)
+}
+
+/// **One item's `(workersHolding, workersOnQuotedJob)` pair**, off the **encoded** envelope — read
+/// together, because the two fields are one sentence and a test that read them apart could not
+/// catch them describing two different jobs.
+fn published_gear_pair(app: &App, band: bevy::prelude::Entity, item: &str) -> (f32, f32) {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.entity() == band.to_bits())
+        .expect("the band is on the wire")
         .kitItemConditions()
         .expect("the band publishes a condition row per config item")
         .iter()
         .find(|row| row.itemId() == Some(item))
-        .map(|row| row.workersHolding())
-        .unwrap_or_else(|| panic!("the config carries '{item}', so it has a row"));
-    (crews, cohort.hunterAttack(), workers_holding)
+        .map(|row| (row.workersHolding(), row.workersOnQuotedJob()))
+        .unwrap_or_else(|| panic!("the config carries '{item}', so it has a row"))
 }
 
 /// **A BAND SHORT OF SPEARS PUBLISHES ITS DIVISION** (issue #520) — two crews whose workers sum to
@@ -1839,6 +1913,97 @@ fn a_band_short_of_spears_publishes_one_hunt_crew_per_run() {
         spears_holding, SPEARS_OWNED as f32,
         "`workersHolding` counts the PEOPLE the spears reach, so a gear row reads '2 of 4' without \
          dividing anything"
+    );
+}
+
+/// **A GEAR ROW CARRIES ITS OWN DENOMINATOR, on the jobs that are not the hunt** (issue #520).
+///
+/// `workersHolding` alone is only renderable where the wire also carries a head count, and only the
+/// hunt does (`Σ huntCrews.workers`) — so a spears shortfall could be stated and a **basket's** could
+/// not, which is the quiet half of the same reassuring-direction failure. `workersOnQuotedJob` is
+/// that denominator, off the same coverage the numerator came from.
+///
+/// The band below staffs **gatherers** and holds fewer baskets than it has of them, so the pair is a
+/// genuine shortfall on a job the hunt's head count says nothing about.
+#[test]
+fn a_gear_row_publishes_the_head_count_of_the_job_it_is_quoted_at() {
+    /// Fewer than the crew, so the pair is a real *"2 of 4"* rather than a full set.
+    const BASKETS_OWNED: u32 = 2;
+
+    let mut app = placid_world();
+    let (band, _patch) = spawn_gathering_band(&mut app, BASKETS_OWNED);
+    recapture_snapshot_in_place(&mut app.world);
+
+    let (holding, on_job) = published_gear_pair(&app, band, "baskets");
+    assert_eq!(
+        on_job, CREW as f32,
+        "the denominator is the FORAGE job's head count — the hunt's says nothing about baskets"
+    );
+    assert_eq!(
+        holding, BASKETS_OWNED as f32,
+        "and the numerator is the gatherers the baskets reach, so the row reads '2 of 4'"
+    );
+    assert!(
+        holding < on_job,
+        "liveness: this band really is short, or the pair is the trivial truth about a full set"
+    );
+
+    // The HUNT row is unaffected and still answers at its own job — nobody is staffed on it here,
+    // which is the other zero the schema separates.
+    let (spears_holding, spears_on_job) = published_gear_pair(&app, band, "spears");
+    assert_eq!(
+        (spears_holding, spears_on_job),
+        (0.0, 0.0),
+        "nobody hunts in this band, so the spear row is `0 of 0` — not a shortfall"
+    );
+}
+
+/// **A JOB NOBODY IS STAFFED ON PUBLISHES A ZERO DENOMINATOR, and the row is still there.**
+///
+/// `0 of 0` is *"nothing was needed"*; `0 of 4` is *"four people went without"*. Both are `0`
+/// numerators, and a client that could not tell them apart would render a warning on every band that
+/// simply is not gathering. Asserted against a real shortfall in the same world, so *"the row exists
+/// and reads zero"* cannot pass on a sim that publishes zeros everywhere.
+#[test]
+fn a_job_nobody_is_staffed_on_publishes_a_zero_denominator_rather_than_an_absent_row() {
+    let mut app = placid_world();
+    let (herd, pos) = pin_herd(&mut app);
+    let band = spawn_hunting_band(&mut app, pos, &herd, None);
+    {
+        // Strip the CLUBS so the warrior row would be a shortfall if anybody were on it.
+        let mut wear = app
+            .world
+            .get_mut::<BandEquipment>(band)
+            .expect("the fixture spawned a ledger");
+        wear.restore_batches("clubs", Vec::new());
+    }
+    recapture_snapshot_in_place(&mut app.world);
+
+    // Nobody on Warrior: `0 of 0`, and the row is present.
+    assert_eq!(
+        published_gear_pair(&app, band, "clubs"),
+        (0.0, 0.0),
+        "a band with no warriors needed no clubs — `0 of 0`, and the row must still be published"
+    );
+    // Nobody on Forage either, though the band owns baskets: the denominator, not the stock, is
+    // what makes this zero — which is exactly the distinction the pair exists to draw.
+    let (baskets_holding, baskets_on_job) = published_gear_pair(&app, band, "baskets");
+    assert_eq!((baskets_holding, baskets_on_job), (0.0, 0.0));
+    assert!(
+        app.world
+            .get::<BandEquipment>(band)
+            .expect("ledger")
+            .count_of("baskets")
+            > 0,
+        "…and the band DOES own baskets, so the zero is about the staffing and not the stock"
+    );
+    // LIVENESS, same frame: the job this band IS staffed on publishes a real denominator.
+    let (spears_holding, spears_on_job) = published_gear_pair(&app, band, "spears");
+    assert_eq!(
+        (spears_holding, spears_on_job),
+        (CREW as f32, CREW as f32),
+        "the hunt row is staffed and fully armed, so the pair is `4 of 4` — a zero everywhere would \
+         pass every assertion above"
     );
 }
 

@@ -5425,14 +5425,12 @@ impl PartyResolution<'_> {
         }
     }
 
-    /// The head count the shares are taken against. Positive whenever there is a crew, because
-    /// `coverage` never emits one with no workers in it.
+    /// The head count the shares are taken against — the coverage's own
+    /// ([`crate::equipment_config::KitCoverage::workers`]), not a sum of the crews, so the shares
+    /// divide by the very number the partition was cut from. Positive whenever there is a crew,
+    /// because `coverage` never emits one for a party of nobody.
     fn total_workers(&self) -> f32 {
-        self.coverage
-            .crews()
-            .iter()
-            .map(|crew| crew.workers)
-            .sum::<f32>()
+        self.coverage.workers()
     }
 }
 

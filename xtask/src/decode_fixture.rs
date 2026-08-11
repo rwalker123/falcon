@@ -963,6 +963,11 @@ fn seed_snapshot() -> WorldSnapshot {
                 // deliberately: a golden where the two matched would pass a decoder that read
                 // either field for the other.
                 workers_holding: if index == 1 { 0.0 } else { 3.0 },
+                // **Its denominator** — a third distinct value, so a golden where a decoder read
+                // `count` or `workersHolding` for this field would not pass. The dry row is the
+                // "staffed job, nobody holding it" reading (5 on the job, 0 holding), which is the
+                // one a client must render as a shortfall.
+                workers_on_quoted_job: 5.0,
             })
             .collect();
         // **The per-band resolved tiers**, one row per shipped kit. Spelled out for the same reason

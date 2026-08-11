@@ -761,12 +761,27 @@ pub struct KitCoverage {
     /// every rate below it would otherwise be a division by zero; the chosen kit's own rate is the
     /// answer every one of those sites gave before coverage existed.
     kit: KitChoice,
+    /// **The head count this coverage was resolved for** — the party the crews partition.
+    ///
+    /// Stored rather than summed back out of [`Self::crews`], because it is the **denominator**
+    /// every share and every weighted rate divides by, and a published *"10 of 17"* pair whose two
+    /// halves came from different arithmetic is exactly the disagreement a reader cannot see. The
+    /// crews telescope to it, but a float sum of a partition is not the number that went in.
+    workers: f32,
 }
 
 impl KitCoverage {
     /// The crews, best-equipped first.
     pub fn crews(&self) -> &[Crew] {
         &self.crews
+    }
+
+    /// **The head count this coverage divides** — `0` for a job nobody is staffed on.
+    ///
+    /// The one authority for the denominator: [`Self::workers_holding`] over this is the whole
+    /// *"10 of 17 armed"* sentence, and `Σ crews().workers` is the same number by construction.
+    pub fn workers(&self) -> f32 {
+        self.workers
     }
 
     /// The kit the party was sent out with, before any crew narrowed it.
@@ -787,9 +802,10 @@ impl KitCoverage {
     /// what every one of these sites answered before coverage existed and keeps the inversions from
     /// dividing by zero.
     pub fn weighted_rate(&self, rate: impl Fn(&KitChoice) -> f32) -> f32 {
-        let total: f32 = self.crews.iter().map(|crew| crew.workers).sum();
-        // `<=` rather than `!(> 0)` so a NaN total takes the fallback too — a rate divided by one
-        // would poison every consumer downstream.
+        // **The stored head count, not a sum of the crews** — one authority for the denominator
+        // ([`Self::workers`]). `<=` rather than `!(> 0)` so a NaN takes the fallback too: a rate
+        // divided by one would poison every consumer downstream.
+        let total = self.workers;
         if !total.is_finite() || total <= 0.0 {
             return rate(&self.kit);
         }
@@ -1140,6 +1156,7 @@ impl EquipmentConfig {
             return KitCoverage {
                 crews: Vec::new(),
                 kit: kit.clone(),
+                workers: 0.0,
             };
         }
         // What each of the kit's items covers, clamped to the party — an item the band has more of
@@ -1194,6 +1211,7 @@ impl EquipmentConfig {
         KitCoverage {
             crews,
             kit: kit.clone(),
+            workers,
         }
     }
 

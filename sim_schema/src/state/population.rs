@@ -235,6 +235,20 @@ pub struct KitItemConditionState {
     /// no quoted kit carries reads `0`, a bench tool included.
     #[serde(default)]
     pub workers_holding: f32,
+    /// **The denominator of [`Self::workers_holding`]** — the head count of the job this row is
+    /// quoted at, so the two are one sentence: *"`workers_holding` of `workers_on_quoted_job`"*.
+    ///
+    /// Published rather than re-derived, and it is the very number the resolving pass divided
+    /// against — only the hunt has a head count on the wire otherwise
+    /// ([`PopulationCohortState::hunt_crews`]), so a spears shortfall could be stated and a basket's
+    /// or a club's could not.
+    ///
+    /// **Two zeros a reader must not confuse.** `0` here means **nobody is staffed** on that job —
+    /// *"0 of 0"* is not a shortfall, and nothing may divide by it. A positive value with
+    /// `workers_holding == 0` is the real one: the job is staffed and every worker on it is at the
+    /// unequipped tier.
+    #[serde(default)]
+    pub workers_on_quoted_job: f32,
 }
 
 /// **What one kit would grant THIS band, at its current wear** — a row of

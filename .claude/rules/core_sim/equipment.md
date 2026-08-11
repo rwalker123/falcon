@@ -737,7 +737,16 @@ party that never engaged.
     (`huntCarryPerWorkerBiomass` / `forageCarryPerWorkerBiomass` / `penCarryPerWorkerBiomass`):
     those are liveness readouts saying *what the kit buys*, and only the **hunt gate** — the thing
     that decides whether a species can be taken at all — was worth a per-crew wire shape.
-  - **The Godot client does not read either field yet**; wiring the readout is separate work.
+  - ~~The Godot client does not read either field yet.~~ **Wired** — the decoder maps both, the hunt
+    compose sheets state the split beside the combat gate, and the Gear row and its popover state a
+    shortfall (`.claude/rules/client/labor-ui.md` → "…AND A CLEARED GATE IS THE REASSURING HALF OF A
+    SPLIT PARTY" and `band-readouts.md` → "A partly-armed band must stop reading as a fully-armed
+    one"). ~~**What stays unwired is the non-hunt jobs' coverage**: only the HUNT publishes a head
+    count to divide `workersHolding` by, so a basket's or a club's shortfall is not stated.~~
+    **Closed** — every row carries its own denominator now (`workersOnQuotedJob`, below), so a
+    shortfall on any job is one subtraction with no head count to hunt for, **and the client renders
+    all four through one path**: `DetailFormat.kit_coverage` reads the published pair and the hunt's
+    old `Σ huntCrews.workers` private path is gone (`band-readouts.md`, same section).
   - **`force_power` / `victor` / the kill-wound split are untouched.** A bare-handed hunter's
     intrinsic `attack 1` still contributes to `victor`, which is a separate question.
 - ~~The compose sheets offer no kit picker on a Scout or Warrior row.~~ **Wired.** The Band panel's
@@ -1133,7 +1142,7 @@ one place):
 
 | Field | Meaning |
 |---|---|
-| `kitItemConditions:[KitItemCondition]` | **One row per item the config carries** — `itemId` + `remaining` on the 0–100 scale, `0` = dry. It replaced three fixed floats (`huntingKitDurability` / `sledKitDurability` / `basketKitDurability`), which are **`(deprecated)` in the schema rather than deleted**: FlatBuffers field ids are positional, so removing one renumbers every field after it. **Driven by the CONFIG's item table, not the band's sparse ledger**, so an item is never missing from the list — but since the count slice an item the band does not **own** reads `0`, not full, and `remaining` is the condition left on the **serving batch** (the most-worn live one), which is what makes it a fuel gauge for the unit actually in hand. **`count` rides beside it** since the crafting wire stage, and it is what stops a client inferring ownership from a condition of zero: `remaining == 0` means *owns none*, never *"owns one that is dry"* — a batch with no units left is removed. Which of *worn out* / *never made* a zero is, is `equipmentBatches`' answer (`crafting.md` → "On the wire"). **`workersHolding` rides beside both** since the partly-equipped slice: `count` is UNITS owned, this is PEOPLE reached, and the two differ whenever the band is short or holds the spawn's reserve. Quoted at the job whose kit carries the item — and at `kitId`'s for an item several jobs' kits carry, the same convention `penCarryPerWorkerBiomass` follows |
+| `kitItemConditions:[KitItemCondition]` | **One row per item the config carries** — `itemId` + `remaining` on the 0–100 scale, `0` = dry. It replaced three fixed floats (`huntingKitDurability` / `sledKitDurability` / `basketKitDurability`), which are **`(deprecated)` in the schema rather than deleted**: FlatBuffers field ids are positional, so removing one renumbers every field after it. **Driven by the CONFIG's item table, not the band's sparse ledger**, so an item is never missing from the list — but since the count slice an item the band does not **own** reads `0`, not full, and `remaining` is the condition left on the **serving batch** (the most-worn live one), which is what makes it a fuel gauge for the unit actually in hand. **`count` rides beside it** since the crafting wire stage, and it is what stops a client inferring ownership from a condition of zero: `remaining == 0` means *owns none*, never *"owns one that is dry"* — a batch with no units left is removed. Which of *worn out* / *never made* a zero is, is `equipmentBatches`' answer (`crafting.md` → "On the wire"). **`workersHolding` / `workersOnQuotedJob` ride beside both** since the partly-equipped slice, and they are ONE SENTENCE — *"`workersHolding` of `workersOnQuotedJob`"*. `count` is UNITS owned, the numerator is PEOPLE reached (the two differ whenever the band is short or holds the spawn's reserve), and the denominator is the head count of the job the row is quoted at. Quoted at the job whose kit carries the item — and at `kitId`'s for an item several jobs' kits carry, the same convention `penCarryPerWorkerBiomass` follows |
 | `equipmentBatches:[EquipmentBatchState]` | **One row per BATCH**, plus one `count: 0` row per config item the band owns none of — `itemId`, `tierId`, `grade`, `count`, `remaining`, and the **life wording in use quanta, never percent**. It is the crafting arc's field; the rationale, the `Worn out` / `Never made` split and the `BandEquipment::retired` tally it needed are in `crafting.md` → "On the wire" |
 | `hunterAttack:float` | The band's resolved per-hunter `attack` (1 bare / 20 kitted) — the left side of the fight's gate against a herd's `HerdTelemetryState.defense`. **It is the BEST-EQUIPPED crew's tier, not the whole band's**, and `huntCrews` is the rest of the party — see below |
 | `huntCrews:[BandKitCrew]` | **How this band's gear divides its HUNT workers** — `workers` + that run's own `hunterAttack` + the `itemIds` it holds, best-equipped first, `Σ workers ==` the hunt head count. **Never empty**: a uniform band is one row |
@@ -1197,19 +1206,37 @@ head count.
   no sources: its `LaborAllocation` is empty, and reading a `0` off that would publish an outfitted
   raid as holding nothing.
 
-**`KitItemCondition.workersHolding` is the same fact one level down** — the people an item reaches,
-so a gear row reads *"spears 87 · 10 of 17"* without the client dividing anything (it could not: both
-`workers_per_unit` and which job is staffed are sim-side). `count` is UNITS, this is PEOPLE, and the
-two differ whenever the band is short **or** holds the spawn's reserve. It is quoted at the job whose
-kit carries the item, breaking ties toward `kitId`'s — one coverage per job, resolved in the same
-pass — so `baskets` answers at the forage row and `clubs` at the warrior row rather than reading `0`
-against the hunt kit that carries neither. **A `0` is three sentences** (nobody staffed, owns none,
-no quoted kit carries it) and `count` beside it is what separates them.
+**`KitItemCondition.workersHolding` / `workersOnQuotedJob` are the same fact one level down, and
+they are ONE SENTENCE** — *"spears 87 · **10 of 17**"*, with no client dividing anything (it could
+not: `workers_per_unit` and which job is staffed are both sim-side). `count` is UNITS, the numerator
+is PEOPLE, and the two differ whenever the band is short **or** holds the spawn's reserve.
 
-Both are pinned **off the encoded envelope** by
-`kit_selection::a_band_short_of_spears_publishes_one_hunt_crew_per_run` and its uniform twin
-`::a_fully_armed_band_publishes_exactly_one_hunt_crew` — paired, because *"exactly one row"* alone
-would pass on a sim that had stopped dividing anything.
+**The denominator is not optional garnish.** Without it only the hunt is renderable, because
+`Σ huntCrews.workers` is the only job head count on the wire — so a *spears* shortfall could be
+stated and a **basket's, club's or wayfinding's could not**, which is the quiet half of the same
+reassuring-direction failure `huntCrews` exists to remove.
+
+**Both come off the SAME coverage, chosen by which quoted kit carries the item** (ties to `kitId`'s,
+the hunt) — one coverage per job, resolved in the same pass — so `baskets` answers at the forage row
+and `clubs` at the warrior row rather than reading `0` against a hunt kit that carries neither, and
+the pair can never describe two different jobs. The job is picked by *"whose kit carries this"*
+rather than *"whose coverage holds somebody"*, deliberately: the latter leaves the denominator
+undefined in the case that matters most — a **staffed** job whose gear the band owns none of.
+
+> **TWO ZEROS A READER MUST NOT CONFUSE.** `workersOnQuotedJob == 0` is *nobody is staffed on that
+> job* — *"0 of 0"*, nothing was needed, not a warning, and nothing may divide by it. A **positive**
+> denominator with `workersHolding == 0` is the real shortfall: the job is staffed and every worker
+> on it is at the unequipped tier. (A third `0/0` is an item no quoted kit carries — a bench tool —
+> and `count` beside it is what separates that from *"the band owns none"*.)
+
+All of it is pinned **off the encoded envelope**, in pairs, because each claim alone passes on a
+dead field:
+
+| test | pins | its pair |
+|---|---|---|
+| `a_band_short_of_spears_publishes_one_hunt_crew_per_run` | two crews, the workers summing to the head count, the armed row equipped and the bare row intrinsic | `::a_fully_armed_band_publishes_exactly_one_hunt_crew` — *"exactly one row"* alone would pass on a sim that had stopped dividing anything |
+| `a_gear_row_publishes_the_head_count_of_the_job_it_is_quoted_at` | a **gathering** band short of baskets reads *"2 of 4"* at the FORAGE head count, which the hunt's says nothing about | the same band's spear row reads `0 of 0` in the same frame |
+| `a_job_nobody_is_staffed_on_publishes_a_zero_denominator_rather_than_an_absent_row` | `0 of 0` on two unstaffed jobs, with the row still present, and the baskets zero proven to be about the STAFFING (the band owns some) | the hunt row it is staffed on reads `4 of 4` in the same frame — a sim publishing zeros everywhere would pass every other assertion |
 
 ### `kitTiers` — the resolved per-band answer, because the derivation is impossible on the wire
 

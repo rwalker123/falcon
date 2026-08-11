@@ -334,29 +334,41 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .coverage(choice, job_workers(job) as f32, &kit)
     };
     let hunt_coverage = coverage_for(crate::equipment_config::KitJob::Hunt, &hunt_choice);
-    // The other three, for `workers_holding` alone — each item is quoted at the job whose kit
-    // carries it, and at the hunt's for an item several of them carry (see the schema comment).
-    let other_coverages = [
-        coverage_for(crate::equipment_config::KitJob::Forage, &forage_choice),
-        coverage_for(crate::equipment_config::KitJob::Scout, &scout_choice),
-        coverage_for(crate::equipment_config::KitJob::Warrior, &warrior_choice),
+    // **All four, HUNT FIRST** — an item is quoted at the job whose kit carries it, and at the
+    // hunt's for an item several of them carry (`kit_id`'s tie-break, the same one
+    // `pen_carry_per_worker_biomass` follows).
+    let quoted_coverages = [
+        &hunt_coverage,
+        &coverage_for(crate::equipment_config::KitJob::Forage, &forage_choice),
+        &coverage_for(crate::equipment_config::KitJob::Scout, &scout_choice),
+        &coverage_for(crate::equipment_config::KitJob::Warrior, &warrior_choice),
     ];
     let kit_item_conditions = kit_levers
         .config
         .items()
-        .map(|(id, _)| sim_schema::state::KitItemConditionState {
-            item_id: id.to_string(),
-            remaining: kit.remaining(id, kit_levers.config),
-            count: kit.count_of(id),
-            // **The HUNT row first**, which is what `kit_id` names, then whichever other job's
-            // quoted kit carries the item. An item no quoted kit carries — a bench tool, or a
-            // basket on a band whose forage row is unstaffed — reads `0`, and `count` beside it is
-            // what tells that from "the band owns none".
-            workers_holding: std::iter::once(&hunt_coverage)
-                .chain(other_coverages.iter())
-                .map(|coverage| coverage.workers_holding(id))
-                .find(|holding| *holding > 0.0)
-                .unwrap_or(0.0),
+        .map(|(id, _)| {
+            // **The job is chosen by WHICH QUOTED KIT CARRIES THE ITEM, not by which coverage
+            // happens to hold somebody.** Both published numbers then come from that one coverage,
+            // so the pair is one sentence — *"`workers_holding` of `workers_on_quoted_job`"* — and
+            // cannot describe two different jobs. Picking the first *positive* holding instead
+            // would leave the denominator undefined for the case that matters most: a staffed job
+            // whose gear the band owns none of.
+            let quoted = quoted_coverages
+                .iter()
+                .find(|coverage| coverage.kit().uses().any(|used| used == id));
+            sim_schema::state::KitItemConditionState {
+                item_id: id.to_string(),
+                remaining: kit.remaining(id, kit_levers.config),
+                count: kit.count_of(id),
+                // An item no quoted kit carries — a bench tool, or a basket on a band running the
+                // `none` forage kit — reads `0` on both, and `count` beside it is what tells that
+                // from "the band owns none".
+                workers_holding: quoted.map_or(0.0, |coverage| coverage.workers_holding(id)),
+                // **The denominator, off the same coverage.** `0` here means *nobody is staffed on
+                // that job* — a different sentence from a staffed job holding none of the item, and
+                // a client must not divide by it.
+                workers_on_quoted_job: quoted.map_or(0.0, |coverage| coverage.workers()),
+            }
         })
         .collect();
     // **The party's runs, published as the sim resolved them.** Best-equipped first, workers summing

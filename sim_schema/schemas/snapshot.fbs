@@ -2815,6 +2815,28 @@ table KitItemCondition {
   // 0 is therefore three different sentences (nobody staffed on the job, the band owns none, or no
   // quoted kit carries it) and a readout that needs to tell them apart reads `count` beside it.
   workersHolding:float = 0;
+  // --- ...AND ITS DENOMINATOR (appended) --------------------------------------------------------
+  // *** THE TWO FIELDS ARE ONE SENTENCE: `workersHolding` OF `workersOnQuotedJob`. ***
+  //
+  // The head count of the job this row is quoted at - the same number the sim divided against when
+  // it resolved `workersHolding`, published rather than re-derived. Without it only the HUNT has a
+  // denominator on the wire (Sigma huntCrews.workers), so a spears shortfall could be stated and a
+  // basket / club / wayfinding shortfall could not - the quiet half of the same "reassuring
+  // direction" failure `huntCrews` exists to remove.
+  //
+  // The job is the SAME one `workersHolding` names, by the same tie-break: whichever quoted kit
+  // carries the item, and `PopulationCohortState.kitId`'s for an item several jobs' kits carry. The
+  // pair therefore cannot disagree about which job it is describing.
+  //
+  // *** TWO ZEROS A READER MUST NOT CONFUSE ***
+  //   - workersOnQuotedJob == 0 -> NOBODY IS STAFFED on that job. "0 of 0" is not a shortfall; the
+  //     band has assigned no gatherers, so no basket was needed and none went unheld. Do not render
+  //     it as a warning, and do not divide by it.
+  //   - workersOnQuotedJob > 0 && workersHolding == 0 -> the job IS staffed and NOBODY is holding
+  //     the item. That is the real shortfall: every one of those workers is at the unequipped tier.
+  // (An item no quoted kit carries reads 0/0 for the third reason `workersHolding` documents, and
+  // `count` is what separates it from the two above.)
+  workersOnQuotedJob:float = 0;
 }
 
 // ONE RUN OF A BAND'S HUNT WORKERS HOLDING THE SAME GEAR - a row of

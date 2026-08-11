@@ -275,6 +275,9 @@ fn create_populations<'a>(
                                 // one worker, so "owns 87 units" and "10 of 17 armed" are different
                                 // facts and a client may not divide one into the other.
                                 workersHolding: condition.workers_holding,
+                                // **Its denominator**, so the pair is one sentence and only the
+                                // hunt is not the one job with a head count on the wire.
+                                workersOnQuotedJob: condition.workers_on_quoted_job,
                             },
                         )
                     })
