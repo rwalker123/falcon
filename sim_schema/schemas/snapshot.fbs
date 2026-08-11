@@ -973,6 +973,27 @@ table PopulationCohortState {
   // published head count is its workers — a rounded-up phantom is not a person.
   childrenCount:uint = 0;
   eldersCount:uint = 0;
+  // THE TARGET HERD'S SPECIES DISPLAY NAME ("Red Deer") for a hunt/deny party -- what the client
+  // RENDERS for the quarry. "" for a scout or a normal band. Appended last (append-only discipline).
+  //
+  // *** IT IS NOT A DUPLICATE OF expeditionTargetHerd, AND NOT A DUPLICATE OF THE HERD LIST. ***
+  //
+  // expeditionTargetHerd is the KEY: it addresses the herd in every command, and a player must never
+  // see it (a fauna id means nothing to anyone). The NAME used to be reached by joining that key
+  // against HerdTelemetryState, but that list is fog-filtered to tiles the viewer can see RIGHT NOW
+  // and pruned at local extinction -- and a detached expedition is deliberately not a vision source
+  // (visibility_systems.rs, Without<Expedition>). So a hunting party's own quarry routinely leaves the
+  // list while the party is still bound to it, and the client had nothing left to render but the raw
+  // id (issue #378).
+  //
+  // Resolved at LAUNCH, where the herd is in the registry by construction, and carried on the mission
+  // for the party's life -- so it survives BOTH ways the target can vanish. A capture-time registry
+  // lookup would have survived fog and still gone blank on extinction, which prunes the registry.
+  //
+  // The herd list is still joined for the target's LIVE POSITION, which genuinely needs live
+  // telemetry: its absence is what "target herd lost" reports, and that stays a separate statement
+  // from not knowing the animal's name.
+  expeditionTargetSpecies:string;
 }
 
 // What ONE kit would grant ONE band at its current wear - a row of

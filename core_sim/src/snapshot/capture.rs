@@ -1236,6 +1236,17 @@ impl PublishState {
             self.encoded_delta_flat = Some(encoded_delta_flat.clone());
             if let Some(back) = self.history.back_mut() {
                 back.snapshot = stored.snapshot.clone();
+                // **And DROP the entry's cached encoding, which describes the pre-recapture world.**
+                // Refreshing `snapshot` without clearing this left `StoredSnapshot`'s two views of one
+                // entry disagreeing: `.snapshot` saw the command's mutation and `.encode_flat()` — which
+                // returns these bytes when present — still answered with the world's FIRST publication.
+                // Its only callers are tests asserting on encoded content, so the cost was silent: a
+                // wire-level assertion read a frame from before the fixture had finished building, and
+                // passed or failed on the wrong world. `None` rather than a re-encode on purpose — a
+                // recapture must not pay the full-snapshot encoding #384 took off the turn path, and
+                // `encode_flat` already encodes on demand for the rare reader that wants one. Symmetric
+                // with `self.encoded_snapshot_flat = None` on the line above, for the same reason.
+                back.encoded_snapshot_flat = None;
             }
             return Some(encoded_delta_flat);
         }
@@ -1485,10 +1496,10 @@ impl PublishState {
     ///
     /// It matters most on the **resync** path, because resync is the *recovery* path: a resync answer
     /// carrying a stale number opens the very sequence gap it was sent to close, and the client can
-    /// only heal once some later publication refreshes the ring entry. The entry's stored numbers go
-    /// stale in two ways — a mid-tick recapture refreshes `history.back().snapshot` but **not** its
-    /// cached `encoded_snapshot_flat`, and an auxiliary delta (`update_axis_bias` and friends) claims
-    /// a sequence number without touching the ring at all.
+    /// only heal once some later publication refreshes the ring entry. Any publication at all dates
+    /// the number stored on an entry: a mid-tick recapture claims one on every world-mutating command,
+    /// and an auxiliary delta (`update_axis_bias` and friends) claims one without touching the ring
+    /// at all.
     ///
     /// `base_frame_seq` stays `0`: a full snapshot names no base, matching the baseline path.
     ///

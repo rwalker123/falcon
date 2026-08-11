@@ -479,6 +479,13 @@ fn create_populations<'a>(
             } else {
                 Some(builder.create_string(&cohort.expedition_target_herd))
             };
+            // The NAME beside that key — absent rather than empty for a non-raiding cohort, the same
+            // convention the id above follows.
+            let expedition_target_species = if cohort.expedition_target_species.is_empty() {
+                None
+            } else {
+                Some(builder.create_string(&cohort.expedition_target_species))
+            };
             // `""` = "not raiding" (a resident band, a scout, a party walking a load home) — absent
             // rather than an empty string, the convention every discriminator above follows.
             let expedition_trip_bound = if cohort.expedition_trip_bound.is_empty() {
@@ -634,6 +641,7 @@ fn create_populations<'a>(
                     // `workingAge`. `childrenCount + workingAge + eldersCount == size`.
                     childrenCount: cohort.children_count,
                     eldersCount: cohort.elders_count,
+                    expeditionTargetSpecies: expedition_target_species,
                 },
             )
         })

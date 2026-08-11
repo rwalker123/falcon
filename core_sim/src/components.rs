@@ -1073,6 +1073,22 @@ pub enum ExpeditionMission {
     /// party's larder, and deliver it back to the band. `fauna_id` keys `HerdRegistry::find`.
     Hunt {
         fauna_id: String,
+        /// **The quarry's species display name, resolved ONCE at launch** — what the client names
+        /// this party's target on screen (`Red Deer`), never the `fauna_id` beside it.
+        ///
+        /// **It is carried rather than looked up because the herd is the one thing a party outlives**
+        /// (issue #378). Herd telemetry is fog-filtered to tiles the viewer can see *right now* and
+        /// pruned at local extinction, and a detached party is deliberately **not** a vision source
+        /// ([`crate::visibility_systems::calculate_visibility`], `Without<Expedition>`) — so a
+        /// party's own quarry routinely leaves the published herd list while the party is still bound
+        /// to it. A client joining `fauna_id` against that list had nothing left to join against and
+        /// fell back to rendering the raw id.
+        ///
+        /// **Launch is the moment the name is reliable**: the herd is in [`crate::fauna::HerdRegistry`]
+        /// by construction there (the command resolved it to forecast the trip), and it can never be
+        /// again once the herd is gone. Resolving at capture time instead would have survived fog and
+        /// still gone blank on extinction, which prunes the registry itself.
+        target_species: String,
         /// **WHERE THE RAID STOPS, as a fraction of the herd's `K`** — chosen at launch, and the
         /// whole of what the party's orders say about pressure (`docs/plan_harvest_floor.md` §1).
         /// The raid takes the stock standing above it as fast as it can carry it, then comes home;
@@ -1111,7 +1127,14 @@ pub enum ExpeditionMission {
     /// [`crate::fauna::AnimalTake`], which already models kill ≠ carry.
     ///
     /// **No target faction** (§2). Denial is aimed at a herd, not at a player.
-    Deny { fauna_id: String },
+    Deny {
+        fauna_id: String,
+        /// The quarry's species display name, resolved once at launch — see
+        /// [`ExpeditionMission::Hunt::target_species`]. A denial raid needs it *more* than a hunt
+        /// does: the mission's whole purpose is to drive the herd past recovery, so its target is
+        /// pruned from the herd list by the raid succeeding.
+        target_species: String,
+    },
 }
 
 /// **The orders a party works a herd under** — what [`ExpeditionMission::Hunt`] and
@@ -1138,17 +1161,19 @@ impl ExpeditionMission {
     }
 
     /// Parse a mission from its wire keys (snapshot restore). `"hunt"` reconstructs
-    /// `Hunt { fauna_id, floor }` from `target_herd` + `floor`; `"deny"` reconstructs
-    /// `Deny { fauna_id }` from `target_herd` alone — it carries no number; anything else is
-    /// `Scout`.
-    pub fn from_wire(kind: &str, target_herd: &str, floor: f32) -> Self {
+    /// `Hunt { fauna_id, target_species, floor }` from `target_herd` + `target_species` + `floor`;
+    /// `"deny"` reconstructs `Deny { fauna_id, target_species }` from the two strings alone — it
+    /// carries no number; anything else is `Scout`.
+    pub fn from_wire(kind: &str, target_herd: &str, target_species: &str, floor: f32) -> Self {
         match kind {
             "hunt" => ExpeditionMission::Hunt {
                 fauna_id: target_herd.to_string(),
+                target_species: target_species.to_string(),
                 floor,
             },
             "deny" => ExpeditionMission::Deny {
                 fauna_id: target_herd.to_string(),
+                target_species: target_species.to_string(),
             },
             _ => ExpeditionMission::Scout,
         }
@@ -1158,10 +1183,45 @@ impl ExpeditionMission {
     /// `expeditionTargetHerd`.
     pub fn target_herd(&self) -> &str {
         match self {
-            ExpeditionMission::Hunt { fauna_id, .. } | ExpeditionMission::Deny { fauna_id } => {
+            ExpeditionMission::Hunt { fauna_id, .. } | ExpeditionMission::Deny { fauna_id, .. } => {
                 fauna_id
             }
             ExpeditionMission::Scout => "",
+        }
+    }
+
+    /// The target herd's species display name for a `Hunt`/`Deny` mission (empty for `Scout`) — the
+    /// snapshot `expeditionTargetSpecies`. **This is the name the client renders**; `target_herd` is
+    /// the key it addresses commands by, and the two are not interchangeable.
+    ///
+    /// Empty is possible and means only "launched against a herd the registry could not resolve" —
+    /// the client keeps its own herd-list join for that, so an empty string here costs nothing that
+    /// was not already missing.
+    pub fn target_species(&self) -> &str {
+        match self {
+            ExpeditionMission::Hunt { target_species, .. }
+            | ExpeditionMission::Deny { target_species, .. } => target_species,
+            ExpeditionMission::Scout => "",
+        }
+    }
+
+    /// **The string a player is shown for this mission's quarry** — [`Self::target_species`] when it
+    /// resolved, else [`Self::target_herd`]. Every player-facing line about the target goes through
+    /// here (the sim's own event-feed prose included), so no call site re-implements the fallback and
+    /// none of them can reach for the raw id by accident.
+    ///
+    /// **The id tier is a last resort, not a normal path.** A launch resolves the species name from
+    /// [`crate::fauna::HerdRegistry`] before it builds the mission (`outfit_raiding_party`), so every
+    /// real party carries one; what falls through to the key is a mission hand-built without it — a
+    /// test fixture, or a snapshot restored from a frame that carried no species. That mirrors the
+    /// client's own last tier, which renders the id when neither the mission's name nor its herd-list
+    /// join has anything to show.
+    pub fn target_display(&self) -> &str {
+        let species = self.target_species();
+        if species.is_empty() {
+            self.target_herd()
+        } else {
+            species
         }
     }
 

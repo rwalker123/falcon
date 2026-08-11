@@ -3054,6 +3054,12 @@ struct OutfittedParty {
     band: SelectedBand,
     /// The herd's live tile, captured as the party's initial travel target.
     herd_pos: UVec2,
+    /// **The herd's species display name**, captured in the same lookup that proved the herd live and
+    /// carried onto the mission (`ExpeditionMission::target_species`). This is the only moment the
+    /// name is guaranteed available — the gate below refuses a launch the registry cannot resolve, and
+    /// the herd may be gone from both the registry and the published telemetry long before the party
+    /// stops being bound to it (issue #378).
+    herd_species: String,
     /// The home band's cohort, cloned as the detached party's template.
     cohort: PopulationCohort,
     unit_kind: String,
@@ -3091,12 +3097,15 @@ fn outfit_raiding_party(
         return None;
     }
 
-    // The target must resolve to a live herd; capture its current tile as the initial travel target.
-    let herd_pos = {
+    // The target must resolve to a live herd; capture its current tile as the initial travel target
+    // and its species as the name the party will be known by for the rest of its life.
+    let target = {
         let registry = app.world.resource::<HerdRegistry>();
-        registry.find(fauna_id).map(|herd| herd.position())
+        registry
+            .find(fauna_id)
+            .map(|herd| (herd.position(), herd.species.clone()))
     };
-    let Some(herd_pos) = herd_pos else {
+    let Some((herd_pos, herd_species)) = target else {
         emit_command_failure(
             app,
             CommandEventKind::ExpeditionSent,
@@ -3145,6 +3154,7 @@ fn outfit_raiding_party(
     Some(OutfittedParty {
         band,
         herd_pos,
+        herd_species,
         cohort,
         unit_kind,
         unit_tags,
@@ -3358,6 +3368,9 @@ fn launch_detached_party(
     let OutfittedParty {
         band,
         herd_pos,
+        // Not read here: the caller has already spent it composing the `mission` argument, which is
+        // where the name lives for the party's life.
+        herd_species: _,
         mut cohort,
         unit_kind,
         unit_tags,
@@ -3576,18 +3589,22 @@ fn handle_send_hunt_expedition(
     };
 
     let band_label = outfit.band.label.clone();
+    // Read off the outfit BEFORE it is moved into the launch, for the same reason `band_label` is.
+    let target_species = outfit.herd_species.clone();
+    let mission = ExpeditionMission::Hunt {
+        fauna_id: fauna_id.clone(),
+        target_species,
+        floor,
+    };
+    // **The event line names the species; the `herd=` token below keeps the id.** Read off the
+    // mission rather than off `outfit.herd_species` so this line and every later line about the
+    // same party resolve the name one way (`ExpeditionMission::target_display`).
+    let target_display = mission.target_display().to_string();
     // **A launch that did not happen publishes a FAILURE, never an `applied` line** — see
     // `launch_detached_party`, which answers `None` rather than a placeholder entity.
-    let Some(expedition_entity) = launch_detached_party(
-        app,
-        outfit,
-        party_workers,
-        ExpeditionMission::Hunt {
-            fauna_id: fauna_id.clone(),
-            floor,
-        },
-        kit.clone(),
-    ) else {
+    let Some(expedition_entity) =
+        launch_detached_party(app, outfit, party_workers, mission, kit.clone())
+    else {
         emit_command_failure(
             app,
             CommandEventKind::ExpeditionSent,
@@ -3604,8 +3621,8 @@ fn handle_send_hunt_expedition(
         CommandEventKind::ExpeditionSent,
         faction,
         format!(
-            "{} hunting expedition (floor {:.2}·K) -> herd {}{}",
-            band_label, floor, fauna_id, viability_note
+            "{} hunting expedition (floor {:.2}·K) -> {}{}",
+            band_label, floor, target_display, viability_note
         ),
         Some(format!(
             "status=applied mission=hunt floor={} workers={} herd={} expedition={}{}",
@@ -3759,17 +3776,19 @@ fn handle_send_denial_raid(
     };
 
     let band_label = outfit.band.label.clone();
+    // Read off the outfit BEFORE it is moved into the launch, for the same reason `band_label` is.
+    let target_species = outfit.herd_species.clone();
+    let mission = ExpeditionMission::Deny {
+        fauna_id: fauna_id.clone(),
+        target_species,
+    };
+    // The species on the line, the id in the `herd=` token — as the hunt launch does.
+    let target_display = mission.target_display().to_string();
     // **A launch that did not happen publishes a FAILURE, never an `applied` line** — see
     // `launch_detached_party`, which answers `None` rather than a placeholder entity.
-    let Some(expedition_entity) = launch_detached_party(
-        app,
-        outfit,
-        party_workers,
-        ExpeditionMission::Deny {
-            fauna_id: fauna_id.clone(),
-        },
-        kit.clone(),
-    ) else {
+    let Some(expedition_entity) =
+        launch_detached_party(app, outfit, party_workers, mission, kit.clone())
+    else {
         emit_command_failure(
             app,
             CommandEventKind::ExpeditionSent,
@@ -3785,7 +3804,10 @@ fn handle_send_denial_raid(
         tick,
         CommandEventKind::ExpeditionSent,
         faction,
-        format!("{} denial raid -> herd {}{}", band_label, fauna_id, verdict),
+        format!(
+            "{} denial raid -> {}{}",
+            band_label, target_display, verdict
+        ),
         Some(format!(
             "status=applied mission=deny workers={} herd={} expedition={}{}",
             party_workers,
@@ -8645,11 +8667,11 @@ mod tests {
     /// disagreeing, so a fixture that read the component would assert the two halves agree by
     /// construction and prove nothing.
     ///
-    /// **It publishes through `publish_full_frame`, not `StoredSnapshot::encode_flat`.** A recapture
-    /// refreshes the ring entry's `snapshot` but deliberately leaves its cached bytes alone (see
-    /// `.claude/rules/core_sim/turn-profiling.md`), so `encode_flat` on a recaptured entry hands back
-    /// the *world's first* frame — one that predates every command since. `publish_full_frame` is the
-    /// seam a `Resync` answers through, and it re-encodes.
+    /// **It publishes through `publish_full_frame`, not `StoredSnapshot::encode_flat`.** `encode_flat`
+    /// is a read of stored bytes, so its header carries the sequence number the entry was published
+    /// under — stale the moment anything else publishes, and a recapture publishes on every
+    /// world-mutating command. `publish_full_frame` is the seam a `Resync` answers through: it claims
+    /// a live number and re-encodes, which is the frame a client would actually be handed here.
     fn published_party_band_id(app: &mut bevy::prelude::App) -> u64 {
         use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 

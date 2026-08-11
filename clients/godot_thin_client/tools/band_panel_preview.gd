@@ -337,6 +337,10 @@ const HUNT_DELIVERING_ENTITY := 952
 const HUNT_LEAN_ENTITY := 953
 # A hunt party whose target herd has DROPPED OUT of `_world_herds` (lost/replaced), projecting 0.
 const HUNT_LOST_ENTITY := 954
+# The species that party declares for its vanished target. **Deliberately a species NO herd in
+# `_herd_fixtures()` carries**, so an assertion matching it proves the name came off the PARTY and not
+# from a herd-list join that happened to succeed.
+const LOST_HUNT_TARGET_SPECIES := "Steppe Bison"
 # A party still standing in its home band's camp with no map report owed — the one shape a recall
 # CANCELS on the spot rather than walking home (`HudBandLaborState.party_cancels_in_camp`).
 const HUNT_IN_CAMP_ENTITY := 955
@@ -4425,6 +4429,14 @@ func _assert_next_delivery_disambiguation() -> void:
 	var lost_delivery := DetailFormat.expedition_next_delivery_line(
 		lost, _hud._band_labor.expedition_target_herd(lost))
 	_check_line("lost delivery", lost_delivery, DetailFormat.EXPEDITION_NEXT_DELIVERY_TARGET_LOST)
+	# **AND ITS `Target:` ROW STILL NAMES THE ANIMAL** (issue #378). This case had a delivery-line
+	# assertion and no target-line one, while the two cases either side of it checked both — so the row
+	# rendered the raw `game_deer_gone` id past a green run, in the one fixture built for this state.
+	# NO POSITION on it: the coordinates need the herd to be in `_world_herds`, and it is not — that
+	# absence is what the delivery line above reports, and naming the animal is a separate statement
+	# from knowing where it is standing.
+	_check_line("lost target", _summary_target_line(lost),
+		"Target: %s" % LOST_HUNT_TARGET_SPECIES)
 	# (3) projecting party (delivery > 0) → the ETA line, Target row shows the herd's position.
 	var live := _hunt_expedition_fixture()
 	var live_delivery := DetailFormat.expedition_next_delivery_line(
@@ -9947,6 +9959,10 @@ func _lost_hunt_expedition_fixture() -> Dictionary:
 		"expedition_phase": "returning",
 		# NOT in `_herd_fixtures()` — the target the party launched at is no longer in the telemetry.
 		"expedition_target_herd": "game_deer_gone",
+		# **AND THE NAME THE PARTY CARRIES FOR IT** — the sim resolves this at launch and ships it on
+		# the party, precisely so a target that has left the telemetry is still nameable (issue #378).
+		# Without it every row and card about this party rendered the raw `game_deer_gone` id.
+		"expedition_target_species": LOST_HUNT_TARGET_SPECIES,
 		"expedition_floor": 0.5,
 		"home_band_entity": 904,
 		"expedition_eta_turns": 0,

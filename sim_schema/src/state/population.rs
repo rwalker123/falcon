@@ -399,6 +399,16 @@ pub struct PopulationCohortState {
     /// `Hunt { fauna_id }`; also shown in the client hunt panel.
     #[serde(default)]
     pub expedition_target_herd: String,
+    /// **Hunt/deny mission only: the target herd's species DISPLAY NAME** (`"Red Deer"`), resolved at
+    /// launch and carried for the party's life. Empty for scout/normal bands.
+    ///
+    /// It exists because [`Self::expedition_target_herd`] alone is not enough to *name* the quarry:
+    /// the herd list the client would join it against is fog-filtered and extinction-pruned, and a
+    /// detached party is not a vision source, so a party's own target routinely leaves that list while
+    /// the party is still bound to it — leaving the client nothing to render but the raw id (issue
+    /// #378). The id stays the key commands address; this is the string the player reads.
+    #[serde(default)]
+    pub expedition_target_species: String,
     /// The `BandTravel` destination tile while traveling (`is_traveling` gates it; `0,0` otherwise).
     /// Lets the client draw a destination hex + line from a selected band/expedition. Appended last
     /// in the FlatBuffers table (append-only wire discipline).

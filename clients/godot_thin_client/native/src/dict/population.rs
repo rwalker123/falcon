@@ -530,6 +530,16 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "expedition_target_herd",
         cohort.expeditionTargetHerd().unwrap_or(""),
     );
+    // THE NAME OF THAT HERD ("Red Deer"), resolved by the sim at launch and carried for the party's
+    // life — what the HUD renders for the quarry, while the id above stays the key it addresses
+    // commands by. It exists because the herd list the client used to join the id against is
+    // fog-filtered and extinction-pruned, and a detached party is not a vision source, so a party's
+    // own target routinely leaves that list and left the raw id on screen (issue #378). "" for a
+    // scout or a resident band.
+    let _ = dict.insert(
+        "expedition_target_species",
+        cohort.expeditionTargetSpecies().unwrap_or(""),
+    );
     // WHERE THE RAID STOPS, as a fraction of the herd's carrying capacity — the launched party's
     // orders (`docs/plan_harvest_floor.md`), replacing the retired `expeditionHuntPolicy` string.
     // `1.0` on a scout or a resident band: they harvest no herd, and an absent floor must not read as

@@ -498,6 +498,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_mission,
         expedition_phase,
         expedition_target_herd,
+        expedition_target_species,
         expedition_floor,
         home_band_entity,
         expedition_announced,
@@ -510,6 +511,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             exp.mission.as_str().to_string(),
             exp.phase.as_str().to_string(),
             exp.mission.target_herd().to_string(),
+            exp.mission.target_species().to_string(),
             exp.mission.hunt_floor(),
             exp.home_band.to_bits(),
             exp.announced,
@@ -519,6 +521,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         ),
         None => (
             false,
+            String::new(),
             String::new(),
             String::new(),
             String::new(),
@@ -736,6 +739,10 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // The two derived halves of the published triple; `working_age` above is the third.
         children_count: age_brackets.children,
         elders_count: age_brackets.elders,
+        // **The name of the quarry, beside the id that keys it.** Appended last (append-only wire
+        // discipline) — the client renders this and joins on `expedition_target_herd` only for the
+        // herd's *live position*, which is the one fact that genuinely needs live telemetry.
+        expedition_target_species,
     }
 }
 

@@ -1452,6 +1452,14 @@ fn spawn_raid_party(
         .resource::<TileRegistry>()
         .index(pos.x, pos.y)
         .expect("the herd's tile resolves");
+    // The name a launched party would carry, resolved off the registry as `outfit_raiding_party` does.
+    // Display-only — this suite measures products, and those resolve through `fauna_id`.
+    let target_species = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(fauna_id)
+        .map(|herd| herd.species.clone())
+        .unwrap_or_default();
     app.world
         .spawn((
             party_cohort(tile, RAID_PARTY),
@@ -1461,6 +1469,7 @@ fn spawn_raid_party(
                 home_band,
                 mission: ExpeditionMission::Hunt {
                     fauna_id: fauna_id.to_string(),
+                    target_species,
                     floor,
                     // This suite measures the raid's PRODUCTS, not its length, so the party fills
                     // its pack exactly as it did before the fill target existed.
