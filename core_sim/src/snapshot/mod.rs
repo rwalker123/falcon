@@ -1400,8 +1400,6 @@ mod tests {
             ],
             last_yields: vec![
                 SourceYield {
-                    trade: 0.0,
-                    realized_trade: 0.0,
                     // A staple gather: no fodder crop in the basket.
                     fodder: 0.0,
                     actual: 2.5,
@@ -1414,11 +1412,9 @@ mod tests {
                     // A continuous source lands the same amount every turn.
                     arrivals: vec![2.5; 3],
                     // A resolved fixture row: the take happened, so its band is a point.
-                    range: YieldRange::certain(2.5, 0.0),
+                    range: YieldRange::certain(2.5),
                 },
                 SourceYield {
-                    trade: 0.0,
-                    realized_trade: 0.0,
                     // A hunt: no animal pays fodder.
                     fodder: 0.0,
                     actual: 0.5,
@@ -1430,7 +1426,7 @@ mod tests {
                     realized: 0.25,
                     // A lumpy hunt: nothing for two turns, then a whole animal.
                     arrivals: vec![0.0, 0.0, 0.75],
-                    range: YieldRange::certain(0.5, 0.0),
+                    range: YieldRange::certain(0.5),
                 },
             ],
             last_pen_feed_upkeep: 0.0,
@@ -1545,11 +1541,7 @@ mod tests {
             state.labor_assignments[0].fodder_yield
         );
         assert_eq!(
-            (
-                state.labor_assignments[0].actual_yield,
-                state.labor_assignments[0].trade_yield
-            ),
-            (0.0, 0.0),
+            state.labor_assignments[0].actual_yield, 0.0,
             "a hay Field's whole product is fodder — this is the row that read +0.00"
         );
         assert_eq!(

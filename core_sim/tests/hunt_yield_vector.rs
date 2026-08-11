@@ -41,7 +41,6 @@ use core_sim::{
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
     MSY_BIOMASS_FRACTION, NO_BUILD_UNDERWAY_DIP, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
-    TRADE_GOODS,
 };
 
 /// Four depths on the intensity dial. Every one of them must pay the species' product vector; none
@@ -255,13 +254,23 @@ fn larder(app: &App, band: bevy::prelude::Entity) -> f32 {
         .unwrap_or(0.0)
 }
 
-/// Trade goods on the producing/receiving band's own `LocalStore` — the account every ongoing
-/// harvest credits, a third key beside `FOOD` on the very store `larder` reads. **Fractional**: it is
-/// fixed-point, so a sub-unit pelt haul accumulates rather than rounding away.
-fn trade_goods(app: &App, band: bevy::prelude::Entity) -> f32 {
+/// **Every material on the producing/receiving band's own `LocalStore`, summed** — the non-food half
+/// of what a take pays, held as batches on the very store `larder` reads. **Fractional**: the batch
+/// store is fixed-point, so a sub-unit pelt haul accumulates rather than rounding away.
+///
+/// A bare sum across materials is the right shape *for these assertions only*: they ask whether a
+/// take banked anything at all, or more than another take did. Which hide it is, and what its
+/// characteristics read, is `materials.rs`'s subject.
+fn materials(app: &App, band: bevy::prelude::Entity) -> f32 {
     app.world
         .get::<PopulationCohort>(band)
-        .map(|c| c.stores.get(TRADE_GOODS).to_f32())
+        .map(|c| {
+            c.stores
+                .materials()
+                .flat_map(|(_, batches)| batches.values())
+                .map(|batch| batch.amount.to_f32())
+                .sum()
+        })
         .unwrap_or(0.0)
 }
 
@@ -273,7 +282,7 @@ fn herd_biomass(app: &App, id: &str) -> f32 {
         .unwrap_or(0.0)
 }
 
-/// One hunting turn on a re-shaped herd: `(food_banked, trade_banked, biomass_killed)`.
+/// One hunting turn on a re-shaped herd: `(food_banked, materials_banked, biomass_killed)`.
 fn hunt_one_turn(display_name: &str, policy: f32, workers: u32) -> (f32, f32, f32) {
     let mut app = spawn_world();
     let (id, pos) = reshape_first_herd(&mut app, display_name);
@@ -282,21 +291,22 @@ fn hunt_one_turn(display_name: &str, policy: f32, workers: u32) -> (f32, f32, f3
     app.world.run_system_once(advance_labor_allocation);
     (
         larder(&app, band),
-        trade_goods(&app, band),
+        materials(&app, band),
         before - herd_biomass(&app, &id),
     )
 }
 
-/// **1. A wolf hunt credits pelts and EXACTLY zero food — on every rung.**
+/// **1. A wolf hunt credits hide and bone and EXACTLY zero food — on every rung.**
 ///
 /// The first `edible = false` species. `provisions_per_biomass` is an explicit `0.0`, which is a
 /// real configured value ("you do not eat me"), not an unset one — so the food component is zero on
-/// every intensity, while the trade component is strictly positive on every intensity. That is the
-/// product/intensity split stated as an assertion.
+/// every intensity, while the **material** account is strictly positive on every intensity. That is
+/// the product/intensity split stated as an assertion. (It read the retired trade scalar until arc
+/// #527; the wolf's payload is the same take's hide and bone, and always physically was.)
 #[test]
 fn a_wolf_hunt_credits_pelts_and_exactly_zero_food_on_every_rung() {
     for policy in EXTRACTIVE {
-        let (food, trade, killed) = hunt_one_turn("Grey Wolf Pack", policy, UNBOUNDED_CREW);
+        let (food, stuff, killed) = hunt_one_turn("Grey Wolf Pack", policy, UNBOUNDED_CREW);
         assert!(
             killed > 0.0,
             "{policy:?}: the harness must actually take something, got {killed} biomass"
@@ -306,28 +316,28 @@ fn a_wolf_hunt_credits_pelts_and_exactly_zero_food_on_every_rung() {
             "{policy:?}: a wolf is not food — the larder must not move (killed {killed})"
         );
         assert!(
-            trade > 0.0,
-            "{policy:?}: a wolf is a pelt — trade goods must be credited (killed {killed})"
+            stuff > 0.0,
+            "{policy:?}: a wolf is a pelt — its materials must be credited (killed {killed})"
         );
     }
 }
 
 /// **2. A deer hunt credits meat AND hide under Sustain** — the rebalance.
 ///
-/// Before this arc only the third rung sold anything (it alone carried the retired 4×
-/// `market.trade_goods_multiplier`); Sustain and Surplus produced no trade goods at all. Now every
-/// harvesting policy sells the species' trade component, so a restrained hunt earns hides too.
+/// Before the yield-vector arc only the deepest rung produced anything beyond meat (it alone carried
+/// the retired 4× `market.trade_goods_multiplier`). Now every harvesting policy pays the species'
+/// whole vector, so a restrained hunt banks hide and bone too.
 #[test]
 fn a_deer_hunt_credits_meat_and_hide_under_sustain() {
-    let (food, trade, killed) = hunt_one_turn("Red Deer", 0.5, UNBOUNDED_CREW);
+    let (food, stuff, killed) = hunt_one_turn("Red Deer", 0.5, UNBOUNDED_CREW);
     assert!(killed > 0.0, "the harness must take something");
     assert!(
         food > 0.0,
         "a Sustain deer hunt still feeds the band: {food}"
     );
     assert!(
-        trade > 0.0,
-        "a Sustain deer hunt now sells hides too (it earned nothing before #337): {trade}"
+        stuff > 0.0,
+        "a Sustain deer hunt banks hide and bone too (it earned nothing beyond meat before): {stuff}"
     );
 }
 
@@ -377,8 +387,8 @@ fn eradicate_pays_a_windfall_and_still_ends_the_herd() {
          vs {sustain_food} (Sustain killed {sustain_killed})"
     );
     assert!(
-        trade_goods(&app, band) > 0.0,
-        "denial sells its hides too — every rung is paid the species' vector"
+        materials(&app, band) > 0.0,
+        "denial banks its hides too — every rung is paid the species' whole vector"
     );
     let left = herd_biomass(&app, &id);
     assert!(
@@ -393,16 +403,16 @@ fn eradicate_pays_a_windfall_and_still_ends_the_herd() {
     );
 }
 
-/// **5. The larder ledger still closes for a wolf hunt — trade is NOT food income.**
+/// **5. The larder ledger still closes for a wolf hunt — materials are NOT food income.**
 ///
 /// `foodIncome` is `Σ SourceYield::actual`, and the identity
 /// `larder_delta == food_income − food_consumption − pen_feed_upkeep` is what makes the band's food
-/// panel honest. A hunt that now credits a *second* currency must not leak it into that sum: a
-/// wolf's take contributes `0` to `food_income` while filling the band's trade store. Run
-/// with only the labor system, so consumption and pen feed are both `0` and the identity reduces to
+/// panel honest. A hunt that credits a *second* account must not leak it into that sum: a wolf's
+/// take contributes `0` to `food_income` while filling the band's material batches. Run with only
+/// the labor system, so consumption and pen feed are both `0` and the identity reduces to
 /// `larder_delta == Σ actual`.
 #[test]
-fn the_larder_ledger_excludes_trade_goods_for_a_wolf_hunt() {
+fn the_larder_ledger_excludes_materials_for_a_wolf_hunt() {
     let mut app = spawn_world();
     let (id, pos) = reshape_first_herd(&mut app, "Grey Wolf Pack");
     let band = spawn_hunters(&mut app, pos, &id, 0.15, UNBOUNDED_CREW);
@@ -430,8 +440,8 @@ fn the_larder_ledger_excludes_trade_goods_for_a_wolf_hunt() {
          {food_income}"
     );
     assert!(
-        trade_goods(&app, band) > 0.0,
-        "…while the same take really did earn trade goods, so this is not a no-op hunt"
+        materials(&app, band) > 0.0,
+        "…while the same take really did bank hide and bone, so this is not a no-op hunt"
     );
 }
 
@@ -469,18 +479,21 @@ fn a_hunt_row_reports_no_fodder_because_no_animal_pays_it() {
 
 /// **6. A `yields_nothing` species offers Eradicate ALONE.**
 ///
-/// The only pruning rule in the picker: a pure pest, worth neither meat nor pelt, has no meaningful
-/// *rate* at which to collect nothing — the one coherent verb left is *make it stop*. No shipped
-/// species is this today (the wolf trades), so it is pinned on a synthetic config, and it is
-/// asserted through [`core_sim::hunt_policies_for`] — the single seam the `assign_labor` validator
-/// and the snapshot's exported `huntPolicyCeilings` both read, so the two can never become two
-/// lists that disagree.
+/// The only pruning rule in the picker: a pure pest, worth neither meat nor material, has no
+/// meaningful *rate* at which to collect nothing — the one coherent verb left is *make it stop*. No
+/// shipped species is this today (a wolf is a pelt and a bone), so it is pinned on a synthetic
+/// config, and it is asserted through [`core_sim::species_requires_denial`] — the single seam the
+/// `assign_labor` validator and the snapshot both read, so the two can never disagree.
+///
+/// **The synthetic pest must strip the MATERIAL rows as well as the food rate.** Until arc #527 the
+/// second half of "worth nothing" was a trade rate; it is the material list now, and a deer with
+/// `provisions 0` and its hide intact is still worth hunting.
 #[test]
 fn a_yields_nothing_species_may_only_be_worked_at_floor_zero() {
     let mut json: serde_json::Value =
         serde_json::from_str(core_sim::BUILTIN_FAUNA_CONFIG).expect("the builtin parses");
     json["species"]["deer"]["hunt_yield"] =
-        serde_json::json!({ "provisions_per_biomass": 0.0, "trade_goods_per_biomass": 0.0 });
+        serde_json::json!({ "provisions_per_biomass": 0.0, "materials": [] });
     let config =
         FaunaConfig::from_json_str(&json.to_string()).expect("a zero vector is a legal config");
 
@@ -491,45 +504,52 @@ fn a_yields_nothing_species_may_only_be_worked_at_floor_zero() {
         "a worthless quarry may only be worked at floor 0 — there is nothing else to do with it"
     );
 
-    // …and the flags gate the yield COMPONENTS, not the dial: an inedible-but-tradeable species may
-    // be worked at ANY floor, because every depth is a meaningful one at which to collect pelts.
+    // …and the flags gate the yield ACCOUNTS, not the dial: an inedible species that is still made
+    // of something may be worked at ANY floor, because every depth is a meaningful one at which to
+    // collect hides.
     let wolf = config.hunt_yield_for("Grey Wolf Pack");
-    assert!(!wolf.edible() && wolf.tradeable());
+    assert!(!wolf.edible() && wolf.yields_materials);
     assert!(
         !core_sim::species_requires_denial(wolf),
-        "a wolf may be worked at any floor and is paid in pelts"
+        "a wolf may be worked at any floor and is paid in hide and bone"
     );
 }
 
 /// **The derived flags are a comparison against the vector, never a stored second copy** — the
 /// property that keeps "is it food?" from drifting away from "what does it pay?".
 #[test]
-fn edible_and_tradeable_are_derived_from_the_vector() {
+fn edible_and_worth_hunting_are_derived_from_the_vector() {
     let both = HuntYield {
         provisions_per_biomass: 0.02,
-        trade_goods_per_biomass: 0.005,
+        yields_materials: true,
     };
-    assert!(both.edible() && both.tradeable() && !both.yields_nothing());
+    assert!(both.edible() && !both.yields_nothing());
 
     let pelt_only = HuntYield {
         provisions_per_biomass: 0.0,
-        trade_goods_per_biomass: 0.02,
+        yields_materials: true,
     };
-    assert!(!pelt_only.edible() && pelt_only.tradeable() && !pelt_only.yields_nothing());
+    assert!(!pelt_only.edible() && !pelt_only.yields_nothing());
+
+    let meat_only = HuntYield {
+        provisions_per_biomass: 0.02,
+        yields_materials: false,
+    };
+    assert!(meat_only.edible() && !meat_only.yields_nothing());
 
     let pest = HuntYield {
         provisions_per_biomass: 0.0,
-        trade_goods_per_biomass: 0.0,
+        yields_materials: false,
     };
-    assert!(!pest.edible() && !pest.tradeable() && pest.yields_nothing());
+    assert!(!pest.edible() && pest.yields_nothing());
 }
 
 // ---------------------------------------------------------------------------------------------------
 // B2 — the forecast and the wire
 // ---------------------------------------------------------------------------------------------------
 
-/// The two shipped species this file contrasts: one that omits `hunt_yield` (so both components fall
-/// back to the globals) and the one that declares an inedible, pelt-bearing vector.
+/// The two shipped species this file contrasts: one that omits `hunt_yield`'s rate (so it falls back
+/// to the global) and the one that declares an inedible, pelt-bearing vector.
 const DEFAULTING_SPECIES: &str = "Red Deer";
 const INEDIBLE_SPECIES: &str = "Grey Wolf Pack";
 
@@ -681,23 +701,23 @@ fn spawn_resident_crew(
 /// The **pre-commit forecast** for this herd/staffing/policy — the assign-time seed
 /// (`hunt_source_yield_preview`), i.e. the pair the client is shown *before* committing. Read before
 /// the turn resolves.
-fn precommit_pair(app: &App, id: &str, policy: f32, workers: u32) -> (f32, f32) {
-    precommit_pair_building(app, id, policy, workers, NO_IMPROVEMENT_UNDERWAY)
+fn precommit_food(app: &App, id: &str, policy: f32, workers: u32) -> f32 {
+    precommit_food_building(app, id, policy, workers, NO_IMPROVEMENT_UNDERWAY)
 }
 
-/// [`precommit_pair`] at the band's **live** output multiplier rather than the content-band `1.0`.
+/// [`precommit_food`] at the band's **live** output multiplier rather than the content-band `1.0`.
 ///
 /// A single-turn fixture can assume a content band; a multi-turn one cannot — morale moves under a
-/// run, and the resolved take applies the multiplier while [`precommit_pair`] does not. Reading the
+/// run, and the resolved take applies the multiplier while [`precommit_food`] does not. Reading the
 /// exported cohort's own multiplier is what `expedition_hunt`'s band-preview sweep already does, and
 /// it keeps a multi-turn comparison about the fight rather than about wellbeing.
-fn precommit_pair_at_band_morale(
+fn precommit_food_at_band_morale(
     app: &App,
     id: &str,
     band: bevy::prelude::Entity,
     policy: f32,
     workers: u32,
-) -> (f32, f32) {
+) -> f32 {
     let multiplier = {
         let snapshot = app
             .world
@@ -734,17 +754,17 @@ fn precommit_pair_at_band_morale(
             .get()
             .forecast_range_sigmas,
     );
-    (seed.actual, seed.trade)
+    seed.actual
 }
 
-/// [`precommit_pair`] with a build verb in flight.
-fn precommit_pair_building(
+/// [`precommit_food`] with a build verb in flight.
+fn precommit_food_building(
     app: &App,
     id: &str,
     policy: f32,
     workers: u32,
     improvement: Option<Improvement>,
-) -> (f32, f32) {
+) -> f32 {
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let labor = app.world.resource::<LaborConfigHandle>().get();
@@ -767,15 +787,15 @@ fn precommit_pair_building(
             .get()
             .forecast_range_sigmas,
     );
-    (seed.actual, seed.trade)
+    seed.actual
 }
 
 /// A content band's output multiplier — morale `1.0`, so the forecast and the take share it.
 const FORECAST_OUTPUT_MULTIPLIER: f32 = 1.0;
 
-/// The **exported** `(actualYield, tradeYield)` for a band's single assignment, read off the shipped
-/// snapshot rather than the in-process `SourceYield`.
-fn exported_pair(app: &App, band: bevy::prelude::Entity) -> (f32, f32) {
+/// The **exported** `actualYield` for a band's single assignment, read off the shipped snapshot
+/// rather than the in-process `SourceYield`.
+fn exported_food(app: &App, band: bevy::prelude::Entity) -> f32 {
     let snapshot = app
         .world
         .resource::<SnapshotHistory>()
@@ -791,11 +811,11 @@ fn exported_pair(app: &App, band: bevy::prelude::Entity) -> (f32, f32) {
         .labor_assignments
         .first()
         .expect("its one Hunt assignment is exported");
-    (row.actual_yield, row.trade_yield)
+    row.actual_yield
 }
 
 /// The **exported** telemetry row for a band's single assignment — the whole shipped record, for the
-/// staffing signals (`workersNeeded` / `wastedYield`) [`exported_pair`] does not carry.
+/// staffing signals (`workersNeeded` / `wastedYield`) [`exported_food`] does not carry.
 fn exported_row(app: &App, band: bevy::prelude::Entity) -> sim_runtime::LaborAssignmentState {
     let snapshot = app
         .world
@@ -848,7 +868,7 @@ fn exported_herd(app: &App, id: &str) -> sim_runtime::HerdTelemetryState {
 /// **escapement ceiling** to bind instead. The take is `min` of the two, so an agreement that held
 /// on only one side would be an agreement about one term rather than about the take.
 #[test]
-fn the_forecast_equals_the_paid_take_in_both_products_on_the_wire() {
+fn the_forecast_equals_the_paid_take_on_the_wire() {
     let mut saw_labor_bound = false;
     let mut saw_escapement_bound = false;
     for species in [DEFAULTING_SPECIES, INEDIBLE_SPECIES] {
@@ -873,32 +893,35 @@ fn the_forecast_equals_the_paid_take_in_both_products_on_the_wire() {
                         saw_escapement_bound = true;
                     }
                 }
-                let forecast = precommit_pair(&app, &id, policy, crew);
+                let forecast = precommit_food(&app, &id, policy, crew);
                 let band = spawn_resident_hunters(&mut app, pos, &id, policy, crew);
 
                 app.world.run_system_once(advance_labor_allocation);
                 recapture_snapshot_in_place(&mut app.world);
-                let paid = exported_pair(&app, band);
+                let paid = exported_food(&app, band);
 
                 assert!(
-                    (forecast.0 - paid.0).abs() <= YIELD_EPSILON,
-                    "{species} {policy:?} × {crew} hunters: forecast FOOD {} must equal the paid {}",
-                    forecast.0,
-                    paid.0
+                    (forecast - paid).abs() <= YIELD_EPSILON,
+                    "{species} {policy:?} × {crew} hunters: forecast FOOD {forecast} must equal \
+                     the paid {paid}"
                 );
-                assert!(
-                    (forecast.1 - paid.1).abs() <= YIELD_EPSILON,
-                    "{species} {policy:?} × {crew} hunters: forecast TRADE {} must equal the paid {}",
-                    forecast.1,
-                    paid.1
-                );
-                // …and the test must not be vacuously comparing two zeros: every rung of every
-                // species here pays *something*, in one currency or the other, at every staffing.
-                assert!(
-                    paid.0 > 0.0 || paid.1 > 0.0,
-                    "{species} {policy:?} × {crew} hunters: the harness must actually take \
-                     something ({paid:?})"
-                );
+                // …and the test must not be vacuously comparing two zeros. The EDIBLE species pays
+                // food at every rung and every staffing; the inedible one honestly pays none at any,
+                // and asserting that is a claim rather than an exemption — its real payload is hide
+                // and bone, which the forecast does not project (arc #527).
+                if species == INEDIBLE_SPECIES {
+                    assert_eq!(
+                        paid, 0.0,
+                        "{species} {policy:?} × {crew} hunters: an inedible quarry pays no food, \
+                         and the row must say so"
+                    );
+                } else {
+                    assert!(
+                        paid > 0.0,
+                        "{species} {policy:?} × {crew} hunters: the harness must actually take \
+                         something ({paid})"
+                    );
+                }
             }
         }
     }
@@ -954,24 +977,16 @@ fn the_forecast_equals_the_paid_take_across_a_multi_turn_kill() {
         };
         // The pre-commit quote for THIS turn's herd state — banked wounds and all — at the band's
         // live morale, since a multi-turn run cannot assume a content band.
-        let forecast = precommit_pair_at_band_morale(&app, &id, band, STRIP_IT_BARE, crew);
+        let forecast = precommit_food_at_band_morale(&app, &id, band, STRIP_IT_BARE, crew);
         app.world.run_system_once(advance_labor_allocation);
         recapture_snapshot_in_place(&mut app.world);
-        let paid = exported_pair(&app, band);
+        let paid = exported_food(&app, band);
 
         assert!(
-            (forecast.0 - paid.0).abs() <= YIELD_EPSILON,
-            "turn {turn}: forecast FOOD {} must equal the paid {}",
-            forecast.0,
-            paid.0
+            (forecast - paid).abs() <= YIELD_EPSILON,
+            "turn {turn}: forecast FOOD {forecast} must equal the paid {paid}"
         );
-        assert!(
-            (forecast.1 - paid.1).abs() <= YIELD_EPSILON,
-            "turn {turn}: forecast TRADE {} must equal the paid {}",
-            forecast.1,
-            paid.1
-        );
-        if paid.0 > 0.0 {
+        if paid > 0.0 {
             saw_kill_turn = true;
         } else {
             saw_wait_turn = true;
@@ -1033,26 +1048,17 @@ fn the_forecast_equals_the_paid_take_with_a_build_in_flight_at_every_floor() {
                             saw_escapement_bound = true;
                         }
                     }
-                    let forecast = precommit_pair_building(&app, &id, floor, crew, improvement);
+                    let forecast = precommit_food_building(&app, &id, floor, crew, improvement);
                     let band = spawn_resident_crew(&mut app, pos, &id, floor, crew, improvement);
 
                     app.world.run_system_once(advance_labor_allocation);
                     recapture_snapshot_in_place(&mut app.world);
-                    let paid = exported_pair(&app, band);
+                    let paid = exported_food(&app, band);
 
                     assert!(
-                        (forecast.0 - paid.0).abs() <= YIELD_EPSILON,
-                        "{species} floor {floor} + {improvement:?} × {crew}: forecast FOOD {} must \
-                         equal the paid {}",
-                        forecast.0,
-                        paid.0
-                    );
-                    assert!(
-                        (forecast.1 - paid.1).abs() <= YIELD_EPSILON,
-                        "{species} floor {floor} + {improvement:?} × {crew}: forecast TRADE {} must \
-                         equal the paid {}",
-                        forecast.1,
-                        paid.1
+                        (forecast - paid).abs() <= YIELD_EPSILON,
+                        "{species} floor {floor} + {improvement:?} × {crew}: forecast FOOD \
+                         {forecast} must equal the paid {paid}"
                     );
                 }
             }
@@ -1075,7 +1081,7 @@ fn the_forecast_equals_the_paid_take_with_a_build_in_flight_at_every_floor() {
                 spawn_resident_crew(&mut app, pos, &id, floor, LABOR_BOUND_CREW, improvement);
             app.world.run_system_once(advance_labor_allocation);
             recapture_snapshot_in_place(&mut app.world);
-            exported_pair(&app, band).0
+            exported_food(&app, band)
         };
         let harvesting = take(NO_IMPROVEMENT_UNDERWAY);
         let taming = take(Some(Improvement::Tame));
@@ -1091,14 +1097,20 @@ fn the_forecast_equals_the_paid_take_with_a_build_in_flight_at_every_floor() {
     }
 }
 
-/// **8. A wolf's exported per-policy ceilings read ZERO food and NON-ZERO trade, on all four rungs.**
+/// **8. A wolf's exported per-policy ceilings read ZERO food at every floor, and it is still
+/// huntable at every one of them.**
 ///
 /// The wire-level statement of *product × intensity*: the rungs are a pressure ladder over one
-/// species' vector, so an inedible quarry offers every rung — each a meaningful rate at which to
-/// collect pelts — and every one of them is honestly `0` food. Also pins the trip-estimate flags,
-/// which say the same thing for an expedition: "pelts, no meat", never "denial mission".
+/// species' vector, so an inedible quarry offers every rung — each a meaningful depth at which to
+/// collect **hides** — and every one of them is honestly `0` food.
+///
+/// **The "and it is still huntable" half is what the retirement of the trade axis put at risk**
+/// (arc #527): the wolf's whole scalar payload was the trade rate, so a picker rule that tested
+/// only food would have pruned every floor but denial off it. It reads its material rows instead,
+/// which is what `species_requires_denial` and `HuntTripRow::delivers_food` are asserted against
+/// here.
 #[test]
-fn a_wolves_exported_rate_reads_no_food_and_real_trade_at_every_floor() {
+fn a_wolves_exported_rate_reads_no_food_and_it_is_still_huntable_at_every_floor() {
     let (mut app, id, _pos) = headless_with_species(INEDIBLE_SPECIES);
     reveal_herd(&mut app, &id);
     recapture_snapshot_in_place(&mut app.world);
@@ -1111,14 +1123,20 @@ fn a_wolves_exported_rate_reads_no_food_and_real_trade_at_every_floor() {
         exported.provisions_per_biomass, 0.0,
         "a wolf is not food — its exported food rate must be 0"
     );
+    // **The species is nonetheless worth working at every depth**, and that is a fact about its
+    // material rows rather than about any rate on this row.
+    let hunt_yield = app
+        .world
+        .resource::<FaunaConfigHandle>()
+        .get()
+        .hunt_yield_for(INEDIBLE_SPECIES);
     assert!(
-        exported.trade_per_biomass > 0.0,
-        "a wolf is a pelt — its exported trade rate must be positive, got {}",
-        exported.trade_per_biomass
+        hunt_yield.yields_materials && !core_sim::species_requires_denial(hunt_yield),
+        "a wolf is a pelt and a bone, so every floor is a meaningful depth to work it at"
     );
     // **Composed at every floor the herd actually stands above.** A floor above the standing stock
-    // composes an honest zero in *both* accounts — that is the escapement rule, not a wolf fact — so
-    // the sweep is over the floors that have room, with a liveness bound so it cannot be empty.
+    // composes an honest zero — that is the escapement rule, not a wolf fact — so the sweep is over
+    // the floors that have room, with a liveness bound so it cannot be empty.
     let standing_fraction = exported.biomass / exported.carrying_capacity;
     let mut saw_room = false;
     for floor in EXTRACTIVE {
@@ -1134,8 +1152,8 @@ fn a_wolves_exported_rate_reads_no_food_and_real_trade_at_every_floor() {
         }
         saw_room = true;
         assert!(
-            room * exported.trade_per_biomass > 0.0,
-            "floor {floor}: …and where there IS room, the composed trade ceiling is real"
+            room > 0.0,
+            "floor {floor}: …and where there IS room, the herd really stands above it"
         );
     }
     assert!(
@@ -1159,9 +1177,9 @@ fn a_wolves_exported_rate_reads_no_food_and_real_trade_at_every_floor() {
         .cloned()
         .expect("the herd is in the snapshot");
 
-    // The expedition side says the same thing with two flags rather than two numbers. **Asked for
-    // rather than exported**: the pre-launch table is retired, so the sweep over floors is the
-    // caller's now instead of the capture's.
+    // The expedition side says the same thing with a flag rather than a number. **Asked for rather
+    // than exported**: the pre-launch table is retired, so the sweep over floors is the caller's now
+    // instead of the capture's.
     let kit_id = app
         .world
         .resource::<core_sim::EquipmentConfigHandle>()
@@ -1196,8 +1214,9 @@ fn a_wolves_exported_rate_reads_no_food_and_real_trade_at_every_floor() {
             row.floor
         );
         assert!(
-            row.delivers_trade,
-            "floor {}: …but it does bring home pelts — the flag that keeps it from reading as denial",
+            row.animals_taken > 0,
+            "floor {}: …but it does bring animals down — the reading that keeps a wolf raid from \
+             looking like a raid nobody should send",
             row.floor
         );
         seen += 1;
@@ -1211,20 +1230,21 @@ fn a_wolves_exported_rate_reads_no_food_and_real_trade_at_every_floor() {
     // `huntPerWorkerProvisions` is species-blind by construction — see its doc — which is exactly why
     // a band preview must clamp with THESE.)
     assert_eq!(herd.per_worker_yield, 0.0, "no food per hunter on a wolf");
-    assert!(herd.per_worker_trade > 0.0, "pelts per hunter on a wolf");
     assert_eq!(herd.food_per_animal, 0.0, "a wolf is worth no food");
+    // …and the CREW half of the same question is still answerable, which is exactly why
+    // `perWorkerBiomass` is on the wire: the food quotient a client would otherwise divide is `0/0`.
     assert!(
-        herd.trade_per_animal > 0.0,
-        "…but one wolf is worth a pelt — the only quantum it has"
+        herd.per_worker_biomass > 0.0,
+        "a hunter still carries wolf biomass home — the term a crew count divides by"
     );
 }
 
-/// **9. A composed ceiling carries the windfall at floor `0`, in both currencies.**
+/// **9. A composed ceiling carries the windfall at floor `0`.**
 ///
 /// Denial once quoted a zeroed food row, on the premise it carries nothing home — the premise #337
 /// reversed. There is no row to zero any more: the client composes `max(0, B − f·K) × rate` from the
 /// exported per-biomass vector (`docs/plan_harvest_floor.md` §5), so floor `0` is simply the whole
-/// standing stock and must top the ladder in **both** accounts.
+/// standing stock and must top the ladder.
 #[test]
 fn a_composed_ceiling_carries_the_windfall_at_floor_zero() {
     let (mut app, id, _pos) = headless_with_species(DEFAULTING_SPECIES);
@@ -1233,12 +1253,9 @@ fn a_composed_ceiling_carries_the_windfall_at_floor_zero() {
 
     let herd = exported_herd(&app, &id);
     // THE CLIENT'S OWN COMPOSITION, from the three terms the wire publishes.
-    let ceiling_at = |floor: f32| -> (f32, f32) {
+    let ceiling_at = |floor: f32| -> f32 {
         let room = (herd.biomass - floor * herd.carrying_capacity).max(0.0);
-        (
-            room * herd.provisions_per_biomass,
-            room * herd.trade_per_biomass,
-        )
+        room * herd.provisions_per_biomass
     };
 
     // Two floors the herd genuinely stands above, derived from the exported stock so the comparison
@@ -1251,22 +1268,12 @@ fn a_composed_ceiling_carries_the_windfall_at_floor_zero() {
     let strip = ceiling_at(0.0);
     let deep = ceiling_at(standing_fraction * 0.5);
     assert!(
-        strip.0 > 0.0,
-        "floor 0 composes the windfall, not a zeroed denial row: {}",
-        strip.0
+        strip > 0.0,
+        "floor 0 composes the windfall, not a zeroed denial row: {strip}"
     );
     assert!(
-        strip.0 > deep.0,
-        "floor 0 takes the whole stock, so it must top the ladder: {} vs {}",
-        strip.0,
-        deep.0
-    );
-    // Every depth sells, so the trade ladder is ordered the same way — one vector, one dial.
-    assert!(
-        strip.1 > deep.1 && deep.1 > 0.0,
-        "the trade ceilings ride the same dial: {} vs {}",
-        strip.1,
-        deep.1
+        strip > deep && deep > 0.0,
+        "floor 0 takes the whole stock, so it must top the ladder: {strip} vs {deep}"
     );
 }
 
@@ -1468,7 +1475,6 @@ fn spawn_raid_party(
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
                 pending_reveal: Vec::new(),
-                carried_trade: 0.0,
                 kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Hunt),
             },
         ))
@@ -1481,7 +1487,6 @@ struct ExportedRaid {
     animals_taken: u32,
     delivered_food: f32,
     wasted_food: f32,
-    delivered_trade: f32,
     bound: String,
 }
 
@@ -1529,7 +1534,6 @@ fn exported_raid_row(app: &mut App, id: &str, floor: f32) -> ExportedRaid {
         animals_taken: row.animals_taken,
         delivered_food: row.delivered_food,
         wasted_food: row.wasted_food,
-        delivered_trade: row.delivered_trade,
         bound: row.bound,
     }
 }
@@ -1538,15 +1542,14 @@ fn exported_raid_row(app: &mut App, id: &str, floor: f32) -> ExportedRaid {
 const FIXTURE_BAND_ID: u64 = 1;
 
 /// The **exported** pre-launch raid promise for `(policy, RAID_PARTY)` — the very row the client's
-/// "delivers ≈X over ≈N turns · ⇄ ~Y trade goods" line reads — as
-/// `(turns_to_fill, delivered_food, delivered_trade)`.
-fn exported_raid_promise(app: &mut App, id: &str, floor: f32) -> (u32, f32, f32) {
+/// "delivers ≈X over ≈N turns" line reads — as `(turns_to_fill, delivered_food, animals_taken)`.
+fn exported_raid_promise(app: &mut App, id: &str, floor: f32) -> (u32, f32, u32) {
     let row = exported_raid_row(app, id, floor);
-    (row.turns_to_fill, row.delivered_food, row.delivered_trade)
+    (row.turns_to_fill, row.delivered_food, row.animals_taken)
 }
 
 /// Run one raid to its first delivery and report `(food_landed_in_the_band_larder,
-/// trade_goods_landed_in_the_same_band_store)`.
+/// materials_landed_in_the_same_band_store)`.
 ///
 /// Drives the **real** systems in the real order (`advance_herds` → `advance_band_movement` →
 /// `advance_expeditions`) and stops on the party's first completed trip: either it folded back
@@ -1572,21 +1575,22 @@ fn run_one_raid(
             left_hunting = true;
         }
     }
-    (larder(app, home), trade_goods(app, home))
+    (larder(app, home), materials(app, home))
 }
 
-/// **10. A hunting EXPEDITION delivers BOTH products it promised — wolf and deer.**
+/// **10. A hunting EXPEDITION delivers the food it promised, and brings its hides home too.**
 ///
-/// The raid arm used to credit `FOOD ONLY` while its forecast already advertised `deliveredTrade`,
-/// so the outfit UI promised pelts the sim never paid and a **wolf raid came home with literally
-/// nothing** (`provisions_per_biomass == 0`). That is `forecast == actual` — Decision 8, the one
-/// invariant this arc rests on — broken on the expedition path, and this is its guard.
+/// The raid arm used to credit `FOOD ONLY`, so a **wolf raid came home with literally nothing**
+/// (`provisions_per_biomass == 0`). That is `forecast == actual` — the one invariant this arc rests
+/// on — broken on the expedition path, and this is its guard.
 ///
-/// Asserted against the **exported** `huntTripEstimates` row (the client's own pre-launch readout),
-/// not an in-process forecast, and against the two accounts the sim really credits: the home band's
-/// store — provisions under `FOOD`, pelts under `TRADE_GOODS`.
+/// Asserted against the **answered** pre-launch row (the client's own readout), not an in-process
+/// forecast, and against the two accounts the sim really credits on the home band's store:
+/// provisions under `FOOD`, and material batches beside them. **The material half is a liveness
+/// claim rather than an equality**, because the raid projection is scalar-only (arc #527) — it has
+/// no per-material promise to compare against, which is the gap that arc left open.
 #[test]
-fn a_hunting_expedition_delivers_both_products_it_forecast() {
+fn a_hunting_expedition_delivers_the_food_it_forecast_and_hauls_its_hides() {
     for species in [DEFAULTING_SPECIES, INEDIBLE_SPECIES] {
         let mut raids_compared = 0;
         for policy in [0.5, 0.3, 0.15] {
@@ -1595,12 +1599,12 @@ fn a_hunting_expedition_delivers_both_products_it_forecast() {
             pin_quarry(&mut app, &id);
             reveal_herd(&mut app, &id);
             recapture_snapshot_in_place(&mut app.world);
-            let (turns, promised_food, promised_trade) =
+            let (turns, promised_food, promised_animals) =
                 exported_raid_promise(&mut app, &id, policy);
             let context = format!("{species} {policy:?} raid");
             // **`turnsToFill == 0` = "the raid never completes within `hunt.forecast_horizon_turns`"**
             // — a herd whose regrowth keeps handing the party another whole animal forever. Its
-            // `deliveredFood`/`deliveredTrade` are then *"what the horizon saw"*, not *"what comes
+            // `deliveredFood` is then *"what the horizon saw"*, not *"what comes
             // home"*, because the party never comes home; the client shows such a row without an
             // ETA. `forecast == actual` is a statement about a trip that ENDS, so those rows are
             // out of this pin's scope (the coverage assertion below keeps that from hollowing it).
@@ -1611,22 +1615,19 @@ fn a_hunting_expedition_delivers_both_products_it_forecast() {
 
             let home = spawn_raid_home_band(&mut app, pos);
             let party = spawn_raid_party(&mut app, home, pos, &id, policy);
-            let (landed_food, banked_trade) = run_one_raid(&mut app, party, home);
+            let (landed_food, banked_materials) = run_one_raid(&mut app, party, home);
 
             assert!(
                 (landed_food - promised_food).abs() <= RAID_PAYLOAD_EPSILON,
-                "{context}: the band larder must receive the {promised_food} food the exported \
-                 estimate promised, got {landed_food}"
+                "{context}: the band larder must receive the {promised_food} food the answered \
+                 row promised, got {landed_food}"
             );
+            // …and the test must not be vacuously comparing zeros: a completing raid that promised
+            // animals really banks their hides, on either species.
             assert!(
-                (banked_trade - promised_trade).abs() <= RAID_PAYLOAD_EPSILON,
-                "{context}: the home band must bank the {promised_trade} trade goods the exported \
-                 estimate promised, got {banked_trade}"
-            );
-            // …and the test must not be vacuously comparing zeros: a completing raid really pays.
-            assert!(
-                banked_trade > 0.0,
-                "{context}: the harness must actually earn trade goods (promised {promised_trade})"
+                promised_animals > 0 && banked_materials > 0.0,
+                "{context}: the harness must actually bring animals down and haul their materials \
+                 home (promised {promised_animals} animals, banked {banked_materials})"
             );
         }
         assert!(
@@ -1637,7 +1638,7 @@ fn a_hunting_expedition_delivers_both_products_it_forecast() {
     }
 }
 
-/// **11. An INEDIBLE raid comes home with pelts and exactly zero food.**
+/// **11. An INEDIBLE raid comes home with hides and exactly zero food.**
 ///
 /// The wolf case stated on its own, because it is the one the bug made visible: before the fix this
 /// party returned with nothing at all, and the feed line called a full pack of pelts "EMPTY".
@@ -1648,10 +1649,15 @@ fn an_inedible_raid_comes_home_with_pelts_and_no_food() {
     pin_quarry(&mut app, &id);
     reveal_herd(&mut app, &id);
     recapture_snapshot_in_place(&mut app.world);
-    let (turns, promised_food, promised_trade) = exported_raid_promise(&mut app, &id, 0.5);
+    let (turns, promised_food, promised_animals) = exported_raid_promise(&mut app, &id, 0.5);
     assert_eq!(
         promised_food, 0.0,
         "a wolf is not food — the exported raid promise must be 0 provisions"
+    );
+    assert!(
+        promised_animals > 0,
+        "…and the row must still promise the animals it brings down, or a client has nothing true \
+         to say about a wolf raid at all"
     );
     assert!(
         turns > 0,
@@ -1661,20 +1667,16 @@ fn an_inedible_raid_comes_home_with_pelts_and_no_food() {
 
     let home = spawn_raid_home_band(&mut app, pos);
     let party = spawn_raid_party(&mut app, home, pos, &id, 0.5);
-    let (landed_food, banked_trade) = run_one_raid(&mut app, party, home);
+    let (landed_food, banked_materials) = run_one_raid(&mut app, party, home);
 
     assert_eq!(
         landed_food, 0.0,
         "a wolf hunt adds nothing to the larder — the larder ledger must stay food-only"
     );
     assert!(
-        banked_trade > 0.0,
-        "…but the pelts DO come home: the raid promised {promised_trade} trade goods and banked \
-         {banked_trade}"
-    );
-    assert!(
-        (banked_trade - promised_trade).abs() <= RAID_PAYLOAD_EPSILON,
-        "and it banks exactly what the outfit UI promised"
+        banked_materials > 0.0,
+        "…but the pelts DO come home: the raid promised {promised_animals} animals and banked \
+         {banked_materials} of material"
     );
 }
 
@@ -1695,14 +1697,14 @@ const RAID_WASTE_EPSILON: f32 = 64.0 / core_sim::Scalar::SCALE as f32;
 /// The floor-`0` raid used to pass `f32::INFINITY` as its carry room — "driving the herd extinct is
 /// the point, the meat is incidental" — which made `carried = killed × body_mass`. Two things were
 /// then false at once: its hunt report published `wasted_biomass = 0` for a raid that left a range of
-/// carcasses, and `Expedition::carried_trade` accrued pelts off the whole kill instead of off the
-/// load. Its **exported promise** carried the same lie: on a mammoth herd the row advertised the
-/// whole animal's 16 provisions and zero waste against a pack that holds 3.2.
+/// carcasses, and the retired `Expedition::carried_trade` accrued pelts off the whole kill instead
+/// of off the load. Its **exported promise** carried the same lie: on a mammoth herd the row
+/// advertised the whole animal's 16 provisions and zero waste against a pack that holds 3.2.
 ///
 /// *When* a party stops engaging (`fauna::EngagementStop`, which is what `Deny` changes) and *how
-/// much* it can haul are separate questions. This pins all four components of the answer — food,
-/// pelts, waste and the kill count — against a **real driven party**, on the shipped snapshot row a
-/// client reads, for the one floor no other test in this file covers.
+/// much* it can haul are separate questions. This pins three components of the answer — food, waste
+/// and the kill count — against a **real driven party**, on the answered row a client reads, for the
+/// one floor no other test in this file covers.
 #[test]
 fn a_floor_zero_raid_delivers_and_wastes_what_its_exported_row_promised() {
     let (mut app, id, pos) = headless_with_species(HEAVY_BODIED_SPECIES);
@@ -1756,21 +1758,21 @@ fn a_floor_zero_raid_delivers_and_wastes_what_its_exported_row_promised() {
         .map(|c| c.stores.get(FOOD).to_f32())
         .unwrap_or(0.0)
         + larder(&app, home);
-    let banked_trade = app
+    let banked_materials = app
         .world
-        .get::<Expedition>(party)
-        .map(|e| e.carried_trade)
+        .get::<PopulationCohort>(party)
+        .map(|_| materials(&app, party))
         .unwrap_or(0.0)
-        + trade_goods(&app, home);
+        + materials(&app, home);
     let carried_biomass = carried_food / yields.provisions_per_biomass;
     let wasted_food = (killed_biomass - carried_biomass).max(0.0) * yields.provisions_per_biomass;
 
     // **The liveness half, first** — every equality below would hold trivially on a raid that did
     // nothing at all.
     assert!(
-        carried_food > 0.0 && banked_trade > 0.0,
-        "a strip-it-bare raid banks the windfall it can carry: {carried_food} food, {banked_trade} \
-         trade"
+        carried_food > 0.0 && banked_materials > 0.0,
+        "a strip-it-bare raid banks the windfall it can carry: {carried_food} food, \
+         {banked_materials} of material"
     );
     assert!(
         wasted_food > 0.0,
@@ -1784,11 +1786,7 @@ fn a_floor_zero_raid_delivers_and_wastes_what_its_exported_row_promised() {
         "the exported row promised {} food, the party banked {carried_food}",
         promised.delivered_food
     );
-    assert!(
-        (promised.delivered_trade - banked_trade).abs() <= RAID_PAYLOAD_EPSILON,
-        "the exported row promised {} trade goods, the party banked {banked_trade}",
-        promised.delivered_trade
-    );
+
     assert!(
         (promised.wasted_food - wasted_food).abs() <= RAID_WASTE_EPSILON,
         "the exported row promised {} wasted, the raid wasted {wasted_food}",
@@ -1871,7 +1869,7 @@ fn the_exported_terms_reproduce_the_engagement_bounded_take() {
     recapture_snapshot_in_place(&mut app.world);
 
     let herd = exported_herd(&app, &id);
-    let paid = exported_pair(&app, band).0;
+    let paid = exported_food(&app, band);
 
     assert!(
         herd.engage_rate > 0.0,

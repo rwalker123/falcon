@@ -27,7 +27,7 @@ use bevy::math::UVec2;
 
 use core_sim::{
     build_headless_app, spawn_initial_world, FactionInventory, InventoryEntry, PopulationCohort,
-    SimulationConfig, Tile, TileRegistry, TRADE_GOODS,
+    SimulationConfig, Tile, TileRegistry,
 };
 
 /// Map dimensions for the runs. Smaller than the shipped standard (80×52) because these tests care
@@ -118,12 +118,18 @@ fn stockpile_total(app: &bevy::prelude::App) -> i64 {
 /// shipped profile, which grants nothing — see the module header.
 const TEST_STOCKPILE: i64 = 40;
 
+/// **A commodity key the sim has no opinion about**, deliberately: what is under test is the
+/// re-grant seam, and `seed_starting_inventory` is commodity-generic. It used to be the `TRADE_GOODS`
+/// key, which is retired (arc #527) — and naming a live key would let a future consumer of that key
+/// quietly change what this test measures.
+const TEST_STOCKPILE_ITEM: &str = "test_stockpile_item";
+
 #[test]
 fn second_worldgen_pass_does_not_re_grant_starting_inventory() {
     let mut app = app_on_test_map();
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.start_profile_overrides.inventory = vec![InventoryEntry {
-        item: TRADE_GOODS.to_string(),
+        item: TEST_STOCKPILE_ITEM.to_string(),
         quantity: TEST_STOCKPILE,
     }];
     app.world.insert_resource(config);

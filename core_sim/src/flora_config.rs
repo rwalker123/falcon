@@ -129,16 +129,15 @@ impl CultivationCeiling {
     }
 }
 
-/// **What one unit of a species' biomass pays, into three different accounts**
+/// **What one unit of a species' biomass pays, into every account it pays into**
 /// (`docs/plan_flora_roster.md` §3). A harvest of `B` biomass pays `B × yield.*` into provisions
-/// (human food), fodder (animal feed) and trade goods.
+/// (human food) and fodder (animal feed), plus `B × per_biomass` of each material it names.
 ///
-/// The three "roles" the design names are not three subsystems — they are three characteristic
-/// *shapes* of this one vector, which is what lets a future market read a per-species trade rate
-/// without re-cutting the schema. **In F1 every row carries today's flat values verbatim**
-/// (`labor_config`'s `forage.provisions_per_biomass` and `forage.market.trade_goods_per_biomass`,
-/// fodder `0.0`), so today's behaviour is the degenerate case and the slice cannot move the economy.
-/// **Parsed and validated only** — nothing reads it in F1.
+/// **The `trade_goods_per_biomass` scalar is RETIRED** (arc #527). It was written on every harvest
+/// and read by nothing — no `take(TRADE_GOODS)` existed anywhere — while the `materials` list beside
+/// it credited the same take's concrete stuff. A scalar collapses exactly the distinction the
+/// crafting arc exists to keep (cotton fibre and hay straw are both `fibre` and are not the same
+/// thing), so the flattened duplicate went and the vector-valued account stayed.
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct YieldVector {
@@ -146,8 +145,6 @@ pub struct YieldVector {
     pub provisions_per_biomass: f32,
     /// Animal feed per unit biomass — the storable hay a fodder crop grows.
     pub fodder_per_biomass: f32,
-    /// Trade value per unit biomass — what differentiates today's single flat scalar.
-    pub trade_goods_per_biomass: f32,
     /// **What the plant is MADE OF** — bast, cordage fibre — per unit of biomass gathered
     /// (`docs/plan_crafting_and_materials.md` §2). **The same type, and the same shape, the fauna
     /// roster's `hunt_yield.materials` carries**: the yield edge is deliberately neither
@@ -160,19 +157,23 @@ pub struct YieldVector {
 }
 
 impl YieldVector {
-    /// Does this vector pay **anything at all**? An all-zero vector is a plant that produces nothing
-    /// into any account — a row that parses perfectly and can never matter, which is exactly the
+    /// Does this vector pay **anything at all**? A vector paying into no account is a plant that
+    /// produces nothing — a row that parses perfectly and can never matter, which is exactly the
     /// class of silently-inert config [`FloraConfig::validate`] exists to reject.
+    ///
+    /// **A material row counts.** The five cash crops read `0` provisions and `0` fodder and are
+    /// paid entirely in stuff (cotton and flax in fibre; tobacco, tea and grapes in their own
+    /// materials), so testing the two scalars alone would reject every one of them at boot. This is
+    /// the assertion that turns *"did we silently stop paying a species"* into a load failure rather
+    /// than a quiet zero, so it has to count every account a harvest can land in.
     fn pays_something(&self) -> bool {
         self.provisions_per_biomass > 0.0
             || self.fodder_per_biomass > 0.0
-            || self.trade_goods_per_biomass > 0.0
+            || !self.materials.is_empty()
     }
 
     fn is_finite(&self) -> bool {
-        self.provisions_per_biomass.is_finite()
-            && self.fodder_per_biomass.is_finite()
-            && self.trade_goods_per_biomass.is_finite()
+        self.provisions_per_biomass.is_finite() && self.fodder_per_biomass.is_finite()
     }
 }
 
@@ -1002,7 +1003,7 @@ mod tests {
         "role": "staple",
         "cultivation_ceiling": "tended",
         "host_biomes": { "AlluvialPlain": 1.0 },
-        "yield": { "provisions_per_biomass": 0.05, "fodder_per_biomass": 0.0, "trade_goods_per_biomass": 0.005 },
+        "yield": { "provisions_per_biomass": 0.05, "fodder_per_biomass": 0.0 },
         "regrowth_rate": 0.25
     }"#;
 

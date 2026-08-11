@@ -50,8 +50,8 @@ use sim_runtime::{FloraShareInfo, TerrainType};
 use crate::components::Tile;
 use crate::flora_config::{FloraConfig, FloraShare};
 use crate::forage::{
-    commit_fodder_payoff, commit_payoff, commit_trade_payoff, commit_yield_ratio,
-    tile_flora_composition, tile_forage_capacity, wild_payoff,
+    commit_fodder_payoff, commit_payoff, commit_yield_ratio, tile_flora_composition,
+    tile_forage_capacity, wild_payoff,
 };
 use crate::intensification::RungKey;
 use crate::labor_config::{ForageLaborConfig, LaborConfig};
@@ -304,18 +304,6 @@ fn derive_tile_quotes(
                     rung,
                 )
             };
-            let trade_payoff = |rung| {
-                commit_trade_payoff(
-                    tile.position,
-                    tile_capacity,
-                    &share.species,
-                    &composition,
-                    flora,
-                    forage,
-                    FORECAST_OUTPUT_MULTIPLIER,
-                    rung,
-                )
-            };
             FloraShareInfo {
                 species: share.species.clone(),
                 display_name: def.display_name.clone(),
@@ -339,18 +327,16 @@ fn derive_tile_quotes(
                 // so the picker can show hay's value where `sow_yield_ratio` reads 0×. `0` for a
                 // staple (no fodder in its vector) or a plant that cannot Sow here.
                 sow_fodder_payoff: fodder_payoff(RungKey::PlantField),
-                // **What a cash-crop Field of this plant would pay into the TRADE account** (F4) —
-                // the exact trade twin, through the same `commit_trade_payoff` seam the sim's
-                // `field_trade_goods` pays with, so the picker can show a cash crop's value where
-                // `sow_yield_ratio` reads 0×. `0` for hay (no trade in its vector) or a plant that
-                // cannot Sow here — a staple reads the small flat token, never `0`.
-                sow_trade_payoff: trade_payoff(RungKey::PlantField),
-                // **The same two accounts one rung down** (#419) — what a completed TENDED PATCH of
-                // this plant would pay, through `tended_fodder`/`tended_trade_goods`. The Cultivate
-                // row of the picker had only the Field figures above and quoted those, which is a
-                // managed rate standing in for an MSY skim on a rung the player commits 25 turns to.
+                // **The same account one rung down** (#419) — what a completed TENDED PATCH of
+                // this plant would pay, through `tended_fodder`. The Cultivate row of the picker had
+                // only the Field figure above and quoted that, which is a managed rate standing in
+                // for an MSY skim on a rung the player commits 25 turns to.
+                //
+                // **A cash crop quotes NOTHING here since arc #527**, and that is a real gap rather
+                // than a zero: what cotton pays is fibre, and a material yield is a per-material
+                // reading with a characteristic vector — it has no honest per-turn scalar for this
+                // row. `cultivate_payoff` / `sow_payoff` still read its (small) calories.
                 cultivate_fodder_payoff: fodder_payoff(RungKey::PlantTended),
-                cultivate_trade_payoff: trade_payoff(RungKey::PlantTended),
                 // **What this plant is FOR** — the roster's own `role`, shipped verbatim as the
                 // display tag it is. Taken off `def` rather than re-read from the yield vector here,
                 // because a tag whose whole purpose is to be ONE definition must have exactly one

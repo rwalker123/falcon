@@ -109,43 +109,25 @@ pub struct LaborAssignmentState {
     /// (append-only).
     #[serde(default)]
     pub arrival_schedule: Vec<f32>,
-    /// **Trade goods this source produced this turn** — the twin of [`Self::actual_yield`] in the
-    /// other currency (issue #337). Every harvesting policy now sells the species' trade component,
-    /// so this is non-zero on rungs that earned nothing before, and it is the ONLY thing a wolf hunt
-    /// produces. Render a trade line **only when `> 0`**.
-    ///
-    /// **NOT food income.** `PopulationCohortState::food_income` stays `Σ actual_yield`; folding this
-    /// in would break the pinned larder identity (trade goods credit the faction stockpile, never the
-    /// larder).
-    #[serde(default)]
-    pub trade_yield: f32,
-    /// **The steady forward-projected trade/turn** — the twin of [`Self::realized_yield`].
-    ///
-    /// `0.0` on every **forage** source: the plant web's trade *projection* is a known gap (#337
-    /// vectorised the animal web), while the trade a gather actually earned *is* reported in
-    /// [`Self::trade_yield`]. There is deliberately no trade *arrival schedule* — see
-    /// [`Self::arrival_schedule`].
-    #[serde(default)]
-    pub realized_trade_yield: f32,
-    /// **Fodder this source produced this turn** — the third account beside [`Self::actual_yield`]
-    /// and [`Self::trade_yield`] (issue #449), and exactly the `min(production, collection)` the
+    // **RETIRED: `trade_yield` / `realized_trade_yield`** (arc #527), with the trade-goods axis they
+    // reported. The wire slots `tradeYield` / `realizedTradeYield` are `(deprecated)` in place.
+    /// **Fodder this source produced this turn** — the second account beside [`Self::actual_yield`]
+    /// (issue #449), and exactly the `min(production, collection)` the
     /// band's `FODDER` store was credited with, the wild credit's *Foddering* knowledge gate
     /// included: a gated-off row reports `0.0` because the band was paid `0.0`. Reported, never
     /// recomputed.
     ///
     /// **Plant-only, structurally rather than by omission**: no animal pays fodder, so every hunt row
     /// is an honest `0.0`. What it exists for is the opposite case — a sown **hay Field**
-    /// (`flora_config.json`'s `hay_grass`: no provisions, no trade, positive fodder) whose compact
+    /// (`flora_config.json`'s `hay_grass`: no provisions, positive fodder) whose compact
     /// readout said `+0.00` while it fed the band's herds every turn.
     ///
-    /// **NOT food income**, the same rule [`Self::trade_yield`] carries: `food_income` stays
-    /// `Σ actual_yield`; fodder credits the band's `FODDER` store and never touches the larder.
+    /// **NOT food income**: `food_income` stays `Σ actual_yield`; fodder credits the band's `FODDER`
+    /// store and never touches the larder.
     ///
-    /// There is deliberately no `realized_fodder_yield` twin — [`Self::realized_trade_yield`] exists
-    /// because the *animal* web projects a steady rate, and fodder is paid by the *plant* web alone,
-    /// whose projection is the very gap that field is already `0.0` for. Read this actual, exactly as
-    /// a client already falls back to [`Self::trade_yield`] on every forage source. Appended
-    /// (append-only).
+    /// There is deliberately no `realized_fodder_yield` twin — fodder is paid by the *plant* web
+    /// alone, whose forward projection is food-only, so a projected-fodder field would be a constant
+    /// zero on the only web that can pay it. Read this actual. Appended (append-only).
     #[serde(default)]
     pub fodder_yield: f32,
     /// **The band [`Self::actual_yield`] sits in the middle of** — *"6–11, likely 9"*
@@ -167,14 +149,8 @@ pub struct LaborAssignmentState {
     /// The optimistic bound — see [`Self::actual_yield_low`].
     #[serde(default)]
     pub actual_yield_high: f32,
-    /// The trade-goods twin of [`Self::actual_yield_low`], carried because the forecast is a **pair**
-    /// everywhere else (#337): a wolf's food band is honestly all-zero, so a food-only range could
-    /// not state its take at all.
-    #[serde(default)]
-    pub trade_yield_low: f32,
-    /// The optimistic bound on the trade component — see [`Self::trade_yield_low`].
-    #[serde(default)]
-    pub trade_yield_high: f32,
+    // **RETIRED: `trade_yield_low` / `trade_yield_high`** (arc #527). The wire slots
+    // `tradeYieldLow` / `tradeYieldHigh` are `(deprecated)` in place.
     /// **What this crew is BUILDING on the source** — the second, independent axis of an assignment
     /// (issue #442, `docs/plan_investment_rung_toggle.md`): `""` | `"cultivate"` | `"sow"` |
     /// `"tame"` | `"corral"`.
@@ -420,15 +396,10 @@ pub struct PopulationCohortState {
     pub pending_reveal_x: Vec<u32>,
     #[serde(default)]
     pub pending_reveal_y: Vec<u32>,
-    /// Persistence-only: the fractional **trade goods the party is carrying home** — the pelt/hide
-    /// half of every kill's hunt yield, banked until the next drop-off/fold-back settles it into the
-    /// faction stockpile (`docs/plan_hunt_yield_model.md`, issue #337). Not on the FlatBuffers wire:
-    /// the client already reads the raid's *promised* trade off the forecast query's reply
-    /// (`HuntTripRow::delivered_trade`), and this is server state a rollback must not silently zero
-    /// (the provisions half round-trips for free in `stores`, so without this a rewind would drop
-    /// the pelts and only the pelts).
-    #[serde(default)]
-    pub expedition_carried_trade: f32,
+    // **RETIRED: `expedition_carried_trade`** (arc #527). It was persistence-only — the scalar the
+    // party banked its pelts on between kills — and a raid's non-food haul is now **material
+    // batches** in the party's own `stores`, which the checkpoint carries whole. There is nothing
+    // left for a rollback to silently zero.
     /// Hunt expedition only: the carry cap = `party_workers × expedition_config.hunt.per_worker_carry`
     /// (the provisions ceiling the party fills to before auto-Delivering). Capture-only, `0` for
     /// scouts + normal bands. Lets the client render carried/cap + a FULL state.

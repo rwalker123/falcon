@@ -561,13 +561,16 @@ message HuntTripRow {
   // A `HuntTripBound` key: which stop ended the trip.
   string bound = 4;
   bool delivers_food = 5;
-  bool delivers_trade = 6;
+  // RETIRED (arc #527) with the trade-goods yield axis. RESERVED, never freed: concurrent branches
+  // append here, and a shipped field number is immutable.
+  reserved 6;
   // WHOLE animals killed, so uint32 — the same type the retired estimate tables published and the
   // same type `DenialRow.animals_killed` carries. A float here would let a client render "2.0
   // animals" and would type one quantity two ways inside a single reply.
   uint32 animals_taken = 7;
   float delivered_food = 8;
-  float delivered_trade = 9;
+  // RETIRED (arc #527) — see the note on 6. RESERVED, never freed.
+  reserved 9;
   float wasted_food = 10;
 }
 
@@ -605,8 +608,11 @@ message DenialRow {
   uint32 animals_killed = 6;
   float delivered_food = 7;
   float wasted_food = 8;
-  float delivered_trade = 9;
-  float wasted_trade = 10;
+  // RETIRED (arc #527) with the trade-goods yield axis. RESERVED, never freed: concurrent branches
+  // append here, and a shipped field number is immutable. **The gap they leave is real** — on an
+  // inedible quarry a denial raid's whole destruction is in hides, so `wasted_food` reports 0 beside
+  // a large `animals_killed`.
+  reserved 9, 10;
 }
 
 message DenialRaidForecastReply {

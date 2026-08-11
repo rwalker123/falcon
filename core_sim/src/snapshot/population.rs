@@ -29,18 +29,13 @@ pub(crate) fn labor_assignment_to_state(
         // rather than moved so the caller's telemetry row (which the band roll-ups below still read)
         // is untouched.
         arrival_schedule: yields.arrivals.clone(),
-        // The other currency, beside the food it never joins (issue #337).
-        trade_yield: yields.trade,
-        realized_trade_yield: yields.realized_trade,
         // The feed currency (#449) — the value the band's `FODDER` store was credited, published
         // verbatim so the compact readout can state a hay Field's whole product.
         fodder_yield: yields.fodder,
-        // **The band the two scalars above sit in the middle of** (§6.4). A seeded row carries the
+        // **The band the scalar above sits in the middle of** (§6.4). A seeded row carries the
         // real distribution; a resolved row carries the point it paid.
         actual_yield_low: yields.range.low,
         actual_yield_high: yields.range.high,
-        trade_yield_low: yields.range.trade_low,
-        trade_yield_high: yields.range.trade_high,
         // **The second axis** (issue #442) — what this crew is building, `""` for a pure harvest.
         // Written for every kind, because a band-wide role simply never carries one.
         improvement: assignment
@@ -494,7 +489,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_announced,
         pending_reveal_x,
         pending_reveal_y,
-        expedition_carried_trade,
     ) = match expedition {
         Some(exp) => (
             true,
@@ -506,7 +500,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             exp.announced,
             exp.pending_reveal.iter().map(|p| p.x).collect(),
             exp.pending_reveal.iter().map(|p| p.y).collect(),
-            exp.carried_trade,
         ),
         None => (
             false,
@@ -520,7 +513,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             false,
             Vec::new(),
             Vec::new(),
-            0.0,
         ),
     };
     // Resolve the band's settlement stage from the data-driven config (interim input: head-count).
@@ -599,7 +591,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_announced,
         pending_reveal_x,
         pending_reveal_y,
-        expedition_carried_trade,
         expedition_floor,
         expedition_carry_cap,
         // Appended after every earlier-shipped field (append-only wire discipline; matches the
@@ -991,7 +982,6 @@ mod tests {
             phase: ExpeditionPhase::Outbound,
             announced: false,
             pending_reveal: Vec::new(),
-            carried_trade: 0.0,
             kit: crate::equipment_config::EquipmentConfig::builtin()
                 .default_kit(crate::equipment_config::KitJob::Hunt),
         };

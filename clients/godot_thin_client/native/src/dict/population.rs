@@ -389,29 +389,20 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // agree and a range only when they differ — slice 7 authors wariness and the same
             // readout turns on with no further change here.
             //
-            // BOTH CURRENCIES, read as one vector beside their scalars: a wolf's food band is
-            // honestly all-zero, so a food-only range could not state its take at all. Undecoded
-            // until now — see the kit block in `population_to_dict` for the class of bug.
+            // Undecoded until now — see the kit block in `population_to_dict` for the class of bug.
             let _ = entry.insert("actual_yield_low", assignment.actualYieldLow() as f64);
             let _ = entry.insert("actual_yield_high", assignment.actualYieldHigh() as f64);
-            let _ = entry.insert("trade_yield_low", assignment.tradeYieldLow() as f64);
-            let _ = entry.insert("trade_yield_high", assignment.tradeYieldHigh() as f64);
             // The per-source STEADY average: the honest long-run average of this source's lumpy
             // `actual_yield`. Headlines the Band panel row + map label so they don't swing turn-to-turn.
             let _ = entry.insert("realized_yield", assignment.realizedYield() as f64);
-            // The TRADE twins (issue #337): `trade_yield` is this turn's actual trade from the source,
-            // `realized_trade_yield` its steady forward-projected rate — the same actual/steady split
-            // as the food pair above, in the currency a wolf hunt pays exclusively. They are NOT food
-            // income (the cohort's `food_income` stays Σ actual_yield, which is what keeps the larder
-            // identity closed for an inedible quarry); the client renders a trade component ONLY when
-            // it is > 0. `realized_trade_yield` is 0 on every FORAGE source — the plant web's trade
-            // PROJECTION is a documented sim-side gap, while the trade a gather actually earned does
-            // ship in `trade_yield`.
-            let _ = entry.insert("trade_yield", assignment.tradeYield() as f64);
-            let _ = entry.insert(
-                "realized_trade_yield",
-                assignment.realizedTradeYield() as f64,
-            );
+            // **RETIRED: `trade_yield` / `realized_trade_yield` / `trade_yield_low` /
+            // `trade_yield_high`** (arc #527), with the trade-goods yield axis they decoded. The
+            // wire slots are `(deprecated)` and the sim writes nothing to them. What a take pays
+            // beyond food is MATERIALS, which ride `material_batches` on the cohort dict.
+            //
+            // **The GDScript that reads these keys is a separate pass** — they simply stop appearing
+            // in the dict, so a reader falling back to `0` degrades to "no trade line", which is what
+            // it already rendered for a source with no trade.
             // The FEED currency (issue #449) — the third account beside the food and trade pairs
             // above, exactly the fodder the band's `FODDER` store was credited with. PLANT-ONLY:
             // no animal pays fodder, so a hunt row's `0` here is a structural zero rather than a

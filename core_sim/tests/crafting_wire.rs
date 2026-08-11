@@ -1636,11 +1636,31 @@ fn the_per_world_catalogues_round_trip() {
         hide.4, "tanning_frame",
         "the material names the tool that bounds it, which is what the 'No loom' refusal reads"
     );
+    // **Six ship: the three organics and the three uncrafted luxury crops** (arc #527). An
+    // *unreachable* material would still be dead content the catalogue publishes; these three are
+    // *uncrafted* — a plant grows them, a band banks them, and no bench works them yet — so their
+    // published `craft` is the empty string, which is what tells a client there is nothing to make.
+    assert_eq!(published.materials.len(), 6);
+    let uncrafted: Vec<&str> = published
+        .materials
+        .iter()
+        .filter(|(_, craft, ..)| craft.is_empty())
+        .map(|(id, ..)| id.as_str())
+        .collect();
     assert_eq!(
-        published.materials.len(),
-        3,
-        "only the three organics ship — an unreachable material is dead content"
+        uncrafted,
+        vec!["grape", "tea", "tobacco"],
+        "exactly the three luxury crops publish no craft"
     );
+    for (id, craft, _, hand_workable, tool) in &published.materials {
+        if !craft.is_empty() {
+            continue;
+        }
+        assert!(
+            !hand_workable && tool.is_empty(),
+            "{id}: a material nothing works has no bench of any kind — not a bare hand, not a tool"
+        );
+    }
 
     // --- bands -------------------------------------------------------------------------------
     assert_eq!(

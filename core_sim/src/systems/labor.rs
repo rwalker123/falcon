@@ -706,36 +706,12 @@ pub fn advance_labor_allocation(
                             cohort.stores.add(FODDER, fodder);
                             band_fodder_inflow += fodder.to_f32();
                         }
-                        // **The TRADE-GOODS account (Flora Roster F4).** The SAME managed harvest, routed by the yield
-                        // vector's trade component — a staple/hay Field's field_trade_goods is ~0, a cash crop's is
-                        // dominant, so this is commodity-generic with NO role branch. Credited to the band's own
-                        // `TRADE_GOODS` `LocalStore` key, exactly like FOOD/FODDER above: goods sit where they were
-                        // produced until a supply network reaches them (see `TRADE_GOODS`).
-                        let trade_production = field_trade_goods(
-                            patch,
-                            &tile_composition,
-                            &labor.forage,
-                            &flora,
-                            mult_f,
-                        );
-                        let trade_collection = workers as f32
-                            * managed_per_worker_trade(
-                                patch,
-                                &tile_composition,
-                                &labor.forage,
-                                equipped_gather_reference,
-                                &flora,
-                                mult_f,
-                            );
-                        let trade_goods = scalar_from_f32(trade_production.min(trade_collection));
-                        if trade_goods > scalar_zero() {
-                            cohort.stores.add(TRADE_GOODS, trade_goods);
-                        }
                         // **The MATERIAL account of the same managed harvest**
                         // (`docs/plan_crafting_and_materials.md` §2) — a sown flax Field is the whole
-                        // point of sowing flax. It reads the harvest in **biomass**
+                        // point of sowing flax, and since arc #527 it is the **only** thing a cash
+                        // Field produces. It reads the harvest in **biomass**
                         // ([`crate::forage::field_harvest_biomass`]) rather than scaling off one of
-                        // the three currencies, because a cash Field's provisions are `0` and there
+                        // the scalar currencies, because a cash Field's provisions are `0` and there
                         // would be nothing to scale. A Field's basket is 100% its crop, so this
                         // credits exactly that crop's reading and nothing else.
                         crate::materials_config::credit_material_yield(
@@ -777,10 +753,6 @@ pub fn advance_labor_allocation(
                         );
                         yields[idx] = SourceYield {
                             actual: paid,
-                            // A cash crop's harvest really does sell (Flora Roster F4) — the same
-                            // `min(production, collection)` the band's trade store was credited with.
-                            trade: trade_production.min(trade_collection),
-                            realized_trade: crate::forage::PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
                             // **The credited value, not a recomputation** (issue #449) — the very
                             // `fodder` scalar added to the `FODDER` store above, so a hay Field's
                             // compact readout states what the band was actually paid rather than a
@@ -795,10 +767,7 @@ pub fn advance_labor_allocation(
                             // **A RESOLVED row is a fact, not a forecast** — the take has happened, so
                             // the band around it is a point. The distribution belongs to the
                             // pre-commit seed (`fauna::forecast_take_range`).
-                            range: YieldRange::certain(
-                                paid,
-                                trade_production.min(trade_collection),
-                            ),
+                            range: YieldRange::certain(paid),
                             // The crop the crew could not carry: it stood in the field and rotted.
                             // The understaffing signal — "add hands here" — and the reason a rich
                             // Field is a real labor sink rather than a free ration.
@@ -1030,32 +999,9 @@ pub fn advance_labor_allocation(
                             completed.push(idx);
                         }
                     }
-                    // **Every harvest sells its basket's trade component, at the basket's own
-                    // rate.** No factor of any kind rides the depth of the draw: the retired
-                    // `market.trade_goods_multiplier` (4×) paid one drawdown rate a product bonus,
-                    // which re-welded product to intensity — the exact thing the yield vector
-                    // exists to separate (`docs/plan_hunt_yield_model.md` §2). A deep floor still
-                    // out-earns a shallow one on trade, because it *takes more biomass*: that is
-                    // the intensity ladder doing the work, not a bonus.
-                    //
-                    // (Rung 3 keeps its own rule in `field_trade_goods` — a Field is never drawn
-                    // down at all.)
-                    let forage_trade = tended_take_trade_goods(
-                        take,
-                        patch,
-                        &tile_composition,
-                        &flora,
-                        &labor.forage,
-                        mult_f,
-                    );
-                    {
-                        let trade_goods = scalar_from_f32(forage_trade);
-                        if trade_goods > scalar_zero() {
-                            cohort.stores.add(TRADE_GOODS, trade_goods);
-                        }
-                    }
                     // **The MATERIAL account of the same take** (`docs/plan_crafting_and_materials.md`
-                    // §2) — the bast, boll and stem in what the crew carried off the patch. It is
+                    // §2) — the bast, boll and stem in what the crew carried off the patch, and since
+                    // arc #527 the **only** non-food account a drawn-down patch pays. It is
                     // **decomposed** rather than averaged: one credit per species in the basket, each
                     // keeping its own exact reading, because averaging two plants' characteristic
                     // vectors would invent a plant that is not growing there
@@ -1146,15 +1092,6 @@ pub fn advance_labor_allocation(
                     );
                     yields[idx] = SourceYield {
                         actual: provisions.to_f32(),
-                        // **The other currency this gather produced** — the patch basket's trade
-                        // component on the take, at the `Deplete` markup if that was the policy.
-                        // Never summed into `food_income` (`docs/plan_hunt_yield_model.md` §9) —
-                        // that would break the larder identity.
-                        trade: forage_trade,
-                        // The plant web's steady TRADE projection is #337's known gap — see
-                        // `forage::PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`. The trade a gather
-                        // *actually* earned is reported above; only the projection is missing.
-                        realized_trade: crate::forage::PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
                         // **The credited value, not a recomputation** (issue #449) — the very
                         // `fodder` scalar added to the `FODDER` store above, **including the
                         // `fodder_permitted` gate**: a faction that has not learned Foddering was
@@ -1167,7 +1104,7 @@ pub fn advance_labor_allocation(
                         realized: forage_realized,
                         arrivals,
                         // Resolved: a fact, so the band is a point — see the Field arm above.
-                        range: YieldRange::certain(provisions.to_f32(), forage_trade),
+                        range: YieldRange::certain(provisions.to_f32()),
                         wasted: forage_provisions(
                             (production - take).max(0.0),
                             patch_provisions_per_biomass(
@@ -1515,12 +1452,6 @@ pub fn advance_labor_allocation(
                             faction,
                             &mut discovery,
                         );
-                        // Trade goods land in the keeper band's own store, like the food beside them,
-                        // and are scaled off what was **carried home**.
-                        let pen_trade = scalar_from_f32(paid.trade_goods);
-                        if pen_trade > scalar_zero() {
-                            cohort.stores.add(TRADE_GOODS, pen_trade);
-                        }
                         // **A pen changes the INTENSITY, never the PRODUCT** — so the keeper is paid
                         // this herd's own material rows too, off what was carried home, exactly as
                         // the range take is. Penning an animal does not change what it is made of.
@@ -1580,9 +1511,6 @@ pub fn advance_labor_allocation(
                         );
                         yields[idx] = SourceYield {
                             actual: tended,
-                            // A penned wolf pays pelts; the pen changes the intensity, not the product.
-                            trade: paid.trade_goods,
-                            realized_trade: hunt_realized.trade_goods,
                             // No animal pays fodder, so this arm credits the `FODDER` store nothing
                             // and the row reports the same nothing (see [`SourceYield::fodder`]).
                             fodder: 0.0,
@@ -1594,7 +1522,7 @@ pub fn advance_labor_allocation(
                             // Resolved: a fact, so the band is a point. A pen is also the one animal
                             // source with no stochastic stage at all — not stalked, not fought, not
                             // wary — so its forecast is a point too.
-                            range: YieldRange::certain(tended, paid.trade_goods),
+                            range: YieldRange::certain(tended),
                             wasted: pen_yield.apply(take.wasted, mult_f).provisions,
                             // **ONE CREW doing both jobs** ([`source_crew_needed`]): big enough to
                             // mind the heads *and* to haul the meat. The haul side is the **steady
@@ -1828,21 +1756,8 @@ pub fn advance_labor_allocation(
                             }
                         }
                     }
-                    // **EVERY extractive rung sells, including Eradicate.** The retired 4×
-                    // `market.trade_goods_multiplier` on the Deplete rung re-welded product to
-                    // policy — the thing this arc removes. Deplete still out-earns Sustain on trade,
-                    // because it *takes* 2.5× more biomass: that is the intensity ladder doing the
-                    // work, not a per-rung bonus.
-                    //
-                    // Both accounts are fully fractional and band-local. Both scale off the meat
-                    // actually **carried home**, not the animals killed: you cannot trade a hide you
-                    // left on the range.
-                    let trade_goods = scalar_from_f32(paid.trade_goods);
                     if provisions > scalar_zero() {
                         cohort.stores.add(FOOD, provisions);
-                    }
-                    if trade_goods > scalar_zero() {
-                        cohort.stores.add(TRADE_GOODS, trade_goods);
                     }
                     // **The MATERIAL account of the same take** (`docs/plan_crafting_and_materials.md`
                     // §2) — hide, sinew and bone, off the meat **carried home** exactly as the two
@@ -1952,10 +1867,6 @@ pub fn advance_labor_allocation(
                     );
                     yields[idx] = SourceYield {
                         actual: provisions.to_f32(),
-                        // **The other currency this take produced.** Never summed into `food_income`
-                        // (`docs/plan_hunt_yield_model.md` §9) — that would break the larder identity.
-                        trade: paid.trade_goods,
-                        realized_trade: hunt_realized.trade_goods,
                         // No animal pays fodder, so this arm credits the `FODDER` store nothing and
                         // the row reports the same nothing (see [`SourceYield::fodder`]).
                         fodder: 0.0,
@@ -1970,7 +1881,7 @@ pub fn advance_labor_allocation(
                         // Resolved: a fact, so the band is a point — see the Field arm above. This is
                         // the row whose *seeded* twin carries a real distribution once `wariness` or
                         // a sub-1 `hit_chance` is authored.
-                        range: YieldRange::certain(provisions.to_f32(), paid.trade_goods),
+                        range: YieldRange::certain(provisions.to_f32()),
                     };
                     // **The fight already happened — inside the take** (`docs/plan_hunt_through_combat.md`
                     // §0.1). This site used to resolve the party's casualties in a *second*

@@ -233,7 +233,7 @@ Each rider defines its own use of a connection. The connection does not know the
 | **Logistics** | a connection | holds a route; its tiles stay `Seen` while held; climbs the ladder |
 | **Culture** | a connection | **open — §Open items** |
 | **Knowledge** | a connection | **open** — the `openness → leak_timer → partial fragment` model is worth keeping (§As-built) |
-| **Cargo** (goods, food, materials) | a **logistics link** | mass moves, throughput-limited, friction-lossy |
+| **Cargo** (food, fodder, materials) | a **logistics link** | mass moves, throughput-limited, friction-lossy |
 
 Two structural properties belong to the rider, not the connection:
 
@@ -243,27 +243,36 @@ Two structural properties belong to the rider, not the connection:
 - **What it does to the world beyond moving its payload** — logistics keeps tiles `Seen`; the others
   are open.
 
-### The cargo already exists and has nowhere to go
+### The cargo is food, fodder and MATERIALS — and the trade scalar was retired rather than given a sink
 
-`TRADE_GOODS` (`components.rs`) is the **third component of every yield vector**, beside food and
-fodder. Every flora and fauna species carries a `trade_goods_per_biomass`; a cash Field credits the
-band's `stores[TRADE_GOODS]`, as do hunt hides, pens and returning expeditions; the client renders
-the total with its own ⇄ glyph across several surfaces.
+**An earlier draft of this section had it the other way round**, and the correction is worth keeping
+because it is the arc's own reasoning turned against its first premise. That draft argued: the sim
+already pays a `TRADE_GOODS` yield nobody spends — there is no `take(TRADE_GOODS)` anywhere in the
+workspace — so *"cargo over a logistics link is the sink that has been missing"*.
 
-**Nothing anywhere spends them.** There is no `take(TRADE_GOODS)` in the workspace. Trade goods
-accumulate in a band's store from the first cash harvest to the end of the game.
+Both halves of that were true and the conclusion did not follow. **A written-and-never-read account
+is not a resource waiting for a use; it is a duplicate.** Beside every one of those credit sites sat
+a `credit_material_yield` banking the *same* take's concrete hide, bone and fibre as `MaterialBatch`
+es keyed by quality axes — and materials are the real resource model. The trade scalar was the
+flattened copy that model made redundant, and it collapsed exactly the distinction the crafting arc
+exists to preserve: a mammoth hide and a hare pelt are both `hide`, and they are not the same thing.
+Giving it a sink would have built a market on the one representation that cannot tell them apart.
 
-That is not a defect to fix here — it is this arc's reason for existing, stated in the sim's own
-data. The land already pays a non-food, non-fodder yield whose only conceivable use is exchange, and
-exchange is what has no substrate. **Cargo over a logistics link is the sink that has been missing**,
-and #517 is where it arrives.
+So `TRADE_GOODS`, `trade_goods_per_biomass` and every field that carried them are **retired**
+(arc #527, same PR as the demolition above), and **the cargo this arc moves is food, fodder and
+materials**. Five flora species paid the trade scalar and nothing else; cotton and flax already
+carried fibre rows, and tobacco, tea and grapevine now carry materials of their own.
 
-> **This is distinct from the retired `FactionInventory` grant.** The shipped start profile used to
-> hand the faction 40 `trade_goods`, which `apply_trade_goods_bonus` then drained into an openness
-> field on a `TradeLink` that never existed — so the grant was deleted at startup, every game, for no
-> effect. With that system gone the grant would have sat visible and frozen in the Inspector's Map
-> tab forever (nothing reads `FactionInventory` for any decision), so **the grant was retired too**.
-> The band-local store above is untouched: they are two different things that share a name.
+**What that leaves for #517 to build is a market over batches, not over a number** — a shipment
+carries a *rating*, `balance_supply_networks` already pools per `(material id, band key)`, and
+`LocalStore::drain_materials_into` already moves a haul batch by batch without averaging. The
+substrate is in better shape for it than the scalar ever was.
+
+> **The retired `FactionInventory` grant was a different thing that shared the name.** The shipped
+> start profile used to hand the faction 40 `trade_goods`, which `apply_trade_goods_bonus` then
+> drained into an openness field on a `TradeLink` that never existed — so the grant was deleted at
+> startup, every game, for no effect. The grant went with that system; the band-local store went with
+> the axis above.
 
 ---
 

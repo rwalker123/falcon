@@ -882,8 +882,8 @@ pub fn spawn_initial_world(
 /// **The shipped profile no longer makes that grant**, because with the drain gone it would sit in
 /// [`FactionInventory`] forever: nothing anywhere reads that resource for a decision, and the
 /// Inspector's Map tab renders it, so the player would see a permanently frozen stockpile of 40.
-/// The `trade_goods` a band actually earns are band-local `stores[TRADE_GOODS]`, credited by cash
-/// Fields, hunt hides and pens — a different thing entirely, and untouched
+/// The `trade_goods` commodity key itself is retired (arc #527); what a cash Field, a hunt or a pen
+/// actually pays beyond food is **material batches** on the band's own store
 /// (`docs/plan_contact_and_logistics.md` §As-built).
 pub fn apply_starting_inventory_effects(
     demographics: Res<DemographicsConfigHandle>,
@@ -3861,18 +3861,12 @@ mod inventory_effect_tests {
     use bevy::prelude::World;
     use bevy_ecs::system::RunSystemOnce;
 
-    fn configured_world(provisions: i64, trade_goods: i64) -> World {
+    fn configured_world(provisions: i64) -> World {
         let mut config = SimulationConfig::builtin();
-        config.start_profile_overrides.inventory = vec![
-            InventoryEntry {
-                item: "provisions".to_string(),
-                quantity: provisions,
-            },
-            InventoryEntry {
-                item: TRADE_GOODS.to_string(),
-                quantity: trade_goods,
-            },
-        ];
+        config.start_profile_overrides.inventory = vec![InventoryEntry {
+            item: "provisions".to_string(),
+            quantity: provisions,
+        }];
         let mut world = World::default();
         world.insert_resource(config);
         world.insert_resource(SimulationTick::default());
@@ -3896,7 +3890,7 @@ mod inventory_effect_tests {
     /// well-fed morale bonus — food is band-local, so nothing sits in the faction provisions pool.
     #[test]
     fn startup_seeds_larder_and_morale() {
-        let mut world = configured_world(0, 0);
+        let mut world = configured_world(0);
         world.run_system_once(crate::systems::spawn_initial_world);
         world.run_system_once(crate::systems::apply_starting_inventory_effects);
         let mut query = world.query::<&PopulationCohort>();

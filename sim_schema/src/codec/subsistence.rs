@@ -403,11 +403,7 @@ fn create_herds<'a>(
                 corralled: herd.corralled,
                 corralProgress: herd.corral_progress,
                 perWorkerYield: herd.per_worker_yield,
-                perWorkerTrade: herd.per_worker_trade,
-                tradePerAnimal: herd.trade_per_animal,
                 corralYield: herd.corral_yield,
-                // The Corral rung's trade half (issue #397) — appended last (append-only wire).
-                corralTrade: herd.corral_trade,
                 penUpkeep: herd.pen_upkeep,
                 penFedFraction: herd.pen_fed_fraction,
                 // Appended after every earlier-shipped field (append-only wire discipline).
@@ -415,7 +411,6 @@ fn create_herds<'a>(
                 // composes any floor's ceiling from `biomass`/`carryingCapacity`/`*PerBiomass`.
                 provisionsPerBiomass: herd.provisions_per_biomass,
                 fodderPerBiomass: herd.fodder_per_biomass,
-                tradePerBiomass: herd.trade_per_biomass,
                 // Ecological K + grazing range (Grazing Phase 2b-iii) — appended last.
                 carryingCapacity: herd.carrying_capacity,
                 grazeRangeRadius: herd.graze_range_radius,
@@ -435,8 +430,6 @@ fn create_herds<'a>(
                 herdedFraction: herd.herded_fraction,
                 // The Tame rung's payoff — appended last (append-only wire).
                 pastoralYield: herd.pastoral_yield,
-                // The Tame rung's trade half (issue #397) — appended last (append-only wire).
-                pastoralTrade: herd.pastoral_trade,
                 // Hay this pen drew last turn (F3) — appended last (append-only wire).
                 fodderDraw: herd.fodder_draw,
                 // The render-ready feed split (F3) — appended last (append-only wire).
@@ -529,10 +522,7 @@ fn create_forage_patches<'a>(
                 // RETIRED: see the herd twin above.
                 provisionsPerBiomass: patch.provisions_per_biomass,
                 fodderPerBiomass: patch.fodder_per_biomass,
-                tradePerBiomass: patch.trade_per_biomass,
-                tendedTrade: patch.tended_trade,
                 tendedFodder: patch.tended_fodder,
-                fieldTrade: patch.field_trade,
                 fieldFodder: patch.field_fodder,
                 // The two build dips as FRACTIONS (issue #442) — appended last.
                 cultivateBuildFraction: patch.cultivate_build_fraction,
@@ -586,11 +576,8 @@ fn create_flora_shares<'a>(
                 sowPayoff: share.sow_payoff,
                 // The fodder a hay Field would pay — appended last (append-only wire, F3).
                 sowFodderPayoff: share.sow_fodder_payoff,
-                // The trade goods a cash Field would pay — appended last (append-only wire, F4).
-                sowTradePayoff: share.sow_trade_payoff,
                 // The same two accounts at the TENDED rung — appended last (append-only wire, #419).
                 cultivateFodderPayoff: share.cultivate_fodder_payoff,
-                cultivateTradePayoff: share.cultivate_trade_payoff,
                 // What the plant is FOR — a display tag off the roster, appended last (append-only
                 // wire). `""` is "unstated", never "staple".
                 role: Some(role),

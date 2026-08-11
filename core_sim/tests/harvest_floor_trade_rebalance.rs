@@ -1,113 +1,19 @@
-//! **The 2b trade rebalance, measured** (`docs/plan_harvest_floor.md` §4).
+//! **The retired harvest-floor levers, asserted absent** (`docs/plan_harvest_floor.md` §4).
 //!
 //! Slice 2b deleted `forage.market.trade_goods_multiplier` — the 4× markup a `Deplete`-depth gather
-//! used to earn on its trade component. This file is the arithmetic that says what that cost, and it
-//! is a **regression guard on the shape**, not on the old number: after this slice **no option
-//! carries a factor of any kind**, so trade income must be exactly linear in the biomass taken.
-
-use bevy::math::UVec2;
-use core_sim::{FloraConfig, ForagePatch, LaborConfig};
-
-/// The reference tile the plant figures in `.claude/rules/core_sim/` are quoted on.
-const REFERENCE_BIOME: sim_runtime::TerrainType = sim_runtime::TerrainType::AlluvialPlain;
-const REFERENCE_TILE: UVec2 = UVec2::new(0, 0);
-const REFERENCE_MAP_SEED: u64 = 0xF10A_5EED_C011_0010;
-
-/// The markup the deleted `forage.market.trade_goods_multiplier` used to apply at a
-/// `Deplete`-depth draw. Retained **here only**, as the measurement's baseline — it is not read by
-/// the sim and has no config row left.
-const RETIRED_DEPLETE_MARKUP: f32 = 4.0;
-
-/// A neutral band, so the numbers are the ground's own.
-const UNIT_OUTPUT_MULTIPLIER: f32 = 1.0;
-
-/// **TRADE INCOME IS LINEAR IN THE TAKE — no option carries a factor.**
-///
-/// That is §4's acceptance test, and it is what the measurement below is *for*: with the markup gone
-/// there is exactly one way depth can raise trade income, which is by taking more biomass. Doubling
-/// the biomass taken must double the trade earned, at every depth, with no discontinuity at the
-/// floor the retired markup used to key on (`0.15`).
-#[test]
-fn trade_income_is_linear_in_the_take_at_every_floor() {
-    let labor = LaborConfig::builtin();
-    let flora = FloraConfig::builtin();
-    let composition =
-        flora.realized_composition(REFERENCE_BIOME, REFERENCE_TILE, REFERENCE_MAP_SEED);
-    let capacity = labor.forage.capacity_for(REFERENCE_BIOME);
-    let patch = ForagePatch::new(REFERENCE_TILE, capacity);
-    let rate = core_sim::patch_trade_per_biomass(&patch, &composition, &flora, &labor.forage);
-    assert!(
-        rate > 0.0,
-        "the reference basket must carry a trade component, or this asserts nothing"
-    );
-
-    // The floor the retired markup keyed on, its neighbours either side, and the ends of the dial.
-    for floor in [0.0_f32, 0.14, 0.15, 0.16, 0.5, 0.8] {
-        let take = (capacity - floor * capacity).max(0.0);
-        let earned = core_sim::forage_provisions(take, rate, UNIT_OUTPUT_MULTIPLIER);
-        let doubled = core_sim::forage_provisions(take * 2.0, rate, UNIT_OUTPUT_MULTIPLIER);
-        assert!(
-            (doubled - 2.0 * earned).abs() < 1e-4,
-            "floor {floor}: twice the biomass must earn twice the trade — a factor anywhere breaks \
-             this ({earned} vs {doubled})"
-        );
-    }
-
-    // …and there is no step at the retired markup's floor: `0.14` and `0.16` differ only by the
-    // biomass between them. Under the markup, `0.15` alone paid 4× and this ratio was ~4.
-    let trade_at = |floor: f32| {
-        core_sim::forage_provisions(
-            (capacity - floor * capacity).max(0.0),
-            rate,
-            UNIT_OUTPUT_MULTIPLIER,
-        )
-    };
-    let step = trade_at(0.15) / trade_at(0.16);
-    assert!(
-        step < 1.05,
-        "no discontinuity at the retired markup's floor: 0.15 earns {step}× what 0.16 does, and \
-         under the 4× markup it earned ~{RETIRED_DEPLETE_MARKUP}×"
-    );
-}
-
-/// **What the rebalance cost, in the sim's own units** — printed rather than asserted, because the
-/// point is the magnitude, not a pinned number a retune would have to chase.
-///
-/// Run with `cargo test -p core_sim --test harvest_floor_trade_rebalance -- --ignored --nocapture`.
-#[test]
-#[ignore = "measurement harness — run with --ignored --nocapture"]
-fn measure_the_lost_markup() {
-    let labor = LaborConfig::builtin();
-    let flora = FloraConfig::builtin();
-    let composition =
-        flora.realized_composition(REFERENCE_BIOME, REFERENCE_TILE, REFERENCE_MAP_SEED);
-    let capacity = labor.forage.capacity_for(REFERENCE_BIOME);
-    let patch = ForagePatch::new(REFERENCE_TILE, capacity);
-    let rate = core_sim::patch_trade_per_biomass(&patch, &composition, &flora, &labor.forage);
-    let food_rate =
-        core_sim::patch_provisions_per_biomass(&patch, &composition, &flora, &labor.forage);
-
-    println!("\n=== 2b trade rebalance — {REFERENCE_BIOME:?}, K = {capacity} ===");
-    println!("basket trade rate {rate:.5}/biomass, food rate {food_rate:.5}/biomass");
-    println!(
-        "\n{:<8} {:>10} {:>12} {:>12} {:>10}",
-        "floor", "take", "trade NOW", "trade WAS", "food"
-    );
-    for floor in [0.0_f32, 0.15, 0.3, 0.5, 0.8] {
-        let take = (capacity - floor * capacity).max(0.0);
-        let now = core_sim::forage_provisions(take, rate, UNIT_OUTPUT_MULTIPLIER);
-        // Only the 0.15 row ever earned the markup — it keyed on Deplete's floor alone.
-        let was = if (floor - 0.15).abs() < 1e-6 {
-            now * RETIRED_DEPLETE_MARKUP
-        } else {
-            now
-        };
-        println!(
-            "{floor:<8} {take:>10.1} {now:>12.3} {was:>12.3} {:>10.3}",
-            core_sim::forage_provisions(take, food_rate, UNIT_OUTPUT_MULTIPLIER)
-        );
-    }
-}
+//! used to earn on its trade component — and this file was the arithmetic that said what that cost.
+//!
+//! **Arc #527 retired the trade-goods axis itself**, so the two measurements that lived here
+//! (`trade_income_is_linear_in_the_take_at_every_floor` and the `measure_the_lost_markup` harness)
+//! are deleted: they priced an account that no longer exists, and the property they asserted —
+//! *no option carries a factor of any kind* — is now pinned on the accounts that do, by
+//! `labor_allocation::a_deeper_floor_pays_more_because_it_takes_more` (food) and
+//! `forage_tended_vector::a_deeper_floor_banks_more_material_off_a_tended_cash_crop` (materials).
+//!
+//! **What survives is the structural guard below**, which is the durable half: it reads the shipped
+//! JSON and asserts the retired keys are really gone. The file keeps its name because that is the
+//! name `fauna_config::tests::the_hunt_block_carries_no_take_multiplier` cites as its other half,
+//! and because it names the arc rather than the account.
 
 /// **THE DELETED CONFIG HAS NO READER LEFT** — the structural half of §4's acceptance test.
 ///
@@ -147,6 +53,37 @@ fn the_deleted_levers_are_gone_and_the_allee_threshold_is_not() {
         assert!(
             fauna["hunt"].get(key).is_none(),
             "fauna_config `hunt.{key}` is retired with the stance axis it tuned"
+        );
+    }
+
+    // **The trade-goods RATE went the way of its multiplier** (arc #527): it was written by every
+    // take site and read by none, while the `materials` rows beside it named the same take's actual
+    // hide, bone and fibre. Asserted on both webs' shipped JSON, because a key `#[serde(default)]`
+    // would fill silently is exactly what this test exists to catch.
+    assert!(
+        fauna["hunt"].get("trade_goods_per_biomass").is_none(),
+        "fauna_config `hunt.trade_goods_per_biomass` is retired with the trade axis"
+    );
+    for (key, species) in fauna["species"]
+        .as_object()
+        .expect("the species table is an object")
+    {
+        assert!(
+            species["hunt_yield"]
+                .get("trade_goods_per_biomass")
+                .is_none(),
+            "fauna_config species `{key}` still names a retired trade rate"
+        );
+    }
+    let flora: serde_json::Value =
+        serde_json::from_str(core_sim::BUILTIN_FLORA_CONFIG).expect("the builtin flora parses");
+    for (key, species) in flora["species"]
+        .as_object()
+        .expect("the flora species table is an object")
+    {
+        assert!(
+            species["yield"].get("trade_goods_per_biomass").is_none(),
+            "flora_config species `{key}` still names a retired trade rate"
         );
     }
 

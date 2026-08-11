@@ -225,14 +225,10 @@ fn create_populations<'a>(
                                 overdraws: assignment.overdraws,
                                 realizedYield: assignment.realized_yield,
                                 arrivalSchedule: arrival_schedule,
-                                tradeYield: assignment.trade_yield,
-                                realizedTradeYield: assignment.realized_trade_yield,
                                 // The band the two scalars above sit in the middle of — appended
                                 // last, after `floor`, so the slots stay positional.
                                 actualYieldLow: assignment.actual_yield_low,
                                 actualYieldHigh: assignment.actual_yield_high,
-                                tradeYieldLow: assignment.trade_yield_low,
-                                tradeYieldHigh: assignment.trade_yield_high,
                                 // The improvement axis — appended (append-only wire).
                                 improvement,
                                 // THE HARVEST FLOOR — where this crew stops, as a fraction of `K`.

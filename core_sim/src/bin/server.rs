@@ -3011,7 +3011,6 @@ fn handle_send_expedition(
                 pending_reveal: Vec::new(),
                 // An outfitted party leaves with an empty trade pack — it earns its pelts in the
                 // field (`advance_expeditions`).
-                carried_trade: 0.0,
                 // **A scout carries the HUNT job's default kit.** `send_expedition` names no kit —
                 // scouting is not a kit job — but a scout's opportunistic roadside kill resolves
                 // through the very same hunt seams, so it needs a real mask rather than a hole.
@@ -3289,18 +3288,10 @@ fn describe_denial_ledger(forecast: &core_sim::DenialForecast) -> String {
             forecast.wasted_food
         ));
     }
-    if forecast.delivered_trade > 0.0 || forecast.wasted_trade > 0.0 {
-        ledger.push(format!(
-            "~{:.*} trade goods home, ~{:.*} left on the range",
-            DENIAL_LEDGER_DECIMALS,
-            forecast.delivered_trade,
-            DENIAL_LEDGER_DECIMALS,
-            forecast.wasted_trade
-        ));
-    }
     if ledger.is_empty() {
-        // Neither meat nor pelts — the raid destroys animals and brings back nothing at all, which
-        // is a statement rather than an empty clause.
+        // No meat — the raid destroys animals and brings home nothing this line can count. What it
+        // *does* bring on an inedible quarry is hides, which the projection cannot state per
+        // material (arc #527), so the honest wording is that there is nothing to weigh here.
         return "nothing worth hauling from this quarry".to_string();
     }
     ledger.join("; ")
@@ -3399,7 +3390,6 @@ fn launch_detached_party(
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
                 pending_reveal: Vec::new(),
-                carried_trade: 0.0,
                 kit,
             },
             BandTravel { target: herd_pos },
@@ -3501,18 +3491,10 @@ fn handle_send_hunt_expedition(
         // used to fire for a denial *mission* (Eradicate); since #337 the policy is pure intensity
         // and the species decides the product, so a floor-`0` raid on a deer reports its windfall
         // like any other rung, and only a wolf lands here.
-        Some(f) if !f.delivers_food => (
-            if f.delivers_trade {
-                " — no food from this quarry: the party brings back trade goods, not meat"
-                    .to_string()
-            } else {
-                " — this quarry yields nothing: the party delivers neither food nor trade goods"
-                    .to_string()
-            },
-            format!(
-                " eta_turns=none viability=inedible delivers_trade={}",
-                f.delivers_trade
-            ),
+        Some(_f) if !_f.delivers_food => (
+            " — no food from this quarry: the party brings back hides and bone, not meat"
+                .to_string(),
+            " eta_turns=none viability=inedible".to_string(),
         ),
         // The herd has no surplus above the policy's floor — the honest non-viable case. "Too lean"
         // now means the raid lands NO food at all (a small party on a big animal still delivers a
@@ -3714,7 +3696,7 @@ fn handle_send_denial_raid(
                     ),
                     format!(
                         " outcome={} turns_to_collapse={} low={} high={} travel_turns={} \
-                         animals={} food={:.2} wasted={:.2} trade={:.2} wasted_trade={:.2}",
+                         animals={} food={:.2} wasted={:.2}",
                         f.outcome.as_str(),
                         turns,
                         f.turns_to_collapse_low.unwrap_or(0),
@@ -3722,9 +3704,7 @@ fn handle_send_denial_raid(
                         travel_turns,
                         f.animals_killed,
                         f.delivered_food,
-                        f.wasted_food,
-                        f.delivered_trade,
-                        f.wasted_trade
+                        f.wasted_food
                     ),
                 ),
                 // **Never a blank** (§3). A party whose kills cannot outpace the herd's regrowth is
@@ -3743,14 +3723,12 @@ fn handle_send_denial_raid(
                     },
                     format!(
                         " outcome={} turns_to_collapse=none travel_turns={} animals={} \
-                         food={:.2} wasted={:.2} trade={:.2} wasted_trade={:.2}",
+                         food={:.2} wasted={:.2}",
                         f.outcome.as_str(),
                         travel_turns,
                         f.animals_killed,
                         f.delivered_food,
-                        f.wasted_food,
-                        f.delivered_trade,
-                        f.wasted_trade
+                        f.wasted_food
                     ),
                 ),
             }
@@ -3868,7 +3846,8 @@ fn handle_recall_expedition(
         );
         // The world event beside the command ack: the fold-back is what actually happened, and it is
         // the same line the `Returning` arm publishes when a party walks home.
-        let event = expedition_returned_event(tick, faction, at.position, at.banked_trade, entity);
+        let event =
+            expedition_returned_event(tick, faction, at.position, at.banked_materials, entity);
         app.world.resource_mut::<CommandEventLog>().push(event);
         app.world.despawn(entity);
         return;
@@ -3969,7 +3948,7 @@ fn handle_split_band(
 /// needs from a fold-back that happened outside the turn loop.
 struct CancelledInCamp {
     position: UVec2,
-    banked_trade: Scalar,
+    banked_materials: f32,
 }
 
 /// Settle `entity` into its home band **now** if it is standing on that band's tile with nothing left
@@ -3983,7 +3962,7 @@ fn cancel_party_standing_in_camp(
     app: &mut bevy::prelude::App,
     entity: Entity,
 ) -> Option<CancelledInCamp> {
-    let mut expedition = app.world.get::<Expedition>(entity)?.clone();
+    let expedition = app.world.get::<Expedition>(entity)?.clone();
     if party_owes_a_report(&expedition) {
         return None;
     }
@@ -4000,10 +3979,10 @@ fn cancel_party_standing_in_camp(
     let mut home = app
         .world
         .get_mut::<PopulationCohort>(expedition.home_band)?;
-    let banked_trade = fold_party_into_band(&mut party, &mut expedition, &mut home);
+    let banked_materials = fold_party_into_band(&mut party, &mut home);
     Some(CancelledInCamp {
         position,
-        banked_trade,
+        banked_materials,
     })
 }
 
@@ -8456,7 +8435,6 @@ mod tests {
                 phase: ExpeditionPhase::Outbound,
                 announced: false,
                 pending_reveal: Vec::new(),
-                carried_trade: 0.0,
                 kit: core_sim::EquipmentConfig::builtin().default_kit(KitJob::Hunt),
             },
         ));

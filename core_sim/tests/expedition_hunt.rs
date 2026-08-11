@@ -351,7 +351,6 @@ fn spawn_hunt_party_of(
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
                 pending_reveal: Vec::new(),
-                carried_trade: 0.0,
                 kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Hunt),
             },
         ))
@@ -1262,10 +1261,8 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                 herd_hunt_yield(registry.find(id).expect("herd present"), &fauna)
             };
             assert!(
-                (exported.provisions_per_biomass - live_yield.provisions_per_biomass).abs() < 1e-6
-                    && (exported.trade_per_biomass - live_yield.trade_goods_per_biomass).abs()
-                        < 1e-6,
-                "{case}: {id}: the exported per-biomass vector must be the species' own"
+                (exported.provisions_per_biomass - live_yield.provisions_per_biomass).abs() < 1e-6,
+                "{case}: {id}: the exported per-biomass rate must be the species' own"
             );
         }
         // Every floor a Hunt assignment accepts.

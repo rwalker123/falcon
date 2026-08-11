@@ -3842,20 +3842,18 @@ fn starve_underfed_pen(
 /// will lie.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct SourceYieldForecast {
-    /// **Every field is a [`YieldAccounts`] — food AND trade goods per turn, never a food scalar**
+    /// **Every field is a [`YieldAccounts`] — every scalar account per turn, never a food scalar**
     /// (`docs/plan_hunt_yield_model.md`, issue #337).
     ///
-    /// **Why vectorised rather than sibling `*_trade` scalars.** A wolf's food ceilings are all `0`,
-    /// so a food-denominated forecast cannot express its yield *at all* — the client would read
-    /// "0/turn" on every rung and the forecast would be **false**, not merely incomplete. Sibling
-    /// scalars would double the surface and let the two halves drift apart under a retune; one pair
-    /// per rung cannot, because `ceiling_for` hands both components to every reader at once.
+    /// **Why vectorised rather than sibling per-account scalars.** Sibling scalars double the
+    /// surface and let the halves drift apart under a retune; one vector per rung cannot, because
+    /// `ceiling_at` hands every component to every reader at once.
     ///
-    /// **The forage side fills `.trade_goods = 0.0` throughout** — see `forage::forage_forecast`.
-    /// That is a known gap (the plant web's Deplete gather *does* sell), not a regression: the
-    /// forecast carried no trade at all before this arc. The client renders a trade line **only when
-    /// `trade_goods > 0`** — flora's cash-crop rule — so a plant shows no trade line rather than a
-    /// false "0".
+    /// **The forecast is scalar-only, and a wolf therefore forecasts `0`** (arc #527). What an
+    /// inedible species pays is **materials**, which are batches carrying a characteristic vector
+    /// each and cannot be added, scaled or `min`'d the way this type's components are. A wolf's
+    /// forecast reading `0 food` is honest — it is not food — but it is also *silent* about the
+    /// pelts the take really banks. Projecting materials is its own arc.
     ///
     /// Food/turn one worker contributes at this source (throughput → provisions), before the policy
     /// ceiling binds. `0.0` means no worker can extract anything this turn (e.g. a zero seasonal
@@ -4669,7 +4667,6 @@ pub(crate) fn forecast_source_yield(
     floor: f32,
     improvement: Option<Improvement>,
     realized: f32,
-    realized_trade: f32,
     arrivals: Vec<f32>,
     // How wide a band to report around the expected take (`combat_config.forecast_range_sigmas`) —
     // a **readout width**: nothing the sim resolves reads it, so it cannot move an animal.
@@ -4689,24 +4686,19 @@ pub(crate) fn forecast_source_yield(
         .scale(forecast.build_dips.of(improvement));
     SourceYield {
         actual: actual.provisions,
-        // **Trade is telemetry, not larder income** — it never enters `food_income` (see
-        // `SourceYield::trade`), so it rides beside `actual` rather than being summed into it.
-        trade: actual.trade_goods,
         // **The FEED currency, taken off the same take vector** (issue #449) — never a second
         // derivation. It is `0` today on both webs and for two different reasons: no animal pays
         // fodder at all, and the plant web's forecast is deliberately food-only
-        // (`forage::plant_food_only`, the same gap `PLANT_TRADE_FORECAST_NOT_YET_PROJECTED` names),
+        // (`forage::plant_food_only`, the gap `PLANT_FODDER_FORECAST_NOT_YET_PROJECTED` names),
         // so a pre-commit row quotes no fodder until that projection lands. Reading the component
         // rather than writing a literal means it starts telling the truth the moment it does.
         fodder: actual.fodder,
-        // The band the two scalars above sit in the middle of. Built from the SAME
+        // The band `actual` sits in the middle of. Built from the SAME
         // `forecast_production_and_take_at`, three quantiles apart, so `low <= actual <= high` is a
         // property of the arithmetic rather than a clamp.
         range: YieldRange {
             low: range.low.provisions,
             high: range.high.provisions,
-            trade_low: range.low.trade_goods,
-            trade_high: range.high.trade_goods,
         },
         sustainable: if managed {
             actual.provisions
@@ -4721,7 +4713,6 @@ pub(crate) fn forecast_source_yield(
         // (`project_realized_hunt` / `project_realized_forage`), computed by the caller from the same
         // source state — a pure function of state, so the seed and the resolved row agree exactly.
         realized,
-        realized_trade,
         wasted: (production.provisions - actual.provisions).max(0.0),
         // **Every source reports its whole CREW: [`source_crew_needed`] = `max(standing, take)`** — the
         // SAME shape both resolved arms of `advance_labor_allocation` record, so the assign-time seed
@@ -4884,7 +4875,6 @@ pub fn hunt_source_yield_preview(
         floor,
         improvement,
         realized.provisions,
-        realized.trade_goods,
         arrivals,
         range_sigmas,
     )

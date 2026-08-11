@@ -407,12 +407,10 @@ pub struct HuntTripRow {
     pub turns_to_fill: u32,
     pub bound: String,
     pub delivers_food: bool,
-    pub delivers_trade: bool,
     /// **Whole** animals killed — a count, typed as one, exactly as the retired
     /// `HuntTripEstimateState` typed it and as [`DenialRow::animals_killed`] types it.
     pub animals_taken: u32,
     pub delivered_food: f32,
-    pub delivered_trade: f32,
     pub wasted_food: f32,
 }
 
@@ -440,8 +438,6 @@ pub struct DenialRow {
     pub animals_killed: u32,
     pub delivered_food: f32,
     pub wasted_food: f32,
-    pub delivered_trade: f32,
-    pub wasted_trade: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1524,10 +1520,8 @@ fn hunt_trip_row_to_proto(row: &HuntTripRow) -> pb::HuntTripRow {
         turns_to_fill: row.turns_to_fill,
         bound: row.bound.clone(),
         delivers_food: row.delivers_food,
-        delivers_trade: row.delivers_trade,
         animals_taken: row.animals_taken,
         delivered_food: row.delivered_food,
-        delivered_trade: row.delivered_trade,
         wasted_food: row.wasted_food,
     }
 }
@@ -1539,10 +1533,8 @@ fn hunt_trip_row_from_proto(row: pb::HuntTripRow) -> HuntTripRow {
         turns_to_fill: row.turns_to_fill,
         bound: row.bound,
         delivers_food: row.delivers_food,
-        delivers_trade: row.delivers_trade,
         animals_taken: row.animals_taken,
         delivered_food: row.delivered_food,
-        delivered_trade: row.delivered_trade,
         wasted_food: row.wasted_food,
     }
 }
@@ -1557,8 +1549,6 @@ fn denial_row_to_proto(row: &DenialRow) -> pb::DenialRow {
         animals_killed: row.animals_killed,
         delivered_food: row.delivered_food,
         wasted_food: row.wasted_food,
-        delivered_trade: row.delivered_trade,
-        wasted_trade: row.wasted_trade,
     }
 }
 
@@ -1572,8 +1562,6 @@ fn denial_row_from_proto(row: pb::DenialRow) -> DenialRow {
         animals_killed: row.animals_killed,
         delivered_food: row.delivered_food,
         wasted_food: row.wasted_food,
-        delivered_trade: row.delivered_trade,
-        wasted_trade: row.wasted_trade,
     }
 }
 

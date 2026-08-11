@@ -16,7 +16,7 @@ paths:
 
 | File | Purpose |
 |------|---------|
-| `src/data/flora_config.json` | **The flora roster** (Flora Roster F1, `flora_config.rs`, env override **`FLORA_CONFIG_PATH`**; design `docs/plan_flora_roster.md`) — the plant twin of `fauna_config.json`'s species table, and the first time a plant has a **name**. **33 species** (18 F1–F4 families + the **F5 fine-grained mass-fill** of 15 — kelp, sea_kale, wild_rice, cattail, chestnut, wild_orchard, sunflower, wild_pulses, mesquite, wild_fig, cloudberry, rock_tripe, alpine_herbs, cave_fungi, grapevine — so every non-zero biome now carries a **3–5 species basket** and per-tile realization (§10) has enough breadth to vary tile-to-tile). The F1 core is 12 biome-keyed staples + `river_fish`, which alone hosts `NavigableRiver` and means the *fishery bonus term*, not the vestigial capacity row; each: `display_name`/`plural`/`adjective`, **`role`** (`staple`\|`fodder`\|`cash` — a **DISPLAY TAG ONLY**, derived from which component of the yield vector dominates, never branched on in the sim), **`cultivation_ceiling`** (`wild`\|`tended`\|`field`, default `field` — the exact twin of `husbandry_ceiling`: one ceiling, not two flags, so "sowable but not tendable" is unrepresentable; `allows_cultivate`/`allows_sow` are **LIVE since S1** — they gate which species a `Cultivate`/`Sow` may commit a patch to, so a basket that is all-`wild` cannot be tended or sown at all), **`host_biomes`** (`TerrainType` → a **relative affinity WEIGHT, not a capacity**), **`yield`** (`provisions_per_biomass` / `fodder_per_biomass` / `trade_goods_per_biomass` — one vector, three accounts; **all three are LIVE AT EVERY RUNG since #433** — each patch's rate is the share-weighted average of its own basket's vectors, so a *wild* tile's food, fodder and trade all depend on what is actually growing there; `provisions_per_biomass` went live at S1 as a *committed* patch's conversion rate, `fodder_per_biomass` at F3 on hay Fields, `trade_goods_per_biomass` at **F4** on cash Fields — see "Cash crops — the F4 coupling"), and `regrowth_rate`. **NAMING DECOMPOSES, IT DOES NOT ADD:** `FloraConfig::composition(terrain)` is a **derived, precomputed** share table — `share = weight / Σ weights hosting that biome` — so the shares sum to `1.0` by construction and `share × forage.capacity_by_biome[biome]` always re-sums to the biome's own capacity. Adding a species **dilutes** the others; it cannot inflate a tile. Built once at load through the single constructor every `Deserialize` path routes through, so a stale table is unrepresentable, and sorted **share DESC then species key ASC** because it goes on the wire (`ForagePatchState.composition`). **The share DENOMINATOR must be summed in a deterministic order, not merely presented in one** — `HashMap` iteration order is randomized per instance and f32 addition is not associative, so a `Σ weights` accumulated in map order lands a ULP apart between two builds, and that ULP divides into every published share and changes the snapshot hash. Both share tables therefore order *before* they sum: `build_composition` sorts its rows first, and `navigable_composition` merges through a `BTreeMap`. Sorting the *output* does not fix the arithmetic — this was a ~50%-of-runs `deterministic_snapshots_match` flake, pinned now by `the_share_table_is_bit_identical_across_builds` / `navigable_composition_is_bit_identical_across_calls`. Navigable hexes blend two baskets — see `FloraConfig::navigable_composition` / `forage::tile_flora_composition`, the twin of `navigable_forage_capacity`. **`provisions_per_biomass` is hand-tuned per species and LIVE since S1** — it is the *conversion* half of the commit trade (see "Committing a patch to one plant"), so the F1 "flat 0.05 verbatim" rule is deliberately gone. Grains/tubers on their best ground are strongest (wild_emmer **0.080**); the `wild`-ceiling gathered things sit at or below the 0.05 baseline (shellfish/river fish 0.050, pine nut 0.048, oak mast 0.045, arctic greens 0.040). **Those `wild`-ceiling rates stopped being inert at #433** — they can still never be *committed*, but they are now weighted into their tile's wild basket average, so an oak-mast-heavy realization genuinely pays less per biomass than an emmer-heavy one and the numbers have to be right. `fodder_per_biomass` is **live since F3** on the one fodder crop **hay_grass** (0.20 — a hay Field harvests into the band's `FODDER` store, a pen that knows **Foddering** draws it) and 0.0 on every staple; `trade_goods_per_biomass` is **live since F4** — the flat **0.005 token** on every staple (the F1 baseline that differentiates trade value) and **trade-dominant** on the four **cash crops** **cotton** (0.20) / **flax** (0.15) / **tobacco** (0.18) / **tea** (0.16), whose harvest as a Field credits the faction `trade_goods` stockpile (see "Cash crops — the F4 coupling"); `regrowth_rate` is still `forage.ecology.regrowth_rate` verbatim — all pinned by `core_sim/tests/flora_roster.rs` **against the loaded labor config, not literals**, along with the design's own bar, **reframed at #433**: what must differ is the *crop choice* — a species must pay materially better on its best country than on its worst, and materially better than favoring a marginal neighbour on the same tile. The older form ("committing must sometimes lose to leaving it wild") is retired: with the rung-2 conversion gain, any commitment with a real share pays, and the rung-2 decision is which currency plus whether the 25-turn build is worth it. The cash crops are hosted **honestly on the river valleys** (cotton/tobacco/flax on AlluvialPlain/Floodplain/RiverDelta, tea on the uplands); **per-tile realization (§10) keeps the staples dominant on their own realized tiles** — the commit bar reads a tile's local realized share, not the uniform biome share — rather than keeping cash crops off that ground (the S1 commit-worthiness bar). `reed_and_root` is `field`-ceiling (rice/taro on a delta are the archetypal field crop; at `tended` the richest sowable ground in the game would be unsowable). **Validated** — `FloraConfig::validate()` runs inside `from_json_str` (every load path) for the per-row invariants (empty `display_name`, empty `host_biomes`, a non-positive weight, an all-zero `yield`, a non-positive `regrowth_rate`), and the **cross-web** pair `FloraConfig::validate_against_forage(&forage.capacity_by_biome)` runs on the load path with `labor_config`'s table passed in (one copy): **no nameless food** — a biome with non-zero forage capacity that no species hosts is rejected, which is what forces a **complete** roster rather than a couple of species — and **no claiming barren ground** — a species hosting a stated-zero biome is rejected. A broken invariant is logged at **error** level (`flora_config.invalid_rejected`) and the builtin is used |
+| `src/data/flora_config.json` | **The flora roster** (Flora Roster F1, `flora_config.rs`, env override **`FLORA_CONFIG_PATH`**; design `docs/plan_flora_roster.md`) — the plant twin of `fauna_config.json`'s species table, and the first time a plant has a **name**. **33 species** (18 F1–F4 families + the **F5 fine-grained mass-fill** of 15 — kelp, sea_kale, wild_rice, cattail, chestnut, wild_orchard, sunflower, wild_pulses, mesquite, wild_fig, cloudberry, rock_tripe, alpine_herbs, cave_fungi, grapevine — so every non-zero biome now carries a **3–5 species basket** and per-tile realization (§10) has enough breadth to vary tile-to-tile). The F1 core is 12 biome-keyed staples + `river_fish`, which alone hosts `NavigableRiver` and means the *fishery bonus term*, not the vestigial capacity row; each: `display_name`/`plural`/`adjective`, **`role`** (`staple`\|`fodder`\|`cash` — a **DISPLAY TAG ONLY**, derived from which component of the yield vector dominates, never branched on in the sim), **`cultivation_ceiling`** (`wild`\|`tended`\|`field`, default `field` — the exact twin of `husbandry_ceiling`: one ceiling, not two flags, so "sowable but not tendable" is unrepresentable; `allows_cultivate`/`allows_sow` are **LIVE since S1** — they gate which species a `Cultivate`/`Sow` may commit a patch to, so a basket that is all-`wild` cannot be tended or sown at all), **`host_biomes`** (`TerrainType` → a **relative affinity WEIGHT, not a capacity**), **`yield`** (`provisions_per_biomass` / `fodder_per_biomass` / `materials[]` — one vector; **the two rates are LIVE AT EVERY RUNG since #433** — each patch's rate is the share-weighted average of its own basket's vectors, so a *wild* tile's food and fodder depend on what is actually growing there; `provisions_per_biomass` went live at S1 as a *committed* patch's conversion rate, `fodder_per_biomass` at F3 on hay Fields. **`trade_goods_per_biomass` is RETIRED (arc #527)** — written by every take site, read by none — and a cash crop is paid in `materials` instead; see "Cash crops — the F4 coupling"), and `regrowth_rate`. **NAMING DECOMPOSES, IT DOES NOT ADD:** `FloraConfig::composition(terrain)` is a **derived, precomputed** share table — `share = weight / Σ weights hosting that biome` — so the shares sum to `1.0` by construction and `share × forage.capacity_by_biome[biome]` always re-sums to the biome's own capacity. Adding a species **dilutes** the others; it cannot inflate a tile. Built once at load through the single constructor every `Deserialize` path routes through, so a stale table is unrepresentable, and sorted **share DESC then species key ASC** because it goes on the wire (`ForagePatchState.composition`). **The share DENOMINATOR must be summed in a deterministic order, not merely presented in one** — `HashMap` iteration order is randomized per instance and f32 addition is not associative, so a `Σ weights` accumulated in map order lands a ULP apart between two builds, and that ULP divides into every published share and changes the snapshot hash. Both share tables therefore order *before* they sum: `build_composition` sorts its rows first, and `navigable_composition` merges through a `BTreeMap`. Sorting the *output* does not fix the arithmetic — this was a ~50%-of-runs `deterministic_snapshots_match` flake, pinned now by `the_share_table_is_bit_identical_across_builds` / `navigable_composition_is_bit_identical_across_calls`. Navigable hexes blend two baskets — see `FloraConfig::navigable_composition` / `forage::tile_flora_composition`, the twin of `navigable_forage_capacity`. **`provisions_per_biomass` is hand-tuned per species and LIVE since S1** — it is the *conversion* half of the commit trade (see "Committing a patch to one plant"), so the F1 "flat 0.05 verbatim" rule is deliberately gone. Grains/tubers on their best ground are strongest (wild_emmer **0.080**); the `wild`-ceiling gathered things sit at or below the 0.05 baseline (shellfish/river fish 0.050, pine nut 0.048, oak mast 0.045, arctic greens 0.040). **Those `wild`-ceiling rates stopped being inert at #433** — they can still never be *committed*, but they are now weighted into their tile's wild basket average, so an oak-mast-heavy realization genuinely pays less per biomass than an emmer-heavy one and the numbers have to be right. `fodder_per_biomass` is **live since F3** on the one fodder crop **hay_grass** (0.20 — a hay Field harvests into the band's `FODDER` store, a pen that knows **Foddering** draws it) and 0.0 on every staple; the five **cash crops** **cotton** / **flax** / **tobacco** / **tea** / **grapevine** read `0` in both scalar accounts and are paid entirely by their `materials` rows (cotton/flax fibre; the uncrafted `tobacco`/`tea`/`grape` since arc #527); `regrowth_rate` is still `forage.ecology.regrowth_rate` verbatim — all pinned by `core_sim/tests/flora_roster.rs` **against the loaded labor config, not literals**, along with the design's own bar, **reframed at #433**: what must differ is the *crop choice* — a species must pay materially better on its best country than on its worst, and materially better than favoring a marginal neighbour on the same tile. The older form ("committing must sometimes lose to leaving it wild") is retired: with the rung-2 conversion gain, any commitment with a real share pays, and the rung-2 decision is which currency plus whether the 25-turn build is worth it. The cash crops are hosted **honestly on the river valleys** (cotton/tobacco/flax on AlluvialPlain/Floodplain/RiverDelta, tea on the uplands); **per-tile realization (§10) keeps the staples dominant on their own realized tiles** — the commit bar reads a tile's local realized share, not the uniform biome share — rather than keeping cash crops off that ground (the S1 commit-worthiness bar). `reed_and_root` is `field`-ceiling (rice/taro on a delta are the archetypal field crop; at `tended` the richest sowable ground in the game would be unsowable). **Validated** — `FloraConfig::validate()` runs inside `from_json_str` (every load path) for the per-row invariants (empty `display_name`, empty `host_biomes`, a non-positive weight, a `yield` that pays into no account at all — every scalar zero **and** no material rows, which is what makes `pays_something` the guard that catches a species silently ceasing to pay — a non-positive `regrowth_rate`), and the **cross-web** pair `FloraConfig::validate_against_forage(&forage.capacity_by_biome)` runs on the load path with `labor_config`'s table passed in (one copy): **no nameless food** — a biome with non-zero forage capacity that no species hosts is rejected, which is what forces a **complete** roster rather than a couple of species — and **no claiming barren ground** — a species hosting a stated-zero biome is rejected. A broken invariant is logged at **error** level (`flora_config.invalid_rejected`) and the builtin is used |
 ## Depletable Forage (Intensification §0-ii)
 
 Forage tiles are **depletable**, the herd biomass/regrowth model transposed onto plants (design:
@@ -55,10 +55,10 @@ forage exactly as it does for overhunting. *Sim-only — the client already rend
   **Since `docs/plan_harvest_floor.md` slice 1 the whole axis is ONE expression parameterised by a
   floor** — `max(0, B − floor·K) × build_dip`, the exact twin of `fauna::hunt_escapement_ceiling` —
   with the floor carried on the assignment (`LaborTarget::Forage`) as an `f32` fraction of `K`.
-  A deeper floor leaves less standing and so takes more; the `Forage` arm sells the take as trade
-  goods **at the basket's own rate, with no markup of any kind** — the 4×
+  A deeper floor leaves less standing and so takes more, **with no markup of any kind** — the 4×
   `market.trade_goods_multiplier` is deleted, because a factor attached to one drawdown depth
-  re-welded product to intensity (`docs/plan_harvest_floor.md` §4).
+  re-welded product to intensity (`docs/plan_harvest_floor.md` §4), and the trade axis it multiplied
+  went with arc #527.
   **It is `r`-INDEPENDENT and takes no `EcologyConfig`**, which is what makes the rung-2 payoff read
   as what it is: a tended patch does not get a bigger ceiling, it *refills faster*, so it has more
   stock standing above the floor next turn.
@@ -288,20 +288,22 @@ pays in conversion, never in concentration*. Authoritative design: `docs/plan_fl
   is the bug #433 fixed. `effective_forage_capacity` / `patch_concentration` /
   `concentration_for_share` and the `field_concentration_gain` dial are **retired** with it.
   **Least abundant first is currency-free and deliberate:** ranking the weeds by yield would mean
-  comparing a food rate against a trade rate — an exchange rate this codebase does not have and that
-  belongs to the Market arc — and `hay_grass` (0 food, 0 trade, 0.2 fodder) has no non-arbitrary rank
-  at all.
+  comparing a food rate against a fodder rate against a material's characteristic vector — exchange
+  rates this codebase does not have — and `hay_grass` (0 food, 0.2 fodder) has no non-arbitrary rank
+  against a grain at all.
 - **Conversion — a share-weighted average of the patch's own basket, at EVERY rung.**
-  `forage::patch_provisions_per_biomass` and its fodder/trade twins are `Σ share × the member's
-  yield component` over `patch_composition`, so *what is growing there* finally decides what the tile
-  pays. **This reaches rung 1**: a wild patch used to fall through to the flat
+  `forage::patch_provisions_per_biomass` and its fodder twin are `Σ share × the member's yield
+  component` over `patch_composition`, so *what is growing there* finally decides what the tile pays.
+  The **material** account is the same idea without the average: `forage::patch_material_yields`
+  emits one row per species at its share-scaled rate, because a characteristic vector cannot be
+  averaged (see the rung-2 section). **This reaches rung 1**: a wild patch used to fall through to the flat
   `forage.provisions_per_biomass` and never read its composition at all, so one constant stood in for
   a per-tile average it could not equal in either direction. That constant (**0.05**) survives only as
   the **empty-basket fallback** and as the rung-3 quality normalization baseline. Rung 2 adds
   `forage.cultivation.tended_conversion_gain` (**2.0**) on the **favored species' term only** — a
   tended stand of a *known* plant converts better, the volunteers beside it do not — so weeding and
   conversion **compound** and favoring a marginal plant barely moves the number. It multiplies food,
-  fodder and trade alike, with no `role` branch. At rung 3 the managed payoff keeps its one dial and
+  fodder and the material rates alike, with no `role` branch. At rung 3 the managed payoff keeps its one dial and
   is scaled by the **derived** `patch_species_quality` (= the projected basket's rate ÷ the wild
   baseline, which for a Field's 100%-crop basket is exactly the crop's rate) — never a second
   per-species field that could drift from the rate it restates.
@@ -314,8 +316,7 @@ pays in conversion, never in concentration*. Authoritative design: `docs/plan_fl
   `snapshot_forage_patches` — which publishes `fieldYield` for *every* patch, tended ones included —
   quoted a Sow on a tended patch against the **weeded** basket *with rung 2's conversion gain in it*,
   overstating by 10.2% on the reference tile and by the full gain (2×) wherever weeding saturates.
-  `field_fodder` / `field_trade_goods` / `managed_per_worker_*` carried the same latent defect with no
-  reachable trigger. Pinned on the **shipped snapshot** by
+  `field_fodder` / `managed_per_worker_*` carried the same latent defect with no reachable trigger. Pinned on the **shipped snapshot** by
   `the_published_field_yield_never_inherits_the_tended_rungs_basket` and, at the seam,
   `the_composition_seam_answers_the_rung_it_is_asked_about_not_the_one_the_patch_stands_on`.
 - **Both terms switch on together, when the improvement COMPLETES.** A crew still clearing has
@@ -407,48 +408,58 @@ and the two stores **never convert**.
   snapshot" for the `pasture_food + penHayFood + penLarderBill == penUpkeep` invariant the client draws
   the feed row from.
 
-### Cash crops — the F4 coupling (trade is the vector's third routing)
+### Cash crops — the F4 coupling (a cash crop is paid in MATERIALS)
 
-The yield vector's **third and final** account, the exact twin of the F3 fodder work
-(`docs/plan_flora_roster.md` §6). **The one-sentence model:** a cash crop (**cotton**/**flax**/
-**tobacco**/**tea**) is a `field`-ceiling species whose vector is *trade-dominant* and whose
-`provisions_per_biomass` is `0`; harvesting it as a **Field** credits the faction **`trade_goods`
-stockpile** and (near) zero food. "Calories OR cash from the same scarce sowable tile" is the
-land-use tension.
+`docs/plan_flora_roster.md` §6, **restated by arc #527**. **The one-sentence model:** a cash crop
+(**cotton**/**flax**/**tobacco**/**tea**/**grapevine**) is a `field`-ceiling species whose
+`provisions_per_biomass` is `0` and which is paid entirely in **materials**; harvesting it as a
+**Field** credits the band's **material batches** and (near) zero food. "Calories OR cash from the
+same scarce sowable tile" is the land-use tension, and *cash* is now literally *stuff*.
+
+> **F4 shipped as the yield vector's third SCALAR account, and that scalar is retired.** The `trade`
+> component was written by every take site and read by none — no `take(TRADE_GOODS)` existed anywhere
+> — while the `materials` list beside it named the same take's concrete fibre and leaf. A flat scalar
+> also collapses the distinction the crafting arc exists to keep: cotton fibre (`fineness 0.92 /
+> strength 0.35`) and hay straw (`0.22 / 0.30`) are both `fibre` and are not the same thing. So
+> `trade_goods_per_biomass`, `field_trade_goods`, `tended_take_trade_goods`,
+> `patch_trade_per_biomass`, `managed_per_worker_trade` and `commit_trade_payoff` are **all deleted**;
+> `docs/plan_contact_and_logistics.md` §Q5 carries the argument.
 
 - **The plant half — the vector routes by account, no `role` branch.** A Field's managed harvest
-  credits each yield component to its own account, commodity-generically: `field_provisions` → the
-  band's `FOOD` store, `field_fodder` → its `FODDER` store, and the new **`field_trade_goods`** → the
-  **faction** `trade_goods` stockpile (`FactionInventory`, *not* a band-local store — the one place F4
-  differs from F3, exactly as the Deplete-forage arm's wild sale credits the faction). Each is capped
-  by its own per-worker collection (`managed_per_worker_yield` / `_fodder` / `_trade`). A cash crop's
-  `field_provisions` is `0` (worthless as food), a grain's `field_trade_goods` is the negligible flat
-  token (`biomass × field_provisions_per_biomass × 0.005/0.05`), a hay crop's is `0` — the vector does
-  the routing.
-- **No markup, anywhere.** `field_trade_goods` applies no `trade_goods_multiplier` — and neither does
-  anything else now: the whole `forage.market` block is **deleted** with the four stances (see the
-  retired-levers note at the top of this file). A deep floor still out-earns a shallow one on trade
-  **because it takes more biomass**, which is the ladder doing the work rather than a stance bonus.
-- **`provisions 0.0` is SAFE.** `patch_species_quality` divides by the **wild** `provisions_per_biomass`,
-  never the species rate, so a 0-provisions cash crop yields exactly 0 food with no divide-by-zero, and
-  `YieldVector::pays_something()` passes because trade `> 0`. This is the sharp "pays no calories" edge.
-- **Hosting.** The four cash crops are hosted **honestly on the river valleys** — cotton/tobacco/flax
-  on AlluvialPlain/Floodplain/RiverDelta (capacity ≥ the 195 field-rung floor, so they contest grain on
+  credits each component to its own account, commodity-generically: `field_provisions` → the band's
+  `FOOD` store, `field_fodder` → its `FODDER` store, and `credit_material_yield` → its material
+  batches. A cash crop's `field_provisions` is `0` (worthless as food) and a grain's material list is
+  empty — the vector does the routing.
+- **The MATERIAL account reads the harvest in BIOMASS** (`forage::field_harvest_biomass`) rather than
+  scaling off one of the scalar currencies, because a cash Field's provisions are `0` and there would
+  be nothing to scale. A Field's basket is 100% its crop, so it credits exactly that crop's reading.
+- **`provisions 0.0` is SAFE.** `patch_species_quality` divides by the **wild**
+  `provisions_per_biomass`, never the species rate, so a 0-provisions cash crop yields exactly 0 food
+  with no divide-by-zero — and `YieldVector::pays_something()` passes **because the species names
+  material rows**. That last clause is the assertion that turned "did we silently break a species"
+  into a load failure when the trade axis went: all five cash crops read `0` provisions and `0`
+  fodder, so a `pays_something` testing only the two scalars would have rejected every one of them at
+  boot.
+- **Three of the five needed materials of their own.** Cotton and flax already carried fibre rows;
+  **tobacco**, **tea** and **grapevine** paid the trade scalar and nothing else, so they would have
+  produced literally nothing. They now pay the **uncrafted** materials `tobacco` / `tea` / `grape`
+  (rates 0.07 / 0.06 / 0.07, sitting with cotton's 0.07 and flax's 0.06 rather than with a byproduct
+  like hazel bast's 0.010 — on a cash crop the harvested plant **is** the product). Their axes and
+  readings are **provisional placeholders** for a luxury system that does not exist; see
+  `crafting.md` → "A material with NO CRAFT is one nothing works".
+- **Hosting.** The cash crops are hosted **honestly on the river valleys** — cotton/tobacco/flax on
+  AlluvialPlain/Floodplain/RiverDelta (capacity ≥ the 195 field-rung floor, so they contest grain on
   real sowable ground), tea on the uplands (RollingHills/MixedWoodland/HighPlateau). **Per-tile
   realization (§10) is what keeps the staples (wild_emmer / reed_and_root) dominant** — the commit bar
   reads a tile's *local realized share*, so some alluvial tiles realize as wheat and others as cotton,
-  rather than the cash crop being kept off that ground (the S1 commit-worthiness bar, reframed around
-  the realized share in `flora_roster.rs` + `flora_commitment.rs`). Trade rates are **playtest dials**.
-- **The picker seam.** `commit_trade_payoff` is the crop-picker's cash quote — the trade twin of
-  `commit_fodder_payoff`, built through the *same* `hypothetical_patch` and the *same*
-  `field_trade_goods` the sim pays with, so quote and payout cannot drift. `sowYieldRatio`/`sowPayoff`
-  read `0` for a cash crop (worthless as food), so this is the number that lets the picker show its
-  real value instead of a bare `0×`.
-- **Wire (append-only):** `FloraShareInfo.sowTradePayoff` — trade/turn a sown Field of this plant
-  would credit the working band's own `TRADE_GOODS` store (see `yield-forecast.md` → "Trade goods are a
-  BAND-LOCAL store"); `0` for a staple/hay or a plant that cannot Sow here. **Client
-  done:** the native reader decodes `sowTradePayoff` and the crop picker renders a cash-crop trade row
-  (`FLORA_CROP_TRADE_ROW_FORMAT`).
+  rather than the cash crop being kept off that ground. Material rates are **playtest dials**.
+- **THE CROP PICKER HAS NO CASH QUOTE ANY MORE, and that is an open client-side gap.**
+  `commit_trade_payoff` and the wire fields it fed (`FloraShareInfo.sowTradePayoff` /
+  `cultivateTradePayoff`) are gone: a material yield is a **per-material reading with a
+  characteristic vector**, and there is no honest per-turn scalar for a picker row to state. So the
+  Cultivate/Sow rows of a cash crop now show its (small, rung-2) calories and nothing about the fibre
+  that is the whole point of sowing it. Filling it needs a per-material quote on `FloraShareInfo` —
+  **not** a flat "materials/turn" number, which would be the retired trade axis under a new name.
 
 ### The `role` tag is on the wire — `FloraShareInfo.role`
 
@@ -468,41 +479,41 @@ where the role is still a true and useful fact. Pinned by
 `an_unstated_role_ships_as_an_empty_string_rather_than_a_default_category` and, at the capture site, by
 `flora_quotes::tests::every_quoted_plant_carries_its_rosters_own_role`.
 
-### The vector routes at RUNG 2 as well — a Tended Patch pays all three accounts
+### The vector routes at RUNG 2 as well — a Tended Patch pays every account it names
 
-§3's spine is unconditional: *a harvest* of `B` biomass pays `B × yield.*` into three accounts. F3 and F4
-implemented it only inside the `is_field()` branch of `advance_labor_allocation`'s Forage arm, so a
-**completed Tended Patch** routed provisions alone and dropped its crop's fodder and trade on the floor —
-a rung-2 cash crop (`provisions_per_biomass: 0`) produced **nothing in any currency** while being drawn
-down at full MSY every turn (issue #427). The same take now feeds all three accounts at rung 2:
+§3's spine is unconditional: *a harvest* of `B` biomass pays `B × yield.*` into every account the
+species names. F3 and F4 implemented it only inside the `is_field()` branch of
+`advance_labor_allocation`'s Forage arm, so a **completed Tended Patch** routed provisions alone and
+dropped its crop's other accounts on the floor — a rung-2 cash crop (`provisions_per_biomass: 0`)
+produced **nothing at all** while being drawn down at full MSY every turn (issue #427). The same take
+now feeds every account at rung 2:
 
-- **`tended_take_fodder` / `tended_take_trade_goods`** (`forage.rs`) — the take-driven twins of
-  `field_fodder` / `field_trade_goods`, resolving their rates through `patch_fodder_per_biomass` /
-  `patch_trade_per_biomass`, the fodder and trade twins of the `patch_provisions_per_biomass`
-  conversion seam. Both read `committed_species`, so all three accounts switch on together the turn
-  the rung completes, and all three read `0` for a crop whose vector does not pay them — commodity-generic,
-  no `role` branch. `FODDER` credits the working band's `LocalStore` (feeding `band_fodder_inflow` as the
-  Field arm does); `TRADE_GOODS` credits the **faction** stockpile.
+- **`tended_take_fodder`** (`forage.rs`) — the take-driven twin of `field_fodder`, resolving its rate
+  through `patch_fodder_per_biomass`, the fodder twin of the `patch_provisions_per_biomass`
+  conversion seam. It reads `committed_species`, so both scalar accounts switch on together the turn
+  the rung completes, and both read `0` for a crop whose vector does not pay them — commodity-generic,
+  no `role` branch. `FODDER` credits the working band's `LocalStore` (feeding `band_fodder_inflow` as
+  the Field arm does).
+- **The MATERIAL account rides the same take**, credited by `credit_material_yield` off
+  `forage::patch_material_yields` at rungs 1 and 2 alike — which is what closes #427 now that the
+  trade scalar is retired: a tended grapevine patch banks **grapes**, not nothing.
+  (`tended_take_trade_goods` is deleted with the axis it converted.)
 - **TAKE-driven, not a managed rate — the deliberate difference from the Field arm.** A Field is never
   drawn down, so its harvest collapses the policy axis and is quoted as a rate on the standing crop. A
   tended patch *is* drawn down, so its non-food accounts ride the same take its food account does:
-  `Deplete` on a tended cash crop earns more trade than `Sustain` because it takes more, and the
-  over-farm ⚠ covers the whole vector. **A Sustain harvest of a tended cash crop therefore does pay
-  trade** — that is the #427 fix, not a leak.
+  `Deplete` on a tended cash crop banks more material than `Sustain` because it takes more, and the
+  over-farm ⚠ covers the whole vector. **A Sustain harvest of a tended cash crop therefore does pay**
+  — that is the #427 fix, not a leak. Pinned by
+  `forage_tended_vector::a_deeper_floor_banks_more_material_off_a_tended_cash_crop`, which asserts the
+  ordering as a **ratio against the biomass ratio**, so a per-depth bonus could not hide in it.
 - **No second collection cap.** `forage_take` already caps the take by `workers × per_worker_biomass ×
-  seasonal`, so unlike the Field arm's `managed_per_worker_fodder`/`_trade` there is nothing further to
-  cap: the crop the crew carries home *is* the take it made.
-- **One trade rule at every drawn-down rung** (#433). There is no committed-vs-wild branch left: every
-  `forage_take` harvest credits `take × patch_trade_per_biomass`, the basket average, at rung 1 **and**
-  rung 2 alike — and **nothing multiplies it**. The `forage.market.trade_goods_multiplier` (4.0) this
-  paragraph used to describe is deleted with the stance axis: it re-welded product to policy, which is
-  exactly what the harvest-floor arc removed. A deeper floor sells more because it takes more,
-  settings on the same rate. The species-blind `forage.market.trade_goods_per_biomass` (0.005) is
-  **retired**; the vector is the rate. Because every staple carries `trade_goods_per_biomass` 0.005,
-  a staple-only basket's wild `Deplete` sale is **numerically unchanged** — only baskets holding a
-  cash crop move, and a `Sustain` gather of wild ground that happens to hold grapevine now returns
-  trade goods, because you gathered them. **Rung 3 keeps its no-markup rule**: a Field is never drawn
-  down and has no policy axis.
+  seasonal`, so unlike the Field arm's `managed_per_worker_fodder` there is nothing further to cap:
+  the crop the crew carries home *is* the take it made.
+- **A mixed basket DECOMPOSES rather than averaging.** Food and fodder are interchangeable numbers, so
+  a basket averages them into one rate; a material carries a characteristic vector, and averaging two
+  species' would invent a plant that is not growing there. So a mixed tile pays one material credit
+  per species, each keeping its own exact reading, and credits landing in the same band merge in the
+  store.
 - **Wild fodder is gated at the CONSUMER, not in the rate seam** (#433). The invariant reaches fodder
   too — a wild tile realizing `hay_grass` pays hay on any harvest — but crediting it to a band with
   nowhere to put it hands out animal feed nobody bid for. So an **uncommitted** patch's `FODDER`
@@ -532,36 +543,36 @@ down at full MSY every turn (issue #427). The same take now feeds all three acco
     improvement — so the lock lifts on exactly the turn the sim's does, and a rung the player has
     ticked but not yet committed still reads as refused. Keying the client on the RUNG would have shown
     a refusal through the whole build while the sim was already paying.
-- **Pinned by `core_sim/tests/forage_tended_vector.rs`**: the #427 grapevine-under-Sustain regression, hay
-  crediting `FODDER`, a staple keeping its food *and* gaining its token trade, the wild `Deplete` sale
-  unchanged, no double credit under `Deplete`, and `Deplete > Sustain` on the same tended cash crop. Five
-  of the six fail against the pre-fix code; the wild-market pin passes both sides, which is its job.
-- **The CROP PICKER quotes rung 2's other two accounts** (issue #419) — `commit_fodder_payoff` /
-  `commit_trade_payoff` take a **`RungKey`**, exactly as `commit_payoff` does, and dispatch through
-  `rung_fodder_payoff` / `rung_trade_payoff`: `field_fodder`/`field_trade_goods` at rung 3, the new
-  **`tended_fodder`/`tended_trade_goods`** at rung 2, `0` below. On the wire as
-  `FloraShareInfo.cultivateFodderPayoff` / `cultivateTradePayoff`, the tended twins of the two `sow*`
-  fields. Until then both seams hardcoded `RungKey::PlantField`, so a tended cash crop was *paid*
-  correctly (above) and *previewed* with a **Field's** number — a managed rate on the full standing crop
-  standing in for an MSY skim off a merely-weeded basket, on the rung the player was about to spend 25
-  turns on. **Two fields per account per rung, for `cultivatePayoff`/`sowPayoff`'s reason**: the rungs
-  differ in basket, conversion gain *and* the SHAPE of the harvest, so one number cannot answer both.
-  - **All three rung-2 accounts ride ONE take**, `tended_msy_take` — the Sustain skim on the tended
-    curve, extracted so `tended_provisions` and the two new quotes cannot describe different harvests
-    (the `patch_ecology` no-second-copy rule, applied to the take). The non-food quotes are
-    **floor-blind**, and there is no `market.trade_goods_multiplier` left to be blind to — the lever is
-    deleted. A crop-picker row states what the *crop* pays on this ground — the
-    same rule `field_trade_goods` states one rung up. At the food-peak floor on a patch at `K/2` the quote and
-    the credit therefore coincide exactly, which is how they are pinned:
-    `forage_tended_vector::the_published_cultivate_{trade,fodder}_quote_is_the_{trade,fodder}_a_tended_patch_actually_credits`
-    run a real turn and assert the published quote against what the turn credited (the §4.3 rule).
+- **Pinned by `core_sim/tests/forage_tended_vector.rs`**: the #427 grapevine-under-Sustain regression
+  (`a_tended_cash_crop_under_sustain_credits_materials_and_costs_food`), hay crediting `FODDER`, and
+  `Deplete > Sustain` on the same tended cash crop **in the ratio of the biomass taken**. The nine
+  trade-account tests that sat beside them are deleted with the axis, and the file's own gravestone
+  names each one and where its surviving claim moved to.
+- **The CROP PICKER quotes rung 2's FODDER account** (issue #419) — `commit_fodder_payoff` takes a
+  **`RungKey`**, exactly as `commit_payoff` does, and dispatches through `rung_fodder_payoff`:
+  `field_fodder` at rung 3, `tended_fodder` at rung 2, `0` below. On the wire as
+  `FloraShareInfo.cultivateFodderPayoff`, the tended twin of `sowFodderPayoff`. Until then the seam
+  hardcoded `RungKey::PlantField`, so a tended fodder crop was *paid* correctly (above) and
+  *previewed* with a **Field's** number — a managed rate on the full standing crop standing in for an
+  MSY skim off a merely-weeded basket, on the rung the player was about to spend 25 turns on. **Two
+  fields per account per rung, for `cultivatePayoff`/`sowPayoff`'s reason**: the rungs differ in
+  basket, conversion gain *and* the SHAPE of the harvest, so one number cannot answer both.
+  - **Both rung-2 scalar accounts ride ONE take**, `tended_msy_take` — the Sustain skim on the tended
+    curve, extracted so `tended_provisions` and the fodder quote cannot describe different harvests
+    (the `patch_ecology` no-second-copy rule, applied to the take). The non-food quote is
+    **floor-blind**: a crop-picker row states what the *crop* pays on this ground. At the food-peak
+    floor on a patch at `K/2` the quote and the credit therefore coincide exactly, which is how they
+    are pinned —
+    `forage_tended_vector::the_published_cultivate_fodder_quote_is_the_fodder_a_tended_patch_actually_credits`
+    runs a real turn and asserts the published quote against what the turn credited (the §4.3 rule).
   - **A rung-2 cash crop's FOOD payoff is non-zero, and the picker states it.** Weeding raises cotton's
-    share but leaves the volunteers standing, so `cultivate_payoff` is their calories — measured 0.149
-    on the fixture's richest cotton tile against 4.28 trade, and a *loss* against gathering the same
-    tile wild. Only a sown **Field** is 100% crop and pays exactly `0` food. Pinned by
-    `a_staples_cultivate_trade_quote_is_the_flat_token_not_zero_and_not_a_cash_crops`, which also pins
-    the other half of #419: **every staple's rung-2 trade quote is non-zero** (the flat 0.005 token —
-    measured 0.112 for wild_emmer), which is why no client surface may treat "trade > 0" as "cash crop".
+    share but leaves the volunteers standing, so `cultivate_payoff` is their calories — a *loss*
+    against gathering the same tile wild. Only a sown **Field** is 100% crop and pays exactly `0`
+    food.
+  - **THE CASH QUOTE ITSELF IS GONE** (arc #527) — `cultivateTradePayoff` / `sowTradePayoff` went with
+    the trade axis, so the picker's cash-crop rows now show only that (small) food number and say
+    nothing about the fibre or leaf a player is sowing for. See "Cash crops — the F4 coupling" for
+    what filling it would take.
 - **Still provisions-only:** `project_realized_forage` / `project_arrivals_forage` — the forward
   projection reports food, so a cash Field's contribution to it is its calories and nothing else.
 

@@ -107,7 +107,19 @@ pub type VarietyReadings = BTreeMap<String, f32>;
 pub struct MaterialDef {
     /// The craft track that works this material — one craft per material (hide → tanning). The
     /// knowledge half of the ladder hangs off this id.
-    pub craft: String,
+    ///
+    /// **Absent ⇒ nothing works it** — the same statement [`Self::hand_working`] makes one level
+    /// down, one rung further out: `hand_working: None` says *"not by hand"*, `craft: None` says
+    /// *"not by anything, yet"*. A material with no craft has a **producer** but no bench: the yield
+    /// edge credits it, the store holds it, the catalogue publishes it, and no recipe can name it —
+    /// because [`crate::crafting::crafts_declared_by`] does not list a craft that is not there, and
+    /// a recipe's `craft` is validated against exactly that list.
+    ///
+    /// It is deliberately **not** a licence to ship an unreachable material. The three that use it
+    /// (`tobacco`, `tea`, `grape`) are *uncrafted*, not *unreachable*: a plant grows them and a band
+    /// banks them today; what does not exist yet is the craft that would turn them into something.
+    #[serde(default)]
+    pub craft: Option<String>,
     /// **The axes this material is rated on**, in the order a [`BandKey`] reads them. Order is part
     /// of the contract: it is what makes a key comparable between two batches.
     pub characteristics: Vec<String>,
@@ -374,9 +386,18 @@ impl MaterialsConfig {
             });
         }
         for (id, def) in &self.materials {
-            if def.craft.trim().is_empty() {
+            // **An ABSENT craft is legal; a BLANK one is not.** `None` is the deliberate statement
+            // *"nothing works this yet"* (see [`MaterialDef::craft`]); `""` is a typo that would
+            // put an unnameable craft in `crafts_declared_by` and let a recipe match it.
+            if def
+                .craft
+                .as_ref()
+                .is_some_and(|craft| craft.trim().is_empty())
+            {
                 return Err(MaterialsConfigError::InvalidTable {
-                    reason: format!("material '{id}' names no craft, so nothing could work it"),
+                    reason: format!(
+                        "material '{id}' states a blank craft - omit the key to say nothing works it"
+                    ),
                 });
             }
             if def.characteristics.is_empty() {
@@ -673,6 +694,10 @@ mod tests {
     const HIDE: &str = "hide";
     const FIBRE: &str = "fibre";
     const BONE: &str = "bone";
+    /// The three **uncrafted** luxury crops (arc #527): a producer exists, a craft does not.
+    const GRAPE: &str = "grape";
+    const TEA: &str = "tea";
+    const TOBACCO: &str = "tobacco";
 
     fn builtin() -> MaterialsConfig {
         MaterialsConfig::from_json_str(BUILTIN_MATERIALS_CONFIG).expect("builtin parses")
@@ -695,16 +720,30 @@ mod tests {
             .expect_err("the mutated table must be rejected")
     }
 
+    /// **What ships, and the line between the two kinds of shipped material.**
+    ///
+    /// The three organics are **crafted** — each names a craft and yields to bare hands. The three
+    /// luxury crops are **uncrafted**: `craft` and `hand_working` are both absent, which is the
+    /// deliberate statement *nothing works this yet* (arc #527). Neither kind is *unreachable* —
+    /// every one of the six has a producer on the shipped rosters — and the rule this pins is that a
+    /// material with no craft is also a material with no bench, never one with a half-declared one.
     #[test]
     fn the_builtin_table_parses_and_validates() {
         let config = builtin();
-        // The three organic materials, and nothing that has no producer yet.
         let ids: Vec<&str> = config.materials().map(|(id, _)| id).collect();
-        assert_eq!(ids, vec![BONE, FIBRE, HIDE]);
+        assert_eq!(ids, vec![BONE, FIBRE, GRAPE, HIDE, TEA, TOBACCO]);
         for (id, def) in config.materials() {
-            assert!(
+            let crafted = [BONE, FIBRE, HIDE].contains(&id);
+            assert_eq!(
+                def.craft.is_some(),
+                crafted,
+                "{id}: only the three organics name a craft"
+            );
+            assert_eq!(
                 def.is_hand_workable(),
-                "{id} is organic, so it must be workable bare-handed"
+                crafted,
+                "{id}: a material nothing works is not workable bare-handed either — the absent \
+                 block is the refusal, with no branch anywhere"
             );
             assert!(
                 def.varieties.is_empty(),

@@ -27,7 +27,6 @@ use crate::{
         MoraleCause, MoraleContributions, MountainMetadata, PendingMigration, PopulationCohort,
         PowerNode, ResidentBand, SourceYield, StartingUnit, Tile, YieldRange,
         DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
-        TRADE_GOODS,
     },
     creatures_config::CreaturesConfigHandle,
     culture::{
@@ -47,11 +46,10 @@ use crate::{
     flora_config::FloraConfigHandle,
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
     forage::{
-        field_fodder, field_provisions, field_trade_goods, forage_escapement_ceiling,
-        forage_per_worker_biomass, forage_provisions, forage_take, managed_per_worker_fodder,
-        managed_per_worker_trade, managed_per_worker_yield, patch_ecology,
-        patch_provisions_per_biomass, patch_rung, resolve_committed_species, rung_site_refusal,
-        tended_take_fodder, tended_take_trade_goods, tile_flora_composition, tile_forage_capacity,
+        field_fodder, field_provisions, forage_escapement_ceiling, forage_per_worker_biomass,
+        forage_provisions, forage_take, managed_per_worker_fodder, managed_per_worker_yield,
+        patch_ecology, patch_provisions_per_biomass, patch_rung, resolve_committed_species,
+        rung_site_refusal, tended_take_fodder, tile_flora_composition, tile_forage_capacity,
         tile_is_fresh_watered, ForagePatch, ForageRegistry, NO_FORAGE_SEASON,
     },
     generations::GenerationRegistry,

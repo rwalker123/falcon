@@ -284,10 +284,8 @@ fn hunt_trip_row(
         turns_to_fill: forecast.turns_to_fill.unwrap_or(NEVER_FILLED),
         bound: forecast.bound.as_str().to_string(),
         delivers_food: forecast.delivers_food,
-        delivers_trade: forecast.delivers_trade,
         animals_taken: forecast.animals_taken,
         delivered_food: forecast.delivered_food,
-        delivered_trade: forecast.delivered_trade,
         wasted_food: forecast.wasted_food,
     }
 }
@@ -306,8 +304,9 @@ fn hunt_trip_row(
 ///   across every small party on big game, and that leading-zeros plateau capped the sheet at one
 ///   hunter; delivered payload rises smoothly because a party too small to haul its kill whole still
 ///   lands a partial.
-/// - **It scans the component this QUARRY pays.** An inedible species delivers `0` food at every
-///   size, so a food-only scan finds no plateau at all on exactly the quarry whose payload is trade.
+/// - **It scans the measure this QUARRY pays in.** An inedible species delivers `0` food at every
+///   size, so a food-only scan finds no plateau at all on exactly the quarry whose whole payload is
+///   hides — which this reply cannot carry, so the scan counts its ANIMALS instead.
 /// - **A payload that never rises above zero is not a plateau.** A raid every quoted party comes home
 ///   empty from is *flat at zero*, and reading that flatness as "the first size was enough" is how
 ///   the sheet came to say *"max 1 worker useful"* about a party that kills nothing.
@@ -343,10 +342,16 @@ fn useful_party_cap(
     let mut plateau = NO_USEFUL_CAP;
     for party_workers in 1..=max_party_workers {
         let row = hunt_trip_row(floor, party_workers, resolved, fauna, expedition);
+        // **An INEDIBLE quarry's payload is counted in ANIMALS**, not in food it does not pay.
+        // It used to be counted in the retired trade scalar; what such a raid really brings home is
+        // material batches, which this reply does not carry — but the *plateau* is a fact about the
+        // herd's surplus rather than about a currency, and the kill count reaches it at exactly the
+        // party size any payload measure would. Without this arm a wolf raid's `useful_cap` would be
+        // `0` (*"no party is worth sending"*) for a raid the sim will happily pay in pelts.
         let delivered = if row.delivers_food {
             row.delivered_food
         } else {
-            row.delivered_trade
+            row.animals_taken as f32
         };
         if delivered > previous {
             previous = delivered;
@@ -435,8 +440,6 @@ fn answer_denial_raid_forecast(world: &mut World, ask: &DenialRaidForecastQuery)
             animals_killed: forecast.animals_killed,
             delivered_food: forecast.delivered_food,
             wasted_food: forecast.wasted_food,
-            delivered_trade: forecast.delivered_trade,
-            wasted_trade: forecast.wasted_trade,
         },
         party_needed,
     })
@@ -874,9 +877,9 @@ mod tests {
     ///
     /// What is durable, and what this keeps, is the half that can still break: the **mapping**.
     /// `hunt_trip_row` transcribes a `HuntTripForecast` into a wire row, and every field is a place
-    /// a rename or a reorder could silently swap two numbers of the same type — `delivered_food` for
-    /// `wasted_food`, `delivers_food` for `delivers_trade`. Those are all `f32` and `bool`; nothing
-    /// but an assertion catches a transposition.
+    /// a rename or a reorder could silently swap two numbers of the same type — `delivered_food`
+    /// for `wasted_food`. Those are all `f32` and `bool`; nothing but an assertion catches a
+    /// transposition.
     ///
     /// It also pins the two sentinels, which are the only values the row does not carry verbatim:
     /// `turns_to_fill` collapses `None` to [`NEVER_FILLED`], and `bound` is the enum's own key.
@@ -927,13 +930,11 @@ mod tests {
                 );
                 assert_eq!(row.bound, direct.bound.as_str());
                 assert_eq!(row.delivers_food, direct.delivers_food);
-                assert_eq!(row.delivers_trade, direct.delivers_trade);
                 assert_eq!(row.animals_taken, direct.animals_taken);
                 assert_eq!(row.delivered_food, direct.delivered_food);
-                assert_eq!(row.delivered_trade, direct.delivered_trade);
                 assert_eq!(row.wasted_food, direct.wasted_food);
 
-                saw_a_payload |= row.delivered_food > 0.0 || row.delivered_trade > 0.0;
+                saw_a_payload |= row.delivered_food > 0.0 || row.animals_taken > 0;
             }
         }
         assert!(
@@ -1172,7 +1173,7 @@ mod tests {
             if row.delivers_food {
                 row.delivered_food
             } else {
-                row.delivered_trade
+                row.animals_taken as f32
             }
         };
 

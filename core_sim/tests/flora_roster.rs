@@ -46,18 +46,15 @@ fn realized_share(flora: &FloraConfig, terrain: TerrainType, species: &str, coor
         .unwrap_or(0.0)
 }
 
-/// **The flat trade TOKEN every staple carries** — read off the roster as the smallest positive
-/// `trade_goods_per_biomass` in it, because since #433 the roster is the token's only home: the
-/// species-blind `forage.market.trade_goods_per_biomass` copy is retired, and the yield vector is now
-/// the one trade rate at every rung. A **cash** crop is defined here as one paying materially more
-/// than this.
-fn staple_trade_token(flora: &FloraConfig) -> f32 {
-    flora
-        .species
-        .values()
-        .map(|def| def.yield_.trade_goods_per_biomass)
-        .filter(|rate| *rate > 0.0)
-        .fold(f32::MAX, f32::min)
+/// **Is this species a CASH crop?** Since arc #527 the trade scalar that defined one is gone, so the
+/// definition is read off the accounts that remain: a cash crop pays **no food and no fodder** and is
+/// paid entirely in **materials**. That is not a weaker test than the retired "trade above the flat
+/// token" — it is the same statement about the same five rows, made against the accounts the sim
+/// actually credits.
+fn is_cash_crop(def: &core_sim::FloraDef) -> bool {
+    def.yield_.provisions_per_biomass == 0.0
+        && def.yield_.fodder_per_biomass == 0.0
+        && !def.yield_.materials.is_empty()
 }
 
 /// What a **tended** patch committed to `species` converts at on this basket, and what the same
@@ -205,41 +202,44 @@ fn a_navigable_hex_names_both_its_valley_and_its_fishery() {
     }
 }
 
-/// **The yield vector routes by account, and only the accounts F3/F4 have opened are live.** S1 made
+/// **The yield vector routes by account, and EVERY species pays into at least one.** S1 made
 /// `provisions_per_biomass` per-species (`docs/plan_flora_roster.md` §4.3); F3 opened the **fodder**
-/// account for the one fodder crop, hay_grass. So a **staple** pays food and no fodder, the **fodder
-/// crop** pays fodder and no food, and trade stays the flat F1 rate on staples (0.0 on the fodder
-/// crop — a fodder crop pays no trade). `role` is a display tag, so this reads the *vector*, not the
-/// tag. Regrowth is still verbatim on every row (S1/F3 move no regrowth).
+/// account for the one fodder crop, hay_grass; the cash crops are paid entirely in **materials**
+/// (arc #527 retired the trade scalar that used to carry them). So a **staple** pays food and no
+/// fodder, the **fodder crop** pays fodder and no food, and a **cash crop** pays neither and carries
+/// material rows instead. `role` is a display tag, so this reads the *vector*, not the tag. Regrowth
+/// is still verbatim on every row.
+///
+/// **The last clause is the one that would have caught the trade retirement silently breaking five
+/// species**: a row paying into no account at all is a plant that grows and produces nothing, which
+/// `FloraConfig::validate`'s `pays_something` now rejects at load.
 #[test]
-fn the_yield_vector_routes_by_account_and_only_opened_accounts_are_live() {
+fn the_yield_vector_routes_by_account_and_every_species_pays_into_one() {
     let flora = FloraConfig::builtin();
     let forage = labor().forage;
 
-    let flat_trade = staple_trade_token(&flora);
     let mut fodder_crops = 0;
     let mut cash_crops = 0;
     for (key, def) in &flora.species {
         let is_fodder_crop = def.yield_.fodder_per_biomass > 0.0;
-        // A CASH crop (Flora Roster F4) pays into the trade account alone: no food, no fodder, and a
-        // trade rate ABOVE the flat F1 token every staple still carries. The three categories are
-        // read off the *vector*, never the display `role` (which is derived from exactly this).
-        let is_cash_crop = !is_fodder_crop
-            && def.yield_.provisions_per_biomass == 0.0
-            && def.yield_.trade_goods_per_biomass > flat_trade;
+        // The three categories are read off the *vector*, never the display `role` (which is derived
+        // from exactly this).
+        let is_cash = !is_fodder_crop && is_cash_crop(def);
+        assert!(
+            def.yield_.provisions_per_biomass > 0.0
+                || def.yield_.fodder_per_biomass > 0.0
+                || !def.yield_.materials.is_empty(),
+            "`{key}` pays into no account at all — it would grow forever and produce nothing"
+        );
         if is_fodder_crop {
-            // A fodder crop pays into the fodder account, NOT provisions and NOT trade.
+            // A fodder crop pays into the fodder account, NOT provisions.
             fodder_crops += 1;
             assert_eq!(
                 def.yield_.provisions_per_biomass, 0.0,
                 "fodder crop `{key}` must pay no provisions — hay feeds animals, not people"
             );
-            assert_eq!(
-                def.yield_.trade_goods_per_biomass, 0.0,
-                "fodder crop `{key}` must pay no trade — its payoff is the fodder account"
-            );
-        } else if is_cash_crop {
-            // A cash crop pays into the trade account alone (F4): no food, no fodder, trade dominant.
+        } else if is_cash {
+            // A cash crop pays in materials alone: no food, no fodder.
             cash_crops += 1;
             assert_eq!(
                 def.yield_.provisions_per_biomass, 0.0,
@@ -247,24 +247,18 @@ fn the_yield_vector_routes_by_account_and_only_opened_accounts_are_live() {
             );
             assert_eq!(
                 def.yield_.fodder_per_biomass, 0.0,
-                "cash crop `{key}` must pay no fodder — its payoff is the trade account"
+                "cash crop `{key}` must pay no fodder — its payoff is what it is MADE OF"
             );
             assert!(
-                def.yield_.trade_goods_per_biomass > flat_trade,
-                "cash crop `{key}` must pay trade ABOVE the flat token that differentiates it \
-                 ({} vs {flat_trade})",
-                def.yield_.trade_goods_per_biomass
+                !def.yield_.materials.is_empty(),
+                "cash crop `{key}` must name the material it pays in — it has no other account"
             );
         } else {
-            // A staple converts biomass to food positively, pays the flat F1 trade rate, and — since
-            // the fodder account is for hay alone — pays no fodder.
+            // A staple converts biomass to food positively and — since the fodder account is for hay
+            // alone — pays no fodder.
             assert!(
                 def.yield_.provisions_per_biomass > 0.0,
                 "staple `{key}` must convert biomass into food at some positive rate"
-            );
-            assert_eq!(
-                def.yield_.trade_goods_per_biomass, flat_trade,
-                "staple `{key}` must still carry the flat trade token verbatim — F4 owns cash crops"
             );
             assert_eq!(
                 def.yield_.fodder_per_biomass, 0.0,
@@ -430,26 +424,21 @@ fn the_fodder_crop_pays_a_positive_fodder_yield() {
     }
 }
 
-/// **The cash crops pay a positive trade yield, and they compete with grain on SOWABLE ground**
-/// (Flora Roster F4, `docs/plan_flora_roster.md` §6). A cash crop's worth-it bar is the trade
-/// account, not provisions: a cash Field's harvest credits the faction `trade_goods` stockpile,
-/// which the worth-committing bar above (provisions-only) deliberately skips. The land-use tension is
-/// real only if a cash crop grows where grain could: each must host at least one biome that also
-/// hosts a **sowable** staple (one that reaches the field rung), so growing cash genuinely displaces
-/// calories on ground a Field could have taken.
+/// **The cash crops pay a positive MATERIAL yield, and they compete with grain on SOWABLE ground**
+/// (Flora Roster F4, `docs/plan_flora_roster.md` §6). A cash crop's worth-it bar is its material
+/// account, not provisions: a cash Field's harvest credits the band's material batches, which the
+/// worth-committing bar above (provisions-only) deliberately skips. The land-use tension is real only
+/// if a cash crop grows where grain could: each must host at least one biome that also hosts a
+/// **sowable** staple (one that reaches the field rung), so growing cash genuinely displaces calories
+/// on ground a Field could have taken.
 #[test]
-fn the_cash_crops_pay_a_positive_trade_yield_and_contest_sowable_ground() {
+fn the_cash_crops_pay_a_positive_material_yield_and_contest_sowable_ground() {
     let flora = FloraConfig::builtin();
-    let flat_trade = staple_trade_token(&flora);
 
     let cash: Vec<(&String, &_)> = flora
         .species
         .iter()
-        .filter(|(_, def)| {
-            def.yield_.provisions_per_biomass == 0.0
-                && def.yield_.fodder_per_biomass == 0.0
-                && def.yield_.trade_goods_per_biomass > flat_trade
-        })
+        .filter(|(_, def)| is_cash_crop(def))
         .collect();
     assert_eq!(
         cash.len(),
@@ -459,8 +448,9 @@ fn the_cash_crops_pay_a_positive_trade_yield_and_contest_sowable_ground() {
 
     for (key, def) in cash {
         assert!(
-            def.yield_.trade_goods_per_biomass > flat_trade,
-            "`{key}` must pay a trade rate above the flat token — it is what a cash Field credits"
+            def.yield_.materials.iter().all(|row| row.per_biomass > 0.0),
+            "`{key}` must pay a positive rate in every material it names — it is the only account \
+             a cash Field credits"
         );
         assert!(
             def.cultivation_ceiling.allows_sow(),

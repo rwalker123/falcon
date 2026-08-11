@@ -76,8 +76,10 @@ const FOOD_PEAK: f32 = 0.5;
 /// A defaulting species (its `hunt_yield` block is omitted, so it pays the global rate) — the
 /// forecast's food half.
 const DEFAULTING_SPECIES: &str = "Red Deer";
-/// The **inedible** species: `provisions_per_biomass == 0`, so a food-only range could not state its
-/// take at all and only the trade half is live. #337's case, restated for the band.
+/// The **inedible** species: `provisions_per_biomass == 0`, so every food reading it publishes is an
+/// honest zero. Since arc #527 retired the trade axis, what such a hunt really banks is **material
+/// batches**, which the forecast does not project — so the wolf's arm here asserts the *shape* of
+/// the row (a degenerate band on a zero) rather than a payload.
 const INEDIBLE_SPECIES: &str = "Grey Wolf Pack";
 /// Defenceless (`defense 0`), frail (`durability 2`), harmless (`ferocity 0`) and cheap to reach
 /// (`engage_rate 10`) — the one roster row where a sub-1 `hit_chance` moves the take by **many whole
@@ -293,8 +295,8 @@ fn exported_row(app: &App, band: bevy::prelude::Entity) -> sim_runtime::LaborAss
 /// ship with the range wired through every path and *no* number in the game moving.
 ///
 /// Swept across both webs' shapes on the animal side — a **defaulting** species (food, the global
-/// rate) and an **inedible** one (trade only, whose food band is honestly all-zero) — and across the
-/// floor, because the floor is what decides whether the escapement or the crew binds.
+/// rate) and an **inedible** one (whose food band is honestly all-zero) — and across the floor,
+/// because the floor is what decides whether the escapement or the crew binds.
 #[test]
 fn the_degenerate_range_is_a_point_and_it_is_the_take_the_sim_pays() {
     for species in [DEFAULTING_SPECIES, INEDIBLE_SPECIES] {
@@ -313,12 +315,6 @@ fn the_degenerate_range_is_a_point_and_it_is_the_take_the_sim_pays() {
                 "{species} @ floor {floor}: with no stochastic term the FOOD range must be the \
                  point estimate, bit-for-bit: {seeded:?}"
             );
-            assert_eq!(
-                (seeded.trade_yield_low, seeded.trade_yield_high),
-                (seeded.trade_yield, seeded.trade_yield),
-                "{species} @ floor {floor}: with no stochastic term the TRADE range must be the \
-                 point estimate, bit-for-bit: {seeded:?}"
-            );
 
             // ...and the point is the take. (Within a `Scalar` grid step — see [`YIELD_EPSILON`];
             // the *range* above is the bit-for-bit claim.)
@@ -331,18 +327,23 @@ fn the_degenerate_range_is_a_point_and_it_is_the_take_the_sim_pays() {
                 seeded.actual_yield,
                 paid.actual_yield
             );
-            assert!(
-                (seeded.trade_yield - paid.trade_yield).abs() <= YIELD_EPSILON,
-                "{species} @ floor {floor}: forecast TRADE {} must equal the paid {}",
-                seeded.trade_yield,
-                paid.trade_yield
-            );
-            // **Liveness.** A range that is a point because the take is zero "passes" every
-            // assertion above; every case here must actually take something in one currency.
-            assert!(
-                paid.actual_yield > 0.0 || paid.trade_yield > 0.0,
-                "{species} @ floor {floor}: the harness must actually take something ({paid:?})"
-            );
+            // **Liveness, where there is a payload to be live about.** A range that is a point
+            // because the take is zero "passes" every assertion above, so the EDIBLE species must
+            // actually take something. The inedible one honestly pays no food at any floor — its
+            // whole payload is hides the forecast does not project — so its arm asserts exactly
+            // that, which is a claim rather than an exemption.
+            if species == INEDIBLE_SPECIES {
+                assert_eq!(
+                    paid.actual_yield, 0.0,
+                    "{species} @ floor {floor}: an inedible quarry pays no food, and the row must \
+                     say so rather than inventing one ({paid:?})"
+                );
+            } else {
+                assert!(
+                    paid.actual_yield > 0.0,
+                    "{species} @ floor {floor}: the harness must actually take something ({paid:?})"
+                );
+            }
         }
     }
 }

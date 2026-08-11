@@ -110,15 +110,19 @@ pub(crate) fn herds_to_array(
         // crew's baskets — and it is what leaves the ceiling linear in the floor, hence composable
         // here at all.
         //
-        // An INEDIBLE species (a wolf) reads `provisions_per_biomass == 0` with `trade_per_biomass`
-        // positive — the only shape that can state that at all. No animal pays fodder, so that
-        // component is `0` on every herd; it is surfaced anyway so both webs read the same triple.
+        // An INEDIBLE species (a wolf) reads `provisions_per_biomass == 0`, and what it is really
+        // worth is material batches this row does not carry. No animal pays fodder, so that
+        // component is `0` on every herd; it is surfaced anyway so both webs read the same pair.
         let _ = dict.insert(
             "provisions_per_biomass",
             f64::from(herd.provisionsPerBiomass()),
         );
         let _ = dict.insert("fodder_per_biomass", f64::from(herd.fodderPerBiomass()));
-        let _ = dict.insert("trade_per_biomass", f64::from(herd.tradePerBiomass()));
+        // **RETIRED with the trade-goods yield axis** (arc #527): the wire slot is
+        // `(deprecated)` and the sim writes nothing to it. What a source pays beyond food is
+        // MATERIALS, which ride the cohort's `material_batches`. The GDScript that read the
+        // key it used to insert is a separate pass — the key simply stops appearing.
+
         // **WHAT ONE HUNTER MOVES, IN BIOMASS** — the crew term the panel's two worker targets
         // divide by (`clear it now` = room / this, `hold it after` = the regrowth at the floor /
         // this). It is NOT derivable from `per_worker_yield / provisions_per_biomass`: on a wolf
@@ -155,11 +159,10 @@ pub(crate) fn herds_to_array(
         // (ceilingSustain/Surplus/Deplete/Eradicate/Corral) are ALL retired `(deprecated)` slots the
         // sim no longer writes, and are no longer decoded.
         let _ = dict.insert("per_worker_yield", herd.perWorkerYield());
-        // The SAME per-worker rate in the other currency (issue #337) — read the two as ONE vector.
-        // THIS pair, not the cohort's `hunt_per_worker_provisions`, is what a per-herd band preview
-        // clamps with: that cohort field is a species-BLIND global echo (the sim's own doc says so),
-        // and quoting it against a wolf's all-zero food ceilings manufactures phantom food.
-        let _ = dict.insert("per_worker_trade", herd.perWorkerTrade());
+        // **RETIRED with the trade-goods yield axis** (arc #527): the wire slot is
+        // `(deprecated)` and the sim writes nothing to it. What a source pays beyond food is
+        // MATERIALS, which ride the cohort's `material_batches`. The GDScript that read the
+        // key it used to insert is a separate pass — the key simply stops appearing.
         // `corral_yield` is the Corral rung's PAYOFF — what the herd pays once penned; its
         // during-building dip is `corral_build_fraction` on the CREW, so together they drive the
         // pre-commit "+X → +Y while building → +Z" deal on %HerdAssignControls.
@@ -168,11 +171,10 @@ pub(crate) fn herds_to_array(
         // escapement composition above does not apply to it (sim `SourceYieldForecast::managed`).
         // `corral_yield` is GROSS — the pen's feed below is a separate debit on the keeper's larder.
         let _ = dict.insert("corral_yield", herd.corralYield());
-        // The trade half of that SAME payoff — read the two as ONE pair, exactly like
-        // `per_worker_yield`/`per_worker_trade`. The Corral rung's picker face renders the pair,
-        // each component only when non-zero, so a boar reads `→ food · trade` and a pelt-only
-        // species reads trade alone.
-        let _ = dict.insert("corral_trade", herd.corralTrade());
+        // **RETIRED with the trade-goods yield axis** (arc #527): the wire slot is
+        // `(deprecated)` and the sim writes nothing to it. What a source pays beyond food is
+        // MATERIALS, which ride the cohort's `material_batches`. The GDScript that read the
+        // key it used to insert is a separate pass — the key simply stops appearing.
         // The pen as a managed POPULATION (docs/plan_corral_managed_population.md): a confined herd
         // cannot graze, so its keeper hauls it food every turn.
         //   `pen_upkeep`       = the feed/turn the pen DEMANDS, or WOULD demand once built, at the
@@ -251,11 +253,10 @@ pub(crate) fn herds_to_array(
         // kill-rhythm divides the per-turn food rate by (`Hud._hunt_kill_rhythm`: food ÷ food →
         // animals/turn), so a mammoth reads "≈1 / 7 turns" not the biomass-÷-food 333. 0 if unknown.
         let _ = dict.insert("food_per_animal", herd.foodPerAnimal());
-        // One animal's worth of TRADE GOODS — the twin of `food_per_animal`, and the ONLY per-animal
-        // quantum an inedible species has (a wolf's `food_per_animal` is honestly 0, so a cadence
-        // derived from food alone divides by zero). The animal COUNT is the same on either component:
-        // a ratio is unit-free.
-        let _ = dict.insert("trade_per_animal", herd.tradePerAnimal());
+        // **RETIRED with the trade-goods yield axis** (arc #527): the wire slot is
+        // `(deprecated)` and the sim writes nothing to it. What a source pays beyond food is
+        // MATERIALS, which ride the cohort's `material_batches`. The GDScript that read the
+        // key it used to insert is a separate pass — the key simply stops appearing.
         // Staffing of a MANAGED herd (intensification ladder). A domesticated herd needs
         // `herders_needed` herders every turn to HOLD its tameness; `herded_fraction` = min(1,
         // assigned / needed) is how well that demand is met. Understaffed (< 1) means the herd's
@@ -278,9 +279,10 @@ pub(crate) fn herds_to_array(
         // `→ +pastoral_yield` (like Cultivate/Sow/Corral) instead of quoting only the dip. Sustain <
         // Tame < Corral. Appended-field audit: this is the newest slot on HerdTelemetryState.
         let _ = dict.insert("pastoral_yield", herd.pastoralYield());
-        // The trade half of the Tame payoff, the twin of `corral_trade` above — one pair, rendered
-        // component-by-component only when non-zero, so Tame's face carries both products.
-        let _ = dict.insert("pastoral_trade", herd.pastoralTrade());
+        // **RETIRED with the trade-goods yield axis** (arc #527): the wire slot is
+        // `(deprecated)` and the sim writes nothing to it. What a source pays beyond food is
+        // MATERIALS, which ride the cohort's `material_batches`. The GDScript that read the
+        // key it used to insert is a separate pass — the key simply stops appearing.
         // THE BUILD DIPS, AS FRACTIONS (issue #442) — the animal twins of `ForagePatchState`'s
         // `cultivate_build_fraction` / `sow_build_fraction`. The dip stopped being a
         // `hunt_policy_ceilings` ROW (that list is exactly the four stances now) because a crew may
@@ -516,19 +518,15 @@ pub(crate) fn forage_patches_to_array(
                 // food but valuable as feed. The crop picker shows this hay value in place of the 0×
                 // provisions ratio so a fodder crop does not read as a loss. 0 for a normal crop.
                 let _ = share_dict.insert("sow_fodder_payoff", share.sowFodderPayoff());
-                // The TRADE twin of `sow_payoff` (Flora roster F4): trade goods a Sown Field of THIS
-                // species would credit to the faction trade_goods stockpile per turn. >0 marks a CASH
-                // crop (e.g. flax), whose provisions payoff/ratio AND fodder payoff read 0 — worthless
-                // as food or feed but valuable as trade. The crop picker shows this trade value in
-                // place of the 0× provisions ratio so a cash crop does not read as a loss. 0 for a
-                // normal or fodder crop.
-                let _ = share_dict.insert("sow_trade_payoff", share.sowTradePayoff());
+                // **RETIRED with the trade-goods yield axis** (arc #527). A cash crop's payoff is
+                // its MATERIALS, which have no per-turn scalar for a picker row to state — so the
+                // crop picker's cash-crop line has no server-side number to read until a
+                // per-material quote is built. Flagged as client work, not filled with a zero.
                 // The same two accounts AT THE TENDED RUNG (#419). The two `sow_*` payoffs above are
                 // Field figures, so a Cultivate row that read them quoted rung 3's managed rate for a
                 // rung that pays an MSY skim off a merely-weeded basket. Which one a row states is the
                 // POLICY's question, so both ride the entry and the picker picks by rung.
                 let _ = share_dict.insert("cultivate_fodder_payoff", share.cultivateFodderPayoff());
-                let _ = share_dict.insert("cultivate_trade_payoff", share.cultivateTradePayoff());
                 // WHAT THIS PLANT IS FOR — "staple" | "fodder" | "cash", the species' own display
                 // tag. The tile card leads each basket row with one icon per role, so a player sees
                 // at a glance how much of a stand is food, feed or cash.
@@ -579,16 +577,18 @@ pub(crate) fn forage_patches_to_array(
         // pay no food (a sown Field of flax, cotton or hay). See the field below.
         //
         // **No account carries a factor of any kind** since the 4x `market.trade_goods_multiplier`
-        // was retired (plan §4): a deeper floor earns more trade only because it takes more biomass,
-        // which is what removed the per-policy per-worker terms this used to need.
-        //
-        // `trade > 0` does **NOT** mean "cash crop": every staple pays the token (flora.md).
+        // was retired (plan §4): a deeper floor earns more only because it takes more biomass, which
+        // is what removed the per-policy per-worker terms this used to need.
         let _ = dict.insert(
             "provisions_per_biomass",
             f64::from(patch.provisionsPerBiomass()),
         );
         let _ = dict.insert("fodder_per_biomass", f64::from(patch.fodderPerBiomass()));
-        let _ = dict.insert("trade_per_biomass", f64::from(patch.tradePerBiomass()));
+        // **RETIRED with the trade-goods yield axis** (arc #527): the wire slot is
+        // `(deprecated)` and the sim writes nothing to it. What a source pays beyond food is
+        // MATERIALS, which ride the cohort's `material_batches`. The GDScript that read the
+        // key it used to insert is a separate pass — the key simply stops appearing.
+
         // **WHAT ONE GATHERER MOVES, IN BIOMASS** — the plant twin of the herd's field above, with
         // the tile's SEASONAL WEIGHT folded in exactly as `per_worker_yield` folds it. So it is
         // honestly **`0` in a dead season**: do not divide by it, and do not read the zero as "no
@@ -603,12 +603,10 @@ pub(crate) fn forage_patches_to_array(
             "regrowth_samples",
             &regrowth_samples_packed(patch.regrowthSamples()),
         );
-        // The two investment rungs' PAYOFF twins — the non-food halves of `tended_yield`/`field_yield`,
-        // as `pastoral_trade`/`corral_trade` are of their food siblings. Each is quoted at **its own**
-        // rung (#433), never at the rung the patch happens to stand on.
-        let _ = dict.insert("tended_trade", patch.tendedTrade());
+        // The two investment rungs' FODDER payoff twins — the non-food half of
+        // `tended_yield`/`field_yield`, quoted at **its own** rung (#433), never at the rung the
+        // patch happens to stand on. (Their `*_trade` siblings went with arc #527's axis.)
         let _ = dict.insert("tended_fodder", patch.tendedFodder());
-        let _ = dict.insert("field_trade", patch.fieldTrade());
         let _ = dict.insert("field_fodder", patch.fieldFodder());
         // THE BUILD DIPS, AS FRACTIONS (issue #442) — the plant twins of `HerdTelemetryState`'s
         // `tame_build_fraction` / `corral_build_fraction`; see there for why the dip stopped being a

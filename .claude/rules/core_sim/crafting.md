@@ -57,14 +57,22 @@ they do three jobs at once, all three load-bearing:
 ## `LocalStore` gained a second map; `goods` is untouched
 
 ```text
-goods:     BTreeMap<String, Scalar>                       // provisions, fodder, trade goods
+goods:     BTreeMap<String, Scalar>                       // provisions, fodder
 materials: BTreeMap<String, BTreeMap<BandKey, MaterialBatch>>
 ```
 
-Provisions and trade goods are interchangeable **scalars** — two units of grain are two units of
-grain. A material is not, so it cannot share that map: a single pooled average would silently drag a
-mammoth hide down to a hare pelt the moment the two met, which is the whole thing the characteristic
-vector exists to prevent.
+Provisions and fodder are interchangeable **scalars** — two units of grain are two units of grain. A
+material is not, so it cannot share that map: a single pooled average would silently drag a mammoth
+hide down to a hare pelt the moment the two met, which is the whole thing the characteristic vector
+exists to prevent.
+
+> **`TRADE_GOODS` was a third key here and is RETIRED (arc #527).** It was written by every take site
+> — the Field harvest, the drawn-down forage take, the pen, the wild hunt, the expedition delivery —
+> and **read by none**: there was no `take(TRADE_GOODS)` anywhere in the workspace. Beside every one
+> of those credits sat a `credit_material_yield` banking the *same* take's concrete hide, bone and
+> fibre, which is the account that survived. A flat scalar is the one representation that cannot tell
+> a mammoth hide from a hare pelt, so a market built on it would have collapsed the distinction this
+> whole model exists to keep. `docs/plan_contact_and_logistics.md` §Q5 carries the long form.
 
 - **`deposit_material`** is the merge rule. Amounts add; each axis becomes the amount-weighted
   average of the two, over **every axis either side names**.
@@ -110,30 +118,33 @@ rung-3 Field harvest.
 
 - **Amounts are `Scalar` and accumulate.** A rate becomes a whole unit by crossing a threshold in the
   store, never by rounding per turn.
-- **The band's `output_multiplier` applies**, exactly as it does to the three currencies: a material
-  is the fourth account of one harvest, not a parallel economy.
-- **A mixed plant basket DECOMPOSES rather than averaging** (`forage::patch_material_yields`). Food,
-  fodder and trade are interchangeable numbers, so a basket averages them into one rate; a material
-  carries a characteristic vector, and averaging two species' would invent a plant that is not
-  growing there. So a mixed tile pays one credit per species, each keeping its own exact reading, and
+- **The band's `output_multiplier` applies**, exactly as it does to the two scalar currencies: a
+  material is the third account of one harvest, not a parallel economy.
+- **A mixed plant basket DECOMPOSES rather than averaging** (`forage::patch_material_yields`). Food
+  and fodder are interchangeable numbers, so a basket averages them into one rate; a material carries
+  a characteristic vector, and averaging two species' would invent a plant that is not growing
+  there. So a mixed tile pays one credit per species, each keeping its own exact reading, and
   credits that land in the same band merge in the store — which is where merging belongs.
 - **A Field reads its harvest in BIOMASS** (`forage::field_harvest_biomass`) rather than scaling off
-  one of the three currencies, because a cash Field's provisions are `0` and there would be nothing
-  to scale. Same `min(production, collection)` shape the other three accounts run.
+  one of the scalar currencies, because a cash Field's provisions are `0` and there would be nothing
+  to scale. Same `min(production, collection)` shape the other accounts run — and since arc #527 it
+  is the **only** account a cash Field pays into at all.
 
 **An EXPEDITION credits its own store and hands it over on arrival.** A raid's take is a yield edge
 like any other, so both detached take sites (`systems/expeditions.rs` — the `Hunting` arm and the
-scout's roadside kill) credit off the same `take.carried` the food and the pelts come off, into the
-**party's** `LocalStore`. It banks there rather than as a scalar on the `Expedition` — which is what
-`carried_trade` does for trade goods — because a material is a batch with a characteristic vector and
-there is nothing to flatten it to. `LocalStore::drain_materials_into` moves it, **batch by batch**,
-at the `Delivering` drop-off and in `fold_party_into_band`, so a mammoth hide is never averaged into
-a hare pelt on the walk home and the receiver's ordinary merge rule does the merging.
+scout's roadside kill) credit off the same `take.carried` the food comes off, into the **party's**
+`LocalStore`. It banks there rather than as a scalar on the `Expedition` — which is what the retired
+`carried_trade` did — because a material is a batch with a characteristic vector and there is nothing
+to flatten it to. `LocalStore::drain_materials_into` moves it, **batch by batch**, at the
+`Delivering` drop-off and in `fold_party_into_band`, so a mammoth hide is never averaged into a hare
+pelt on the walk home and the receiver's ordinary merge rule does the merging. It is also what the
+feed line's *"returning EMPTY"* test reads (`systems::expeditions::materials_carried`): a wolf raid
+comes home with no meat and a pack full of hides, and calling that empty is the food-only blindness
+the yield-vector arc removed.
 
 **The pack does not bound it.** Food is capped by `provisions_capacity` and the surplus is wasted;
-materials and trade goods both ride home outside that cap, which is the rule the yield-vector arc
-already settled for pelts (`hunt-yield-model.md`) and this follows it rather than inventing a second
-carry rule.
+materials ride home outside that cap, which is the rule the yield-vector arc already settled for
+pelts (`hunt-yield-model.md`) and this follows it rather than inventing a second carry rule.
 
 ## The two cross-config seams
 
@@ -260,6 +271,41 @@ Pinned as a *pairing* by
 spawned sled and one the band's own bench makes bare-handed off richer hide than the bare hand can
 reach carry the **same** grade — asserted against `anchor_grade_for_item`'s own answer rather than
 the word `"good"`, or the test would pass a hard-coded stamp.
+
+## A material with NO CRAFT is one nothing works — and it is not the same as unreachable
+
+`MaterialDef::craft` is `Option<String>`. **Absent means nothing works this material**, which is the
+same statement `hand_working: None` already makes one level down and one rung further out:
+
+| | `hand_working: None` | `craft: None` |
+|---|---|---|
+| says | not by hand | not by anything, yet |
+| refuses by | a bench rate of `0` | not appearing in `crafts_declared_by` at all |
+
+There is **no *"you cannot craft that"* branch anywhere**, exactly as there is none for the bare-hand
+rate. `crafting::crafts_declared_by` filters `None` out, and a recipe's `craft` and every
+`requires_knowledge` entry are validated against precisely that list — so a recipe *cannot name* a
+craftless material's absent craft, and `RecipesConfig::validate_against` rejects a recipe that works
+one outright rather than falling through an empty-string comparison. Nothing gains a knowledge track:
+the coded set in `crafting::craft_discovery_id` is untouched.
+
+**The three that use it are UNCRAFTED, not UNREACHABLE, and the distinction is the whole licence.**
+`materials.json`'s roster note bans an unreachable material because it is dead content the catalogue
+publishes. `tobacco`, `tea` and `grape` each have a **producer today** — the flora roster's three
+cash crops pay them on every harvest, a band banks them, the store holds them, the catalogue lists
+them. What does not exist is the craft that would turn a leaf into a cure or a grape into wine. The
+wire says so with an empty `MaterialDefState.craft`, the `displayName` convention.
+
+> **`grape` is dominated on both its axes** — `potency 0.20 / keeping 0.15` against tea's
+> `0.45 / 0.80` and tobacco's `0.85 / 0.75` — which sits badly against this file's own *"there is no
+> best material"* principle. **That is recorded rather than resolved.** A grape's value is entirely
+> on the far side of a craft (fermenting) that has not been built, so inventing a third axis today to
+> balance the roster would be inventing a number to fit a rule. **Open item**: when the luxury system
+> lands, either the axes change or the grape gains the one it is actually good on.
+>
+> The axes themselves (`potency` — how strong the effect; `keeping` — how well it stores) and every
+> reading on them are **provisional placeholders** for a luxury/boost system that does not exist.
+> They are stated as such in `materials.json`'s `_comment_roster` rather than dressed as tuned values.
 
 ## The craft is DERIVED and then written down
 
@@ -479,7 +525,7 @@ so *"tools are earned"* survives the flip by construction rather than by the old
 
 | File | Purpose |
 |---|---|
-| `src/data/materials.json` | **The materials table** (loader `materials_config.rs`, env override `MATERIALS_CONFIG_PATH`, validated inside `from_json_str` so every load path is covered). Two blocks. **`characteristic_bands`** — the shared rating vocabulary, `[{ name, from }]` ascending: `poor 0.0 · fair 0.30 · good 0.55 · excellent 0.80`. Retuning these re-partitions every batch on the map. **`materials`** — id → `{ craft, characteristics[], hand_working?, varieties? }`. Shipped: **`hide`** (tanning; `toughness`/`suppleness`), **`fibre`** (weaving; `fineness`/`strength`), **`bone`** (bone_working; `density`/`length`), each `hand_working { rate 0.5, quality_ceiling 0.60 }`. **Only the three organics ship** — wood, stone, clay and metal have no producer until the minerals arc and an unreachable material is dead content the catalogue publishes. **`hand_working` absent means the material cannot be worked bare-handed at all** (rate `0`, which is how metal will refuse itself with no branch), and the bare-handed ceiling belongs to the **material**, not to the absent tool. **`varieties` are parsed, validated, and none ships** — named presets over the material's own axes (`copper`, `bronze`), exercised by a test fixture for the same reason the bronze equipment tier is. **`validate` rejects**: an empty material table; a band list that is empty, does not open at `0.0`, does not strictly ascend, or carries a seam outside `0..=1`; a material with no craft or no characteristics; a duplicate characteristic on one material; a non-finite or negative `hand_working.rate`; a `quality_ceiling` outside `0..=1`; a variety that omits an axis the material declares or names one it does not, or states a reading off the range. **The root is open (`_comment*` keys) and `MaterialDef` is CLOSED** — a mistyped `hand_workng` would silently make a material unworkable, while a stray key at the root can only be prose. |
+| `src/data/materials.json` | **The materials table** (loader `materials_config.rs`, env override `MATERIALS_CONFIG_PATH`, validated inside `from_json_str` so every load path is covered). Two blocks. **`characteristic_bands`** — the shared rating vocabulary, `[{ name, from }]` ascending: `poor 0.0 · fair 0.30 · good 0.55 · excellent 0.80`. Retuning these re-partitions every batch on the map. **`materials`** — id → `{ craft, characteristics[], hand_working?, varieties? }`. Shipped: **`hide`** (tanning; `toughness`/`suppleness`), **`fibre`** (weaving; `fineness`/`strength`), **`bone`** (bone_working; `density`/`length`), each `hand_working { rate 0.5, quality_ceiling 0.60 }` — plus the three **uncrafted** luxury crops **`tobacco`** / **`tea`** / **`grape`**, which name **no `craft`, no `hand_working` and no `varieties`** and carry the provisional axes `potency`/`keeping` (arc #527; see "A material with NO CRAFT is one nothing works"). Wood, stone, clay and metal still have no producer until the minerals arc, and an unreachable material is dead content the catalogue publishes — the three luxury crops are *uncrafted* rather than unreachable, which is a different thing. **`hand_working` absent means the material cannot be worked bare-handed at all** (rate `0`, which is how metal will refuse itself with no branch), and the bare-handed ceiling belongs to the **material**, not to the absent tool. **`varieties` are parsed, validated, and none ships** — named presets over the material's own axes (`copper`, `bronze`), exercised by a test fixture for the same reason the bronze equipment tier is. **`validate` rejects**: an empty material table; a band list that is empty, does not open at `0.0`, does not strictly ascend, or carries a seam outside `0..=1`; a material stating a **blank** craft (omit the key to say nothing works it — an empty string would put an unnameable craft in `crafts_declared_by`) or no characteristics; a duplicate characteristic on one material; a non-finite or negative `hand_working.rate`; a `quality_ceiling` outside `0..=1`; a variety that omits an axis the material declares or names one it does not, or states a reading off the range. **The root is open (`_comment*` keys) and `MaterialDef` is CLOSED** — a mistyped `hand_workng` would silently make a material unworkable, while a stray key at the root can only be prose. |
 
 | `src/data/recipes.json` | **The recipe book** (loader `recipes_config.rs`, env override `RECIPES_CONFIG_PATH`, `validate` inside `from_json_str`, cross-config `validate_against(&materials, &equipment)` at the `build_headless_app` seam). Two blocks. **`crafting`** — `progress_per_worker_turn` (**1.0**). **`recipes`** — id → `{ display_name, craft, work, requires_knowledge[]?, inputs[], outputs[], grades? }`, where `grades` is keyed by `characteristic_bands` NAME and carries only `effects` (there is no `when`), an input is `{ material, amount, variety?, reads? }` and an output is exactly one of `{ equipment }` or `{ material, characteristics }`. Ten ship: the seven kit items (`sled` 6 hide + 2 fibre / work 8; `husbandry_gear` 4 hide + 3 fibre / 7; `baskets` 5 fibre + 1 hide / 6; `traps` 6 fibre + 1 bone / 6; `spears` 1 bone + 2 fibre + 1 hide / 6; `clubs` 2 bone + 1 hide / 4; `wayfinding` 1 bone + 1 hide + 1 fibre / 4) and the three bench tools (`tanning_frame` 8 fibre + 2 bone / 12; `loom` 3 bone + 4 hide / 14; `bone_awl` 3 hide + 3 fibre / 10). **Costs are sized so MATERIAL, not bench time, is what binds** — see the file's `_comment_work_and_costs` for the measured income figures. **Bone is the scarce one by an order of magnitude** (0.0012–0.003 per biomass against hide's 0.006–0.022), so nothing costs more than 3 of it. **`validate` rejects**: a non-positive `progress_per_worker_turn`; an empty book; a non-positive `work` or `amount`; a recipe with no inputs or no outputs; the same material twice in one recipe's inputs; **more than one input carrying `reads`**; an output naming both or neither of `equipment`/`material`; an equipment output stating characteristics, or a material output stating none; a duplicate output; grades on a recipe that reads nothing or outputs only materials; a duplicate stat in one grade's effects. **`validate_against` additionally rejects**: an unknown material, item, variety or axis; a `craft` that is not the craft of the material the recipe reads; a `requires_knowledge` naming a craft no material declares **or one that none of the recipe's own inputs is worked by**; a tool recipe whose inputs include the material it bounds; **a fractional `amount` on an equipment output** (a batch's `count` cannot bank half a spear); **a grade key that is not a declared `characteristic_bands` name, and a lowest declared grade that is not the FIRST band**; and **a grade effect that names a stat no tier of the output item declares, drops that effect's mass bounds, or — at the DERIVED anchor band — disagrees with the item's default tier** (see "ONE QUALITY LADDER"). |
 
@@ -511,6 +557,10 @@ The pairs are the point, not the rows:
 
 Neither member of any pair is the upgrade. A **Grey Seal** (`0.66 / 0.74`) is the deliberate
 exception that says the two axes are not opposed *by construction* — they just usually are.
+
+**The three luxury crops are the standing counter-example, and it is flagged rather than fixed**:
+tobacco (`0.85 / 0.75`) dominates tea (`0.45 / 0.80`) on potency and grape (`0.20 / 0.15`) on both.
+See the callout under "A material with NO CRAFT is one nothing works" for why that is honest today.
 
 `per_biomass` follows a physical rule rather than a per-row judgement: **a small animal is nearly all
 skin and a big one is nearly all meat**, so hide runs from a snow hare's `0.021` to a mammoth's
