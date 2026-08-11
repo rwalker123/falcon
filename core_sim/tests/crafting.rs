@@ -15,7 +15,7 @@ use core_sim::{
     advance_crafting, scalar_from_f32, scalar_one, scalar_zero, BandBench, BandEquipment, BandId,
     DiscoveryProgressLedger, EquipmentConfig, EquipmentConfigHandle, FactionId, GenerationId,
     LadderConfigHandle, LocalStore, MaterialsConfig, MaterialsConfigHandle, MoraleCause,
-    PopulationCohort, RecipesConfig, RecipesConfigHandle, Scalar,
+    PopulationCohort, RecipesConfig, RecipesConfigHandle, Scalar, WearQuantum,
 };
 use std::collections::BTreeMap;
 
@@ -358,7 +358,7 @@ fn the_lesson_and_the_tools_wear_are_charged_the_same_number_of_times() {
     let per_item = equipment
         .item(TANNING_FRAME)
         .expect("the frame is shipped")
-        .wear
+        .headline_wear()
         .amount;
     assert_eq!(
         bench.wear_of(TANNING_FRAME),
@@ -417,13 +417,13 @@ fn a_finished_item_lands_in_the_bands_equipment_ledger_unworn() {
     let equipment =
         EquipmentConfig::from_json_str(core_sim::BUILTIN_EQUIPMENT_CONFIG).expect("equipment");
     let sled = equipment.item(SLED).expect("the sled is shipped");
-    let uses = (sled.default_tier().starting_durability - 1.0) / sled.wear.amount;
+    let uses = (sled.default_tier().starting_durability - 1.0) / sled.headline_wear().amount;
     bench
         .app
         .world
         .get_mut::<BandEquipment>(bench.band)
         .expect("ledger")
-        .wear_item(&equipment, SLED, uses);
+        .wear_item(&equipment, SLED, WearQuantum::BiomassHauled, uses);
     assert_eq!(bench.count_of(SLED), 1, "the band starts with one sled");
 
     bench.start(SLED, CREW).turns(6);
@@ -523,7 +523,7 @@ fn validate_rejects_a_kit_that_names_a_bench_tool() {
 #[test]
 fn validate_rejects_a_tool_that_does_not_wear_per_item_crafted() {
     let err = mutate_shipped_equipment(|json| {
-        json["items"][TANNING_FRAME]["wear"]["per"] = serde_json::json!("kill");
+        json["items"][TANNING_FRAME]["wear"][0]["per"] = serde_json::json!("strike");
     });
     assert!(err.contains("item_crafted"), "got {err}");
 }
@@ -587,7 +587,7 @@ const FIXTURE_RECIPES: &str = r#"{
 const FIXTURE_EQUIPMENT: &str = r#"{
   "items": {
     "spears": {
-      "wear": { "per": "strike", "amount": 0.4 },
+      "wear": [{ "per": "strike", "amount": 0.4 }],
       "tiers": [
         {
           "id": "flint",
@@ -597,7 +597,7 @@ const FIXTURE_EQUIPMENT: &str = r#"{
       ]
     },
     "crucible": {
-      "wear": { "per": "item_crafted", "amount": 4.0 },
+      "wear": [{ "per": "item_crafted", "amount": 4.0 }],
       "bounds_material": "ore",
       "tiers": [
         {

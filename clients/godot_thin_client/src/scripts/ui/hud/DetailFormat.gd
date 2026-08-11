@@ -302,6 +302,23 @@ const KIT_ROLE_ATTACK_FORMAT := "attack %s"
 const KIT_ROLE_HUNT_CARRY_FORMAT := "hunt carry %s per hunter"
 const KIT_ROLE_FORAGE_CARRY_FORMAT := "gathering %s per forager"
 const KIT_ROLE_PEN_CARRY_FORMAT := "pen collection %s per keeper"
+# **THE HANDLING GEAR DOES TWO JOBS, AND ITS ROW HAS TO SAY BOTH** (issue #515). Hurdles, halters and
+# a butchering stone bound a slaughter at a pen *and* speed the `Tame` and `Corral` builds — so a row
+# quoting only the pen rate describes the gear's payoff at the top of the ladder and says nothing
+# about the climb that produces it, which is the whole complaint the build axis was added to answer.
+#
+# **APPENDED ONLY ABOVE NEUTRAL, and its absence is a real reading.** A multiplier of `1.0` means the
+# gear is doing nothing to a build — because it is spent, or because this band's hunt job is on a kit
+# that does not carry it — and `× 1.0` is a clause that costs a line's width to say *no*. The row's
+# own condition and its stepped-down pen rate already carry that news.
+const KIT_ROLE_BUILD_RATE_SUFFIX := " · taming and penning ×%s"
+# A multiplier reads to one place: the shipped 1.5 is a playtest dial and a second decimal would
+# imply a precision the number does not have.
+const KIT_BUILD_RATE_DECIMALS := 1
+# **The value that means "this gear changes no build"** — the schema's own default and what every kit
+# but `husbandry` resolves to. Named so the suffix's suppression reads as a stated rule rather than a
+# comparison against a bare literal.
+const KIT_BUILD_RATE_NEUTRAL := 1.0
 # Written as `2-tile sight`, not `sight 2 tiles`, because the tier is a small whole number and the
 # unit would otherwise have to be pluralized: a bare-handed scout sees `1`, and `sight 1 tiles` is
 # the row every value-plus-unit phrasing prints at the bottom of this axis.

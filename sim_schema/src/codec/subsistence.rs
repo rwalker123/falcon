@@ -334,6 +334,7 @@ fn create_kits<'a>(
                 attackMaxBodyMass: state.attack_max_body_mass,
                 dispersion: state.dispersion,
                 exposure: state.exposure,
+                buildRate: state.build_rate,
             },
         ));
     }

@@ -781,6 +781,18 @@ a new quantum would not update. A *count* quantum gets a count noun; a
 *continuous* one keeps its own unit (`biomass hauled`), because a "biomass" is not a countable event
 and a turns conversion would need a forecast of what the band is about to do.
 
+> **AN ITEM ON SEVERAL QUANTA IS QUOTED ON ITS FIRST** (`ItemDefinition::headline_wear`, issue #515 —
+> `equipment.md` → "An item may wear on SEVERAL quanta"). A gauge reads in **one** unit, so the
+> handling gear — worked both at a slaughter and on a `Tame` — has to pick one: `≈12 builds` and
+> `≈2500 biomass butchered` are the same condition counted two ways, and stating both would need the
+> readout to know the usage mix it exists to let the player choose. The item **declares** its headline
+> by writing that quantum first, exactly as `tiers[0]` declares the default tier.
+>
+> **So the gauge is accurate under one usage assumption, not unconditionally** — a band splitting its
+> handling gear between a pen and a climb runs out sooner than the pen-only count says. That is the
+> limit every rate-to-range conversion has; the alternative, a row per quantum, is a wire and readout
+> change #515 deliberately did not make.
+
 Five wordings: `Untouched` · `48 blows left` · `~1 blow left` · **`Worn out`** · **`Never made`**.
 
 > ### `Worn out` and `Never made` both read `count 0`, and telling them apart needed STATE

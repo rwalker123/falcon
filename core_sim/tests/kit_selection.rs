@@ -22,7 +22,7 @@ use core_sim::{
     ExpeditionMission, ExpeditionPhase, FactionId, FaunaConfigHandle, GenerationId, HerdRegistry,
     HerdTelemetry, KitChoice, KitJob, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
     MoraleCause, PopulationCohort, ResidentBand, SimulationConfig, SnapshotHistory, SourceYield,
-    StartingUnit, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR,
+    StartingUnit, TileRegistry, WearQuantum, DEFAULT_ESCAPEMENT_FLOOR,
 };
 
 /// The crew every fixture in this file staffs, so two arms are only ever comparable to each other.
@@ -768,7 +768,8 @@ fn a_bands_published_tiers_step_down_per_kit_by_which_item_that_kit_actually_use
         let spears = cfg
             .item("spears")
             .expect("the shipped roster carries spears");
-        let kills_to_expiry = spears.default_tier().starting_durability / spears.wear.amount;
+        let kills_to_expiry =
+            spears.default_tier().starting_durability / spears.headline_wear().amount;
         let mut equipment_ledger = app
             .world
             .get_mut::<core_sim::BandEquipment>(band)
@@ -776,7 +777,7 @@ fn a_bands_published_tiers_step_down_per_kit_by_which_item_that_kit_actually_use
         // **Every unit** — a spawn stocks a party's worth, so one unit's kills leave the rest of
         // the stock standing and the kit would still be live.
         while equipment_ledger.count_of("spears") > 0 {
-            equipment_ledger.wear_item(&cfg, "spears", kills_to_expiry);
+            equipment_ledger.wear_item(&cfg, "spears", WearQuantum::Strike, kills_to_expiry);
         }
     }
     recapture_snapshot_in_place(&mut app.world);
@@ -903,13 +904,21 @@ fn wear_to_the_cliff(app: &mut App, band: bevy::prelude::Entity, item_id: &str) 
     let item = cfg
         .item(item_id)
         .unwrap_or_else(|| panic!("the shipped roster carries '{item_id}'"));
-    let uses_to_expiry = item.default_tier().starting_durability / item.wear.amount;
+    let uses_to_expiry = item.default_tier().starting_durability / item.headline_wear().amount;
     let mut ledger = app
         .world
         .get_mut::<BandEquipment>(band)
         .expect("a spawned band is kitted");
     while ledger.count_of(item_id) > 0 {
-        ledger.wear_item(&cfg, item_id, uses_to_expiry);
+        ledger.wear_item(
+            &cfg,
+            item_id,
+            cfg.item(item_id)
+                .expect("the fixture names a roster item")
+                .headline_wear()
+                .per,
+            uses_to_expiry,
+        );
     }
 }
 
@@ -1666,10 +1675,18 @@ fn run_dry(ledger: &mut BandEquipment, cfg: &EquipmentConfig, id: &str) {
         / cfg
             .item(id)
             .unwrap_or_else(|| panic!("the shipped roster must carry '{id}'"))
-            .wear
+            .headline_wear()
             .amount;
     while ledger.remaining(id, cfg) > 0.0 {
-        ledger.wear_item(cfg, id, uses);
+        ledger.wear_item(
+            cfg,
+            id,
+            cfg.item(id)
+                .expect("the fixture names a roster item")
+                .headline_wear()
+                .per,
+            uses,
+        );
     }
 }
 

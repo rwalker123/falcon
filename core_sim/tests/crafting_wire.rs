@@ -236,7 +236,16 @@ fn wear_out(app: &mut App, band: Entity, item: &str) {
         .expect("a spawned band carries an equipment ledger");
     // One charge per whole unit's durability, plus a margin, until nothing is left.
     while wear.count_of(item) > 0 {
-        wear.wear_item(&equipment, item, f32::MAX / 2.0);
+        wear.wear_item(
+            &equipment,
+            item,
+            equipment
+                .item(item)
+                .expect("the fixture names a roster item")
+                .headline_wear()
+                .per,
+            f32::MAX / 2.0,
+        );
     }
 }
 
@@ -930,7 +939,16 @@ fn the_life_wording_is_in_the_items_own_use_quanta_and_the_noun_comes_from_its_q
             .get_mut::<BandEquipment>(band)
             .expect("a spawned band carries an equipment ledger");
         for item in [SPEARS_ITEM, "clubs", SLED_ITEM] {
-            wear.wear_item(&equipment, item, 1.0);
+            wear.wear_item(
+                &equipment,
+                item,
+                equipment
+                    .item(item)
+                    .expect("the fixture names a roster item")
+                    .headline_wear()
+                    .per,
+                1.0,
+            );
         }
     }
     let published = publish(&mut app, band);

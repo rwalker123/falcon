@@ -2104,12 +2104,21 @@ impl BandEquipment {
         &mut self,
         config: &crate::equipment_config::EquipmentConfig,
         item: &str,
+        quantum: crate::equipment_config::WearQuantum,
         uses: f32,
     ) -> &mut Self {
         let Some(def) = config.item(item) else {
             return self;
         };
-        let charged = usable_uses(uses) * def.wear.amount;
+        // **THE CALLER NAMES WHAT IT IS PAYING FOR, and an item not worn by it pays nothing.** An
+        // item may declare several quanta ([`crate::equipment_config::ItemDefinition::wear`]), so
+        // the amount is no longer a property of the item alone — reading a single rate off the
+        // definition would bill a `Tame` at the butchering rate the moment handling gear grew its
+        // second entry. `None` is the same no-op as an item the band does not own.
+        let Some(wear) = def.wear_for(quantum) else {
+            return self;
+        };
+        let charged = usable_uses(uses) * wear.amount;
         if charged <= 0.0 {
             return self;
         }
@@ -2203,7 +2212,7 @@ impl BandEquipment {
             .filter(|item| {
                 config
                     .item(item)
-                    .is_some_and(|def| def.wear.per == quantum)
+                    .is_some_and(|def| def.wears_on(quantum))
                     // **WEAR RIDES THE SAME PREDICATE THAT CHOSE THE TIER.** A spent item is already
                     // paying its cost — the role has stepped down — so charging it again would let a
                     // ledger run arbitrarily far past its own durability, and any future
@@ -2214,7 +2223,7 @@ impl BandEquipment {
             })
             .collect();
         for item in items {
-            self.wear_item(config, item, uses);
+            self.wear_item(config, item, quantum, uses);
         }
         self
     }

@@ -300,13 +300,29 @@ pub struct BandKitTiersState {
     /// sees, and the reveal path rounds it to whole tiles.
     #[serde(default)]
     pub scout_vantage_range: f32,
+    /// **What this kit would do to a rung's build meter for this band**, at its live wear — the
+    /// factor `RungDef::build_accrual` applies beside the floor, the species' taming timescale and
+    /// the crew scale. Neutral `1.0`; the handling gear ships `1.5`.
+    ///
+    /// **There is no flat [`PopulationCohortState`] twin, deliberately.** The flat per-band fields
+    /// answer for a readout with *no* kit selected, and a build always has one (its job's default),
+    /// so a reader wanting this band's own reading takes the row whose `kit_id` matches. That is
+    /// also the safe shape — `PopulationCohortState` derives `Default`, which would answer `0`, and
+    /// a `build_rate` of `0` says *this crew builds nothing at all*.
+    #[serde(default = "kit_multiplier_neutral")]
+    pub build_rate: f32,
 }
 
-/// The neutral value of [`BandKitTiersState`]'s two multipliers — `1.0`, never `0`.
+/// The neutral value of [`BandKitTiersState`]'s three multipliers — `1.0`, never `0`.
 ///
 /// Same reason `KitOptionState` spells its own out: `0` is the *reassuring* wrong answer. A
 /// `dispersion 0` says nothing breaks off at contact and an `exposure 0` says nobody can be hurt, so
 /// a field that failed to arrive would hand every band the passive device's whole advantage.
+///
+/// **`build_rate 0` is the one that fails in the other direction**, and it is worth stating because
+/// it breaks the pattern: it says *this crew builds nothing at all*, so a field that failed to
+/// arrive would report every rung as unbuildable rather than as free. Both are wrong; only one of
+/// them is quiet.
 fn kit_multiplier_neutral() -> f32 {
     1.0
 }
@@ -326,6 +342,7 @@ impl Default for BandKitTiersState {
             exposure: kit_multiplier_neutral(),
             pen_carry_per_worker_biomass: 0.0,
             scout_vantage_range: 0.0,
+            build_rate: kit_multiplier_neutral(),
         }
     }
 }

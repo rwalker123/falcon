@@ -428,6 +428,7 @@ pub(crate) fn kits_to_array(kits: Vector<'_, ForwardsUOffset<fb::KitOption<'_>>>
             kit.penCarryPerWorkerBiomass() as f64,
         );
         let _ = dict.insert("scout_vantage_range", kit.scoutVantageRange() as f64);
+        let _ = dict.insert("build_rate", kit.buildRate() as f64);
         // What the kit does BESIDES the tiers. `dispersion` multiplies the quarry's own retreat and
         // `exposure` the hunt's injury hazard, both neutral at 1. The two mass bounds say which
         // quarry `attack` above actually applies to — 0 on an end is unbounded — so a picker can

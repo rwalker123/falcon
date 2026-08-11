@@ -1856,13 +1856,41 @@ something the source already publishes:**
 | rule | what it reads | who it withholds |
 |---|---|---|
 | **the weapon cannot reach the quarry** | `attack_against(kit, body_mass, bare)` through `SourceForecast.hunt_gate_model_at` | a snare against a Red Deer; anything bare-handed against a defended species |
-| **the kit's contribution is an axis this source cannot read** | `kit_uses(…, pen_carry)` against the herd's `corralled` | the husbandry kit on any herd with no pen |
+| **the kit's contribution is an axis this source cannot read** | `kit_uses(…, pen_carry)` against the herd's `corralled`, **and** `kit_uses(…, build_rate)` against `RungGates.hunt_rung_remains` | the husbandry kit on a herd that is neither penned nor able to climb |
 
 - **`none` is NEVER greyed, and nothing spells its id to arrange that.** `kit_supplies_any` asks
   whether the kit beats the roster's bare-handed tier on *any* axis; a kit that beats none of them
   grants nothing anywhere, so there is no source it can be inapplicable *to*. It is the free
   bare-handed comparison the whole wear model exists to protect, and a future `fishing` kit with an
   empty `uses` inherits the treatment — which is the test of whether `none` has been special-cased.
+> #### THE BUILD AXIS IS ASKED FIRST, and it is what stopped the pen rule from LYING (issue #515)
+>
+> The rule the doc stated was *"offer a kit only if something it declares can change this source's
+> outcome"*; the rule the code ran was `kit_uses(pen_carry) and not penned`. Those agreed only while
+> `pen_carry` was the handling kit's whole payload. Once the gear also declared `build_rate` — which
+> speeds `Tame` and `Corral` — the kit was still withheld on the very herd the player was taming,
+> **stating a reason that had become false**: *"what it adds is only used on a penned herd"* is not
+> true of gear that is doing its work on that animal right now.
+>
+> `kit_offer` now asks the build axis first, and a kit that can speed a rung the herd has left to
+> climb is **offered outright** — so the weapon rule below never runs on it either. Hurdles do not
+> have to bring a deer down to be the right thing to carry while you are gentling one.
+>
+> **"A rung left to climb" is `RungGates.hunt_rung_remains`, the same seam the rung picker admits
+> rungs with** (ceiling above the standing rung, and that rung not already finished), *not* a second
+> ceiling comparison — two copies is how the picker comes to offer a Corral the kit list has already
+> called impossible. It is asked with **no exclusion**, unlike the picker's: a herd mid-`Tame` is
+> "progress, not an opportunity" to the picker, but it is exactly where build gear does its work.
+>
+> It is knowledge-blind like every other term here, and resolved at the FRESH tier: what a kit *can*
+> change is a property of (kit × quarry), and a faction that has not learned Penning yet will learn it
+> while still holding this herd.
+>
+> **Pinned as a pairing, on the two species' real ceilings** (`ui_preview`, `compose_rungs`): a **Red
+> Deer** is `wild`-ceiling and never climbs, so the handling kit is still withheld there for its own
+> reason; a **Rabbit Warren** pens, so the same kit on the same roster in the same run is offered. A
+> rule that simply stopped greying anything fails the deer half.
+
 - **A PEN is exempt from the weapon rule**, gated on the same `has_engagement_stage` predicate the
   gate LINE is mounted behind: a penned animal is slaughtered rather than stalked. Without it a
   corralled Red Deer would withhold every kit but the spear line.

@@ -293,6 +293,7 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
                 floor,
                 RUNG_TIMESCALE_UNSCALED,
                 full_crew(rung),
+                crate::intensification::NO_BUILD_GEAR,
             );
             if accrual > 0.0 {
                 // The completion bool is the labor arm's feed-line trigger; this probe reads the
@@ -511,6 +512,7 @@ fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOu
                 floor,
                 RUNG_TIMESCALE_UNSCALED,
                 full_crew(pen),
+                crate::intensification::NO_BUILD_GEAR,
             );
             if accrual > 0.0 {
                 let tile = herd.position();
@@ -581,6 +583,7 @@ fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutc
                 floor,
                 timescale,
                 full_crew(pastoral),
+                crate::intensification::NO_BUILD_GEAR,
             );
             if accrual > 0.0 {
                 herd.accrue_domestication(PROBE_FACTION, accrual);
@@ -1160,8 +1163,22 @@ fn probe_build_and_teach_axis() {
                     ladder.build_dip(Some(v))
                 )),
                 format!("{floor:.2}K"),
-                rung.build_accrual(verb, true, floor, RUNG_TIMESCALE_UNSCALED, full_crew(rung)),
-                rung.build_accrual(verb, false, floor, RUNG_TIMESCALE_UNSCALED, full_crew(rung)),
+                rung.build_accrual(
+                    verb,
+                    true,
+                    floor,
+                    RUNG_TIMESCALE_UNSCALED,
+                    full_crew(rung),
+                    crate::intensification::NO_BUILD_GEAR,
+                ),
+                rung.build_accrual(
+                    verb,
+                    false,
+                    floor,
+                    RUNG_TIMESCALE_UNSCALED,
+                    full_crew(rung),
+                    crate::intensification::NO_BUILD_GEAR,
+                ),
                 rung.build_decay(RUNG_TIMESCALE_UNSCALED),
             );
         }

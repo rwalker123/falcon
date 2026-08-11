@@ -210,6 +210,16 @@ pub const MANAGED_SOURCE_FLOOR: f32 = crate::fauna::MSY_BIOMASS_FRACTION;
 /// speed alone.
 pub const RUNG_TIMESCALE_UNSCALED: f32 = 1.0;
 
+/// **The build multiplier of a crew carrying no gear that helps** — the neutral `1.0` a kit resolves
+/// to when none of its live items declares [`crate::equipment_config::EquipmentStat::BuildRate`].
+///
+/// It is [`crate::equipment_config::EquipmentConfig::build_rate`]'s answer for every plant build
+/// today (no plant item declares the stat yet — issue #539) and for every animal build whose crew
+/// went out on a kit without handling gear. Named rather than a bare `1.0` at the call sites that
+/// have no band to resolve a kit against — a forecast probe, a test fixture — so *"this crew brought
+/// nothing"* reads as a stated fact rather than an unexplained literal.
+pub const NO_BUILD_GEAR: f32 = 1.0;
+
 /// **The yield dip of an assignment that is building nothing** — the identity, so a pure harvest pays
 /// its stance's whole ceiling. Named rather than a bare `1.0` at [`LadderConfig::build_dip`]'s `None`
 /// arm, where the number says nothing about which multiplier is being declined.
@@ -799,6 +809,23 @@ impl RungDef {
     /// both preserves the rung's 4:1 ratio — **slow to tame, slow to forget** — which is also the
     /// truer story: a beast that takes a lifetime to gentle does not go feral in a season.
     ///
+    /// # `build_rate` — what the crew brought to the work
+    ///
+    /// The crew's kit ([`crate::equipment_config::EquipmentConfig::build_rate`]), neutral at
+    /// [`NO_BUILD_GEAR`] for a crew carrying nothing that helps — which is every plant build and
+    /// every animal one whose crew left the handling gear at home. Hurdles, halters and a butchering
+    /// stone are animal-handling tools, and `Tame` and `Corral` are exactly the turns a band spends
+    /// handling animals (issue #515).
+    ///
+    /// **It multiplies the accrual and NOT [`RungDef::build_decay`]** — the opposite treatment to
+    /// `timescale`, and for the same reason `floor` gets it: decay happens on turns nobody works the
+    /// source, so there is no crew, no kit and no gear to read. Better tools make a build arrive
+    /// sooner; they do not make an abandoned one forget more slowly.
+    ///
+    /// **It does NOT touch [`RungDef::yield_fraction_while_building`], deliberately.** The gear's
+    /// payoff is already compounding — a faster build pays the dip for fewer turns — and a second
+    /// lever on the same turns would be a rate axis with nothing asking for one.
+    ///
     /// The caller applies the amount to its own meter (`ForagePatch::accrue_cultivation` /
     /// `Herd::accrue_domestication` / `Herd::accrue_corral`), which owns the clamp to
     /// [`RUNG_COMPLETE`] and the side-effects of completing.
@@ -809,6 +836,7 @@ impl RungDef {
         floor: f32,
         timescale: f32,
         workers: u32,
+        build_rate: f32,
     ) -> f32 {
         let Some(build) = self.build.as_ref() else {
             return 0.0;
@@ -817,7 +845,7 @@ impl RungDef {
             return 0.0;
         }
         let timescale = timescale * self.build_crew_scale(workers);
-        build.progress_per_turn * learn_multiplier(floor) * timescale
+        build.progress_per_turn * learn_multiplier(floor) * timescale * build_rate
     }
 
     /// **The build seam — the decay side.** How much this rung's per-source meter bleeds on a turn
@@ -1606,7 +1634,8 @@ mod tests {
                 true,
                 FOOD_PEAK_FLOOR,
                 RUNG_TIMESCALE_UNSCALED,
-                crew
+                crew,
+                crate::intensification::NO_BUILD_GEAR,
             ),
             build.progress_per_turn
         );
@@ -1617,14 +1646,22 @@ mod tests {
                 true,
                 FOOD_PEAK_FLOOR,
                 RUNG_TIMESCALE_UNSCALED,
-                crew
+                crew,
+                crate::intensification::NO_BUILD_GEAR,
             ),
             0.0
         );
         // No improvement at all → nothing. A crew that is only harvesting builds nothing, whatever
         // its stance.
         assert_eq!(
-            tended.build_accrual(None, true, FOOD_PEAK_FLOOR, RUNG_TIMESCALE_UNSCALED, crew),
+            tended.build_accrual(
+                None,
+                true,
+                FOOD_PEAK_FLOOR,
+                RUNG_TIMESCALE_UNSCALED,
+                crew,
+                crate::intensification::NO_BUILD_GEAR
+            ),
             0.0
         );
         // Right verb, gate lapsed → nothing accrues (progress is neither lost nor advanced).
@@ -1634,7 +1671,8 @@ mod tests {
                 false,
                 FOOD_PEAK_FLOOR,
                 RUNG_TIMESCALE_UNSCALED,
-                crew
+                crew,
+                crate::intensification::NO_BUILD_GEAR,
             ),
             0.0
         );
@@ -1670,7 +1708,8 @@ mod tests {
                         true,
                         FOOD_PEAK_FLOOR,
                         RUNG_TIMESCALE_UNSCALED,
-                        full_crew(wild)
+                        full_crew(wild),
+                        crate::intensification::NO_BUILD_GEAR,
                     ),
                     0.0
                 );
@@ -1709,7 +1748,8 @@ mod tests {
                 true,
                 FOOD_PEAK_FLOOR,
                 RUNG_TIMESCALE_UNSCALED,
-                full_crew(pastoral)
+                full_crew(pastoral),
+                crate::intensification::NO_BUILD_GEAR,
             ),
             build.progress_per_turn
         );
@@ -1725,7 +1765,8 @@ mod tests {
                     true,
                     FOOD_PEAK_FLOOR,
                     RUNG_TIMESCALE_UNSCALED,
-                    full_crew(pastoral)
+                    full_crew(pastoral),
+                    crate::intensification::NO_BUILD_GEAR,
                 ),
                 0.0,
                 "{improvement:?} must not tame a herd — only Tame does"
@@ -1738,7 +1779,8 @@ mod tests {
                 false,
                 FOOD_PEAK_FLOOR,
                 RUNG_TIMESCALE_UNSCALED,
-                full_crew(pastoral)
+                full_crew(pastoral),
+                crate::intensification::NO_BUILD_GEAR,
             ),
             0.0
         );
@@ -1841,6 +1883,7 @@ mod tests {
                 FOOD_PEAK_FLOOR,
                 RUNG_TIMESCALE_UNSCALED,
                 workers,
+                crate::intensification::NO_BUILD_GEAR,
             )
         };
 
@@ -2210,6 +2253,7 @@ mod tests {
                     FOOD_PEAK_FLOOR,
                     RUNG_TIMESCALE_UNSCALED,
                     full_crew(rung),
+                    crate::intensification::NO_BUILD_GEAR,
                 ),
                 stated,
                 "{key:?}: a full crew at the food peak builds at the rung's stated rate — the \
@@ -2225,6 +2269,7 @@ mod tests {
             FOOD_PEAK_FLOOR,
             RUNG_TIMESCALE_UNSCALED,
             full_crew(tended),
+            crate::intensification::NO_BUILD_GEAR,
         );
         assert_eq!(
             (RUNG_COMPLETE / per_turn).ceil() as u32,
@@ -2255,6 +2300,7 @@ mod tests {
                     floor,
                     RUNG_TIMESCALE_UNSCALED,
                     full_crew(rung),
+                    crate::intensification::NO_BUILD_GEAR,
                 )
             };
             // Liveness first: an ordering sweep alone would pass on an accrual that returned zero
@@ -2289,6 +2335,7 @@ mod tests {
                     1.0,
                     RUNG_TIMESCALE_UNSCALED,
                     full_crew(rung),
+                    crate::intensification::NO_BUILD_GEAR,
                 ),
                 0.0,
                 "{key:?}: watching a source builds nothing, however restrained the watching"

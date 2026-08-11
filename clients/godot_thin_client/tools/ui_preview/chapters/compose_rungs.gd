@@ -645,6 +645,7 @@ func _offer_roster() -> Array:
 		"forage_carry_per_worker_biomass": BandFx.KIT_FORAGE_CARRY_BARE,
 		"pen_carry_per_worker_biomass": BandFx.KIT_PEN_CARRY_BARE,
 		"scout_vantage_range": BandFx.KIT_SCOUT_VANTAGE_BARE,
+		"build_rate": BandFx.KIT_BUILD_RATE_NEUTRAL,
 		"attack_max_body_mass": TRAPPING_MAX_BODY_MASS,
 		"dispersion": TRAPPING_DISPERSION,
 		# **THE OFFER TEST READS THIS LIST, not the tiers.** `KitRoster.kit_supplies_any` asks whether
@@ -657,7 +658,7 @@ func _offer_roster() -> Array:
 ## One quarry, carrying the three terms the fight is composed from plus the mass the weapon's window
 ## is tested against. Built on the shared herd fixture so the sheet renders in full.
 func _offer_quarry(id: String, species: String, size_class: String, body_mass: float,
-		defense: float) -> Dictionary:
+		defense: float, ceiling: String) -> Dictionary:
 	var herd := HerdFx.herd_fixture()
 	herd["id"] = id
 	herd["label"] = "%s (%s)" % [species, id]
@@ -669,6 +670,11 @@ func _offer_quarry(id: String, species: String, size_class: String, body_mass: f
 	herd["durability"] = OFFER_QUARRY_DURABILITY
 	herd["engage_rate"] = OFFER_QUARRY_ENGAGE_RATE
 	herd["corralled"] = false
+	# **THE HUSBANDRY CEILING IS A PARAMETER NOW, because the offer rule turns on it** (issue #515):
+	# a kit that speeds a build is applicable to any herd with a rung left to climb. Both shipped
+	# values are the real species' — a Red Deer never climbs, a Rabbit Warren pens — so the pairing
+	# below is a fact about the roster rather than two hand-picked flags.
+	herd["husbandry_ceiling"] = ceiling
 	return herd
 
 ## Every entry the mounted kit picker is showing, as `{text, disabled}` in roster order — read off the
@@ -701,9 +707,9 @@ func _kit_offer_states() -> void:
 	h._hud.update_kit_roster(roster, BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,
 		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR)
 	var deer := _offer_quarry("game_deer_offer", "Red Deer", "big", OFFER_DEER_BODY_MASS,
-		OFFER_DEER_DEFENSE)
+		OFFER_DEER_DEFENSE, SourceForecast.HUSBANDRY_CEILING_WILD)
 	var rabbit := _offer_quarry("game_rabbit_offer", "Rabbit Warren", "small",
-		OFFER_RABBIT_BODY_MASS, OFFER_RABBIT_DEFENSE)
+		OFFER_RABBIT_BODY_MASS, OFFER_RABBIT_DEFENSE, SourceForecast.HUSBANDRY_CEILING_PEN)
 
 	# --- THE RED DEER: two of the four kits take nothing, and the sheet now says which -------------
 	h._hud._compose.reset_hunt_source()
@@ -739,7 +745,11 @@ func _kit_offer_states() -> void:
 			and String(deer_trapping.get("text", "")).contains(
 				HudComposeVocab.KIT_WITHHELD_REASON_CANNOT_HURT % "Red Deer"))
 	var deer_husbandry := _picker_entry(deer_sheet, "Husbandry kit")
-	h._assert_hud("…and Husbandry is greyed on a herd with no pen, for its OWN reason — \"%s\""
+	# **A RED DEER NEVER CLIMBS**, so neither of the handling kit's axes can reach it: its pen tier
+	# wants a pen this species can never have, and its build axis wants a rung it can never stand on.
+	# That is what keeps the withholding honest now that the build axis exists — see the warren below,
+	# where the same kit on the same roster is offered.
+	h._assert_hud("…and Husbandry is greyed on a wild-ceiling herd, for its OWN reason — \"%s\""
 			% String(deer_husbandry.get("text", "")),
 		bool(deer_husbandry.get("disabled", false))
 			and String(deer_husbandry.get("text", "")).contains(
@@ -763,8 +773,15 @@ func _kit_offer_states() -> void:
 	var rabbit_sheet: Control = h._hud._drawercompose._compose_sheet
 	h._assert_hud("the SAME trapping kit is selectable on a warren — the bound is the animal, not the kit",
 		not bool(_picker_entry(rabbit_sheet, "Trapping kit").get("disabled", true)))
-	h._assert_hud("…while Husbandry stays greyed there too, its pen axis being unread either way",
-		bool(_picker_entry(rabbit_sheet, "Husbandry kit").get("disabled", false)))
+	# **AND THE HANDLING KIT IS OFFERED ON A HERD THAT CAN STILL CLIMB** (issue #515) — the defect
+	# the build axis was added to fix. It used to be greyed here, telling the player *"what it adds is
+	# only used on a penned herd"* on the very warren they were about to tame, which is exactly the
+	# work hurdles and halters do. The reason was not merely unhelpful, it was false.
+	#
+	# **THE PAIRING IS THE CLAIM.** The deer above is still withheld on the same roster in the same
+	# run, so a rule that simply stopped greying anything fails there rather than passing here.
+	h._assert_hud("…while Husbandry is OFFERED on a warren, whose rungs its gear can still speed",
+		not bool(_picker_entry(rabbit_sheet, "Husbandry kit").get("disabled", true)))
 
 	_assert_a_closed_gate_quotes_zero(deer)
 
@@ -807,7 +824,11 @@ const DEFAULT_KIT_WARREN_ID := "game_rabbit_quarry_default"
 ## composed now, so there is no other kit's numbers to refuse.
 func _quarry_defaulting_to(id: String, species: String, size_class: String, body_mass: float,
 		defense: float, default_kit_id: String) -> Dictionary:
-	var herd := _offer_quarry(id, species, size_class, body_mass, defense)
+	# **A `wild` ceiling, because this block is about the DEFAULT kit and nothing else.** A climbable
+	# herd would additionally offer the handling kit (issue #515), which is a true statement about a
+	# different question and would only add noise to the rows these states read.
+	var herd := _offer_quarry(id, species, size_class, body_mass, defense,
+		SourceForecast.HUSBANDRY_CEILING_WILD)
 	herd[KitRoster.HERD_DEFAULT_KIT_KEY] = default_kit_id
 	return herd
 
@@ -1071,6 +1092,46 @@ func _assert_a_pen_prices_on_the_keepers_carry() -> void:
 	# The headline, in the direction the report named: the pen under-quoted the very kit it exists for.
 	h._assert_hud("…so the handling gear is worth MORE at a pen than the sled is (%s against %s)"
 		% [str(handling_at_the_pen), str(sled_at_the_pen)], handling_at_the_pen > sled_at_the_pen)
+	_assert_the_gear_row_states_the_build_it_speeds(band)
+
+## **THE HANDLING GEAR'S ROW SAYS BOTH THE JOBS IT DOES** (issue #515). It bounds a slaughter at a pen
+## AND speeds the `Tame` and `Corral` builds, and a row quoting only the pen rate describes the payoff
+## at the top of the ladder while saying nothing about the climb that produces it — which is the whole
+## complaint the build axis was added to answer.
+##
+## **ASKED THREE WAYS, because each alone passes on a broken renderer.** Present when the band's hunt
+## kit carries the gear; ABSENT on the same band reading a kit that does not (or a suffix stamped on
+## every row passes the first); and ABSENT again when the gear is DRY (or a clause read off the fresh
+## ROSTER instead of the band's own worn row passes the first two).
+func _assert_the_gear_row_states_the_build_it_speeds(band: Dictionary) -> void:
+	var clause := DetailFormat.KIT_ROLE_BUILD_RATE_SUFFIX % String.num(
+		BandFx.KIT_BUILD_RATE_HANDLING, DetailFormat.KIT_BUILD_RATE_DECIMALS)
+	var on_handling := band.duplicate(true)
+	on_handling[DetailFormat.BAND_QUOTED_KIT_ID_KEY] = HUSBANDRY_KIT_ID
+	var geared_line := _gear_row(on_handling)
+	h._assert_hud("the handling gear's row states the build it speeds (%s) — \"%s\""
+		% [clause, geared_line], geared_line.contains(clause))
+	var on_stalking := band.duplicate(true)
+	on_stalking[DetailFormat.BAND_QUOTED_KIT_ID_KEY] = BandFx.KIT_ID_BIG_GAME
+	var bare_line := _gear_row(on_stalking)
+	h._assert_hud("…and NOT on a band whose hunt job left the gear at camp — \"%s\"" % bare_line,
+		not bare_line.contains(clause))
+	var dry := _pen_axis_band(BandFx.hunt_preview_local_band(), true)
+	dry[DetailFormat.BAND_QUOTED_KIT_ID_KEY] = HUSBANDRY_KIT_ID
+	var dry_line := _gear_row(dry)
+	h._assert_hud("…nor once the gear is spent, a multiplier's step-down being the neutral — \"%s\""
+		% dry_line, not dry_line.contains(clause))
+	# **LIVENESS**: every claim above but the first is an absence, and all three pass on a popover
+	# that stopped rendering the row at all.
+	h._assert_hud("…while all three really rendered the handling gear's row",
+		geared_line != "" and bare_line != "" and dry_line != "")
+
+## The handling gear's line out of the band's own gear breakdown, `""` when no row carries the label.
+func _gear_row(band: Dictionary) -> String:
+	for line in h._hud._disclosures.kit_breakdown_lines(band):
+		if String(line).contains(DetailFormat.KIT_LABEL_HUSBANDRY_GEAR):
+			return String(line)
+	return ""
 
 ## The ONE herd both pen blocks are asked against, in its two states. `corralled` is the only
 ## difference between the two dicts, so anything the sheet says differently about them is the pen's.
@@ -1095,6 +1156,10 @@ func _pen_axis_roster() -> Array:
 		"forage_carry_per_worker_biomass": BandFx.KIT_FORAGE_CARRY_BARE,
 		"pen_carry_per_worker_biomass": BandFx.KIT_PEN_CARRY_EQUIPPED,
 		"scout_vantage_range": BandFx.KIT_SCOUT_VANTAGE_BARE,
+		# **AND THE BUILD AXIS, which is what makes this kit applicable before a pen exists.** Its
+		# pen tier above is read on a corralled herd and nowhere else; this one is read on any herd
+		# with a rung left to climb, which is the work hurdles and halters are physically for.
+		"build_rate": BandFx.KIT_BUILD_RATE_HANDLING,
 		# Handling gear, then the sled it also carries — config order, and the list the hint's condition
 		# clauses are read off. See the trapping entry above for why an entry without one is inert.
 		"item_ids": [BandFx.KIT_ITEM_HUSBANDRY_GEAR, BandFx.KIT_ITEM_SLED],
@@ -1128,6 +1193,11 @@ func _pen_axis_band(band: Dictionary, handling_gear_dry: bool = false) -> Dictio
 		# The handling gear buys the PEN and nothing else, so this kit's vantage is the bare one
 		# whatever state that gear is in — a keeper's tools do not help a scout see further.
 		KitRoster.KIT_SCOUT_VANTAGE_KEY: BandFx.KIT_SCOUT_VANTAGE_BARE,
+		# **AND THE BUILD AXIS, which steps down WITH the gear** (issue #515). A multiplier's
+		# step-down is the neutral, so dry hurdles read exactly as bare hands do — which is why the
+		# readout drops the clause entirely rather than printing `×1.0`.
+		KitRoster.KIT_BUILD_RATE_KEY: (BandFx.KIT_BUILD_RATE_NEUTRAL if handling_gear_dry
+			else BandFx.KIT_BUILD_RATE_HANDLING),
 	})
 	kitted[KitRoster.BAND_KIT_TIERS_KEY] = rows
 	if handling_gear_dry:

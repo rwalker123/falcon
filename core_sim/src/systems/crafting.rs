@@ -317,7 +317,12 @@ pub fn advance_crafting(
         if tiers.tooled {
             if let Some((tool_id, _)) = equipment.bench_tool_for(material) {
                 let tool_id = tool_id.to_string();
-                wear.wear_item(&equipment, &tool_id, ONE_ITEM);
+                wear.wear_item(
+                    &equipment,
+                    &tool_id,
+                    crate::equipment_config::WearQuantum::ItemCrafted,
+                    ONE_ITEM,
+                );
             }
         }
         credit_craft_lesson(&recipe.craft, lesson * ONE_ITEM, faction, &mut discovery);

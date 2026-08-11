@@ -313,9 +313,18 @@ fn run_dry(ledger: &mut BandEquipment, config: &EquipmentConfig, item: &str) {
     let def = config
         .item(item)
         .unwrap_or_else(|| panic!("the shipped roster must carry '{item}'"));
-    let uses = def.default_tier().starting_durability / def.wear.amount;
+    let uses = def.default_tier().starting_durability / def.headline_wear().amount;
     while ledger.remaining(item, config) > 0.0 {
-        ledger.wear_item(config, item, uses);
+        ledger.wear_item(
+            config,
+            item,
+            config
+                .item(item)
+                .expect("the fixture names a roster item")
+                .headline_wear()
+                .per,
+            uses,
+        );
     }
 }
 
@@ -484,7 +493,7 @@ fn both_hunt_carry_tiers_are_live_and_a_sledless_party_hauls_less() {
     // dragging by hand and is charged nothing more: its `sled_wear` sits at the limit forever. The
     // dry arm's haul is therefore read off `food_income`, which is `carried × provisions_per_biomass
     // × output_multiplier` — strictly monotone in the haul, so the ordering below is the same claim.
-    let per_biomass = equipment().item(SLED).expect("sled").wear.amount;
+    let per_biomass = equipment().item(SLED).expect("sled").headline_wear().amount;
     let kitted_haul = kit_of(&kitted, kitted_band).wear_of(SLED) / per_biomass;
 
     assert!(
@@ -596,7 +605,11 @@ fn both_gather_tiers_are_live_and_bare_hands_gather_less() {
     // The biomass actually gathered, inverted from the basket kit's own wear — the same trick the
     // sled test uses, with the same restriction to the kitted arm and for the same reason: a crew
     // with no baskets left is gathering by hand and is charged nothing more.
-    let per_biomass = equipment().item(BASKETS).expect("baskets").wear.amount;
+    let per_biomass = equipment()
+        .item(BASKETS)
+        .expect("baskets")
+        .headline_wear()
+        .amount;
     let kitted_take = kit_of(&kitted, kitted_band).wear_of(BASKETS) / per_biomass;
 
     assert!(
@@ -965,7 +978,11 @@ fn wear_is_charged_for_work_not_for_turns_elapsed() {
     );
 
     // ...and the hunting kit's wear is an exact whole number of kills, never a per-turn drip.
-    let per_kill = equipment().item(SPEARS).expect("spears").wear.amount;
+    let per_kill = equipment()
+        .item(SPEARS)
+        .expect("spears")
+        .headline_wear()
+        .amount;
     let kills = hunted.wear_of(SPEARS) / per_kill;
     assert!(
         (kills - kills.round()).abs() < EPSILON,
@@ -989,7 +1006,8 @@ fn a_kit_run_dry_stays_dry() {
         .default_tier()
         .starting_durability;
     // One deer's worth of sled life left: this run crosses the cliff mid-flight.
-    let almost = sled_limit - equipment.item(SLED).expect("sled").wear.amount * DEER_BODY_MASS;
+    let almost =
+        sled_limit - equipment.item(SLED).expect("sled").headline_wear().amount * DEER_BODY_MASS;
     let (mut app, band) = hunting_world(worn(&[(SLED, almost)]));
 
     let mut wear_series = Vec::new();
@@ -1039,7 +1057,12 @@ fn baskets_run_dry_on_their_own_quantum_and_stay_dry() {
         .starting_durability;
     // A single turn's gathering is enough to tip this over: the crew's throughput is
     // `workers × 8`, and one unit of biomass costs `wear_per_biomass_gathered`.
-    let almost = basket_limit - equipment.item(BASKETS).expect("baskets").wear.amount;
+    let almost = basket_limit
+        - equipment
+            .item(BASKETS)
+            .expect("baskets")
+            .headline_wear()
+            .amount;
     let (mut app, band) = gathering_world(worn(&[(BASKETS, almost)]));
 
     let mut wear_series = Vec::new();
@@ -1265,11 +1288,16 @@ fn worn(entries: &[(&str, f32)]) -> BandEquipment {
         // **Down to the LAST unit first.** A spawn stocks a party's worth, so a wear figure that
         // means *"this band is about to lose its sled"* has to spend the reserve before it can say
         // so — otherwise it names the condition of one unit among two dozen fresh ones.
-        let uses_per_unit = def.default_tier().starting_durability / def.wear.amount;
+        let uses_per_unit = def.default_tier().starting_durability / def.headline_wear().amount;
         while ledger.count_of(item) > 1 {
-            ledger.wear_item(&config, item, uses_per_unit);
+            ledger.wear_item(&config, item, def.headline_wear().per, uses_per_unit);
         }
-        ledger.wear_item(&config, item, wear / def.wear.amount);
+        ledger.wear_item(
+            &config,
+            item,
+            def.headline_wear().per,
+            wear / def.headline_wear().amount,
+        );
     }
     ledger
 }
@@ -1535,7 +1563,7 @@ fn each_kit_wears_on_a_use_quantum_of_its_own_job() {
         equipment
             .item(item)
             .unwrap_or_else(|| panic!("the shipped roster must carry '{item}'"))
-            .wear
+            .headline_wear()
             .per
     };
     assert_eq!(quantum(WAYFINDING), core_sim::WearQuantum::TileRevealed);
@@ -1719,7 +1747,7 @@ fn the_reference_ledger_is_one_unit_and_the_shipped_lives_are_unchanged() {
         let def = equipment
             .item(item)
             .unwrap_or_else(|| panic!("the shipped roster must carry '{item}'"));
-        def.default_tier().starting_durability / def.wear.amount
+        def.default_tier().starting_durability / def.headline_wear().amount
     };
     assert_eq!(uses(SPEARS), 250.0, "250 kills of spears");
     assert_eq!(uses(SLED), 5000.0, "5000 biomass hauled");
@@ -1741,11 +1769,16 @@ fn wear_runs_the_stock_out_one_batch_at_a_time_and_idle_stock_does_not_rot() {
     let equipment = equipment();
     let def = equipment.item(SPEARS).expect("spears");
     let durability = def.default_tier().starting_durability;
-    let uses_per_unit = durability / def.wear.amount;
+    let uses_per_unit = durability / def.headline_wear().amount;
 
     let mut ledger = BandEquipment::start_stocked(&equipment);
     // Spend most of the spawned unit, then take delivery of a second batch of two.
-    ledger.wear_item(&equipment, SPEARS, uses_per_unit * 0.8);
+    ledger.wear_item(
+        &equipment,
+        SPEARS,
+        core_sim::WearQuantum::Strike,
+        uses_per_unit * 0.8,
+    );
     ledger.stock(SPEARS, 2, FLINT_TIER, None);
     assert_eq!(
         ledger.count_of(SPEARS),
@@ -1759,7 +1792,12 @@ fn wear_runs_the_stock_out_one_batch_at_a_time_and_idle_stock_does_not_rot() {
     );
 
     // A charge that finishes the worn unit must not spill onto the fresh batch.
-    ledger.wear_item(&equipment, SPEARS, uses_per_unit * 0.2);
+    ledger.wear_item(
+        &equipment,
+        SPEARS,
+        core_sim::WearQuantum::Strike,
+        uses_per_unit * 0.2,
+    );
     assert_eq!(
         ledger.count_of(SPEARS),
         2,
@@ -1773,9 +1811,19 @@ fn wear_runs_the_stock_out_one_batch_at_a_time_and_idle_stock_does_not_rot() {
     );
 
     // And the fresh batch is really two items' worth of life, not one.
-    ledger.wear_item(&equipment, SPEARS, uses_per_unit);
+    ledger.wear_item(
+        &equipment,
+        SPEARS,
+        core_sim::WearQuantum::Strike,
+        uses_per_unit,
+    );
     assert_eq!(ledger.count_of(SPEARS), 1, "one of the two is spent");
-    ledger.wear_item(&equipment, SPEARS, uses_per_unit);
+    ledger.wear_item(
+        &equipment,
+        SPEARS,
+        core_sim::WearQuantum::Strike,
+        uses_per_unit,
+    );
     assert_eq!(ledger.count_of(SPEARS), 0, "and then the band is dry");
     assert_eq!(ledger.remaining(SPEARS, &equipment), 0.0);
 }
@@ -1911,7 +1959,7 @@ fn report_the_strike_wear_the_shipped_opening_pays() {
 
     let equipment = equipment();
     let spears = equipment.item(SPEARS).expect("spears ship");
-    let per_strike = spears.wear.amount;
+    let per_strike = spears.headline_wear().amount;
     let unit_durability = spears.default_tier().starting_durability;
 
     let mut previous = kit_of(&app, band).wear_of(SPEARS);

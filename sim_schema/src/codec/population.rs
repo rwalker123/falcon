@@ -310,6 +310,7 @@ fn create_populations<'a>(
                                 exposure: tiers.exposure,
                                 penCarryPerWorkerBiomass: tiers.pen_carry_per_worker_biomass,
                                 scoutVantageRange: tiers.scout_vantage_range,
+                                buildRate: tiers.build_rate,
                             },
                         )
                     })
