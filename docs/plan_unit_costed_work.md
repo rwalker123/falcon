@@ -2,8 +2,8 @@
 
 **Issue #542**, under arc #184. Blocks #539 (the plant web's build tool).
 
-**Status: DESIGN DRAFT.** §§1–8 propose a model and recommend numbers; §10 lists what is still
-genuinely open, each with a recommendation to argue with. Nothing here is implemented.
+**Status: DESIGN, model settled 2026-08-11.** §§1–9 are the model; §10 records what was decided and
+the two tuning questions left. Nothing here is implemented — §11 is the slicing.
 
 ---
 
@@ -74,11 +74,12 @@ defence and trade arrive as those systems land.
 fewer hands than the harvest it replaced. It no longer touches the accrual.
 `RungDef::build_crew_scale` and `FULL_CREW_SCALE` are deleted.
 
-> **This is a real behaviour change on the ANIMAL web, and it must be said out loud.** Both animal
-> rungs declare `crew_needed: null` and are therefore **unscaled by crew today** — a Tame takes 25
-> turns whether two hands or twenty work the herd. Under the work model every build is crew-scaled,
-> so a large keeper crew now tames materially faster. That is the model working as intended, but it
-> is not pacing-neutral and no test pins it today.
+> **A consequence on the ANIMAL web, accepted.** Both animal rungs declare `crew_needed: null` and
+> are therefore not merely uncapped but **crew-blind today** — a Tame takes 25 turns whether two
+> hands or twenty work the herd. Under the work model every build is crew-scaled, so a large keeper
+> crew tames materially faster. This follows directly from the decision above and is not something
+> the neutral calibration can preserve: **the animal rungs' turn counts will move**, in proportion to
+> `herders_needed`. A crew-blind build is exactly what the model removes.
 
 ## 2. Two currencies, deliberately — work and practice
 
@@ -143,16 +144,17 @@ lifetime to gentle does not go feral in a season, and the rung's build:decay rat
 invariant under it. Moot on the animal branch (both rungs' `decay_per_turn` is `null`), but the
 rule is what keeps a future decaying rung correct.
 
-### 3.2 Decay, restated
+#### 3.2 Decay of the source's meter, restated
 
 `decay_per_turn` becomes **a fraction of the rung's own cost bled per turn**, keeping today's 0.01
 (≈100 turns to fully lapse, whatever the job's size).
 
-The alternative — decay in absolute units per turn — makes a bigger investment take
-proportionally longer to lapse ("a farm's clearing outlasts a garden's"), which is arguably truer.
-It is rejected for continuity: the fractional form preserves today's numbers, keeps the
-build:decay ratio a per-rung statement, and keeps the grace bound (§7) meaningful. Flagged in §10
-as reversible with one line.
+**This is about the SOURCE going feral** — a part-cleared patch reverting on the turns nobody works
+it — not about tool durability, which is §6.3 and a separate quantum. The alternative (decay in
+absolute units per turn, so a bigger investment lapses proportionally slower) is **rejected for
+continuity**: the fractional form preserves today's ~100-turn lapse whatever a rung costs, keeps
+build:decay a per-rung ratio, and keeps the grace bound of §7 meaningful. One line to reverse if
+playtest disagrees.
 
 ## 4. What the lessons cost
 
@@ -180,13 +182,16 @@ lessons (`seed_selection`, `penning`) rise, `foddering` higher again.
 
 ## 5. What a worker is worth — and what knowledge does NOT do yet
 
-`per_worker_output` is **1.0**, flat (§1.1). The issue asks how knowledge contributes to it.
+`per_worker_output` is **1.0**, flat (§1.1). **Knowledge does not feed it, and the reason is a
+design claim rather than a scoping one.**
 
-**Recommendation: it does not, and that is deliberately out of scope.** Knowledge paces *unlocks*
-today; making it also pace *throughput* is a second job for the same mechanic and a new balance
-surface, on top of an arc that already touches two webs, the schema and the gear model. The model
-leaves the room — worker output is written as a sum of terms — and the term can be added later
-without re-inverting anything.
+Knowledge already reaches throughput — *through the tools it unlocks*. Knowing about wheels while
+owning no wheels does nothing, and it should do nothing; what raises a crew's output is the crafted
+item in their hands, which §6 already prices. A second, invisible knowledge→throughput term would
+pay the player twice for the same discovery and would make the tool's contribution unreadable.
+
+Worker output is nonetheless written as a **sum of terms**, so a future buff mechanic has a place to
+land without re-inverting anything.
 
 ## 6. The gear — an additive contribution, and the arithmetic that decides its shape
 
@@ -194,51 +199,70 @@ without re-inverting anything.
 "contributes N" representation today**: every effect names the value a stat *takes*
 (`equipment.md` → "An effect names the value a stat TAKES"). Adding one is a model change.
 
-### 6.1 THE FINDING: an additive RATE is not scale-sensitive. Only an additive COST is.
+### 6.1 The tool's help lands on the JOB, not on the crew's output
 
-This is the load-bearing piece of arithmetic in the whole design, and it is easy to get backwards.
+There are two places a tool's help can be added, and only one of them gives a hoe that fades on a
+farm. **This is the load-bearing arithmetic in the design.**
 
-**Shape A — the tool is an extra pair of hands** (`work/turn = Σ workers + Σ tools`):
-
-```
-turns = cost / (W + t)      speedup = (W + t) / W
-```
-
-The speedup **does not mention the cost at all**. A hoe worth +1 against a 2-hand crew is +50% on a
-garden *and* +50% on a farm. What varies is the crew size, not the job — so the hoe is diluted by
-however many hands the player brings, and it is *most* valuable exactly when they bring the fewest.
-Under the no-cap decision (§1.2) the player controls that dilution freely. **This shape does not
-deliver the stated intent.**
-
-**Shape B — the tool is worth N units of the job** (`effective_cost = cost − Σ tool_worth`):
+**On the crew's output** — a hoed worker produces `w + h` per turn instead of `w`. A fully hoed crew
+of `n` produces `n(w + h)`, so:
 
 ```
-turns = (cost − t) / W      saving = t / cost
+turns_bare = cost / (n·w)          turns_hoed = cost / (n·(w + h))
+ratio      = w / (w + h)
 ```
 
-The saving is **inversely proportional to the job's size** — 30% off a 50-unit garden, 6% off a
-400-unit farm — and it does not mention the crew. This is exactly *"a tool says 'I am worth N
-units,' and the job's own size decides whether that matters,"* and it is what makes **no item ever
-name an improvement** true rather than aspirational.
+**The cost cancels.** The hoe saves the same *percentage* of turns on a garden, a field and a farm
+alike, forever — the multiplier problem in a different costume, which is the thing this arc exists
+to escape.
 
-**Recommendation: Shape B.**
+**On the job** — the tool takes units off the cost:
 
-### 6.2 What that means concretely
+```
+effective_cost = cost − t          saving = t / cost
+```
 
-- A new stat, neutral at **0.0**, resolved as the **SUM** of what the kit's live declaring items
-  state — not the max. Summing is what "additive" means and is the only way a hoe and a mattock
-  both count; taking the max (`dispersion`/`exposure`'s shape, and what `BuildRate` uses today)
-  would make the second tool worthless. This is a genuinely new resolution rule in
-  `equipment_config.rs` and should be stated as one.
-- **Summed over distinct declaring items, not over the batch count.** Ten hoes are not ten hoes'
-  worth of help; the contribution is "the crew brought the right tool." Consistent with
-  `BuildRate` already not being coverage-averaged. (Open — §10.)
-- **Clamped**: `effective_cost = max(cost × MIN_BUILD_FRACTION, cost − Σ tool_worth)`, so a tool
-  worth more than a small job cannot make it instant or negative.
+Now the job's own size decides. A tool contribution of 8 units is 16% of a 50-unit garden and 2.7%
+of a 300-unit farm, and **the hoe never mentions either improvement by name**. This is the shape.
+
+### 6.2 `t` scales with how many workers are holding one — by COVERAGE
+
+**The correction.** An earlier draft said the contribution was counted once per distinct item type,
+which is wrong: a hoe is wielded, so ten hoed workers must beat five. But `t` also cannot be a plain
+per-worker sum (`n_equipped × worth`), because then a large enough crew drives any job's cost to
+zero and the fade on a farm disappears — a farm is worked by more people, which is exactly when the
+tool is supposed to stop mattering.
+
+**So the tool declares what it is worth to a job when the WHOLE crew has one, and the crew's actual
+coverage scales it:**
+
+```
+t = Σ over declaring items ( worth × share of the crew holding it )
+```
+
+Ten workers with ten hoes get the full worth; ten workers with five hoes get half of it; two workers
+with two hoes get the full worth on a job that is much smaller. That is Ray's objection honored and
+the fade preserved, and it needs **no new machinery** — `EquipmentCoverage::weighted_rate` already
+computes `Σ share × value(crew's kit)`, which is this expression exactly.
+
+It also settles the question `equipment.md` left open on `BuildRate` ("whether a digging tool wants
+the covered reading instead"): **yes, covered.** The old stat was deliberately *not* coverage-averaged
+because averaging a rate said *"bring fewer keepers and the pen goes up faster"* — a multiplier's
+pathology, which the cost-side form does not have.
+
+Everything else about the stat:
+
+- **Neutral at `0.0`**, resolved as the **SUM** across declaring items — not the max. Summing is what
+  "additive" means and is the only way a hoe and a mattock both count; the max
+  (`dispersion`/`exposure`'s shape, and what `BuildRate` uses today) would make the second tool
+  worthless. A new resolution rule in `equipment_config.rs`, and it should be stated as one.
+- **Clamped**: `effective_cost = max(cost × MIN_BUILD_FRACTION, cost − t)`, so a tool worth more than
+  a small job cannot make it instant or negative.
 - **Calibration.** `husbandry_gear`'s flint tier declares ×1.5 today, which on a 50-unit build is
-  worth `50 × (1 − 1/1.5) ≈ 17` units. Ship **17** and the animal builds stay where they are.
-- **Evaluated live each turn** off the crew's current kit, so acquiring or wearing out a tool
-  mid-build takes effect immediately, and no state records "this build was geared."
+  worth `50 × (1 − 1/1.5) ≈ 17` units at full coverage. Ship **17** and a fully-geared animal build
+  stays where it is; a partly-geared one is now honestly slower, which it was not before.
+- **Evaluated live each turn** off the crew's current kit and coverage, so gaining or wearing out a
+  tool mid-build takes effect immediately and no state records "this build was geared."
 
 ### 6.3 Wear — the free win the arc pays out
 
@@ -254,8 +278,12 @@ the gear, for free.
 and should wear for it. Keep `charge_build_wear`'s existing before/after delta discipline (a build
 the source refuses spends no gear) and `ExtendPen`'s documented exception.
 
-`ItemDefinition::headline_wear`'s "≈12.5 builds" readout no longer has a fixed denominator. Quote
-it in work units, or against a named reference build. (Open — §10.)
+**One readout has to change.** `ItemDefinition::headline_wear` is the item's life gauge — the
+sentence that today reads *"≈12.5 builds"* on the handling gear, the same way the sled reads
+*"≈5000 biomass hauled"*. It works today only because every build is the same size. Once a Cultivate
+is 50 units and a Farm is 300, *"12.5 builds"* is not a statement. **Quote it against a named
+reference job** — *"≈12 gardens' worth"*, the reference being rung 2's cost — rather than in bare
+work units, which mean nothing to a player holding a hoe.
 
 ## 7. What survives unchanged
 
@@ -279,15 +307,22 @@ it in work units, or against a named reference build. (Open — §10.)
 divides at capture, which is the repo's standing discipline (the client does zero arithmetic).
 
 - `ForagePatchState.cultivationProgress` / `fieldProgress`, `HerdTelemetryState.corralProgress`:
-  unchanged in type, meaning and range. `isCultivated` / `isField` / `corralled` unchanged.
-- **No client change is required.** *Verified*: every consumer of the build meters
+  unchanged in type, meaning and range. `isCultivated` / `isField` / `corralled` unchanged. So
+  **every shipped readout keeps working untouched** — verified: every consumer of the build meters
   (`SubjectDrawerController`, `MapView`, `RungGates`, `hud_compose_vocab`) renders a **percentage
-  label**; nothing derives a turn estimate from them. The issue's concern about *"N turns
-  remaining"* readouts does not apply to shipped code.
-- The one turns-valued readout, `neglectGraceRemaining`, counts unworked turns and is computed
-  sim-side. Unaffected.
-- **Optional, if a readout ever wants it:** append `workDone` / `workCost` so the client can say
-  *"18 of 50"*. Not required by this arc.
+  label** and nothing derives a turn estimate from them, so the issue's *"N turns remaining"* concern
+  does not apply to shipped code.
+- **Append `workDone` / `workCost`** on both plant meters and both animal ones. `% done` is exactly
+  `workDone / workCost`, so the fraction fields stay as the redundant-but-free rendering path while
+  the two absolutes are what let the UI say *"18 of 50 work"* — the sentence that makes the arc's
+  thesis visible at all. Append-only, no cost to a client that ignores them.
+- **Append `buildTurnsRemaining`.** The player-facing payoff of this arc is *turns fall as you
+  improve*, and the player can only see that if something says so. The client **cannot** compute it —
+  it holds neither the crew's output, nor the floor multiplier, nor the kit's coverage-weighted
+  contribution — so the sim answers it, the same discipline as `penFeedUpkeep` and the yield
+  forecast. `−1` (or an absent/false companion bool) where no build is in flight.
+- The one existing turns-valued readout, `neglectGraceRemaining`, counts unworked turns and is
+  computed sim-side. Unaffected.
 
 **In-sim, `RUNG_COMPLETE = 1.0` retires** — each rung has its own completion value. Every
 `>= RUNG_COMPLETE` comparison, `is_cultivated()` / `is_domesticated()` / `is_field()`, and the test
@@ -312,36 +347,55 @@ call sites of this change.
 > which the no-cap decision now actually permits. Not a new hazard, and not something validate can
 > catch — it depends on the crew.
 
-## 10. Open — what still needs a decision
+## 10. Decided, and what is left
 
-1. **Pacing-neutral first, or ship the cost spread with the model?** (§3) Recommendation:
-   neutral first, spread as a config-only follow-up.
-2. **Tool contribution: Shape A or Shape B?** (§6.1) Recommendation: B — it is the only one that
-   delivers the stated scale-sensitivity. If A is wanted anyway, the hoe in #539 needs a different
-   justification.
-3. **Does a tool's contribution scale with how many the band holds, or with coverage?** (§6.2)
-   Recommendation: neither — distinct items, counted once.
-4. **Decay as a fraction of cost, or absolute units per turn?** (§3.2) Recommendation: fraction,
-   for continuity. Absolute has a real argument ("a bigger clearing lasts longer").
-5. **The animal web becomes crew-scaled** (§1.2). Accept, or give the animal rungs a `crew_needed`
-   so the change is bounded? Recommendation: accept — a crew-blind build is the thing the model
-   removes.
-6. **Does knowledge feed worker throughput?** (§5) Recommendation: not in this arc.
-7. **What `headline_wear` quotes** once a build has no fixed size (§6.3).
-8. **Should the wire gain `workDone`/`workCost`?** (§8) Recommendation: no, until a readout asks.
+**Settled (2026-08-11):** ship pacing-neutral first, with the cost spread as a config-only follow-up
+(§3). The tool's contribution lands on the **job**, not the crew's output, and scales by **coverage**
+(§6.1–6.2). Source decay stays a **fraction of the rung's cost** (§3.2). The animal web **becomes
+crew-scaled** and that is accepted (§1.2). Knowledge does **not** feed throughput — it reaches it
+through the tools it unlocks (§5). The wire **gains** `workDone` / `workCost` / `buildTurnsRemaining`
+(§8). `headline_wear` quotes a **reference job** (§6.3).
+
+**Left open, and both are tuning rather than model:**
+
+1. **The cost spread itself** — what a Sow, a Corral and an eventual Farm cost relative to a
+   Cultivate, and what each lesson costs. Wants measurement against a real campaign, not a decision
+   in advance. It is slice 4.
+2. **`MIN_BUILD_FRACTION`** (§6.2) — the floor a tool contribution cannot shrink a job past. A
+   playtest anchor; 0.25 is a reasonable opening value.
 
 ## 11. Slicing
 
 | slice | scope | ships |
 |---|---|---|
-| **1** | `core_sim` — the build inversion: `work_cost`, absolute-unit meters, `crew_scale` deleted, species cost multiplier, decay restated, validate rewritten, capture divides | pacing-neutral; every existing turn-count test still passes on the plant web |
+| **1** | `core_sim` + schema — the build inversion: `work_cost`, absolute-unit meters, `crew_scale` deleted, species cost multiplier, decay restated, validate rewritten, capture divides; `workDone` / `workCost` / `buildTurnsRemaining` appended | pacing-neutral on plants; every existing plant turn-count test still passes |
 | **2** | `core_sim` — the knowledge inversion: `lesson_cost`, `learn_rate`, `craft_lesson_per_item`, ledger stays normalized | pacing-neutral |
-| **3** | `core_sim` — gear: `BuildRate` replaced by the additive contribution, wear per work unit | `husbandry_gear` at 17 units, animal builds unmoved |
-| **4** | config only — the cost spread: later rungs and later lessons cost more | the visible payoff |
+| **3** | `core_sim` — gear: `BuildRate` replaced by the coverage-weighted additive contribution, wear per work unit, `headline_wear` requoted | `husbandry_gear` at 17 units, a fully-geared animal build unmoved |
+| **4** | **client** — the build readout becomes work and turns (below) | the arc becomes visible |
+| **5** | config only — the cost spread: later rungs and later lessons cost more | the pacing payoff |
 | **then** | **#539** — the hoe: two work contributions, one for breaking ground and one for already-prepared ground | |
 
-Slices 1–3 are `server-dev` work against a settled spec. Slice 4 is a tuning pass that wants
-measurement, not implementation.
+### The client slice is NOT optional, and slice 5 is why
+
+**A cost spread with no UX change is invisible.** Today the player sees *"Cultivation: 42%"*, and
+after slice 5 they would see the same percentage filling at different speeds on different rungs with
+nothing on screen saying why. The arc's whole thesis — *jobs have sizes, and your turns fall as you
+get better* — lives entirely in numbers the current HUD does not show. So slice 4 lands **before**
+the spread, and it is three readouts:
+
+- **The build meter says work, not just percent** — *"Cultivation: 18 / 50 work (42%)"* on the tile
+  card and the herd drawer, off the appended `workDone` / `workCost`.
+- **A turn estimate beside it** — *"≈11 turns at this crew"*, off `buildTurnsRemaining`. This is the
+  one that makes "turns are an output" legible: add hands and watch it drop.
+- **The compose sheet quotes the job before you commit** — the cost of the improvement being
+  offered, and what the current crew would take to finish it. Today the sheet offers a verb with no
+  price at all, which was survivable when every verb cost the same 25 turns and will not be once
+  they differ.
+
+A fourth, once #539 lands: **what the gear took off the job** — *"your hoes: −8 work"* — which is
+the only way the player can tell a hoe is worth carrying to a garden and not to a farm.
+
+Slices 1–3 and 5 are `server-dev`; slice 4 is `client-dev`.
 
 ---
 
