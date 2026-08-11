@@ -216,6 +216,17 @@ combat gate needed). Eleven fields, thirty golden lines, no fixture edit: `decod
 SATURATION reaches an appended scalar automatically, so the only step an appended scalar needs here is
 the converter and a re-record.
 
+**A VECTOR FIELD IS NOT AN APPENDED SCALAR, and the three material fields are the worked example**
+(arc #527 follow-up): `HerdTelemetryState.materialPerBiomass` / `perWorkerMaterial` →
+`material_per_biomass` / `per_worker_material` on the herd dict, and `LaborAssignment.materialYield` →
+`material_yield` on the assignment, each an `Array` of `{material_id, amount}` dicts. Saturation still
+reaches them, so the re-record is still the only golden step — but a consumer that treats one like a
+scalar fails LOUDLY and at a distance: `HudBandLaborState.OPTIONAL_YIELD_KEYS` coerces every entry
+through `float()`, and an `Array` through that constructor is `Invalid call. Nonexistent 'float'
+constructor` raised inside `effective_worker_map`, which surfaces as a work board with **zero rows**
+rather than as a bad number. The vector is copied beside that list, verbatim; normalizing is
+`SourceForecast.material_payoff_rows`' job, beside the readouts that spend it.
+
 **ONE KIT, ONE JOB, and the two carry tiers are not two readings of one number.** A band can be out of
 baskets with its sled untouched, so `hunt_carry_per_worker_biomass` and
 `forage_carry_per_worker_biomass` must never be rendered on each other's rows — the defect slice 5

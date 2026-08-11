@@ -94,6 +94,11 @@ const QUARRY_FOOD_PER_ANIMAL := 4.0
 ## The INEDIBLE quarry on the work board (issue #337): its hunt row pays no food, and since arc #527
 ## retired the trade axis it pays nothing this board can state a rate for either.
 const TRADE_ONLY_HERD_ID := "game_wolf_03"
+## What the inedible row's RESOLVED take credited this turn. `hide` is a real `materials.json` id and
+## the catalogue ships no display name, so the id IS the display word — the same idiom the crop
+## picker's basket rows and the compose sheet's readout use, one reading for all three.
+const WORK_ROW_MATERIAL_ID := "hide"
+const WORK_ROW_MATERIAL_AMOUNT := 0.22
 
 ## ---- THE FODDER FACE (issue #449) -------------------------------------------------------------
 ## The sown hay FIELD on the work board: a forage source paying feed and NO provisions, which is the
@@ -1193,6 +1198,7 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
+	_assert_work_material_readouts()
 	_open_work_inspector_for_herd(TRADE_ONLY_HERD_ID)
 	await _settle()
 	await _save("band_panel_work_trade_inspector")
@@ -7212,6 +7218,41 @@ func _assert_work_fodder_readouts() -> void:
 	_assert_band_panel("fodder — no fodder term reaches a hunt row's sentence",
 		not _hud._bandpanel._work_inspector_sentence(hunt).contains("fodder"))
 
+## **THE INEDIBLE ROW STATES WHAT IT PAYS** (arc #527 follow-up) — the board half of closing the
+## `+0.00`. Its subject is the RESOLVED `material_yield`, not a rate the compose sheet would project:
+## a worked row reports what a turn actually credited.
+##
+## **THREE claims, and the deer beside it is why they bite.** The wolf must state its hide; the deer
+## must be UNCHANGED (a food row is what a food-paying source still shows, so "always print the
+## materials" cannot pass); and no material term may reach the deer's sentence, since it pays none —
+## which is the render-only-when-non-zero rule asked one account further out.
+func _assert_work_material_readouts() -> void:
+	var band: Dictionary = _hud._band_labor._panel_band
+	var models: Array = _hud._bandpanel._work_source_models(band, 0)
+	var paying: Array = models.filter(func(m):
+		return SourceForecast.signed_material_components(m.get("material_rows", [])) != "")
+	_assert_band_panel("material — exactly one worked source pays a material (found %d)"
+		% paying.size(), paying.size() == 1)
+	if paying.is_empty():
+		return
+	var wolf: Dictionary = paying[0]
+	var wolf_rate := _hud._bandpanel._work_row_rate_text(wolf)
+	_assert_band_panel(
+		"material — the inedible row states its hide instead of +0.00 (got \"%s\")" % wolf_rate,
+		wolf_rate.contains(WORK_ROW_MATERIAL_ID)
+			and wolf_rate.contains(SourceForecast.format_magnitude(WORK_ROW_MATERIAL_AMOUNT)))
+	_assert_band_panel("material — …and its inspector sentence names the material too",
+		_hud._bandpanel._work_inspector_sentence(wolf).contains(WORK_ROW_MATERIAL_ID))
+	var deer: Array = models.filter(func(m):
+		return String(m.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT \
+			and String(m.get("key", "")) != String(wolf.get("key", "")))
+	_assert_band_panel("material — the control hunt row is on the board (found %d)" % deer.size(),
+		deer.size() == 1)
+	if deer.is_empty():
+		return
+	_assert_band_panel("material — a food-paying hunt row is UNCHANGED, no material term on it",
+		not _hud._bandpanel._work_inspector_sentence(deer[0]).contains(WORK_ROW_MATERIAL_ID))
+
 ## The paired NEGATIVE: a band with no feed-paying source renders NO fodder sibling. Without it every
 ## claim above is satisfied by a head that renders the total unconditionally.
 func _assert_no_work_fodder_total() -> void:
@@ -9309,10 +9350,12 @@ func _concerning_food_band_fixture() -> Dictionary:
 		{"kind": "forage", "workers": 3, "target_x": 71, "target_y": 18, "actual_yield": 0.15, "sustainable_yield": 0.15},
 		{"kind": "hunt", "workers": 2, "fauna_id": "game_deer_07", "floor": 0.5, "target_x": 70, "target_y": 17, "actual_yield": 0.15, "sustainable_yield": 0.20},
 		# THE INEDIBLE ROW (issue #337, arc #527): a wolf pack pays pelts and NO meat, so every food
-		# field on it is honestly 0. It used to headline the trade rate its pelts earned; with that
-		# account retired and no per-turn material figure on the wire, the row reads `+0.00 /turn` —
-		# and it must still stay out of the Food line's Hunted total.
-		{"kind": "hunt", "workers": 2, "fauna_id": TRADE_ONLY_HERD_ID, "floor": 0.15, "target_x": 72, "target_y": 19, "actual_yield": 0.0, "sustainable_yield": 0.0},
+		# field on it is honestly 0. It headlined the trade rate its pelts earned until that account
+		# was retired, then `+0.00` for one release; `material_yield` is what it headlines now — the
+		# RESOLVED take, what this source actually credited to the band's `MaterialStore` this turn.
+		# **It must still stay out of the Food line's Hunted total**: a material is not a meal.
+		{"kind": "hunt", "workers": 2, "fauna_id": TRADE_ONLY_HERD_ID, "floor": 0.15, "target_x": 72, "target_y": 19, "actual_yield": 0.0, "sustainable_yield": 0.0,
+			"material_yield": [{"material_id": WORK_ROW_MATERIAL_ID, "amount": WORK_ROW_MATERIAL_AMOUNT}]},
 		{"kind": "scout", "workers": 2},
 	]
 	return band

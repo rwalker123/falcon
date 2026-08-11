@@ -244,9 +244,14 @@ label has room for exactly ONE rate, so WHICH account it states is the whole cla
 directly — the choice is split out of `_draw_yield_label` for that reason, a draw call rendering to
 a canvas nothing can read a glyph back off — over values rather than a fixture, and pairs every
 fall-through with the case that must NOT change: food still leads wherever there is food (which is
-what stops "always show fodder" passing), and a source paying into no account at all still prints its
-food zero. (A TRADE branch sat between the two and won the slot ahead of fodder; arc #527 retired it,
-so the cascade is food → fodder and an inedible quarry falls through to the zero.) `_entry_fodder` is asked beside them,
+what stops "always show fodder" passing), food still leads a source paying food AND a material,
+fodder still beats a material in the wire's own order, and a source paying into no account at all
+still prints its food zero. (A TRADE branch sat between food and fodder and won the slot ahead of it;
+arc #527 retired that account, and its follow-up put MATERIALS at the END of the cascade instead —
+`food → fodder → materials` — so an inedible quarry states `+0.22 hide` rather than falling through
+to the zero.) `_entry_materials` is asked beside `_entry_fodder`, for the same reason: a
+fall-through is unreachable if the entry's vector is never read, and neither has a realized fallback
+to make. `_entry_fodder` is asked beside them,
 since the fall-through is unreachable if the entry's feed rate is never read — and it has no
 realized fallback to make, fodder being plant-only.
 

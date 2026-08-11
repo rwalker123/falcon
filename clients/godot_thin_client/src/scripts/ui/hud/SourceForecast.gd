@@ -244,6 +244,9 @@ const COMPACT_COMPONENT_SEPARATOR := " "
 # spends no glyph on it), and borrowing another account's would say the wrong thing. It carries no
 # "up to" (unlike `POLICY_CAP_FORMAT`), so the investment payoff tooltip reuses it.
 const POLICY_CAP_FODDER_FORMAT := "%s fodder/turn"
+# Its MATERIAL twin, for the same rung tooltip — `+0.22 hide/turn`. The material names itself here
+# too, so this is `POLICY_CAP_FODDER_FORMAT` with the noun taken from the row rather than baked in.
+const POLICY_CAP_MATERIAL_FORMAT := "%s %s/turn"
 
 # ---- THE PICKER FACE'S PRODUCT LINE -------------------------------------------------------------
 # THE PRODUCTS IN WORDS, for the policy picker's SECOND line: `0.96 food · 0.40 fodder`. The picker is
@@ -265,6 +268,18 @@ const PICKER_FOOD_PRODUCT_FORMAT := "%s food"
 # pays, and hay is what hay grass pays.
 const PICKER_FODDER_PRODUCT_FORMAT := "%s fodder"
 
+## **A MATERIAL NAMES ITSELF, AND THAT IS THE MARK IT WEARS** — `0.22 hide`, in the same shape its
+## neighbour `0.40 fodder` wears, and the same shape the crop picker's basket rows already use
+## (`HudFloraVocab.FLORA_CROP_MATERIAL_CLAUSE_FORMAT`). The material CATALOGUE ships no display name,
+## so the id IS the display word, and a reader who has learned one of these readouts has learned all
+## of them.
+##
+## There is deliberately NO generic glyph. `⇄` earned its job by being one mark for one scalar
+## product; a material has a name, which is a better mark than an arrow saying only "not food", and
+## with the trade axis retired there is no generic account left for a generic mark to stand for.
+## **Do not add one.**
+const PICKER_MATERIAL_PRODUCT_FORMAT := "%s %s"
+
 ## The picker face's product line for a source's yield VECTOR — `0.96 food`, `0.62 food · 0.40 fodder`
 ## (a tended patch carrying a hay crop), `1.80 fodder` (a hay-only meadow). Same food-leads order and
 ## same render-only-when-non-zero rule as `yield_components`, in words instead of glyphs and without
@@ -278,14 +293,17 @@ const PICKER_FODDER_PRODUCT_FORMAT := "%s fodder"
 ## `zero_account` decides WHICH account's zero survives when every component is empty, and it is the
 ## §7.7 correctness fix rather than a formatting option — see `zero_account_of`.
 static func picker_products(food: float, fodder: float = 0.0,
-        zero_account: String = YIELD_ACCOUNT_FOOD) -> String:
+        zero_account: String = YIELD_ACCOUNT_FOOD, materials: Array = []) -> String:
     var parts: Array[String] = []
-    for row in yield_rows(food, fodder, zero_account):
-        match String(row[YIELD_ROW_ACCOUNT]):
-            YIELD_ACCOUNT_FOOD:
-                parts.append(PICKER_FOOD_PRODUCT_FORMAT % format_magnitude(row[YIELD_ROW_VALUE]))
-            YIELD_ACCOUNT_FODDER:
-                parts.append(PICKER_FODDER_PRODUCT_FORMAT % format_magnitude(row[YIELD_ROW_VALUE]))
+    for row in yield_rows(food, fodder, zero_account, {}, materials):
+        var material_id := _row_material_id(row)
+        if material_id != "":
+            parts.append(PICKER_MATERIAL_PRODUCT_FORMAT % [
+                format_magnitude(row[YIELD_ROW_VALUE]), material_id])
+        elif String(row[YIELD_ROW_ACCOUNT]) == YIELD_ACCOUNT_FOOD:
+            parts.append(PICKER_FOOD_PRODUCT_FORMAT % format_magnitude(row[YIELD_ROW_VALUE]))
+        else:
+            parts.append(PICKER_FODDER_PRODUCT_FORMAT % format_magnitude(row[YIELD_ROW_VALUE]))
     return COMPONENT_SEPARATOR.join(parts)
 
 # ---- WHICH ACCOUNTS THIS SOURCE PAYS AT ALL (spec §7.7) -----------------------------------------
@@ -412,15 +430,43 @@ const YIELD_AFTER_FORMAT := "%s " + YIELD_AFTER_GLYPH + " %s"
 ## beside a second account correctly reading `0.90 → 0.87`). The same reasoning `COMPONENT_RENDER_MIN`
 ## already records one function along: a gate finer than its formatter's resolution admits exactly what
 ## it exists to stop.
+## **MATERIALS ARE ROWS OF THIS SAME VECTOR** (arc #527 follow-up), appended after the two scalar
+## accounts and under the identical non-zero gate — so an inedible quarry reads `0.22 HIDE` where it
+## used to read nothing at all, and every surface that iterates this function gains the account for
+## free rather than growing a second code path to spell it.
+##
+## **A MATERIAL ROW'S ACCOUNT IS ITS OWN ID**, not a shared `"material"` tag: the material names
+## itself, `YIELD_ACCOUNT_UNITS` has no entry for it, and the unit therefore falls back to the id,
+## which is the display word. (The catalogue's ids are disjoint from `food` / `fodder`; a material
+## named for an account would be a content collision, not a case to branch on.)
+##
+## **THEY ALSO ANSWER THE ZERO QUESTION.** A source paying a material pays SOMETHING, so no zero
+## survives beside it — which is what stops a wolf reading `0.00 food · 0.22 hide` and reasserting
+## the false precision this rule exists to remove. `after` is keyed by account and so reaches a
+## material row too, though nothing quotes a material's holding rate today.
 static func yield_rows(food: float, fodder: float = 0.0,
-        zero_account: String = YIELD_ACCOUNT_FOOD, after: Dictionary = {}) -> Array[Dictionary]:
+        zero_account: String = YIELD_ACCOUNT_FOOD, after: Dictionary = {},
+        materials: Array = []) -> Array[Dictionary]:
     var rows: Array[Dictionary] = []
-    var empty: bool = not (has_component(food) or has_component(fodder))
-    for pair in [
-        [YIELD_ACCOUNT_FOOD, food], [YIELD_ACCOUNT_FODDER, fodder],
-    ]:
+    var pairs: Array = [[YIELD_ACCOUNT_FOOD, food], [YIELD_ACCOUNT_FODDER, fodder]]
+    for row_variant in materials:
+        if not (row_variant is Dictionary):
+            continue
+        var material: Dictionary = row_variant
+        pairs.append([
+            String(material.get(MATERIAL_PAYOFF_ID_KEY, "")),
+            float(material.get(MATERIAL_PAYOFF_AMOUNT_KEY, 0.0)),
+        ])
+    var empty := true
+    for pair in pairs:
+        if has_component(float(pair[1])):
+            empty = false
+            break
+    for pair in pairs:
         var account := String(pair[0])
         var value := float(pair[1])
+        if account == "":
+            continue
         if has_component(value) or (empty and zero_account == account):
             var row := {YIELD_ROW_ACCOUNT: account, YIELD_ROW_VALUE: value}
             if after.has(account) and format_magnitude(float(after[account])) \
@@ -428,6 +474,15 @@ static func yield_rows(food: float, fodder: float = 0.0,
                 row[YIELD_ROW_AFTER] = float(after[account])
             rows.append(row)
     return rows
+
+## The spelling of ONE row of that vector, given the row's account. The four joiners below differ
+## only in which of these tables they reach for, so a new account is spelled once per REGISTER rather
+## than once per surface.
+static func _row_material_id(row: Dictionary) -> String:
+    var account := String(row[YIELD_ROW_ACCOUNT])
+    if account == YIELD_ACCOUNT_FOOD or account == YIELD_ACCOUNT_FODDER:
+        return ""
+    return account
 
 ## **ONE TAKE, COUNTED ON THE PROVISIONS AXIS AND VALUED IN EVERY ACCOUNT** — the client mirror of the
 ## sim's `YieldPair::rescaled_to` (`core_sim/src/fauna_config.rs`), and the companion `yield_rows`
@@ -494,6 +549,20 @@ const FORECAST_BIOMASS_KEY := "biomass"
 const FORECAST_CAPACITY_KEY := "carrying_capacity"
 const FORECAST_PROVISIONS_PER_BIOMASS_KEY := "provisions_per_biomass"
 const FORECAST_FODDER_PER_BIOMASS_KEY := "fodder_per_biomass"
+# **AND WHAT THAT UNIT OF STOCK IS MADE OF, PER MATERIAL** — the vector that replaced the retired
+# `trade_per_biomass` scalar (arc #527 follow-up). It composes at any floor by the SAME rule the two
+# scalars do, `max(0, B − floor·K) × rate`, which is why it lives here beside them rather than in a
+# branch of its own. Herd-side today; a patch quotes its materials per RUNG on the crop picker
+# instead, because a plant's material payoff is a property of the rung you build, not of the stock.
+const FORECAST_MATERIAL_PER_BIOMASS_KEY := "material_per_biomass"
+# The per-worker twin — what ONE HUNTER brings home per turn, per material. The material sibling of
+# `per_worker_yield`, so a band preview clamps `min(workers × rate, ceiling)` per material exactly as
+# it does for food, and the build dip rides it exactly as it rides `per_worker`.
+const FORECAST_PER_WORKER_MATERIAL_KEY := "per_worker_material"
+# **THE RESOLVED YIELD, ON A LABOR ASSIGNMENT** — what this source actually credited to the band's
+# `MaterialStore` this turn. Read through `material_rows_of`, never as a forecast: the sim seeds it
+# EMPTY pre-commit by design (see there).
+const ASSIGNMENT_MATERIAL_YIELD_KEY := "material_yield"
 # **THE CREW'S THROUGHPUT IN BIOMASS** — what ONE worker moves before any account conversion, and the
 # term everything on the crew side of the panel divides by. Published identically by both webs, which
 # is what lets the two worker targets be one expression. It folds the tile's seasonal weight in on the
@@ -1222,14 +1291,17 @@ static func fodder_rate_of(source: Dictionary) -> float:
 ## hay-only meadow reads `0.00 fodder` rather than the `+0.00 /turn` that says its hay is worth no
 ## meals, and a source that pays nothing in either account renders no line at all.
 static func yield_components(food: float, fodder: float = 0.0,
-        zero_account: String = YIELD_ACCOUNT_FOOD) -> String:
+        zero_account: String = YIELD_ACCOUNT_FOOD, materials: Array = []) -> String:
     var parts: Array[String] = []
-    for row in yield_rows(food, fodder, zero_account):
-        match String(row[YIELD_ROW_ACCOUNT]):
-            YIELD_ACCOUNT_FOOD:
-                parts.append(format_yield(row[YIELD_ROW_VALUE]))
-            YIELD_ACCOUNT_FODDER:
-                parts.append(PICKER_FODDER_PRODUCT_FORMAT % format_magnitude(row[YIELD_ROW_VALUE]))
+    for row in yield_rows(food, fodder, zero_account, {}, materials):
+        var material_id := _row_material_id(row)
+        if material_id != "":
+            parts.append(PICKER_MATERIAL_PRODUCT_FORMAT % [
+                format_magnitude(row[YIELD_ROW_VALUE]), material_id])
+        elif String(row[YIELD_ROW_ACCOUNT]) == YIELD_ACCOUNT_FOOD:
+            parts.append(format_yield(row[YIELD_ROW_VALUE]))
+        else:
+            parts.append(PICKER_FODDER_PRODUCT_FORMAT % format_magnitude(row[YIELD_ROW_VALUE]))
     return COMPONENT_SEPARATOR.join(parts)
 
 ## THE COMPACT TWIN of `yield_components`, for a surface that supplies its own framing and has no room
@@ -1241,12 +1313,18 @@ static func yield_components(food: float, fodder: float = 0.0,
 ##
 ## The fodder term wears the WORD, not a glyph, for `yield_components`' reason: fodder has none. It is
 ## plant-only, so every hunt-side caller leaves it defaulted and its chip reads exactly as before.
-static func magnitude_components(food: float, fodder: float = 0.0) -> String:
+static func magnitude_components(food: float, fodder: float = 0.0,
+        materials: Array = []) -> String:
     var parts: Array[String] = []
-    if has_component(food) or not has_component(fodder):
-        parts.append(format_magnitude(food))
-    if has_component(fodder):
-        parts.append(PICKER_FODDER_PRODUCT_FORMAT % format_magnitude(fodder))
+    for row in yield_rows(food, fodder, YIELD_ACCOUNT_FOOD, {}, materials):
+        var material_id := _row_material_id(row)
+        if material_id != "":
+            parts.append(PICKER_MATERIAL_PRODUCT_FORMAT % [
+                format_magnitude(row[YIELD_ROW_VALUE]), material_id])
+        elif String(row[YIELD_ROW_ACCOUNT]) == YIELD_ACCOUNT_FOOD:
+            parts.append(format_magnitude(row[YIELD_ROW_VALUE]))
+        else:
+            parts.append(PICKER_FODDER_PRODUCT_FORMAT % format_magnitude(row[YIELD_ROW_VALUE]))
     return COMPACT_COMPONENT_SEPARATOR.join(parts)
 
 ## A `{compact, full}` metric pair for an EXTRACTIVE rung, over the source's whole yield VECTOR — the
@@ -1263,16 +1341,19 @@ static func magnitude_components(food: float, fodder: float = 0.0) -> String:
 ## food-only twin is deleted rather than left as an alias: one joiner is what keeps the three pickers
 ## wearing one face.
 static func extractive_take_pair(food: float, fodder: float = 0.0,
-        zero_account: String = YIELD_ACCOUNT_FOOD) -> Dictionary:
+        zero_account: String = YIELD_ACCOUNT_FOOD, materials: Array = []) -> Dictionary:
     var full_parts: Array[String] = []
-    for row in yield_rows(food, fodder, zero_account):
-        match String(row[YIELD_ROW_ACCOUNT]):
-            YIELD_ACCOUNT_FOOD:
-                full_parts.append(POLICY_CAP_FORMAT % format_signed(row[YIELD_ROW_VALUE]))
-            YIELD_ACCOUNT_FODDER:
-                full_parts.append(POLICY_CAP_FODDER_FORMAT % format_signed(row[YIELD_ROW_VALUE]))
+    for row in yield_rows(food, fodder, zero_account, {}, materials):
+        var material_id := _row_material_id(row)
+        if material_id != "":
+            full_parts.append(POLICY_CAP_MATERIAL_FORMAT % [
+                format_signed(row[YIELD_ROW_VALUE]), material_id])
+        elif String(row[YIELD_ROW_ACCOUNT]) == YIELD_ACCOUNT_FOOD:
+            full_parts.append(POLICY_CAP_FORMAT % format_signed(row[YIELD_ROW_VALUE]))
+        else:
+            full_parts.append(POLICY_CAP_FODDER_FORMAT % format_signed(row[YIELD_ROW_VALUE]))
     return {
-        "compact": picker_products(food, fodder, zero_account),
+        "compact": picker_products(food, fodder, zero_account, materials),
         "full": COMPONENT_SEPARATOR.join(full_parts),
     }
 
@@ -2533,7 +2614,17 @@ static func herd_axis_rates(herd: Dictionary, floor: float, improvement: String)
 static func forecast_is_known(src: Dictionary, kind: String, prefix: String) -> bool:
     if source_is_managed(src, kind, prefix):
         return true
-    return zero_account_of(src, prefix) != YIELD_ACCOUNT_NONE
+    if zero_account_of(src, prefix) != YIELD_ACCOUNT_NONE:
+        return true
+    # **A MATERIAL VECTOR IS A WITNESS TOO** (arc #527 follow-up), and it is the one that makes an
+    # INEDIBLE quarry a described source rather than an unknown one. `zero_account_of` cannot answer
+    # this question: it names which SCALAR zero is worth printing, and a material's empty answer is
+    # rendered as no row at all, so it has no zero to nominate. Without this arm a wolf reads
+    # `known == false` everywhere — no floor-preset caps, no compose readout, no worker cap — which is
+    # the client calling a fully-described herd undescribed because the one account it pays is not a
+    # scalar.
+    return not material_payoff_rows(
+        src.get(prefix + FORECAST_MATERIAL_PER_BIOMASS_KEY, [])).is_empty()
 
 ## **THE ONE PLACE A BUILD'S DIP IS RESOLVED** — `<rung>BuildFraction` off the source, or
 ## `NO_BUILD_DIP` when nothing is in flight. It is the client twin of `LadderConfig::build_dip`, and
@@ -2598,6 +2689,10 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
     # REGROWS at that floor, which is why a big crew's headline take is a burst and not a rate.
     var hold_ceiling := 0.0
     var hold_ceiling_fodder := 0.0
+    # …AND THE SAME PAIR PER MATERIAL. It is a VECTOR rather than a third scalar, so it travels as
+    # `[{material_id, amount}]` all the way to the readout and is never summed on the way.
+    var ceiling_material: Array[Dictionary] = []
+    var hold_ceiling_material: Array[Dictionary] = []
     if source_is_managed(src, kind, prefix):
         var rung := String(FORECAST_MANAGED_IMPROVEMENTS[kind])
         ceiling = float(src.get(prefix + String(FORECAST_PAYOFF_KEYS[rung]), 0.0))
@@ -2608,12 +2703,21 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         # readout renders one reading rather than an arrow pointing at itself.
         hold_ceiling = ceiling
         hold_ceiling_fodder = ceiling_fodder
+        # **A MANAGED RUNG QUOTES NO MATERIAL, and that is the wire's answer rather than a gap this
+        # layer should paper over.** A rung's payoff fields are scalars; the crop picker states a
+        # plant's materials per RUNG from its own `sow_material_payoff` / `cultivate_material_payoff`,
+        # which is a different question asked on a different surface (`land-readouts.md`).
     else:
         # ONE composition, both webs — the terms it reads are published identically by
         # `HerdTelemetryState` and `ForagePatchState`, which is what collapsed two branches into none.
         var room := escapement_room(src, prefix, floor)
         ceiling = room * float(src.get(prefix + FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0))
         ceiling_fodder = room * float(src.get(prefix + FORECAST_FODDER_PER_BIOMASS_KEY, 0.0))
+        # The material vector through the SAME room, by the same rule — which is the whole reason
+        # `material_per_biomass` is a per-biomass rate and not a pre-composed ceiling: it answers at
+        # whatever floor the player has dragged to, exactly as the two scalars do.
+        ceiling_material = scaled_material_rows(
+            src.get(prefix + FORECAST_MATERIAL_PER_BIOMASS_KEY, []), room)
         # ONE turn's regrowth AT the floor, through the SAME per-biomass vector the room goes through
         # — which is why the accounts stay in one ratio in both readings, and why a second row of them
         # would carry one new fact in every slot. `crew_to_hold` divides this same growth by the crew's
@@ -2622,6 +2726,8 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         var growth := regrowth_at(regrowth_samples(src, prefix), clamp_floor(floor))
         hold_ceiling = growth * float(src.get(prefix + FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0))
         hold_ceiling_fodder = growth * float(src.get(prefix + FORECAST_FODDER_PER_BIOMASS_KEY, 0.0))
+        hold_ceiling_material = scaled_material_rows(
+            src.get(prefix + FORECAST_MATERIAL_PER_BIOMASS_KEY, []), growth)
     # ---- THE CREW'S THROUGHPUT, PER ACCOUNT, DIPPED ---------------------------------------------
     var per_worker := float(src.get(prefix + FORECAST_PER_WORKER_KEY, 0.0))
     var per_worker_fodder := 0.0
@@ -2636,6 +2742,11 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         per_worker_fodder = carry * float(src.get(prefix + FORECAST_FODDER_PER_BIOMASS_KEY, 0.0))
     per_worker *= dip
     per_worker_fodder *= dip
+    # **THE DIP RIDES THE MATERIAL CREW TERM TOO**, for the reason it rides the other two: a crew
+    # preparing a rung is not harvesting at full rate, whatever the account. Herd-side only today —
+    # a patch publishes no per-worker material vector, and reads an empty one.
+    var per_worker_material := scaled_material_rows(
+        src.get(prefix + FORECAST_PER_WORKER_MATERIAL_KEY, []), dip)
     # WHOLE-ANIMAL HUNT: a take of whole animals (`food_per_animal` = one animal's yield in food; 0 or
     # absent for a forage patch, which harvests grain by the handful). The peak-turn carry need is
     # quantized to whole bodies (see `max_useful_workers`), so it fires ONLY for a hunt of a live,
@@ -2652,6 +2763,13 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         # every hunt-side answer is unchanged.
         "per_worker_fodder": per_worker_fodder,
         "ceiling_fodder": ceiling_fodder,
+        # THE MATERIAL ACCOUNT, as a VECTOR (arc #527 follow-up) — what an inedible quarry is FOR,
+        # and the pair a compose sheet reads instead of the assignment's resolved `material_yield`
+        # (which is empty pre-commit by design; `material_rows_of` says why). `expected_materials`
+        # is the clamp over these two, and it is the food side's own `min` one account further out.
+        FORECAST_PER_WORKER_MATERIAL_KEY: per_worker_material,
+        "material_ceiling": ceiling_material,
+        "hold_material_ceiling": hold_ceiling_material,
         # The HOLD ceilings, keyed to match their room twins so `expected_yield_account` reaches either
         # by name and no second take function exists to drift from the first.
         "hold_ceiling": hold_ceiling,
@@ -3070,6 +3188,9 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
     # Its FODDER twin (issue #449) — 0 on every hunt row (no animal pays feed) and on any patch
     # growing nothing a pen eats, which is what suppresses the term everywhere it does not belong.
     var fodder_rate := 0.0
+    # …and its MATERIAL twin, as a VECTOR (arc #527 follow-up). Empty on every row whose source pays
+    # no material AND on every row whose take has not resolved yet, which render identically — no row.
+    var material_rows: Array[Dictionary] = []
     if bool(m.get("has_yield", false)):
         var actual := float(m.get("actual_yield", 0.0))
         var sustainable := float(m.get("sustainable_yield", 0.0))
@@ -3110,15 +3231,25 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
         # `yield_components` gives — and the tooltip reuses the rung tooltips' own fodder wording
         # rather than spelling the account a third way.
         #
-        # **A THIRD PRODUCT USED TO RIDE HERE** — the trade goods a take sold (issue #337) — and it is
-        # retired with the axis (arc #527). A source's non-food, non-feed product is MATERIALS, which
-        # are credited as batches rather than as a per-turn rate this row could headline.
+        # **THE THIRD PRODUCT IS A VECTOR OF MATERIALS** — the trade-goods scalar that rode here
+        # (issue #337) was retired with the axis, and `material_yield` replaced it per material
+        # (arc #527 follow-up). It is what an INEDIBLE quarry is for: a wolf pays no provisions and no
+        # feed, so without this its row headlined `+0.00 /turn` while its pelts landed in the band's
+        # `MaterialStore` every turn — the same defect the fodder term fixed one account earlier.
+        # **The resolved yield, never a forecast**: a pre-commit row seeds it empty by design, which
+        # is why the compose sheet reads the herd's rates instead (`material_rows_of`).
         fodder_rate = fodder_rate_of(m)
+        material_rows = material_rows_of(m)
         if has_component(fodder_rate):
             tooltip += COMPONENT_SEPARATOR + (POLICY_CAP_FODDER_FORMAT % format_signed(fodder_rate))
+        for row in material_rows:
+            if has_component(float(row[MATERIAL_PAYOFF_AMOUNT_KEY])):
+                tooltip += COMPONENT_SEPARATOR + (POLICY_CAP_MATERIAL_FORMAT % [
+                    format_signed(row[MATERIAL_PAYOFF_AMOUNT_KEY]),
+                    String(row[MATERIAL_PAYOFF_ID_KEY])])
         # `zero_account` stays defaulted: a source that produced nothing in ANY account still prints
         # its `+0.00 /turn`, which is a fact worth reading and is what this row has always said.
-        label_suffix = " " + yield_components(rate, fodder_rate)
+        label_suffix = " " + yield_components(rate, fodder_rate, YIELD_ACCOUNT_FOOD, material_rows)
     # Overstaffing: fewer workers were needed than are assigned, so the remainder produced nothing
     # here. `workers_needed == 0` means "unknown" (rehydrated) → no note.
     var note := ""
@@ -3167,6 +3298,10 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
         # rate, the WORK header's totals, the work inspector's sentence — states the second account
         # rather than reading a hay Field as a dead tile.
         "fodder_rate": fodder_rate,
+        # …and the MATERIAL component, as the vector it is. Same job, one account further out: the
+        # one-slot rate column, the map's yield label, the WORK header's totals and the inspector
+        # sentence all compose their own string and must state what an inedible quarry pays.
+        "material_rows": material_rows,
     }
 
 ## A hunt source is MANAGED (its crew are herders/keepers, not a hunt party) once the herd is penned,
@@ -3298,9 +3433,9 @@ static func flora_basket_entries(composition: Variant) -> Array[Dictionary]:
             # (#433), so a grain Field quotes nothing at all; a TENDED patch is a weeded basket whose
             # volunteers are still standing, so a tended grain honestly quotes the fibre its neighbours
             # pay. Read each rung's own vector — one never implies the other.
-            "sow_material_payoff": _material_payoff_rows(entry.get("sow_material_payoff", [])),
+            "sow_material_payoff": material_payoff_rows(entry.get("sow_material_payoff", [])),
             "cultivate_material_payoff":
-                _material_payoff_rows(entry.get("cultivate_material_payoff", [])),
+                material_payoff_rows(entry.get("cultivate_material_payoff", [])),
             # WHAT THIS PLANT IS FOR — the sim's own display tag ("staple"/"fodder"/"cash"), carried
             # so the tile card's basket rows can lead with a role icon. **`""` is UNSTATED and must
             # stay `""`**: defaulting a missing tag to "staple" would invent a fact, and re-deriving
@@ -3326,7 +3461,7 @@ const MATERIAL_PAYOFF_AMOUNT_KEY := "amount"
 ## **AN EMPTY ANSWER IS "THIS PLANT PAYS NO MATERIAL", WHICH IS A REAL ANSWER** — the caller renders no
 ## row for it, never a `0`. A row naming no material is dropped: an id is what a row is FOR, and a
 ## nameless amount could only be rendered as the summed scalar this arc exists to refuse.
-static func _material_payoff_rows(raw: Variant) -> Array[Dictionary]:
+static func material_payoff_rows(raw: Variant) -> Array[Dictionary]:
     var rows: Array[Dictionary] = []
     if not (raw is Array):
         return rows
@@ -3342,6 +3477,82 @@ static func _material_payoff_rows(raw: Variant) -> Array[Dictionary]:
             MATERIAL_PAYOFF_AMOUNT_KEY: float(row.get(MATERIAL_PAYOFF_AMOUNT_KEY, 0.0)),
         })
     return rows
+
+## **THE ONE DEFINITION of a worked source's MATERIAL rows** — the resolved yield, read off a
+## labor-assignment / worker-map dict. The material twin of `fodder_rate_of`, and the reason an
+## inedible quarry stops reading `+0.00` on every compact readout in the HUD (arc #527 follow-up).
+##
+## **A PLAIN READ IS THE WHOLE OF IT, and there is deliberately no realized/projected sibling.** The
+## sim seeds this EMPTY on a pre-commit row by design: projecting materials needs the take in BIOMASS,
+## while the forecast resolves in currency space where an inedible species has no positive axis to
+## resolve on. So an empty answer here means either "this source pays no material" or "no take has
+## resolved yet", and **both render as no row** — which is why the compose sheet must read the herd's
+## two RATES instead of this (`forecast_inputs`' `per_worker_material` / `material_ceiling`).
+##
+## **NEVER SUM THE ROWS.** One materials/turn figure is the retired trade axis under a new name.
+static func material_rows_of(source: Dictionary) -> Array[Dictionary]:
+    return material_payoff_rows(source.get(ASSIGNMENT_MATERIAL_YIELD_KEY, []))
+
+## **THE ONE-SLOT SURFACES' MATERIAL ARM** — every material this source pays, SIGNED, joined in the
+## sentence idiom (`+0.22 hide`), and `""` when there is nothing to say. The empty answer is the whole
+## point: it is the gate a fall-through tests, so "this source pays no material" and "this source pays
+## a material" are one call rather than a condition each caller re-derives.
+##
+## **EVERY material, never the first one.** Picking one of a vector names a winner the sim does not
+## name; summing them is the retired trade axis under a new name. A species pays few materials, and
+## both callers size to their measured run rather than clipping.
+static func signed_material_components(rows: Array) -> String:
+    var parts: Array[String] = []
+    for row in material_payoff_rows(rows):
+        var amount := float(row[MATERIAL_PAYOFF_AMOUNT_KEY])
+        if has_component(amount):
+            parts.append(PICKER_MATERIAL_PRODUCT_FORMAT % [
+                format_signed(amount), String(row[MATERIAL_PAYOFF_ID_KEY])])
+    return COMPONENT_SEPARATOR.join(parts)
+
+## One per-material vector times a scalar — a per-biomass vector through the escapement room, a
+## per-worker vector through the build dip, or any of them through the band's `output_multiplier`.
+## **Every material scales by the SAME factor**, because they are one biomass flow through a fixed
+## per-biomass vector, exactly as the food and fodder accounts are.
+static func scaled_material_rows(rows: Array, factor: float) -> Array[Dictionary]:
+    var out: Array[Dictionary] = []
+    for row_variant in rows:
+        if not (row_variant is Dictionary):
+            continue
+        var row: Dictionary = row_variant
+        out.append({
+            MATERIAL_PAYOFF_ID_KEY: String(row.get(MATERIAL_PAYOFF_ID_KEY, "")),
+            MATERIAL_PAYOFF_AMOUNT_KEY:
+                float(row.get(MATERIAL_PAYOFF_AMOUNT_KEY, 0.0)) * factor,
+        })
+    return out
+
+## **WHAT A CREW OF `workers` TAKES, PER MATERIAL** — `min(workers × per_worker, ceiling)` evaluated
+## once per material, which is the food side's own clamp applied one account further out. `forecast`
+## is a `forecast_inputs` answer and `ceiling_key` picks the ROOM (`material_ceiling`) or the
+## every-turn regrowth (`hold_material_ceiling`), the same pair `expected_yield_account` chooses
+## between.
+##
+## **The two vectors are unioned by id, never zipped by position.** They come off the same species so
+## they list the same materials today, but a missing term must read as `0` — a rate with no ceiling is
+## a herd standing at its floor, which takes nothing and correctly renders no row.
+static func expected_materials(workers: float, forecast: Dictionary,
+        ceiling_key: String) -> Array[Dictionary]:
+    var ceilings: Dictionary = {}
+    for row_variant in forecast.get(ceiling_key, []):
+        var row: Dictionary = row_variant
+        ceilings[String(row.get(MATERIAL_PAYOFF_ID_KEY, ""))] = \
+            float(row.get(MATERIAL_PAYOFF_AMOUNT_KEY, 0.0))
+    var out: Array[Dictionary] = []
+    for row_variant in forecast.get(FORECAST_PER_WORKER_MATERIAL_KEY, []):
+        var row: Dictionary = row_variant
+        var material_id := String(row.get(MATERIAL_PAYOFF_ID_KEY, ""))
+        var crew := workers * float(row.get(MATERIAL_PAYOFF_AMOUNT_KEY, 0.0))
+        out.append({
+            MATERIAL_PAYOFF_ID_KEY: material_id,
+            MATERIAL_PAYOFF_AMOUNT_KEY: minf(crew, float(ceilings.get(material_id, 0.0))),
+        })
+    return out
 
 ## **THE RAID ROW'S OWN KEYS.** A forecast row is what it always was — the sim's forward-simulated
 ## answer for one (floor, party) — and it still spells `floor` / `party_workers` / `turns_to_fill` /

@@ -444,6 +444,17 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		for rate_key in OPTIONAL_YIELD_KEYS:
 			if (a as Dictionary).has(rate_key):
 				(merged[key] as Dictionary)[rate_key] = float((a as Dictionary)[rate_key])
+		# **THE MATERIAL ACCOUNT TRAVELS TOO, AND IT IS NOT A SCALAR** (arc #527 follow-up). It rides
+		# beside the list above on the same reasoning one account further out — an inedible quarry's
+		# WHOLE product is this vector, and a key not copied here does not exist as far as the work
+		# board is concerned — but it cannot ride IN it: every entry there is coerced through
+		# `float()`, and an Array through that constructor is a hard script error, not a zero. An
+		# absent key and an empty array are one reading (no row), so there is nothing to fall back
+		# from here either, and it is copied verbatim rather than normalized: `material_rows_of` is
+		# the one normalizer and it lives beside the readouts that spend it.
+		if (a as Dictionary).has(SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY):
+			(merged[key] as Dictionary)[SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY] = \
+				(a as Dictionary)[SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY]
 	var pend := pending_assigns_for(int(band.get("entity", -1)))
 	for key in pend:
 		var pd: Dictionary = pend[key]

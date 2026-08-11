@@ -93,6 +93,11 @@ const YIELD_LABEL_FODDER_FACE := "+0.40 fodder"
 # What a source paying into NO account still prints: the food zero, which is the honest reading of a
 # worked tile that produced nothing this turn and is what this label has always said.
 const YIELD_LABEL_EMPTY_FACE := "+0.00"
+# ---- …AND ITS THIRD ARM, THE MATERIALS (arc #527 follow-up) -------------------------------------
+# What an INEDIBLE quarry pays: a vector, not a scalar, so the probe drives it with a row of the
+# wire's own shape. The face is written out rather than composed, for the reason the two above are.
+const YIELD_LABEL_MATERIAL_ROWS := [{"material_id": "hide", "amount": 0.22}]
+const YIELD_LABEL_MATERIAL_FACE := "+0.22 hide"
 # Canned settlement-stage tokens (the native bridge doesn't run here, so preview band dicts must
 # carry settlement_stage_* directly). Icons are opaque sim strings — the emoji here just mirror the
 # current config so the map token glyphs render. EMPTY exercises the neutral non-circular fallback marker (square).
@@ -1494,8 +1499,22 @@ func _assert_yield_label_component() -> void:
 	_assert_map("yield label — food still leads wherever there is food",
 		overlays._yield_label_rate_text(YIELD_LABEL_FOOD_RATE, YIELD_LABEL_FODDER_RATE)
 			== YIELD_LABEL_FOOD_FACE)
+	_assert_map("yield label — an inedible quarry states its material, not +0.00",
+		overlays._yield_label_rate_text(0.0, 0.0, YIELD_LABEL_MATERIAL_ROWS)
+			== YIELD_LABEL_MATERIAL_FACE)
+	_assert_map("yield label — food still leads a source that pays food AND a material",
+		overlays._yield_label_rate_text(YIELD_LABEL_FOOD_RATE, 0.0, YIELD_LABEL_MATERIAL_ROWS)
+			== YIELD_LABEL_FOOD_FACE)
+	_assert_map("yield label — fodder still beats a material, in the wire's own order",
+		overlays._yield_label_rate_text(0.0, YIELD_LABEL_FODDER_RATE, YIELD_LABEL_MATERIAL_ROWS)
+			== YIELD_LABEL_FODDER_FACE)
 	_assert_map("yield label — a source paying nothing still prints its food zero",
-		overlays._yield_label_rate_text(0.0, 0.0) == YIELD_LABEL_EMPTY_FACE)
+		overlays._yield_label_rate_text(0.0, 0.0) == YIELD_LABEL_EMPTY_FACE
+			and overlays._yield_label_rate_text(0.0, 0.0, []) == YIELD_LABEL_EMPTY_FACE)
+	_assert_map("yield label — the material vector is read off the entry, empty when absent",
+		overlays._entry_materials({SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY:
+			YIELD_LABEL_MATERIAL_ROWS}).size() == YIELD_LABEL_MATERIAL_ROWS.size()
+		and overlays._entry_materials({}).is_empty())
 	_assert_map("yield label — the feed rate is read off the entry with no realized fallback",
 		is_equal_approx(overlays._entry_fodder({"fodder_yield": YIELD_LABEL_FODDER_RATE}),
 			YIELD_LABEL_FODDER_RATE)

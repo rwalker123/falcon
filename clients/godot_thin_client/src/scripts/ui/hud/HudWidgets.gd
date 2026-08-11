@@ -1377,8 +1377,12 @@ static func _yield_reading(row: Dictionary, number_tint: Color) -> HBoxContainer
     number.add_theme_font_size_override("font_size",
         HudComposeVocab.READOUT_YIELD_NUMBER_FONT_SIZE)
     pair.add_child(number)
+    # **AN ACCOUNT WITH NO TABLE ENTRY IS A MATERIAL, AND ITS UNIT IS ITS OWN NAME** (arc #527
+    # follow-up). `yield_rows` puts a material's id in the account slot precisely because the
+    # material names itself — the catalogue ships no display name, so the id IS the display word —
+    # and defaulting to `""` here printed a bare `0.22` with nothing saying what it was.
     var unit := String(row.get(YIELD_ROW_UNIT,
-        SourceForecast.YIELD_ACCOUNT_UNITS.get(account, "")))
+        SourceForecast.YIELD_ACCOUNT_UNITS.get(account, account)))
     pair.add_child(_readout_unit_label(unit, HudStyle.INK_FAINT))
     return pair
 

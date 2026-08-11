@@ -780,6 +780,16 @@
       "husbandry_ceiling": "herds[0].husbandry_ceiling",
       "id": "herds[0].id",
       "label": "herds[0].label",
+      "material_per_biomass": [
+        {
+          "amount": 56.779999,
+          "material_id": "herds[0].material_per_biomass[0].material_id"
+        },
+        {
+          "amount": 104.849998,
+          "material_id": "herds[0].material_per_biomass[1].material_id"
+        }
+      ],
       "neglect_grace_remaining": 142,
       "next_x": 68,
       "next_y": 57,
@@ -793,6 +803,16 @@
       "pen_radius": 8,
       "pen_upkeep": 13.16,
       "per_worker_biomass": 8.51,
+      "per_worker_material": [
+        {
+          "amount": 98.080002,
+          "material_id": "herds[0].per_worker_material[0].material_id"
+        },
+        {
+          "amount": 53.009998,
+          "material_id": "herds[0].per_worker_material[1].material_id"
+        }
+      ],
       "per_worker_yield": 30.27,
       "prey_sense_radius": 108,
       "provisions_per_biomass": 82.150002,
@@ -836,6 +856,16 @@
       "husbandry_ceiling": "herds[1].husbandry_ceiling",
       "id": "herds[1].id",
       "label": "herds[1].label",
+      "material_per_biomass": [
+        {
+          "amount": 103.07,
+          "material_id": "herds[1].material_per_biomass[0].material_id"
+        },
+        {
+          "amount": 35.639999,
+          "material_id": "herds[1].material_per_biomass[1].material_id"
+        }
+      ],
       "neglect_grace_remaining": 57,
       "next_x": 1,
       "next_y": 12,
@@ -849,6 +879,16 @@
       "pen_radius": 109,
       "pen_upkeep": 26.040001,
       "per_worker_biomass": 22.99,
+      "per_worker_material": [
+        {
+          "amount": 81.870003,
+          "material_id": "herds[1].per_worker_material[0].material_id"
+        },
+        {
+          "amount": 91.68,
+          "material_id": "herds[1].per_worker_material[1].material_id"
+        }
+      ],
       "per_worker_yield": 37.77,
       "prey_sense_radius": 23,
       "provisions_per_biomass": 55.490002,
@@ -1822,6 +1862,16 @@
           "improvement": "populations[0].labor_assignments[0].improvement",
           "kind": "populations[0].labor_assignments[0].kind",
           "kit_id": "populations[0].labor_assignments[0].kit_id",
+          "material_yield": [
+            {
+              "amount": 3.85,
+              "material_id": "populations[0].labor_assignments[0].material_yield[0].material_id"
+            },
+            {
+              "amount": 60.299999,
+              "material_id": "populations[0].labor_assignments[0].material_yield[1].material_id"
+            }
+          ],
           "overdraws": true,
           "realized_yield": 50.82,
           "sustainable_yield": 16.4,
@@ -1842,6 +1892,16 @@
           "improvement": "populations[0].labor_assignments[1].improvement",
           "kind": "populations[0].labor_assignments[1].kind",
           "kit_id": "populations[0].labor_assignments[1].kit_id",
+          "material_yield": [
+            {
+              "amount": 77.470001,
+              "material_id": "populations[0].labor_assignments[1].material_yield[0].material_id"
+            },
+            {
+              "amount": 3.78,
+              "material_id": "populations[0].labor_assignments[1].material_yield[1].material_id"
+            }
+          ],
           "overdraws": true,
           "realized_yield": 67.830002,
           "sustainable_yield": 35.830002,
@@ -2310,6 +2370,16 @@
           "improvement": "populations[1].labor_assignments[0].improvement",
           "kind": "populations[1].labor_assignments[0].kind",
           "kit_id": "populations[1].labor_assignments[0].kit_id",
+          "material_yield": [
+            {
+              "amount": 27.16,
+              "material_id": "populations[1].labor_assignments[0].material_yield[0].material_id"
+            },
+            {
+              "amount": 6.72,
+              "material_id": "populations[1].labor_assignments[0].material_yield[1].material_id"
+            }
+          ],
           "overdraws": true,
           "realized_yield": 31.379999,
           "sustainable_yield": 23.76,
@@ -2330,6 +2400,16 @@
           "improvement": "populations[1].labor_assignments[1].improvement",
           "kind": "populations[1].labor_assignments[1].kind",
           "kit_id": "populations[1].labor_assignments[1].kit_id",
+          "material_yield": [
+            {
+              "amount": 98.839996,
+              "material_id": "populations[1].labor_assignments[1].material_yield[0].material_id"
+            },
+            {
+              "amount": 75.370003,
+              "material_id": "populations[1].labor_assignments[1].material_yield[1].material_id"
+            }
+          ],
           "overdraws": true,
           "realized_yield": 16.93,
           "sustainable_yield": 31.49,

@@ -538,27 +538,87 @@ func _delivered_oracle_herd() -> Dictionary:
 ## food-denominated field is deliberately 0/absent, `food_per_animal` included, so anything that still
 ## divides by a food quantum divides by zero and shows up in the frame rather than hiding.
 ##
-## **WHAT THIS FRAME PROVES CHANGED WITH THE TRADE AXIS.** It used to carry a real trade ceiling on
-## all four rungs and was the frame the two-product arc was judged on: four ascending trade numbers,
-## no food line, no zeros. That account is retired and a herd's materials have NO per-rung quote on
-## the wire, so the honest reading now is that this sheet states **no per-turn rate at all** — and
-## the claim worth pinning is the one that never changed: it must not print a `0.00 FOOD` saying a
-## wolf's pelts are worth no meat. The `herd_hunt_both_products` deer beside it is what keeps that
-## negative from passing on a readout that lost every account.
+## **WHAT THIS FRAME PROVES, AND HOW ITS SUBJECT MOVED TWICE.** It began as the two-product arc's
+## judge: four ascending TRADE numbers, no food line, no zeros. Arc #527 retired that account, and for
+## one release the honest reading was that the sheet stated no rate at all — the wire quoted a herd no
+## material figure. The follow-up closed that: a herd now publishes `material_per_biomass` and
+## `per_worker_material`, so this sheet composes `min(workers × per_worker, ceiling(floor))` per
+## material exactly as the food side does, and the wolf quotes what it actually pays.
+##
+## **The claim that never changed is still the one that matters**: it must not print a `0.00 FOOD`
+## saying a wolf's pelts are worth no meat. `herd_hunt_both_products`' deer beside it is what keeps
+## that negative from passing on a readout that has simply lost every account — and the positive
+## claim (a live `hide` rate) is what keeps it from passing on a readout that says nothing.
+##
+## **THE FOOD SIDE IS ALL ZEROS ON PURPOSE.** `provisions_per_biomass`, `food_per_animal` and
+## `per_worker_yield` are the structural zeros of an inedible species; they are what make every food
+## path in `_hunt_yield_model` bail, which is the state the material arm has to stand up alone in.
 func _pelt_only_wolf_herd() -> Dictionary:
 	return {
 		"id": "game_wolf_03", "label": "Grey Wolf (game_wolf_03)", "species": "Grey Wolf",
 		"size_class": "medium", "huntable": true, "ecology_phase": "thriving",
-		"x": 66, "y": 10, "biomass": 240.0,
+		"x": 66, "y": 10, "biomass": WOLF_BIOMASS,
+		# The capacity the escapement room is measured against — a wolf pack composes its material
+		# ceiling by the SAME `max(0, B − floor·K) × rate` rule a deer composes its food one, so the
+		# fixture has to state it or the room is the whole standing stock.
+		"carrying_capacity": WOLF_CAPACITY,
 		"husbandry_ceiling": "wild",
 		"prey_sense_radius": 4,
 		"food_per_animal": 0.0,
 		"per_worker_yield": 0.0,
+		"provisions_per_biomass": 0.0,
+		# **WHAT ONE UNIT OF THIS PACK IS MADE OF** — the material twin of `provisions_per_biomass`,
+		# and the term the floor presets scale by the room at whatever floor is dragged.
+		"material_per_biomass": [
+			{"material_id": WOLF_MATERIAL_ID, "amount": WOLF_MATERIAL_PER_BIOMASS},
+		],
+		# …and what ONE HUNTER brings home per turn, the twin of `per_worker_yield`. Deliberately the
+		# BINDING term at this frame's crew: see `WOLF_MATERIAL_PER_WORKER`.
+		"per_worker_material": [
+			{"material_id": WOLF_MATERIAL_ID, "amount": WOLF_MATERIAL_PER_WORKER},
+		],
 		"hunt_policy_ceilings": {
 			"sustain": 0.0, "surplus": 0.0, "deplete": 0.0, "eradicate": 0.0,
 		},
 		"tile_info": HerdFx.plain_herd_tile_info(),
 	}
+
+## A floor preset's TOOLTIP — where its per-turn cap is stated now that the face carries the intent
+## alone. Reached by the rung's own meta (`HudWidgets.POLICY_RUNG_META`) and never by button text:
+## the face is a two-Label stack beside an empty-`text` Button, so a text search finds nothing here.
+func _floor_preset_tooltip(root: Node, preset: String) -> String:
+	var btn := Q.find_policy_rung(root, preset)
+	return btn.tooltip_text if btn != null else ""
+
+## ---- THE INEDIBLE QUARRY'S OWN ARITHMETIC -----------------------------------------------------
+## Stated rather than restated, because two frames and a work-board row read the same pack and a
+## number typed twice is a fixture that can disagree with itself.
+##
+##   room at the food-peak floor = 240 − 0.5 × 400 = 40 biomass
+##   ceiling                     = 40 × 0.02       = 0.80 hide/turn
+##   per hunter                  = 0.11 hide/turn                    ← the binding term
+##
+## **THE CREW BINDS, NOT THE CEILING, AND THAT IS THE POINT OF THE NUMBERS.** A frame whose ceiling
+## bound would render the same string whether or not the per-worker rate were read at all, so the
+## `min` it is supposed to prove would be decorative. At any crew this sheet can compose, the crew
+## arm is the one that answers.
+##
+## **THE CREW IS READ BACK, NEVER ASSUMED.** The sheet's own worker cap lands this frame at ONE
+## hunter — `max_useful_workers` divides by the quantised FOOD axis, which an inedible quarry has
+## none of — so a `PELT_FRAME_HUNTERS`-shaped expectation would assert against a crew the stepper
+## refuses. The claim is composed from `hunt_count()` at assertion time instead, which is also what
+## keeps it true the day that cap learns about materials.
+const WOLF_BIOMASS := 240.0
+const WOLF_CAPACITY := 400.0
+## `hide` is a real `materials.json` id, and the catalogue ships no display name — so the id IS the
+## display word, exactly as `fibre` is on the crop picker's basket rows.
+const WOLF_MATERIAL_ID := "hide"
+const WOLF_MATERIAL_PER_BIOMASS := 0.02
+const WOLF_MATERIAL_PER_WORKER := 0.11
+## What the frame must read, composed at assertion time from the crew the sheet actually landed on
+## (see above) times the per-worker rate, at the reference band's full output.
+func _wolf_material_take(crew: int) -> float:
+	return float(crew) * WOLF_MATERIAL_PER_WORKER
 
 ## The wolf's RAID table: `delivers_food = false` on every rung — an INEDIBLE quarry, not a denial
 ## POLICY. Since arc #527 retired the `delivers_trade` sibling that made such a raid a real delivery,
@@ -1332,11 +1392,12 @@ func run(harness) -> void:
 	h._assert_compose_sheet_fits("herd_hunt_big_game_window")
 
 	# 3w — THE INEDIBLE QUARRY (issue #337, arc #527). A wolf pays PELTS AND NO MEAT: `provisions == 0`
-	# on every rung. It used to carry a real trade ceiling on all four and read four ascending trade
-	# numbers here; that account is retired, a herd's materials have NO per-rung quote on the wire, and
-	# the honest reading is that this sheet quotes NO per-turn rate at all. What must still hold — and
-	# is the claim this frame has always really been about — is that it never prints a `0.00 FOOD`
-	# saying a wolf's pelts are worth no meat.
+	# on every rung. It read four ascending TRADE numbers until that account was retired, then nothing
+	# at all for one release; the follow-up gave a herd `material_per_biomass` / `per_worker_material`,
+	# so the sheet composes `min(workers × per_worker, ceiling(floor))` per material and the wolf
+	# quotes what it actually pays. TWO claims ride the frame, and they are a pair: it must never print
+	# a `0.00 FOOD` saying a wolf's pelts are worth no meat, AND it must state the hide rate — the
+	# negative alone is satisfied by a readout that prints nothing.
 	var wolf := _pelt_only_wolf_herd()
 	h._hud._compose.reset_hunt_source()
 	h._hud._compose.set_hunt_band(-1)
@@ -1357,6 +1418,28 @@ func run(harness) -> void:
 	h._assert_hud("an inedible quarry states NO food row — its pelts are not meat",
 		not wolf_yields.contains(SourceForecast.YIELD_ACCOUNT_UNITS[
 			SourceForecast.YIELD_ACCOUNT_FOOD].to_upper()))
+	# **AND THE POSITIVE HALF: it quotes the hide it pays**, at the CREW arm of the `min` rather than
+	# at the ceiling — see `WOLF_MATERIAL_TAKE` for why that distinction is what makes the claim bite.
+	# The unit is the material's own id, uppercased by the readout exactly as `FOOD` is, because the
+	# catalogue ships no display name and the id IS the display word.
+	var wolf_take := _wolf_material_take(h._hud._compose.hunt_count())
+	h._assert_hud("the wolf's crew is one the sheet will actually compose", wolf_take > 0.0)
+	h._assert_hud("…and it QUOTES the hide, which is the whole of what the hunt pays",
+		wolf_yields.contains(SourceForecast.format_magnitude(wolf_take))
+			and wolf_yields.contains(WOLF_MATERIAL_ID.to_upper()))
+	# **THE FLOOR PRESETS QUOTE IT TOO, and at the PRESET's own floor rather than the composed one.**
+	# A preset's cap is the room above ITS floor through the same per-biomass rate, so `strip` (floor
+	# 0, the whole standing stock) must quote strictly more hide than the food peak's half-capacity
+	# room — which is the claim that the material ceiling composes at a floor at all rather than being
+	# a constant the picker repeats four times.
+	var peak_cap := _floor_preset_tooltip(h._hud._drawercompose._compose_sheet,
+		SourceForecast.FLOOR_PRESET_PEAK)
+	var strip_cap := _floor_preset_tooltip(h._hud._drawercompose._compose_sheet,
+		SourceForecast.FLOOR_PRESET_STRIP)
+	h._assert_hud("the wolf's floor presets quote hide rather than nothing",
+		peak_cap.contains(WOLF_MATERIAL_ID) and strip_cap.contains(WOLF_MATERIAL_ID))
+	h._assert_hud("…and a deeper floor quotes MORE of it — the ceiling composes at the floor",
+		strip_cap != peak_cap)
 	# **THE CHART ON AN INEDIBLE QUARRY** (the wolf half of the five chart cases). The readout above it
 	# carries no food line at all, and the chart must not care: a floor is a fraction of BIOMASS, and
 	# the crew targets divide by `perWorkerBiomass`, which is positive on a wolf where both the food

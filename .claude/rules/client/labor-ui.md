@@ -685,8 +685,10 @@ shows no row at all, and the single surviving zero is still `zero_account`'s. A 
 a row would put the false `0.00 food` straight back on the loudest line of the panel.
 
 **THE HUNT WEB'S PER-TURN ROW IS AN ACCOUNT, LIKE EVERY OTHER RATE ON THIS READOUT** — `1.23 → 0.07
-FOOD` on a deer, through `SourceForecast.yield_rows` and `YIELD_ACCOUNT_UNITS`; an inedible quarry
-states no row at all, arc #527 having retired the trade account that used to be its only one. **The
+FOOD` on a deer, and `0.11 HIDE` on an inedible quarry, both through `SourceForecast.yield_rows` and
+`YIELD_ACCOUNT_UNITS` — a material's account IS its id, so the table's fallback yields the id as the
+unit. (The wolf read nothing at all for the one release between the trade account's retirement and
+`material_per_biomass` reaching the wire.) **The
 whole-animal reading belongs to the CHART above it** — the escapement curve and its `leave 50% · ≈1
 Grey Wolf` handle — and to the raid's whole-trip payload, which has no `/turn` and no `now → after`;
 a per-turn row wearing `WILD FOWL/TURN` states a rate in a currency the band's stores do not keep,
@@ -708,8 +710,9 @@ per-biomass vector as the reference mix, the counted axis coming back bit-identi
 
 - **`yield_rows` still decides which rows EXIST**, so this is not "credit every account": an inedible
   quarry's provisions rate is a structural `0`, the crossing answers a structural zero, and no
-  `0.00 FOOD` appears. `herd_hunt_pelts_only` is the frame that pins it and `herd_hunt_both_products` its
-  positive twin — asserted as a pair, since the negative alone passes on a readout that lost both.
+  `0.00 FOOD` appears — while the MATERIAL rows beside it state what the take is actually worth.
+  `herd_hunt_pelts_only` is the frame that pins it and `herd_hunt_both_products` its positive twin —
+  asserted as a pair, since the negative alone passes on a readout that lost every account.
 - **The `after` reading rescales the same way**, or an arrowed row would key one account's holding
   rate beside another account with none.
 - **BOTH branches of `_hunt_yield_model` cross the same way** — the quantised take and the smoothed
@@ -1169,10 +1172,12 @@ claim the wire contradicts: a wolf's `provisionsPerBiomass` is `0`, it pays pelt
 the per-biomass vector (a structural fact, not this turn's ceiling) and `picker_products` /
 `yield_components` / `extractive_take_pair` take it as `zero_account`. A source with no positive rate
 in any account answers `YIELD_ACCOUNT_NONE` and its caller renders **no line at all**. Frame:
-`herd_hunt_pelts_only` — an inedible quarry whose three presets render **no product line at all**,
-no food line and no zeros. Since arc #527 that quarry has no account left to state, so the frame is
-asserted as a PAIR with `herd_hunt_both_products`, whose deer still prints a live FOOD line: "renders
-nothing" and "is correctly silent" are one picture, and only the paired frame separates them.
+`herd_hunt_pelts_only` — an inedible quarry whose presets quote **hide and no food**, and no zeros.
+`zero_account_of` still answers `NONE` for it (it names which SCALAR zero to print, and a material has
+none to nominate), and the material rows are what make the readout non-empty anyway — which is why
+`forecast_is_known` takes the material vector as a witness of its own. Asserted as a PAIR with
+`herd_hunt_both_products`, whose deer prints a live FOOD line: "renders nothing" and "is correctly
+silent" are one picture, and only the paired frame separates them.
 
 ### Per-account divergence is GONE on the plant web, and that is the model
 
@@ -2784,8 +2789,10 @@ discard is precisely what this axis split removed.
     standing stock in one haul, the biggest payoff of any rung, in whatever the species pays, and the
     herd gone for good — denial is the END STATE, not a promise that the carcasses were thrown away
     (#337). **The `⇄ trade goods` half of that sentence went with the account (arc #527)**: the rung
-    still names the meat and the end state, and a species whose only product was pelts now names
-    nothing, the wire quoting a herd no material figure). **They no longer teach the LADDER** — see
+    names the meat and the end state, and what an inedible species pays is quoted by the rung's own
+    METRIC line rather than by the hint — the floor presets state its materials off
+    `material_per_biomass`, which is a number and not a noun the prose has to carry). **They no longer
+    teach the LADDER** — see
     "The two compose sheets read in ONE grammar" above. **These are
     NOT the expedition hints** (`SEND_HUNT_POLICY_HINTS`): an expedition's Hunting arm banks the kill's
     provisions into the party's larder and into the HOME BAND's `stores` at the drop-off/fold-back, but
@@ -3499,7 +3506,7 @@ meadow rendered `0.00 food` on every rung and looked like a source worth nothing
 | a staple patch | food only |
 | a hay meadow | food **and** fodder, **food leading** |
 | a sown hay Field | fodder only — **never** a "0 food" line |
-| an inedible quarry | **nothing** — no rate at all, and never a "0 food" line |
+| an inedible quarry | its **MATERIALS**, each naming itself — and never a "0 food" line |
 
 A `0` printed as a number for a component the source does not produce is the false precision this
 whole arc exists to remove; it is not "more complete", it is wrong. The one place a zero survives is a
@@ -3546,15 +3553,70 @@ whole product, because the sim modelled a scalar; a material has a NAME, and a n
 than an abstract arrow saying only "not food". So a material row reads `0.29 fibre`, exactly as its
 neighbour reads `1.80 hay`, and there is no generic account left for a generic mark to stand for.
 
-**WHAT AN INEDIBLE QUARRY READS NOW, AND WHY THE CLIENT CANNOT DO BETTER.** A wolf's
-`provisionsPerBiomass` is `0` and it paid trade goods; with the axis retired it pays MATERIALS, and
-**the wire quotes a HERD no per-rung, per-turn or per-raid material figure at all**. So its compose
-sheet quotes no rate, its board row reads `+0.00`, its map label reads `+0.00`, and a raid on it reads
-as a DENIAL mission (`delivers_food == false` with no `delivers_trade` sibling left to redeem it). Every
-one of those is the client reading the current contract honestly rather than a readout that was lost —
-the surviving claim, asserted on `herd_hunt_pelts_only` against `herd_hunt_both_products`, is that it
-never prints a `0.00 FOOD` saying a wolf's pelts are worth no meat. **A per-herd material quote is
-server-side work.**
+### AN INEDIBLE QUARRY QUOTES WHAT IT PAYS, IN THREE FIELDS
+
+A wolf's `provisionsPerBiomass` is `0` and it used to pay `trade_goods_per_biomass: 0.02`, so it had
+a rate. Retiring the axis took that away and nothing replaced it for one release: the compose sheet
+quoted no rate, the board row and the map label read `+0.00`, and the pelts still landed in the
+band's `MaterialStore` every turn. **Three wire fields close it**, and which one a surface reads is
+the whole of the rule:
+
+| field | on | what it is | who reads it |
+|---|---|---|---|
+| `material_per_biomass` | a herd | what ONE UNIT of its biomass is MADE OF, per material | the ceiling, composed at the dragged floor |
+| `per_worker_material` | a herd | what ONE HUNTER brings home per turn, per material | the crew term of the preview's `min` |
+| `material_yield` | a labor assignment | what the source actually CREDITED this turn | the board row, the map label, the inspector strip |
+
+- **THE TWO RATES ARE THE FOOD SIDE'S OWN TERMS, ONE ACCOUNT OUT.** `material_per_biomass` is the
+  twin of `provisionsPerBiomass`, so `forecast_inputs` composes `ceiling(floor) = max(0, B − floor·K)
+  × rate` per material through the identical `escapement_room` the two scalars go through — which is
+  why it is a per-biomass RATE and not a pre-composed ceiling: it has to answer at whatever floor the
+  player has dragged to. `per_worker_material` is the twin of `perWorkerYield` and carries the build
+  DIP for the same reason `per_worker` does. `SourceForecast.expected_materials` is the `min` over
+  the pair, unioned BY ID rather than zipped by position: a rate with no ceiling is a herd standing at
+  its floor, which takes nothing and correctly renders no row.
+- **`material_yield` IS NOT A FORECAST, AND READING IT AS ONE IS THE TRAP.** The sim seeds it EMPTY
+  on a pre-commit row **by design** — projecting materials needs the take in BIOMASS while the
+  forecast resolves in currency space, where an inedible species has no positive axis. So an empty
+  answer means either "pays no material" or "no take has resolved yet", and both render as no row.
+  **A compose sheet must therefore read the two RATES**, and `_hunt_material_rows` is the one place
+  that composition lives (`DrawerComposeController`). `SourceForecast.material_rows_of` is the
+  resolved reader, the material twin of `fodder_rate_of`, and it likewise has no
+  realized/projected sibling to fall back from.
+- **THE MATERIAL ARM IS INDEPENDENT OF THE FOOD AXIS, and that independence is the whole point.**
+  Both food paths in `_hunt_yield_model` bail on an inedible quarry — its per-animal quantum is
+  honestly `0`, so there is nothing to quantise and nothing to smooth — and the model returned `{}`
+  there, which is what left the sheet quoting nothing. The material branch answers on its own, with
+  **no overdraw verdict**: the sustainability bar is the food peak's ceiling in the account the take
+  is measured in, and this take is measured in none of it. The drawdown is real; the client has no
+  material sustainable-yield to judge it against and must not invent one.
+- **A MATERIAL VECTOR IS A `forecast_is_known` WITNESS.** `zero_account_of` cannot answer this — it
+  names which SCALAR zero is worth printing, and a material's empty answer renders as no row, so it
+  has no zero to nominate. Without the extra arm a wolf reads `known == false` everywhere: no
+  floor-preset caps, no compose readout, no worker cap. That is the client calling a fully-described
+  herd undescribed because the one account it pays is not a scalar.
+- **MATERIALS ARE ROWS OF `yield_rows`' OWN VECTOR**, appended after the two scalars under the
+  identical non-zero gate, so `yield_components` / `picker_products` / `magnitude_components` /
+  `extractive_take_pair` gained the account without a second code path to spell it. **A material
+  row's ACCOUNT IS ITS OWN ID** — the material names itself, `YIELD_ACCOUNT_UNITS` has no entry for
+  it, and the unit falls back to the id, which is the display word. (That fallback used to be `""`,
+  which printed a bare `0.22` with nothing saying what it was.) **They also answer the ZERO
+  question**: a source paying a material pays SOMETHING, so no zero survives beside it, and a wolf
+  never reads `0.00 food · 0.22 hide`.
+- **THE RAID IS STILL A DENIAL MISSION.** `delivers_food == false` with no `delivers_trade` sibling,
+  and the wire states no material payload for a RAID — the three fields above are a herd's rates and
+  an assignment's resolved take, neither of which is a trip. A party sent after an inedible quarry
+  really does bring home nothing the sheet can name. **That one is still server-side work.**
+
+**Frames.** `herd_hunt_pelts_only` — the compose sheet reading `0.11 HIDE` at the crew the stepper
+landed on, with the floor presets quoting hide in their tooltips and `strip` quoting strictly more
+than `peak` (the claim that the ceiling composes AT a floor rather than being a constant repeated
+four times). It is asserted as a PAIR with `herd_hunt_both_products` and carries BOTH halves: no
+`0.00 FOOD`, **and** a live hide rate — the negative alone is satisfied by a readout that prints
+nothing. `band_panel_work_trade_rows` — the resolved row, `+0.22 hide` beside the deer's `+0.20`,
+with the deer as the control that must be UNCHANGED. `map_preview`'s `_assert_yield_label_component`
+drives the full fall-through, including the two negatives (food still leads a source paying food AND
+a material; fodder still beats a material).
 
 ### The shared layer (`SourceForecast`)
 
@@ -3598,10 +3660,15 @@ server-side work.**
   work board only because `fodder_yield` is in `HudBandLaborState.OPTIONAL_YIELD_KEYS`** — a key not
   copied through `effective_worker_map` does not exist as far as the board, its chips and its header
   totals are concerned, whatever the decoder published.
-- **`MATERIAL_PAYOFF_ID_KEY` / `MATERIAL_PAYOFF_AMOUNT_KEY` + `_material_payoff_rows`** — the two keys
-  of one per-material row and the normalizer `flora_basket_entries` runs each rung's vector through.
-  A row naming no material is dropped: an id is what a row is FOR, and a nameless amount could only be
-  rendered as the summed scalar this arc refuses.
+- **`MATERIAL_PAYOFF_ID_KEY` / `MATERIAL_PAYOFF_AMOUNT_KEY` + `material_payoff_rows`** — the two keys
+  of one per-material row and the normalizer every material vector runs through. A row naming no
+  material is dropped: an id is what a row is FOR, and a nameless amount could only be rendered as the
+  summed scalar this arc refuses. Beside it: **`scaled_material_rows`** (one vector times a scalar —
+  the room, the dip, the band's output multiplier; every material scales by the SAME factor, because
+  they are one biomass flow through a fixed per-biomass vector), **`expected_materials`** (the
+  `min(workers × per_worker, ceiling)` clamp), **`material_rows_of`** (the RESOLVED yield off an
+  assignment) and **`signed_material_components`** (every material, signed, joined — and `""` when
+  there is nothing to say, which is the gate both one-slot surfaces test).
 
 ### THE AXIS IS PROVISIONS, AND IT IS NO LONGER A CHOICE
 
@@ -3647,11 +3714,21 @@ Two readouts have a single narrow slot and cannot carry a pair — the **work-bo
 rate column (`BandPanelController._work_row_rate_text`) and the **map's** on-tile yield label
 (`BandOverlayRenderer._draw_yield_label`, whose choice is split out as `_yield_label_rate_text` so a
 harness can ask it — a draw call renders to a canvas and no assertion can read a glyph back off one).
-Both fall through **food → fodder**, in the wire's own order: food when there is food (so every forage
-patch and edible quarry is unchanged), else the fodder rate spelled with the WORD (`+0.40 fodder`) —
-fodder has no glyph, and borrowing another account's would say the wrong thing. A trade branch stood
-between the two until arc #527. The work **inspector strip** beside the row states both components in
-full.
+Both fall through **food → fodder → materials**, in the wire's own order: food when there is food (so
+every forage patch and edible quarry is unchanged), else the fodder rate spelled with the WORD
+(`+0.40 fodder`) — fodder has no glyph, and borrowing another account's would say the wrong thing —
+else the MATERIALS, each naming itself (`+0.22 hide`). A trade branch stood between food and fodder
+until arc #527; the material arm is what replaced it, one release later. The work **inspector strip**
+beside the row states the whole vector in full.
+
+**THE MATERIAL ARM STATES EVERY MATERIAL, NOT THE FIRST ONE.** Naming one of a vector picks a winner
+the sim does not name, and summing them is the retired trade axis under a new name. A species pays
+few materials; the board column's width is a MINIMUM rather than a clip and the map plate sizes to
+its measured run, so a two-material label is wide rather than truncated — which is a legibility
+question for `map_band_label_overlap`, not a reason to state less than the truth. Both surfaces gate
+on `SourceForecast.signed_material_components` answering `""`, so "pays no material" is one call
+rather than a condition each re-derives, and a source that genuinely produced nothing in every
+account still falls through to its honest food zero.
 
 **The fodder rung is the one this pair was reported on** (issue #449): a sown hay Field pays no
 provisions, so with only one option both surfaces read `+0.00` on a tile that was filling the band's
@@ -3661,8 +3738,8 @@ other would have been hidden at.
 
 **A HUNT call site passes NO fodder argument, and that is a decision rather than an omission.** No
 animal is harvested for feed, so a hunt row's fodder is a structural zero and passing it would only
-offer the label a fall-through it can never take. **An inedible quarry consequently has no
-fall-through at all** and reads `+0.00`.
+offer the label a fall-through it can never take. **It DOES pass the materials**, which is the arm
+that closes an inedible quarry's `+0.00` — see "AN INEDIBLE QUARRY QUOTES WHAT IT PAYS" above.
 
 **AN AGGREGATE STATES EVERY ACCOUNT ITS ROWS PAY, and that rule outlived the account it was written
 for.** The work zone's header once read `3 sources +0.35 /turn` with a `⇄+0.22` wolf row directly
@@ -3679,11 +3756,11 @@ in the client currently sums or counts across sources: the parties header counts
 and the attention producers key off `idle_workers` / `turns_of_food` / pen status. **Do not add a
 "produces nothing" empty-state that tests food alone.**
 
-**Frames.** `ui_preview`: **`herd_hunt_pelts_only`** (the inedible quarry — asserted as a PAIR with
-`herd_hunt_both_products`, whose deer still prints a live FOOD row: with the trade account gone, "the
-readout prints nothing" and "the readout is correctly silent" are the same picture, and only a frame
-that still prints tells them apart) · **`herd_hunt_pelts_raid`** (the same wolf as an expedition
-target, now reading as a denial mission) · `hunt_picker_ascending` · `food_tile` ·
+**Frames.** `ui_preview`: **`herd_hunt_pelts_only`** (the inedible quarry, quoting `0.11 HIDE` — and
+still asserted as a PAIR with `herd_hunt_both_products`, whose deer prints a live FOOD row, because
+"prints nothing" and "is correctly silent" are the same picture and only a frame that still prints
+tells them apart) · **`herd_hunt_pelts_raid`** (the same wolf as an expedition target, still reading
+as a denial mission — a RAID has no material payload on the wire) · `hunt_picker_ascending` · `food_tile` ·
 **`forage_three_accounts`** (the PLANT frame the rule is judged on since #426 — a hay meadow whose
 rungs read `0.24 food · 0.40 fodder`, and the frame the picker's three-column ceiling was MEASURED
 against rather than assumed) · **`forage_three_accounts_overdraw`** (the same meadow, three foragers —

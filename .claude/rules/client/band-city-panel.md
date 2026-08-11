@@ -1941,17 +1941,23 @@ closed until this.
 
 ## Work rows carry ONE account, and the aggregates carry a SIBLING (issues #337 / #449 / #527)
 
-A board row's rate column is a single fixed width, so it shows the account the source actually PAYS,
-falling through **food → fodder**: food when there is food (unchanged for every forage patch and
-edible quarry), else the fodder rate spelled with the WORD — `+0.40 fodder` on a sown hay Field, never
-the `+0.00` that said the source was worth nothing. `_work_row_rate_text` is the one definition. The
-**inspector strip** has room for the pair and states both (`SourceForecast.yield_components`).
+A board row's rate column is a single fixed width, so it states the account the source actually PAYS,
+falling through **food → fodder → materials**: food when there is food (unchanged for every forage
+patch and edible quarry), else the fodder rate spelled with the WORD — `+0.40 fodder` on a sown hay
+Field — else the MATERIALS, each naming itself: `+0.22 hide` on a hunted wolf pack, never the `+0.00`
+that said the source was worth nothing. `_work_row_rate_text` is the one definition. The **inspector
+strip** has room for the whole vector and states all of it (`SourceForecast.yield_components`).
 
-**A TRADE branch stood between the two until arc #527** — `⇄+0.22` on a hunted wolf pack, marked with
-the retired `FoodIcons.TRADE_GOODS_GLYPH`. With that account gone an inedible quarry has no
-fall-through and reads `+0.00`, the wire quoting a herd no per-turn material figure at all. **A hunt
-row's fodder is a structural zero** (no animal is harvested for feed), so a hunt call site passes no
-fodder argument and the animal web has no second account to fall through to.
+**A TRADE branch stood between food and fodder until arc #527** — `⇄+0.22` on that same wolf, marked
+with the retired `FoodIcons.TRADE_GOODS_GLYPH` — and for one release after it the row read `+0.00`.
+The material arm reads the assignment's **RESOLVED `material_yield`**, what the source actually
+credited this turn, never a rate the compose sheet would project (`labor-ui.md` → "AN INEDIBLE QUARRY
+QUOTES WHAT IT PAYS"). **A hunt row's fodder is a structural zero** (no animal is harvested for feed),
+so the fodder arm is one only the plant web can take.
+
+**THE MATERIAL ARM STATES EVERY MATERIAL, NOT THE FIRST ONE.** Picking one of a vector names a winner
+the sim does not name; summing them is the retired axis under a new name. The column's width is a
+MINIMUM rather than a clip, so the honest reading is the one that fits.
 
 **THE AGGREGATES CARRY A SIBLING TOTAL, NEVER A FOLDED-IN ONE.** The header's food figure and each
 chip's food figure stay `actual_yield`-denominated — that is the sim's larder identity — but omitting
@@ -1990,11 +1996,12 @@ does not make and the player cannot check. Tiering asserts nothing about an exch
 orders attention. **Food leads not because it is worth more per unit** but because the larder is the
 live survival constraint the player decides against every turn.
 
-Frames `band_panel_work_trade_rows` (mixed board) / `band_panel_work_trade_inspector` /
-**`band_panel_work_trade_totals`** (the aggregate-suppression path the mixed board cannot reach).
-**The three keep their names and their subject moved**: they stage an inedible quarry, whose rows now
-read `+0.00 /turn` because the wire states no rate for it rather than because the client dropped one.
-The rule and the axis contract live in `labor-ui.md`.
+Frames `band_panel_work_trade_rows` (mixed board — `+0.22 hide` beside the deer's `+0.20` and the
+patch's `+0.15`) / `band_panel_work_trade_inspector` / **`band_panel_work_trade_totals`** (the
+aggregate-suppression path the mixed board cannot reach). **The three keep their names and their
+subject moved**: they stage an inedible quarry. `_assert_work_material_readouts` carries the claims,
+and the DEER beside the wolf is what makes them bite — "always print the materials" passes every
+positive and fails the control. The rule and the axis contract live in `labor-ui.md`.
 
 **Yield is the OPT-IN sort, not the default** — see the next section for why.
 

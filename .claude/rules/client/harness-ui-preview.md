@@ -554,10 +554,12 @@ built from the code under test can only agree with itself. **They are the SIM's 
 from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
 payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-**A clean run is 296 frames / 824 `PASS`, exit 0.** (It was 827 before arc #527 retired the
-`trade_goods` yield axis — three claims went with the account; **no frame was added or removed**, and
-the crop-picker frames listed under `land-readouts.md` → "WHAT A CASH CROP PAYS, PER MATERIAL" moved
-in place as their basket rows swapped a trade scalar for per-material clauses.) **Twelve** of those frames are the Materials &
+**A clean run is 296 frames / 828 `PASS`, exit 0.** (It was 827 before arc #527 retired the
+`trade_goods` yield axis — three claims went with the account, and the follow-up that gave a herd
+`material_per_biomass` / `per_worker_material` added four to `herd_hunt_pelts_only`. **No frame was
+added or removed by either**: the crop-picker frames moved in place as their basket rows swapped a
+trade scalar for per-material clauses, and the wolf frame moved in place from quoting nothing to
+quoting `0.11 HIDE`.) **Twelve** of those frames are the Materials &
 Crafting chapter's: the ledger's own frame, its reserved-edge / event-bar / band-dock / co-edge /
 collapsed variants, the two-tier and folded group heads, and the two stopped benches — the crew that
 walked off and the store that cannot cover the next draw. **The figure is

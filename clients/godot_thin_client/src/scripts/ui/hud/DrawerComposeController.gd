@@ -376,11 +376,14 @@ func _hunt_floor_takes(herd: Dictionary, band: Dictionary, improvement: String) 
         var forecast := _hunt_forecast(herd, band, floor_value)
         if not bool(forecast["known"]):
             continue
-        # Each preset's cap, rendered only when non-zero. **An inedible quarry's presets are BLANK
-        # since arc #527**: the trade cap that used to stand in for its food zeros went with the axis,
-        # and the materials replacing it have no per-turn ceiling on the herd wire.
+        # Each preset's cap, rendered only when non-zero — **per account, materials included**. The
+        # material ceiling composes at THIS preset's floor by the same
+        # `max(0, B − floor·K) × rate` rule the food one does (`material_per_biomass`), which is why an
+        # inedible quarry's presets state `0.22 hide` rather than the blank they read while the
+        # retired trade cap was the only thing that could stand in for its food zeros.
         var pair := SourceForecast.extractive_take_pair(
-            float(forecast["ceiling"]), 0.0, zero_account)
+            float(forecast["ceiling"]), 0.0, zero_account,
+            forecast["material_ceiling"])
         var window_turns := _hunt_avg_window_turns(herd, floor_value, improvement)
         if window_turns > 0:
             pair["note"] = HudComposeVocab.HUNT_AVG_WINDOW_FORMAT % window_turns
@@ -495,6 +498,17 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
     # below is off `herd`; the raw dict is not in scope again, which is the point of shadowing it here
     # rather than pricing at each `herd_axis_rates` call (this model makes three).
     var herd := _hunt_priced_herd(herd_raw, band)
+    # **WHAT THIS CREW BRINGS HOME IN MATERIALS, AT THIS FLOOR** — composed from the herd's two RATES
+    # rather than from the assignment's resolved `material_yield`, which a pre-commit sheet has not
+    # got: the sim seeds it empty by design because projecting materials needs the take in biomass
+    # while the forecast resolves in currency space. So this arm is `min(workers × per_worker,
+    # ceiling(floor))` per material — the food side's own clamp, one account further out.
+    #
+    # **IT IS INDEPENDENT OF THE FOOD AXIS, and that independence is the whole point.** Both food
+    # paths below bail on an inedible quarry (its per-animal quantum is honestly 0, so there is
+    # nothing to quantise and nothing to smooth), and a model that returned `{}` there is what left a
+    # wolf's sheet quoting no rate at all.
+    var materials := _hunt_material_rows(herd, band, floor, workers, improvement)
     # **THE SUSTAINABILITY BAR IS THE FOOD PEAK'S CEILING**, in the same account the take is measured
     # in. It is the floor at which the herd settles on its most productive biomass, so a take above it
     # is one the herd cannot pay forever — which is exactly what the verdict claims.
@@ -521,7 +535,24 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
         # different accounts for one herd is the defect one branch above records.
         var take := _hunt_take_rate(herd, floor, workers, improvement)
         if not bool(take.get("available", false)):
-            return {}
+            # **NO FOOD PATH AT ALL — but a material one may still stand.** An inedible quarry reaches
+            # here every time, and its materials are the whole of what the hunt pays; a `{}` model
+            # renders no readout, which is the `+0.00` this arm exists to close.
+            if SourceForecast.signed_material_components(materials) == "":
+                return {}
+            return {
+                YIELD_MODEL_ROWS: SourceForecast.yield_rows(
+                    0.0, 0.0, SourceForecast.YIELD_ACCOUNT_NONE, {}, materials),
+                YIELD_MODEL_TEXT: HudComposeVocab.LOCAL_HUNT_YIELD_FORMAT % (
+                    SourceForecast.yield_components(
+                        0.0, 0.0, SourceForecast.YIELD_ACCOUNT_NONE, materials)),
+                # **NO OVERDRAW VERDICT ON A MATERIAL-ONLY TAKE.** The sustainability bar is the food
+                # peak's ceiling in the account the take is measured in, and this take is measured in
+                # none of it — the drawdown a material take causes is real, but the client has no
+                # material sustainable-yield to judge it against and must not invent one.
+                YIELD_MODEL_OVERDRAW: false,
+                YIELD_MODEL_WASTE: "",
+            }
         var actual := float(take["rate"]) * output
         var smooth := SourceForecast.rescaled_accounts(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
             actual)
@@ -536,14 +567,14 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
             YIELD_MODEL_ROWS: SourceForecast.yield_rows(
                 float(smooth[SourceForecast.YIELD_ACCOUNT_FOOD]),
                 float(smooth[SourceForecast.YIELD_ACCOUNT_FODDER]),
-                account, smooth_after),
+                account, smooth_after, materials),
             # The SENTENCE states the same vector the rows do — `yield_components` is the joiner the
             # plant twin already uses, and it obeys the same render-only-when-non-zero rule, so this
             # line cannot quote one account beside a row set carrying two.
             YIELD_MODEL_TEXT: HudComposeVocab.LOCAL_HUNT_YIELD_FORMAT % (
                 SourceForecast.yield_components(
                     float(smooth[SourceForecast.YIELD_ACCOUNT_FOOD]),
-                    float(smooth[SourceForecast.YIELD_ACCOUNT_FODDER]), account)),
+                    float(smooth[SourceForecast.YIELD_ACCOUNT_FODDER]), account, materials)),
             YIELD_MODEL_OVERDRAW: _is_overdraw(actual, sustainable) \
                 and _herd_take_draws_down(herd, floor, workers, improvement),
             YIELD_MODEL_WASTE: "",
@@ -585,13 +616,38 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
         YIELD_MODEL_ROWS: SourceForecast.yield_rows(
             float(take[SourceForecast.YIELD_ACCOUNT_FOOD]),
             float(take[SourceForecast.YIELD_ACCOUNT_FODDER]),
-            account, after),
+            account, after, materials),
         YIELD_MODEL_TEXT: HudComposeVocab.HUNT_DELIVERED_FORMAT % [rate_text, quarry],
         YIELD_MODEL_OVERDRAW: _is_overdraw(delivered, sustainable) \
             and _herd_take_draws_down(herd, floor, workers, improvement),
         YIELD_MODEL_WASTE: SourceForecast.HUNT_WASTE_NOTE_FORMAT % int(round(waste_pct * 100.0)) \
             if waste_pct > 0.0 else "",
     }
+
+## **THE CREW'S MATERIAL TAKE AT THIS FLOOR** — `min(workers × per_worker_material, material_ceiling)`
+## per material, then the band's output multiplier, which is the food side's own composition one
+## account further out (arc #527 follow-up).
+##
+## `herd` arrives ALREADY KIT-PRICED (`_hunt_yield_model` prices at its own top and is the only
+## caller), so this reaches `SourceForecast.forecast_inputs` directly rather than through
+## `_hunt_forecast`, which would price a second time. That is this file's "price once per producer"
+## rule, and the reason the parameter is named for what it already is.
+##
+## **NEVER read the assignment's `material_yield` here.** That is the RESOLVED take and is empty
+## pre-commit by design; a compose sheet asks what a crew WOULD bring home, which is a question only
+## the rates can answer.
+func _hunt_material_rows(herd: Dictionary, band: Dictionary, floor: float, workers: int,
+        improvement: String, holding: bool = false) -> Array:
+    if workers <= 0:
+        return []
+    var forecast := SourceForecast.forecast_inputs(herd, SourceForecast.SOURCE_KIND_HERD,
+        HudComposeVocab.BARE_FORECAST_PREFIX, floor, improvement)
+    if not bool(forecast["known"]):
+        return []
+    return SourceForecast.scaled_material_rows(
+        SourceForecast.expected_materials(float(workers), forecast,
+            "hold_material_ceiling" if holding else "material_ceiling"),
+        float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL)))
 
 ## The hunt web's half of the overdraw GATE — `SourceForecast.take_draws_down` on a herd, asked at the
 ## crew's LIVE improvement.

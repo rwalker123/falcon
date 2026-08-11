@@ -193,25 +193,35 @@ inversion is real; the fixture stages it deterministically for the harness.
 
 A source can pay more than one account, but the label sits on a hex a few pixels wide beside a floor
 mark and a `⚠` — there is no room for a second rate. `BandOverlayRenderer._draw_yield_label` therefore
-shows the account the source PAYS, falling through **food → fodder** in the wire's own order: food
-when `realized_yield` is non-zero (every forage patch and edible quarry, so those frames are
-unchanged), else the assignment's `fodder_yield` spelled with the WORD — a sown hay Field reads
-`+0.40 fodder ♻` instead of `+0.00`. **The word, never a borrowed glyph**: fodder has none, and
-another account's would say the wrong thing.
+shows the account the source PAYS, falling through **food → fodder → materials** in the wire's own
+order: food when `realized_yield` is non-zero (every forage patch and edible quarry, so those frames
+are unchanged), else the assignment's `fodder_yield` spelled with the WORD — a sown hay Field reads
+`+0.40 fodder ♻` instead of `+0.00` — else its `material_yield`, each material naming itself, so a
+hunted wolf pack reads `+0.22 hide ⇊`. **The word, never a borrowed glyph**: fodder has none, and a
+material has a NAME, which is a better mark than an arrow saying only "not food".
 
-**A TRADE branch stood between the two until arc #527** — a hunted wolf pack read `⇄+0.22 ⇊`, marked
-with the retired `FoodIcons.TRADE_GOODS_GLYPH`. With that account gone an inedible quarry has **no
-fall-through at all** and reads `+0.00`, the wire quoting a herd no per-turn material figure; that is
-the client reading the current contract honestly, not a readout that was lost.
+**A TRADE branch stood between food and fodder until arc #527** — the wolf read `⇄+0.22 ⇊`, marked
+with the retired `FoodIcons.TRADE_GOODS_GLYPH` — and for one release after that the inedible quarry
+had no fall-through at all and read `+0.00`. The material arm is what closed it: `material_yield` is
+the RESOLVED take, what the source actually credited to the band's `MaterialStore` this turn.
+
+**THE MATERIAL ARM STATES EVERY MATERIAL.** Naming one of a vector picks a winner the sim does not
+name, and summing them is the retired trade axis under a new name. `_draw_pill_plate` sizes to the
+MEASURED run, so a two-material label is wide rather than clipped — a legibility question for
+`map_band_label_overlap`, not a reason to state less than the truth.
 
 **A HUNT call site passes NO fodder argument**, deliberately: no animal is harvested for feed, so a
 hunt row's fodder is a structural zero and passing it would offer the label a branch it can never
-take. `_yield_label_rate_text(value, fodder)` is split out of the draw call so a harness can ask it —
-a draw renders to a canvas and no assertion can read a glyph back off one.
+take. **It DOES pass the materials.** `_yield_label_rate_text(value, fodder, materials)` is split out
+of the draw call so a harness can ask it — a draw renders to a canvas and no assertion can read a
+glyph back off one — and `_entry_materials` is its reader, the vector twin of `_entry_fodder` with
+the same "no realized fallback" reasoning.
 
 `YIELD_LABEL_COMPONENT_MIN` is the map twin of `SourceForecast.FOOD_FLOW_MIN` and is the test that
-decides which, applied to BOTH accounts so neither can show at a magnitude the other would be hidden
-at. Frame: `map_preview` `map_band_work` (the hay Field's label beside the deer's `+0.20`), with
+decides between the two SCALARS, applied to both so neither can show at a magnitude the other would
+be hidden at; the material arm is gated instead by `SourceForecast.signed_material_components`
+answering `""`, which is the HUD's own display floor and the same gate the work board's rate column
+tests. Frame: `map_preview` `map_band_work` (the hay Field's label beside the deer's `+0.20`), with
 `_assert_yield_label_component` driving the fall-through directly; the general
 render-only-when-non-zero rule lives in `labor-ui.md`.
 

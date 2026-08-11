@@ -118,16 +118,26 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 225 `assert OK` lines, 310 `: PASS` ones and ZERO `FAIL` ones, over
-88 frames.** (It was 233 / 313 / 91 before arc #527 retired the `trade_goods` yield axis. **Three
+**A clean run exits 0 and prints 225 `assert OK` lines, 315 `: PASS` ones and ZERO `FAIL` ones, over
+88 frames.** (The five `PASS`es above 310 are `_assert_work_material_readouts`, the board half of
+closing the inedible quarry's `+0.00`.) (It was 233 / 313 / 91 before arc #527 retired the `trade_goods` yield axis. **Three
 frames went with the band's Trade vitals row** — `band_panel_trade_expanded_left` /
 `band_panel_trade_zero` / `band_panel_trade_short_tier` — taking their three `assert OK` PAIRS and
 their `_assert_forage_trade_counted` / `_assert_trade_row_reads_zero` /
 `_assert_trade_row_absent_in_short_tier` helpers with them. **The three WORK-board frames were KEPT
 and RE-PURPOSED**: `band_panel_work_trade_rows` / `_inspector` / `_totals` keep their names and stage
-an inedible quarry, whose rows read `+0.00 /turn` because the wire states no rate for it — a frame
-that stopped asserting anything is worse than one that fails, so the states that could still say
-something real were re-pointed rather than deleted.) **The three figures are MEASURED from a run, never summed** — band fission retired one
+an inedible quarry — a frame that stopped asserting anything is worse than one that fails, so the
+states that could still say something real were re-pointed rather than deleted. Their wolf row read
+`+0.00 /turn` for one release and now reads **`+0.22 hide`**, off the assignment's resolved
+`material_yield`.)
+
+**`_assert_work_material_readouts` makes THREE claims, and the deer beside the wolf is why they
+bite**: the wolf must state its hide; the deer must be UNCHANGED (so "always print the materials"
+cannot pass); and no material term may reach the deer's sentence, which is the
+render-only-when-non-zero rule asked one account further out. Its subject is the RESOLVED
+`material_yield` — **not** a rate the compose sheet would project, because a worked row reports what
+a turn actually credited. (`labor-ui.md` → "AN INEDIBLE QUARRY QUOTES WHAT IT PAYS" has the three
+fields and which surface reads which.) **The three figures are MEASURED from a run, never summed** — band fission retired one
 family of frames here and added another in the same merge this arc landed in, so two arcs' deltas
 added by hand is exactly how a tally stops matching its harness. (The retired **"start a life
 here"** arrival verb had five frames here — `band_panel_settle_offered` / `_withheld` / `_confirm` /

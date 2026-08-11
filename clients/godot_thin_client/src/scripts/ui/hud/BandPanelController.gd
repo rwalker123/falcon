@@ -1578,6 +1578,15 @@ func _work_inspector_height(_model: Dictionary) -> float:
 ## fodder has none, and borrowing another account's mark would say the wrong thing. A sown hay Field
 ## pays no food, so without this branch its row headlined `+0.00` while it fed the band's pens every
 ## turn. (A trade branch sat between the two until arc #527 retired that account.)
+## **THE ONE-SLOT FALL-THROUGH: food → fodder → materials**, in the wire's own order. The column is
+## one fixed width, so it states the account the source actually PAYS rather than a food zero on a
+## source that pays no food.
+##
+## **THE MATERIAL ARM STATES EVERY MATERIAL, NOT THE FIRST ONE** (arc #527 follow-up). Picking one of
+## a vector would name a winner the sim does not name, and summing them is the retired trade axis
+## under a new name; a species pays few materials, and the column's width is a MINIMUM rather than a
+## clip, so the honest reading is the one that fits. The inspector strip beside the row states the
+## whole vector too, in full.
 func _work_row_rate_text(model: Dictionary) -> String:
     if not bool(model.get("has_yield", false)):
         return ""
@@ -1585,6 +1594,12 @@ func _work_row_rate_text(model: Dictionary) -> String:
     var fodder := float(model.get("fodder_rate", 0.0))
     if not SourceForecast.has_component(food) and SourceForecast.has_component(fodder):
         return SourceForecast.PICKER_FODDER_PRODUCT_FORMAT % SourceForecast.format_signed(fodder)
+    if not SourceForecast.has_component(food) and not SourceForecast.has_component(fodder):
+        # `""` is "this source pays no material", so a source that genuinely produced nothing in
+        # every account still falls through to its honest food zero.
+        var materials := SourceForecast.signed_material_components(model.get("material_rows", []))
+        if materials != "":
+            return materials
     return SourceForecast.format_signed(food)
 
 ## The inspector's one-sentence readout: rate · the floor in WORDS · status · assigned workers.
@@ -1594,7 +1609,8 @@ func _work_inspector_sentence(model: Dictionary) -> String:
         # Both products, each only when non-zero (issue #449): a hay Field's sentence leads with its
         # fodder rate instead of asserting "+0.00 /turn".
         parts.append(SourceForecast.yield_components(
-            float(model.get("rate", 0.0)), float(model.get("fodder_rate", 0.0))))
+            float(model.get("rate", 0.0)), float(model.get("fodder_rate", 0.0)),
+            SourceForecast.YIELD_ACCOUNT_FOOD, model.get("material_rows", [])))
     # The floor as the player set it — `50% left standing`, the same phrasing the picker's tooltips
     # and the slider caption use, so one number is never worded two ways.
     parts.append(HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(
@@ -1727,6 +1743,10 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # Carried so the row's one-slot rate, the header total and the inspector sentence all state
             # a hay Field's whole product instead of reading it as a dead tile.
             "fodder_rate": float(yld.get("fodder_rate", 0.0)),
+            # …and its MATERIAL component, a VECTOR (arc #527 follow-up). Empty on every row that
+            # pays no material; an inedible quarry's whole product is here, which is what stops a
+            # hunted wolf pack reading `+0.00 /turn` on the board it is commanded from.
+            "material_rows": yld.get("material_rows", []),
             "has_yield": bool(m.get("has_yield", false)),
             "workers": workers, "pending": pending, "warn": bool(yld.get("warn", false)),
             "under_herded": under_herded,
