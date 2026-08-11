@@ -2192,11 +2192,12 @@ pub struct DenialForecast {
     /// "wasted materials" scalar: that is the retired trade axis under a new name.
     pub delivered_material: Vec<crate::materials_config::MaterialPayoff>,
     // **RETIRED: `delivered_trade` / `wasted_trade`** (arc #527), with the trade axis they were the
-    // two halves of. **The gap they leave is real and is deliberately not filled here:** on an
-    // inedible quarry a denial raid`s whole destruction is in HIDES, and `wasted_food` reports `0`
-    // beside a large `animals_killed` for it. A material equivalent would have to be a
-    // per-material projection, which nothing in the forecast can express — see the note on
-    // `SourceYieldForecast::per_worker_yield`.
+    // two halves of. The delivered half was replaced by [`Self::delivered_material`] above; the
+    // waste half was **not**, and the reason is the ruling recorded on that field rather than an
+    // expressiveness problem — a per-material vector states a projection perfectly well, which is
+    // precisely what the field above does. What remains true is the consequence: on an inedible
+    // quarry a denial raid's whole destruction is in HIDES, and `wasted_food` reports `0` beside a
+    // large `animals_killed` for it.
 }
 
 /// One quantile's worth of [`denial_forecast`]'s forward simulation.
@@ -2374,9 +2375,13 @@ fn denial_projection_at(
         let landed = hunt_yield.apply(take.carried, EXPEDITION_OUTPUT_MULTIPLIER);
         delivered_food += landed.provisions;
         carried_biomass += take.carried;
-        // **BOTH products of the wasted biomass, off ONE conversion** — the rule the delivered pair
-        // above already follows. A food-only waste line reports `0` on an inedible quarry, which is
-        // exactly the raid whose waste is total.
+        // **The waste is FOOD ONLY, and that is a ruling rather than an omission.** The delivered
+        // pair above accumulates both products off one conversion; this deliberately does not, so an
+        // inedible quarry's waste reads `0` beside a large `animals_killed`. Ray ruled the
+        // per-material waste out of scope: the waste is already legible as a percentage, so a
+        // `wasted_material` vector buys a second reading of a fact the sheet states. **A flat
+        // "wasted materials" scalar is the one thing that must NOT be added here** — that is the
+        // retired trade axis under a new name. See `DenialForecast::delivered_material`.
         let left_on_the_range = hunt_yield.apply(take.wasted, EXPEDITION_OUTPUT_MULTIPLIER);
         wasted_food += left_on_the_range.provisions;
         let room = (cap - larder).max(scalar_zero());

@@ -492,7 +492,12 @@ fixture basket names one material from two species**, or the merge is untested (
 rate passes a single-species fixture and is off by 10× here).
 `crafting_wire::every_sources_material_rate_reaches_the_wire` asserts, on the decoded snapshot over
 the real map, that every source's rate is *published* and that a patch never publishes one material
-twice — a rate derived right and written nowhere looks exactly like the retired field's absence.
+twice — a rate derived right and written nowhere looks exactly like the retired field's absence. **It
+covers `perWorkerMaterial` on both webs too**, as `materialPerBiomass × perWorkerBiomass`: that is
+the field the compose sheet clamps with, so a codec that dropped it would zero every material row on
+the sheet with the suite green. The plant twin carries the **dead-season** half — a patch whose
+`perWorkerBiomass` is `0` publishes an **empty** per-worker vector, "no row" rather than a column of
+zeros.
 
 **Client:** the native reader surfaces `material_per_biomass` / `per_worker_material` on each patch
 dict. Rendering them is the client pass.

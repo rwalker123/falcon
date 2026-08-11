@@ -1892,7 +1892,6 @@ table ForagePolicyCeiling {
   perWorkerFodder:float = 0;
 }
 
-// One named plant's share of a tile's forage capacity — see `ForagePatchState.composition`.
 // ONE MATERIAL A COMMITMENT WOULD PAY, AND HOW MUCH OF IT PER TURN (appended, arc #527) - a row of
 // FloraShareInfo.sowMaterialPayoff / cultivateMaterialPayoff.
 //
@@ -1911,6 +1910,7 @@ table MaterialPayoff {
   amount:float;
 }
 
+// One named plant's share of a tile's forage capacity — see `ForagePatchState.composition`.
 table FloraShareInfo {
   // The stable config key (`flora_config.json` -> species), e.g. "hazel". Free-form string (the
   // `species`/`policy` convention), so adding a plant needs no schema change.
@@ -2756,9 +2756,14 @@ table HerdTelemetryState {
   //                        for food.
   //
   // Both are the species' OWN `hunt_yield.materials` rows through the same biomass terms every other
-  // field here uses (ONE_UNIT_OF_BIOMASS and hunt.per_worker_biomass_capacity), with the band's
-  // outputMultiplier folded in - so they are the rates credit_material_yield is actually paid off,
-  // not a second derivation.
+  // field here uses (ONE_UNIT_OF_BIOMASS and hunt.per_worker_biomass_capacity) - the very rows
+  // credit_material_yield is handed at the take site, not a second derivation.
+  //
+  // BAND-AGNOSTIC, at an output multiplier of 1.0, exactly like every food field on this row: a herd
+  // row serves every band, so THE CONSUMER APPLIES ITS BAND'S outputMultiplier. Omitting it here
+  // under-reports a productive band's haul by that factor, and the food siblings beside these two
+  // need the same multiplication - so the whole row scales together or none of it does. The take
+  // site is where the band's real multiplier enters.
   //
   // EMPTY MEANS "NO ROW", NEVER "ZERO": most species are made of nothing anyone builds with, and a
   // published 0 would read as a herd that pays badly rather than one that pays in meat alone.
@@ -2930,14 +2935,20 @@ table MapSection {
 }
 
 table EconomySection {
-  // Four retired slots (arc #527) — see the note above `LogisticsLinkState`. Deprecated, never
+  // FIVE retired slots (arc #527) — see the note above `LogisticsLinkState`. Deprecated, never
   // freed: field ids are positional and reusing one silently mis-decodes an old capture.
   logistics:[LogisticsLinkState] (deprecated);
   tradeLinks:[TradeLinkState] (deprecated);
-  // No longer published: the raster averaged `LogisticsLink.flow`, which went with the mass
-  // economy. Left UNdeprecated (the client still decodes the field, and simply falls back when it
-  // is absent) so a future logistics network can refill this exact slot.
-  logisticsRaster:ScalarRaster;
+  // The raster averaged `LogisticsLink.flow`, which went with the mass economy. It was briefly left
+  // UNdeprecated on the grounds that the client still decoded it and fell back when absent — that
+  // stopped being true in the same arc, which deleted the native decode site and the delta path
+  // (`apply_logistics_raster` / `SECTION_OVERLAY_LOGISTICS`), so nothing in the workspace reads the
+  // slot and `(deprecated)` is now the honest statement. Deprecating it also drops it from
+  // `EconomySectionArgs`, which is what removed the two `logisticsRaster: None` writes in
+  // `sim_schema/src/codec/economy.rs`: an always-absent field nobody decodes had two writers and no
+  // reader. A future logistics network refills THIS slot by un-deprecating it — the meaning is
+  // reserved, only the accessor is withdrawn.
+  logisticsRaster:ScalarRaster (deprecated);
   factionInventory:[FactionInventoryState];
   removedLogistics:[ulong] (deprecated);    // delta-only
   removedTradeLinks:[ulong] (deprecated);   // delta-only

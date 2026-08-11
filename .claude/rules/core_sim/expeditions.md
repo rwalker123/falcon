@@ -1012,9 +1012,14 @@ is under-reported by everything it did not bring home in materials.
 > being absent. What must NOT happen is a flat "wasted materials" scalar — that is the retired trade
 > axis under a new name.
 >
-> `server::describe_denial_ledger` accordingly states the food ledger alone and falls back to
-> *"nothing worth hauling from this quarry"* when there is no food to weigh, which is honest about a
-> wolf raid rather than silent about it.
+> The ruling is about the **waste** alone. `server::describe_denial_ledger` states the food ledger
+> **and one clause per delivered material**, off `DenialForecast::delivered_material` — the same
+> field the client's own take line (`SourceForecast.denial_take_bbcode`) reads off the same
+> forecast, so the launch ack and the sheet cannot disagree about one raid. It falls back to
+> *"nothing worth hauling from this quarry"* only when there is neither food nor material to weigh.
+> Pinned as a pairing by
+> `server::tests::an_inedible_raids_ack_names_the_materials_its_forecast_promises`, because *"always
+> name the hides"* would otherwise be satisfiable by deleting the fallback.
 
 > **An INEDIBLE quarry is the wrong place to look for this, and not for the obvious reason.**
 > `carry_room_biomass` answers `NO_CARRY_BOUND` for a species paying no provisions, so a wolf raid's

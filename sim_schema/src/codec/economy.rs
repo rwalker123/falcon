@@ -14,7 +14,6 @@ pub(crate) fn serialize_economy_section<'a>(
     fb::EconomySection::create(
         builder,
         &fb::EconomySectionArgs {
-            logisticsRaster: None,
             factionInventory: Some(faction_inventory),
         },
     )
@@ -31,7 +30,6 @@ pub(crate) fn serialize_economy_section_delta<'a>(
     fb::EconomySection::create(
         builder,
         &fb::EconomySectionArgs {
-            logisticsRaster: None,
             factionInventory: faction_inventory,
         },
     )

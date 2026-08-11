@@ -50,8 +50,15 @@ second table was minted**.
 **Priced through the expressions the payout runs, not beside them.** The two rates are the species'
 own `hunt_yield.materials` rows — the very rows `credit_material_yield` is handed at the take site —
 through the same two biomass terms every other field on that row uses (`ONE_UNIT_OF_BIOMASS` and
-`hunt.per_worker_biomass_capacity`), with the band's `output_multiplier` folded in. Nothing is
-re-derived, so a rate retune moves the quote and the payout together.
+`hunt.per_worker_biomass_capacity`). Nothing is re-derived, so a rate retune moves the quote and the
+payout together.
+
+**BAND-AGNOSTIC, at an output multiplier of `1.0`** (`FORECAST_OUTPUT_MULTIPLIER`), exactly like
+every food field on the same row — a herd row serves every band, so **the consumer multiplies by its
+band's `outputMultiplier`**, as `yield-forecast.md` requires of the whole row. A client that took the
+rate as already-multiplied would under-report a productive band's haul while its food siblings scaled
+correctly, so the row scales together or not at all. The band's real multiplier enters at the take
+site, where `credit_material_yield` is paid.
 
 > **`credit_material_yield` now RETURNS what it deposited**, merged per material id, and
 > `SourceYield::materials` is that return verbatim — the *"reported, never recomputed"* discipline
@@ -85,6 +92,15 @@ resolved once in `hunt_forecast`) precisely so a rung's two readouts cannot desc
 harvests. That the forecast has to *retain* a biomass at all is the same asymmetry
 `forage::field_harvest_biomass` states one web over: the material account has no currency to scale
 off on a species whose currency components are all `0`.
+
+**That "one harvest" claim is asserted rather than asserted-in-prose.**
+`crafting_wire::every_sources_material_rate_reaches_the_wire` reads each rung's vector off the
+decoded snapshot, derives the **single** biomass factor it is `materialPerBiomass` scaled by, and
+requires that factor `×` the row's own `provisionsPerBiomass` to reproduce `corralYield` /
+`pastoralYield`. A rung priced off a second `sustainable_yield` call fails it; so does a swap of the
+two slots, which the ordering check (`corral >= pastoral` — the pen breeds at `r × 4` against the
+pastoral rung's `r × 2`) catches even on an inedible quarry, where there is no food sibling to tie
+to.
 
 **Deliberately out of scope: the denial raid's wasted materials.** A carcass left on the range takes
 its hide with it, and `DenialForecast` still says nothing about that. **The reason is a decision, not

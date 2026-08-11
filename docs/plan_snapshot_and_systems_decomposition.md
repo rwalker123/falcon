@@ -49,7 +49,7 @@ touch different tables and never collide on slot order.
 | Section table | Fields (from `WorldSnapshot`) | Delta `removed*` lists |
 |---|---|---|
 | `MapSection` | tiles, terrainOverlay, elevationOverlay, moistureRaster | removedTiles |
-| `EconomySection` | factionInventory (`logistics` / `tradeLinks` / `removedLogistics` / `removedTradeLinks` are retired `(deprecated)` slots, and `logisticsRaster` is no longer published — arc #527, `docs/plan_contact_and_logistics.md` §As-built) | — |
+| `EconomySection` | factionInventory (`logistics` / `tradeLinks` / `logisticsRaster` / `removedLogistics` / `removedTradeLinks` are all retired `(deprecated)` slots — arc #527, `docs/plan_contact_and_logistics.md` §As-built; the raster was deprecated once the arc deleted its last decode site, so nothing reads it and nothing writes it) | — |
 | `PopulationSection` | populations, demographics, generations | removedPopulations, removedGenerations |
 | `SubsistenceSection` | herds, foragePatches, sedentarization, intensificationKnowledge, foodModules | — |
 | `KnowledgeSection` | greatDiscoveryDefinitions, greatDiscoveries, greatDiscoveryProgress, greatDiscoveryTelemetry, knowledgeLedger, knowledgeTimeline, knowledgeMetrics, discoveredSites, discoveryProgress | removedKnowledgeLedger |

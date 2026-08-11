@@ -3297,13 +3297,31 @@ fn resolve_raid_kit(
 /// projection does not have. The `detail` twin keeps the finer `{:.2}` a machine reader wants.
 const DENIAL_LEDGER_DECIMALS: usize = 1;
 
-/// **What a denial raid brings home and what it leaves — PER PRODUCT** (issue #337).
+/// Decimal places the same line prints a **material** haul to — finer than the food figure beside
+/// it, for the reason `systems::expeditions::HAUL_MATERIAL_DECIMALS` is finer than a whole count: a
+/// raid can honestly come home with a *fraction* of a hide, and a one-digit readout would print
+/// `~0.0` over a pack that really did bank pelts — the exact `~0.0` the omission rule below exists
+/// to prevent.
+const DENIAL_LEDGER_MATERIAL_DECIMALS: usize = 2;
+
+/// **What a denial raid brings home and what it leaves — food AND materials.**
 ///
-/// A Grey Wolf Pack pays `provisions_per_biomass == 0`, so the food-only line this replaced read
-/// *"~0.0 food home, ~0.0 left on the range"* on exactly the raid whose waste is total — while the
-/// same projection carried a large trade waste. **A component with nothing on either side of it is
-/// omitted rather than printed as `~0.0`**, the `describe_haul` rule: a zero there is a fact about
-/// the species, not about this raid.
+/// A Grey Wolf Pack pays `provisions_per_biomass == 0`, so a food-only line reads *"~0.0 food home,
+/// ~0.0 left on the range"* on exactly the raid whose waste is total, and says nothing at all about
+/// the hides that raid really banks. [`core_sim::DenialForecast::delivered_material`] states that
+/// haul per material, so this line states it too — **the client's own take line
+/// (`SourceForecast.denial_take_bbcode`) reads that same field off that same forecast**, and the
+/// server's sentence and the client's must not disagree about one raid. The material id is printed
+/// verbatim; `materials.json` authors no display name, and the client resolves the same key.
+///
+/// **A component with nothing on either side of it is omitted rather than printed as `~0.0`**, the
+/// `describe_haul` rule: a zero there is a fact about the species, not about this raid — and an
+/// empty `delivered_material` is *"no row"*, never a zero, so nothing has to special-case it.
+///
+/// **The waste stays food-only, deliberately.** `DenialForecast` carries no `wasted_material` and is
+/// not to grow one: Ray ruled the per-material waste out of scope (the waste is already legible as a
+/// percentage, so a second reading buys nothing), and a flat "wasted materials" scalar would be the
+/// retired trade axis under a new name. See `DenialForecast::delivered_material`'s own comment.
 fn describe_denial_ledger(forecast: &core_sim::DenialForecast) -> String {
     let mut ledger = Vec::new();
     if forecast.delivered_food > 0.0 || forecast.wasted_food > 0.0 {
@@ -3315,10 +3333,16 @@ fn describe_denial_ledger(forecast: &core_sim::DenialForecast) -> String {
             forecast.wasted_food
         ));
     }
+    // One clause per material, never a sum: a total of hide and bone is the retired trade axis under
+    // a new name. Same grammar as the food clause above, so the two read as one ledger.
+    for payoff in &forecast.delivered_material {
+        ledger.push(format!(
+            "~{:.*} {} home",
+            DENIAL_LEDGER_MATERIAL_DECIMALS, payoff.amount, payoff.material
+        ));
+    }
     if ledger.is_empty() {
-        // No meat — the raid destroys animals and brings home nothing this line can count. What it
-        // *does* bring on an inedible quarry is hides, which the projection cannot state per
-        // material (arc #527), so the honest wording is that there is nothing to weigh here.
+        // Neither meat nor material: the raid destroys animals and genuinely brings nothing back.
         return "nothing worth hauling from this quarry".to_string();
     }
     ledger.join("; ")
@@ -12390,6 +12414,65 @@ mod tests {
             BENCH_IDLE_CREW,
             "the crew already at the bench stays put across the swap — an absent number is not an \
              order to send them home"
+        );
+    }
+
+    /// A projection whose food half is honestly zero and whose whole payload is material — the wolf
+    /// shape, built directly so the assertion is about the *sentence* rather than about a roster.
+    fn inedible_denial_forecast(
+        delivered_material: Vec<core_sim::MaterialPayoff>,
+    ) -> core_sim::DenialForecast {
+        core_sim::DenialForecast {
+            turns_to_collapse: Some(4),
+            turns_to_collapse_low: Some(3),
+            turns_to_collapse_high: Some(6),
+            outcome: core_sim::DenialOutcome::PastRecovery,
+            animals_killed: 9,
+            delivered_food: 0.0,
+            wasted_food: 0.0,
+            delivered_material,
+        }
+    }
+
+    /// **The launch ack states the materials the same forecast promises.** The client's take line
+    /// reads `DenialForecast::delivered_material` off this very forecast, so a server sentence that
+    /// said *"nothing worth hauling"* beside it would contradict the client about one raid.
+    ///
+    /// Paired with the genuinely-empty case, because *"always name the hides"* would otherwise be
+    /// satisfiable by deleting the fallback — and a raid that brings back neither meat nor material
+    /// must still say so rather than print a `~0.0`.
+    #[test]
+    fn an_inedible_raids_ack_names_the_materials_its_forecast_promises() {
+        let hauling = inedible_denial_forecast(vec![
+            core_sim::MaterialPayoff {
+                material: "hide".to_string(),
+                amount: 3.2,
+            },
+            core_sim::MaterialPayoff {
+                material: "bone".to_string(),
+                amount: 0.44,
+            },
+        ]);
+        let line = describe_denial_ledger(&hauling);
+        assert!(
+            line.contains("hide") && line.contains("bone"),
+            "both promised materials belong on the line, never summed — got {line}"
+        );
+        assert!(
+            line.contains("3.20") && line.contains("0.44"),
+            "the amounts print finely enough to show a sub-unit pack — got {line}"
+        );
+        assert!(
+            !line.contains("food"),
+            "an inedible quarry states no food clause at all rather than a fabricated ~0.0 — got \
+             {line}"
+        );
+
+        let barren = inedible_denial_forecast(Vec::new());
+        assert_eq!(
+            describe_denial_ledger(&barren),
+            "nothing worth hauling from this quarry",
+            "a raid that really does bring nothing back still says so"
         );
     }
 }

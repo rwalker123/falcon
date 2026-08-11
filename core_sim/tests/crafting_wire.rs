@@ -1612,20 +1612,102 @@ fn the_published_drawn_pile_is_what_the_store_actually_lost() {
     );
 }
 
+/// How far a scaled material row may drift from `materialPerBiomass × factor` — **relative**,
+/// because the rung rows are a rate multiplied by a pen's whole MSY biomass and an absolute epsilon
+/// tuned for a per-biomass rate would be meaningless three orders of magnitude up.
+const MATERIAL_SCALE_TOLERANCE: f32 = 1e-3;
+
+/// One published material vector, decoded to `(id, amount)` in wire order. Takes the vector's own
+/// iterator so the caller never has to name a FlatBuffers lifetime.
+fn material_rows<'a>(
+    published: impl Iterator<
+        Item = shadow_scale_flatbuffers::generated::shadow_scale::sim::MaterialPayoff<'a>,
+    >,
+) -> Vec<(String, f32)> {
+    published
+        .map(|row| {
+            (
+                row.materialId().unwrap_or_default().to_string(),
+                row.amount(),
+            )
+        })
+        .collect()
+}
+
+/// **The ONE biomass factor a published vector is `materialPerBiomass` scaled by** — derived from
+/// the first row and then required to reproduce *every* row, which is what makes this a statement
+/// about one conversion of one harvest rather than a per-row coincidence. Every material vector on
+/// these two tables is the source's own species rows through `material_yield_totals`, so they differ
+/// only in the biomass term handed to it.
+///
+/// `None` for an empty vector — the wire's "no row", never a zero.
+fn one_biomass_scaling(
+    per_biomass: &[(String, f32)],
+    scaled: &[(String, f32)],
+    what: &str,
+) -> Option<f32> {
+    if scaled.is_empty() {
+        return None;
+    }
+    assert_eq!(
+        scaled.len(),
+        per_biomass.len(),
+        "{what}: a scaled row set is the SAME species vector — one entry per material, no more"
+    );
+    let factor = scaled[0].1 / per_biomass[0].1;
+    for (index, (id, amount)) in scaled.iter().enumerate() {
+        assert_eq!(
+            *id, per_biomass[index].0,
+            "{what}: the rows are the source's own vector, merged and in material-id order"
+        );
+        let want = per_biomass[index].1 * factor;
+        assert!(
+            (amount - want).abs() <= MATERIAL_SCALE_TOLERANCE * want.abs().max(1.0),
+            "{what}: {id} publishes {amount} against {want} — one biomass term scales the whole \
+             vector or the row is describing a different harvest than its siblings"
+        );
+        assert!(
+            *amount > 0.0,
+            "{what}: a published rate is a rate that pays"
+        );
+    }
+    assert!(
+        factor > 0.0,
+        "{what}: the biomass a vector is priced on is positive, or there is no row to publish"
+    );
+    Some(factor)
+}
+
 /// **The three per-world catalogues round-trip**, and the rating vocabulary rides once rather than
 /// per material.
 /// **EVERY SOURCE'S MATERIAL RATE REACHES THE WIRE, on the shipped map** (arc #527).
 ///
-/// The three per-source rates — a herd's `materialPerBiomass`, a patch's, and the two per-worker
-/// twins — are each computed correctly *and then written onto a row*, and the second half is the one
-/// nothing else catches: a rate derived right and published nowhere looks exactly like the retired
-/// trade field's absence, which is the shape this arc has now been asked to fix three times.
+/// Six per-source vectors — a herd's `materialPerBiomass` and a patch's, **both per-worker twins**,
+/// and the herd's two investment rungs (`corralMaterial` / `pastoralMaterial`) — are each computed
+/// correctly *and then written onto a row*, and the second half is the one nothing else catches: a
+/// rate derived right and published nowhere looks exactly like the retired trade field's absence,
+/// which is the shape this arc has now been asked to fix three times.
 ///
 /// Asserted on the **decoded FlatBuffers** over the real headless world, as a *relation* against the
-/// sim's own seams rather than a recorded number, so a rate retune moves both sides at once.
+/// sim's own seams rather than a recorded number, so a rate retune moves both sides at once. The
+/// per-biomass rate is checked against `material_yield_totals`; every other vector is checked as
+/// **that rate scaled by one biomass term**, and the term is then pinned to a number the same row
+/// already publishes:
 ///
-/// The liveness half is the second assertion: the shipped map must publish at least one non-empty
-/// material rate on **each** web, or every comparison above was between empty vectors.
+/// - **`perWorkerMaterial` is `materialPerBiomass × perWorkerBiomass`**, which is the assertion a
+///   codec that dropped the field fails (an empty vector beside a live rate), and also the one a
+///   codec that aliased it onto `materialPerBiomass` fails (the factor would be `1`, not a hunter's
+///   ~20 biomass of carry). It is the field the compose sheet's clamp reads, so its silent loss
+///   would zero every material row on the sheet with the whole suite green.
+/// - **`corralMaterial` / `pastoralMaterial` are the same vector at the two rungs' MSY biomass**,
+///   and each rung's factor `×` the row's own `provisionsPerBiomass` must reproduce its food
+///   sibling (`corralYield` / `pastoralYield`) — the `.fbs`'s claim that a rung's two readouts
+///   describe *one* harvest. A rung priced off a second `sustainable_yield` call, or the two slots
+///   swapped, fails it; the pen breeds at `r × 4` against the pastoral rung's `r × 2`, so the
+///   ordering assertion catches the swap even where the food tie cannot (an inedible quarry).
+///
+/// The liveness half is the closing block: the shipped map must publish at least one non-empty
+/// vector of **each** kind, or every comparison above was between empty vectors.
 #[test]
 fn every_sources_material_rate_reaches_the_wire() {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
@@ -1649,6 +1731,9 @@ fn every_sources_material_rate_reaches_the_wire() {
 
     let fauna = app.world.resource::<core_sim::FaunaConfigHandle>().get();
     let mut live_herd_rate = false;
+    let mut live_herd_per_worker = false;
+    let mut live_rung_material = false;
+    let mut saw_the_rung_ladder = false;
     for herd in subsistence.herds().expect("herds present").iter() {
         let species = herd.species().unwrap_or_default();
         let expected = core_sim::material_yield_totals(fauna.hunt_materials_for(species), 1.0, 1.0);
@@ -1667,9 +1752,103 @@ fn every_sources_material_rate_reaches_the_wire() {
             assert!(row.amount() > 0.0, "a published rate is a rate that pays");
         }
         live_herd_rate |= !published.is_empty();
+
+        let per_biomass = material_rows(published.iter());
+        let per_worker = material_rows(
+            herd.perWorkerMaterial()
+                .expect("the key is always written, empty or not")
+                .iter(),
+        );
+        let corral = material_rows(
+            herd.corralMaterial()
+                .expect("the key is always written, empty or not")
+                .iter(),
+        );
+        let pastoral = material_rows(
+            herd.pastoralMaterial()
+                .expect("the key is always written, empty or not")
+                .iter(),
+        );
+        if per_biomass.is_empty() {
+            // A species nothing is made of publishes no row on ANY of the four — "no row" is one
+            // answer, not one per field.
+            assert!(
+                per_worker.is_empty() && corral.is_empty() && pastoral.is_empty(),
+                "{species}: a herd made of nothing cannot pay a material at any rung"
+            );
+            continue;
+        }
+
+        // **The per-worker twin — the field the compose sheet clamps with.** A hunter's carry is the
+        // row's own `perWorkerBiomass`, so the vector is exactly the per-biomass rate through it.
+        let carry = herd.perWorkerBiomass();
+        assert!(
+            carry > 0.0,
+            "{species}: a herd quotes the EQUIPPED haul rate, which is never zero"
+        );
+        let per_worker_factor = one_biomass_scaling(
+            &per_biomass,
+            &per_worker,
+            &format!("{species}: perWorkerMaterial"),
+        )
+        .unwrap_or_else(|| {
+            panic!(
+                "{species}: a herd that pays a material per biomass pays one per hunter too — an \
+                 empty perWorkerMaterial beside a live rate is the field silently not reaching the \
+                 wire"
+            )
+        });
+        assert!(
+            (per_worker_factor - carry).abs() <= MATERIAL_SCALE_TOLERANCE * carry,
+            "{species}: perWorkerMaterial is priced on {per_worker_factor} biomass against the \
+             perWorkerBiomass of {carry} published beside it"
+        );
+        live_herd_per_worker = true;
+
+        // **The two investment rungs, each priced on its own MSY biomass** — and each tied to its
+        // food sibling, which is the whole of the `.fbs`'s "a rung's two readouts describe one
+        // harvest" claim. Both are empty on a herd that offers neither rung (an already-penned one
+        // reports no *projection*), which is a real answer rather than a gap.
+        let corral_factor =
+            one_biomass_scaling(&per_biomass, &corral, &format!("{species}: corralMaterial"));
+        let pastoral_factor = one_biomass_scaling(
+            &per_biomass,
+            &pastoral,
+            &format!("{species}: pastoralMaterial"),
+        );
+        let food_rate = herd.provisionsPerBiomass();
+        for (factor, food, rung) in [
+            (corral_factor, herd.corralYield(), "corral"),
+            (pastoral_factor, herd.pastoralYield(), "pastoral"),
+        ] {
+            let Some(factor) = factor else { continue };
+            live_rung_material = true;
+            if food_rate <= 0.0 {
+                // An inedible quarry's food sibling is honestly `0`, so there is nothing to tie to
+                // — which is exactly why the material rung exists. The ordering check below is what
+                // covers it.
+                continue;
+            }
+            let want = factor * food_rate;
+            assert!(
+                (food - want).abs() <= MATERIAL_SCALE_TOLERANCE * want.abs().max(1.0),
+                "{species}: the {rung} rung's material is priced on {factor} biomass, which pays \
+                 {want} food against the {food} its own food row publishes — the two readouts must \
+                 be one harvest"
+            );
+        }
+        if let (Some(corral_factor), Some(pastoral_factor)) = (corral_factor, pastoral_factor) {
+            assert!(
+                corral_factor >= pastoral_factor,
+                "{species}: a pen breeds at r×4 against the pastoral rung's r×2, so its harvest \
+                 cannot be the smaller one — the two slots are swapped"
+            );
+            saw_the_rung_ladder |= corral_factor > pastoral_factor;
+        }
     }
 
     let mut live_patch_rate = false;
+    let mut live_patch_per_worker = false;
     for patch in subsistence.foragePatches().expect("patches present").iter() {
         let published = patch
             .materialPerBiomass()
@@ -1688,6 +1867,34 @@ fn every_sources_material_rate_reaches_the_wire() {
             seen.push(id);
         }
         live_patch_rate |= !published.is_empty();
+
+        // **The gatherer's twin, with the tile's seasonal weight already folded in** — so the factor
+        // is the patch's own `perWorkerBiomass`, and a **dead season** publishes no row at all
+        // rather than a column of zeros.
+        let per_biomass = material_rows(published.iter());
+        let per_worker = material_rows(
+            patch
+                .perWorkerMaterial()
+                .expect("the key is always written, empty or not")
+                .iter(),
+        );
+        let carry = patch.perWorkerBiomass();
+        if per_biomass.is_empty() || carry <= 0.0 {
+            assert!(
+                per_worker.is_empty(),
+                "a patch that pays nothing, or one a dead season stops a gatherer working, is \
+                 EMPTY — never a published zero"
+            );
+            continue;
+        }
+        let factor = one_biomass_scaling(&per_biomass, &per_worker, "patch: perWorkerMaterial")
+            .expect("a live patch rate with a working season pays a gatherer too");
+        assert!(
+            (factor - carry).abs() <= MATERIAL_SCALE_TOLERANCE * carry,
+            "patch: perWorkerMaterial is priced on {factor} biomass against the perWorkerBiomass of \
+             {carry} published beside it"
+        );
+        live_patch_per_worker = true;
     }
 
     assert!(
@@ -1698,6 +1905,21 @@ fn every_sources_material_rate_reaches_the_wire() {
     assert!(
         live_patch_rate,
         "…and at least one patch material rate, which is the rung-1 gap this closed"
+    );
+    assert!(
+        live_herd_per_worker && live_patch_per_worker,
+        "…and at least one per-worker twin on EACH web, or the field the compose sheet clamps with \
+         was never compared to anything"
+    );
+    assert!(
+        live_rung_material,
+        "…and at least one investment rung's material payoff, or a herd could publish none at all \
+         and pass"
+    );
+    assert!(
+        saw_the_rung_ladder,
+        "…on at least one herd the pen must out-yield the pastoral rung, or the ordering assertion \
+         above is comparing two copies of one number"
     );
 }
 
