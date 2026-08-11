@@ -1441,7 +1441,9 @@ static func kit_coverage(band: Dictionary, item_id: String) -> Dictionary:
         if staffed <= HUNT_CREW_WORKER_EPSILON:
             return blank
         var holding := minf(maxf(float(row.get(KIT_ITEM_WORKERS_HOLDING_KEY, 0.0)), 0.0), staffed)
-        var parts := HudFormat.apportion_people([holding, staffed - holding])
+        # The two halves partition the job's own head count, so that is the target they must sum to.
+        var parts := HudFormat.apportion_people_to(
+            [holding, staffed - holding], int(round(staffed)))
         return {"stated": true, "holding": parts[0], "short": parts[1],
             "headcount": parts[0] + parts[1]}
     return blank

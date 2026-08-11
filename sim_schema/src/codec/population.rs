@@ -511,6 +511,13 @@ fn create_populations<'a>(
             } else {
                 Some(builder.create_string(&cohort.expedition_target_herd))
             };
+            // The NAME beside that key — absent rather than empty for a non-raiding cohort, the same
+            // convention the id above follows.
+            let expedition_target_species = if cohort.expedition_target_species.is_empty() {
+                None
+            } else {
+                Some(builder.create_string(&cohort.expedition_target_species))
+            };
             // `""` = "not raiding" (a resident band, a scout, a party walking a load home) — absent
             // rather than an empty string, the convention every discriminator above follows.
             let expedition_trip_bound = if cohort.expedition_trip_bound.is_empty() {
@@ -568,9 +575,8 @@ fn create_populations<'a>(
                     harvestTask: harvest,
                     scoutTask: scout,
                     accessibleStockpile: accessible_stockpile_fb,
-                    children: cohort.children,
-                    working: cohort.working,
-                    elders: cohort.elders,
+                    // The raw fixed-point brackets are gone from here on purpose — see
+                    // `childrenCount` / `eldersCount` at the end of these args.
                     stores,
                     ageTurns: cohort.age_turns,
                     turnsOfFood: cohort.turns_of_food,
@@ -660,6 +666,14 @@ fn create_populations<'a>(
                     bench: Some(bench),
                     craftOffers: Some(craft_offers),
                     equipmentBatches: Some(equipment_batches),
+                    // **The age brackets in WHOLE PEOPLE** — appended last, and the only reading of
+                    // them that crosses. The raw fixed-point `children`/`working`/`elders` slots are
+                    // `(deprecated)` in the schema and are not written: the fraction is an internal
+                    // growth accumulator, so a client rounding it invented a second answer beside
+                    // `workingAge`. `childrenCount + workingAge + eldersCount == size`.
+                    childrenCount: cohort.children_count,
+                    eldersCount: cohort.elders_count,
+                    expeditionTargetSpecies: expedition_target_species,
                     // The partly-equipped party — appended last. Always written, and never empty:
                     // a client must not have to tell "no crews" from "one crew holding nothing".
                     huntCrews: Some(hunt_crews),

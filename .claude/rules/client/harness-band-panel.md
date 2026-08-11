@@ -118,7 +118,7 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 233 `assert OK` lines, 313 `: PASS` ones and ZERO `FAIL` ones, over
+**A clean run exits 0 and prints 234 `assert OK` lines, 313 `: PASS` ones and ZERO `FAIL` ones, over
 91 frames.** **The three figures are MEASURED from a run, never summed** — band fission retired one
 family of frames here and added another in the same merge this arc landed in, so two arcs' deltas
 added by hand is exactly how a tally stops matching its harness. (The retired **"start a life
@@ -272,6 +272,23 @@ OFFER TEST and the GEAR BREAKDOWN's three new rows.
 to `ui_preview`** — `band_panel_role_kits` (the LEFT dock, both cards) with its bounds/content-fits
 pair, `_assert_role_card_gear`'s six, `_assert_role_cards_are_level`'s two and
 `_assert_role_kit_command_carries_the_pick`'s five. The figures before it were **86 / 225 / 265**.
+
+**The PEOPLE↔WORKFORCE cross-check contributes ONE frame and EIGHT `PASS` to `band_panel_preview`
+and nothing to `ui_preview`** — `band_panel_workforce_away` plus `_assert_people_matches_workforce`,
+run twice on deliberately opposite bands: at `band_panel_people` on a band with NO party out (the
+negative arm — the away clause must not grow a permanent `· 0 away`), and on the reference band with
+its two parties in the field, the only configuration in which a party crew counted as a workforce
+segment is visible at all. The figures before it were **91 / 233 / 313**.
+
+Its four claims are read off the RENDERED chips (`_composition_counts`, the structural twin of
+`_zone_head_readout`: a zone block is a VBox whose head names it and whose `HFlowContainer` carries
+one `▪ key count` chip per segment), because both defects it guards were in the rendering and
+neither is legible in a thumbnail. PEOPLE's 🛠 chip must EQUAL the denominator in WORKFORCE's
+`n idle of m` — the two blocks are one band counted two ways, and a client that rounded the age
+brackets for itself put **17** directly above **"0 idle of 16"**. The PEOPLE chips must account for
+the band's whole `size`. WORKFORCE's segments must sum to `working_age` — with 10 workers away, a
+Parties segment made that bar total 26. And the header must carry `· 10 away` exactly when there is
+someone away, so the fact stays reachable rather than being deleted along with the segment.
 
 **The gear breakdown contributes ONE frame, ONE `assert OK` and EIGHT `PASS` to `band_panel_preview`
 and nothing to `ui_preview`** — `band_panel_kit_expanded` (the dock's own Kit popover, opened on the
@@ -674,6 +691,22 @@ clause first shipped passing with a Policy row put back on the form.
 is the only thing that can assert the four-token grammar. **Each mission's confirm wears its OWN
 meta** — a search for "the send button" on a parties compose sheet cannot tell which mission it just
 launched, and the two emit different signals with non-interchangeable payloads.
+
+### The LOST party's `Target:` row is asserted, and it was the gap that let issue #378 ship
+
+`_assert_next_delivery_disambiguation` walks three parties over one projected-`0` forecast, and it
+checks **both** lines for each: the delivery line *and* the `Target:` row. It did not always — the
+lost-target party had a delivery-line assertion and no target-line one, while the two cases either side
+of it checked both. So `_lost_hunt_expedition_fixture`, the one fixture in this file built for "the
+target has left the telemetry", rendered its raw `game_deer_gone` id **past a green run** in the very
+state it exists to cover.
+
+`_lost_hunt_expedition_fixture` therefore carries `expedition_target_species`, and
+`LOST_HUNT_TARGET_SPECIES` is deliberately a species **no herd in `_herd_fixtures()` has**: matching it
+proves the name came off the PARTY's own declared field rather than from a herd-list join that happened
+to resolve. The row carries **no `(x, y)`** — coordinates need the herd in `_world_herds`, and its
+absence is what the delivery line reports; naming the animal and knowing where it stands are separate
+statements.
 
 ### The party-axis guards, and why one of them is an INVERSION
 

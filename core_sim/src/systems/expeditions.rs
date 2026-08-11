@@ -254,13 +254,18 @@ pub fn advance_expeditions(
                 // failed on one of its two success paths. The `done` arm below states the same
                 // split for the other one (`past_recovery`); the reasons are the `DenialOutcome`
                 // keys, so the exit and the pre-launch verdict spell the outcome the same way.
+                // **The line names the species, never the `fauna_id`.** This exit is also the one
+                // place the name cannot be looked up: the herd is gone from the registry by the time
+                // we get here (that is the condition above), so the only name left is the one the
+                // mission carried from launch — which is what `target_display` reads.
+                let target = mission.target_display();
                 let (message, reason) = match orders.stop {
                     fauna::EngagementStop::Never => (
-                        format!("Denial raid wiped out the {} — returning home", fauna_id),
+                        format!("Denial raid wiped out the {} — returning home", target),
                         DenialOutcome::HerdLost.as_str(),
                     ),
                     fauna::EngagementStop::WhenPackFull => (
-                        format!("Hunting expedition lost the {} — returning home", fauna_id),
+                        format!("Hunting expedition lost the {} — returning home", target),
                         HERD_GONE_MID_HUNT,
                     ),
                 };
@@ -822,6 +827,9 @@ pub fn advance_expeditions(
                             // would be exactly the food-only blindness this arc removes. The pelts
                             // are still banked on `carried_trade`; the `Returning` arm settles them.
                             let pelts = expedition.carried_trade;
+                            // The quarry by NAME, never by `fauna_id` — same rule as the lost-herd
+                            // guard above, and the `detail` below still carries no id at all.
+                            let target = mission.target_display();
                             let (message, reason) = if stop == fauna::EngagementStop::Never {
                                 // **A denial raid reports the verdict, never a harvest** — it
                                 // succeeded when the herd went past recovery, and what it hauled
@@ -831,7 +839,7 @@ pub fn advance_expeditions(
                                     format!(
                                         "Denial raid drove the {} past recovery — returning home \
                                          with {}",
-                                        fauna_id,
+                                        target,
                                         describe_haul(carried.to_i64_whole(), pelts)
                                     ),
                                     "past_recovery",
@@ -848,7 +856,7 @@ pub fn advance_expeditions(
                                 (
                                     format!(
                                         "Hunting expedition returning EMPTY — the {} is at its {:.2}·K floor and has no surplus to raid",
-                                        fauna_id, floor
+                                        target, floor
                                     ),
                                     "empty_no_surplus",
                                 )
@@ -856,7 +864,7 @@ pub fn advance_expeditions(
                                 (
                                     format!(
                                         "Hunting expedition returning EMPTY — no take was possible from the {}",
-                                        fauna_id
+                                        target
                                     ),
                                     "empty_no_take",
                                 )
@@ -2424,7 +2432,10 @@ pub fn expedition_delivery(
     grid_width: u32,
     wrap_horizontal: bool,
 ) -> Option<ExpeditionDelivery> {
-    let ExpeditionMission::Hunt { fauna_id, floor } = &expedition.mission else {
+    let ExpeditionMission::Hunt {
+        fauna_id, floor, ..
+    } = &expedition.mission
+    else {
         // Scouts deliver map data, not food; a denial raid delivers a rounding error and is read by
         // its collapse verdict instead.
         return None;

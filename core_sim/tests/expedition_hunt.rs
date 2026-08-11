@@ -326,6 +326,19 @@ fn spawn_hunt_party(
     spawn_hunt_party_of(app, home_band, pos, fauna_id, policy, PARTY_WORKERS)
 }
 
+/// The species display name `send_hunt_expedition` stamps on a mission — resolved off the registry
+/// exactly as [`outfit_raiding_party`] does, so a directly-spawned party fixture is indistinguishable
+/// from a launched one by the name of its quarry. **Display-only**: every raid mechanic resolves the
+/// herd through `fauna_id`, so nothing branches on this string; what it must not be is silently empty
+/// where production always has a name.
+fn target_species_of(app: &App, fauna_id: &str) -> String {
+    app.world
+        .resource::<HerdRegistry>()
+        .find(fauna_id)
+        .map(|herd| herd.species.clone())
+        .unwrap_or_default()
+}
+
 /// A hunting party of `workers` positioned at `pos`, already in the `Hunting` phase (as
 /// `send_hunt_expedition` spawns it).
 fn spawn_hunt_party_of(
@@ -337,6 +350,7 @@ fn spawn_hunt_party_of(
     workers: u32,
 ) -> bevy::prelude::Entity {
     let tile = tile_at(app, pos);
+    let target_species = target_species_of(app, fauna_id);
     app.world
         .spawn((
             cohort(tile, workers),
@@ -346,6 +360,7 @@ fn spawn_hunt_party_of(
                 home_band,
                 mission: ExpeditionMission::Hunt {
                     fauna_id: fauna_id.to_string(),
+                    target_species,
                     floor,
                 },
                 phase: ExpeditionPhase::Hunting,
@@ -2656,4 +2671,129 @@ fn every_cohort_publishes_the_forecast_horizon_on_the_wire() {
             cohort.expeditionForecastHorizonTurns()
         );
     }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// THE QUARRY'S NAME (issue #378)
+//
+// A hunting party is bound to a herd for its whole life, but the herd TELEMETRY it would be named
+// from is fog-filtered to `Active` ground and pruned at local extinction — and a detached expedition
+// is deliberately not a vision source (`visibility_systems`, `Without<Expedition>`). So the party's
+// own target routinely leaves the published herd list while the party is still hunting it, and a
+// client joining `expeditionTargetHerd` against that list had nothing left to render but the raw
+// fauna id. `expeditionTargetSpecies` is the name, carried from launch so it outlives the join.
+// ---------------------------------------------------------------------------------------------------
+
+/// **A party's own quarry is NOT published just because the party is standing on it — and the party
+/// names it anyway.**
+///
+/// The herd's tile is marked `Discovered`, which is the live shape of this: the player walked that
+/// ground earlier, the party is out there hunting now, and nothing is watching the hex today. The herd
+/// is therefore absent from the snapshot (`Active`, not `Discovered` —
+/// `snapshot::subsistence::HerdSnapshotInputs::herd_is_visible`) while the party still carries its id.
+/// That is exactly the state that put a raw `game_deer_57` on screen.
+///
+/// Asserted on the **encoded wire**, and with a positive control: the same herd, watched, IS published.
+/// Without that control the absence proves nothing — a fixture publishing no herds at all would pass
+/// the first half.
+#[test]
+fn a_party_names_its_quarry_when_the_herd_has_left_the_snapshot() {
+    let mut app = deterministic_headless_app();
+    app.update();
+
+    let herd_id = stationary_game_herd(&app);
+    let (herd_pos, herd_species) = {
+        let registry = app.world.resource::<HerdRegistry>();
+        let herd = registry.find(&herd_id).expect("the picked herd resolves");
+        (herd.position(), herd.species.clone())
+    };
+    assert!(
+        !herd_species.is_empty(),
+        "the roster names this species — an empty name would make the assertions below vacuous"
+    );
+
+    // The party stands ON the herd; its home band is far away, so nothing else can light the hex.
+    let home = spawn_home_band(&mut app, herd_pos);
+    spawn_hunt_party(&mut app, home, herd_pos, &herd_id, PEAK_FLOOR);
+
+    // Seen once, not seen now — a REAL faction map rather than the fail-closed absent-map path, so
+    // what this measures is the `Active`-not-`Discovered` rule and not the lack of a map.
+    {
+        let grid = app.world.resource::<SimulationConfig>().grid_size;
+        let viewer = app.world.resource::<core_sim::ViewerFaction>().0;
+        let mut ledger = app.world.resource_mut::<VisibilityLedger>();
+        let map = ledger.ensure_faction(viewer, grid.x, grid.y);
+        map.mark_discovered(herd_pos.x, herd_pos.y);
+    }
+
+    let (published_ids, target_herd, target_species) = published_party_target(&mut app);
+    assert!(
+        !published_ids.contains(&herd_id),
+        "the party's own quarry {herd_id} is published while nothing watches its hex — the fog gate \
+         this test is built on has changed, and the bug it guards no longer has this shape"
+    );
+    assert_eq!(
+        target_herd, herd_id,
+        "the party is still bound to the herd it launched at"
+    );
+    assert_eq!(
+        target_species, herd_species,
+        "the party must publish its quarry's NAME, so the client never falls back to the id"
+    );
+
+    // POSITIVE CONTROL — the same herd, watched, is published. This is what makes the absence above a
+    // statement about visibility rather than about the fixture.
+    reveal_herds(&mut app, std::slice::from_ref(&herd_id));
+    let (published_ids, _, target_species) = published_party_target(&mut app);
+    assert!(
+        published_ids.contains(&herd_id),
+        "a watched herd is published — otherwise the absence asserted above proves nothing"
+    );
+    assert_eq!(
+        target_species, herd_species,
+        "and the published name does not depend on whether the herd is in view"
+    );
+}
+
+/// Recapture, encode, and read back `(every published herd id, the party's target id, its target
+/// species)` off the **wire**. A field that never reached the codec still satisfies an in-process
+/// assertion on `WorldSnapshot`, so this reads the encoded buffer the client actually gets.
+fn published_party_target(app: &mut App) -> (Vec<String>, String, String) {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    recapture_snapshot_in_place(&mut app.world);
+    let bytes = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .encode_flat();
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let snapshot = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot");
+    let published_ids: Vec<String> = snapshot
+        .subsistence()
+        .and_then(|section| section.herds())
+        .map(|herds| {
+            herds
+                .iter()
+                .filter_map(|herd| herd.id().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let cohorts = snapshot
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the snapshot carries a population section");
+    let party = cohorts
+        .iter()
+        .find(|cohort| cohort.isExpedition())
+        .expect("the fixture published its expedition cohort");
+    (
+        published_ids,
+        party.expeditionTargetHerd().unwrap_or("").to_string(),
+        party.expeditionTargetSpecies().unwrap_or("").to_string(),
+    )
 }

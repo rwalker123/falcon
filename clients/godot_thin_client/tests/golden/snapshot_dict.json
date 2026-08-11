@@ -1438,9 +1438,6 @@
         "radius": 173
       },
       "activity": "populations[0].activity",
-      "age_children": 0.000157,
-      "age_elders": 0.000027,
-      "age_working": 0.000131,
       "band_id": 141,
       "band_move_tiles_per_turn": 65.150002,
       "bench": {
@@ -1481,6 +1478,7 @@
         "work": 77.519997,
         "workers": 95
       },
+      "children": 97,
       "craft_offers": [
         {
           "available": true,
@@ -1598,6 +1596,7 @@
       "current_x": 0,
       "current_y": 0,
       "discontent_fraction": 0.00013,
+      "elders": 199,
       "entity": 100,
       "equipment_batches": [
         {
@@ -1655,6 +1654,7 @@
       "expedition_projected_delivery": 86.919998,
       "expedition_recurring": true,
       "expedition_target_herd": "populations[0].expedition_target_herd",
+      "expedition_target_species": "populations[0].expedition_target_species",
       "expedition_trip_bound": "populations[0].expedition_trip_bound",
       "expedition_viability_warn_turns": 89,
       "faction": 182,
@@ -1959,9 +1959,6 @@
         "radius": 102
       },
       "activity": "populations[1].activity",
-      "age_children": 0.000028,
-      "age_elders": 0.00017,
-      "age_working": 0.00008,
       "band_id": 42,
       "band_move_tiles_per_turn": 61.23,
       "bench": {
@@ -2002,6 +1999,7 @@
         "work": 5.62,
         "workers": 4
       },
+      "children": 148,
       "craft_offers": [
         {
           "available": true,
@@ -2119,6 +2117,7 @@
       "current_x": 1,
       "current_y": 1,
       "discontent_fraction": 0.000061,
+      "elders": 58,
       "entity": 101,
       "equipment_batches": [
         {
@@ -2176,6 +2175,7 @@
       "expedition_projected_delivery": 110.099998,
       "expedition_recurring": true,
       "expedition_target_herd": "populations[1].expedition_target_herd",
+      "expedition_target_species": "populations[1].expedition_target_species",
       "expedition_trip_bound": "populations[1].expedition_trip_bound",
       "expedition_viability_warn_turns": 190,
       "faction": 141,

@@ -357,6 +357,11 @@ pub struct PopulationCohortState {
     pub size: u32,
     /// Age brackets (fixed-point raw, `Scalar::SCALE` = 1.0) — persisted so a rollback restores
     /// the exact demographic structure. `children + working + elders` rounds to `size`.
+    ///
+    /// **Sim-internal: these three do NOT cross the wire.** Their FlatBuffers slots are
+    /// `(deprecated)`; what a client reads is the whole-people triple
+    /// [`Self::children_count`] / [`Self::working_age`] / [`Self::elders_count`]. The fraction is a
+    /// growth accumulator, and a client rounding it for itself disagreed with the sim's rounding.
     #[serde(default)]
     pub children: i64,
     #[serde(default)]
@@ -422,6 +427,16 @@ pub struct PopulationCohortState {
     /// `Hunt { fauna_id }`; also shown in the client hunt panel.
     #[serde(default)]
     pub expedition_target_herd: String,
+    /// **Hunt/deny mission only: the target herd's species DISPLAY NAME** (`"Red Deer"`), resolved at
+    /// launch and carried for the party's life. Empty for scout/normal bands.
+    ///
+    /// It exists because [`Self::expedition_target_herd`] alone is not enough to *name* the quarry:
+    /// the herd list the client would join it against is fog-filtered and extinction-pruned, and a
+    /// detached party is not a vision source, so a party's own target routinely leaves that list while
+    /// the party is still bound to it — leaving the client nothing to render but the raw id (issue
+    /// #378). The id stays the key commands address; this is the string the player reads.
+    #[serde(default)]
+    pub expedition_target_species: String,
     /// The `BandTravel` destination tile while traveling (`is_traveling` gates it; `0,0` otherwise).
     /// Lets the client draw a destination hex + line from a selected band/expedition. Appended last
     /// in the FlatBuffers table (append-only wire discipline).
@@ -836,6 +851,21 @@ pub struct PopulationCohortState {
     /// row. See [`EquipmentBatchState`] for why the life wording is in use quanta and not percent.
     #[serde(default)]
     pub equipment_batches: Vec<EquipmentBatchState>,
+    /// **Whole children**, the derived half of the published age triple.
+    ///
+    /// **The wire carries whole people.** The fractional brackets above are an internal *growth
+    /// accumulator* — they exist so a slow birth rate does not round to zero every turn — with
+    /// exactly one correct reading, which is the sim's; they are no longer serialized. Together with
+    /// [`Self::working_age`] (the whole workers, already shipped) and [`Self::elders_count`] this
+    /// satisfies `children_count + working_age + elders_count == size`, by construction: `size` is
+    /// written as that sum. Derived by `core_sim::snapshot::population::whole_age_brackets`.
+    #[serde(default)]
+    pub children_count: u32,
+    /// **Whole elders** — the remainder of the dependents after [`Self::children_count`] takes its
+    /// round-half share, so the triple sums exactly. A cohort with no dependent *mass* has no
+    /// dependents at all: an elder rounded into existence is not a person.
+    #[serde(default)]
+    pub elders_count: u32,
     /// **How this band's gear divides its HUNT workers** — best-equipped first, `Σ workers ==` the
     /// hunt head count, and **never empty**: a uniformly-equipped band publishes exactly one row.
     /// See [`BandKitCrewState`].

@@ -182,7 +182,24 @@ paths:
   player the key. It stays **data**: the row's `pressed` bind and every `assign_labor` / `tame` /
   `send_hunt_expedition` address the herd by it. Renders of it elsewhere are **fallbacks only**
   (`SourceForecast.herd_display_name` / `_herd_label_for_id` reach for `id` only when species AND label are
-  both missing) — never the normal path. What's left in a drawer is only what the row can't show — herd: Size / Herd (the stock pair, with
+  both missing) — never the normal path.
+  **AND THERE IS A FOURTH CASE, which is the one that actually leaked** (issue #378): not a herd
+  whose strings are empty, but **no herd dict at all**. `_herd_label_for_id`'s three tiers — the tile
+  roster, the selected herd, the snapshot herd list — every one of them needs the herd to be in a live
+  array, and a **hunting party's own quarry is guaranteed to leave all three**: herd telemetry is
+  fog-gated to hexes lit *right now*, a detached party is deliberately not a vision source
+  (`visibility_systems.rs`, `Without<Expedition>`), and local extinction prunes the herd outright. So a
+  party outlives every array that could name its target, and the Parties zone rendered
+  `game_boar_88` — a row beside two healthy ones reading `Wild Boar`.
+  The fix is on the wire, not a fourth client tier over the same dead arrays: the sim resolves the
+  species at launch, where the herd is in the registry by construction, and carries it on the party as
+  **`expeditionTargetSpecies`**. `_herd_label_for_id` consults the party's own declared name
+  (`HudBandLaborState.expedition_target_label`) **last** — while the herd is visible the live telemetry
+  is the better answer, since the party's copy is a launch-time snapshot. That accessor is a pure
+  filter over `_player_expeditions`, **not a name cache**: the parties array is replaced wholesale each
+  snapshot, so it can only answer for a herd some live party is hunting now.
+  The target's live `(x, y)` still comes from the herd list and is still absent here — that is a
+  separate statement, and the one the "target herd lost" delivery line already makes. What's left in a drawer is only what the row can't show — herd: Size / Herd (the stock pair, with
   its ecology phase riding it — see `herd-readouts.md`) / Husbandry / Corral; expedition: Mission / Target / Orders / Phase / Carried /
   Position. **A herd states NO `Position`**: `herd_summary_lines` renders in this drawer and
   nowhere else, and the card's own `TILE (x, y)` header sits two rows above it, so the row was the

@@ -126,10 +126,10 @@ fn pin_herd_of(app: &mut App, species: &str, id: &str) -> String {
 /// `HerdTelemetryState.defaultKitId` read off the **encoded envelope**, through the client's own
 /// accessor chain — a field that never reached the codec still passes an in-process assertion.
 ///
-/// **Encoded here rather than read back off the ring entry.** `StoredSnapshot::encode_flat` hands
-/// back the bytes cached when the entry was *first* published, and a mid-tick recapture refreshes
-/// the entry's `snapshot` without refreshing them — so a fixture that pins a herd and recaptures
-/// would be decoding the frame from before it pinned anything.
+/// **Encoded here rather than through `StoredSnapshot::encode_flat`.** This asserts on frame
+/// *content*, and encoding the entry's snapshot directly says so: `encode_flat` is a read of stored
+/// bytes whose header carries whatever sequence number the entry was published under, which is a
+/// concern this fixture has no stake in.
 fn published_default_kit(app: &App, herd_id: &str) -> String {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
@@ -272,6 +272,14 @@ fn spawn_party(
     kit: KitChoice,
 ) -> bevy::prelude::Entity {
     let tile = tile_at(app, pos);
+    // The name a launched party would carry, resolved off the registry as `outfit_raiding_party` does.
+    // Display-only — every mechanic here resolves the herd through `fauna_id`.
+    let target_species = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(fauna_id)
+        .map(|herd| herd.species.clone())
+        .unwrap_or_default();
     app.world
         .spawn((
             cohort(tile, CREW),
@@ -283,6 +291,7 @@ fn spawn_party(
                 home_band,
                 mission: ExpeditionMission::Hunt {
                     fauna_id: fauna_id.to_string(),
+                    target_species,
                     floor: DEFAULT_ESCAPEMENT_FLOOR,
                 },
                 phase: ExpeditionPhase::Hunting,
@@ -837,10 +846,8 @@ struct PublishedKitRow {
 /// One band's whole `kitTiers` table, **off the encoded envelope**, keyed by kit id.
 ///
 /// Encoded from the ring entry's *snapshot* rather than through `StoredSnapshot::encode_flat` for
-/// the reason [`published_default_kit`] states: the cached bytes are the ones published when the
-/// entry was first written, and a mid-tick recapture refreshes the snapshot without refreshing
-/// them — so a fixture that wears an item and recaptures would be decoding the frame from before it
-/// touched anything.
+/// the reason [`published_default_kit`] states: the claim here is about frame content, and
+/// `encode_flat` is a read of stored bytes carrying a stored sequence number.
 fn published_kit_tiers(
     app: &App,
     band: bevy::prelude::Entity,

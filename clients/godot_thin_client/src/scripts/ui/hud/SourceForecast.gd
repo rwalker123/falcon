@@ -1321,7 +1321,10 @@ static func hunt_crew_split_model(band: Dictionary, herd: Dictionary, quarry: St
         if taken > DetailFormat.HUNT_CREW_WORKER_EPSILON \
                 and not (crew.get(DetailFormat.HUNT_CREW_ITEM_IDS_KEY, []) as Array).is_empty():
             barred_bare = false
-    var parts := HudFormat.apportion_people([armed, barred])
+    # **The target is the party the two halves partition.** `armed + barred` is what the crews
+    # actually covered of `budget` — the loop stops at whichever runs out first — so that sum, not
+    # `budget`, is the total the displayed pair has to add to.
+    var parts := HudFormat.apportion_people_to([armed, barred], int(round(armed + barred)))
     if parts[0] <= 0 or parts[1] <= 0:
         return blank
     var clause := HUNT_CREW_SPLIT_BARE_CLAUSE if barred_bare else HUNT_CREW_SPLIT_UNDER_CLAUSE
