@@ -1614,6 +1614,93 @@ fn the_published_drawn_pile_is_what_the_store_actually_lost() {
 
 /// **The three per-world catalogues round-trip**, and the rating vocabulary rides once rather than
 /// per material.
+/// **EVERY SOURCE'S MATERIAL RATE REACHES THE WIRE, on the shipped map** (arc #527).
+///
+/// The three per-source rates — a herd's `materialPerBiomass`, a patch's, and the two per-worker
+/// twins — are each computed correctly *and then written onto a row*, and the second half is the one
+/// nothing else catches: a rate derived right and published nowhere looks exactly like the retired
+/// trade field's absence, which is the shape this arc has now been asked to fix three times.
+///
+/// Asserted on the **decoded FlatBuffers** over the real headless world, as a *relation* against the
+/// sim's own seams rather than a recorded number, so a rate retune moves both sides at once.
+///
+/// The liveness half is the second assertion: the shipped map must publish at least one non-empty
+/// material rate on **each** web, or every comparison above was between empty vectors.
+#[test]
+fn every_sources_material_rate_reaches_the_wire() {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let (mut app, _band) = world();
+    recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let subsistence = envelope
+        .payload_as_snapshot()
+        .expect("a snapshot payload")
+        .subsistence()
+        .expect("a subsistence section");
+
+    let fauna = app.world.resource::<core_sim::FaunaConfigHandle>().get();
+    let mut live_herd_rate = false;
+    for herd in subsistence.herds().expect("herds present").iter() {
+        let species = herd.species().unwrap_or_default();
+        let expected = core_sim::material_yield_totals(fauna.hunt_materials_for(species), 1.0, 1.0);
+        let published = herd
+            .materialPerBiomass()
+            .expect("the key is always written, empty or not");
+        assert_eq!(
+            published.len(),
+            expected.len(),
+            "{species}: the row must carry the seam's own material rows"
+        );
+        for (index, want) in expected.iter().enumerate() {
+            let row = published.get(index);
+            assert_eq!(row.materialId().unwrap_or_default(), want.material);
+            assert!((row.amount() - want.amount).abs() < 1e-6);
+            assert!(row.amount() > 0.0, "a published rate is a rate that pays");
+        }
+        live_herd_rate |= !published.is_empty();
+    }
+
+    let mut live_patch_rate = false;
+    for patch in subsistence.foragePatches().expect("patches present").iter() {
+        let published = patch
+            .materialPerBiomass()
+            .expect("the key is always written, empty or not");
+        // A patch's rows are a decomposition of its own basket, so the relation this can state
+        // cheaply is the one that matters: every published row is positive and named once.
+        let mut seen: Vec<&str> = Vec::new();
+        for index in 0..published.len() {
+            let row = published.get(index);
+            let id = row.materialId().unwrap_or_default();
+            assert!(row.amount() > 0.0, "a published rate is a rate that pays");
+            assert!(
+                !seen.contains(&id),
+                "a patch must MERGE two species giving {id} into one rate, not publish it twice"
+            );
+            seen.push(id);
+        }
+        live_patch_rate |= !published.is_empty();
+    }
+
+    assert!(
+        live_herd_rate,
+        "the shipped map must publish at least one herd material rate, or the herd loop compared \
+         empty vectors"
+    );
+    assert!(
+        live_patch_rate,
+        "…and at least one patch material rate, which is the rung-1 gap this closed"
+    );
+}
+
 #[test]
 fn the_per_world_catalogues_round_trip() {
     let (mut app, band) = world();

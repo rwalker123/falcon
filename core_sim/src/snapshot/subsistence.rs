@@ -504,6 +504,32 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // every ceiling above reads, so it cannot drift; `0` for a source that never offers
                 // Tame (penned/forage), which is exactly `SourceYieldForecast::pastoral_yield`.
                 pastoral_yield: forecast.pastoral_yield.provisions,
+                // **THE TWO INVESTMENT RUNGS' MATERIAL PAYOFFS** (arc #527) — the twins of
+                // `corral_yield`/`pastoral_yield` above, and the replacement for the retired
+                // `corral_trade`/`pastoral_trade`. Without them an inedible quarry's Tame and Corral
+                // rungs quote nothing at all: a wolf's food payoff on both is honestly `0`.
+                //
+                // Priced on the **same** MSY biomass the food quotes are — the forecast hands both
+                // over (`managed_yield_biomass` / `pastoral_yield_biomass`) precisely so a rung's two
+                // readouts cannot describe different harvests.
+                corral_material: herd
+                    .map(|herd| {
+                        material_rates(
+                            fauna.hunt_materials_for(&herd.species),
+                            forecast.managed_yield_biomass,
+                            FORECAST_OUTPUT_MULTIPLIER,
+                        )
+                    })
+                    .unwrap_or_default(),
+                pastoral_material: herd
+                    .map(|herd| {
+                        material_rates(
+                            fauna.hunt_materials_for(&herd.species),
+                            forecast.pastoral_yield_biomass,
+                            FORECAST_OUTPUT_MULTIPLIER,
+                        )
+                    })
+                    .unwrap_or_default(),
                 // The hay this pen drew last turn (Flora Roster F3) — the transient `Herd::fodder_draw`
                 // the corral-tend branch wrote, so the client can render "fed by hay" beside the
                 // `pen_upkeep` bread bill. `0.0` for an unpenned/absent herd or one no hay reached.
@@ -716,6 +742,32 @@ pub(crate) fn snapshot_forage_patches(
                     tile_composition,
                     flora,
                     forage,
+                ),
+                // **WHAT A GATHER OF THIS PATCH IS MADE OF** (arc #527) — the material twins of the
+                // two rates above, and the **rung-1** half of the material story: `FloraShareInfo`'s
+                // two payoffs quote a commitment at rungs 2 and 3, and a *wild* gather had nothing
+                // at all. A tile whose basket carries a cash crop read food-and-fodder-only while
+                // the turn banked its fibre and leaf.
+                //
+                // **Through `patch_material_yields`, the very rows `credit_material_yield` is handed
+                // at the take site** — which is also what makes the mixed-basket rule fall out
+                // rather than being restated: it decomposes per species, each carrying its own share
+                // *and its own exact reading*, and `material_yield_totals` then merges by material
+                // id for the RATE. Two species that both give fibre sum into one fibre rate, which
+                // is what a rate means; their readings are never averaged, because that would invent
+                // a plant that is not growing there. The readings ride the batches the take creates.
+                material_per_biomass: material_rates(
+                    &crate::forage::patch_material_yields(patch, tile_composition, flora, forage),
+                    ONE_UNIT_OF_BIOMASS,
+                    FORECAST_OUTPUT_MULTIPLIER,
+                ),
+                // The gatherer's own throughput, with the tile's **seasonal weight** folded in
+                // exactly as `per_worker_yield` folds it — so this is honestly EMPTY in a dead
+                // season, and a client must not divide by it.
+                per_worker_material: material_rates(
+                    &crate::forage::patch_material_yields(patch, tile_composition, flora, forage),
+                    forage_per_worker_biomass(equipped_gather_rate, seasonal),
+                    FORECAST_OUTPUT_MULTIPLIER,
                 ),
                 // **One gatherer's BIOMASS throughput** — `per_worker_biomass_capacity × seasonal`,
                 // the exact term `forage_take`'s worker cap multiplies by the head-count, through the

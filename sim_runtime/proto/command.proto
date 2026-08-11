@@ -635,10 +635,16 @@ message DenialRow {
   uint32 animals_killed = 6;
   float delivered_food = 7;
   float wasted_food = 8;
+  // WHAT THE RAID LANDS, PER MATERIAL - the same haul `delivered_food` converts, and on an inedible
+  // quarry the whole of it. Projected off the same carried-biomass accumulator. EMPTY means "no
+  // row", never "zero"; never summed.
+  repeated MaterialPayoff delivered_material = 11;
   // RETIRED (arc #527) with the trade-goods yield axis. RESERVED, never freed: concurrent branches
-  // append here, and a shipped field number is immutable. **The gap they leave is real** — on an
-  // inedible quarry a denial raid's whole destruction is in hides, so `wasted_food` reports 0 beside
-  // a large `animals_killed`.
+  // append here, and a shipped field number is immutable. `delivered_trade`'s replacement is
+  // `delivered_material` below; `wasted_trade` has none, and NOT for the reason it was retired for —
+  // a per-material vector states a projection fine (this row proves it). The waste line is out of
+  // scope by decision: it is already legible as a percentage. Do NOT add a flat "wasted materials"
+  // scalar, which would be the retired axis under a new name.
   reserved 9, 10;
 }
 

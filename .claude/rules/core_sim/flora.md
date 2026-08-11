@@ -456,6 +456,47 @@ same scarce sowable tile" is the land-use tension, and *cash* is now literally *
   rather than the cash crop being kept off that ground. Material rates are **playtest dials**.
 - **The crop picker's cash quote is PER MATERIAL** — see the section below.
 
+### A WILD gather's material rate is on the wire too — the rung-1 half (arc #527)
+
+The crop picker's quotes above answer *a commitment* at rungs 2 and 3. **Rung 1 had nothing**, and
+`ForagePatchState.tradePerBiomass` sat `(deprecated)` with no replacement — so a tile whose realized
+basket is 32% cotton and 26% tobacco composed a forage sheet reading `0.24 → 0.18 FOOD · — FODDER`
+while the turn banked its fibre and leaf. The sim credited them correctly the whole time
+(`systems/labor.rs`, decomposed per species); the wire had nowhere to say so.
+
+| Field | Answers |
+|---|---|
+| `ForagePatchState.materialPerBiomass` | what **one unit of this patch's biomass** is made of — the twin of `provisionsPerBiomass`, so it composes at **any** floor: `ceiling(floor) = max(0, B − floor·K) × rate` |
+| `ForagePatchState.perWorkerMaterial` | what **one gatherer** brings home per turn — the twin of `perWorkerYield`, so a sheet clamps `min(workers × rate, ceiling)` per material. **Folds in the tile's seasonal weight**, so it is honestly **empty in a dead season** |
+
+Both `[MaterialPayoff]`, the same table the picker and the herd rates use. Same three contracts:
+**never summed**, **empty is "no row" not zero**, **key always present**.
+
+> #### THE ONE THING THAT DIFFERS FROM A HERD: A PATCH IS A MIXED BASKET
+>
+> A herd is one species. A patch's rows come from `patch_material_yields`, which **decomposes per
+> species** — each carrying its own share *and its own exact reading* — and `material_yield_totals`
+> then merges **by material id** for the rate. Two species that both give fibre sum into **one fibre
+> rate**, which is what a rate means and what `LocalStore::material_total` sums the same way; that
+> equality is the whole reason the quote is checkable against the store.
+>
+> **Their CHARACTERISTIC READINGS are never merged.** Averaging them would invent a plant that is not
+> growing there — the config's own words. The reading belongs to the batch that lands in the store
+> (`MaterialBatchState`); the rate says only *how much of what*. This file's rung-2 section states the
+> same rule for the credit; this is it stated for the quote.
+
+**Guarded at both levels, because the failure modes differ.**
+`forage_basket_reweight::a_wild_gathers_published_material_rate_is_what_the_band_banks` drives a real
+wild gather and asserts the published rate against `LocalStore::material_total` — and **insists its
+fixture basket names one material from two species**, or the merge is untested (a last-write-wins
+rate passes a single-species fixture and is off by 10× here).
+`crafting_wire::every_sources_material_rate_reaches_the_wire` asserts, on the decoded snapshot over
+the real map, that every source's rate is *published* and that a patch never publishes one material
+twice — a rate derived right and written nowhere looks exactly like the retired field's absence.
+
+**Client:** the native reader surfaces `material_per_biomass` / `per_worker_material` on each patch
+dict. Rendering them is the client pass.
+
 ### The crop picker's cash quote is PER MATERIAL — `commit_material_payoff` (arc #527)
 
 The retired `commit_trade_payoff` was the one surface that told a player what sowing cotton is

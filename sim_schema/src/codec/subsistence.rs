@@ -369,6 +369,8 @@ fn create_herds<'a>(
         // **Built before the parent table opens**, the ordinary FlatBuffers rule.
         let material_per_biomass = create_material_payoffs(builder, &herd.material_per_biomass);
         let per_worker_material = create_material_payoffs(builder, &herd.per_worker_material);
+        let corral_material = create_material_payoffs(builder, &herd.corral_material);
+        let pastoral_material = create_material_payoffs(builder, &herd.pastoral_material);
         let id = builder.create_string(herd.id.as_str());
         let label = builder.create_string(herd.label.as_str());
         let species = builder.create_string(herd.species.as_str());
@@ -479,6 +481,9 @@ fn create_herds<'a>(
                 // EMPTY vector is "no row", never "zero".
                 materialPerBiomass: Some(material_per_biomass),
                 perWorkerMaterial: Some(per_worker_material),
+                // The two investment rungs' material payoffs — appended last (append-only wire).
+                corralMaterial: Some(corral_material),
+                pastoralMaterial: Some(pastoral_material),
             },
         );
         entries.push(entry);
@@ -492,6 +497,9 @@ fn create_forage_patches<'a>(
 ) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::ForagePatchState<'a>>>> {
     let mut entries = Vec::with_capacity(patches.len());
     for patch in patches {
+        // **Built before the parent table opens**, the ordinary FlatBuffers rule.
+        let material_per_biomass = create_material_payoffs(builder, &patch.material_per_biomass);
+        let per_worker_material = create_material_payoffs(builder, &patch.per_worker_material);
         let ecology_phase = builder.create_string(patch.ecology_phase.as_str());
         let sow_site_refusal = builder.create_string(patch.sow_site_refusal.as_str());
         let composition = create_flora_shares(builder, &patch.composition);
@@ -549,6 +557,11 @@ fn create_forage_patches<'a>(
                 // The phase bands this patch's own rung cuts on — appended last (append-only wire).
                 collapseFraction: patch.collapse_fraction,
                 stressedFraction: patch.stressed_fraction,
+                // **What a gather of this patch is MADE OF** — appended last (append-only wire, arc
+                // #527), the replacement for the retired `tradePerBiomass` and the RUNG-1 half of
+                // the material story. An EMPTY vector is "no row", never "zero".
+                materialPerBiomass: Some(material_per_biomass),
+                perWorkerMaterial: Some(per_worker_material),
             },
         );
         entries.push(entry);

@@ -459,6 +459,15 @@ fn answer_denial_raid_forecast(world: &mut World, ask: &DenialRaidForecastQuery)
             animals_killed: forecast.animals_killed,
             delivered_food: forecast.delivered_food,
             wasted_food: forecast.wasted_food,
+            // What the raid lands, per material — the whole payload on an inedible quarry.
+            delivered_material: forecast
+                .delivered_material
+                .iter()
+                .map(|payoff| sim_runtime::commands::MaterialPayoff {
+                    material_id: payoff.material.clone(),
+                    amount: payoff.amount,
+                })
+                .collect(),
         },
         party_needed,
     })

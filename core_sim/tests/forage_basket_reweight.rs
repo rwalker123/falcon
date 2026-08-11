@@ -384,6 +384,102 @@ fn a_deep_gather_banks_the_baskets_materials_at_both_drawn_down_rungs() {
     }
 }
 
+/// **THE PUBLISHED WILD MATERIAL RATE IS WHAT THE GATHER BANKS** (arc #527) — the rung-1 twin of the
+/// wolf guard, and the close on the third instance of one mistake.
+///
+/// `ForagePatchState.tradePerBiomass` was `(deprecated)` with **no replacement**: the crop picker's
+/// quotes cover a *commitment* at rungs 2 and 3, and a **wild gather had nothing at all**. A tile
+/// whose basket carries a cash crop read food-and-fodder-only while the turn banked its fibre.
+///
+/// **The mixed basket is the case that matters, and the fixture insists on it.** A herd is one
+/// species; a patch is a basket, and two species that both give fibre must sum into **one** fibre
+/// rate — which is what a rate means, and what `LocalStore::material_total` sums the same way. A
+/// per-species rate that forgot to merge would pass a single-species fixture and fail here. Their
+/// **characteristic readings** are never merged: those ride the batches the take creates, which is
+/// why this asserts the *total* and `materials.rs` asserts the *batches*.
+///
+/// Asserted against what the band's store actually **holds** after a real turn, not a re-derivation.
+#[test]
+fn a_wild_gathers_published_material_rate_is_what_the_band_banks() {
+    let labor = labor();
+    let flora = FloraConfig::builtin();
+    let mut app = spawn_standard_world();
+    let (tile_entity, coord) = a_patch_tile_growing(&mut app, Some("cotton"));
+    seat_patch(&mut app, coord, None); // WILD — no commitment, which is the rung under test
+
+    let composition = tile_composition(&app, coord);
+    // **The merge case, insisted on rather than hoped for**: at least one material must be named by
+    // two different species of this basket, or the assertion below cannot distinguish a merged rate
+    // from a per-species one.
+    let mut contributors: std::collections::BTreeMap<&str, usize> =
+        std::collections::BTreeMap::new();
+    for entry in &composition {
+        for row in &flora.species[&entry.species].yield_.materials {
+            *contributors.entry(row.material.as_str()).or_insert(0) += 1;
+        }
+    }
+    let shared = contributors
+        .iter()
+        .find(|(_, count)| **count > 1)
+        .map(|(material, _)| (*material).to_string());
+    assert!(
+        shared.is_some(),
+        "the fixture tile's basket must name one material from TWO species, or the merge is \
+         untested: {contributors:?} over {:?}",
+        composition
+            .iter()
+            .map(|entry| entry.species.as_str())
+            .collect::<Vec<_>>()
+    );
+
+    let before = standing_crop(&app, coord);
+    let band = spawn_forager(&mut app, tile_entity, coord, 0.15);
+    app.world.run_system_once(advance_labor_allocation);
+    let take = before - standing_crop(&app, coord);
+    assert!(take > 0.0, "the gather must draw the stand down");
+
+    // **THE PUBLISHED RATE**, through the very seam the capture publishes verbatim — the patch's
+    // decomposed rows merged by material id, per unit of biomass.
+    let patch = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("patch exists")
+        .clone();
+    let rows = core_sim::patch_material_yields(&patch, &composition, &flora, &labor.forage);
+    let published = core_sim::material_yield_totals(&rows, 1.0, NEUTRAL_MULTIPLIER);
+    assert!(
+        !published.is_empty(),
+        "a basket carrying a cash crop must publish a material rate"
+    );
+
+    let cohort = app
+        .world
+        .get::<core_sim::PopulationCohort>(band)
+        .expect("the foraging band still exists");
+    for rate in &published {
+        let held = cohort.stores.material_total(&rate.material).to_f32();
+        let expected = rate.amount * take * NEUTRAL_MULTIPLIER;
+        assert!(
+            (held - expected).abs() <= EPSILON * expected.max(1.0),
+            "the published {} rate composes to {expected} over a {take}-biomass gather, and the \
+             band holds {held}",
+            rate.material
+        );
+        assert!(rate.amount > 0.0, "a published rate is a rate that pays");
+    }
+    // …and the shared material really did come out as ONE row, not two.
+    let shared = shared.expect("checked above");
+    assert_eq!(
+        published
+            .iter()
+            .filter(|rate| rate.material == shared)
+            .count(),
+        1,
+        "two species giving {shared} must merge into ONE rate: {published:?}"
+    );
+}
+
 /// **A WILD patch's fodder credit is gated on Foddering; a COMMITTED one is not.**
 ///
 /// The invariant reaches fodder too — a wild tile realizing `hay_grass` pays hay on any harvest — but

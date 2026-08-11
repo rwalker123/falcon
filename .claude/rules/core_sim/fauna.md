@@ -75,9 +75,23 @@ is what `LocalStore::material_total` actually holds** (asserted against the stor
 re-derivation); and every material's `credited ÷ published rate` is the **same** positive number — the
 carried biomass — which a rate published from a second derivation would not satisfy.
 
+**The two INVESTMENT rungs quote materials too** — `HerdTelemetryState.corralMaterial` /
+`pastoralMaterial`, the twins of `corralYield`/`pastoralYield` and the replacement for the retired
+`corralTrade`/`pastoralTrade`. Without them an inedible quarry's Tame and Corral rungs quoted nothing
+at all: a wolf's food payoff on both is honestly `0`, so the compose sheet's *"→ then +Y"* had no
+number on either. They are priced on the **same** pen/pastoral MSY biomass their food siblings are —
+`SourceYieldForecast` now hands both over (`managed_yield_biomass` / `pastoral_yield_biomass`,
+resolved once in `hunt_forecast`) precisely so a rung's two readouts cannot describe different
+harvests. That the forecast has to *retain* a biomass at all is the same asymmetry
+`forage::field_harvest_biomass` states one web over: the material account has no currency to scale
+off on a species whose currency components are all `0`.
+
 **Deliberately out of scope: the denial raid's wasted materials.** A carcass left on the range takes
-its hide with it, and `DenialForecast` still says nothing about that. It needs a per-material
-*projection* rather than a rate, which is a design slice — see `expeditions.md`.
+its hide with it, and `DenialForecast` still says nothing about that. **The reason is a decision, not
+a shape problem** — `DenialRow.deliveredMaterial` proves a per-material vector states a projection
+fine, and the *delivered* half is built. The waste is already legible as a percentage, so its material
+twin buys a second reading of a fact the sheet states. Do not add a flat "wasted materials" scalar —
+see `expeditions.md`.
 
 ## Fauna & Wild Game
 

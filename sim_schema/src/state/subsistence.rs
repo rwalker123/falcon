@@ -387,6 +387,21 @@ pub struct HerdTelemetryState {
     /// [`Self::material_per_biomass`]. Appended (append-only).
     #[serde(default)]
     pub per_worker_material: Vec<MaterialPayoff>,
+    /// **What the Corral rung would pay, per material** (arc #527) — the material twin of
+    /// [`Self::corral_yield`] and the replacement for the retired `corral_trade`. Without it an
+    /// **inedible** quarry's Corral rung quotes nothing at all: a wolf's `corral_yield` is honestly
+    /// `0`, so the compose sheet's *"→ then +Y"* had no number.
+    ///
+    /// Priced on the **same** pen MSY biomass its food sibling is, so a rung's two readouts cannot
+    /// describe different harvests. **Gross** like `corral_yield` — the pen's feed is a provisions
+    /// debit and never touches it. **Empty is "no row"**, including on a herd that never offers the
+    /// rung. Appended (append-only).
+    #[serde(default)]
+    pub corral_material: Vec<MaterialPayoff>,
+    /// The **Tame** rung's twin of [`Self::corral_material`], priced on the pastoral MSY biomass
+    /// [`Self::pastoral_yield`] reads its provisions from. Appended (append-only).
+    #[serde(default)]
+    pub pastoral_material: Vec<MaterialPayoff>,
 }
 
 impl Default for HerdTelemetryState {
@@ -456,6 +471,8 @@ impl Default for HerdTelemetryState {
             // No material — the ordinary case, and an EMPTY list rather than a row of zeros.
             material_per_biomass: Vec::new(),
             per_worker_material: Vec::new(),
+            corral_material: Vec::new(),
+            pastoral_material: Vec::new(),
         }
     }
 }
@@ -648,6 +665,26 @@ pub struct ForagePatchState {
     /// `thriving`) — see [`Self::collapse_fraction`].
     #[serde(default)]
     pub stressed_fraction: f32,
+    /// **What ONE UNIT of this patch's biomass is MADE OF** (arc #527) — the material twin of
+    /// [`Self::provisions_per_biomass`], and the replacement for the retired `trade_per_biomass`.
+    ///
+    /// It is the **rung-1** half of the material story: `FloraShareInfo`'s two payoffs quote a
+    /// commitment at rungs 2 and 3, and a *wild* gather had nothing at all — a tile whose basket
+    /// carries a cash crop read food-and-fodder-only while the turn banked fibre. Composes at any
+    /// floor by the rule the scalar rates use.
+    ///
+    /// **A patch is a MIXED basket.** The rows are decomposed per species
+    /// ([`crate::ForagePatchState`]'s composition keeps each one's own reading) and merged **by
+    /// material id** for the rate; the *readings* are never averaged. Appended (append-only).
+    #[serde(default)]
+    pub material_per_biomass: Vec<MaterialPayoff>,
+    /// **What ONE GATHERER brings home per turn, per material** — the twin of
+    /// [`Self::per_worker_yield`], so a sheet clamps `min(workers × rate, ceiling)` per material.
+    ///
+    /// Folds in the tile's **seasonal weight** exactly as [`Self::per_worker_yield`] does, so it is
+    /// honestly **empty in a dead season**. Appended (append-only).
+    #[serde(default)]
+    pub per_worker_material: Vec<MaterialPayoff>,
 }
 
 /// **One material a commitment would pay, and how much of it per turn** — a row of

@@ -1055,6 +1055,9 @@ fn seed_snapshot() -> WorldSnapshot {
         // the same reason the curve above is.
         herd.material_per_biomass = rows();
         herd.per_worker_material = rows();
+        // …and the two investment rungs' material payoffs.
+        herd.corral_material = rows();
+        herd.pastoral_material = rows();
     }
     s.food_modules = rows();
     // **The kit roster**, and each entry's `jobs` / `item_ids` — repeated fields inside a repeated
@@ -1110,6 +1113,10 @@ fn seed_snapshot() -> WorldSnapshot {
         // Shared on the state struct (a tile's basket, not a frame's), so the fixture's rows are
         // handed over as one — the encoded bytes are identical either way.
         patch.composition = composition.into();
+        // What a gather of this patch is MADE OF (arc #527) — two nested repeated fields, seeded for
+        // the same reason the curve below is.
+        patch.material_per_biomass = rows();
+        patch.per_worker_material = rows();
         // The TILE's per-rung vector (#426) — the plant twin of `hunt_policy_ceilings` above, and
         // seeded for the same reason: a repeated field the fixture leaves empty is a field the decode
         // guard cannot exercise, which is how four appended fields reached the client as zeros.

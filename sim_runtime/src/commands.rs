@@ -456,6 +456,9 @@ pub struct DenialRow {
     pub animals_killed: u32,
     pub delivered_food: f32,
     pub wasted_food: f32,
+    /// **What the raid lands, per material** — the same haul `delivered_food` converts, and on an
+    /// inedible quarry the whole of it. **Empty is "no row", never zero**, and it is never summed.
+    pub delivered_material: Vec<MaterialPayoff>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1583,6 +1586,14 @@ fn denial_row_to_proto(row: &DenialRow) -> pb::DenialRow {
         animals_killed: row.animals_killed,
         delivered_food: row.delivered_food,
         wasted_food: row.wasted_food,
+        delivered_material: row
+            .delivered_material
+            .iter()
+            .map(|payoff| pb::MaterialPayoff {
+                material_id: payoff.material_id.clone(),
+                amount: payoff.amount,
+            })
+            .collect(),
     }
 }
 
@@ -1596,6 +1607,14 @@ fn denial_row_from_proto(row: pb::DenialRow) -> DenialRow {
         animals_killed: row.animals_killed,
         delivered_food: row.delivered_food,
         wasted_food: row.wasted_food,
+        delivered_material: row
+            .delivered_material
+            .into_iter()
+            .map(|payoff| MaterialPayoff {
+                material_id: payoff.material_id,
+                amount: payoff.amount,
+            })
+            .collect(),
     }
 }
 

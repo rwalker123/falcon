@@ -1827,6 +1827,31 @@ table ForagePatchState {
   // fields describe the same cliff from either side and must be read together.
   collapseFraction:float = 0;
   stressedFraction:float = 0;
+  // --- WHAT A GATHER OF THIS PATCH IS MADE OF (appended last, arc #527) ---
+  // The replacement for the retired tradePerBiomass above, and the RUNG-1 half of the material
+  // story: FloraShareInfo.sowMaterialPayoff/cultivateMaterialPayoff quote rungs 3 and 2, and a WILD
+  // gather had nothing at all - a tile whose basket is 32% cotton and 26% tobacco read
+  // "0.24 FOOD, - FODDER" while the turn banked fibre and leaf.
+  //
+  //   materialPerBiomass = what ONE UNIT of this patch's biomass is made of. The material twin of
+  //                        provisionsPerBiomass/fodderPerBiomass, so it composes at ANY floor by the
+  //                        same rule: ceiling(floor) = max(0, B - floor*K) x rate.
+  //   perWorkerMaterial  = what ONE GATHERER brings home per turn - the twin of perWorkerYield, so
+  //                        the sheet clamps min(workers x rate, ceiling) PER MATERIAL. It folds in
+  //                        the tile's SEASONAL WEIGHT exactly as perWorkerYield does, so it is
+  //                        honestly EMPTY in a dead season.
+  //
+  // A PATCH IS A MIXED BASKET, WHICH IS THE ONE DIFFERENCE FROM THE HERD. The rows are decomposed
+  // per species (forage::patch_material_yields, each species carrying its own share and its own
+  // exact reading) and then merged BY MATERIAL ID for the rate - two species that both give fibre
+  // sum into one fibre rate, which is what a rate quote means and what the crop picker already does.
+  // Their CHARACTERISTIC READINGS are never averaged: that would invent a plant that is not growing
+  // there. The reading belongs to the batch that lands in the store (MaterialBatchState); this says
+  // only how much of what.
+  //
+  // EMPTY MEANS "NO ROW", NEVER "ZERO" - most baskets grow nothing anyone builds with.
+  materialPerBiomass:[MaterialPayoff];
+  perWorkerMaterial:[MaterialPayoff];
 }
 
 // One STANCE's ceiling on one tile, in every account the tile's basket pays (issue #426). The plant
@@ -2739,6 +2764,20 @@ table HerdTelemetryState {
   // published 0 would read as a herd that pays badly rather than one that pays in meat alone.
   materialPerBiomass:[MaterialPayoff];
   perWorkerMaterial:[MaterialPayoff];
+  // --- WHAT THE TWO INVESTMENT RUNGS WOULD PAY, PER MATERIAL (appended last, arc #527) ---
+  // The material twins of corralYield/pastoralYield, and the replacement for the retired
+  // corralTrade/pastoralTrade. Without them an INEDIBLE quarry's Tame and Corral rungs quote nothing
+  // at all: a wolf's corralYield and pastoralYield are honestly 0, so the compose sheet's
+  // "-> then +Y" had no number on either rung.
+  //
+  // Priced on the SAME pen/pastoral MSY biomass their food siblings are
+  // (SourceYieldForecast::managedYieldBiomass / pastoralYieldBiomass, resolved once in
+  // hunt_forecast), so a rung's two readouts cannot describe different harvests.
+  //
+  // corralMaterial is GROSS like corralYield - the pen's feed (penUpkeep) is a PROVISIONS debit and
+  // never touches it. EMPTY on a herd that never offers the rung, and EMPTY means "no row".
+  corralMaterial:[MaterialPayoff];
+  pastoralMaterial:[MaterialPayoff];
 }
 
 table CommandEventState {

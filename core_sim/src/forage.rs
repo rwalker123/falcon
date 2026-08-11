@@ -2238,6 +2238,12 @@ pub(crate) fn forage_forecast(
         // `Tame` is hunt-only — a patch has no pastoral rung — so it advertises no Tame payoff (the
         // plant twin of `ceiling_tame: 0`).
         pastoral_yield: NO_PASTORAL_YIELD,
+        // **The plant web quotes no investment payoff in BIOMASS.** Rung 2's own harvest is
+        // `tended_msy_take` and the crop picker prices its material quote on that directly
+        // (`commit_material_payoff`), so nothing reads these here — and a patch offers no `Tame`
+        // rung at all. Stated as the "no such rung" zero rather than a measurement.
+        managed_yield_biomass: crate::fauna::NO_INVESTMENT_RUNG_BIOMASS,
+        pastoral_yield_biomass: crate::fauna::NO_INVESTMENT_RUNG_BIOMASS,
     }
 }
 

@@ -2178,6 +2178,19 @@ pub struct DenialForecast {
     /// Food killed and left on the range — **the bulk of a raid's take**, and stated rather than
     /// hidden (§3).
     pub wasted_food: f32,
+    /// **What the raid actually LANDS, per material** — the same haul
+    /// [`Self::delivered_food`] converts, and on an **inedible** quarry the whole of it.
+    ///
+    /// Projected off the same `take.carried` accumulator `delivered_food` is, through the expression
+    /// the live arm's `credit_material_yield` is paid on — so a denial launch sheet's promise is
+    /// checkable against what the party brings home.
+    ///
+    /// **Its WASTE twin is deliberately absent**, and not for the reason the retired `wasted_trade`
+    /// was: a per-material vector states a projection perfectly well (this field proves it). Ray has
+    /// ruled the waste line out of scope — the waste is already legible as a percentage, so a
+    /// `wasted_material` buys a second reading of a fact the sheet states. Do **not** add a flat
+    /// "wasted materials" scalar: that is the retired trade axis under a new name.
+    pub delivered_material: Vec<crate::materials_config::MaterialPayoff>,
     // **RETIRED: `delivered_trade` / `wasted_trade`** (arc #527), with the trade axis they were the
     // two halves of. **The gap they leave is real and is deliberately not filled here:** on an
     // inedible quarry a denial raid`s whole destruction is in HIDES, and `wasted_food` reports `0`
@@ -2193,6 +2206,10 @@ struct DenialProjection {
     animals_killed: u32,
     delivered_food: f32,
     wasted_food: f32,
+    /// The biomass the party carried home over the raid — what the material projection is the
+    /// conversion of, kept in biomass for the reason `HuntTripForecast::delivered_material` is:
+    /// one accumulator beside `delivered_food`, so the two readouts describe one haul.
+    carried_biomass: f32,
 }
 
 /// **The pre-launch denial readout**, evaluated at three quantiles of the take's own distribution —
@@ -2247,6 +2264,13 @@ pub fn denial_forecast(
         animals_killed: likely.animals_killed,
         delivered_food: likely.delivered_food,
         wasted_food: likely.wasted_food,
+        // **The material half of the same haul** — the species' own rows over the biomass the
+        // likely projection carried, through the one seam the live credit is paid on.
+        delivered_material: crate::materials_config::material_yield_totals(
+            fauna.hunt_materials_for(&herd.species),
+            likely.carried_biomass,
+            EXPEDITION_OUTPUT_MULTIPLIER,
+        ),
     }
 }
 
@@ -2292,6 +2316,8 @@ fn denial_projection_at(
     let mut larder = scalar_zero();
     let mut animals_killed = 0u32;
     let mut delivered_food = 0.0_f32;
+    // The biomass the party carries home — see `DenialProjection::carried_biomass`.
+    let mut carried_biomass = 0.0_f32;
     let mut wasted_food = 0.0_f32;
     // **The headway window** (§3's *"its kills per turn below the herd's regrowth"*): the herd's
     // biomass halfway through the projection, so the verdict at the horizon is read over the whole
@@ -2315,6 +2341,7 @@ fn denial_projection_at(
                 animals_killed,
                 delivered_food,
                 wasted_food,
+                carried_biomass,
             };
         }
 
@@ -2346,6 +2373,7 @@ fn denial_projection_at(
         animals_killed += take.killed;
         let landed = hunt_yield.apply(take.carried, EXPEDITION_OUTPUT_MULTIPLIER);
         delivered_food += landed.provisions;
+        carried_biomass += take.carried;
         // **BOTH products of the wasted biomass, off ONE conversion** — the rule the delivered pair
         // above already follows. A food-only waste line reports `0` on an inedible quarry, which is
         // exactly the raid whose waste is total.
@@ -2361,6 +2389,7 @@ fn denial_projection_at(
                 animals_killed,
                 delivered_food,
                 wasted_food,
+                carried_biomass,
             };
         }
     }
@@ -2381,6 +2410,7 @@ fn denial_projection_at(
         animals_killed,
         delivered_food,
         wasted_food,
+        carried_biomass,
     }
 }
 

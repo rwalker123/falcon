@@ -494,9 +494,29 @@
       "has_owner": true,
       "is_cultivated": true,
       "is_field": true,
+      "material_per_biomass": [
+        {
+          "amount": 66.779999,
+          "material_id": "forage_patches[0].material_per_biomass[0].material_id"
+        },
+        {
+          "amount": 98.949997,
+          "material_id": "forage_patches[0].material_per_biomass[1].material_id"
+        }
+      ],
       "neglect_grace_remaining": 181,
       "owner": 114,
       "per_worker_biomass": 110.809998,
+      "per_worker_material": [
+        {
+          "amount": 85.18,
+          "material_id": "forage_patches[0].per_worker_material[0].material_id"
+        },
+        {
+          "amount": 90.279999,
+          "material_id": "forage_patches[0].per_worker_material[1].material_id"
+        }
+      ],
       "per_worker_yield": 54.48,
       "provisions_per_biomass": 5.97,
       "regrowth_samples": {"__packed": "PackedFloat32Array", "len": 11, "items": [64.120003, 37.02, 60.77, 28.27, 25.76, 51.169998, 22.4, 111.809998, 39.91, 108.449997, 53.68]},
@@ -597,9 +617,29 @@
       "has_owner": true,
       "is_cultivated": true,
       "is_field": true,
+      "material_per_biomass": [
+        {
+          "amount": 93.660004,
+          "material_id": "forage_patches[1].material_per_biomass[0].material_id"
+        },
+        {
+          "amount": 80.709999,
+          "material_id": "forage_patches[1].material_per_biomass[1].material_id"
+        }
+      ],
       "neglect_grace_remaining": 186,
       "owner": 21,
       "per_worker_biomass": 109.980003,
+      "per_worker_material": [
+        {
+          "amount": 22.07,
+          "material_id": "forage_patches[1].per_worker_material[0].material_id"
+        },
+        {
+          "amount": 38.400002,
+          "material_id": "forage_patches[1].per_worker_material[1].material_id"
+        }
+      ],
       "per_worker_yield": 108.360001,
       "provisions_per_biomass": 95.019997,
       "regrowth_samples": {"__packed": "PackedFloat32Array", "len": 11, "items": [50.919998, 94.879997, 68.43, 91.529999, 65.07, 109.040001, 30.07, 62.560001, 26.709999, 53.810001, 78.75]},
@@ -758,6 +798,16 @@
       "carrying_capacity": 59.91,
       "collapse_fraction": 9.08,
       "corral_build_fraction": 42.07,
+      "corral_material": [
+        {
+          "amount": 3.27,
+          "material_id": "herds[0].corral_material[0].material_id"
+        },
+        {
+          "amount": 80.559998,
+          "material_id": "herds[0].corral_material[1].material_id"
+        }
+      ],
       "corral_progress": 82.440002,
       "corral_yield": 50.880001,
       "corralled": true,
@@ -793,6 +843,16 @@
       "neglect_grace_remaining": 142,
       "next_x": 68,
       "next_y": 57,
+      "pastoral_material": [
+        {
+          "amount": 74.5,
+          "material_id": "herds[0].pastoral_material[0].material_id"
+        },
+        {
+          "amount": 69.400002,
+          "material_id": "herds[0].pastoral_material[1].material_id"
+        }
+      ],
       "pastoral_yield": 90.18,
       "pen_extend_progress": 34.240002,
       "pen_fed_fraction": 2.26,
@@ -834,6 +894,16 @@
       "carrying_capacity": 52.919998,
       "collapse_fraction": 77.970001,
       "corral_build_fraction": 0.28,
+      "corral_material": [
+        {
+          "amount": 37.32,
+          "material_id": "herds[1].corral_material[0].material_id"
+        },
+        {
+          "amount": 9.98,
+          "material_id": "herds[1].corral_material[1].material_id"
+        }
+      ],
       "corral_progress": 69.410004,
       "corral_yield": 35.5,
       "corralled": true,
@@ -869,6 +939,16 @@
       "neglect_grace_remaining": 57,
       "next_x": 1,
       "next_y": 12,
+      "pastoral_material": [
+        {
+          "amount": 4.45,
+          "material_id": "herds[1].pastoral_material[0].material_id"
+        },
+        {
+          "amount": 49.52,
+          "material_id": "herds[1].pastoral_material[1].material_id"
+        }
+      ],
       "pastoral_yield": 53.27,
       "pen_extend_progress": 58.25,
       "pen_fed_fraction": 94.949997,

@@ -241,10 +241,10 @@ pub use labor_config::{
 };
 pub use map_preset::{ErosionConfig, MapPreset, MapPresets, MapPresetsHandle, BUILTIN_MAP_PRESETS};
 pub use materials_config::{
-    credit_material_yield, load_materials_config_from_env, BandKey, CharacteristicBand,
-    HandWorking, MaterialDef, MaterialPayoff, MaterialYieldDef, MaterialYieldError,
-    MaterialsConfig, MaterialsConfigError, MaterialsConfigHandle, MaterialsConfigMetadata,
-    BUILTIN_MATERIALS_CONFIG,
+    credit_material_yield, load_materials_config_from_env, material_yield_totals, BandKey,
+    CharacteristicBand, HandWorking, MaterialDef, MaterialPayoff, MaterialYieldDef,
+    MaterialYieldError, MaterialsConfig, MaterialsConfigError, MaterialsConfigHandle,
+    MaterialsConfigMetadata, BUILTIN_MATERIALS_CONFIG,
 };
 pub use recipes_config::{
     load_recipes_config_from_env, CraftingTuning, RecipeDef, RecipeGrade, RecipeInput,

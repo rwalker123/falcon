@@ -3922,6 +3922,21 @@ pub struct SourceYieldForecast {
     /// `0` on a source that never offers Tame: a forage patch (hunt-only verb), or a herd already
     /// penned or forage-tended. Crosses the wire as `HerdTelemetryState.pastoralYield`.
     pub pastoral_yield: YieldAccounts,
+    /// **The BIOMASS [`Self::managed_yield`] and [`Self::pastoral_yield`] are the conversion of** —
+    /// the two investment rungs' harvests before any rate is applied.
+    ///
+    /// **The MATERIAL account needs them and the scalar accounts do not**, which is the same
+    /// asymmetry `forage::field_harvest_biomass` already states one web over: a material's
+    /// `per_biomass` is a rate on the *carcass*, and an inedible species' currency components are
+    /// all `0`, so there is no currency to scale off. Without these a wolf's Tame and Corral rungs
+    /// could quote nothing at all — which is exactly what the retired `pastoralTrade`/`corralTrade`
+    /// used to say and what their material replacements say now.
+    ///
+    /// `0.0` on a source that offers neither rung (a forage patch, a herd already penned), matching
+    /// the `NO_PASTORAL_YIELD` convention beside it.
+    pub managed_yield_biomass: f32,
+    /// See [`Self::managed_yield_biomass`].
+    pub pastoral_yield_biomass: f32,
     /// **One animal's worth of yield** — `body_mass` through the same species vector every other
     /// field here uses — or **[`YieldAccounts::ZERO`] for a source that does not quantise**
     /// (intensification ladder slice 8).
@@ -3966,6 +3981,11 @@ pub struct SourceYieldForecast {
     /// slaughtered, not stalked). The same statement `engage_rate: f32::INFINITY` makes beside it.
     pub fight: Option<(HuntingParty, QuarryFight)>,
 }
+
+/// **The biomass an investment rung a source does not offer would harvest: none.** The biomass twin
+/// of [`NO_PASTORAL_YIELD`], named rather than a bare `0.0` because it is the statement *"there is no
+/// such rung here"* rather than a measurement of an empty one.
+pub(crate) const NO_INVESTMENT_RUNG_BIOMASS: f32 = 0.0;
 
 /// [`SourceYieldForecast::pastoral_yield`] for a source that never offers the `Tame` verb — a forage
 /// patch, or a herd already penned/forage-tended. `0` = *no Tame payoff to advertise*, the pastoral
@@ -4037,6 +4057,11 @@ impl SourceYieldForecast {
             // A rung-3 managed source (a Pen or a Field) is past taming — a penned herd never offers
             // the Tame verb — so it advertises no pastoral payoff.
             pastoral_yield: NO_PASTORAL_YIELD,
+            // **A rung-3 source quotes no INVESTMENT payoff at all** — it is already there — so the
+            // biomass behind those quotes is the same "no rung to advertise" zero. A penned herd's
+            // live material credit rides its actual take, not this.
+            managed_yield_biomass: NO_INVESTMENT_RUNG_BIOMASS,
+            pastoral_yield_biomass: NO_INVESTMENT_RUNG_BIOMASS,
         }
     }
 
@@ -6654,6 +6679,21 @@ pub(crate) fn hunt_forecast(
             hunt_yield.apply(herd.body_mass, output_multiplier),
         );
     }
+    // **The two investment rungs' harvests, in BIOMASS, resolved once.** Both quotes below are a
+    // rate applied to one of these, and the material account needs the biomass itself — see
+    // `SourceYieldForecast::managed_yield_biomass`. Same `biomass_before_regrowth` basis and
+    // `carrying_capacity` the wild ceiling uses, so the ONLY difference from Sustain is the rung's
+    // boosted `r`.
+    let pen_msy_biomass = sustainable_yield(
+        herd.biomass_before_regrowth,
+        herd.carrying_capacity,
+        &pen_ecology_for(herd, fauna),
+    );
+    let pastoral_msy_biomass = sustainable_yield(
+        herd.biomass_before_regrowth,
+        herd.carrying_capacity,
+        &pastoral_ecology_for(herd, fauna),
+    );
     SourceYieldForecast {
         per_worker_yield: hunt_yield.apply(per_worker_biomass_capacity.max(0.0), output_multiplier),
         // The quantum that makes this preview pulse exactly as the take does (slice 8).
@@ -6686,28 +6726,19 @@ pub(crate) fn hunt_forecast(
         // `biomass_before_regrowth` basis and `carrying_capacity` the wild `ceiling` closure uses, so
         // the ONLY difference from Sustain is the pen ecology's boosted `r`. The **actual** pen take
         // stays constant-escapement (`corral_yield`) — see the `is_corralled()` early-return.
-        managed_yield: hunt_yield.apply(
-            sustainable_yield(
-                herd.biomass_before_regrowth,
-                herd.carrying_capacity,
-                &pen_ecology_for(herd, fauna),
-            ),
-            output_multiplier,
-        ),
+        managed_yield: hunt_yield.apply(pen_msy_biomass, output_multiplier),
         // The Tame rung's PAYOFF (the pastoral analog of `managed_yield` above): the pastoral
         // **sustained MSY** — what a Sustain hunt pays once this herd is tamed — projected for a
         // still-wild herd on the same basis as Sustain, so the only difference is the pastoral `r`.
         // `ceiling_tame` is the during-building dip; this is the `→ +Y` the client renders. A wild
         // herd whose species never tames (`wild` ceiling) reads its wild MSY here, which is fine — the
         // client only surfaces it on the Tame affordance, hidden on a non-tameable herd.
-        pastoral_yield: hunt_yield.apply(
-            sustainable_yield(
-                herd.biomass_before_regrowth,
-                herd.carrying_capacity,
-                &pastoral_ecology_for(herd, fauna),
-            ),
-            output_multiplier,
-        ),
+        pastoral_yield: hunt_yield.apply(pastoral_msy_biomass, output_multiplier),
+        // **The biomass both quotes above are the conversion of** — stated once and handed over, so
+        // the material account (which has no currency to scale off on an inedible species) reads the
+        // *same* harvest the food quote does rather than a second `sustainable_yield` call.
+        managed_yield_biomass: pen_msy_biomass,
+        pastoral_yield_biomass: pastoral_msy_biomass,
     }
 }
 

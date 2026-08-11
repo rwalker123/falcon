@@ -317,6 +317,18 @@ fn denial_row_to_dict(row: &sim_runtime::DenialRow) -> VarDictionary {
     let _ = dict.insert("animals_killed", i64::from(row.animals_killed));
     let _ = dict.insert("delivered_food", f64::from(row.delivered_food));
     let _ = dict.insert("wasted_food", f64::from(row.wasted_food));
+    // WHAT THE RAID LANDS, PER MATERIAL (arc #527) — the same haul `delivered_food` converts, and on
+    // an inedible quarry the whole of it. An ARRAY of `{ material_id, amount }` dicts; EMPTY means
+    // "no row", never "zero". Its WASTE twin does not exist by decision — the waste is already
+    // legible as a percentage — so do not synthesize one.
+    let mut materials = VarArray::new();
+    for payoff in &row.delivered_material {
+        let mut entry = VarDictionary::new();
+        let _ = entry.insert("material_id", payoff.material_id.as_str());
+        let _ = entry.insert("amount", f64::from(payoff.amount));
+        materials.push(&entry.to_variant());
+    }
+    let _ = dict.insert("delivered_material", &materials);
     dict
 }
 

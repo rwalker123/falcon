@@ -142,6 +142,20 @@ pub(crate) fn herds_to_array(
             "per_worker_material",
             &material_payoffs_to_array(herd.perWorkerMaterial()),
         );
+        // THE TWO INVESTMENT RUNGS' MATERIAL PAYOFFS (arc #527) — the twins of `corral_yield` /
+        // `pastoral_yield`, and the replacement for the retired `corral_trade`/`pastoral_trade`.
+        // Without them an INEDIBLE quarry's Tame and Corral rungs quote nothing at all: a wolf's food
+        // payoff on both is honestly `0`, so the "→ then +Y" face had no number. Priced on the same
+        // MSY biomass their food siblings are. EMPTY = "no row" (including a rung this herd never
+        // offers), never "zero".
+        let _ = dict.insert(
+            "corral_material",
+            &material_payoffs_to_array(herd.corralMaterial()),
+        );
+        let _ = dict.insert(
+            "pastoral_material",
+            &material_payoffs_to_array(herd.pastoralMaterial()),
+        );
 
         // **WHAT ONE HUNTER MOVES, IN BIOMASS** — the crew term the panel's two worker targets
         // divide by (`clear it now` = room / this, `hold it after` = the regrowth at the floor /
@@ -646,10 +660,27 @@ pub(crate) fn forage_patches_to_array(
             f64::from(patch.provisionsPerBiomass()),
         );
         let _ = dict.insert("fodder_per_biomass", f64::from(patch.fodderPerBiomass()));
-        // **RETIRED with the trade-goods yield axis** (arc #527): the wire slot is
-        // `(deprecated)` and the sim writes nothing to it. What a source pays beyond food is
-        // MATERIALS, which ride the cohort's `material_batches`. The GDScript that read the
-        // key it used to insert is a separate pass — the key simply stops appearing.
+        // WHAT A GATHER OF THIS PATCH IS MADE OF (arc #527) — the material twins of the two rates
+        // above, and the RUNG-1 half of the material story: the crop picker's
+        // `sow_material_payoff`/`cultivate_material_payoff` quote rungs 3 and 2, and a WILD gather
+        // had nothing at all. A tile whose basket is 32% cotton and 26% tobacco read
+        // "0.24 FOOD, — FODDER" while the turn banked fibre and leaf.
+        //
+        //   material_per_biomass — composes at ANY floor: `max(0, B − floor*K) × rate`.
+        //   per_worker_material  — clamp `min(workers × rate, ceiling)` PER MATERIAL. Folds in the
+        //                          tile's SEASONAL WEIGHT, so it is honestly EMPTY in a dead season.
+        //
+        // A PATCH IS A MIXED BASKET: two species that both give fibre are merged into one fibre
+        // RATE (which is what a rate means), but their characteristic READINGS are never averaged —
+        // those ride the batches in `material_batches`. EMPTY = "no row", never "zero". DO NOT SUM.
+        let _ = dict.insert(
+            "material_per_biomass",
+            &material_payoffs_to_array(patch.materialPerBiomass()),
+        );
+        let _ = dict.insert(
+            "per_worker_material",
+            &material_payoffs_to_array(patch.perWorkerMaterial()),
+        );
 
         // **WHAT ONE GATHERER MOVES, IN BIOMASS** — the plant twin of the herd's field above, with
         // the tile's SEASONAL WEIGHT folded in exactly as `per_worker_yield` folds it. So it is

@@ -292,6 +292,15 @@ substrate is in better shape for it than the scalar ever was.
 > per material, projected off the same carried biomass `delivered_food` is. The *in-flight* half
 > needed nothing: `materialBatches` is ungated by `ResidentBand`, so a party's carried materials are
 > already on the wire with their exact readings.
+>
+> **And the WILD gather, fourth — which is where the pattern was finally named.** Three surfaces had
+> been closed one bug report at a time, each scoped to the reported symptom rather than to the
+> *account*. An audit of every `(deprecated)` trade field then found the rest at once:
+> `ForagePatchState.materialPerBiomass` / `perWorkerMaterial` (rung 1, which had nothing at all),
+> `HerdTelemetryState.corralMaterial` / `pastoralMaterial` (an inedible quarry's Tame and Corral rungs
+> quoted nothing), and `DenialRow.deliveredMaterial`. The audit table lives in
+> `.claude/rules/core_sim/flora.md` and `fauna.md`; what remains unreplaced is listed there with the
+> reason, not left to the next screenshot.
 
 > **The retired `FactionInventory` grant was a different thing that shared the name.** The shipped
 > start profile used to hand the faction 40 `trade_goods`, which `apply_trade_goods_bonus` then
