@@ -10,7 +10,7 @@ use bevy::{
 use sim_runtime::{
     encode_delta_flatbuffer, encode_snapshot_flatbuffer, AxisBiasState, CampaignProfileState,
     CharacteristicBandState, ClimateBandsState, CohortStoreState, CommandEventState,
-    CorruptionLedger, CorruptionSubsystem, CraftKnowledgeState, CrisisGaugeState,
+    ConnectionState, CorruptionLedger, CorruptionSubsystem, CraftKnowledgeState, CrisisGaugeState,
     CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
     CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
@@ -108,6 +108,7 @@ use crate::crisis::{
 
 mod campaign;
 mod capture;
+mod connections;
 pub(crate) mod crafting;
 mod culture;
 mod economy;
@@ -1112,6 +1113,7 @@ mod tests {
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
             discovered_sites: Vec::new(),
+            connections: Vec::new(),
             demographics: Vec::new(),
             forage_patches: Vec::new(),
             intensification_knowledge: Vec::new(),
@@ -1182,6 +1184,7 @@ mod tests {
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
             discovered_sites: Vec::new(),
+            connections: Vec::new(),
             demographics: Vec::new(),
             forage_patches: Vec::new(),
             intensification_knowledge: Vec::new(),
@@ -1247,6 +1250,7 @@ mod tests {
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
             discovered_sites: Vec::new(),
+            connections: Vec::new(),
             demographics: Vec::new(),
             forage_patches: Vec::new(),
             intensification_knowledge: Vec::new(),

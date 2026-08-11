@@ -3564,6 +3564,40 @@ table CampaignSection {
   commandEventsRetentionTurns:uint;
 }
 
+// --- Connections: the contact primitive (arc #527, `docs/plan_contact_and_logistics.md` §Q2) ---
+// A DIRECTED tie: `observerBandId` knows `subjectBandId`. The reverse edge is a separate row.
+//
+// **It is a RAW primitive and must stay one.** It carries no tariff, no openness, no goods, no
+// culture and no knowledge — the riders that sit on top of it (logistics, culture, knowledge) each
+// define their own use of it and own their own state. A field here that belongs to one rider is how
+// the retired `TradeLink` ended up carrying four of them.
+//
+// **Faction is a property of the ENDPOINT, never a field on the edge.** There is deliberately no
+// faction column and no same-faction/cross-faction distinction anywhere in this contract.
+//
+// Filtered to the VIEWER: only edges whose observer band belongs to `ViewerFaction` are published —
+// you see your own ties, not other peoples'.
+table ConnectionState {
+  observerBandId:ulong;
+  subjectBandId:ulong;
+  // Clock 2: 0..=1, where 0 is a PARKED tie ("we know such a people exist and have no current tie")
+  // rather than an absent one. At zero nothing flows.
+  strength:float;
+  // Clock 1: where the subject was the last time the observer actually SAW them, and on which turn.
+  // Not refreshed by a turn without contact — that is the whole of "you know where they were".
+  lastSeenX:uint;
+  lastSeenY:uint;
+  lastSeenTurn:ulong;
+  // Drives clocks 2 and 3: the turn the tie was last refreshed by a contact event.
+  lastContactTurn:ulong;
+  // The turn the tie first formed. Never changes.
+  firstContactTurn:ulong;
+}
+
+table ConnectionSection {
+  connections:[ConnectionState];
+}
+
 table WorldSnapshot {
   header:SnapshotHeader;
   capabilityFlags:uint;
@@ -3576,6 +3610,8 @@ table WorldSnapshot {
   culture:CultureSection;
   vision:VisionSection;
   campaign:CampaignSection;
+  // Appended LAST (append-only schema discipline).
+  connections:ConnectionSection;
 }
 
 table WorldDelta {
@@ -3590,6 +3626,10 @@ table WorldDelta {
   culture:CultureSection;
   vision:VisionSection;
   campaign:CampaignSection;
+  // Appended LAST, mirroring `WorldSnapshot`. A section with no delta twin is permanently stale on
+  // a delta-fed client — the defect `campaign_profiles` actually was, and the one
+  // `core_sim/tests/delta_streaming.rs` exists to catch.
+  connections:ConnectionSection;
 }
 
 union SnapshotPayload {

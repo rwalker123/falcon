@@ -143,6 +143,8 @@ fn spawn_world() -> App {
     app.world
         .insert_resource(VisibilityConfigHandle::new(VisibilityConfig::builtin()));
     app.world.insert_resource(VisibilityLedger::default());
+    app.world
+        .insert_resource(core_sim::ContactsThisTurn::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_herds);
     app.world.run_system_once(spawn_initial_forage);
@@ -366,6 +368,7 @@ fn spawn_hunt_party_of(
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
                 pending_reveal: Vec::new(),
+                pending_contacts: Default::default(),
                 kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Hunt),
             },
         ))

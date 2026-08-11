@@ -31,6 +31,17 @@ pub struct SimulationMetrics {
     pub herd_density_avg: f32,
     pub herd_density_peak: f32,
     pub herd_density_ratio: f32,
+    /// Directed ties standing in the [`crate::connections::ConnectionLedger`] after this turn's
+    /// clocks ran — a parked edge at strength 0 still counts, because the edge is the memory.
+    ///
+    /// The three below are written by `advance_connections` in the Visibility stage rather than by
+    /// [`collect_metrics`]: only that system knows which edges *formed* and which were *reaped*,
+    /// and re-deriving either from the ledger afterwards is impossible (both are differences).
+    pub connections_live: u32,
+    /// Edges that did not exist before this turn's contacts.
+    pub connections_formed: u32,
+    /// Edges removed this turn by clock 3 — nobody has seen those people in `forget_turns`.
+    pub connections_reaped: u32,
 }
 
 #[allow(clippy::too_many_arguments)]

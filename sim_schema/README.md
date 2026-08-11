@@ -8,7 +8,7 @@ dependencies.
 
 ## Module map
 
-The crate is partitioned along the **same nine domain sections `schemas/snapshot.fbs`
+The crate is partitioned along the **same ten domain sections `schemas/snapshot.fbs`
 uses**, so each feature arc appends into its own file instead of colliding in one
 6k-line module. `src/lib.rs` is module declarations plus glob re-exports, so every
 item is still reachable as `sim_schema::Foo` — consumers never name a submodule.
@@ -23,6 +23,7 @@ item is still reachable as `sim_schema::Foo` — consumers never name a submodul
 | `src/state/governance.rs` | power nodes/incidents/telemetry, corruption ledger, crisis gauges + overlay |
 | `src/state/culture.rs` | culture layers/traits/tensions, influential individuals, influence domains, sentiment telemetry |
 | `src/state/campaign.rs` | campaign profiles, command events, victory, and the whole Telling family (beats, voice, forks, stance) |
+| `src/state/connections.rs` | `ConnectionState` — the directed band-to-band tie contact leaves behind (arc #527, `docs/plan_contact_and_logistics.md` §Q2). Deliberately carries **no** faction column and no rider vocabulary: faction is a property of the endpoints, and logistics/culture/knowledge each own their own state |
 | `src/world.rs` | the deliberately **flat** `WorldSnapshot`/`WorldDelta`, `SnapshotHeader`, `hash_snapshot`, `MapExport`, and the **JSON** codecs (`encode_/decode_snapshot_json`, `_delta_json` — the only pair here with both directions; `MapExport` rides JSON too). **There is no bincode codec** — `finalize`/`hash_snapshot` call `bincode::serialize` inline purely to get bytes to hash, and nothing anywhere bincode-*decodes* these structs: the bincode snapshot socket was retired in #388, and the frames were never decodable anyway (`skip_serializing_if` omits fields a non-self-describing format still expects back) |
 | `src/codec/mod.rs` | `encode_snapshot_flatbuffer`/`encode_delta_flatbuffer`, the `build_*_flatbuffer` envelope assembly, and helpers shared by two or more sections (`create_scalar_raster`, `create_float_raster`, `create_known_fragments`) |
 | `src/codec/<section>.rs` | that section's `serialize_<section>_section` + `_delta` plus the `create_*`/`to_fb_*` helpers only those two use. `vision` is codec-only — its state is the rasters in `state/map.rs` |

@@ -340,6 +340,7 @@ fn spawn_party(
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
                 pending_reveal: Vec::new(),
+                pending_contacts: Default::default(),
                 kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Hunt),
                 // Derived per-turn telemetry; a raid never reaches `AwaitingOrders`, so it stays
                 // empty for the party's whole life.

@@ -1,6 +1,6 @@
 //! FlatBuffers encoders for the world payloads.
 //!
-//! `build_snapshot_flatbuffer` / `build_delta_flatbuffer` assemble the envelope from the nine
+//! `build_snapshot_flatbuffer` / `build_delta_flatbuffer` assemble the envelope from the
 //! per-domain section serializers in the sibling modules; helpers shared by two or more sections
 //! live here.
 
@@ -15,6 +15,7 @@
 // ---------------------------------------------------------------------------
 
 mod campaign;
+mod connections;
 mod culture;
 mod economy;
 mod governance;
@@ -28,6 +29,7 @@ use crate::codec::campaign::{
     create_campaign_label, create_victory_state, serialize_campaign_section,
     serialize_campaign_section_delta,
 };
+use crate::codec::connections::{serialize_connection_section, serialize_connection_section_delta};
 use crate::codec::culture::{serialize_culture_section, serialize_culture_section_delta};
 use crate::codec::economy::{serialize_economy_section, serialize_economy_section_delta};
 use crate::codec::governance::{serialize_governance_section, serialize_governance_section_delta};
@@ -101,6 +103,7 @@ fn build_snapshot_flatbuffer<'a>(
     let culture = serialize_culture_section(builder, snapshot);
     let vision = serialize_vision_section(builder, snapshot);
     let campaign = serialize_campaign_section(builder, snapshot, victory_state);
+    let connections = serialize_connection_section(builder, snapshot);
 
     let snapshot_table = fb::WorldSnapshot::create(
         builder,
@@ -116,6 +119,7 @@ fn build_snapshot_flatbuffer<'a>(
             culture: Some(culture),
             vision: Some(vision),
             campaign: Some(campaign),
+            connections: Some(connections),
         },
     );
 
@@ -174,6 +178,7 @@ fn build_delta_flatbuffer<'a>(
     let culture = serialize_culture_section_delta(builder, delta);
     let vision = serialize_vision_section_delta(builder, delta);
     let campaign = serialize_campaign_section_delta(builder, delta, victory_state);
+    let connections = serialize_connection_section_delta(builder, delta);
 
     let delta_table = fb::WorldDelta::create(
         builder,
@@ -189,6 +194,7 @@ fn build_delta_flatbuffer<'a>(
             culture: Some(culture),
             vision: Some(vision),
             campaign: Some(campaign),
+            connections: Some(connections),
         },
     );
 

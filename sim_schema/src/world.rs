@@ -9,6 +9,7 @@ use crate::state::campaign::{
     CampaignLabel, CampaignProfileState, CommandEventState, PendingForksState, StanceState,
     VictorySnapshotState, VoiceMediumState,
 };
+use crate::state::connections::ConnectionState;
 use crate::state::culture::{
     AxisBiasState, CultureLayerState, CultureTensionState, InfluentialIndividualState,
     SentimentTelemetryState,
@@ -251,6 +252,11 @@ pub struct WorldSnapshot {
     pub culture_layers: Vec<CultureLayerState>,
     pub culture_tensions: Vec<CultureTensionState>,
     pub discovery_progress: Vec<DiscoveryProgressEntry>,
+    /// **The viewer's own directed ties** (`docs/plan_contact_and_logistics.md` §Q2) — a raw
+    /// primitive carrying no rider's opinion, filtered to edges whose *observer* band belongs to
+    /// the viewer faction. Ordered by `(observer, subject)`, the ledger's own key order.
+    #[serde(default)]
+    pub connections: Vec<ConnectionState>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -369,6 +375,9 @@ pub struct WorldDelta {
     /// writes the FlatBuffers vector only for `Some`, so absence carries the distinction.
     pub culture_tensions: Option<Vec<CultureTensionState>>,
     pub discovery_progress: Vec<DiscoveryProgressEntry>,
+    /// `None` = unchanged this frame. A whole-vector diff like the other `Whole` sections; a
+    /// section with no delta twin is permanently stale on a delta-fed client.
+    pub connections: Option<Vec<ConnectionState>>,
 }
 
 pub fn hash_snapshot(snapshot: &WorldSnapshot) -> u64 {

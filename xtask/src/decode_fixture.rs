@@ -1124,6 +1124,11 @@ fn seed_snapshot() -> WorldSnapshot {
     }
     s.intensification_knowledge = rows();
 
+    // --- connections -----------------------------------------------------
+    // The contact primitive's own section (arc #527). Seeded for the reason every repeated
+    // field here is: an empty vector is a field the decode guard cannot exercise.
+    s.connections = rows();
+
     // --- knowledge -------------------------------------------------------
     s.discovered_sites = rows();
     for entry in &mut s.discovered_sites {

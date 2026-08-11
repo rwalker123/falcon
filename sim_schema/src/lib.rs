@@ -1,6 +1,6 @@
 //! Wire-facing schema for the simulation: the flat world payloads and their codecs.
 //!
-//! The crate is partitioned along the **nine domain sections of `snapshot.fbs`**:
+//! The crate is partitioned along the **domain sections of `snapshot.fbs`**:
 //!
 //! - [`state`] — the world-state structs and enums, one module per section (Vision has none: its
 //!   three rasters are `ScalarRasterState` fields on [`WorldSnapshot`] itself).

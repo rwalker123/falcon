@@ -22,6 +22,8 @@ mod combat_config;
 mod components;
 mod config_load;
 pub mod config_override;
+pub mod connections;
+mod connections_config;
 pub mod crafting;
 mod creatures_config;
 mod crisis;
@@ -117,6 +119,14 @@ pub use config_load::ConfigLoadError;
 pub use config_override::{
     clear_config_overrides, install_config_override, spec_for as config_override_spec_for,
     ConfigKindSpec, ConfigOverrideError, InstalledOverride,
+};
+pub use connections::{
+    advance_connections, Connection, ConnectionKey, ConnectionLedger, ContactsThisTurn, FULL_TIE,
+    NO_TIE,
+};
+pub use connections_config::{
+    load_connections_config_from_env, ConnectionStrengthConfig, ConnectionsConfig,
+    ConnectionsConfigHandle, ConnectionsConfigMetadata, BUILTIN_CONNECTIONS_CONFIG,
 };
 pub use creatures_config::{
     load_creatures_config_from_env, CreatureDef, CreaturesConfig, CreaturesConfigHandle,
@@ -478,6 +488,11 @@ pub fn build_headless_app() -> App {
     let (visibility_config, visibility_metadata) =
         visibility_config::load_visibility_config_from_env();
     let visibility_handle = visibility_config::VisibilityConfigHandle::new(visibility_config);
+    // The connection primitive's three clocks. It loads beside visibility because contact is found
+    // inside that sweep (`connections::ContactsThisTurn`).
+    let (connections_config, connections_metadata) =
+        connections_config::load_connections_config_from_env();
+    let connections_handle = connections_config::ConnectionsConfigHandle::new(connections_config);
     // **The materials table loads FIRST of the three**, because both food webs' yield edges are
     // reconciled against it: a species (plant or animal) naming a material that does not exist, or
     // stating a reading on an axis that material does not declare, is a boot panic rather than a
@@ -604,6 +619,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(CrisisOverlayCache::default())
         .insert_resource(visibility_handle)
         .insert_resource(visibility_metadata)
+        .insert_resource(connections_handle)
+        .insert_resource(connections_metadata)
         .insert_resource(materials_handle)
         .insert_resource(materials_metadata)
         .insert_resource(recipes_handle)
@@ -647,6 +664,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(supply::SupplyNetworkMembership::default())
         .insert_resource(visibility::VisibilityLedger::default())
         .insert_resource(visibility::VisibilitySweepTracker::default())
+        .insert_resource(connections::ConnectionLedger::default())
+        .insert_resource(connections::ContactsThisTurn::default())
         .insert_resource(visibility::ViewerFaction::default())
         .insert_resource(turn_pipeline_handle)
         .insert_resource(turn_pipeline_metadata)
@@ -928,6 +947,10 @@ pub fn build_headless_app() -> App {
                 (
                     visibility_systems::clear_active_visibility,
                     visibility_systems::calculate_visibility,
+                    // Right behind the sweep that FOUND the contacts: it consumes
+                    // `ContactsThisTurn` (which `calculate_visibility` and the expedition flush
+                    // both fill) and clears it, so the set is rebuilt from scratch every turn.
+                    connections::advance_connections,
                     visibility_systems::apply_visibility_decay,
                     sites::discover_sites,
                 )

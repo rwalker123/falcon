@@ -1159,6 +1159,7 @@ mod tests {
             phase: ExpeditionPhase::Outbound,
             announced: false,
             pending_reveal: Vec::new(),
+            pending_contacts: Default::default(),
             kit: crate::equipment_config::EquipmentConfig::builtin()
                 .default_kit(crate::equipment_config::KitJob::Hunt),
         };

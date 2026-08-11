@@ -3018,6 +3018,7 @@ fn handle_send_expedition(
                 phase: ExpeditionPhase::Outbound,
                 announced: false,
                 pending_reveal: Vec::new(),
+                pending_contacts: Default::default(),
                 // An outfitted party leaves with an empty trade pack — it earns its pelts in the
                 // field (`advance_expeditions`).
                 // **A scout carries the HUNT job's default kit.** `send_expedition` names no kit —
@@ -3444,6 +3445,7 @@ fn launch_detached_party(
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
                 pending_reveal: Vec::new(),
+                pending_contacts: Default::default(),
                 kit,
             },
             BandTravel { target: herd_pos },
@@ -8507,6 +8509,7 @@ mod tests {
                 phase: ExpeditionPhase::Outbound,
                 announced: false,
                 pending_reveal: Vec::new(),
+                pending_contacts: Default::default(),
                 kit: core_sim::EquipmentConfig::builtin().default_kit(KitJob::Hunt),
             },
         ));
