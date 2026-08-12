@@ -26,10 +26,12 @@ pub const BUILTIN_SUPPLY_NETWORK_CONFIG: &str = include_str!("data/supply_networ
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct SupplyNetworkConfig {
-    /// Connection radius, in tiles: two same-faction nodes share when within this distance.
+    /// **The distance at which a logistics link holds itself for free**, in tiles. Two *connected*
+    /// nodes (a live tie in [`crate::connections::ConnectionLedger`], either direction) pool when
+    /// within it; beyond it a link needs a route to hold it open, and goods move by a shipment.
     pub reach_tiles: u32,
     /// Max quantity of a single commodity a node may send or receive per turn (how *fast* a
-    /// network equalizes; reach decides *who* is connected).
+    /// network equalizes; reach and the tie decide *who* is connected).
     pub throughput_per_turn: f32,
     /// Fraction of each transfer lost in transit (`0` = frictionless, `1` = nothing arrives).
     pub friction: f32,

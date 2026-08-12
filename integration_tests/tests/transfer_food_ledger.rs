@@ -10,8 +10,8 @@
 //! people ate, what its own pen and its own raid cost it. So food that *moves between larders* fits
 //! nowhere in it — and two systems move food between larders every game:
 //!
-//! - **`balance_supply_networks`** equalises co-networked same-faction bands, every turn, since turn
-//!   one. This was a **pre-existing hole**: the two sibling ledger tests each stand up a *single*
+//! - **`balance_supply_networks`** equalises co-networked bands — within `reach_tiles` of each other
+//!   and holding a live connection — every turn, since turn one. This was a **pre-existing hole**: the two sibling ledger tests each stand up a *single*
 //!   band, no network forms (`MIN_NETWORK_MEMBERS` is 2), and the identity was therefore never
 //!   exercised against a transfer at all. `the_pre_transfer_identity_is_short_by_exactly_the_move`
 //!   below measures the gap rather than asserting it from the doc.
@@ -63,8 +63,9 @@ const NO_PRIOR_FRAME_LARDER: f32 = 0.0;
 const PARTY_WORKERS: u32 = 2;
 const CARGO_FOOD: f32 = 8.0;
 /// The faction the *destination* of a shipment belongs to. A different one, deliberately: it is the
-/// arc's own claim (faction is a property of the endpoint, never a branch) and it keeps the supply
-/// network — which pools **same-faction** bands — out of a test about a shipment.
+/// arc's own claim that faction is a property of the endpoint and never a branch. What keeps the
+/// supply network out of a shipment test is **distance**, not this — pooling asks only about reach
+/// and a live tie.
 const FOREIGN_FACTION: core_sim::FactionId = core_sim::FactionId(9);
 
 /// Every ledger term a band published this turn, read off the **exported snapshot** — the numbers a
@@ -354,8 +355,13 @@ fn the_food_ledger_reconciles_when_a_band_splits_mid_window() {
 /// its own, no pen and no raid, so the whole of its larder's rise is the shipment — and the ledger
 /// says so.
 ///
-/// The destination is a **different faction**, which is both the arc's claim (faction is never a
-/// branch) and what keeps the supply network out of a test about a shipment.
+/// The destination is a **different faction**, which is the arc's claim under test: faction is
+/// never a branch, so a shipment to strangers lands exactly as one to your own would.
+///
+/// **What keeps the supply network out of it is distance, not faction.** Pooling joins any two
+/// *connected* bands within `reach_tiles` whatever their factions, and a pooled arrival lands in
+/// the very counter this test measures — so the host is walked out of reach and the party is stood
+/// in its camp, which is the fixture the shipment wanted anyway.
 #[test]
 fn the_food_ledger_reconciles_when_a_shipment_lands() {
     let mut app = world();
@@ -365,17 +371,26 @@ fn the_food_ledger_reconciles_when_a_shipment_lands() {
         .expect("the band exists")
         .faction = FOREIGN_FACTION;
     let host_id = band_id(&app, host);
+    walk_out_of_reach(&mut app, host);
 
     // A loaded party standing in the destination's camp: it hands the cargo over on the next turn.
-    let host_pos = {
-        let tile = app
-            .world
-            .get::<PopulationCohort>(host)
-            .expect("the band")
-            .current_tile;
-        app.world.get::<Tile>(tile).expect("a real tile").position
-    };
-    spawn_shipment(&mut app, sender, host_id, host_pos, CARGO_FOOD);
+    let host_tile = app
+        .world
+        .get::<PopulationCohort>(host)
+        .expect("the band")
+        .current_tile;
+    let host_pos = app
+        .world
+        .get::<Tile>(host_tile)
+        .expect("a real tile")
+        .position;
+    let party = spawn_shipment(&mut app, sender, host_id, host_pos, CARGO_FOOD);
+    // The march is not this test's subject — the party is cloned off the sender, so it opens on the
+    // sender's tile and has to be stood where the shipment is being handed over.
+    app.world
+        .get_mut::<PopulationCohort>(party)
+        .expect("the party exists")
+        .current_tile = host_tile;
 
     let host_before = larder(&app, host);
     run_turn(&mut app);

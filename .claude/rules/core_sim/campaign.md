@@ -234,15 +234,57 @@ sim_schema/snapshot/native/`Hud.gd` exactly like `SedentarizationState`).
 
 ### Supply Network (logistics from turn 0)
 Bands are small logistics nodes: `balance_supply_networks` (`supply.rs`, `TurnStage::Logistics`,
-before Population consumes) connects **same-faction** bands within `reach_tiles` (via
-`grid_utils::wrapped_distance_sq`) into **supply networks** (union-find connected components) and
-each turn moves every commodity toward a **population-weighted per-capita balance** across the
-network. Transfers are **throughput-limited** (`throughput_per_turn` per node) and lose `friction`
-in transit; sub-`min_transfer` moves are dropped. So a gatherer band automatically feeds a scout
-band it's near (you can specialize labor), while a band beyond reach lives off its own larder.
-Reach decides *who* shares, throughput *how fast*, friction the leak — "free neighbor sharing" is
-just the high-throughput/low-friction limit. The per-commodity math is the pure, unit-tested
-`balance_commodity`. Config: `supply_network_config.json`.
+before Population consumes) joins **linked** bands into **supply networks** (union-find connected
+components) and each turn moves every commodity toward a **population-weighted per-capita balance**
+across the network. Transfers are **throughput-limited** (`throughput_per_turn` per node) and lose
+`friction` in transit; sub-`min_transfer` moves are dropped. So a gatherer band automatically feeds
+a scout band it's near (you can specialize labor), while a band beyond reach — or one nobody has met
+— lives off its own larder. Throughput decides *how fast*, friction the leak — "free neighbor
+sharing" is just the high-throughput/low-friction limit. The per-commodity math is the pure,
+unit-tested `balance_commodity`. Config: `supply_network_config.json`.
+
+> #### The link is a rider on a CONNECTION, and both halves of the rule are load-bearing
+>
+> **An undirected logistics link exists between two resident bands iff both hold** (`supply::tie_is_live`,
+> arc #527 §Q4):
+>
+> 1. `wrapped_distance_sq(a, b) <= reach_tiles²` — the geometry, unchanged; and
+> 2. `ConnectionLedger` holds a live tie (`strength > NO_TIE`) between their `BandId`s in **at least
+>    one direction**.
+>
+> The edge used to be derived from proximity alone, which made this a second independent
+> implementation of *"goods move between two bands"* beside a trade shipment's tie gate
+> (`connections.md` → "The first rider exists"). It is now the same object, which is what gives the
+> route ladder something to attach a route to.
+>
+> **`reach_tiles` stopped meaning "who shares" and now means "the distance at which a link holds
+> itself for free".** It has to stay: without it two bands that once met would pool across the whole
+> map, which is exactly the distant-splinter case a shipment exists to serve.
+>
+> **Either direction, not both.** A connection is directed — *who found whom* — and whether a rider
+> requires mutuality is the rider's business. Pooling is one undirected mechanism, and requiring both
+> edges would make the commonest traffic in the game depend on two independent sight sweeps agreeing
+> on the same turn.
+>
+> **A parked tie does not pool**: `strength == NO_TIE` is the keystone's *"at zero nothing flows"*.
+> **A cohort with no `BandId` is never even a node** — it has no identity to tie, so it cannot be an
+> endpoint.
+>
+> **There is no same-faction branch left.** Faction is dropped from the spatial-bin key and from the
+> pair test; the ledger gate is the whole filter, so a cross-faction edge differs only in whose
+> endpoints it joins. Inert today (one faction), and what makes #458 nearly free.
+>
+> **The ledger is read one stage EARLY, and that is accepted.** `advance_connections` runs later the
+> same turn in `TurnStage::Visibility`, so the pass sees the previous turn's contacts, and on the
+> world's first turn the ledger is empty and nothing pools at all. It is self-correcting: bands open
+> with `startup.food_reserve_days` of their own food, and two bands inside `reach_tiles` see each
+> other every turn, pinning the tie at `FULL_TIE` from turn 2 on. The stages are not reordered and
+> supply does not seed the ledger — a second producer of contact that no sight sweep agrees with is
+> the drift `connections.md` exists to prevent.
+>
+> The pre-refactor pooling numbers are pinned as literals by
+> `supply_network::a_connected_network_moves_exactly_what_the_proximity_network_moved`, paired with a
+> liveness assertion because "two runs agree" is also what a dead mechanism reports.
 
 Each turn the same pass also records **network membership** in the `SupplyNetworkMembership`
 resource (`entity → id`, cleared and rebuilt every turn): each connected component with ≥ 2 bands
@@ -506,11 +548,14 @@ shares the take path's yield helpers so forecast == actual.
 
 This is the general mechanism the arc scales: raise reach/throughput for settlements/cities. The
 cross-faction half is no longer a "trade policy on the supply network" — that framing died with the
-`TradeLink` slice it assumed. `docs/plan_contact_and_logistics.md` §Q4 **re-founds this network on a
-primitive instead**: proximity produces a *connection*, a logistics link is a *rider* on one, and
-over a short distance it is cheap enough to hold itself — so two bands standing near each other
-behave exactly as they do today, by construction. A cross-faction edge then differs only in whose
-endpoints it joins, never in a branch in the code. *v1:* population is the universal balancing weight, so a zero-population storage
+`TradeLink` slice it assumed. `docs/plan_contact_and_logistics.md` §Q4 **re-founded this network on
+the primitive**: proximity produces a *connection*, a logistics link is a *rider* on one, and over a
+short distance it is cheap enough to hold itself — so two bands standing near each other behave
+exactly as they did before, by construction (the pre-refactor numbers are pinned as literals). A
+cross-faction edge differs only in whose endpoints it joins, and there is no branch in the code that
+asks. What holds a link open *beyond* `reach_tiles` is a **route**, and that state belongs to the
+route ladder — there is deliberately no `LogisticsLink` component or resource. See "The link is a
+rider on a CONNECTION" above. *v1:* population is the universal balancing weight, so a zero-population storage
 node would compute a 0 fair share — revisit (→ capacity weight) when storage-pits land. The
 connected-components pass is also what Phase 4 will use to derive settlement clusters.
 

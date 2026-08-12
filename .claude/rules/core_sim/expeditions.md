@@ -1116,8 +1116,11 @@ ladder (#532) is what will hold that state, and building link state before any r
 it would be inventing the ladder's model in advance. So the rider is an expedition, and its state is
 `Expedition::cargo`.
 
-**`balance_supply_networks` is untouched.** Near same-faction bands keep auto-pooling exactly as they
-did; the shipment is what carries mass where proximity does not.
+**`balance_supply_networks` was re-founded on the same primitive** (arc #527 §Q4): near bands keep
+auto-pooling, now gated on a live tie exactly as this launch is, and the shipment is what carries
+mass where `reach_tiles` does not. One consequence for a fixture here — pooling no longer asks about
+faction, so a co-located destination is pooled with its sender from the turn after they meet, and a
+test that reads a destination's store measures on the delivery turn or stands it out of reach.
 
 ### The connection gates the LAUNCH, and arrival is not re-gated
 
