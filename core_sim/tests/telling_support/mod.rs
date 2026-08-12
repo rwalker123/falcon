@@ -106,6 +106,8 @@ pub fn spawn_band(app: &mut App, faction: FactionId, size: u32) {
             stores: LocalStore::new(),
             morale: scalar_one(),
             last_food_consumption: 0.0,
+            last_turn_transfer_received: 0.0,
+            last_turn_transfer_sent: 0.0,
             last_morale_delta: scalar_zero(),
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: Default::default(),

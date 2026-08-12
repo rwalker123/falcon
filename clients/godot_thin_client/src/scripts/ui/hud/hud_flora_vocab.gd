@@ -319,6 +319,15 @@ const FLORA_CROP_ROW_FONT_SIZE := HudWorkVocab.WORK_ROW_FONT_SIZE
 
 const FLORA_CROP_ROW_PADDING_V := HudStyle.WORK_ROW_PADDING_V
 
+# A crop-picker row wears its species' bundled ART where there is any (issue #339), as the Button's
+# own `icon` — and the cap is what keeps that from breaking the list's arithmetic. The source PNGs
+# are 256px, which a Button reserves IN FULL, so an uncapped icon would set the row's minimum height
+# and the MEASURED `FLORA_CROP_LIST_MAX_HEIGHT` below — derived from `FLORA_CROP_ROW_HEIGHT` — would
+# then describe rows that no longer exist. Held under that 22.0 row height deliberately, with room
+# for the row's own padding; `COMPOSE_QUARRY_ICON_MAX_WIDTH` records the same trap on the compose
+# row's WIDTH.
+const FLORA_CROP_ICON_MAX_WIDTH := 16
+
 # MEASURED, not chosen — and set so that NO SHIPPED BASKET EVER HIDES A CROP. The longest a tile can
 # carry today is 5 (a navigable hex blends the valley's basket with the channel's fishery), so at 5 the
 # whole basket is on screen and the player compares it rather than peering at it through a slot: a

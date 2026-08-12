@@ -984,6 +984,11 @@ pub fn build_headless_app() -> App {
             (
                 metrics::collect_metrics,
                 systems::advance_tick,
+                // **Before the capture, and only on the turn path.** The transfer counters are the
+                // one ledger pair that resets, so the frame a *recapture* rebuilds after a command
+                // would publish them blank; this copies them onto the cohort, where they are a
+                // per-turn value like the other four terms and survive a rebuild.
+                systems::publish_turn_transfers,
                 // Gated off `Replaying`: a rollback replaying the command log forward must not
                 // re-publish frames the client already applied. Its stage-mates above are
                 // deliberately NOT gated — see `sim_state::Replaying`.

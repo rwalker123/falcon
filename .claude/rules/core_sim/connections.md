@@ -200,6 +200,36 @@ state (`Expedition::cargo`), and it re-reads the ledger **only at launch** — a
 the party walks does not stop the delivery, because the party is standing there. See
 `.claude/rules/core_sim/expeditions.md` → "A shipment is a party that WALKS IT".
 
+## The supply network is the second reader, and it takes EITHER direction
+
+`balance_supply_networks` (`supply.rs`, arc #527 §Q4) treats a band pair as **linked** only where they
+are within `supply_network_config.reach_tiles` **and** the ledger holds a live tie between their
+`BandId`s. Before that it derived its edges from proximity alone, which made it a second independent
+implementation of the thing a shipment already gates on; now both riders sit on one object, which is
+what gives the route ladder an edge to attach a route to. Over that short distance a link is cheap
+enough to hold itself for free — that is what `reach_tiles` means — and a distant splinter still
+needs a party to walk goods to it.
+
+**It requires a live tie in either direction, not both**, which is the module's *"whether a rider
+requires mutuality is the rider's business"* being exercised for the first time: pooling is one
+undirected mechanism, and demanding both edges would make the commonest traffic in the game depend on
+two independent sight sweeps agreeing on the same turn. A **parked** tie (`NO_TIE`) pools nothing,
+and a cohort with no `BandId` is not an endpoint at all.
+
+**It reads the ledger one stage early.** Supply runs in `TurnStage::Logistics` and
+`advance_connections` in `TurnStage::Visibility`, so the pooling pass sees the *previous* turn's
+contacts and nothing pools on the world's very first turn. That is accepted rather than fixed: bands
+open with their own food, and two bands inside `reach_tiles` see each other every turn, so the tie is
+pinned at `FULL_TIE` from turn 2. Supply must not seed the ledger — the whole point of finding
+contact inside the sight sweep is that there is only one producer of it.
+
+**The link it reads is faction-blind; what it then pools over is not.** The rider equalizes larders
+for free only within one people (`supply::pools_freely`), because a stranger's larder draining into
+yours because they camped nearby is not trade — that is a shipment's job, or a priced exchange's.
+This module's discipline is about the *edge*: no faction field on `ConnectionKey`, no faction branch
+in `connections.rs`. A rider's policy is the rider's.
+`.claude/rules/core_sim/campaign.md` → "Supply Network" has the as-built detail.
+
 ## Metrics
 
 `SimulationMetrics` carries `connections_live` / `connections_formed` / `connections_reaped`, written

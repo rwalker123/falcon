@@ -121,6 +121,41 @@ func _player_knowledge() -> Dictionary:
 func _resolve_assign_band() -> Dictionary:
     return _resolve_assign_band_fn.call()
 
+
+## **THE SHEET OPENS ON THE BAND ALREADY WORKING THE SOURCE** — one rung AHEAD of
+## `_resolve_assign_band`'s ladder, and it lives HERE rather than in that resolver because the resolver
+## is shared with move-band and targeting, neither of which has a source in hand to ask about.
+##
+## Reported from play: a tile worked by Band 3 opened a sheet composing for Band 1, a band four tiles
+## away with no idle crew and the patch outside its forage range. Every live reading on the sheet moved
+## when the picker was corrected; the composed crew did not, and a composed 0 against a standing 2 turns
+## the commit button into `Unassign`.
+##
+## `works_source` is asked of every player band in ROSTER order and must be PENDING-AWARE (the
+## `effective_*_workers` readers), so a just-issued assign counts rather than the sheet bouncing to
+## another band for the turn before the snapshot confirms it.
+##
+## **THE EXISTING LADDER WINS A TIE.** Where its answer is itself one of the crews, nothing moves — the
+## band the player is reading is the right subject when it works the source. Only when the ladder names
+## a band that is NOT working it does the first worker in roster order take it (roster order, so the
+## answer is deterministic), and only when nobody works it does the ladder answer alone.
+func _band_working_source(works_source: Callable) -> Dictionary:
+    var resolved := _resolve_assign_band()
+    var resolved_entity := int(resolved.get("entity", ComposeState.NO_BAND_ENTITY))
+    var first_worker := {}
+    for band_variant in _band_labor.current_player_bands():
+        if not (band_variant is Dictionary):
+            continue
+        var band: Dictionary = band_variant
+        if not bool(works_source.call(band)):
+            continue
+        var entity := int(band.get("entity", ComposeState.NO_BAND_ENTITY))
+        if entity != ComposeState.NO_BAND_ENTITY and entity == resolved_entity:
+            return resolved
+        if first_worker.is_empty():
+            first_worker = band
+    return resolved if first_worker.is_empty() else first_worker
+
 ## A friendlier label for a herd id. Retained on HudLayer, which also feeds the targeting banner and
 ## the command feed from it.
 func _herd_label_for_id(herd_id: String) -> String:
@@ -1513,14 +1548,16 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         child.queue_free()
     if not _herd_compose_available(herd):
         return
-    var resolved := _resolve_assign_band()
     var herd_id := String(herd.get("id", ""))
+    # The band the sheet DEFAULTS to: whoever already hunts this herd, else the shared ladder's answer.
+    var resolved := _band_working_source(func(candidate: Dictionary) -> bool:
+        return _band_labor.effective_hunt_workers(candidate, herd_id) > 0)
     # When the selected herd changes, default the actor band to the resolved band (and re-seed
-    # the compose count/policy from its staffing); otherwise preserve the picked band + count
+    # the compose count/floor from its staffing); otherwise preserve the picked band + count
     # across per-snapshot re-renders of the same herd.
     var source_changed := _compose.hunt_key() != herd_id
     if source_changed:
-        _compose.begin_hunt_source(herd_id, int(resolved.get("entity", -1)))
+        _compose.begin_hunt_source(herd_id, int(resolved.get("entity", ComposeState.NO_BAND_ENTITY)))
         # **AND THE KIT, because the default is a fact about the ANIMAL now** — every render writes
         # the resolved id back onto the compose state, so a choice resolved on the last herd would
         # otherwise read as the player's own choice here and hide this herd's own default.
@@ -1529,25 +1566,22 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var band := _band_labor.player_band_by_entity(_compose.hunt_band())
     if band.is_empty():
         band = resolved
-        _compose.set_hunt_band(int(band.get("entity", -1)))
+        _compose.set_hunt_band(int(band.get("entity", ComposeState.NO_BAND_ENTITY)))
     # THE SECOND AXIS's standing value (issue #442) — what the band is already BUILDING here. It seeds
     # the improvement control so a herd mid-Tame opens with its box checked rather than looking
     # untouched, and it is what the commit compares against to decide whether a verb needs sending.
     var standing_improvement := _band_labor.improvement_for_hunt(band, herd_id)
-    if source_changed:
+    # **A COMPOSITION IS SEEDED FOR ONE BAND, so the ACTOR changing re-seeds it exactly as the SOURCE
+    # changing does.** The picker's callback writes the band and rebuilds, so at this point the composed
+    # band IS the picked one — and the crew, the floor and the build it carries are still the previous
+    # band's row. Evaluated AFTER `band` resolves, or it would compare against the band being left.
+    var band_entity := int(band.get("entity", ComposeState.NO_BAND_ENTITY))
+    if source_changed or _compose.hunt_seeded_band() != band_entity:
         var staffed := _band_labor.workers_for_hunt(band, herd_id)
         _compose.seed_hunt(staffed if staffed > 0 else HudConst.WORKER_STEP,
             _band_labor.floor_for_hunt(band, herd_id), standing_improvement)
-    # Show the effective (pending-aware) staffing so re-selecting reflects a just-issued assign.
+    # The effective (pending-aware) standing crew, which the commit's unassign/no-op test reads below.
     var current := _band_labor.effective_hunt_workers(band, herd_id)
-    var pending := _band_labor.pending_assigns_for(int(band.get("entity", -1))).has(_band_labor.pending_key(SourceForecast.LABOR_KIND_HUNT, -1, -1, herd_id))
-    # The sheet's own header already names the verb ("ASSIGN HERDERS") and the herd, so this line
-    # carries only what the header cannot: the standing staffing being edited.
-    if current > 0 or pending:
-        var title := Label.new()
-        title.text = HudComposeVocab.COMPOSE_NOW_STAFFED_FORMAT % [current, HudComposeVocab.COMPOSE_PENDING_SUFFIX if pending else ""]
-        title.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK_DIM)
-        target.add_child(title)
     # Which band supplies the hunters (above the worker/party stepper, so it reads "which band →
     # how many workers"). Switching bands re-runs the distance-aware branch below for that band.
     target.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
@@ -2343,6 +2377,9 @@ func _build_crop_picker(
         # climbability flags is a bare `Name 12%` (printing "0.0×" there would read as "a crop worth
         # nothing" rather than "not a crop at this rung").
         btn.text = _flora_row_face(crop_name, percent, ratio, fodder_payoff, material_payoff)
+        # The row's own KEY, so a harness can ask about the plant rather than about its face — which
+        # carries live numbers and whose name is a separate axis from the id (see the meta's note).
+        btn.set_meta(HudWidgets.FLORA_CROP_ROW_SPECIES_META, species)
         btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         # WHICH ROW IS MARKED depends on which question the block is asking: an open picker marks the
         # composed pick (and only if that pick is legal), a committed one marks the crop the patch is
@@ -2356,6 +2393,26 @@ func _build_crop_picker(
         # wearing the default button chrome would silently break that maths (the work board's rule).
         HudWidgets.compact(btn, HudFloraVocab.FLORA_CROP_ROW_FONT_SIZE, HudFloraVocab.FLORA_CROP_ROW_PADDING_V)
         btn.custom_minimum_size = Vector2(0.0, HudFloraVocab.FLORA_CROP_ROW_HEIGHT)
+        # The row wears the SPECIES' bundled ART where there is any (issue #339), as the Button's own
+        # `icon` — the `BandPanelController._build_quarry_row` precedent, and deliberately NOT
+        # `HudWidgets.build_marker_icon`, whose host is a `Label` in an `HBoxContainer` and which
+        # returns a `Control`: a Button carries art on a property, so a builder that parents a child
+        # into its face buys nothing (that rule is written on `build_marker_icon` itself).
+        # **GUARDED ON NON-NULL, not merely defaulted.** `FloraSprites` covers 32 of the roster's 33
+        # species, so most rows now take the icon branch — but the fodder row (`hay_grass`, the one
+        # permanent gap) takes the `null` branch on every picker it appears in, and it must render
+        # BYTE-IDENTICALLY to before this existed rather than merely equivalently: setting an empty
+        # `icon` would still reserve the icon's chrome and push that row's face out of line with the
+        # ones above it.
+        # `icon_max_width` is what stops a 256px source setting the row's minimum height and breaking
+        # the MEASURED `FLORA_CROP_LIST_MAX_HEIGHT` arithmetic; `expand_icon` then fits it to the row.
+        # UNTINTED: nothing sets `modulate` on it, the map markers' own rule — a plant carries no
+        # state, and a row's state rides its ink and its chrome.
+        var crop_art := FloraSprites.texture_for(species)
+        if crop_art != null:
+            btn.icon = crop_art
+            btn.expand_icon = true
+            btn.add_theme_constant_override("icon_max_width", HudFloraVocab.FLORA_CROP_ICON_MAX_WIDTH)
         # A committed patch locks EVERY row — a pressable one would imply a switch the sim will refuse.
         btn.disabled = is_committed or not legal
         if legal:
@@ -2437,9 +2494,11 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         child.queue_free()
     if not _forage_compose_available(tile_info):
         return
-    var resolved := _resolve_assign_band()
     var x := int(tile_info.get("x", -1))
     var y := int(tile_info.get("y", -1))
+    # The band the sheet DEFAULTS to: whoever already forages this patch, else the shared ladder's answer.
+    var resolved := _band_working_source(func(candidate: Dictionary) -> bool:
+        return _band_labor.effective_forage_workers(candidate, x, y) > 0)
     # ONE key for this patch: the compose source key and the sheet's subject key are the same string
     # by definition, and the rebuild closures below re-resolve the LIVE tile through it (`_live_tile_info`).
     var subject_key := _forage_source_key(tile_info)
@@ -2448,31 +2507,27 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # per-snapshot re-renders of the same tile.
     var source_changed := _compose.forage_key() != subject_key
     if source_changed:
-        _compose.begin_forage_source(subject_key, int(resolved.get("entity", -1)))
+        _compose.begin_forage_source(subject_key, int(resolved.get("entity", ComposeState.NO_BAND_ENTITY)))
     var band := _band_labor.player_band_by_entity(_compose.forage_band())
     if band.is_empty():
         band = resolved
-        _compose.set_forage_band(int(band.get("entity", -1)))
+        _compose.set_forage_band(int(band.get("entity", ComposeState.NO_BAND_ENTITY)))
     # THE SECOND AXIS's standing value (issue #442) — what the band is already BUILDING on this patch.
     # Unlike the stance it needs no staffing test: `improvement_for_forage` reads the assignment's own
     # field and answers "" when there is no assignment at all.
     var standing_improvement := _band_labor.improvement_for_forage(band, x, y)
-    if source_changed:
+    # **THE ACTOR BAND CHANGING RE-SEEDS THE COMPOSITION, exactly as the SOURCE changing does** — see
+    # the hunt sheet's twin. Evaluated AFTER `band` resolves, so it compares against the band just
+    # picked rather than the one being left.
+    var band_entity := int(band.get("entity", ComposeState.NO_BAND_ENTITY))
+    if source_changed or _compose.forage_seeded_band() != band_entity:
         # `seed_forage` also clears the crop: a crop pick belongs to the PATCH it was made on, and a
         # new tile has a different basket.
         var staffed := _band_labor.workers_for_forage(band, x, y)
         _compose.seed_forage(staffed if staffed > 0 else HudConst.WORKER_STEP,
             _band_labor.floor_for_forage(band, x, y), standing_improvement)
-    # Effective (pending-aware) staffing so re-selecting reflects a just-issued assign.
+    # The effective (pending-aware) standing crew, which the commit's unassign/no-op test reads below.
     var current := _band_labor.effective_forage_workers(band, x, y)
-    var pending := _band_labor.pending_assigns_for(int(band.get("entity", -1))).has(_band_labor.pending_key(SourceForecast.LABOR_KIND_FORAGE, x, y, ""))
-    # The sheet's own header already names the verb and the subject ("ASSIGN FORAGERS  Nut Grove"),
-    # so this line carries only what the header cannot: the standing staffing being edited.
-    if current > 0 or pending:
-        var title := Label.new()
-        title.text = HudComposeVocab.COMPOSE_NOW_STAFFED_FORMAT % [current, HudComposeVocab.COMPOSE_PENDING_SUFFIX if pending else ""]
-        title.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK_DIM)
-        target.add_child(title)
     # Which band supplies the foragers (above the stepper). Switching re-runs the range check below
     # for that band.
     target.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:

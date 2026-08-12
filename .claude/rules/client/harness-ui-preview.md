@@ -565,7 +565,7 @@ built from the code under test can only agree with itself. **They are the SIM's 
 from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
 payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-**A clean run is 314 frames / 923 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
+**A clean run is 318 frames / 975 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
 three times in one arc and once across a merge, and a running total kept by addition would be wrong
 by now. (The measurement above came back FIVE higher than the 895 recorded before it while the arc
 #527 review added exactly ONE claim — the `Carrying:` mass one. Four `PASS`es had accumulated
@@ -607,6 +607,100 @@ says WORK".
 **Its fixtures DERIVE `work_done` from the fraction they already state** (`BaseFx.price_plant_build`
 / `HerdFx.price_animal_build`), and every site that re-dials a meter calls one of them — a fixture
 whose percentage and absolute disagree would render the exact confusion the readout exists to remove.
+
+**THE 32 FLORA ICONS MOVED 100 FRAMES, AND THAT IS THE ARC LANDING RATHER THAN A REGRESSION.** Every
+moved frame is one whose card carries a flora basket or the crop picker — plus the states rendered
+after them, the tile card being long-lived in the HUD, which is why `turn_orb_*`, `terrain_legend_*`,
+`narrative_fork_*` and `reserved_dock_*` are in the list. **Five assertions failed on the way**, all
+five for the right reason, and the re-aiming is the part worth knowing:
+
+- **The liveness precondition fired exactly as designed.** `a real species key answers NO PATH —
+  coverage is zero today` was written to fail the day art landed, and it did. It is now the POSITIVE
+  half (`wild_emmer` must resolve *in the shipped directory*), with the degradation asserted beside
+  it on **`hay_grass`** — the one roster member that will never have art, `icon_prompts.txt` recording
+  the absence as deliberate ("32 prompts, 33 species"). A key that is merely un-drawn *yet* would put
+  the claim in a race with the next batch of PNGs.
+- **`_assert_food_layer_rows`' art claim is re-aimed, not relaxed.** It read `3 of 3` from
+  `CropRoleSprites.SPRITE_DIR`; it now counts the tiers SEPARATELY and demands **2 species + 1 role**
+  on one tile. A single "every row carries bundled art" count would pass with the whole species tier
+  reverted, every row falling back to a role mark that is also bundled art.
+- **The UNSTATED-role fixture had to change WHICH plant is untagged**, from `cotton` to `hay_grass`.
+  The species tier outranks the role, so it also outranks the role's ABSENCE: once `cotton.png`
+  existed, that row led with species art and the blank-slot path — the whole point of the fixture —
+  became unreachable through it. Only a row with no species art AND no role can render the spacer.
+
+Sabotage-verified by making `path_for` answer `""`: exactly the SIX species-tier claims fail (the
+tile splits `0 species + 3 role`, i.e. the pre-art state restored) while all four role-tier claims
+stay green — the demonstration that the two tiers are independently asserted rather than one claim
+wearing two hats.
+
+**THAT SABOTAGE REACHES `path_for` ALONE, AND FOR A WHILE THAT WAS THE WHOLE COVERAGE.** Every
+`FloraSprites` claim in this harness went through the `RichTextLabel` host, so the OTHER accessor —
+`texture_for`, whose one call site is `DrawerComposeController._build_crop_picker` — had no claim
+anywhere: deleting the row's `if crop_art != null: btn.icon = …` block left the run at **exit 0 with
+the full `PASS` tally** and nothing naming it. A frame diff is not the missing signal either, "A
+harness renders the IMPORT CACHE" being the reason a picture cannot answer whether art resolved.
+**Two `PASS` and no frame** now close it, in `chapters/forage_crop.gd` after
+`forage_crop_picker_fodder` — that fixture being the one basket holding a species WITH art beside
+the one that permanently has none. Asserted as a **pair** (a lone positive passes on a picker that
+icons every row; a lone negative on one that resolves nothing), and reached by SPECIES KEY through
+`HudWidgets.FLORA_CROP_ROW_SPECIES_META` / `ForageFx.find_crop_row_by_species`, never by face: a
+row's label is a different axis from the id its art is composed from, and these fixtures pair
+`wild_emmer` with "Wild Grain" on purpose. Sabotage-verified by disabling that `btn.icon` block —
+exactly the POSITIVE claim fails (909 `PASS`, exit 1) and nothing else in the run does, the negative
+correctly staying green.
+
+**The flora-species precedence block (issue #339) added SEVEN `PASS` and NO frame**, in
+`chapters/land_readouts.gd` beside `_assert_food_layer_rows`. It was written while `FloraSprites`
+coverage was zero, when the species tier was unreachable on a shipped card and no frame could move —
+the block points
+`FloraSprites.sprite_dir_override` at `CropRoleSprites.SPRITE_DIR`, which does ship PNGs, drives
+`DetailFormat.flora_composition_lines` through it and clears it again. **The row's ROLE is chosen so
+its own art is a DIFFERENT file from the species-resolved one**, or "the species tier won" and "the
+role tier coincided" would be the same green line. **The charset guard's claim is the one that had to
+be re-aimed**: asked at the shipped directory it passes with `_is_valid_key` deleted (every key
+answers `""` for free), so the live half is asked UNDER the override with two keys whose composed
+paths really do load — `../crops/staple` and a capitalised `Staple` — while the four-shape contract
+claim beside it stays deliberately vacuous. Sabotage-verified four ways, each failing a DISJOINT set:
+dropping the species step from the chain fails the two row claims; ignoring the override fails those
+two plus the precondition; deleting the charset guard fails the under-override claim ALONE (the
+contract claim correctly stays green, which is the vacuity demonstrated rather than asserted); and
+dropping `path_for`'s loaded check fails the two degradation claims **and three of
+`_assert_food_layer_rows`' own** — every species then resolving to a nonexistent flora path that
+displaces the role marks, which is exactly what that older group is there to catch.
+
+### A flora fixture's `species` must be a real `flora_config.json` id
+
+**The KEY is an asset lookup now, and a wrong one fails SILENTLY.** `FloraSprites` composes
+`<species>.png` from the wire key, so a fixture keyed on a species the sim does not ship resolves no
+art and renders the crop-ROLE mark — which is a legitimate state, indistinguishable from "this plant
+has no art yet". The frame stays green while the thing it is evidence of has stopped happening on it,
+the "a dead field cannot diverge" shape. The precedence block above does not cover this: it drives its
+own composition with its own key, so it proves the mechanism and says nothing about the fixtures.
+
+**Before `FloraSprites` the key was pure opaque payload** — nothing branched on the string, and the
+one reader (`committed_species`) was supplied by the same fixture, so a fixture was self-consistent by
+construction and could invent whatever it liked. That is why five invented keys accumulated unnoticed,
+and **two of them were the roster's DISPLAY NAMES snake_cased** (`flax_fields` for `flax`,
+`wild_grapevine` for `grapevine`) — a key derived from a display name rather than taken from the id,
+which is the same defect class as `FaunaSprites`' table in issue #439. The other three were wholly
+invented (`wild_grain`, `ground_nut`, `wild_wheat`).
+
+**The LABELS are deliberately NOT aligned, and that is a separate axis.** A row reads its
+`display_name`, never its key, so realigning keys alone moves **no frame** (measured: 309/309
+byte-identical, 907 `PASS`) while renaming labels moves every frame carrying one. Worse, the two
+`GATED_CROP_NEEDLE` claims are NEGATIVES matched on `"Wild Grain"` — a needle that no longer names
+anything passes for free, so a label rename would turn both silently vacuous. So a fixture pairs a
+roster ID with its own label on purpose (`wild_emmer` / "Wild Grain"), and each such site carries a
+comment saying so; do not "tidy" the mismatch away.
+
+**Two keys are deliberately left alone.** `marsh_reed` is not a rename — its nearest roster analogue
+`reed_and_root` is a `staple` and that fixture needs a `fodder` row, so it is an invented plant
+awaiting a decision, not a wrong id. And `_overlong_basket_tile_fixture`'s second "Ground Nut" row is
+`wild_pulses` rather than the `wild_tubers` its twins took, because that basket already holds
+`wild_tubers`: **one species key twice in one basket renders two names under one icon** the moment art
+exists. `wild_wheat` (`map_preview`, `band_panel_preview`) and `sedge` (`snapshot_alias_guard`) are
+other harnesses' and untouched.
 
 **`forage_no_food_basket` is the newest frame** (`chapters/forage_accounts.gd`, appended last) and
 carries **fourteen** `PASS`, counting the two compose-sheet fit claims every state in that chapter
@@ -771,6 +865,42 @@ entity is absent from the roster failed four unrelated assertions in `tile_panel
 for exactly that reason. The shipped one falls through to `player_band()` instead — which is also the
 correct live behaviour, an unresolvable panel entity being a band that has left the world.
 
+### …and on a WORKED source it opens on the working band, and a switch re-seeds
+
+**`compose_working_band_forage` / `compose_band_switch_forage` and their hunt twins**
+(`chapters/hunt.gd`, appended after the pair above) — four frames and forty `PASS`. The behaviour is
+`labor-ui.md`'s; what belongs here is the shape of the fixture and of the drive.
+
+**The roster is the assertion, again, and one band more than the pair above needs.** Three bands: the
+ladder's own answer works NEITHER source, and the other two work BOTH. With the ladder's band among
+the workers the tie goes to the ladder and the state passes with the rung removed; with only two bands
+there is nowhere for a band SWITCH to go that is also a working band.
+
+**The two standing crews are 2 and 3, and neither may be `HudConst.WORKER_STEP`** — a stepper reading
+1 cannot tell a re-seed from the no-standing-assignment fallback. Both sit under either source's
+max-useful ceiling, so what is rendered is the seed rather than a clamp of it.
+
+**Four claims per state, because they fail apart**: the picker's FACE (what the player reads), the
+STEPPER (what a commit would send), the commit VERB, and the improvement control's PRESENCE. A
+vacuity guard rides between the two switches — the crew dialed to 0 on a band that really does work
+the source, asserting the sheet really does say `Unassign` and really does drop the control, without
+which "not `Unassign`" passes on a sheet that can no longer say it.
+
+**The `Band:` picker is driven with REAL POINTER INPUT** (`_pick_actor_band`: the face, then the popup
+row, through `InputProbe`), the three gotchas `chapters/trade.gd`'s destination pick records —
+`canvas_to_window` for the embedded subwindow, the popup's own `index_pressed` as the witness for a
+derived point, and an `is_instance_valid` guard on the teardown, the pick having freed the popup by
+rebuilding the sheet.
+
+Sabotage-verified on two DISJOINT mutations: restoring the bare `set_*_band` write fails **eight** —
+the re-seed claims on both webs, reading `got Unassign` and a missing improvement control, i.e. the
+played defect — while the default claims stay green; returning `_resolve_assign_band()` unchanged from
+`_band_working_source` fails exactly **four**, the default claims, at `Band 2, got Band 1`.
+
+**Thirty-six existing frames moved with the standing-crew line's removal**, every one a compose sheet
+on a source with a standing crew, plus `herd_band_picker_b`, whose switched band now re-seeds to the
+`WORKER_STEP` floor instead of being hand-clamped by the chapter.
+
 ## The UNBOUNDED-RAID floor: one frame, three equalities, and a driven denial pair
 
 `ui_preview` **`herd_hunt_horizon_travel`** (`chapters/hunt.gd`, appended last in the hunt chapter) is
@@ -803,7 +933,7 @@ a sentence is a string — a frame shows a plausible verdict whichever clock it 
 
 ## `chapters/trade.gd` — the cargo picker and a shipment in flight (arc #527, issue #517)
 
-**Appended LAST in `CHAPTERS`**, after `crafting_bench`. Seven frames and twenty-eight `PASS` — plus
+**Appended LAST in `CHAPTERS`**, after `crafting_bench`. Seven frames and thirty `PASS` — plus
 one more in `chapters/event_dock.gd`, where the shipment's `destination=` label swap belongs
 beside the band-label trio it extends rather than in a chapter that instantiates no dock. It
 injects a real `BandCityPanel` docked RIGHT on the PARTIES tab, drives the whole compose act through
@@ -874,3 +1004,12 @@ terms**: the headline states the steady rate and deliberately says nothing about
 HUD**: a player band's detail renders into the Band/City panel, which is a sibling `CanvasLayer`
 rather than a child of the HUD, so a HUD-rooted walk finds nothing and the click silently never
 happens.
+
+**A PNG-LESS THIRD OPENING RIDES AFTER IT — the COMMAND-REFRESHED frame** (issue #517): the same
+band with `transfer_received` / `transfer_sent` zeroed and the per-turn pair intact, i.e. the frame
+the sim rebuilds from live components after any dispatched command, asserting both `⇄` rows are still
+itemized. **No picture can make that claim** — the two readings differ only in which field the rows
+came from, and the wrong one renders no rows rather than wrong ones. It is judged as a PAIR with the
+turn frame above, and the accumulator is ZEROED rather than left behind, because a client rendering
+whichever term is non-zero would otherwise pass both. Sabotage-verified: pointing the rows back at
+the accumulating pair fails exactly these two and nothing else in the run.

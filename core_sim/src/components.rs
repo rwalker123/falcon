@@ -690,6 +690,30 @@ pub struct PopulationCohort {
     /// `LaborAllocation::last_pen_feed_upkeep`, the food the pen actually paid). Recomputed each turn
     /// by `simulate_population`; on the client wire as `PopulationCohortState.food_consumption`.
     pub last_food_consumption: f32,
+    /// **Food this band RECEIVED from another band, as of this turn's frame** — the per-turn twin of
+    /// the accumulator [`LaborAllocation::last_transfer_received`], and the reading a client renders.
+    ///
+    /// Copied off that accumulator by `systems::publish_turn_transfers`, in the Snapshot stage
+    /// immediately before the turn's `capture_snapshot`. **The copy exists because the accumulator
+    /// resets and this does not.** `systems::reset_transfer_ledger` clears the accumulator *after*
+    /// the capture has read it, so a **recapture** — `snapshot::recapture_snapshot_in_place`, which
+    /// re-runs the capture against live components after every dispatched command — would republish
+    /// the band with the counter already zeroed and blank the row it had just shown. The four
+    /// sibling ledger terms (`food_income`, [`Self::last_food_consumption`], `pen_feed_upkeep`,
+    /// `raid_forfeit`) are per-turn values re-read unchanged on a recapture, and this pair is what
+    /// joins them in that.
+    ///
+    /// **It neither replaces the accumulator nor changes its window.** At the moment it is copied
+    /// the accumulator holds *(command-time draws since the last turn capture) + (this turn's
+    /// transfers)* — exactly the interval the ledger identity
+    /// `larder_delta == income − consumption − pen_feed − raid_forfeit + received − sent` measures —
+    /// so the two readings cannot disagree on a turn frame. On the wire as
+    /// `PopulationCohortState.transfer_received_turn`, beside the accumulator's own
+    /// `transfer_received`.
+    pub last_turn_transfer_received: f32,
+    /// **Food this band GAVE UP to another band, as of this turn's frame** — the sent half of
+    /// [`Self::last_turn_transfer_received`], on the same copy and for the same reason.
+    pub last_turn_transfer_sent: f32,
     /// This turn's signed morale delta (before clamping into `[0, 1]`). Recomputed each turn by
     /// `simulate_population`; on the client wire as `PopulationCohortState.morale_delta`, which the
     /// client renders as a rising/falling trend arrow.

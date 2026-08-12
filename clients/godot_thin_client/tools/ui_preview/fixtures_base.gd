@@ -235,12 +235,17 @@ static func food_tile_fixture() -> Dictionary:
 		# sentinel on the greyed rows. `*_payoff` is the same rung's provisions/turn committed to THAT
 		# species, and it is what the compose sheet's "→ then" term quotes once a crop is picked: the two
 		# rows differ (1.20 vs 0.85), which is what makes the selection visibly move the forecast.
+		# **EVERY `species` HERE IS A REAL `flora_config.json` ID, and the LABELS BESIDE THEM ARE
+		# DELIBERATELY NOT** (issue #339). The key is an asset lookup now — `FloraSprites` composes
+		# `<species>.png` from it — so an invented key silently renders the crop-role fallback; the
+		# display name is this fixture's own and renaming it to the roster's would move frames for a
+		# reason that has nothing to do with art. Do not "tidy" `Wild Grain` into `Wild Emmer`.
 		"patch_composition": [
-			{"species": "wild_grain", "role": "staple", "display_name": "Wild Grain", "share": 0.455,
+			{"species": "wild_emmer", "role": "staple", "display_name": "Wild Grain", "share": 0.455,
 				"can_cultivate": true, "can_sow": true,
 				"cultivate_yield_ratio": 2.40, "sow_yield_ratio": 4.20,
 				"cultivate_payoff": 1.20, "sow_payoff": 2.40},
-			{"species": "ground_nut", "role": "staple", "display_name": "Ground Nut", "share": 0.295,
+			{"species": "wild_tubers", "role": "staple", "display_name": "Ground Nut", "share": 0.295,
 				"can_cultivate": true, "can_sow": false,
 				"cultivate_yield_ratio": 1.70, "sow_yield_ratio": 0.0,
 				"cultivate_payoff": 0.85, "sow_payoff": 0.0},

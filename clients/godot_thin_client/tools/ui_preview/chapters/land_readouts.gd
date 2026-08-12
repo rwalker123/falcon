@@ -74,20 +74,25 @@ func _assert_food_layer_rows() -> void:
 	var role_px = h._hud._drawer._role_icon_px()
 	var unstated = ForageFx.flora_basket_rows(h._hud._drawer._tile_terrain_lines(ForageFx.floorify(
 		_unstated_role_tile_fixture(), HudComposeVocab.FORAGE_FORECAST_PREFIX)))
-	var icon_rows := 0
-	var cotton_has_icon := true
-	var cotton_holds_slot := false
+	var species_rows := 0
+	var hay_has_icon := true
+	var hay_holds_slot := false
 	for row in unstated:
-		var has_icon := _flora_row_has_role_icon(row, role_px)
-		if has_icon:
-			icon_rows += 1
-		if row.contains("Cotton"):
-			cotton_has_icon = has_icon
-			cotton_holds_slot = row.begins_with(
+		if _flora_row_has_species_icon(row):
+			species_rows += 1
+		if row.contains("Hay Grass"):
+			hay_has_icon = _flora_row_has_role_icon(row, role_px) or _flora_row_has_species_icon(row)
+			hay_holds_slot = row.begins_with(
 				DetailFormat.MORALE_BREAKDOWN_INDENT + _expected_blank_slot(role_px) + " ")
-	h._assert_hud("a species whose role the wire leaves UNSTATED renders no role icon",
-		unstated.size() == 3 and not cotton_has_icon)
-	h._assert_hud("…while the two roles the wire DOES state still wear theirs", icon_rows == 2)
+	h._assert_hud("a species with no art whose role the wire leaves UNSTATED renders NO mark at all",
+		unstated.size() == 3 and not hay_has_icon)
+	# **THE OTHER TWO ROWS ARE THE OTHER TIER, and naming it is what stops this going vacuous.** Before
+	# flora art existed this read "the two roles the wire DOES state still wear theirs"; those two
+	# species have art now, so the SPECIES tier outranks the role and they lead with `flora/`. A claim
+	# that merely found "some mark" on them would pass with either tier broken.
+	h._assert_hud("…while the two species that DO have art lead with the flora mark (%d of 2)"
+			% species_rows,
+		species_rows == 2)
 	# **AND THE UNSTATED ROW STILL HOLDS ITS WIDTH** (#463). "No icon" and "no slot" are one glance
 	# apart in a PNG and one character apart in the producer, and the difference is whether one
 	# untagged plant shifts every name in the list out of column.
@@ -101,20 +106,166 @@ func _assert_food_layer_rows() -> void:
 	# sits between the indent and the space before the name. That is what makes deleting the spacer
 	# a MODE CHANGE this still passes (the text spacer holds the column just as honestly) while a
 	# producer that emitted no slot at all — the actual regression — fails.
-	h._assert_hud("…and the UNSTATED row still holds the slot's width", cotton_holds_slot)
+	h._assert_hud("…and the UNSTATED row still holds the slot's width", hay_holds_slot)
 	# **THE ART IS LIVE, NOT THE EMOJI FALLBACK.** Every assertion above passes unchanged if every
 	# PNG fails to load, because `for_crop_role` then answers the emoji and the needles fall back with
 	# it — the whole point of the change would be gone with nothing red. So this one names the
 	# BUNDLED path directly: it is the only claim here that can tell art from fallback, and the only
 	# one a missing/misnamed file breaks. (`role_px > 0` is asserted with it because a zero box would
 	# route every row to the emoji for a completely different reason and read identically.)
-	var art_rows := 0
+	var role_art_rows := 0
+	var species_art_rows := 0
 	for row in ForageFx.flora_basket_rows(lines):
 		if row.contains(CropRoleSprites.SPRITE_DIR):
-			art_rows += 1
-	h._assert_hud("the three-role tile's marks are BUNDLED ART, not the emoji fallback (%d of 3, box %dpx)" % [
-			art_rows, role_px],
-		role_px > 0 and art_rows == 3)
+			role_art_rows += 1
+		if _flora_row_has_species_icon(row):
+			species_art_rows += 1
+	# **BOTH TIERS ON ONE TILE, COUNTED SEPARATELY — that split IS the assertion** (issue #339). This
+	# read `3 of 3` from `CropRoleSprites.SPRITE_DIR` while flora coverage was zero, and flipped the
+	# day art landed, exactly as the liveness precondition was written to. It is re-aimed rather than
+	# relaxed: `wild_tubers` and `cotton` have species art and must lead with it, `hay_grass` has NONE
+	# — deliberately and permanently, `icon_prompts.txt` records why — and must still lead with its
+	# fodder ROLE mark. A single "every row carries bundled art" count would pass with the whole
+	# species tier reverted, every row falling back to a role mark that is also bundled art.
+	h._assert_hud("the three-role tile splits across BOTH art tiers: %d species + %d role, box %dpx" % [
+			species_art_rows, role_art_rows, role_px],
+		role_px > 0 and species_art_rows == 2 and role_art_rows == 1)
+
+## ---- THE BASKET ROW'S FOUR-STEP PRECEDENCE: SPECIES ART → ROLE MARK → SPACER → TEXT (issue #339) --
+##
+## DRIVEN AND PNG-LESS BY CONSTRUCTION — and that is a property of THIS BLOCK, not of the family.
+## `FloraSprites` covers 32 of the roster's 33 species, and those 32 icons MOVED 100 FRAMES when they
+## landed (`harness-ui-preview.md` lists them). Nothing below saves a frame because everything below
+## drives the producer directly: what has to be pinned is that the tier is REAL, that it OUTRANKS the
+## role rather than coinciding with it, that the degradation is the shipped behaviour, and that a
+## wire key cannot compose a path it should not — none of which a picture can state.
+##
+## **`FloraSprites.sprite_dir_override` IS WHAT MAKES THOSE CLAIMS INDEPENDENT OF WHICH SPECIES
+## HAPPEN TO SHIP ART.** It points the species tier at `CropRoleSprites.SPRITE_DIR`, a directory
+## whose contents this block chooses, so a composition keyed `staple` resolves through the SPECIES
+## tier to that directory's `staple.png` — and goes on doing so as flora art is drawn, renamed or
+## retired. The two tiers are therefore exercised deterministically here, and the claims that must
+## be about the SHIPPED directory are made separately below, aimed at the two species that cannot
+## change: `wild_emmer`, which has art, and `hay_grass`, which permanently has none.
+func _assert_flora_species_precedence() -> void:
+	# The SAME box the drawer renders with, read from where it reads it — a literal would pass
+	# against a drawer that had stopped tracking its label's font size.
+	var role_px = h._hud._drawer._role_icon_px()
+	FloraSprites.sprite_dir_override = CropRoleSprites.SPRITE_DIR
+	var species_mark := FoodIcons.for_flora_species(SPECIES_TIER_SPECIES, role_px)
+	var role_mark := FoodIcons.for_crop_role(SPECIES_TIER_ROLE, role_px)
+	var species_rows := ForageFx.flora_basket_rows(DetailFormat.flora_composition_lines(
+		_species_tier_composition(), "", 0.0, role_px))
+	# **THE PRECONDITION IS HALF THE CLAIM.** Both marks must resolve, and to DIFFERENT files: a
+	# claim that merely finds "some art" on the row passes with the whole species tier reverted,
+	# because this row's role has bundled art of its own.
+	h._assert_hud("the override reaches BOTH tiers, at different files (`%s` vs `%s`)" % [
+			SPECIES_TIER_SPECIES, SPECIES_TIER_ROLE],
+		role_px > 0 and species_mark != "" and role_mark != "" and species_mark != role_mark)
+	# POSITIONAL, and naming the species-resolved path specifically — the row leads with the mark,
+	# between the indent and the space before the name (`FLORA_COMPOSITION_SUBLINE_FORMAT`).
+	h._assert_hud("a species with ART leads its basket row with the SPECIES mark",
+		species_rows.size() == 1 and species_rows[0].begins_with(
+			DetailFormat.MORALE_BREAKDOWN_INDENT + species_mark + " "))
+	# …and the two never render TOGETHER: species art REPLACES the role mark, it does not sit beside
+	# it. Without this the row could carry both and still satisfy the claim above.
+	h._assert_hud("…and the ROLE mark is nowhere on that row — species REPLACES it, never joins it",
+		species_rows.size() == 1 and not species_rows[0].contains(role_mark))
+	# **THE CHARSET GUARD, ASKED WHERE IT CAN ACTUALLY FAIL.** It is asked under the OVERRIDE because
+	# the two keys below compose a path that really loads there (measured: `ResourceLoader.exists`
+	# answers true for the `..` form and, on a case-insensitive filesystem, for the capitalised one),
+	# so an unguarded resolve would hand back a real PNG rather than the `""` an absent file produces
+	# for free. That was the whole claim while flora coverage was zero and every key answered `""` at
+	# the shipped directory — the empty-needle vacuity this harness's own rules name, which passes
+	# with `_is_valid_key` deleted. **With 32 PNGs on disk it is no longer only the override that
+	# makes this live**: `Wild_Emmer` composes a path a case-insensitive filesystem resolves to the
+	# shipped `wild_emmer.png`, so the guard now bites in the shipped directory too. Asking it here
+	# keeps the claim true on a case-SENSITIVE filesystem and independent of the art roster. The
+	# traversal half is the portable one; the capitalised half is the display-name shape a careless
+	# wire could carry.
+	h._assert_hud("a key outside `[a-z0-9_]` is REFUSED even where the composed path would load",
+		FloraSprites.path_for(TRAVERSAL_KEY) == "" and FloraSprites.path_for(CAPITALISED_KEY) == "")
+	FloraSprites.sprite_dir_override = ""
+	# **THE LIVENESS PRECONDITION, AND IT HAS ALREADY FIRED ONCE.** While flora coverage was zero this
+	# read "a real species key answers NO PATH", and the day the 32 icons landed it failed loudly —
+	# which is exactly what it was written to do, rather than let the fixtures quietly stop being
+	# evidence. It is now the positive half: a shipped species must RESOLVE, in the shipped directory,
+	# so a PNG that goes missing or is misnamed fails here instead of degrading to a role mark that
+	# looks deliberate.
+	h._assert_hud("a shipped species key resolves in the SHIPPED directory (`%s`)"
+			% SHIPPED_ART_SPECIES,
+		FloraSprites.path_for(SHIPPED_ART_SPECIES).begins_with(FloraSprites.SPRITE_DIR))
+	# …and the DEGRADATION beside it, on the one species that is deliberately never given art. Both
+	# halves are needed: the positive alone passes on a client that resolves everything, the negative
+	# alone on one that resolves nothing.
+	h._assert_hud("…while the species with no art of its own answers NO PATH (`%s`)"
+			% DEGRADED_TIER_SPECIES,
+		FloraSprites.path_for(DEGRADED_TIER_SPECIES) == "")
+	var degraded_rows := ForageFx.flora_basket_rows(DetailFormat.flora_composition_lines(
+		_degraded_tier_composition(), "", 0.0, role_px))
+	var degraded_mark := FoodIcons.for_crop_role(DEGRADED_TIER_ROLE, role_px)
+	h._assert_hud("…so its row falls through to the ROLE mark in `CropRoleSprites.SPRITE_DIR`",
+		degraded_mark.contains(CropRoleSprites.SPRITE_DIR)
+			and degraded_rows.size() == 1 and degraded_rows[0].begins_with(
+				DetailFormat.MORALE_BREAKDOWN_INDENT + degraded_mark + " "))
+	# …and the CONTRACT in full, at the shipped directory: empty, a traversal, a display name
+	# (spaces + capitals) and a hyphenated near-miss. **STILL DELIBERATELY VACUOUS — but for a
+	# different reason than it once was.** It used to pass for free because coverage was zero and
+	# every key answered `""`; with 32 PNGs on disk it passes for free because none of these four
+	# SHAPES names a file that exists — `Wild Emmer` and `wild-emmer` miss `wild_emmer.png` on the
+	# space and on the hyphen even where the filesystem ignores case. The claim that can actually
+	# FAIL is the under-override one above; note that a capitalised key with the right punctuation
+	# (`Wild_Emmer`) would now resolve in the shipped directory too, so the guard is live there and
+	# not merely stated. This group writes the rule down in full; it does not test it.
+	var guarded := FloraSprites.path_for("") == "" \
+		and FloraSprites.path_for("../../../evil") == "" \
+		and FloraSprites.path_for("Wild Emmer") == "" \
+		and FloraSprites.path_for("wild-emmer") == ""
+	h._assert_hud("…and every shape of bad key composes NO path — the wire is not trusted with one",
+		guarded)
+
+## The driven precedence fixture's species key — a key that IS a filename in `CropRoleSprites`'
+## directory, which is what lets the override reach the species tier with no flora art on disk.
+const SPECIES_TIER_SPECIES := "staple"
+
+## …and a role whose OWN art is a DIFFERENT file in that same directory, so "the species tier won"
+## and "the role tier coincided" are distinguishable answers.
+const SPECIES_TIER_ROLE := "cash"
+
+## A roster species that DOES ship art, for the liveness half. `wild_emmer` was the degraded key
+## while coverage was zero and is the resolving one now — the same key, on the other side of the
+## flip, which is what makes the pair of claims read as one history.
+const SHIPPED_ART_SPECIES := "wild_emmer"
+
+## The DEGRADED fixture's species — the one roster member that will NEVER have art, so this claim is
+## durable rather than a race with the next batch of PNGs. `hay_grass` is the roster's only `fodder`
+## species, so its role mark already names it exactly and uniquely; `icon_prompts.txt` records the
+## absence as deliberate ("32 prompts, 33 species"). Its role is `fodder` for the same reason.
+const DEGRADED_TIER_SPECIES := "hay_grass"
+const DEGRADED_TIER_ROLE := "fodder"
+
+## The two guard keys chosen so that the path they WOULD compose under the override resolves to a
+## real shipped PNG — which is the only way to ask whether the guard fires while flora coverage is
+## zero and every key answers `""` for free.
+const TRAVERSAL_KEY := "../crops/staple"
+const CAPITALISED_KEY := "Staple"
+
+## ONE plant, so the assertions can be positional on a single row rather than searching a list.
+func _species_tier_composition() -> Array:
+	return [{
+		"species": SPECIES_TIER_SPECIES,
+		"role": SPECIES_TIER_ROLE,
+		"display_name": "Precedence Probe",
+		"share": 1.0,
+	}]
+
+func _degraded_tier_composition() -> Array:
+	return [{
+		"species": DEGRADED_TIER_SPECIES,
+		"role": DEGRADED_TIER_ROLE,
+		"display_name": "Hay Grass",
+		"share": 1.0,
+	}]
 
 ## THE FOG STOCK/CAPACITY SPLIT (issue #462), asserted over the REAL producer's lines rather than a
 ## picture, because `— / 205` and a row that never rendered at all look far too alike downscaled —
@@ -203,6 +354,15 @@ func _sight_forage_capacity() -> float:
 func _sight_graze_capacity() -> float:
 	return float(TileFx.sight_tile_fixture(TileFx.VIS_DISCOVERED).get("graze_capacity", 0.0))
 
+## Does this basket row lead with a SPECIES mark — the tier ABOVE the role one?
+##
+## Matched on `FloraSprites.SPRITE_DIR`, not through the resolver, and deliberately unlike its role
+## twin: the role marks are a closed table of three that can be enumerated, while the species tier is
+## keyed by FILENAME, so a resolver-built needle would need the row's own key in hand. The directory
+## is what tells the two tiers apart, which is the only distinction being asserted here.
+func _flora_row_has_species_icon(row: String) -> bool:
+	return row.contains(FloraSprites.SPRITE_DIR)
+
 ## The `(78)` a basket row closes with — parsed back out of the RENDERED row, so this reads what the
 ## player reads rather than recomputing what it should have been.
 func _flora_row_biomass(row: String) -> int:
@@ -262,7 +422,9 @@ func _climate_tile_fixture(temperature: float, terrain_label: String) -> Diction
 ## otherwise, and the sim can only ever commit to a plant the tile actually realizes.
 func _committed_crop_tile_fixture() -> Dictionary:
 	var tile := BaseFx.food_tile_fixture()
-	tile["patch_committed_species"] = "wild_grain"
+	# The KEY is the roster id it must join the basket on; the LABEL is deliberately the fixture's own
+	# (see `BaseFx.food_tile_fixture`'s composition note). They differ on purpose — do not align them.
+	tile["patch_committed_species"] = "wild_emmer"
 	tile["patch_committed_display_name"] = "Wild Grain"
 	return tile
 
@@ -280,7 +442,8 @@ func _weeded_crop_tile_fixture() -> Dictionary:
 	for entry_variant in tile["patch_composition"]:
 		var entry: Dictionary = (entry_variant as Dictionary).duplicate(true)
 		match String(entry["species"]):
-			"wild_grain": entry["share"] = 0.6825
+			# Matched on the roster ID, not on the row's label — the two differ here by design.
+			"wild_emmer": entry["share"] = 0.6825
 			"oak_mast": entry["share"] = 0.0225
 		basket.append(entry)
 	tile["patch_composition"] = basket
@@ -304,7 +467,15 @@ func _unstated_role_tile_fixture() -> Dictionary:
 	var basket: Array = []
 	for entry_variant in tile["patch_composition"]:
 		var entry: Dictionary = (entry_variant as Dictionary).duplicate(true)
-		if String(entry["species"]) == "cotton":
+		# **THE UNSTATED ROW MUST BE ONE WHOSE SPECIES HAS NO ART** (issue #339). It was `cotton`
+		# until flora art landed, at which point cotton's row led with `flora/cotton.png` and the
+		# blank-slot path — the whole point of this fixture — became unreachable through it: the
+		# SPECIES tier outranks the role, so it also outranks the role's absence. `hay_grass` is the
+		# durable choice rather than a convenient one: it is the roster's only fodder species, so its
+		# role mark already names it exactly, and `icon_prompts.txt` records that it is DELIBERATELY
+		# never given art. A row with no species art and no role is the only one that can render the
+		# spacer.
+		if String(entry["species"]) == "hay_grass":
 			entry.erase("role")
 		basket.append(entry)
 	tile["patch_composition"] = basket
@@ -525,6 +696,10 @@ func run(harness) -> void:
 	# The three claims a PICTURE cannot carry, asserted over the REAL producer's lines (the harness
 	# pokes `_drawer` directly, the `tile_panel_*` idiom). Each is sabotage-verified.
 	_assert_food_layer_rows()
+	# The basket row's SPECIES tier (issue #339) — driven and PNG-less: it composes lines through the
+	# real producer and saves none of them, so nothing it asserts can move a frame. (The 32 shipped
+	# icons certainly did move frames; that is the tier landing, not this block.)
+	_assert_flora_species_precedence()
 	# The FOG half of the same pair (issue #462) — what each web states on a hex the player remembers
 	# but cannot see. `tile_sight_remembered` is its frame; these are the claims that frame cannot make.
 	_assert_fog_stock_parity()

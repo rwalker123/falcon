@@ -260,8 +260,14 @@ func run(harness) -> void:
 	h._hud._bandpanel._close_party_compose()
 	panel.set_active_tab(BandCityPanel.ZONE_BAND)
 	var transferring := _shipper_band()
+	# **A TURN'S OWN FRAME, so both pairs carry the same two magnitudes** — which is what the sim
+	# publishes there, the per-turn copy being taken off the accumulator immediately before the turn's
+	# capture. The rows read the per-turn pair; the accumulating one rides along because it is what
+	# closes the larder identity, and a fixture that omitted it would not be the live shape.
 	transferring["transfer_received"] = TRANSFER_RECEIVED
 	transferring["transfer_sent"] = TRANSFER_SENT
+	transferring["transfer_received_turn"] = TRANSFER_RECEIVED
+	transferring["transfer_sent_turn"] = TRANSFER_SENT
 	h._hud.update_band_alerts([transferring, _neighbour_band()])
 	h._hud.show_unit_selection(transferring)
 	await h._settle()
@@ -277,6 +283,34 @@ func run(harness) -> void:
 		breakdown.contains(DetailFormat.FOOD_LABEL_TRANSFER_RECEIVED))
 	h._assert_hud("…and what left for them, as its own row",
 		breakdown.contains(DetailFormat.FOOD_LABEL_TRANSFER_SENT))
+	_click_food_breakdown()
+	await h._settle()
+
+	# **THE COMMAND-REFRESHED FRAME (issue #517), PNG-LESS — the same band, the same two rows, on the
+	# frame a dispatched command re-captured.** The sim clears `transferReceived` / `transferSent`
+	# straight after the turn's capture reads them and rebuilds a refreshed frame from live
+	# components, so on this frame the ACCUMULATING pair is 0 and the per-turn pair is untouched. A
+	# breakdown reading the accumulator loses both rows the instant the player does anything, which is
+	# what a live game showed on a real 0.56 transfer.
+	#
+	# **A FRAME CANNOT SAY THIS** — the two states differ only in which field the rows were read from,
+	# and the state that is wrong renders no rows at all rather than wrong ones. It is also asserted
+	# as a PAIR with the turn frame above: a client reading the per-turn pair passes both, and one
+	# reading whichever is non-zero passes both too — which is why the accumulator is zeroed here
+	# rather than merely left behind.
+	var refreshed := transferring.duplicate(true)
+	refreshed["transfer_received"] = 0.0
+	refreshed["transfer_sent"] = 0.0
+	h._hud.update_band_alerts([refreshed, _neighbour_band()])
+	h._hud.show_unit_selection(refreshed)
+	await h._settle()
+	_click_food_breakdown()
+	await h._settle()
+	var refreshed_breakdown := _collect_text(h)
+	h._assert_hud("a command-refreshed frame still itemizes what arrived from other bands",
+		refreshed_breakdown.contains(DetailFormat.FOOD_LABEL_TRANSFER_RECEIVED))
+	h._assert_hud("…and what left for them, the accumulating pair having been cleared",
+		refreshed_breakdown.contains(DetailFormat.FOOD_LABEL_TRANSFER_SENT))
 	_click_food_breakdown()
 	await h._settle()
 

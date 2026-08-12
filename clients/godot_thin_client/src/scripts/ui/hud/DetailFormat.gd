@@ -1173,10 +1173,27 @@ static func flora_composition_lines(
         if committed != "" and String(entry["species"]) == committed:
             face = "[color=#%s]%s[/color]" % [HudStyle.SIGNAL_HEX, face]
         # An UNSTATED role renders the blank slot, never a defaulted icon — see `FoodIcons.for_crop_role`.
-        # THREE STEPS, EACH WITH ONE JOB, and the order is the fallback chain: the mark (bundled art
-        # at `icon_px`, else its emoji), else the transparent slot boxed to the SAME width as a mark,
-        # else the text spacer for when there is no art to match the width of at all.
-        var icon := FoodIcons.for_crop_role(String(entry.get("role", "")), icon_px)
+        # FOUR STEPS, EACH WITH ONE JOB, and the order is the fallback chain: this plant's own
+        # SPECIES art, else the role mark (bundled art at `icon_px`, else its emoji), else the
+        # transparent slot boxed to the SAME width as a mark, else the text spacer for when there is
+        # no art to match the width of at all.
+        #
+        # **SPECIES OUTRANKS ROLE BECAUSE IT IS THE MORE SPECIFIC FACT.** An icon's job on this list
+        # is to make a row findable at a glance, and "this is Wild Emmer" locates a row that "this is
+        # a staple" cannot — three marks cannot separate five rows. The role is not demoted to
+        # decoration by that: it remains the reading on every row with no species art — `hay_grass`
+        # today, the roster's one permanent gap (`FloraSprites` covers 32 of 33), and any plant whose
+        # art has not been drawn yet.
+        #
+        # **THE TWO NEVER RENDER TOGETHER**, deliberately: species art REPLACES the role mark rather
+        # than sitting beside it, because two glyph families adjacent at one weight is the axis
+        # collision `.claude/rules/client/labor-ui.md` records twice.
+        #
+        # The `[img]` box is the SAME `icon_px` in both tiers, so a row with species art and a row
+        # with a role mark occupy identical width and the name column cannot go ragged.
+        var icon := FoodIcons.for_flora_species(String(entry.get("species", "")), icon_px)
+        if icon == "":
+            icon = FoodIcons.for_crop_role(String(entry.get("role", "")), icon_px)
         if icon == "":
             icon = FoodIcons.crop_role_spacer(icon_px)
         if icon == "":
@@ -1311,8 +1328,8 @@ static func morale_is_concerning(unit_data: Dictionary) -> bool:
 ## Net per-turn food flow: income − what the PEOPLE eat − what the band's penned ANIMALS eat − what
 ## PREDATORS raided off the larder this turn.
 ##
-## **THE TRANSFER PAIR IS DELIBERATELY NOT A TERM HERE** (arc #527). `transfer_received` /
-## `transfer_sent` are what CROSSED between larders over the snapshot window — a past event, not a
+## **THE TRANSFER PAIR IS DELIBERATELY NOT A TERM HERE** (arc #527). Transfers are what CROSSED
+## between larders — a past event, not a
 ## rate — and they are itemized as their own two breakdown rows (`⇄ From other bands` / `⇄ To other
 ## bands`) where a past event belongs. Folding them into this headline made it a different quantity
 ## from the runway printed BESIDE IT on the same row: the sim's `turnsOfFood` is computed from
@@ -1366,11 +1383,16 @@ static func band_raid_forfeit(band: Dictionary) -> float:
 
 ## Food that CROSSED IN from another band over the snapshot window
 ## (`PopulationCohortState.transferReceived`) — a supply-network pooling, a shipment landing, a
-## party's pack coming home. 0 for a band nobody sent to, which the ledger renders as no row at all.
+## party's pack coming home. 0 for a band nobody sent to.
 ##
 ## **THE WINDOW IS THE SNAPSHOT WINDOW, NOT THE TURN**, because a launch draw happens when a command
 ## is applied, between two published frames. The sim accumulates across exactly the interval a
 ## client's own `larder_delta` measures and clears after the capture.
+##
+## **NOTHING RENDERS THIS PAIR — the breakdown reads the per-turn twins below.** It is the term that
+## closes the larder identity between two TURN frames, and it is legitimately `0.0` on any frame a
+## command refreshed. A readout reading it shows a transfer for exactly as long as the player does
+## nothing, then loses it.
 static func band_transfer_received(band: Dictionary) -> float:
     return float(band.get("transfer_received", 0.0))
 
@@ -1379,6 +1401,22 @@ static func band_transfer_received(band: Dictionary) -> float:
 ## something, and a net would render that as nothing having happened.
 static func band_transfer_sent(band: Dictionary) -> float:
     return float(band.get("transfer_sent", 0.0))
+
+## What crossed IN **on the turn** (`PopulationCohortState.transferReceivedTurn`) — the reading the
+## Food breakdown's `⇄ From other bands` row is made of. 0 for a band nobody sent to, which the
+## ledger renders as no row at all.
+##
+## **PER-TURN STATE ON THE COHORT, so a recapture re-reads it unchanged** — which is the whole
+## difference from the accumulating twin above, and the reason every row of this breakdown is now on
+## the same basis as `Gathered` / `Eaten` / pen upkeep / raid forfeit beside it. On the turn's own
+## frame the two agree exactly.
+static func band_transfer_received_turn(band: Dictionary) -> float:
+    return float(band.get("transfer_received_turn", 0.0))
+
+## …and what left for them on the turn (`PopulationCohortState.transferSentTurn`). Two named
+## magnitudes here as well, for the same reason the pair above are two.
+static func band_transfer_sent_turn(band: Dictionary) -> float:
+    return float(band.get("transfer_sent_turn", 0.0))
 
 ## The band's larder (provisions) as a float — the starting point of the food-outlook projection and
 ## the number the Food summary row prints (rounded there). Here beside the rest of the band food
@@ -1415,13 +1453,17 @@ static func merged_arrival_schedule(band: Dictionary) -> PackedFloat32Array:
 ## band has `food_consumption` 0 (an empty larder debits nothing) and a whole-animal hunt pays 0 on a
 ## wait turn, so a band with a perfectly good STEADY income failed all three tests and lost its net
 ## line and breakdown entirely. Gate on the same number you display.
+##
+## **The transfer terms are the PER-TURN pair for that same reason** — they are what the two `⇄` rows
+## render, and a gate on the accumulating pair goes false on a command-refreshed frame while the rows
+## it protects still have values.
 static func band_has_food_flow(band: Dictionary) -> bool:
     return band_food_income(band) >= SourceForecast.FOOD_FLOW_MIN \
         or float(band.get("food_consumption", 0.0)) >= SourceForecast.FOOD_FLOW_MIN \
         or band_pen_feed(band) >= SourceForecast.FOOD_FLOW_MIN \
         or band_raid_forfeit(band) >= SourceForecast.FOOD_FLOW_MIN \
-        or band_transfer_received(band) >= SourceForecast.FOOD_FLOW_MIN \
-        or band_transfer_sent(band) >= SourceForecast.FOOD_FLOW_MIN
+        or band_transfer_received_turn(band) >= SourceForecast.FOOD_FLOW_MIN \
+        or band_transfer_sent_turn(band) >= SourceForecast.FOOD_FLOW_MIN
 
 ## Sum of per-source `realized_yield` (the STEADY per-source average, food/turn) across this band's
 ## labor assignments of one kind — the category total behind the Food breakdown (Gathered = forage,

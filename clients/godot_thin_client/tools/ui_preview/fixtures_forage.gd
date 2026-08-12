@@ -323,6 +323,24 @@ static func find_crop_row(root: Node, crop_name: String) -> Button:
 			return found
 	return null
 
+## A CROP-PICKER ROW by the SPECIES KEY it was built from (`HudWidgets.FLORA_CROP_ROW_SPECIES_META`),
+## rather than by the plant's name. The two are different axes and are deliberately allowed to
+## disagree — `wild_emmer` renders as "Wild Grain" in these fixtures — so a claim about the row's ART
+## must come through here: `FloraSprites` composes the PNG from this key, and a name-matched row
+## would be asserting that the label and the file agree, which is not a rule this client has.
+## Returns null when the basket carries no such plant.
+static func find_crop_row_by_species(root: Node, species: String) -> Button:
+	if root == null:
+		return null
+	if root is Button and (root as Button).get_meta(
+			HudWidgets.FLORA_CROP_ROW_SPECIES_META, "") == species:
+		return root as Button
+	for child in root.get_children():
+		var found := find_crop_row_by_species(child, species)
+		if found != null:
+			return found
+	return null
+
 ## The improvement control's FACE text, whichever of its three node shapes it is in — the handle the
 ## meter assertions read. "" when the control is absent.
 static func improvement_face(root: Node, improvement: String) -> String:

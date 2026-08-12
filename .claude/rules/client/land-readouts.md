@@ -114,6 +114,24 @@ paths:
     fact about the plant, and dropping the slot would shift every name in the list out of column. **Never re-derive a role from the payoff fields** — they are rung-2/rung-3
     numbers folding in the weeding and conversion gains, and they read all-zero for a species that
     cannot climb on this ground, which is exactly where the role is still true and useful.
+    **THE MARK IS A FOUR-STEP CHAIN, AND THE ROLE IS ITS SECOND STEP** (issue #339):
+    `FoodIcons.for_flora_species` (this plant's OWN bundled art, `FloraSprites`) → the role mark above
+    → `crop_role_spacer` → `FLORA_ROLE_ICON_UNSTATED`. **SPECIES OUTRANKS ROLE BECAUSE IT IS THE MORE
+    SPECIFIC FACT**: the icon's job on this list is to make a row findable at a glance, and *"this is
+    Wild Emmer"* locates a row that *"this is a staple"* cannot — three marks cannot separate five
+    rows. The role is not demoted by that; it remains the reading on every row without species art —
+    **coverage is 32 of 33**, and the one gap is PERMANENT rather than pending: `hay_grass` is the
+    roster's only `fodder` species, so the fodder mark already names it uniquely and `icon_prompts.txt`
+    ships 32 prompts for 33 species by design. So the role tier is what a hay row wears, not a state
+    the family is passing through. **The two never render TOGETHER**
+    — species art REPLACES the role mark rather than sitting beside it, because two glyph families
+    adjacent at one weight is the axis collision `labor-ui.md` records twice. **There is deliberately
+    NO per-species emoji fallback**: the palette collapses the roster (grains all 🌾, nuts 🌰, berries
+    🫐, mushrooms 🍄), which is exactly why #339 chose art over an emoji map, so an emoji answered here
+    would re-introduce the collapse while SUPPRESSING the role — a distinction the palette CAN carry.
+    The `[img]` box is the SAME `icon_px` in both tiers (`FoodIcons.BASKET_ROW_IMG_FORMAT`, renamed
+    from `CROP_ROLE_IMG_FORMAT` when it grew a second art family), so a row with species art and a row
+    with a role mark occupy identical width and the name column cannot go ragged.
   - **The rows are tinted NEUTRAL ink**, not the ▲/▼ two-tone — a share is descriptive, not a
     good/bad signal. `detail_bbcode` now has ONE indented-sub-row branch that tints by the SIGN GLYPH
     (▲ healthy / ▼ warn / **neither → neutral**), because the leading mark here is a role icon that is
@@ -355,6 +373,18 @@ paths:
   `forage_crop_committed` (the TWO-MATERIAL case: `Flax Fields 21% · 1.42 fibre · 0.31 grape`, which is
   the one frame a summed figure could not fake) · `forage_crop_picker_fodder` (the empty-array case —
   both plants, both rungs, and no material clause anywhere on the list).
+
+  **A PICKER ROW WEARS THE SPECIES' OWN ART, ON THE BUTTON'S `icon` PROPERTY** (issue #339,
+  `FloraSprites.texture_for`) — the same per-species family the basket rows above lead with, reaching
+  its OTHER host kind. A row is a `Button`, which carries art natively, so it is **NOT** routed through
+  `HudWidgets.build_marker_icon`: that builder's host is a `Label` in an `HBoxContainer` and it returns
+  a `Control`, and the rule is written on the builder itself with the quarry picker as its precedent
+  (`sprites-widgets.md` → "The host widget decides the mechanism"). Set **only when the texture is
+  non-null**, so a no-art build is byte-identical rather than merely equivalent — with `expand_icon`
+  and `HudFloraVocab.FLORA_CROP_ICON_MAX_WIDTH` (16), held under the 22.0 `FLORA_CROP_ROW_HEIGHT` so a
+  256px source cannot set the row's minimum and break the MEASURED cap below; `COMPOSE_QUARRY_ICON_MAX_WIDTH`
+  records the same trap on the compose row's WIDTH. Drawn UNTINTED — nothing may set `modulate` on it,
+  the map markers' rule — a plant carrying no state and a row's state riding its ink and chrome.
 
   **SIZING — the picker's LIST scrolls within itself, and the cap is MEASURED**
   (`FLORA_CROP_LIST_MAX_HEIGHT`, derived as `FLORA_CROP_LIST_VISIBLE_ROWS × row + separations`, with the

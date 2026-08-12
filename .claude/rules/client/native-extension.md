@@ -486,13 +486,14 @@ broke. **`strength == 0` is a PARKED tie, not an absent one**, so the row is pub
 renders it disabled; **`last_seen_{x,y}` is CLOCK 1** — where the subject was, not where they are —
 and a consumer that renders it as a live position claims a sighting the tie never granted.
 
-`dict/population.rs` gained eight cohort keys in the same arc, in three groups:
+`dict/population.rs` gained ten cohort keys in the same arc, in four groups:
 
 | keys | shape |
 |---|---|
 | `expedition_destination_band` / `expedition_destination_name` | the KEY and its DISPLAY TWIN, the `expedition_target_herd` / `expedition_target_species` rule — the name is resolved at launch and carried, because a party outlives its destination's presence in the viewer's world |
 | `expedition_cargo_food` / `expedition_cargo_materials` | the shipment, the materials reusing `MaterialPayoff` — **never summed**, empty means "no row", the key always present |
 | `transfer_received` / `transfer_sent` · `expedition_trade_per_worker_carry` / `expedition_trade_material_carry_weight` | the food-ledger pair, and the two GLOBAL levers echoed onto every cohort so the outfit UI can price a manifest for a party that does not exist yet |
+| `transfer_received_turn` / `transfer_sent_turn` | the same two facts taken PER TURN, and the pair a readout renders — the accumulating pair above is cleared once the turn's capture reads it, so it is `0` on every command-refreshed frame |
 
 **`expedition_carry_cap` resolves per MISSION, and that is the trap worth naming**: a raid's pack is
 its provisions ceiling, a shipment's is what its people can carry out. They are different numbers on
@@ -502,5 +503,13 @@ shipment — a client doing so is one config edit from quoting a cap the launch 
 **`expedition_cargo_materials` is a VECTOR field, so it takes the `material_yield` treatment** rather
 than an appended scalar's: saturation reaches it and the golden re-record is the only step, but a
 consumer that coerces it through `float()` fails loudly and at a distance (see the vector-field note
-above). All nine keys are in the golden — re-record with `cargo xtask decode-guard --write-golden`
+above). All eleven keys are in the golden — re-record with `cargo xtask decode-guard --write-golden`
 after any intended change here.
+
+**BOTH TRANSFER PAIRS ARE DECODED, AND NEITHER SUBSTITUTES FOR THE OTHER** (issue #517). The
+accumulating pair spans the publication window and closes the larder identity between two TURN
+frames; the per-turn pair is cohort state a recapture re-reads unchanged, and is what the band
+panel's Food breakdown renders. They are equal on a turn's own frame and differ only on a frame a
+dispatched command refreshed — which is precisely the frame a panel reading the accumulating pair
+renders nothing on, so a decoder that emitted one of them would look correct in a golden and lose the
+rows in play.

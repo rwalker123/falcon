@@ -1020,6 +1020,25 @@ pub struct PopulationCohortState {
     /// weightless"), unlike the pack lever beside it.
     #[serde(default)]
     pub expedition_trade_material_carry_weight: f32,
+    /// **Food this band received from another band ON THIS TURN** — the per-turn twin of
+    /// [`Self::transfer_received`], and **the reading a panel renders**.
+    ///
+    /// The two answer different questions. [`Self::transfer_received`] covers the whole publication
+    /// window (command-time draws included) and is **cleared once the turn's capture reads it**,
+    /// which is the window the ledger identity closes over. This one is per-turn state on the cohort
+    /// and is not cleared, so it survives a **recapture** — the sim re-runs its capture against live
+    /// components after every dispatched command, and on such a refreshed frame the accumulating
+    /// pair reads `0.0` while the four sibling terms (`food_income`, `food_consumption`,
+    /// `pen_feed_upkeep`, `raid_forfeit`) re-read unchanged.
+    ///
+    /// **On a turn frame the two agree** — the copy is taken immediately before that capture, off
+    /// the same counter.
+    #[serde(default)]
+    pub transfer_received_turn: f32,
+    /// **Food this band gave up to another band on this turn** — the sent half of
+    /// [`Self::transfer_received_turn`], on the same copy and for the same reason.
+    #[serde(default)]
+    pub transfer_sent_turn: f32,
 }
 
 /// **One run of a band's hunt workers holding the same gear** — a row of

@@ -12,15 +12,16 @@ use bevy::MinimalPlugins;
 
 use core_sim::{
     advance_labor_allocation, balance_supply_networks, build_headless_app, scalar_from_f32,
-    scalar_one, scalar_zero, spawn_initial_herds, spawn_initial_world, BandKey, CommandEventLog,
-    CultureManager, DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle,
-    ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
-    LocalStore, MapPresets, MapPresetsHandle, MaterialsConfigHandle, MoraleCause, PopulationCohort,
-    ResidentBand, Scalar, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, StartingUnit, SupplyNetworkConfigHandle,
-    SupplyNetworkMembership, TileRegistry, WellbeingConfigHandle,
+    scalar_one, scalar_zero, spawn_initial_herds, spawn_initial_world, BandId, BandKey,
+    CommandEventLog, ConnectionKey, ConnectionLedger, ConnectionsConfig, CultureManager,
+    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, ForageRegistry,
+    GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
+    LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets,
+    MapPresetsHandle, MaterialsConfigHandle, MoraleCause, PopulationCohort, ResidentBand, Scalar,
+    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
+    SupplyNetworkConfigHandle, SupplyNetworkMembership, TileRegistry, WellbeingConfigHandle,
+    FULL_TIE,
 };
 use std::collections::BTreeMap;
 
@@ -36,9 +37,16 @@ const HIDE: &str = "hide";
 const TOUGHNESS: &str = "toughness";
 const SUPPLENESS: &str = "suppleness";
 
-/// A distinct faction for the pooling bands, so they never network with the spawned starting bands.
+/// The faction the pooling bands belong to. It does **not** isolate them — faction is a property of
+/// the endpoint and never a branch in the balancer — what keeps them off the spawned starting bands
+/// is that no tie is ever seeded to one.
 const TEST_FACTION: FactionId = FactionId(7);
 const BAND_POP: u32 = 100;
+
+/// The two pooling bands' ids, well clear of anything `spawn_initial_world` allocates so a seeded
+/// tie cannot name a starting band by accident.
+const STIFF_BAND: BandId = BandId(9_001);
+const SUPPLE_BAND: BandId = BandId(9_002);
 
 fn readings(tough: f32, supple: f32) -> BTreeMap<String, f32> {
     BTreeMap::from([
@@ -58,6 +66,8 @@ fn cohort(tile: Entity, working: f32, stores: LocalStore, faction: FactionId) ->
         stores,
         morale: scalar_one(),
         last_food_consumption: 0.0,
+        last_turn_transfer_received: 0.0,
+        last_turn_transfer_sent: 0.0,
         last_morale_delta: scalar_zero(),
         last_morale_cause: MoraleCause::None,
         last_morale_contributions: Default::default(),
@@ -243,10 +253,15 @@ fn a_hunt_banks_the_hide_it_hauls_home_and_a_hunt_that_takes_nothing_banks_none(
 }
 
 /// Spawn a band at `(x, y)` holding one hide batch at `band_key`, reading `(tough, supple)`.
+///
+/// `band` is its [`BandId`] — the endpoint identity the pooling gate reads. A cohort without one
+/// never joins a supply network.
+#[allow(clippy::too_many_arguments)]
 fn spawn_hide_band(
     app: &mut App,
     x: u32,
     y: u32,
+    band: BandId,
     band_key: BandKey,
     amount: f32,
     tough: f32,
@@ -270,8 +285,26 @@ fn spawn_hide_band(
         .spawn((
             cohort(tile, BAND_POP as f32, stores, TEST_FACTION),
             ResidentBand,
+            band,
         ))
         .id()
+}
+
+/// A live, mutual, full-strength tie between two bands — what standing beside each other for a few
+/// turns leaves behind, and what the pooling pass requires before it will move anything.
+fn seed_mutual_tie(app: &mut App, a: BandId, b: BandId) {
+    const SEEDED_ON_TURN: u64 = 0;
+    /// Clock 1 is not read by pooling, so the remembered position is immaterial here.
+    const SOMEWHERE: bevy::math::UVec2 = bevy::math::UVec2::ZERO;
+
+    let cfg = ConnectionsConfig::default();
+    let contacts_to_full = (FULL_TIE.to_f32() / cfg.strength.gain_per_contact).ceil() as u32;
+    let mut ledger = app.world.resource_mut::<ConnectionLedger>();
+    for key in [ConnectionKey::new(a, b), ConnectionKey::new(b, a)] {
+        for _ in 0..contacts_to_full {
+            ledger.record_contact(key, SOMEWHERE, SEEDED_ON_TURN, SEEDED_ON_TURN, &cfg);
+        }
+    }
 }
 
 fn hide_at(app: &App, band: Entity, key: &BandKey) -> Option<(Scalar, f32, f32)> {
@@ -306,6 +339,8 @@ fn pooling_a_material_between_bands_preserves_its_characteristics() {
         .insert_resource(SupplyNetworkConfigHandle::default());
     app.world
         .insert_resource(SupplyNetworkMembership::default());
+    // The pooling gate: bands pool only where the ledger holds a live tie between them.
+    app.world.insert_resource(ConnectionLedger::default());
 
     let (width, height) = {
         let registry = app.world.resource::<TileRegistry>();
@@ -317,8 +352,27 @@ fn pooling_a_material_between_bands_preserves_its_characteristics() {
     // balancer must treat them as two commodities.
     let tough_key = BandKey(vec![3, 0]);
     let supple_key = BandKey(vec![0, 3]);
-    let stiff = spawn_hide_band(&mut app, cx, cy, tough_key.clone(), 100.0, 0.92, 0.10);
-    let soft = spawn_hide_band(&mut app, cx + 2, cy, supple_key.clone(), 100.0, 0.14, 0.92);
+    let stiff = spawn_hide_band(
+        &mut app,
+        cx,
+        cy,
+        STIFF_BAND,
+        tough_key.clone(),
+        100.0,
+        0.92,
+        0.10,
+    );
+    let soft = spawn_hide_band(
+        &mut app,
+        cx + 2,
+        cy,
+        SUPPLE_BAND,
+        supple_key.clone(),
+        100.0,
+        0.14,
+        0.92,
+    );
+    seed_mutual_tie(&mut app, STIFF_BAND, SUPPLE_BAND);
 
     app.world.run_system_once(balance_supply_networks);
 
