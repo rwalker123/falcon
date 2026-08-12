@@ -147,8 +147,9 @@ Ecology/husbandry tunables live in the `ecology` (`regrowth_rate`, `collapse_fra
 `fauna_config.json`.
 **The pen's BUILD dials live in `intensification_ladder.json`** (the `animal:pen`
 rung's `build` block), and as of slice 4 so do the **earned-knowledge dials** (the ladder-level
-`knowledge` block — the old `knowledge_progress_per_turn` / `knowledge_completion_threshold`, which
-`labor_config` duplicated verbatim) — see "The Intensification Ladder": both food webs climb on the same
+`knowledge` block — the old `knowledge_progress_per_turn`, since split into `learn_rate` plus a
+per-knowledge `lesson_costs` entry, and `knowledge_completion_threshold`, which `labor_config`
+duplicated verbatim) — see "The Intensification Ladder": both food webs climb on the same
 numbers.
 **`FaunaConfig` is validated** (`FaunaConfig::validate`, run inside `from_json_str`, so every load path
 — builtin, default file, `FAUNA_CONFIG_PATH` override — is covered; the `expedition_config.rs` /
@@ -314,8 +315,11 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
 - **Rung-3 earned-knowledge gate — PENNING** (slice 4's §4.3 reshuffle; **it was Herding**). *Learned
   by doing* and **never start-granted**: hunting a **pastoral** (tamed) herd accrues faction
   **Penning** knowledge (discovery `PENNING_DISCOVERY_ID` = 2006, `fauna.rs`) at the ladder's
-  `knowledge.progress_per_turn` **scaled by the assignment's floor** — *"you learn penning by managing
-  tamed herds"*, and how fast depends on how much you leave standing
+  `knowledge.learn_rate` **scaled by the assignment's floor, over Penning's own `lesson_cost`** —
+  *"you learn penning by managing tamed herds"*, and how fast depends on how much you leave standing.
+  **It does NOT depend on how many hands are on the herd**: a lesson is credited once per source per
+  turn, in **practice units**, which is the currency the build's work units are deliberately kept
+  apart from (`intensification.md` → "A LESSON COSTS PRACTICE — and practice is NOT work")
   (`intensification::learn_multiplier`; the health gate is gone, `docs/plan_harvest_floor.md` §3.2). The **`Corral` policy** (and the `corral` / `extend_pen` commands, which ride the same
   `animal:pen` rung) is refused until the faction knows it; every gate resolves the id off the rung
   record, never a literal. The `penning` tag → discovery 2006 mapping is declared in
@@ -440,7 +444,8 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
   — 25 turns at a reference crew of 3, the pacing-neutral cost — and in **slice 4**
   the earned-knowledge levers `knowledge_progress_per_turn` (0.05) / `knowledge_completion_threshold`
   (1.0) moved to that file's ladder-level **`knowledge`** block at the same values, `labor_config`
-  having duplicated them verbatim (see "The Intensification Ladder").
+  having duplicated them verbatim; the rate has since split into `learn_rate` 1.0 over a per-knowledge
+  `lesson_costs` entry of 20, which is the same 0.05 (see "The Intensification Ladder").
   `claim_threshold` is **deleted** with the `domesticate` early-claim it gated (slice 3a — it let the
   player skip the investment). The retired flat rates
   `provisions_per_biomass` (0.01) / `corral_provisions_per_biomass` (0.012) and `fauna::corral_provisions`

@@ -194,7 +194,7 @@ pub fn advance_labor_allocation(
     // `labor_config.forage.cultivation` and `fauna_config.husbandry`, back when each web had its own
     // hard-coded earn site. The earn path is one rung-driven seam now, so the dials live on the
     // ladder with the build dials — the plant and animal ladders can only be paced together.
-    // **The ladder's `knowledge.progress_per_turn` is the BASE, not the amount**: since the harvest floor it is scaled per
+    // **The ladder's `knowledge.learn_rate` is the PRACTICE, not the ledger amount**: it is scaled per
     // call by the assignment's own floor (`intensification::learn_multiplier`), so the whole block
     // travels to `credit_rung_lesson` rather than a pre-multiplied delta.
     let knowledge_dials = &ladder.knowledge;
@@ -6840,7 +6840,7 @@ mod labor_yield_tests {
 
         // **Both webs assert the SAME shape**, which is the point of the predicate the earn path
         // reads: it is the escapement room, in biomass, before the whole-animal quantiser — so the
-        // *lesson* is `progress_per_turn × learn_multiplier(floor)` on both webs and orders strictly
+        // *lesson* is `learn_rate × learn_multiplier(floor) / lesson_cost` on both webs and orders strictly
         // in the floor. It does not, and must not, depend on `body_mass`.
         for rung_two in [false, true] {
             for (web, lesson_at) in [

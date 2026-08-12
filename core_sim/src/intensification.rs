@@ -41,7 +41,7 @@
 //! rung needing a *new* primitive codes that one primitive once, after which it too is config.
 
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
     str::FromStr,
@@ -815,9 +815,19 @@ impl RungDef {
     ///
     /// It was `knowledge_earned(floor, eligible) -> Option<u32>` while restraint was a **predicate**
     /// (`floor_teaches` — teach at or above the food peak, nothing below). The harvest floor made
-    /// restraint a **rate**, so the amount is now part of the answer and the rename says so:
-    /// `knowledge.progress_per_turn × learn_multiplier(floor)`. A crew that leaves more standing
-    /// learns faster, in proportion, with the food peak at ×1.0.
+    /// restraint a **rate**, so the amount is now part of the answer and the rename says so.
+    ///
+    /// # The amount is PRACTICE over the lesson's own COST
+    ///
+    /// ```text
+    /// practice = learn_rate × learn_multiplier(floor)     // per SOURCE per turn, NOT per worker
+    /// amount   = practice / lesson_cost(this rung's knowledge)
+    /// ```
+    ///
+    /// **`workers` is deliberately not a parameter here, and that asymmetry with
+    /// [`RungDef::build_accrual`] is the model** — see [`LadderKnowledge`]: work is earned by a
+    /// worker-turn and scales with hands, practice is earned by a *turn the source is worked* and
+    /// must not, or a faction would learn ten times faster by piling hands onto one patch.
     ///
     /// Returns `(discovery, amount)`, or `None` when:
     /// - `eligible` is false — the caller's composed gate. It carries the rung's own terms **and the
@@ -837,8 +847,8 @@ impl RungDef {
     /// can only ever reach an `animal` rung's `earns_knowledge` and a forage a `plant` one's. A master
     /// rancher isn't automatically a farmer.
     ///
-    /// The **base** amount is the ladder's single `knowledge.progress_per_turn` ([`LadderKnowledge`])
-    /// — the rung names the lesson, the ladder paces every lesson alike, and the floor scales it.
+    /// The rung names the lesson; the ladder prices it ([`LadderKnowledge::lesson_costs`]) and the
+    /// floor scales the practice that pays for it.
     pub fn knowledge_accrual(
         &self,
         floor: f32,
@@ -848,10 +858,14 @@ impl RungDef {
         if !eligible {
             return None;
         }
-        let amount = knowledge.progress_per_turn * learn_multiplier(floor);
-        if amount <= 0.0 {
+        let practice = knowledge.learn_rate * learn_multiplier(floor);
+        if practice <= 0.0 {
             return None;
         }
+        let name = self.earns_knowledge.as_deref()?;
+        let amount = knowledge
+            .ledger_credit(name, practice)
+            .expect("validate requires a lesson cost for every knowledge a rung teaches");
         self.earns_discovery_id().map(|lesson| (lesson, amount))
     }
 
@@ -997,44 +1011,117 @@ impl RungDef {
     }
 }
 
-/// **How fast the ladder is learned** — the pace of *every* rung's `earns_knowledge`, and the bar at
-/// which a faction may act on one.
+/// **How fast the ladder is learned** — what a turn of practice is worth, what each lesson costs, and
+/// the bar at which a faction may act on one.
 ///
-/// These two dials used to be **duplicated, at identical values, in both webs** (`labor_config`'s
+/// These dials used to be **duplicated, at identical values, in both webs** (`labor_config`'s
 /// `forage.cultivation` and `fauna_config`'s `husbandry`) because each web had its own hard-coded earn
 /// site. Slice 4 made the earn path **one rung-driven seam**
-/// ([`RungDef::knowledge_earned`]), so two per-web copies became a pure DRY hazard — nothing but
+/// ([`RungDef::knowledge_accrual`]), so two per-web copies became a pure DRY hazard — nothing but
 /// discipline kept "20 turns to learn Herding" and "20 turns to learn Cultivation" the same
 /// statement. They live here for the same reason the build dials do: the two ladders must climb on
 /// the same numbers, and the ladder is where a number that describes *both* webs belongs.
-#[derive(Debug, Clone, Copy, Deserialize)]
+///
+/// # A LESSON COSTS PRACTICE — and practice is NOT work
+///
+/// The build half prices a job in **work units** and a crew's hands are its throughput
+/// ([`RungBuild::work_cost`]). The lesson half is the same inversion in a **deliberately separate
+/// currency** (`docs/plan_unit_costed_work.md` §2), and **naming them apart is what stops anyone
+/// adding them**:
+///
+/// | | **work units** | **practice units** |
+/// |---|---|---|
+/// | earned by | a **worker-turn** on the source | a **turn** the source is worked |
+/// | scales with hands? | **yes** — that is what the build arc is for | **no** |
+/// | scaled by the floor? | yes ([`learn_multiplier`]) | yes ([`learn_multiplier`]) |
+/// | tools contribute? | yes | no |
+/// | spent on | a per-source build meter | the faction knowledge ledger |
+///
+/// **LEARNING MUST NOT SCALE WITH HANDS.** Knowledge is faction-level and credited **once per source
+/// per turn** (`systems::labor::credit_rung_lesson`), so a per-worker rate would let a faction learn
+/// ten times faster by piling hands onto one patch — the build arc's no-cap decision without the
+/// opportunity-cost brake that justifies it, since a second lesson costs nothing extra. *You learn by
+/// watching the practice, not by counting the hands doing it.*
+#[derive(Debug, Clone, Deserialize)]
 pub struct LadderKnowledge {
-    /// **The BASE** faction knowledge accrued per turn a crew works a source at a rung that teaches
-    /// (§4.2), scaled by the assignment's floor ([`learn_multiplier`], food peak = ×1.0). So
-    /// `completion_threshold / progress_per_turn` is the lesson's length in turns **at the food
-    /// peak** (`1.0 / 0.05` → ~20), and a crew leaving more standing learns it faster. Validated
-    /// `> 0` — a zero would make every knowledge unlearnable, silently freezing the ladder at rung 1.
-    pub progress_per_turn: f32,
+    /// **What ONE TURN of practice at the food peak is worth, in practice units** — charged once per
+    /// source per turn a crew works a rung that teaches, scaled by the assignment's floor
+    /// ([`learn_multiplier`], food peak = ×1.0). It is `1.0`, so a [`Self::lesson_costs`] entry reads
+    /// itself: a cost of `20` means *twenty worked turns at the food peak*, and a crew leaving more
+    /// standing learns it faster in proportion.
+    ///
+    /// It replaced a `progress_per_turn` of `0.05` — a rate straight into a normalized ledger, under
+    /// which **every lesson on both webs took the same ~20 turns** and a knowledge could only be
+    /// dearer by making the crew worse at learning it. Validated finite and `> 0` — a zero would make
+    /// every knowledge unlearnable, silently freezing the ladder at rung 1.
+    pub learn_rate: f32,
     /// Ledger progress at which a faction **knows** a discovery and may select the verb it gates
     /// ([`knows`]). Validated `0 < t <= 1`: at `0` every knowledge would be known before it was
     /// learned (every gate open from turn 1); above `1` no gate could **ever** open, since
     /// `DiscoveryProgressLedger` clamps accrual to `1.0`.
     pub completion_threshold: f32,
-    /// **What one item finished at a bench teaches of its craft** (`docs/plan_crafting_and_materials.md`
-    /// §5). So `completion_threshold / lesson_per_crafted_item` is a craft's length **in items**
-    /// (`1.0 / 0.2` → 5), the way the two dials above give a ladder lesson's length in turns.
+    /// **WHAT EACH LESSON COSTS, IN PRACTICE UNITS**, keyed by the knowledge's name — the same names
+    /// a rung's `earns_knowledge` spells and [`discovery_id_for`] resolves. `20` is twenty worked
+    /// turns at the food peak.
     ///
-    /// **It is a sibling of [`Self::progress_per_turn`] rather than a reading of it, because the
-    /// quantum differs.** A ladder lesson is charged per *turn worked* and scaled by the crew's
-    /// floor; a craft lesson is charged **per item completed**, on the same quantum as the tool's
-    /// wear, so the two cannot drift. There is no floor to scale it by and no turn to charge it on.
-    /// It lives here rather than in `recipes.json` so that **every knowledge pace in the game is
-    /// tuned in one file**, which is the whole reason the ladder's two moved here in slice 4.
+    /// **Keyed by the KNOWLEDGE, not by the rung that teaches it**, because that is whose property
+    /// the cost is: a knowledge can in principle be taught by more than one rung (and a craft is
+    /// taught by no rung at all), so hanging the number off a rung record would make the same lesson
+    /// cost two different things depending on where it was practised. It lives in this file for the
+    /// reason [`Self::craft_lesson_per_item`] does — **every knowledge pace in the game is tuned in
+    /// one place**.
+    ///
+    /// **Every name the ladder can teach must have an entry**, and `validate` insists on it for the
+    /// rungs' `earns_knowledge` *and* for every craft: a missing entry would make the pace whatever
+    /// a fallback happened to be, which is the parked-`0` failure in a new costume.
+    ///
+    /// All eight are **20** today, which is this slice's own pacing proof (`1.0 / 20` reproduces the
+    /// retired `progress_per_turn` of `0.05` exactly). The spread — rung-3's lessons dearer, and
+    /// `foddering` dearer again — is a later config-only slice.
+    pub lesson_costs: BTreeMap<String, f32>,
+    /// **What one item finished at a bench is worth, in PRACTICE UNITS** — the craft twin of
+    /// [`Self::learn_rate`] (`docs/plan_crafting_and_materials.md` §5). At `4.0` against a craft's
+    /// cost of `20`, a craft is learned in **5 items**.
+    ///
+    /// **It is a sibling of [`Self::learn_rate`] rather than a reading of it, because the quantum
+    /// differs.** A ladder lesson is charged per *turn worked* and scaled by the crew's floor; a
+    /// craft lesson is charged **per item completed**, on the same quantum as the bench tool's wear,
+    /// so the thing that consumes the tool and the thing that teaches the craft cannot drift. There
+    /// is no floor to scale it by and no turn to charge it on.
+    ///
+    /// **It moved with the currency rather than being left alone**: it was `lesson_per_crafted_item`
+    /// `0.2`, a fraction of a normalized threshold, and leaving it that way while its sibling became
+    /// a cost is precisely the drift the slice-4 consolidation existed to prevent. `4.0 / 20` is the
+    /// same 5 items.
     ///
     /// **The crafts pace themselves off the land, which is the point.** Weaving is learned quickly
     /// by a gathering band (fibre is everywhere) and Bone-working slowly by anyone (bone is the
     /// scarcest yield on the roster), with no per-craft dial saying so.
-    pub lesson_per_crafted_item: f32,
+    pub craft_lesson_per_item: f32,
+}
+
+impl LadderKnowledge {
+    /// **THE one place practice units become LEDGER progress** — `practice / lesson_cost` — so the
+    /// two teachers (a rung's [`RungDef::knowledge_accrual`] and a bench's craft lesson) cannot
+    /// divide by different things.
+    ///
+    /// **The ledger stays normalized and this is the divisor at the seam.**
+    /// `DiscoveryProgressLedger::add_progress` clamps to `1.0` and is shared with great discoveries,
+    /// espionage and the start profiles, so widening its unit would be a large blast radius for no
+    /// gain; [`Self::completion_threshold`] stays the ledger bar, the wire's
+    /// `IntensificationKnowledgeState` fields stay `0..1`, and the per-knowledge cost lives here
+    /// instead.
+    ///
+    /// `None` for a knowledge the ladder does not price — unreachable for anything the sim teaches,
+    /// since `validate` requires an entry for every rung lesson and every craft.
+    pub fn ledger_credit(&self, knowledge: &str, practice: f32) -> Option<f32> {
+        self.lesson_cost(knowledge).map(|cost| practice / cost)
+    }
+
+    /// What `knowledge` costs in practice units ([`Self::lesson_costs`]).
+    pub fn lesson_cost(&self, knowledge: &str) -> Option<f32> {
+        self.lesson_costs.get(knowledge).copied()
+    }
 }
 
 /// The whole ladder: every rung of both branches, plus the pace they are learned at
@@ -1182,6 +1269,10 @@ impl LadderConfig {
             }
         }
 
+        // **Every lesson the sim can teach must be PRICED.** Run after the rung loop, so the names
+        // are already known to resolve to real discoveries.
+        self.validate_lesson_cost_coverage()?;
+
         // Every rung a system reaches for by name must exist, so `rung()` is infallible and an
         // override can't silently delete a shipped rung out from under the engine.
         for key in RungKey::ALL {
@@ -1189,6 +1280,33 @@ impl LadderConfig {
                 return Err(LadderConfigError::Invalid {
                     field: format!("rungs[{}:{}]", key.branch().as_str(), key.id()),
                     constraint: "define every rung the simulation drives by name (see RungKey)"
+                        .to_string(),
+                    value: "missing".to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// **Every knowledge the sim teaches has a price** — each rung's `earns_knowledge` and each of
+    /// the crafts ([`crate::crafting::CRAFTS_WITH_A_DISCOVERY`], the coded set a bench can teach).
+    ///
+    /// **A missing entry is a load failure, not a silent default.** A defaulted lesson would be paced
+    /// by whatever the fallback happened to be — a number nobody chose, on a knowledge nobody could
+    /// find the dial for — which is the parked-`0` failure mode in a new costume. `knowledge_accrual`
+    /// and `credit_craft_lesson` therefore both read the map as total.
+    fn validate_lesson_cost_coverage(&self) -> Result<(), LadderConfigError> {
+        let taught = self
+            .rungs
+            .iter()
+            .filter_map(|rung| rung.earns_knowledge.as_deref());
+        for name in taught.chain(crate::crafting::CRAFTS_WITH_A_DISCOVERY) {
+            if self.knowledge.lesson_cost(name).is_none() {
+                return Err(LadderConfigError::Invalid {
+                    field: format!("knowledge.lesson_costs[{name}]"),
+                    constraint: "price every knowledge the sim can teach — a rung's \
+                                 `earns_knowledge` and every craft. A missing cost would pace the \
+                                 lesson off a default nobody chose"
                         .to_string(),
                     value: "missing".to_string(),
                 });
@@ -1278,14 +1396,27 @@ fn discovery_id_for(name: &str) -> Option<u32> {
 /// what config validation is for (the `FaunaConfig::validate` discipline these bounds were moved from,
 /// where each web asserted its own copy of them).
 fn validate_knowledge(knowledge: &LadderKnowledge) -> Result<(), LadderConfigError> {
-    if !knowledge.progress_per_turn.is_finite() || knowledge.progress_per_turn <= 0.0 {
+    if !knowledge.learn_rate.is_finite() || knowledge.learn_rate <= 0.0 {
         return Err(LadderConfigError::Invalid {
             field: "knowledge".to_string(),
-            constraint: "teach at a positive rate — at `progress_per_turn <= 0` no knowledge is \
-                         ever learned and the whole ladder silently freezes at rung 1"
+            constraint: "pay a positive amount of practice per worked turn — at `learn_rate <= 0` \
+                         no knowledge is ever learned and the whole ladder silently freezes at \
+                         rung 1"
                 .to_string(),
-            value: format!("progress_per_turn = {}", knowledge.progress_per_turn),
+            value: format!("learn_rate = {}", knowledge.learn_rate),
         });
+    }
+    for (name, cost) in &knowledge.lesson_costs {
+        if !cost.is_finite() || *cost <= 0.0 {
+            return Err(LadderConfigError::Invalid {
+                field: format!("knowledge.lesson_costs[{name}]"),
+                constraint:
+                    "cost a positive amount of practice — a free lesson is known before it \
+                             is learned, so every gate it holds is open on turn 1"
+                        .to_string(),
+                value: format!("{cost}"),
+            });
+        }
     }
     if !knowledge.completion_threshold.is_finite()
         || knowledge.completion_threshold <= 0.0
@@ -1300,16 +1431,16 @@ fn validate_knowledge(knowledge: &LadderKnowledge) -> Result<(), LadderConfigErr
             value: format!("completion_threshold = {}", knowledge.completion_threshold),
         });
     }
-    if !knowledge.lesson_per_crafted_item.is_finite() || knowledge.lesson_per_crafted_item <= 0.0 {
+    if !knowledge.craft_lesson_per_item.is_finite() || knowledge.craft_lesson_per_item <= 0.0 {
         return Err(LadderConfigError::Invalid {
             field: "knowledge".to_string(),
-            constraint: "teach a positive amount per item crafted — at `lesson_per_crafted_item \
-                         <= 0` no craft is ever learned and every tool stays permanently \
-                         unreachable"
+            constraint: "pay a positive amount of practice per item crafted — at \
+                         `craft_lesson_per_item <= 0` no craft is ever learned and every tool stays \
+                         permanently unreachable"
                 .to_string(),
             value: format!(
-                "lesson_per_crafted_item = {}",
-                knowledge.lesson_per_crafted_item
+                "craft_lesson_per_item = {}",
+                knowledge.craft_lesson_per_item
             ),
         });
     }
@@ -2250,8 +2381,41 @@ mod tests {
 
     #[test]
     fn rejects_a_ladder_nobody_could_ever_learn() {
-        let err = reject(|json| json["knowledge"]["progress_per_turn"] = (0.0).into());
+        let err = reject(|json| json["knowledge"]["learn_rate"] = (0.0).into());
         assert_rejects(err, "knowledge");
+    }
+
+    /// **A free lesson is known before it is learned**, so every gate it holds opens on turn 1 — the
+    /// silent-disable failure the cost side inherits from the rate it replaced.
+    #[test]
+    fn rejects_a_free_lesson() {
+        for bad in [0.0, -1.0] {
+            let err = reject(|json| json["knowledge"]["lesson_costs"]["herding"] = (bad).into());
+            assert_rejects(err, "knowledge.lesson_costs[herding]");
+        }
+    }
+
+    /// **Every lesson the sim can teach must be PRICED — a rung's and a bench's alike.** A missing
+    /// entry would pace the lesson off a default nobody chose, which is the parked-`0` failure in a
+    /// new costume, so it is a load failure instead.
+    #[test]
+    fn rejects_a_ladder_that_leaves_a_lesson_unpriced() {
+        // A rung's own lesson…
+        let err = reject(|json| {
+            json["knowledge"]["lesson_costs"]
+                .as_object_mut()
+                .expect("lesson_costs is a map")
+                .remove("penning");
+        });
+        assert_rejects(err, "knowledge.lesson_costs[penning]");
+        // …and a craft, which no rung teaches at all.
+        let err = reject(|json| {
+            json["knowledge"]["lesson_costs"]
+                .as_object_mut()
+                .expect("lesson_costs is a map")
+                .remove("weaving");
+        });
+        assert_rejects(err, "knowledge.lesson_costs[weaving]");
     }
 
     #[test]
@@ -2264,16 +2428,90 @@ mod tests {
         assert_rejects(err, "knowledge");
     }
 
-    /// The shipped pace: ~20 turns of stewardship per lesson, one pair of dials for both webs.
+    /// The shipped pace: ~20 turns of stewardship per lesson, **and every priced lesson is on it**.
+    /// A cost keyed by knowledge could spread them apart silently, so the sweep is over the whole map
+    /// rather than over one exemplar.
     #[test]
     fn the_builtin_ladder_is_learned_at_one_shared_pace() {
-        let knowledge = LadderConfig::builtin().knowledge;
-        assert!(knowledge.progress_per_turn > 0.0);
+        /// The turns of practice a shipped lesson takes at the food peak — this slice's pacing
+        /// proof, since `learn_rate / lesson_cost` reproduces the retired `progress_per_turn` of
+        /// `0.05` exactly.
+        const SHIPPED_LESSON_TURNS: f32 = 20.0;
+        let ladder = LadderConfig::builtin();
+        let knowledge = &ladder.knowledge;
+        assert!(knowledge.learn_rate > 0.0);
         assert!(knowledge.completion_threshold > 0.0 && knowledge.completion_threshold <= 1.0);
-        let turns = knowledge.completion_threshold / knowledge.progress_per_turn;
         assert!(
-            (turns - 20.0).abs() < 1e-3,
-            "a lesson should take ~20 turns of practice, got {turns}"
+            !knowledge.lesson_costs.is_empty(),
+            "the ladder prices lessons"
+        );
+        for (name, cost) in &knowledge.lesson_costs {
+            let turns = knowledge.completion_threshold / (knowledge.learn_rate / cost);
+            assert!(
+                (turns - SHIPPED_LESSON_TURNS).abs() < 1e-3,
+                "{name} should take ~{SHIPPED_LESSON_TURNS} turns of practice, got {turns}"
+            );
+        }
+    }
+
+    /// **A craft is 5 items, and it reads off the SAME cost a turn-worked lesson does** — the two are
+    /// one currency charged on two quanta (`docs/plan_unit_costed_work.md` §4), which is what stops
+    /// the bench and the ladder drifting apart.
+    #[test]
+    fn a_craft_is_learned_in_five_items_at_the_shared_lesson_cost() {
+        /// The items a shipped craft takes — unchanged by the currency move (`0.2` of a normalized
+        /// threshold and `4.0 / 20` are the same five).
+        const SHIPPED_CRAFT_ITEMS: f32 = 5.0;
+        let ladder = LadderConfig::builtin();
+        let knowledge = &ladder.knowledge;
+        for craft in crate::crafting::CRAFTS_WITH_A_DISCOVERY {
+            let per_item = knowledge
+                .ledger_credit(craft, knowledge.craft_lesson_per_item)
+                .expect("validate prices every craft");
+            let items = knowledge.completion_threshold / per_item;
+            assert!(
+                (items - SHIPPED_CRAFT_ITEMS).abs() < 1e-3,
+                "{craft} should be learned in ~{SHIPPED_CRAFT_ITEMS} items, got {items}"
+            );
+        }
+    }
+
+    /// **PRACTICE DOES NOT SCALE WITH HANDS, and work does** — the two-currency rule at the seam
+    /// (`docs/plan_unit_costed_work.md` §2). A lesson is credited once per source per turn, so a
+    /// per-worker rate would let a faction learn ten times faster by piling hands onto one patch.
+    ///
+    /// Asserted as the **asymmetry**, because either half alone reads like an oversight: the build
+    /// seam takes `workers` and moves with it, the lesson seam does not take them at all.
+    #[test]
+    fn a_lesson_is_paid_per_worked_turn_while_a_build_is_paid_per_worker() {
+        let ladder = LadderConfig::builtin();
+        let tended = ladder.rung(RungKey::PlantTended);
+
+        let lesson = |_workers: u32| {
+            tended
+                .knowledge_accrual(FOOD_PEAK_FLOOR, true, &ladder.knowledge)
+                .map(|(_, amount)| amount)
+        };
+        assert_eq!(
+            lesson(1),
+            lesson(50),
+            "fifty hands on one patch learn exactly what one hand does — the seam has no worker \
+             term to give them"
+        );
+        let build = |workers| {
+            tended.build_accrual(
+                tended.verb_improvement(),
+                true,
+                FOOD_PEAK_FLOOR,
+                workers,
+                NO_BUILD_GEAR,
+            )
+        };
+        assert!(
+            build(50) > build(1),
+            "…while the same fifty hands build fifty times as fast: {} vs {}",
+            build(50),
+            build(1)
         );
     }
 
@@ -2289,7 +2527,10 @@ mod tests {
     #[test]
     fn knowledge_accrual_is_the_rungs_lesson_paced_by_the_floor() {
         let ladder = LadderConfig::builtin();
-        let base = ladder.knowledge.progress_per_turn;
+        let base = ladder
+            .knowledge
+            .ledger_credit("herding", ladder.knowledge.learn_rate)
+            .expect("the ladder prices herding");
         let wild = ladder.rung(RungKey::AnimalWild);
 
         // The normalisation, which is the whole reason the multiplier is divided by the peak: a crew

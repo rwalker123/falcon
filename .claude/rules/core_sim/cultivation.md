@@ -32,9 +32,12 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
   faction-level knowledge *learned by doing*, **never start-granted**: **any** forage that actually
   draws a wild patch down accrues faction **Cultivation** knowledge (discovery
   `CULTIVATION_DISCOVERY_ID` = 2003, `forage.rs`) in the per-faction `DiscoveryProgressLedger`, at the
-  ladder's `knowledge.progress_per_turn` **scaled by the assignment's floor**
-  (`intensification::learn_multiplier` — a crew that leaves more standing learns faster, the food peak
-  is ×1.0; `add_progress`, clamped to `1.0`). The old `Sustain && Thriving` pair of gates is gone —
+  ladder's `knowledge.learn_rate` **scaled by the assignment's floor, over Cultivation's own
+  `lesson_cost`** (`intensification::learn_multiplier` — a crew that leaves more standing learns
+  faster, the food peak is ×1.0; `add_progress`, clamped to `1.0`). **It does NOT scale with the
+  crew**: a lesson is credited once per source per turn, in **practice units**, which is exactly what
+  keeps it apart from the build's work units (`intensification.md` → "A LESSON COSTS PRACTICE — and
+  practice is NOT work"). The old `Sustain && Thriving` pair of gates is gone —
   see "The knowledge pattern" in `intensification.md`. **A patch cannot accrue
   `cultivation_progress` until the faction *knows* Cultivation** — `advance_labor_allocation` only calls
   `accrue_cultivation` once `ledger.get_progress(faction, 2003) >= knowledge_completion_threshold`.
@@ -253,7 +256,8 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
   **`field_concentration_gain` is RETIRED** — a Field forces the favored share to 1.0, so there is no
   gain left to tune. Plus the
   **Rung 1b earned-knowledge** levers `knowledge_progress_per_turn` (0.05 — faction Cultivation earned
-  per gathered turn *at the food peak*, ~20 turns to know; the floor scales it) and
+  per gathered turn *at the food peak*, ~20 turns to know; the floor scales it; since split into the
+  ladder's `learn_rate` 1.0 over a `lesson_costs` entry of 20, which is the same number) and
   `knowledge_completion_threshold` (1.0 = the ledger's completion value). The early-claim `claim_threshold` is **removed**. The build dials'
   invariants (`0 < work_cost`, `0 < decay_fraction_per_turn < 1` **when present**
   — `null` is how a rung says its meter does not bleed, and a parked `0` is rejected because it would
@@ -261,8 +265,8 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
   grace that outlasts its own build makes walking away free), `crew_needed != Some(0)`,
   `0 < yield_fraction_while_building < 1`) are now **enforced on every load path** by
   `LadderConfig::validate()`, which owns them — as are the **knowledge** invariants
-  (`knowledge_progress_per_turn > 0`, `0 < knowledge_completion_threshold <= 1`), which moved to the
-  ladder with those dials in slice 4. **The levers homed here are now validated on every load path**
+  (`learn_rate > 0`, every `lesson_cost > 0`, **every knowledge the sim teaches priced at all**,
+  `0 < completion_threshold <= 1`), which moved to the ladder with those dials in slice 4. **The levers homed here are now validated on every load path**
   (slice 7 — the old "asserted over the *builtin* only, so a `LABOR_CONFIG_PATH` override that breaks it
   is accepted silently" gap is **closed**): `LaborConfig::validate()` enforces the **plant ladder's
   monotonicity** — `field_provisions_per_biomass > tended_regrowth_gain × regrowth_rate/4 ×

@@ -128,7 +128,8 @@ const DEFAULT_CULTIVATION_TENDED_CONVERSION_GAIN: f32 = 2.0;
 /// investment dip it pays while preparing) moved to the shared ladder,
 /// `data/intensification_ladder.json` → the `plant:tended` rung's `build` block
 /// (`crate::intensification`), because plants and animals must climb on the *same* numbers — and, as
-/// of slice 4, so did the **earned-knowledge levers** (`knowledge_progress_per_turn` /
+/// of slice 4, so did the **earned-knowledge levers** (`knowledge_progress_per_turn`, since split
+/// into the ladder's `learn_rate` + per-knowledge `lesson_costs`, /
 /// `knowledge_completion_threshold` → the ladder's `knowledge` block): once the earn path became one
 /// rung-driven seam, a per-web copy of "20 turns to learn a rung" was pure duplication. What stays
 /// here is the plant web's own economy: **the two rungs' payoffs** — rung 2's growth gain and rung 3's

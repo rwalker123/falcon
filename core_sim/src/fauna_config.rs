@@ -1175,7 +1175,8 @@ impl Default for FollowConfig {
 /// (`corralled_at`) and its keeper harvests the pen's MSY, paying `pen.upkeep_per_biomass` per unit
 /// of biomass in feed. What stays here is the animal web's own economy.
 ///
-/// **The earned-knowledge levers are GONE from here** (slice 4): `knowledge_progress_per_turn` /
+/// **The earned-knowledge levers are GONE from here** (slice 4): `knowledge_progress_per_turn`
+/// (since split into the ladder's `learn_rate` + per-knowledge `lesson_costs`) /
 /// `knowledge_completion_threshold` moved to `intensification_ladder.json`'s ladder-level `knowledge`
 /// block, which `labor_config` had duplicated verbatim — once the earn path became one rung-driven
 /// seam (`RungDef::knowledge_earned`), a number that paces *both* food webs belonged to the ladder,

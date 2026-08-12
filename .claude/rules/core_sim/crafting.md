@@ -361,12 +361,27 @@ drift, and a tool that lasts 25 items ends up teaching a craft in 30. Pinned by
 `crafting::the_lesson_and_the_tools_wear_are_charged_the_same_number_of_times`, which counts the
 items finished and asserts *both* charges equal that count.
 
-**The dial is `intensification_ladder.json`'s `knowledge.lesson_per_crafted_item` (0.2 → 5 items per
-craft), a SIBLING of `progress_per_turn` rather than a reading of it.** A ladder lesson is charged
-per turn worked and scaled by the crew's floor; a craft lesson is charged per item, and there is no
-floor to scale it by and no turn to charge it on. It lives on the ladder rather than in
-`recipes.json` so that **every knowledge pace in the game is tuned in one file**, which is the reason
-the ladder's other two moved there in slice 4.
+**The dial is `intensification_ladder.json`'s `knowledge.craft_lesson_per_item` (4.0 **practice
+units** per item, against that craft's own `knowledge.lesson_costs` entry of 20 → 5 items per craft),
+a SIBLING of `learn_rate` rather than a reading of it.** A ladder lesson is charged per turn worked
+and scaled by the crew's floor; a craft lesson is charged per item, and there is no floor to scale it
+by and no turn to charge it on. It lives on the ladder rather than in `recipes.json` so that **every
+knowledge pace in the game is tuned in one file**, which is the reason the ladder's other dials moved
+there in slice 4.
+
+> **A CRAFT IS PRICED IN THE SAME CURRENCY AS A RUNG'S LESSON, and goes through the same divisor**
+> (`docs/plan_unit_costed_work.md` §4). `credit_craft_lesson` credits
+> `LadderKnowledge::ledger_credit(craft, craft_lesson_per_item)` — literally the call a rung's
+> `knowledge_accrual` makes — so a bench and a rung cannot come to disagree about what a lesson costs,
+> and **the ledger stays normalized**: the cost is a divisor at the seam, never a widening of
+> `DiscoveryProgressLedger`'s `0..1` unit.
+>
+> **It moved with the currency rather than being left alone.** It was `lesson_per_crafted_item` `0.2`
+> — a fraction of a normalized threshold — and leaving it that way while its sibling became a *cost*
+> is precisely the drift the slice-4 consolidation existed to prevent. `4.0 / 20` is the same 5 items:
+> the crafts' pacing did not move. **`crafting::CRAFTS_WITH_A_DISCOVERY` is what makes the pricing
+> exhaustive** — `LadderConfig::validate` walks it and refuses to load a ladder that leaves a craft
+> unpriced, because a defaulted cost is a pace nobody chose.
 
 ---
 
@@ -586,7 +601,8 @@ committed band *spends* one.
 
 Bench time is deliberately **not** the binding constraint: four hands work a `work: 8` sled off in
 four turns bare-handed, against ten turns of banked hide. **A craft is ~5 items** (the ladder's
-`lesson_per_crafted_item`), so ~25–40 turns of deliberate work — the same order as one rung of the
+`craft_lesson_per_item` against that craft's `lesson_costs` entry), so ~25–40 turns of deliberate
+work — the same order as one rung of the
 intensification ladder — and the tool it unlocks is a further ~28-turn investment (a tanning frame is
 8 fibre + 2 bone, and the bone is what paces it) that then pays back over the 25 items it lasts.
 
