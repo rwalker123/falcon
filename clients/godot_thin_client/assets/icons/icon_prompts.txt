@@ -1,18 +1,26 @@
 # Bundled Icon Generation Prompts
 #
 # The icon twin of assets/terrain/texture_prompts.txt. These prompts generate the
-# bundled PNG art behind the five icon families:
+# bundled PNG art behind the six icon families:
 #
 #   assets/icons/fauna/    herd map markers      (ui/FaunaSprites.gd)
 #   assets/icons/sites/    food-site markers     (ui/SiteSprites.gd)
 #   assets/icons/wonders/  Wondrous Site markers (ui/WonderSprites.gd)
 #   assets/icons/stages/   settlement tokens     (ui/StageSprites.gd)
 #   assets/icons/crops/    crop-ROLE row marks   (ui/CropRoleSprites.gd)
+#   assets/icons/flora/    per-SPECIES row marks (ui/FloraSprites.gd)
 #
 # The first four share ONE pipeline and ONE house style, so both are documented once
-# here rather than per family. THE FIFTH DOES NOT — `crops/` is not a map marker, it
-# is an inline mark inside a text ROW, and it overrides several of the clauses below.
-# Read its own section before generating one; do not start from the house style.
+# here rather than per family. THE LAST TWO DO NOT — `crops/` and `flora/` are not map
+# markers, they are inline marks inside a text ROW, and they override several of the
+# clauses below. Read their own sections before generating one; do not start from the
+# house style. Those two share a row, a size and a ground, so `flora/` takes the
+# `crops/` sub-style wholesale and its section documents only what differs.
+#
+# THE LAST TWO ALSO COMPETE FOR ONE SLOT, which is the thing to know before adding art
+# to either: a basket row draws ONE mark, and a species icon REPLACES its plant's role
+# mark where the art exists (`DetailFormat.flora_composition_lines`). So the two sets
+# must not draw the same subjects — see the `flora/` section's own note.
 #
 # NOTE: prompts predating this file were never committed — only the shipped PNGs
 # survive. The house style below is reconstructed from that art plus the wild-fowl
@@ -612,6 +620,16 @@ village: Flat vector game icon of a small cluster of three simple houses with pi
 # DRAW AN ARROW, COIN OR SCALE FOR `cash`. Re-introducing either subject
 # re-introduces the collision this art exists to remove. Each mark names the
 # PRODUCT, not the account it pays into.
+#
+# THESE THREE ARE THE FALLBACK TIER OF THEIR SLOT, NOT THE ONLY TENANT OF IT.
+# A basket row prefers its plant's own `flora/` icon and falls back to the role
+# mark here, so as flora art lands each of these renders on FEWER rows — the
+# `fodder` bale, for one, is already the whole answer for `hay_grass` and that
+# species is deliberately never given flora art. Two consequences: the set is
+# still judged as three against each other (a row shows one mark, and which of
+# the three it is remains the question), and a `flora/` prompt must never draw
+# one of these three subjects, or a row would say the same thing twice under
+# two different names.
 
 
 # AS SHIPPED — measured at 13px over #111A1E, which is the only size that decides
@@ -662,3 +680,387 @@ fodder: Flat vector game icon of a bound bale of cut green forage, a squat low w
 # the PRODUCT rather than the account. The rose hue is the far side of the wheel
 # from both siblings.
 cash: Flat vector game icon of a compact upright bolt of folded dyed cloth, a roughly square blocky bundle of neatly folded fabric with one simple diagonal binding cord across its face, drawn as one bold flat silhouette with NO outline of any kind, filled in a single warm dusty rose terracotta tone with at most one slightly darker rose line for the cord, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fabric texture, no fine details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+
+# ============================================================================
+# FLORA SPECIES  ->  assets/icons/flora/  (ui/FloraSprites.gd)
+# ============================================================================
+#
+# Keyed by the sim's `FloraShareInfo.species` verbatim, and THE FILENAME IS THE
+# KEY: `wild_emmer` reads `assets/icons/flora/wild_emmer.png`. There is no table
+# in the client to edit — dropping a keyed PNG into that directory wires it.
+# The 33 keys are `species` in `core_sim/src/data/flora_config.json`.
+#
+# THIS FAMILY TAKES THE `crops/` SUB-STYLE, NOT THE HOUSE STYLE ABOVE. These
+# icons render in the SAME `RichTextLabel` row as the crop-role marks, at the
+# same ~13px, over the same `HudStyle.PANEL_SOLID` (#111A1E). So every clause
+# the crops section inverts is inverted here too, and for the same measured
+# reasons: NO OUTLINE (a thick dark charcoal outline is camouflage against a
+# luma-24 panel and eats the fill from both sides at 13px), ONE silhouette and
+# AT MOST ONE interior division, and the FILL itself carries the shape. Read
+# that section before generating one; do not start from the house style.
+#
+# FILL LUMA IS TWO TIERS AGAINST THE PANEL'S 24, and both are NUMBERS rather than
+# adjectives, because an adjective is what failed:
+#
+#   TARGET BAND  ~130-190  where the shipped `crops/` marks measure (134-191, the
+#                          table above, 5-8x the panel) and where most of this set
+#                          landed. A species whose natural colour permits it
+#                          belongs here, and the majority of them are here.
+#   HARD FLOOR   ~55       a little over twice the panel, below which a fill stops
+#                          reading as a shape at all. 55-130 is the legitimate home
+#                          of a species whose true colour IS dark — the deep
+#                          purples, the dark fruits, the browns.
+#
+# THE FLOOR WAS A FLAT 130 UNTIL ALL 32 WERE GENERATED AND MEASURED, and seven of
+# them came in under it while reading perfectly well in the basket — so the number
+# was wrong, not the art. 130 came from `crops/`, where the mark is the row's ONLY
+# graphic; a flora icon sits beside the plant's NAME in text and does not have to
+# carry the row alone. The seven, lowest first:
+#
+#   berry_scrub 59 · wild_fig 72 · pine_nut 76 · wild_orchard 78 · grapevine 79 ·
+#   chestnut 97 · cattail 115
+#
+# `berry_scrub` at 59 is the darkest thing the shipped set accepts and is the
+# practical bottom of the low band. (A floor of 70 was proposed and would have
+# failed shipped art on the spot — the floor has to sit BELOW the darkest icon we
+# accept, which is why it is 55 and why the table is quoted here: a rule with the
+# real numbers beside it is checkable where an adjective is not.)
+#
+# WHAT A DIM FILL COSTS IS LEGIBILITY, AND THE SILHOUETTE THEN HAS TO PAY FOR IT,
+# so a species may sit in the low band ONLY IF its outline is strong and
+# distinctive. All seven qualify on exactly that ground: a spiked star, a
+# triangular bunch of circles, a stepped cone, a smooth teardrop, a tight cluster
+# of four circles, a blunt cylinder. `kelp` is the case that produced this rule and
+# its ~65 sits INSIDE the permitted band, which is not a contradiction: it was
+# rejected because a long thin ribbon blade at 65 has no silhouette left to carry
+# it, where berry_scrub at 59 reads by shape. Same number, different outline,
+# different answer. WHERE A SPECIES' COLOUR IS GENUINELY DARK AND ITS SILHOUETTE IS
+# WEAK, THE ICON TAKES A LIGHTER MEMBER OF THAT HUE FAMILY, not the true one: a
+# plant that reads as a smudge has failed regardless of how accurate its colour is.
+#
+# NONE OF THIS IS LICENCE TO DRIFT DARK. Most icons belong in the target band; the
+# low band is for species whose colour is genuinely dark, not a relaxed floor
+# everyone may use. And it does not soften the TONE-WORD rule, which is a separate
+# failure from merely landing dim and is what actually killed kelp: kelp asked for
+# "a single dark olive green", the generator obeyed exactly, and the same prompt's
+# boilerplate was still asking for a shape "reading clearly LIGHT and
+# high-contrast". A tone word that names darkness OUTRANKS that boilerplate in
+# practice, so do not write one — no fill clause in this section may say "dark",
+# and `grep "^[a-z_]*:.*single dark" icon_prompts.txt` must keep returning nothing.
+# (The pattern is anchored to a PROMPT line for a reason: an unanchored grep for
+# the phrase matches this rule stating it, and comes back looking like a breach.)
+#
+# A SECOND HOST, at the same size class, so ONE piece of art serves both: the
+# crop picker's rows are `Button`s and take the art on their `icon` property at
+# `HudFloraVocab.FLORA_CROP_ICON_MAX_WIDTH` (16) inside a 22px row.
+#
+# A SPECIES ICON REPLACES THE ROW'S CROP-ROLE MARK — they never render together
+# (`DetailFormat.flora_composition_lines`: species art -> role art -> role emoji
+# -> blank slot). Two consequences, and the second is the one that wastes a
+# whole art family if it is missed:
+#
+#   * A row with no art here is NOT bare — it keeps its role mark. So a species
+#     whose role mark already names it needs no art at all (see `hay_grass`).
+#   * THE ART MUST CARRY THE PLANT, NEVER THE ROLE. Do not draw a wheat ear for
+#     every staple and do not draw a bolt of cloth for the cash crops: those are
+#     `crops/staple.png` and `crops/cash.png`, and repeating them here spends a
+#     new icon on re-saying exactly what the mark it displaced already said.
+#
+# THE TEST IS THE BASKET, NOT THE ROSTER — and this is what makes 32 legible
+# icons at 13px possible at all. A tile realizes only `realized_species_min` 2
+# to `realized_species_max` 4 species (`flora_config.json`), so a player never
+# sees more than four of these at once and an icon only has to be told apart
+# from the plants that can stand BESIDE it. Co-hosting is broad, though — 19
+# species share a biome with wild emmer — so the crops family's two-axis rule
+# is applied per CLUSTER below: SILHOUETTE first, HUE second, and every pair
+# that can co-host differs on at least one. Keep both splits when regenerating
+# any one icon; changing a single icon's shape or colour is a change to its
+# CLUSTER, not to that icon.
+#
+# `hay_grass` IS DELIBERATELY ABSENT, and that is the right answer rather than
+# a gap. It is the roster's only `fodder` species, so the fodder role mark — a
+# bound bale of cut forage — already names it exactly and uniquely; and a
+# standing-grass silhouette would collide with the four other grass spikes it
+# co-hosts with (wild emmer, seed grasses, wild rice, cattail), which is the one
+# cluster with no room to spare. It keeps its role mark. 32 prompts, 33 species.
+#
+# SEVEN OF THESE SUBJECTS ARE ALREADY DRAWN IN `sites/`, AND NONE OF THAT ART
+# CAN BE REUSED HERE — but all of it is the REFERENCE to draw from, so that one
+# plant does not end up with two unrelated looks in one game:
+#
+#   sites/chestnut.png  <- flora chestnut       (the same word, even)
+#   sites/grain.png     <- wild_emmer, seed_grasses
+#   sites/reeds.png     <- reed_and_root, cattail
+#   sites/tuber.png     <- wild_tubers
+#   sites/mushroom.png  <- cave_fungi
+#   sites/fish.png      <- river_fish
+#   sites/shell.png     <- shellfish_beds
+#
+# Three reasons the file cannot simply be pointed at, and the third is the one
+# that would still bite after a rescale:
+#
+#   1. THEY WEAR THE HOUSE STYLE'S THICK DARK CHARCOAL OUTLINE, which is
+#      camouflage against a luma-24 panel and eats the fill from both sides at
+#      13px — the measured reason the `crops/` sub-style drops it.
+#   2. THEY ARE MEASURED TO FAIL AT THIS SIZE, in this file, already:
+#      `sites/reeds.png` "blurs into a mass at ~36px", and `crops/staple.png`
+#      exists as ONE ear precisely because `sites/grain.png` is a tied sheaf of
+#      several stalks that "dissolves into a mass at this size".
+#   3. THEY ANSWER A DIFFERENT QUESTION. A site icon is keyed by FOOD MODULE —
+#      one of ten buckets — and is deliberately generic: `chestnut.png` stands
+#      for the whole `temperate_forest` module, not for the `chestnut` species.
+#      Wiring it to the species would make one picture mean the bucket on the
+#      map and one plant in the basket.
+#
+# So: redraw them in this section's style, keeping the existing icon's SUBJECT
+# and PALETTE where one exists, and simplifying its silhouette to survive 13px.
+#
+# PIPELINE DELTAS from the top of this file — the `crops/` set's, unchanged:
+#   * Key at `--size 256`. Many of these are pale subjects, so expect the
+#     catfish note's wider ramp (`--lo 85 --hi 240`) and COUNT THE RESIDUAL.
+#   * `.import`: `process/size_limit=64`, and MIPMAPS ARE LIVE (`mipmaps/
+#     generate=true`) — a RichTextLabel does not inherit MapView's pinned
+#     `TEXTURE_FILTER_NEAREST` and genuinely uses the mip chain.
+#   * Carry the no-tile counter-clause in every prompt below verbatim, and read
+#     `icon_key.py`'s printed COVERAGE figure before anything else: a bare plant
+#     is ~15-25% of the canvas, and a figure far above that means a background
+#     tile survived the key.
+#   * JUDGE AT ~13px OVER #111A1E, AND JUDGE THE CLUSTER TOGETHER — a contact
+#     sheet of the cluster stacked as basket rows, never one icon at a time.
+#     The question a player asks is "which of these rows is which plant".
+
+
+# ----------------------------------------------------------------------------
+# CLUSTER A — GRASS SPIKES & HEADS (the temperate/river staples, and the
+# tightest cluster in the set: four of these co-host almost everywhere)
+#   wild_emmer    STOUT LOBED UPRIGHT SPIKE   ripe gold
+#   seed_grasses  WIDE AIRY SPRAY             pale straw
+#   wild_rice     ARCHED DROOPING SPRAY       fresh green
+#   cattail       BLUNT CYLINDER ON A STEM    warm mid-brown
+#   sunflower     ROUND RAYED DISC            gold, dark centre
+# ----------------------------------------------------------------------------
+
+# wild_emmer.png — Wild Emmer (staple)
+# REVISED, not authored blind: the first generation reduced to a ~2px-wide vertical
+# stripe at row size (measured). The cause is ASPECT, not tone — `icon_key.py` trims
+# to the subject's bounding box and fits it into a square PRESERVING ASPECT, so the
+# subject's own proportions decide how much width survives, and a very tall very
+# narrow ear lands as a hairline. Long awns only make it worse: they add height and
+# no width. Hence a stouter head, stubby awns, and a NUMBER for the proportion
+# instead of an adjective — the luma-floor paragraph makes the number-not-adjective
+# argument for colour, and this is the same lesson applied to GEOMETRY.
+# WHAT THE STOUTNESS MUST NOT COST — cluster A's separation:
+#   vs seed_grasses  emmer stays ONE solid upright spike, seed grasses is a fan of
+#                    several thin stems. Fattening the ear does not threaten this.
+#   vs cattail       the real risk, cattail being a blunt solid cylinder. What must
+#                    survive is that emmer's outline is LOBED by its grain rows
+#                    where cattail's is SMOOTH, and that emmer is gold where cattail
+#                    is brown. Never let "fatter" become "smooth-sided".
+wild_emmer: Flat vector game icon of a single upright ear of wild emmer wheat, one short fat seed head of plump grains stacked in paired rows so its two side edges are clearly lobed and bumpy rather than smooth, three or four short stubby bristles at its tip and no long awns, standing on a very short bare stalk, the overall shape upright but stout, no more than about two and a half times taller than it is wide, drawn as one bold flat silhouette with NO outline of any kind, filled in a single ripe golden amber tone with at most one slightly darker gold division down its centre, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# seed_grasses.png — Seed Grasses (staple)
+# WIDE and AIRY where emmer is one solid spike — the silhouette split is the
+# whole distinction, since both are pale straw-gold heads.
+seed_grasses: Flat vector game icon of a loose open spray of wild grass seedheads, five or six thin stems fanning outward and upward from one point with a small tuft of seed at each tip, clearly wider than it is tall, drawn as one bold flat silhouette with NO outline of any kind, filled in a single pale straw tone with no interior division at all, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# wild_rice.png — Wild Rice (staple)
+# The ARCH is what tells it from emmer and seed grasses; the green seals it.
+wild_rice: Flat vector game icon of a single stem of wild rice arching over to one side with a heavy drooping one-sided head of grains hanging from its curved tip, a clear sideways C-shaped arc in overall silhouette, drawn as one bold flat silhouette with NO outline of any kind, filled in a single fresh medium green tone with at most one slightly darker green division separating the head from the stem, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# cattail.png — Cattail & Bulrush (staple)
+# The one BLUNT SOLID shape in a cluster of feathery ones, and the only brown —
+# it should read instantly even at row size. (It reads as a DARK cattail beside
+# gold and straw because of hue, not because the fill is dark: the fill is a warm
+# MID-brown and must stay one — see the luma floor in the preamble.)
+cattail: Flat vector game icon of a single cattail bulrush, one fat smooth blunt-ended brown cylinder standing upright on a straight thin stem with one narrow blade leaf angling off the stem, drawn as one bold flat silhouette with NO outline of any kind, filled in a single warm mid-brown tone with at most one slightly darker brown division where the cylinder meets the stem, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# sunflower.png — Sunflower & Seedheads (staple)
+# A perfect disc — the only fully round silhouette in this cluster.
+sunflower: Flat vector game icon of a single sunflower head seen face on, a round dark seed centre ringed by one row of short broad triangular petals, roughly circular in overall shape with no stem and no leaves, drawn as one bold flat silhouette with NO outline of any kind, filled in a single bright golden yellow with one clearly darker brown circle for the seed centre, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+
+# ----------------------------------------------------------------------------
+# CLUSTER B — NUTS & MAST (all four co-host across the temperate woodland, so
+# all four are separated on SILHOUETTE alone — they are all brown)
+#   hazel      ROUND NUT IN A FRINGED HUSK   warm hazel
+#   oak_mast   EGG UNDER A SCALED CAP        mid brown
+#   chestnut   SPIKED SPHERE, SPLIT          russet
+#   pine_nut   SCALED TEARDROP CONE          deep brown
+# ----------------------------------------------------------------------------
+
+# hazel.png — Hazel (staple)
+hazel: Flat vector game icon of a single hazelnut sitting in its ragged frilled husk, one smooth round nut with a torn fringe of husk leaves flaring around its base, roughly round with a spiky lower edge, drawn as one bold flat silhouette with NO outline of any kind, filled in a single warm mid-tan tone with at most one slightly darker tan division between the nut and its husk, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# oak_mast.png — Oak Mast (staple)
+oak_mast: Flat vector game icon of a single acorn, one smooth oval nut hanging point-down beneath a thick textured cap that covers its top third, taller than it is wide, drawn as one bold flat silhouette with NO outline of any kind, filled in a single light warm brown with one clearly darker brown cap, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# chestnut.png — Sweet Chestnut (staple)
+# The SPIKES are the silhouette. Keep them few and fat — four or five, not a
+# halo of fine ones, which dissolve to a fuzzy circle at 13px.
+chestnut: Flat vector game icon of a sweet chestnut burr split open, a round shell with five or six short fat triangular spikes around its edge and one smooth glossy nut showing in the opening, roughly round and clearly spiked in overall silhouette, drawn as one bold flat silhouette with NO outline of any kind, filled in a single russet red-brown tone with one clearly lighter oval for the nut, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# pine_nut.png — Pine Nut (staple)
+# The cone's scales are ONE interior division read as a stepped edge, not a
+# grid of individual scales — at 13px a scale grid is grey mush.
+pine_nut: Flat vector game icon of a single pine cone standing upright, a tapering teardrop shape whose two side edges are stepped into four or five broad scale notches, taller than it is wide, drawn as one bold flat silhouette with NO outline of any kind, filled in a single deep warm brown with no interior lines beyond the stepped edges themselves, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+
+# ----------------------------------------------------------------------------
+# CLUSTER C — BERRIES (these two co-host; MANY-vs-ONE and purple-vs-amber)
+#   berry_scrub  CLUSTER OF ROUND BERRIES   deep purple
+#   cloudberry   ONE KNOBBLY AGGREGATE      amber orange
+# ----------------------------------------------------------------------------
+
+# berry_scrub.png — Berry Scrub (staple)
+berry_scrub: Flat vector game icon of a small tight cluster of four round berries hanging together from one short twig with a single small leaf, the berries clearly separate circles touching each other, drawn as one bold flat silhouette with NO outline of any kind, filled in a single deep plum purple with at most one slightly darker purple division between the berries and the twig, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# cloudberry.png — Cloudberry & Crowberry (staple)
+cloudberry: Flat vector game icon of a single cloudberry, one plump raspberry-like berry built from six or seven fat rounded lobes so its outline is clearly bumpy, sitting on a short stem with two small pointed leaves beneath it, drawn as one bold flat silhouette with NO outline of any kind, filled in a single warm amber orange with at most one slightly darker amber division between the berry and its leaves, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+
+# ----------------------------------------------------------------------------
+# CLUSTER D — TREE FRUIT & VINE (grapevine co-hosts all three of the others)
+#   wild_orchard  ONE ROUND FRUIT + LEAF        red
+#   wild_fig      ONE TEARDROP FRUIT            deep violet
+#   date_palm     FROND ABOVE A HANGING BUNCH   amber + light green frond
+#   grapevine     TRIANGULAR BUNCH + LEAF       deep purple
+# NOTE — wild_fig and grapevine are the tightest pair here (both dark purple).
+# They are held apart by SILHOUETTE alone: one smooth teardrop against a
+# triangular mass of small circles. Do not narrow that gap by making the fig
+# lumpy or the bunch smooth.
+# ----------------------------------------------------------------------------
+
+# wild_orchard.png — Wild Orchard (staple)
+wild_orchard: Flat vector game icon of a single round orchard apple on a short stem with one broad pointed leaf angling off to the side, a clean circle with a small notch at the top, drawn as one bold flat silhouette with NO outline of any kind, filled in a single bright warm red with one clearly darker green leaf, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# wild_fig.png — Wild Fig (staple)
+wild_fig: Flat vector game icon of a single fig, one smooth teardrop fruit hanging point-up from a very short stalk, broad and rounded at the bottom and tapering to the stalk, with no leaves at all, drawn as one bold flat silhouette with NO outline of any kind, filled in a single deep violet tone with at most one slightly darker violet division at the stalk, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# date_palm.png — Date Palm (staple)
+# The FROND ON TOP is what stops it reading as a second grape bunch.
+# REVISED, not authored blind: the first generation keyed the frond NEAR-BLACK
+# (measured), so at 13px it vanished into the panel and left a bare hanging mass of
+# small ovals — which is grapevine. The clause that caused it was "one clearly
+# darker green frond", so the two-element split is no longer subject-plus-a-darker-
+# mark: it is amber fruit against a LIGHT green frond, held apart by HUE with both
+# elements up in the target band, not merely over the floor. Weight is the second
+# half of the fix —
+# even a light frond is marginal as a thin arc at this size, so the blade is asked
+# for BROAD and THICK. It stays ONE smooth blade rather than a fan of serrated
+# leaflets: that is the chestnut-spike rule (few and fat, never a halo of fine
+# ones) applied here.
+date_palm: Flat vector game icon of a hanging bunch of dates beneath one arching palm frond, the frond a single broad thick smooth-edged curved blade spanning the whole top, solid and noticeably heavier than a thin stroke, with no separate leaflets and no serrations, and the dates six or seven small ovals gathered in a mass below it, drawn as one bold flat silhouette with NO outline of any kind, filled in just two flat tones, warm amber for the dates and a light fresh green for the frond, the two told apart by HUE rather than by lightness and both plainly on the light side so each reads bright at row size, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# grapevine.png — Wild Grapevine (cash)
+grapevine: Flat vector game icon of a hanging bunch of grapes, seven or eight small circles packed into a clear downward-pointing triangle, with one small lobed vine leaf attached at its top right, drawn as one bold flat silhouette with NO outline of any kind, filled in a single deep purple with one clearly darker green leaf, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+
+# ----------------------------------------------------------------------------
+# CLUSTER E — THE CASH CROPS (four of the five; grapevine is in cluster D)
+#   cotton    WHITE PUFF IN A DARK STAR BRACT   white
+#   flax      THIN STEM + FLAT STAR FLOWER      cornflower blue
+#   tobacco   ONE LARGE DROOPING LEAF           olive
+#   tea       TWO SMALL LEAVES AND A BUD        bright green
+# NOTE — tobacco and tea are the tightest pair (both are green leaves). They are
+# held apart on BOTH axes at once: one big drooping blade against two small
+# upright ones, and olive against bright green. Regenerating either without the
+# other on the contact sheet is how they converge.
+# NONE of these may be drawn as a bolt of cloth — that is `crops/cash.png`, the
+# very mark this art replaces.
+# ----------------------------------------------------------------------------
+
+# cotton.png — Cotton Fields (cash)
+cotton: Flat vector game icon of a single open cotton boll, a soft round white puff of fibre sitting in a four-pointed dark star-shaped bract that opens beneath and around it, drawn as one bold flat silhouette with NO outline of any kind, filled in a single near-white cream with one clearly darker warm brown bract, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# flax.png — Flax Fields (cash)
+# The ONE BLUE icon in the whole set — the hue is doing most of the work here,
+# so do not warm it toward teal.
+flax: Flat vector game icon of a single flax flower on a slender upright stem, one flat five-petalled star-shaped bloom seen face on at the top of a thin bare stalk with two narrow leaves low on the stem, tall and narrow overall, drawn as one bold flat silhouette with NO outline of any kind, filled in a single clear cornflower blue with at most one slightly darker blue centre to the flower, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# tobacco.png — Tobacco Fields (cash)
+tobacco: Flat vector game icon of one large broad tobacco leaf hanging from a short stem, a single wide oval blade with a gently wavy edge and a pronounced droop to one side, filling most of the frame on its own, drawn as one bold flat silhouette with NO outline of any kind, filled in a single dull olive green with one clearly darker olive line for the central vein, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# tea.png — Tea Gardens (cash)
+tea: Flat vector game icon of a tea shoot, two small pointed leaves angling upward and outward from one short stem with a single narrow unopened bud standing between them, small and clearly three-pronged in overall silhouette, drawn as one bold flat silhouette with NO outline of any kind, filled in a single bright fresh green with at most one slightly lighter green bud, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+
+# ----------------------------------------------------------------------------
+# CLUSTER F — ROOTS, REEDS & GOURDS
+#   wild_tubers    LOW LOBED CLUSTER + ROOT TAILS   earth tan
+#   reed_and_root  TALL STEM WITH A BASE KNOT       reed green
+#   desert_gourd   ROUND STRIPED MELON, LYING       pale yellow-green
+# ----------------------------------------------------------------------------
+
+# wild_tubers.png — Wild Tubers (staple)
+wild_tubers: Flat vector game icon of a small clump of three rounded root tubers touching each other, each an irregular oval with one thin wispy root tail trailing from its end, clearly wider than it is tall and sitting low in the frame, drawn as one bold flat silhouette with NO outline of any kind, filled in a single warm earth tan with at most one slightly darker tan division between the tubers, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# reed_and_root.png — Reeds & Water Roots (staple)
+# TALL where the tubers are low; the knuckled base is what says "and root".
+reed_and_root: Flat vector game icon of a single tall straight reed, one thin vertical stem with two narrow blade leaves sheathing it partway up and a thick knuckled horizontal rhizome at its base, clearly taller than it is wide, drawn as one bold flat silhouette with NO outline of any kind, filled in a single muted reed green with one clearly darker tan rhizome at the base, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# desert_gourd.png — Desert Gourd (staple)
+desert_gourd: Flat vector game icon of a single round desert gourd lying on its side, a plump circle slightly wider than tall with one short curled stem at its top and two broad vertical stripes across its face, drawn as one bold flat silhouette with NO outline of any kind, filled in a single pale yellow-green with one clearly darker green stripe, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+
+# ----------------------------------------------------------------------------
+# CLUSTER G — PODS (these two co-host; CURVED-OPEN-GREEN vs STRAIGHT-HUNG-TAN)
+#   wild_pulses  CURVED SPLIT POD, PEAS SHOWING   fresh green
+#   mesquite     LONG STRAIGHT HANGING POD        dry tan
+# ----------------------------------------------------------------------------
+
+# wild_pulses.png — Wild Pulses (staple)
+wild_pulses: Flat vector game icon of a single pea pod split open along its length, a gently curved crescent shell lying open with three round peas resting in a row inside it, clearly wider than it is tall, drawn as one bold flat silhouette with NO outline of any kind, filled in a single fresh medium green with one clearly lighter green for the three peas, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# mesquite.png — Mesquite & Acacia (staple)
+mesquite: Flat vector game icon of a long straight mesquite seed pod hanging down from a short bare twig, one narrow vertical bean pod with four or five gentle bulges along its length showing the seeds inside, clearly taller than it is wide, drawn as one bold flat silhouette with NO outline of any kind, filled in a single dry pale tan with at most one slightly darker tan division at the twig, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+
+# ----------------------------------------------------------------------------
+# CLUSTER H — COAST & WATER
+#   kelp             RIBBON BLADE + FLOAT BULB   mid sea-green
+#   sea_kale         BROAD CRINKLED BLADE        blue-green
+#   shellfish_beds   FAN-RIBBED BIVALVE SHELL    pale grey
+#   river_fish       SIDE-PROFILE FISH           steel blue
+# river_fish co-hosts NOTHING — it is the navigable channel's own basket member
+# (`_comment_river_fish` in flora_config.json), so it never has to be told apart
+# from anything. It still needs to read as a fish at 13px.
+# ----------------------------------------------------------------------------
+
+# kelp.png — Kelp Beds (staple)
+kelp: Flat vector game icon of a single kelp frond, one long narrow ribbon blade with a gentle S-curve and a wavy edge, rising from a single round float bulb at its base, clearly taller than it is wide, drawn as one bold flat silhouette with NO outline of any kind, filled in a single mid sea-green tone, cool and clearly oceanic but plainly on the LIGHT side so the blade reads bright at row size, with at most one slightly darker division where the blade meets the bulb, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# sea_kale.png — Sea Kale & Samphire (staple)
+sea_kale: Flat vector game icon of a single broad sea kale leaf, one wide rounded blade with a strongly crinkled ruffled edge and a short thick stalk, clearly wider than it is tall, drawn as one bold flat silhouette with NO outline of any kind, filled in a single pale blue-green with one clearly darker line for the central vein, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# shellfish_beds.png — Shellfish Beds (staple)
+shellfish_beds: Flat vector game icon of a single scallop shell seen face on, a fan-shaped shell with a straight hinge along the bottom, a rounded top edge and four broad radiating ribs, clearly wider than it is tall, drawn as one bold flat silhouette with NO outline of any kind, filled in a single pale warm grey with one slightly darker grey for the ribs, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# river_fish.png — River Fish & Mussels (staple)
+# Side profile facing RIGHT, matching every bundled fauna sprite in this file.
+river_fish: Flat vector game icon of a single fish in side profile facing right, a simple rounded body tapering to a forked tail with one small triangular dorsal fin and one round eye, clearly wider than it is tall, drawn as one bold flat silhouette with NO outline of any kind, filled in a single pale steel blue with one clearly darker blue eye, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no scales, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+
+# ----------------------------------------------------------------------------
+# CLUSTER I — COLD & BARREN GROUND (all four co-host across the polar, alpine
+# and cavern biomes, and they are the palest subjects in the set — expect to
+# widen the key ramp furthest here)
+#   arctic_greens  LOW ROUND ROSETTE            bright green
+#   rock_tripe     FLAT IRREGULAR CRUST         grey-green
+#   alpine_herbs   THIN STEM + SMALL FLOWERHEAD magenta on green
+#   cave_fungi     DOMED CAP ON A STALK         pale cream
+# ----------------------------------------------------------------------------
+
+# arctic_greens.png — Arctic Greens (staple)
+arctic_greens: Flat vector game icon of a low rosette of arctic greens seen from above, five small round leaves overlapping in a tight circle around one centre, wider than it is tall and sitting low with no stem showing, drawn as one bold flat silhouette with NO outline of any kind, filled in a single bright fresh green with at most one slightly darker green division between the leaves, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# rock_tripe.png — Rock Tripe & Lichen (staple)
+# The famine floor of the roster, and the only IRREGULAR silhouette in the set —
+# every other icon is a recognisable regular shape, which is the point.
+rock_tripe: Flat vector game icon of a flat irregular patch of rock lichen, one ragged lobed disc with a torn uneven edge and a slight curl at one side, clearly wider than it is tall and clinging flat, drawn as one bold flat silhouette with NO outline of any kind, filled in a single pale sage grey-green with at most one slightly darker lobe, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# alpine_herbs.png — Alpine Herbs & Roseroot (staple)
+alpine_herbs: Flat vector game icon of a single alpine herb stem, one thin upright stalk with three pairs of small narrow leaves down its length and a small rounded cluster of flowers at its tip, clearly taller than it is wide, drawn as one bold flat silhouette with NO outline of any kind, filled in a single muted sage green with one clearly brighter magenta pink flower head, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# cave_fungi.png — Cave Fungi (staple)
+cave_fungi: Flat vector game icon of a single mushroom seen from the side, one smooth wide domed cap sitting on a short thick straight stalk, the cap clearly wider than the stalk and slightly overhanging it, drawn as one bold flat silhouette with NO outline of any kind, filled in a single pale cream with one clearly darker division where the cap meets the stalk, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no gills, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon

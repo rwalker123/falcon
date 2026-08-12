@@ -98,7 +98,11 @@ func _four_species_committed_tile_fixture() -> Dictionary:
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 2.40, "sow_yield_ratio": 4.20,
 			"cultivate_payoff": 1.39, "sow_payoff": 2.40},
-		{"species": "flax_fields", "role": "cash", "display_name": "Flax Fields", "share": 0.21,
+		# `flax` / `grapevine` are the roster IDS; "Flax Fields" / "Wild Grapevine" are the roster's
+		# own display names for them, so these two rows agree with `flora_config.json` on both axes.
+		# The keys read as display-names-snake_cased before issue #339 — the shape that made them
+		# wrong, and the same defect class as the fauna table's in #439.
+		{"species": "flax", "role": "cash", "display_name": "Flax Fields", "share": 0.21,
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.0, "sow_payoff": 0.0,
@@ -111,7 +115,7 @@ func _four_species_committed_tile_fixture() -> Dictionary:
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.0, "sow_payoff": 0.0, "sow_fodder_payoff": 15.6},
-		{"species": "wild_grapevine", "role": "cash", "display_name": "Wild Grapevine", "share": 0.11,
+		{"species": "grapevine", "role": "cash", "display_name": "Wild Grapevine", "share": 0.11,
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.0, "sow_payoff": 0.0,
@@ -142,7 +146,8 @@ func _long_basket_tile_fixture() -> Dictionary:
 			"can_cultivate": false, "can_sow": false,
 			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.0, "sow_payoff": 0.0},
-		{"species": "ground_nut", "role": "staple", "display_name": "Ground Nut", "share": 0.14,
+		# Roster ID, fixture's own LABEL — the pairing this harness keeps on purpose (issue #339).
+		{"species": "wild_tubers", "role": "staple", "display_name": "Ground Nut", "share": 0.14,
 			"can_cultivate": true, "can_sow": false,
 			"cultivate_yield_ratio": 0.90, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.45, "sow_payoff": 0.0,
@@ -183,7 +188,13 @@ func _overlong_basket_tile_fixture() -> Dictionary:
 			"can_cultivate": false, "can_sow": false,
 			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.0, "sow_payoff": 0.0},
-		{"species": "ground_nut", "role": "staple", "display_name": "Ground Nut", "share": 0.11,
+		# **`wild_pulses`, NOT `wild_tubers` — this basket already HOLDS `wild_tubers` two rows up.**
+		# The other "Ground Nut" rows took the tuber id; here that would put the same species key on
+		# two rows of one basket, which renders two names under one icon the moment flora art exists.
+		# `wild_pulses` is a real roster id, hosts RollingHills (this fixture's terrain, which
+		# `wild_tubers` does not), and a groundnut is a legume anyway. The fixture is declared
+		# SYNTHETIC above, so its species are not a balance reference either way.
+		{"species": "wild_pulses", "role": "staple", "display_name": "Ground Nut", "share": 0.11,
 			"can_cultivate": true, "can_sow": false,
 			"cultivate_yield_ratio": 1.44, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.72, "sow_payoff": 0.0},
@@ -380,7 +391,9 @@ func run(harness) -> void:
 	var emmer_face = ForageFx.improvement_face(
 		h._hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
 
-	h._hud._compose.set_forage_species("ground_nut")
+	# The KEY the picker commits, i.e. `_long_basket_tile_fixture`'s roster id — the frame's own name
+	# and the prose above still say Ground Nut, which is that row's LABEL.
+	h._hud._compose.set_forage_species("wild_tubers")
 	h._compose_forage(_long_basket_tile_fixture())
 	await h._settle()
 	await h._save("forage_crop_then_groundnut")
