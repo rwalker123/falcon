@@ -2310,6 +2310,23 @@ func _build_crop_picker(
         # wearing the default button chrome would silently break that maths (the work board's rule).
         HudWidgets.compact(btn, HudFloraVocab.FLORA_CROP_ROW_FONT_SIZE, HudFloraVocab.FLORA_CROP_ROW_PADDING_V)
         btn.custom_minimum_size = Vector2(0.0, HudFloraVocab.FLORA_CROP_ROW_HEIGHT)
+        # The row wears the SPECIES' bundled ART where there is any (issue #339), as the Button's own
+        # `icon` — the `BandPanelController._build_quarry_row` precedent, and deliberately NOT
+        # `HudWidgets.build_marker_icon`, whose host is a `Label` in an `HBoxContainer` and which
+        # returns a `Control`: a Button carries art on a property, so a builder that parents a child
+        # into its face buys nothing (that rule is written on `build_marker_icon` itself).
+        # **GUARDED ON NON-NULL, not merely defaulted.** Coverage is zero today, so every row takes
+        # the `null` branch and renders BYTE-IDENTICALLY to before this existed rather than merely
+        # equivalently — setting an empty `icon` would still reserve the icon's chrome.
+        # `icon_max_width` is what stops a 256px source setting the row's minimum height and breaking
+        # the MEASURED `FLORA_CROP_LIST_MAX_HEIGHT` arithmetic; `expand_icon` then fits it to the row.
+        # UNTINTED: nothing sets `modulate` on it, the map markers' own rule — a plant carries no
+        # state, and a row's state rides its ink and its chrome.
+        var crop_art := FloraSprites.texture_for(species)
+        if crop_art != null:
+            btn.icon = crop_art
+            btn.expand_icon = true
+            btn.add_theme_constant_override("icon_max_width", HudFloraVocab.FLORA_CROP_ICON_MAX_WIDTH)
         # A committed patch locks EVERY row — a pressable one would imply a switch the sim will refuse.
         btn.disabled = is_committed or not legal
         if legal:
