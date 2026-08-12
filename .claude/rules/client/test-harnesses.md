@@ -8,6 +8,12 @@ paths:
   # without these globs that section never loads for the code it describes.
   - "scripts/preview.sh"
   - "scripts/run_stack.sh"
+  # The bundled ART a harness renders. "A harness renders the IMPORT CACHE, not the art on disk"
+  # below is aimed at whoever drops a PNG in, and that drop touches no script at all when the
+  # family keys on the filename (`FloraSprites`) — so the file that STATES the fact has to load
+  # for the asset itself, rather than only for the `*Sprites.gd` that would have pointed at it.
+  - "clients/godot_thin_client/assets/icons/**"
+  - "clients/godot_thin_client/assets/terrain/textures/**"
 ---
 
 <!-- Extracted verbatim from lines 214-219 of clients/godot_thin_client/CLAUDE.md at blob 20553fb8f9b193b80338a8c06765d511b81b601e
@@ -127,7 +133,7 @@ which is a change from the old `godot --path .` form those commands used to take
 CLIENT directory). The wrapper `cd`s to the root itself, but the path you type to reach it does not.
 
 ```bash
-godot --headless --path clients/godot_thin_client --import   # only if scenes/scripts changed
+godot --headless --path clients/godot_thin_client --import   # if scenes, scripts or ART changed
 scripts/preview.sh res://tools/ui_preview.tscn
 ```
 
@@ -190,6 +196,28 @@ should reach — and it is not: `get_window().size` takes effect from a fullscre
 A/B in one worktree, wrapper against bare `godot`: `menu_preview` 3/3 frames identical at 1500x900
 both ways, `workbench_preview` 9/9 identical. Do not re-derive that from the window mode; it was
 inferred once and was wrong.
+
+## A harness renders the IMPORT CACHE, not the art on disk
+
+Godot never loads a bundled PNG: it loads the `.ctex` under `.godot/imported/` that the file's
+`.import` sidecar names. `scripts/preview.sh` runs `godot --path <client> <scene>` and nothing else —
+no harness imports anything — so a run started after art was added to or changed under `assets/`
+renders the PREVIOUS art, and **its verdict is byte-indistinguishable from a correct one**: same
+frame and `PASS` tallies, no `FAIL`, `$?` still 0, because no assertion anywhere reads a pixel of the
+art. That is "the exit status IS the verdict" one turn further out — there the thing that lies is a
+grep and the status is the answer; here the status lies too, and nothing inside the run can tell you.
+It holds for every harness that draws bundled art (`ui_preview`, `map_preview`,
+`band_panel_preview`), which makes the import a step of the ART DROP rather than of one harness:
+
+```bash
+godot --headless --path clients/godot_thin_client --import
+```
+
+**`cargo xtask decode-guard` does not stand in for it.** Its `ensure_project_imported` imports **iff
+`.godot/extension_list.cfg` is missing** — the fresh-worktree case in `harness-headless-guards.md` —
+and skips in any worktree that has ever been imported, which is every worktree by the time art is
+being dropped into one. `cargo xtask fauna-icon-guard` does not either: it stats the PNG and its
+`.import` sidecar on disk, never the imported texture behind them.
 
 ## An assertion asks a CONTROL, not the subtree
 

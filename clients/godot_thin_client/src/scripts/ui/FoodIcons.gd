@@ -186,11 +186,14 @@ const CROP_ROLE_ICONS := {
 	CROP_ROLE_CASH: "🧵",
 }
 
-## The `[img]` BBCode a bundled mark is rendered through. Boxed SQUARE at the caller's pixel size:
-## every keyed icon is a square canvas with the subject centred inside it (`icon_key.py` re-frames
-## to one), so a square box makes all four slots — the three marks and the blank one — exactly the
-## same width whatever their subject's aspect.
-const CROP_ROLE_IMG_FORMAT := "[img=%dx%d]%s[/img]"
+## The `[img]` BBCode a bundled mark on a BASKET ROW is rendered through — **both art families that
+## can lead one**, the crop-role marks and the per-species art of `for_flora_species` below, which is
+## why it is named for the row rather than for either family. Boxed SQUARE at the caller's pixel
+## size: every keyed icon is a square canvas with the subject centred inside it (`icon_key.py`
+## re-frames to one), so a square box makes every slot — a species mark, a role mark and the blank
+## one — exactly the same width whatever its subject's aspect, and the name column beside them cannot
+## go ragged as one row gains art and its neighbour does not.
+const BASKET_ROW_IMG_FORMAT := "[img=%dx%d]%s[/img]"
 
 ## Icon for a crop ROLE — the bundled art where we have it, else the emoji fallback above.
 ##
@@ -211,7 +214,7 @@ static func for_crop_role(role: String, icon_px: int = 0) -> String:
 	if icon_px > 0:
 		var art := CropRoleSprites.path_for(key)
 		if art != "":
-			return CROP_ROLE_IMG_FORMAT % [icon_px, icon_px, art]
+			return BASKET_ROW_IMG_FORMAT % [icon_px, icon_px, art]
 	return String(CROP_ROLE_ICONS[key])
 
 
@@ -225,7 +228,33 @@ static func crop_role_spacer(icon_px: int = 0) -> String:
 	var spacer := CropRoleSprites.spacer_path()
 	if spacer == "":
 		return ""
-	return CROP_ROLE_IMG_FORMAT % [icon_px, icon_px, spacer]
+	return BASKET_ROW_IMG_FORMAT % [icon_px, icon_px, spacer]
+
+
+## ---- WHAT THIS PLANT IS — the per-SPECIES mark that outranks the role -------------------------
+## Inline art for one flora SPECIES (`FloraShareInfo.species`), or `""` when the species has no
+## bundled art — `hay_grass` today, `FloraSprites` covering 32 of the roster's 33 species and that
+## one gap being permanent by design. The empty answer is what hands the basket row back to its
+## crop-ROLE mark, so a species with no art renders byte-for-byte what its row rendered before this
+## function existed. That was every row while the art was being drawn; it is now the fodder row.
+##
+## **THERE IS DELIBERATELY NO PER-SPECIES EMOJI FALLBACK, and that is the whole design of this
+## function.** The palette COLLAPSES the roster — every grain is 🌾, every nut 🌰, every berry 🫐,
+## every mushroom 🍄 — so a species tier answering an emoji would re-introduce the very collapse the
+## art family exists to remove (issue #339 chose art over an emoji map for exactly this reason), and
+## it would do it while SUPPRESSING the role mark, which is a real distinction the palette CAN
+## carry. So there is one fallback here and it is the ROLE, not a glyph.
+##
+## `icon_px` is the box the art is drawn in and follows `for_crop_role`'s contract: **`0` means "text
+## only"**, and since this tier has no text form the answer is then `""`. It is the SAME box a role
+## mark takes, so a row wearing species art and a row wearing a role mark occupy identical width.
+static func for_flora_species(species: String, icon_px: int = 0) -> String:
+	if icon_px <= 0:
+		return ""
+	var art := FloraSprites.path_for(species)
+	if art == "":
+		return ""
+	return BASKET_ROW_IMG_FORMAT % [icon_px, icon_px, art]
 
 # Action-STATUS glyphs, read by the Band panel's Current-actions + Active-expeditions rows (Hud) so
 # a row states what it is doing with a glyph instead of a word (the words move into the row

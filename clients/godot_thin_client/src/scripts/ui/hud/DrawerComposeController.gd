@@ -2331,6 +2331,9 @@ func _build_crop_picker(
         # climbability flags is a bare `Name 12%` (printing "0.0×" there would read as "a crop worth
         # nothing" rather than "not a crop at this rung").
         btn.text = _flora_row_face(crop_name, percent, ratio, fodder_payoff, material_payoff)
+        # The row's own KEY, so a harness can ask about the plant rather than about its face — which
+        # carries live numbers and whose name is a separate axis from the id (see the meta's note).
+        btn.set_meta(HudWidgets.FLORA_CROP_ROW_SPECIES_META, species)
         btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         # WHICH ROW IS MARKED depends on which question the block is asking: an open picker marks the
         # composed pick (and only if that pick is legal), a committed one marks the crop the patch is
@@ -2344,6 +2347,26 @@ func _build_crop_picker(
         # wearing the default button chrome would silently break that maths (the work board's rule).
         HudWidgets.compact(btn, HudFloraVocab.FLORA_CROP_ROW_FONT_SIZE, HudFloraVocab.FLORA_CROP_ROW_PADDING_V)
         btn.custom_minimum_size = Vector2(0.0, HudFloraVocab.FLORA_CROP_ROW_HEIGHT)
+        # The row wears the SPECIES' bundled ART where there is any (issue #339), as the Button's own
+        # `icon` — the `BandPanelController._build_quarry_row` precedent, and deliberately NOT
+        # `HudWidgets.build_marker_icon`, whose host is a `Label` in an `HBoxContainer` and which
+        # returns a `Control`: a Button carries art on a property, so a builder that parents a child
+        # into its face buys nothing (that rule is written on `build_marker_icon` itself).
+        # **GUARDED ON NON-NULL, not merely defaulted.** `FloraSprites` covers 32 of the roster's 33
+        # species, so most rows now take the icon branch — but the fodder row (`hay_grass`, the one
+        # permanent gap) takes the `null` branch on every picker it appears in, and it must render
+        # BYTE-IDENTICALLY to before this existed rather than merely equivalently: setting an empty
+        # `icon` would still reserve the icon's chrome and push that row's face out of line with the
+        # ones above it.
+        # `icon_max_width` is what stops a 256px source setting the row's minimum height and breaking
+        # the MEASURED `FLORA_CROP_LIST_MAX_HEIGHT` arithmetic; `expand_icon` then fits it to the row.
+        # UNTINTED: nothing sets `modulate` on it, the map markers' own rule — a plant carries no
+        # state, and a row's state rides its ink and its chrome.
+        var crop_art := FloraSprites.texture_for(species)
+        if crop_art != null:
+            btn.icon = crop_art
+            btn.expand_icon = true
+            btn.add_theme_constant_override("icon_max_width", HudFloraVocab.FLORA_CROP_ICON_MAX_WIDTH)
         # A committed patch locks EVERY row — a pressable one would imply a switch the sim will refuse.
         btn.disabled = is_committed or not legal
         if legal:

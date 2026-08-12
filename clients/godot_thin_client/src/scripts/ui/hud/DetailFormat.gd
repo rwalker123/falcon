@@ -1079,10 +1079,27 @@ static func flora_composition_lines(
         if committed != "" and String(entry["species"]) == committed:
             face = "[color=#%s]%s[/color]" % [HudStyle.SIGNAL_HEX, face]
         # An UNSTATED role renders the blank slot, never a defaulted icon — see `FoodIcons.for_crop_role`.
-        # THREE STEPS, EACH WITH ONE JOB, and the order is the fallback chain: the mark (bundled art
-        # at `icon_px`, else its emoji), else the transparent slot boxed to the SAME width as a mark,
-        # else the text spacer for when there is no art to match the width of at all.
-        var icon := FoodIcons.for_crop_role(String(entry.get("role", "")), icon_px)
+        # FOUR STEPS, EACH WITH ONE JOB, and the order is the fallback chain: this plant's own
+        # SPECIES art, else the role mark (bundled art at `icon_px`, else its emoji), else the
+        # transparent slot boxed to the SAME width as a mark, else the text spacer for when there is
+        # no art to match the width of at all.
+        #
+        # **SPECIES OUTRANKS ROLE BECAUSE IT IS THE MORE SPECIFIC FACT.** An icon's job on this list
+        # is to make a row findable at a glance, and "this is Wild Emmer" locates a row that "this is
+        # a staple" cannot — three marks cannot separate five rows. The role is not demoted to
+        # decoration by that: it remains the reading on every row with no species art — `hay_grass`
+        # today, the roster's one permanent gap (`FloraSprites` covers 32 of 33), and any plant whose
+        # art has not been drawn yet.
+        #
+        # **THE TWO NEVER RENDER TOGETHER**, deliberately: species art REPLACES the role mark rather
+        # than sitting beside it, because two glyph families adjacent at one weight is the axis
+        # collision `.claude/rules/client/labor-ui.md` records twice.
+        #
+        # The `[img]` box is the SAME `icon_px` in both tiers, so a row with species art and a row
+        # with a role mark occupy identical width and the name column cannot go ragged.
+        var icon := FoodIcons.for_flora_species(String(entry.get("species", "")), icon_px)
+        if icon == "":
+            icon = FoodIcons.for_crop_role(String(entry.get("role", "")), icon_px)
         if icon == "":
             icon = FoodIcons.crop_role_spacer(icon_px)
         if icon == "":
