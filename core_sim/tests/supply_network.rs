@@ -107,6 +107,8 @@ fn spawn_band_of(app: &mut App, x: u32, y: u32, food: i64, faction: FactionId) -
                 stores,
                 morale: scalar_zero(),
                 last_food_consumption: 0.0,
+                last_turn_transfer_received: 0.0,
+                last_turn_transfer_sent: 0.0,
                 last_morale_delta: scalar_zero(),
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),

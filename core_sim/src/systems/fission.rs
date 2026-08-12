@@ -269,6 +269,11 @@ pub fn split_band_from_parent(
     // turn, but a split publishes a frame before then, and the new band would open by narrating
     // somebody else's morale swing, meal and migration.
     child.last_food_consumption = 0.0;
+    // The dowry is booked on the *allocation's* accumulator below, which is what the next turn
+    // capture copies here; carrying the parent's published pair over would have the new band open by
+    // reporting a transfer it was not party to.
+    child.last_turn_transfer_received = 0.0;
+    child.last_turn_transfer_sent = 0.0;
     child.last_morale_delta = scalar_zero();
     child.last_morale_cause = MoraleCause::default();
     child.last_morale_contributions = MoraleContributions::default();

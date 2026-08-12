@@ -473,7 +473,24 @@ transferSent` ledger identity.
 > larder when it is applied, between two published frames. So every writer **adds** and exactly one
 > system clears: `systems::reset_transfer_ledger`, in the Snapshot stage **after**
 > `capture_snapshot`. Clearing at the top of the turn instead would drop every command-time draw and
-> leave the identity short by exactly the shipments the player sent.
+> leave the identity short by exactly the shipments the player sent. **The identity therefore
+> reconciles turn frame to turn frame**, over exactly that window.
+>
+> **A RESETTING term is blank on a refreshed frame, which is why the pair a client renders is a
+> second one.** `snapshot::recapture_snapshot_in_place` re-runs the capture against live components
+> after **every dispatched command**, so the frame a client is holding is more often a refreshed one
+> than the turn's. The other four terms are per-turn values on `PopulationCohort` and re-read
+> unchanged there; this pair had been cleared by then, so a refreshed frame published `0.0` for both
+> and overwrote the correct turn-end frame — one command after a turn blanked the ⇄ rows on the band
+> panel. The per-turn twins `PopulationCohort::last_turn_transfer_received` / `last_turn_transfer_sent`
+> (wire: `transferReceivedTurn` / `transferSentTurn`) are copied off the accumulator by
+> `systems::publish_turn_transfers`, in the Snapshot stage between `advance_tick` and
+> `capture_snapshot` — the turn path only — so a recapture republishes them intact. **On a turn frame
+> the two pairs are equal by construction**, being one counter read a moment apart; they diverge only
+> on a refreshed frame. A client renders the per-turn pair and reconciles the identity with the
+> accumulating one, between two turn frames. Pinned by
+> `transfer_food_ledger::a_recapture_still_publishes_the_turns_transfers`, which drives the recapture
+> path itself — a second `capture_snapshot` does not reproduce it.
 >
 > **Food only.** Materials cross between bands too — the network pools them per rating, a shipment
 > carries them — and there is deliberately **no materials identity**: a material's account is the

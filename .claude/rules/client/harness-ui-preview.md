@@ -554,7 +554,7 @@ built from the code under test can only agree with itself. **They are the SIM's 
 from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
 payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-**A clean run is 309 frames / 900 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
+**A clean run is 309 frames / 902 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
 three times in one arc and once across a merge, and a running total kept by addition would be wrong
 by now. (The measurement above came back FIVE higher than the 895 recorded before it while the arc
 #527 review added exactly ONE claim — the `Carrying:` mass one. Four `PASS`es had accumulated
@@ -755,7 +755,7 @@ a sentence is a string — a frame shows a plausible verdict whichever clock it 
 
 ## `chapters/trade.gd` — the cargo picker and a shipment in flight (arc #527, issue #517)
 
-**Appended LAST in `CHAPTERS`**, after `crafting_bench`. Seven frames and twenty-eight `PASS` — plus
+**Appended LAST in `CHAPTERS`**, after `crafting_bench`. Seven frames and thirty `PASS` — plus
 one more in `chapters/event_dock.gd`, where the shipment's `destination=` label swap belongs
 beside the band-label trio it extends rather than in a chapter that instantiates no dock. It
 injects a real `BandCityPanel` docked RIGHT on the PARTIES tab, drives the whole compose act through
@@ -826,3 +826,12 @@ terms**: the headline states the steady rate and deliberately says nothing about
 HUD**: a player band's detail renders into the Band/City panel, which is a sibling `CanvasLayer`
 rather than a child of the HUD, so a HUD-rooted walk finds nothing and the click silently never
 happens.
+
+**A PNG-LESS THIRD OPENING RIDES AFTER IT — the COMMAND-REFRESHED frame** (issue #517): the same
+band with `transfer_received` / `transfer_sent` zeroed and the per-turn pair intact, i.e. the frame
+the sim rebuilds from live components after any dispatched command, asserting both `⇄` rows are still
+itemized. **No picture can make that claim** — the two readings differ only in which field the rows
+came from, and the wrong one renders no rows rather than wrong ones. It is judged as a PAIR with the
+turn frame above, and the accumulator is ZEROED rather than left behind, because a client rendering
+whichever term is non-zero would otherwise pass both. Sabotage-verified: pointing the rows back at
+the accumulating pair fails exactly these two and nothing else in the run.

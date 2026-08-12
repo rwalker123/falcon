@@ -710,6 +710,8 @@ mod tests {
                     stores: LocalStore::new(),
                     morale: scalar_one(),
                     last_food_consumption: 0.0,
+                    last_turn_transfer_received: 0.0,
+                    last_turn_transfer_sent: 0.0,
                     last_morale_delta: scalar_zero(),
                     last_morale_cause: Default::default(),
                     last_morale_contributions: Default::default(),

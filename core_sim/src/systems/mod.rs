@@ -128,6 +128,39 @@ fn step_toward(from: UVec2, to: UVec2, max_step: u32, width: u32, wrap_horizonta
     UVec2::new(nx, ny)
 }
 
+/// **Copy the turn's band-to-band transfer counters onto the cohort, for the frame about to be
+/// captured.**
+///
+/// [`LaborAllocation::last_transfer_received`] / `last_transfer_sent` accumulate across the whole
+/// snapshot window and are cleared by [`reset_transfer_ledger`] once the capture has read them.
+/// [`PopulationCohort::last_turn_transfer_received`] / `last_turn_transfer_sent` are the per-turn
+/// twins, and this is the one system that writes them — which is why it runs **only on the turn
+/// path**, between `advance_tick` and `capture_snapshot`.
+///
+/// **That placement is the whole fix.** `snapshot::recapture_snapshot_in_place` re-runs the capture
+/// against live components after every dispatched command, by which time the accumulator has been
+/// zeroed; a refreshed frame therefore published `0.0` for both terms and overwrote the correct
+/// turn-end frame. Everything else in the food ledger is a per-turn value on the cohort and re-reads
+/// unchanged on a recapture — this pair joins them, and a recapture never reaches this system.
+///
+/// **The whole accumulator is copied, not this turn's share of it.** At this moment it holds
+/// *(command-time draws since the last turn capture) + (this turn's transfers)*, which is exactly the
+/// interval a client's `larder_delta` measures, so the per-turn pair and the accumulator cannot
+/// disagree on a turn frame.
+///
+/// Like [`reset_transfer_ledger`], and unlike their stage-mate `capture_snapshot`, it is **not**
+/// gated on `not_replaying`: a replayed turn publishes nothing, and leaving the copy stale would let
+/// the next frame that *is* published report the wrong turn's transfers.
+pub fn publish_turn_transfers(mut bands: Query<(&mut PopulationCohort, Option<&LaborAllocation>)>) {
+    for (mut cohort, allocation) in bands.iter_mut() {
+        // `Option`, matching how the capture reads all six ledger terms — a band with no allocation
+        // reports zero rather than being skipped.
+        cohort.last_turn_transfer_received =
+            allocation.map(|a| a.last_transfer_received).unwrap_or(0.0);
+        cohort.last_turn_transfer_sent = allocation.map(|a| a.last_transfer_sent).unwrap_or(0.0);
+    }
+}
+
 /// **Clear the band-to-band food transfer counters, once the capture has published them.**
 ///
 /// [`LaborAllocation::last_transfer_received`] / `last_transfer_sent` are the ledger's terms for food

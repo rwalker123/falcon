@@ -1145,6 +1145,35 @@ table PopulationCohortState {
   // FINITE AND >= 0, not positive: `0` is a legitimate setting here ("materials are weightless"),
   // unlike the pack lever above, which is why the two carry different wire assertions.
   expeditionTradeMaterialCarryWeight:float = 0;
+  // --- THE TRANSFER PAIR A CLIENT RENDERS (appended last, arc #527 / issue #517) ----------------
+  //
+  // The same two facts as transferReceived / transferSent above, taken as of THIS TURN'S FRAME.
+  // Two fields per fact because the two answer different questions:
+  //
+  //   transferReceived / transferSent      — what has crossed since the last frame was published,
+  //                                          command-time draws included. The window the ledger
+  //                                          identity closes over, and it RESETS once read.
+  //   transferReceivedTurn / ...SentTurn   — what crossed on the turn, as a per-turn reading that
+  //                                          does NOT reset. THIS IS THE PAIR A PANEL RENDERS.
+  //
+  // *** WHY THE SECOND PAIR EXISTS. *** The sim re-runs its capture against live components after
+  // every dispatched command (core_sim `snapshot::recapture_snapshot_in_place`), so a client's
+  // latest frame is often a REFRESHED one rather than the turn's. The accumulating pair is cleared
+  // straight after the turn capture reads it, so on a refreshed frame it reads 0 and blanks the row
+  // it had just shown; the four sibling terms — foodIncome, foodConsumption, penFeedUpkeep,
+  // raidForfeit — are per-turn values that re-read unchanged, which is why only these two flickered.
+  // This pair is per-turn state on the cohort, so a refresh republishes it intact.
+  //
+  // *** ON A TURN FRAME THEY AGREE. *** transferReceivedTurn == transferReceived at every turn
+  // frame, by construction: the copy is taken immediately before the turn's capture, off the same
+  // counter. They differ only on a refreshed frame, where the accumulating pair has been cleared.
+  //
+  // *** THE IDENTITY STILL BELONGS TO THE FIRST PAIR. *** larder_delta reconciles turn frame to
+  // turn frame, over the accumulating window; on a refreshed frame no term of it is current, since
+  // the other four describe the last turn. A client reconciling a ledger uses transferReceived /
+  // transferSent between two TURN frames, and renders these.
+  transferReceivedTurn:float = 0;
+  transferSentTurn:float = 0;
 }
 
 // What ONE kit would grant ONE band at its current wear - a row of

@@ -2996,6 +2996,8 @@ fn spawn_population_entity(
         stores: LocalStore::new(),
         morale: scalar_from_f32(0.6),
         last_food_consumption: 0.0,
+        last_turn_transfer_received: 0.0,
+        last_turn_transfer_sent: 0.0,
         last_morale_delta: scalar_zero(),
         last_morale_cause: MoraleCause::None,
         last_morale_contributions: MoraleContributions::default(),
