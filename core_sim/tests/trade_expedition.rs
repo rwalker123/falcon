@@ -33,15 +33,9 @@ const SPLIT_WORKERS: u32 = 5;
 const PARTY_WORKERS: u32 = 2;
 /// The food a shipment carries. Well inside `PARTY_WORKERS × trade.per_worker_carry`.
 const CARGO_FOOD: f32 = 8.0;
-/// Turns to drive a co-located delivery: **one**. The party stands in the destination's camp
-/// already, so it hands the cargo over on the launch turn.
-///
-/// It is one and not a few because the two bands are neighbours who have now met, and the supply
-/// network pools whatever a neighbour holds from the *next* turn on — correct behaviour, and it
-/// would rewrite the delivered amounts before a store-contents assertion could read them. The
-/// "it lands only once" claim is `a_shipment_lands_in_the_destination_bands_store`'s, which drives
-/// the extra turn and measures the larder rather than the batches.
-const DELIVERY_TURNS: u32 = 1;
+/// Turns to drive a co-located delivery. One is enough — the party stands in the destination's camp
+/// already — and a couple more prove it does not deliver twice.
+const DELIVERY_TURNS: u32 = 3;
 /// `f32` sums of `Scalar`-quantised amounts; a few ULPs of slack, no more.
 const EPSILON: f32 = 0.01;
 /// How far the in-flight fixtures put the destination from the sender. Well past the comm range a
@@ -110,16 +104,16 @@ fn split_off(app: &mut App, parent: Entity) -> (Entity, BandId) {
     (entity, split.band)
 }
 
-/// **Make the destination band another PEOPLE.** It is the arc's central claim under test: faction
-/// is a property of the endpoint, never a branch, so a shipment to strangers must work **by
-/// construction** — every delivery assertion in this file is therefore a cross-faction delivery,
-/// and that is what makes #458 nearly free.
+/// **Make the destination band another PEOPLE.** Two things at once, both deliberate:
 ///
-/// **It does not keep `balance_supply_networks` out of the picture, and never really did.** That
-/// system now pools any two *connected* bands within reach whatever their factions, so a co-located
-/// destination is pooled with its sender from the turn after they meet — which is why the fixtures
-/// that read a destination's store measure on the delivery turn (`DELIVERY_TURNS`) and the ones
-/// about a party on the road stand the destination out of reach ([`walk_away`]).
+/// - It is the arc's central claim under test. Faction is a property of the endpoint, never a
+///   branch, so a shipment to strangers must work **by construction** — every delivery assertion in
+///   this file is therefore a cross-faction delivery, and that is what makes #458 nearly free.
+/// - It takes `balance_supply_networks` out of the picture. That system pools **same-faction** bands
+///   within reach, so a shipment landing in a co-located band of one's own faction is immediately
+///   re-equalised back toward the sender: the first cut of this test watched 3.0 hide arrive and
+///   read 0.75 a moment later. The shipment is not what changed — the pooling is a separate and
+///   correct mechanism — but it makes *"did the shipment land here"* unanswerable.
 const FOREIGN_FACTION: core_sim::FactionId = core_sim::FactionId(9);
 
 fn make_foreign(app: &mut App, band: Entity) {

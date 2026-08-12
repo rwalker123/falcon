@@ -1,6 +1,7 @@
-//! Supply network integration: bands within `reach_tiles` that hold a **live connection** balance
-//! their stores, so a fed band feeds an empty neighbour — but a band beyond reach, or one nobody
-//! has met, is on its own. World setup mirrors `sedentarization.rs`.
+//! Supply network integration: bands of one people within `reach_tiles` that hold a **live
+//! connection** balance their stores, so a fed band feeds an empty neighbour — but a band beyond
+//! reach, one nobody has met, or one of another people is on its own. World setup mirrors
+//! `sedentarization.rs`.
 //!
 //! **Every fixture here seeds its own ties.** The pooling gate is `ConnectionLedger`, and these
 //! tests run `balance_supply_networks` on its own rather than a whole turn, so no sight sweep ever
@@ -24,10 +25,11 @@ use core_sim::{
     SupplyNetworkMembership, Tile, TileRegistry, FOOD, FULL_TIE, NO_TIE,
 };
 
-/// The faction the test bands belong to. **It no longer isolates them** — faction is a property of
-/// the endpoint and never a branch in the balancer — what keeps them off the spawned starting bands
-/// is that no tie is ever seeded to one.
+/// A distinct faction for the test bands so they never network with the spawned starting bands —
+/// which no seeded tie names either, so both halves of the union gate keep them apart.
 const TEST_FACTION: FactionId = FactionId(7);
+/// **Another people**, for the one fixture about pooling across a faction line.
+const FOREIGN_FACTION: FactionId = FactionId(8);
 const BAND_POP: u32 = 100;
 
 /// Test bands own ids well clear of anything `spawn_initial_world` allocates, so a seeded tie can
@@ -81,6 +83,11 @@ fn spawn_world() -> App {
 
 /// Spawn a test band of `BAND_POP` working-age people on the tile at `(x, y)` carrying `food`.
 fn spawn_band(app: &mut App, x: u32, y: u32, food: i64) -> Entity {
+    spawn_band_of(app, x, y, food, TEST_FACTION)
+}
+
+/// The same, for a named people — the pooling policy asks which one a band belongs to.
+fn spawn_band_of(app: &mut App, x: u32, y: u32, food: i64, faction: FactionId) -> Entity {
     let tile = app
         .world
         .resource::<TileRegistry>()
@@ -110,7 +117,7 @@ fn spawn_band(app: &mut App, x: u32, y: u32, food: i64) -> Entity {
                 last_immigrated: 0,
                 age_turns: 0,
                 generation: 0 as GenerationId,
-                faction: TEST_FACTION,
+                faction,
                 knowledge: Vec::new(),
                 migration: None,
             },
@@ -348,12 +355,49 @@ fn bands_within_reach_with_no_tie_do_not_share() {
     assert_eq!(
         food_of(&app, empty),
         0.0,
-        "strangers within reach must pool nothing"
+        "an unmet neighbour within reach must pool nothing"
     );
     assert_eq!(food_of(&app, fed), 1_000.0, "and the fed band keeps it all");
     let membership = app.world.resource::<SupplyNetworkMembership>();
     assert_eq!(membership.network_of(fed), 0);
     assert_eq!(membership.network_of(empty), 0);
+}
+
+/// **A link is not a licence to pool: free equalization is a same-faction affordance.** Two bands of
+/// different peoples, standing two tiles apart with a full mutual tie, have a logistics link and
+/// still pool nothing — because a stranger's larder draining into yours because they camped nearby
+/// is not trade. Crossing that line is a shipment's job (#517) or a priced exchange's (#546).
+#[test]
+fn bands_of_different_factions_do_not_share() {
+    let mut app = spawn_world();
+    let (w, h) = {
+        let reg = app.world.resource::<TileRegistry>();
+        (reg.width, reg.height)
+    };
+    let (cx, cy) = (w / 4, h / 2);
+    let fed = spawn_band(&mut app, cx, cy, 1_000);
+    let stranger = spawn_band_of(&mut app, cx + 2, cy, 0, FOREIGN_FACTION);
+    seed_mutual_tie(&mut app, fed, stranger);
+
+    app.world.run_system_once(balance_supply_networks);
+
+    assert_eq!(
+        food_of(&app, stranger),
+        0.0,
+        "another people's band must receive nothing from a free balancing pass"
+    );
+    assert_eq!(
+        food_of(&app, fed),
+        1_000.0,
+        "and the fed band keeps its whole larder"
+    );
+    let membership = app.world.resource::<SupplyNetworkMembership>();
+    assert_eq!(
+        membership.network_of(fed),
+        0,
+        "two peoples standing together are not one supply network"
+    );
+    assert_eq!(membership.network_of(stranger), 0);
 }
 
 /// **A parked tie does not pool.** The keystone's *"at zero nothing flows"*: an edge drained to

@@ -234,12 +234,12 @@ sim_schema/snapshot/native/`Hud.gd` exactly like `SedentarizationState`).
 
 ### Supply Network (logistics from turn 0)
 Bands are small logistics nodes: `balance_supply_networks` (`supply.rs`, `TurnStage::Logistics`,
-before Population consumes) joins **linked** bands into **supply networks** (union-find connected
-components) and each turn moves every commodity toward a **population-weighted per-capita balance**
-across the network. Transfers are **throughput-limited** (`throughput_per_turn` per node) and lose
-`friction` in transit; sub-`min_transfer` moves are dropped. So a gatherer band automatically feeds
-a scout band it's near (you can specialize labor), while a band beyond reach — or one nobody has met
-— lives off its own larder. Throughput decides *how fast*, friction the leak — "free neighbor
+before Population consumes) joins **linked bands of one people** into **supply networks** (union-find
+connected components) and each turn moves every commodity toward a **population-weighted per-capita
+balance** across the network. Transfers are **throughput-limited** (`throughput_per_turn` per node)
+and lose `friction` in transit; sub-`min_transfer` moves are dropped. So a gatherer band
+automatically feeds a scout band it's near (you can specialize labor), while a band beyond reach, one
+nobody has met, or one belonging to another people lives off its own larder. Throughput decides *how fast*, friction the leak — "free neighbor
 sharing" is just the high-throughput/low-friction limit. The per-commodity math is the pure,
 unit-tested `balance_commodity`. Config: `supply_network_config.json`.
 
@@ -270,9 +270,21 @@ unit-tested `balance_commodity`. Config: `supply_network_config.json`.
 > **A cohort with no `BandId` is never even a node** — it has no identity to tie, so it cannot be an
 > endpoint.
 >
-> **There is no same-faction branch left.** Faction is dropped from the spatial-bin key and from the
-> pair test; the ledger gate is the whole filter, so a cross-faction edge differs only in whose
-> endpoints it joins. Inert today (one faction), and what makes #458 nearly free.
+> **The LINK is faction-blind; the POOLING POLICY is same-faction** (`supply::pools_freely`). Whether
+> two bands have a logistics link asks nothing about faction — that is the arc's edge, and the
+> connection primitive's *"no faction on the edge"* discipline governs it. What the balancer does
+> over that link is this rider's own policy, and free per-capita equalization is a same-faction
+> affordance: a parent band feeding the splinter it just calved has one interest at both ends, while
+> the same move between two peoples is your larder draining into a stranger's because they camped
+> nearby. Cross-faction exchange is a **shipment** (#517) or a **priced exchange** (#546) — never free
+> equalization, which would otherwise become an accidental default the day #513 lands.
+>
+> **The faction test gates the UNION, not a post-hoc partition of a built component**, and that is
+> the non-obvious part. Partitioning components afterwards would let bands A and C of one people —
+> each within reach of a foreign band B, neither within reach of the other — share a component and
+> pool *through* B, relaying goods across a stranger's camp. Gating the union reproduces exactly the
+> pairing the proximity-only network had. The spatial bins stay keyed on **position alone**: they are
+> geometry, and a foreign neighbour merely widens the candidate net.
 >
 > **The ledger is read one stage EARLY, and that is accepted.** `advance_connections` runs later the
 > same turn in `TurnStage::Visibility`, so the pass sees the previous turn's contacts, and on the
@@ -551,11 +563,11 @@ cross-faction half is no longer a "trade policy on the supply network" — that 
 `TradeLink` slice it assumed. `docs/plan_contact_and_logistics.md` §Q4 **re-founded this network on
 the primitive**: proximity produces a *connection*, a logistics link is a *rider* on one, and over a
 short distance it is cheap enough to hold itself — so two bands standing near each other behave
-exactly as they did before, by construction (the pre-refactor numbers are pinned as literals). A
-cross-faction edge differs only in whose endpoints it joins, and there is no branch in the code that
-asks. What holds a link open *beyond* `reach_tiles` is a **route**, and that state belongs to the
-route ladder — there is deliberately no `LogisticsLink` component or resource. See "The link is a
-rider on a CONNECTION" above. *v1:* population is the universal balancing weight, so a zero-population storage
+exactly as they did before, by construction (the pre-refactor numbers are pinned as literals). The
+cross-faction half is a **shipment or a priced exchange**, because what a rider *does* over a link is
+its own policy and free equalization is a same-faction one. What holds a link open *beyond*
+`reach_tiles` is a **route**, and that state belongs to the route ladder — there is deliberately no
+`LogisticsLink` component or resource. See "The link is a rider on a CONNECTION" above. *v1:* population is the universal balancing weight, so a zero-population storage
 node would compute a 0 fair share — revisit (→ capacity weight) when storage-pits land. The
 connected-components pass is also what Phase 4 will use to derive settlement clusters.
 

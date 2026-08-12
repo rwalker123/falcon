@@ -202,9 +202,9 @@ the party walks does not stop the delivery, because the party is standing there.
 
 ## The supply network is the second reader, and it takes EITHER direction
 
-`balance_supply_networks` (`supply.rs`, arc #527 §Q4) pools two bands only where they are within
-`supply_network_config.reach_tiles` **and** the ledger holds a live tie between their `BandId`s.
-Before that it derived its edges from proximity alone, which made it a second independent
+`balance_supply_networks` (`supply.rs`, arc #527 §Q4) treats a band pair as **linked** only where they
+are within `supply_network_config.reach_tiles` **and** the ledger holds a live tie between their
+`BandId`s. Before that it derived its edges from proximity alone, which made it a second independent
 implementation of the thing a shipment already gates on; now both riders sit on one object, which is
 what gives the route ladder an edge to attach a route to. Over that short distance a link is cheap
 enough to hold itself for free — that is what `reach_tiles` means — and a distant splinter still
@@ -223,9 +223,12 @@ open with their own food, and two bands inside `reach_tiles` see each other ever
 pinned at `FULL_TIE` from turn 2. Supply must not seed the ledger — the whole point of finding
 contact inside the sight sweep is that there is only one producer of it.
 
-Faction is not asked here either: the ledger gate is the whole filter, so pooling across a faction
-line works by construction. `.claude/rules/core_sim/campaign.md` → "Supply Network" has the as-built
-detail.
+**The link it reads is faction-blind; what it then pools over is not.** The rider equalizes larders
+for free only within one people (`supply::pools_freely`), because a stranger's larder draining into
+yours because they camped nearby is not trade — that is a shipment's job, or a priced exchange's.
+This module's discipline is about the *edge*: no faction field on `ConnectionKey`, no faction branch
+in `connections.rs`. A rider's policy is the rider's.
+`.claude/rules/core_sim/campaign.md` → "Supply Network" has the as-built detail.
 
 ## Metrics
 
