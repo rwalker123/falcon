@@ -389,10 +389,17 @@ transferSent` ledger identity.
 > `PopulationCohortState.transferReceived` / `transferSent`
 > (`LaborAllocation::last_transfer_received` / `last_transfer_sent`, arc #527). Every other term is
 > about *this* band: what its own workers produced, what its own people ate, what its own pen and its
-> own raid cost it. Food that **moves between larders** therefore fits nowhere in it, and two things
-> move food between larders: `balance_supply_networks`, every turn since turn one, and a **trade
+> own raid cost it. Food that **moves between larders** therefore fits nowhere in it, and three
+> things move food between larders: `balance_supply_networks`, every turn since turn one; a **trade
 > expedition** carrying a shipment (`.claude/rules/core_sim/expeditions.md` → "A shipment is a party
-> that walks it").
+> that walks it"); and a **band split** handing the new band its share of the parent's stores
+> (`.claude/rules/core_sim/fission.md` → "The dowry is a transfer, and it is booked as one").
+>
+> **`found_settlement`'s `SETTLEMENT_PROVISION_COST` debit is a KNOWN-OPEN hole of a different
+> shape.** That food is *destroyed* — spent on standing a settlement up, not handed to another band —
+> so booking it as `transferSent` would name a recipient that does not exist. It wants a term of its
+> own (a consumption-outside-eating line, the shape `penFeedUpkeep` already has), which is a
+> deliberate decision rather than a mechanical fix, and it is not made here.
 >
 > **The supply-network half was a pre-existing hole, and it is measured rather than asserted.** The
 > two sibling ledger tests each stand up a *single* band, so no network forms
@@ -419,7 +426,12 @@ transferSent` ledger identity.
 > batch store itself, and a scalar total of hide and bone is the retired trade axis under a new name.
 >
 > Pinned by `integration_tests/tests/transfer_food_ledger.rs` against real turns and the real
-> exported snapshot, over both producers.
+> exported snapshot, over every producer. **A producer that fires between two captures needs a case
+> that fires it between two captures**: the split half of that file survived a real hole because the
+> other fixtures split while *building* themselves and then overwrote both larders, which erases the
+> move being measured. `the_food_ledger_reconciles_when_a_band_splits_mid_window` splits after the
+> first published frame and touches nothing afterwards, and the shared fixture now publishes one
+> frame between its split and its forced larders so the counters it clears describe what happened.
 
 > **The ledger identity gained a fourth term with Predators Phase 3 (`combat.md`).**
 > `PopulationCohortState.raidForfeit` (`LaborAllocation::last_raid_forfeit`) is the food a

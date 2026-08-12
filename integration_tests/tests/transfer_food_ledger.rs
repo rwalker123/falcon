@@ -17,6 +17,10 @@
 //!   below measures the gap rather than asserting it from the doc.
 //! - **a trade expedition** (arc #527) draws cargo off the sending band at launch and hands it to
 //!   the destination on arrival.
+//! - **a band split** (`split_band_from_parent`) hands the new band its share of the parent's
+//!   stores. It is a *command*, so it lands between two captures — see
+//!   `the_food_ledger_reconciles_when_a_band_splits_mid_window`, which is deliberately the one case
+//!   here that splits **inside** the measured window rather than while building its fixture.
 //!
 //! `transferReceived` / `transferSent` close both with **one pair of terms**, because they are one
 //! fact — *food that crossed between bands outside income and consumption* — and the identity is now
@@ -52,6 +56,9 @@ const SPLIT_WORKERS: u32 = 5;
 const FED_LARDER: f32 = 400.0;
 /// And what the **hungry** one opens with: nothing, so every unit it holds afterwards arrived.
 const HUNGRY_LARDER: f32 = 0.0;
+/// The larder a band that published no earlier frame is measured against — a client's `larder_delta`
+/// for a band appearing for the first time runs from nothing.
+const NO_PRIOR_FRAME_LARDER: f32 = 0.0;
 /// Workers a shipment party carries, and the food it hauls — inside `trade.per_worker_carry × 2`.
 const PARTY_WORKERS: u32 = 2;
 const CARGO_FOOD: f32 = 8.0;
@@ -155,26 +162,43 @@ fn world() -> bevy::prelude::App {
     app
 }
 
+/// Stock a band with enough working-age people that a split leaves two real bands on any seed.
+fn stock_workers(app: &mut bevy::prelude::App, band: Entity) {
+    let mut cohort = app
+        .world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the band exists");
+    cohort.working = Scalar::from_f32(PARENT_WORKERS);
+    cohort.sync_size();
+}
+
+/// The floors lifted, so a fixture can split whatever it likes.
+fn permissive_settle() -> SettleConfig {
+    SettleConfig {
+        min_founding_workers: 1,
+        parent_min_workers: 0,
+    }
+}
+
 /// **Two co-located bands of the same faction** — which is exactly the fixture that forms a supply
 /// network (`MIN_NETWORK_MEMBERS` is 2, and they are well inside `reach_tiles`). One opens fed, the
 /// other empty, so the balancing pass has a large move to make.
+///
+/// **A published frame stands between the split and the measurement, deliberately.** The split books
+/// its dowry into the transfer pair (`split_band_from_parent`) — and the larders this fixture then
+/// *forces* to `FED_LARDER`/`HUNGRY_LARDER` are not the larders that move produced, so leaving the
+/// counters standing would have every test below open with a transfer that no longer describes
+/// anything. One turn publishes and clears them (`reset_transfer_ledger`), so what these tests
+/// measure is the balancing pass alone. The split's *own* transfer is
+/// `the_food_ledger_reconciles_when_a_band_splits_mid_window`'s subject.
 fn two_networked_bands(app: &mut bevy::prelude::App) -> (Entity, Entity) {
     let parent = first_band(app);
-    {
-        let mut cohort = app
-            .world
-            .get_mut::<PopulationCohort>(parent)
-            .expect("the band exists");
-        cohort.working = Scalar::from_f32(PARENT_WORKERS);
-        cohort.sync_size();
-    }
-    let settle = SettleConfig {
-        min_founding_workers: 1,
-        parent_min_workers: 0,
-    };
+    stock_workers(app, parent);
+    let settle = permissive_settle();
     let split = split_band_from_parent(&mut app.world, parent, SPLIT_WORKERS, &settle)
         .expect("a stocked parent can split");
     let child = entity_for_band(app, split.band).expect("the split allocated this id");
+    run_turn(app);
     set_larder(app, parent, FED_LARDER);
     set_larder(app, child, HUNGRY_LARDER);
     (parent, child)
@@ -257,6 +281,72 @@ fn the_pre_transfer_identity_is_short_by_exactly_the_move() {
     assert!(
         fed_gap.abs() > EPSILON,
         "the liveness half — a zero gap would let this test pass on a sim that moves no food"
+    );
+}
+
+/// **A band that splits MID-WINDOW books the dowry on both ends.**
+///
+/// `split_band_from_parent` takes a share of every good off the parent and hands it to the child,
+/// and a split is a *command*: it is applied between one capture and the next, inside the interval a
+/// client's `larder_delta` measures. So the parent's larder falls by food its people never ate and
+/// the child's opens at food it never grew — which is precisely what the transfer pair exists to
+/// name, and the identity is false on that turn without it.
+///
+/// The other fixtures here split while *building* themselves and then overwrite both larders, which
+/// is exactly why this hole survived them. This one splits after the first published frame and
+/// touches nothing afterwards.
+#[test]
+fn the_food_ledger_reconciles_when_a_band_splits_mid_window() {
+    let mut app = world();
+    let parent = first_band(&mut app);
+    stock_workers(&mut app, parent);
+    set_larder(&mut app, parent, FED_LARDER);
+    let parent_id = band_id(&app, parent);
+
+    // One published frame first, so the window the split falls into has a defined start.
+    run_turn(&mut app);
+    let parent_before = larder(&app, parent);
+
+    let split = split_band_from_parent(&mut app.world, parent, SPLIT_WORKERS, &permissive_settle())
+        .expect("a stocked parent can split");
+    let child = entity_for_band(&mut app, split.band).expect("the split allocated this id");
+    let dowry = split.provisions.to_f32();
+
+    run_turn(&mut app);
+
+    let parent_ledger = ledger_of(&app, parent_id);
+    let child_ledger = ledger_of(&app, split.band);
+
+    // Liveness: real food walked out with them, or both identities below are about nothing.
+    assert!(
+        dowry > EPSILON,
+        "the split must hand over food for this test to say anything: dowry={dowry}"
+    );
+    assert!(
+        parent_ledger.sent >= dowry - EPSILON,
+        "the parent must report giving the dowry up: dowry={dowry} ({parent_ledger:?})"
+    );
+    assert!(
+        child_ledger.received >= dowry - EPSILON,
+        "and the child receiving it: dowry={dowry} ({child_ledger:?})"
+    );
+
+    let parent_delta = larder(&app, parent) - parent_before;
+    assert!(
+        (parent_delta - parent_ledger.expected_delta()).abs() < EPSILON,
+        "the PARENT's ledger must reconcile across the split: delta={parent_delta} vs {} \
+         ({parent_ledger:?})",
+        parent_ledger.expected_delta()
+    );
+
+    // The child published no earlier frame, so the delta a client draws for it is measured from
+    // nothing at all.
+    let child_delta = larder(&app, child) - NO_PRIOR_FRAME_LARDER;
+    assert!(
+        (child_delta - child_ledger.expected_delta()).abs() < EPSILON,
+        "the CHILD's ledger must reconcile on its first frame: delta={child_delta} vs {} \
+         ({child_ledger:?})",
+        child_ledger.expected_delta()
     );
 }
 

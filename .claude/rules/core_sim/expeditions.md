@@ -1168,7 +1168,11 @@ exactly two things and both already have a phase.
 - **A destination that cannot be resolved turns the party for home CARRYING THE CARGO**, the twin of
   the lost-herd guard. Its feed line rides `CommandEventKind::ExpeditionRecalled` — the kind that
   means *"this party has been turned for home"*, the same state change the recall verb makes —
-  because `TradeDelivered` would be a lie about a shipment that has not been delivered.
+  because `TradeDelivered` would be a lie about a shipment that has not been delivered. Its detail
+  carries `destination=<id>` like the launch and delivery lines: the label names the band through
+  `destination_display()`'s `band <id>` fallback, and that token is the only key the client has to
+  swap in its own roster label (`EventDockPanel::_swap_band_label`). Without it this one row of a
+  shipment's life prints a raw id beside siblings that print the band's name.
 - **One-way in this slice.** The party walks home empty; a priced return flow is a later slice, not an
   omission here.
 

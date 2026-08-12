@@ -356,9 +356,16 @@ pub fn advance_expeditions(
                         "Trade party lost {} — returning home with its cargo",
                         mission.destination_display()
                     ),
+                    // **`destination=` rides along, exactly as on the launch and delivery lines.**
+                    // The label above names the band through `destination_display()`, whose
+                    // fallback is the sim's positional `band <id>` spelling; the client swaps that
+                    // for its own roster label by keying on this token
+                    // (`EventDockPanel::_swap_band_label`). Omitting it is what makes one row of a
+                    // shipment's life print a raw id while its siblings print the band's name.
                     Some(format!(
-                        "status=returning reason={} expedition={}",
+                        "status=returning reason={} destination={} expedition={}",
                         DESTINATION_GONE_MID_TRADE,
+                        destination.0,
                         entity.to_bits()
                     )),
                 ));
