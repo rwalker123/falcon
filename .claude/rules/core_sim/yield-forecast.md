@@ -637,7 +637,8 @@ a commodity key holds for a material batch:
 - the snapshot ships batches generically (`snapshot/crafting.rs`), so a new material needs no schema
   change;
 - `balance_supply_networks` pools them per **`(material id, band key)`** (`supply::MaterialKey`), so
-  same-faction bands inside `SupplyNetworkConfig.reach_tiles` share them and bands beyond it do not —
+  connected same-faction bands inside `SupplyNetworkConfig.reach_tiles` share them and bands beyond
+  it do not —
   and pooling can never average a mammoth hide into a hare pelt;
 - a batch's amount is fixed-point, so per-turn flows accumulate instead of rounding to zero.
 
@@ -656,7 +657,8 @@ lever, the `DEFAULT_STOCKPILE_ACCESS_RADIUS` default and the distance test; a ba
 `cohort.stores` is the only store it has.
 
 **The band-to-band radius that does exist is `SupplyNetworkConfig.reach_tiles`** (default `3`) — a
-different mechanic in every respect: it connects same-faction bands to *each other*, and
+different mechanic in every respect: it connects same-faction bands that have met to *each other*,
+and
 `balance_supply_networks` **equalizes their `stores`** rather than publishing a second store beside
 them. Reaching for "bands near each other can pool without a route" means reaching for that lever.
 

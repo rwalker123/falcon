@@ -583,11 +583,6 @@ const COMPOSE_OPEN_BUTTON_FORMAT := "Assign %s ▸"
 
 const COMPOSE_SHEET_EYEBROW_FORMAT := "Assign %s"
 
-# The standing staffing being edited, shown INSIDE the sheet (the header carries verb + subject).
-const COMPOSE_NOW_STAFFED_FORMAT := "Now %d%s"
-
-const COMPOSE_PENDING_SUFFIX := " · pending"
-
 # The drawer's one-line summary of what is ALREADY standing on this source: `♻ 3 foragers · +2.74
 # /turn`. The rate comes from `SourceForecast.source_yield_readout` — never recomputed here.
 const STANDING_SUMMARY_FORMAT := "%s %d %s"

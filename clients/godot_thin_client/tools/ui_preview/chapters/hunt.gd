@@ -10,6 +10,7 @@ const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
+const InputProbe := preload("res://tools/ui_preview/input_probe.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
@@ -844,13 +845,13 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("herd_band_picker")
 
-	# State 3g — same, after switching the dropdown to Band 2 (only 2 idle): the picker path
-	# re-caps the Hunters count to the newly-selected band's assignable workers (8 → 2, + now
-	# disabled), demonstrating selection → actor band → stepper re-cap.
+	# State 3g — same, after switching the dropdown to Band 2 (only 2 idle): the actor band changing
+	# RE-SEEDS the composition from that band's own standing staffing, so the dialed 8 is gone and the
+	# stepper opens on the `WORKER_STEP` floor (Band 2 hunts nothing here). The note beneath it is the
+	# newly-selected band's own labour bound — `2 of 7 useful` — which is the "selection → actor band →
+	# stepper" chain this pair has always demonstrated, now stated by the seed rather than by a clamp.
 	var second_band: Dictionary = _two_player_bands()[1]
 	h._hud._compose.set_hunt_band(int(second_band["entity"]))
-	h._hud._compose.set_hunt_count(clampi(
-		h._hud._compose.hunt_count(), 0, h._hud._band_labor.assignable_hunt_workers(second_band, HerdFx.herd_fixture()["id"])))
 	h._compose_herd(HerdFx.herd_fixture())
 	await h._settle()
 	await h._save("herd_band_picker_b")
@@ -2275,14 +2276,80 @@ func _unkillable_quarry_states() -> void:
 	_assert_composes_for_panel_band("compose_panel_band_forage", panel_colony,
 		h._hud._compose.forage_band())
 
+	# ---- …AND IT OPENS ON THE BAND ALREADY WORKING THE SOURCE, AND RE-SEEDS ON A SWITCH -----------
+	# The block's rationale, its fixture and its four claims are documented beside `_actor_band_roster`
+	# at the foot of this chapter. The panel band stays CLEARED and no unit is selected, so
+	# `_resolve_assign_band` answers roster[0] — a band that works neither source — and the working-band
+	# rung is the only thing that can move the answer.
+	var actor_roster := _actor_band_roster()
+	h._hud._band_labor.set_panel_band({})
+	h._hud._band_labor._player_bands = actor_roster
+	h._hud._band_labor._player_band = actor_roster[0]
+	h._hud._compose.reset_forage_source()
+	h._hud._compose.set_forage_band(ComposeState.NO_BAND_ENTITY)
+	var actor_tile := BaseFx.food_tile_fixture()
+	h._show_tile(actor_tile)
+	h._compose_forage(actor_tile)
+	await h._settle()
+	await h._save("compose_working_band_forage")
+	_assert_actor_band("compose_working_band_forage", ACTOR_FIRST_WORKER_INDEX,
+		ACTOR_FIRST_WORKER_CREW, ACTOR_FORAGE_VERB, ACTOR_FORAGE_RUNG)
+
+	# Drive the picker to the OTHER working band, whose standing crew differs — the composed count,
+	# the verb and the improvement control must all re-read from it. With the bare band write the
+	# stepper stays on the band being left.
+	await _pick_actor_band(ACTOR_SECOND_WORKER_INDEX - 1)
+	await h._settle()
+	await h._save("compose_band_switch_forage")
+	_assert_actor_band("compose_band_switch_forage", ACTOR_SECOND_WORKER_INDEX,
+		ACTOR_SECOND_WORKER_CREW, ACTOR_FORAGE_VERB, ACTOR_FORAGE_RUNG)
+
+	# The vacuity guard, then the played defect itself: dial this band's crew to 0 (a real unassign,
+	# which the sheet must SAY), then switch back to the first worker. Without the re-seed the composed
+	# 0 survives the switch and one press would strip that band's two foragers off the tile.
+	h._hud._compose.set_forage_count(0)
+	h._compose_forage(actor_tile)
+	await h._settle()
+	_assert_actor_unassign("compose_band_switch_forage", ACTOR_FORAGE_RUNG)
+	await _pick_actor_band(ACTOR_FIRST_WORKER_INDEX - 1)
+	await h._settle()
+	_assert_actor_band("compose_band_switch_forage (back)", ACTOR_FIRST_WORKER_INDEX,
+		ACTOR_FIRST_WORKER_CREW, ACTOR_FORAGE_VERB, ACTOR_FORAGE_RUNG)
+
+	# ---- THE HUNT TWINS — a SECOND compose builder, so the plant half says nothing about it -------
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_band(ComposeState.NO_BAND_ENTITY)
+	var actor_herd := HerdFx.herd_fixture()
+	h._show_herd(actor_herd)
+	h._compose_herd(actor_herd)
+	await h._settle()
+	await h._save("compose_working_band_hunt")
+	_assert_actor_band("compose_working_band_hunt", ACTOR_FIRST_WORKER_INDEX,
+		ACTOR_FIRST_WORKER_CREW, ACTOR_HUNT_VERB, ACTOR_HUNT_RUNG)
+
+	await _pick_actor_band(ACTOR_SECOND_WORKER_INDEX - 1)
+	await h._settle()
+	await h._save("compose_band_switch_hunt")
+	_assert_actor_band("compose_band_switch_hunt", ACTOR_SECOND_WORKER_INDEX,
+		ACTOR_SECOND_WORKER_CREW, ACTOR_HUNT_VERB, ACTOR_HUNT_RUNG)
+
+	h._hud._compose.set_hunt_count(0)
+	h._compose_herd(actor_herd)
+	await h._settle()
+	_assert_actor_unassign("compose_band_switch_hunt", ACTOR_HUNT_RUNG)
+	await _pick_actor_band(ACTOR_FIRST_WORKER_INDEX - 1)
+	await h._settle()
+	_assert_actor_band("compose_band_switch_hunt (back)", ACTOR_FIRST_WORKER_INDEX,
+		ACTOR_FIRST_WORKER_CREW, ACTOR_HUNT_VERB, ACTOR_HUNT_RUNG)
+
 	# Reset the roster, the panel band and BOTH compose spines for whatever renders after this chapter.
 	h._hud._band_labor.set_panel_band({})
 	h._hud._band_labor._player_bands = []
 	h._hud._band_labor._player_band = BandFx.band_fixture()
 	h._hud._compose.reset_hunt_source()
-	h._hud._compose.set_hunt_band(-1)
+	h._hud._compose.set_hunt_band(ComposeState.NO_BAND_ENTITY)
 	h._hud._compose.reset_forage_source()
-	h._hud._compose.set_forage_band(-1)
+	h._hud._compose.set_forage_band(ComposeState.NO_BAND_ENTITY)
 	h._hud.clear_selection()
 
 
@@ -2815,19 +2882,25 @@ func _stale_panel_band() -> Dictionary:
 ## pairs the `BAND_PICKER_LABEL` field key with an `OptionButton` — because the face is the very thing
 ## under test, so reaching the control by the text it is claimed to show would assert nothing.
 func _band_picker_face(root: Node) -> String:
+	var picker := _band_picker_control(root)
+	return PANEL_BAND_PICKER_ABSENT if picker == null else picker.text
+
+## The `Band:` picker CONTROL itself, found by the same structural rule — the actor-band block below
+## drives it with real pointer input, which needs the node rather than its face.
+func _band_picker_control(root: Node) -> OptionButton:
 	if root == null:
-		return PANEL_BAND_PICKER_ABSENT
+		return null
 	var key_seen := false
 	for child in root.get_children():
 		if child is Label and (child as Label).text == HudWorkVocab.BAND_PICKER_LABEL:
 			key_seen = true
 		elif key_seen and child is OptionButton:
-			return (child as OptionButton).text
+			return child as OptionButton
 	for child in root.get_children():
-		var found := _band_picker_face(child)
-		if found != PANEL_BAND_PICKER_ABSENT:
+		var found := _band_picker_control(child)
+		if found != null:
 			return found
-	return PANEL_BAND_PICKER_ABSENT
+	return null
 
 ## The three claims an open compose sheet owes the band the player has in FOCUS, made on BOTH sheets
 ## because `_resolve_assign_band` is injected into each of them separately.
@@ -2852,3 +2925,193 @@ func _assert_composes_for_panel_band(state: String, colony: Dictionary, composed
 			+ " %d and not the panel's stale %d")
 			% [state, PANEL_BAND_COLONY_IDLE, got_crew, PANEL_BAND_PARENT_IDLE, PANEL_BAND_STALE_IDLE],
 		got_crew == PANEL_BAND_COLONY_IDLE)
+
+
+# ---- THE SHEET OPENS ON THE BAND ALREADY WORKING THE SOURCE, AND A BAND SWITCH RE-SEEDS ----------
+# Reported from play, on a tile worked by Band 3 with two foragers while the panel showed Band 3: the
+# sheet opened on Band 1 — four tiles away, out of forage range, no idle crew — and switching the
+# picker to Band 3 moved every LIVE reading (`2 of 4 useful`, the standing-crew line) while the
+# COMPOSED count stayed at Band 1's. With a composed 0 against a standing 2 the commit button became
+# `Unassign`, one press from stripping the two real foragers off the tile, and the improvement
+# checkbox vanished with it (the crew-0-on-a-worked-source rule, correctly applied to the wrong state).
+#
+# Both halves are guarded here because both are decisions about the ACTOR BAND, and both webs are
+# guarded because the two compose builders are separate code.
+
+## The band `Hud._resolve_assign_band` answers for — roster[0], with no panel band set and no unit
+## selected. It works NEITHER source, which is what makes the working-band rung observable: with the
+## ladder's own answer among the workers the tie goes to the ladder and nothing moves.
+const ACTOR_LADDER_ENTITY := 861
+
+## The FIRST band in roster order that works both sources — what the sheet must open on.
+const ACTOR_FIRST_WORKER_ENTITY := 862
+
+## A SECOND worker, so the band switch has somewhere to go that is also a working band. Its crew
+## differs from the first's, which is the whole of the re-seed claim.
+const ACTOR_SECOND_WORKER_ENTITY := 863
+
+## The two standing crews. **Neither is `HudConst.WORKER_STEP`**: a stepper reading 1 cannot tell a
+## re-seed from the no-standing-assignment fallback, so a 1 here would make the claim unfalsifiable.
+## Both sit under either source's max-useful ceiling, so the stepper renders the seed rather than a
+## clamp of it.
+const ACTOR_FIRST_WORKER_CREW := 2
+const ACTOR_SECOND_WORKER_CREW := 3
+
+## 1-based roster positions — the picker labels bands positionally (`HudFormat.band_display_name`), so
+## each is both the popup entry a press must land on (one less, the popup being 0-based) and the
+## `Band N` the face must read.
+const ACTOR_FIRST_WORKER_INDEX := 2
+const ACTOR_SECOND_WORKER_INDEX := 3
+
+## Idle crew on every band in the roster, well above both standing crews so no stepper is labour-bound
+## and the rendered number is decided by the SEED alone.
+const ACTOR_IDLE_WORKERS := 10
+
+## The reference food tile (`BaseFx.food_tile_fixture`) and the reference herd, both at (66,10) — every
+## band in the roster stands on that hex, so distance can move neither sheet's branch.
+const ACTOR_TILE_X := 66
+const ACTOR_TILE_Y := 10
+const ACTOR_HERD_ID := "game_deer_07"
+
+## The ordinary commit verbs, spelled out here rather than read back through `HudComposeVocab`: an
+## expectation composed from the vocabulary under test can only ever agree with itself. `Unassign` is
+## the one face taken from the vocabulary, because its ABSENCE is what is being claimed.
+const ACTOR_FORAGE_VERB := "Forage"
+const ACTOR_HUNT_VERB := "Hunt Here"
+
+## The rung each web's improvement control offers on these fixtures — a wild Thriving patch offers
+## Cultivate, a part-tamed herd offers Tame. Reached by `HudWidgets.IMPROVEMENT_CONTROL_META`, never by
+## face, so the claim is about the control's PRESENCE rather than about its wording.
+const ACTOR_FORAGE_RUNG := "cultivate"
+const ACTOR_HUNT_RUNG := "tame"
+
+## Where in a popup row a press is aimed, as a fraction of the row's own height and of the popup's width.
+const ACTOR_POPUP_ROW_CENTRE := 0.5
+
+## The popup reported no entry under the press at all — a failure, never a skip.
+const ACTOR_NO_ENTRY_PRESSED := -1
+
+## Which popup entry the last driven press actually landed on. **A MEMBER, not a local**: a GDScript
+## lambda captures a local by VALUE, so a witness assigning to one reports that nothing ever happened.
+var _actor_entry_pressed := ACTOR_NO_ENTRY_PRESSED
+
+## THREE player bands where the ladder's answer works neither source and the other two work both. The
+## roster is the assertion: with one band, or with the ladder's own band among the workers, every rung
+## of the resolution agrees and a state passes for free.
+func _actor_band_roster() -> Array:
+	return [
+		_actor_band(ACTOR_LADDER_ENTITY, []),
+		_actor_band(ACTOR_FIRST_WORKER_ENTITY, _actor_assignments(ACTOR_FIRST_WORKER_CREW)),
+		_actor_band(ACTOR_SECOND_WORKER_ENTITY, _actor_assignments(ACTOR_SECOND_WORKER_CREW)),
+	]
+
+func _actor_band(entity: int, assignments: Array) -> Dictionary:
+	return BandFx.with_band_id({
+		"entity": entity, "faction": 0, "size": 90,
+		"current_x": ACTOR_TILE_X, "current_y": ACTOR_TILE_Y,
+		"working_age": 16, "idle_workers": ACTOR_IDLE_WORKERS,
+		"work_range": 2, "hunt_reach": 7, "max_expedition_party_size": 8,
+		"activity": "forage", "labor_assignments": assignments,
+	})
+
+## One standing crew on EACH web, so a single roster serves both sheets. Both carry no `improvement`,
+## so the improvement control is an OFFERED box on either band and the presence claim below is about
+## the crew-0 suppression rather than about which rung is being built.
+func _actor_assignments(crew: int) -> Array:
+	return [
+		{"kind": "forage", "workers": crew, "target_x": ACTOR_TILE_X, "target_y": ACTOR_TILE_Y,
+			"floor": SourceForecast.FLOOR_FOOD_PEAK, "actual_yield": 0.0, "sustainable_yield": 0.0,
+			"workers_needed": crew, "overdraws": false},
+		{"kind": "hunt", "workers": crew, "fauna_id": ACTOR_HERD_ID,
+			"target_x": ACTOR_TILE_X, "target_y": ACTOR_TILE_Y,
+			"floor": SourceForecast.FLOOR_FOOD_PEAK, "actual_yield": 0.0, "sustainable_yield": 0.0,
+			"workers_needed": crew, "overdraws": false},
+	]
+
+## The four claims an open compose sheet owes the band it is composing for. They fail apart, which is
+## why they are four: the picker's FACE is what the player reads, the STEPPER is the composition the
+## commit would send, the VERB is what one press would do, and the improvement CONTROL is the
+## affordance the played defect took away.
+func _assert_actor_band(state: String, index: int, crew: int, verb: String, rung: String) -> void:
+	var sheet: Control = h._hud._drawercompose._compose_sheet
+	var want_face := HudFormat.band_display_name(_actor_band_roster()[index - 1], index)
+	var got_face := _band_picker_face(sheet)
+	h._assert_hud("%s: the Band: picker names the band working the source (%s, got %s)"
+			% [state, want_face, got_face],
+		got_face == want_face)
+	var got_crew := Readout.stepper_value(sheet)
+	h._assert_hud("%s: the crew stepper opens on THAT band's standing crew (%d, got %d)"
+			% [state, crew, got_crew],
+		got_crew == crew)
+	var commit := Q.compose_commit_button(sheet)
+	var got_verb := "" if commit == null else commit.text
+	h._assert_hud("%s: the commit button is the ordinary verb, not %s (%s, got %s)"
+			% [state, HudComposeVocab.UNASSIGN_BUTTON, verb, got_verb],
+		got_verb == verb)
+	h._assert_hud("%s: the improvement control is rendered (%s)" % [state, rung],
+		ForageFx.find_improvement_control(sheet, rung) != null)
+
+## The VACUITY GUARD for the "not Unassign" claims above: the same sheet, on the same band, with the
+## crew dialed to 0 — which really is an unassign, so the button really does change its face and the
+## improvement control really does go. Without it a sheet that had lost the ability to say `Unassign`
+## at all, or one that never renders an improvement control, would satisfy every claim above.
+func _assert_actor_unassign(state: String, rung: String) -> void:
+	var sheet: Control = h._hud._drawercompose._compose_sheet
+	var commit := Q.compose_commit_button(sheet)
+	var got_verb := "" if commit == null else commit.text
+	h._assert_hud("%s: a composed 0 against a standing crew really does read %s (got %s)"
+			% [state, HudComposeVocab.UNASSIGN_BUTTON, got_verb],
+		got_verb == HudComposeVocab.UNASSIGN_BUTTON)
+	h._assert_hud("%s: …and the improvement control is suppressed with it" % state,
+		ForageFx.find_improvement_control(sheet, rung) == null)
+
+## Drive the open sheet's `Band:` picker to `entry` (0-based) with REAL POINTER INPUT — the face, then
+## the popup row — rather than emitting `item_selected` by hand. A faked signal calls the connected
+## lambda directly and so passes on a picker whose popup never opens and, worse, on the branch where
+## the engine DECLINES to report a pick at all (`labor-ui.md` → "A PICKER STATES ITS OWN SELECTION").
+##
+## **The popup is FREED under this function, and that is the control behaving correctly**: the pick runs
+## `on_pick`, which rebuilds the compose controls and takes the picker row with it. The teardown is
+## `is_instance_valid`-guarded, because an unguarded `disconnect` raises, which ABORTS the call — and an
+## aborted GDScript call answers with its return type's default, which for an entry index is a legal 0.
+func _pick_actor_band(entry: int) -> void:
+	var sheet: Control = h._hud._drawercompose._compose_sheet
+	var picker := _band_picker_control(sheet)
+	h._assert_hud("the open sheet renders a Band: picker to drive", picker != null)
+	if picker == null:
+		return
+	var viewport: Viewport = h.get_viewport()
+	var face := InputProbe.canvas_to_window(viewport, h.get_window(),
+		picker.get_global_rect().get_center())
+	InputProbe.hover(viewport, face)
+	# An `OptionButton` fires at ACTION_MODE_BUTTON_PRESS, so the popup is up before the release
+	# exists — the two halves have to be driven apart.
+	InputProbe.press_left(viewport, face)
+	await h.get_tree().process_frame
+	InputProbe.release_left(viewport, face)
+	await h.get_tree().process_frame
+	var popup := picker.get_popup()
+	h._assert_hud("a press on the Band: picker's face opens its popup", popup.visible)
+	if not popup.visible:
+		return
+	_actor_entry_pressed = ACTOR_NO_ENTRY_PRESSED
+	var witness := func(index: int) -> void:
+		_actor_entry_pressed = index
+	popup.index_pressed.connect(witness)
+	var row_height := float(popup.size.y) / float(maxi(popup.item_count, 1))
+	var point := InputProbe.canvas_to_window(viewport, h.get_window(), Vector2(
+		float(popup.position.x) + float(popup.size.x) * ACTOR_POPUP_ROW_CENTRE,
+		float(popup.position.y) + row_height * (float(entry) + ACTOR_POPUP_ROW_CENTRE)))
+	InputProbe.hover(viewport, point)
+	await h.get_tree().process_frame
+	InputProbe.press_left(viewport, point)
+	await h.get_tree().process_frame
+	InputProbe.release_left(viewport, point)
+	await h.get_tree().process_frame
+	if is_instance_valid(popup):
+		popup.index_pressed.disconnect(witness)
+	# The point is DERIVED from the popup's own rect (an item's rect is not published), so the popup
+	# itself is asked which row the press hit rather than the derivation being trusted.
+	h._assert_hud("…and the press lands on the band's own entry (%d, got %d)"
+			% [entry, _actor_entry_pressed],
+		_actor_entry_pressed == entry)

@@ -187,8 +187,23 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     //                  neighbouring larders every turn since turn one, so any two co-networked bands
     //                  move these. FOOD ONLY: materials cross too and there is deliberately no
     //                  materials identity (the batch store IS a material's account).
+    //                  **THE LEDGER'S PAIR, AND NOT THE PANEL'S** — see the per-turn twins below.
     let _ = dict.insert("transfer_received", cohort.transferReceived() as f64);
     let _ = dict.insert("transfer_sent", cohort.transferSent() as f64);
+    //   transfer_received_turn / transfer_sent_turn — THE SAME TWO FACTS, TAKEN PER TURN, and the
+    //                  pair a READOUT renders. The accumulating pair above is cleared as soon as the
+    //                  turn's capture reads it, and the sim re-captures after every dispatched
+    //                  command (`snapshot::recapture_snapshot_in_place`), so on any command-refreshed
+    //                  frame it reads 0 — blanking a row it had just shown. These are per-turn state
+    //                  on the cohort, re-read unchanged by a recapture, and equal to the pair above
+    //                  on the turn's own frame by construction. Both pairs ship because they answer
+    //                  different questions: the accumulating one closes the larder identity between
+    //                  two TURN frames, this one says what crossed on the turn.
+    let _ = dict.insert(
+        "transfer_received_turn",
+        cohort.transferReceivedTurn() as f64,
+    );
+    let _ = dict.insert("transfer_sent_turn", cohort.transferSentTurn() as f64);
     // --- THE MINIMAL TOE (`docs/plan_hunt_through_combat.md` 4.8) ---------------------------------
     // The band's THREE consumable kits and the tiers they resolve to. **All six shipped on the wire
     // with NO consumer here**, which is this crate's most-repeated bug and the third time this arc

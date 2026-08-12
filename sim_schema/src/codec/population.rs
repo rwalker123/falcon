@@ -715,6 +715,11 @@ fn create_populations<'a>(
                     // legitimately `0` (weightless materials) unlike the pack lever above it.
                     expeditionTradeMaterialCarryWeight: cohort
                         .expedition_trade_material_carry_weight,
+                    // The transfer pair a client renders — appended last, always written. Per-turn
+                    // state, so unlike the accumulating pair above it survives the sim's
+                    // after-every-command recapture; on a turn frame the two read the same number.
+                    transferReceivedTurn: cohort.transfer_received_turn,
+                    transferSentTurn: cohort.transfer_sent_turn,
                 },
             )
         })

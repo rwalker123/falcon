@@ -900,9 +900,18 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_cargo_food,
         expedition_cargo_materials,
         // The food ledger's last two terms — read off the allocation like `pen_feed_upkeep` and
-        // `raid_forfeit` beside them, and `0.0` for a band that has none.
+        // `raid_forfeit` beside them, and `0.0` for a band that has none. **These answer "what has
+        // crossed since the last published frame"**, the window the ledger identity closes over, and
+        // they are cleared right after this capture (`systems::reset_transfer_ledger`).
         transfer_received: allocation.map(|a| a.last_transfer_received).unwrap_or(0.0),
         transfer_sent: allocation.map(|a| a.last_transfer_sent).unwrap_or(0.0),
+        // **And these answer "what crossed on this turn"** — the same two facts as per-turn state on
+        // the cohort, copied there by `systems::publish_turn_transfers` just before the turn's
+        // capture. A recapture rebuilds this frame from live components *after* the pair above has
+        // been cleared, so it is these that survive one and these a client renders. On a turn frame
+        // the two pairs read the same number.
+        transfer_received_turn: cohort.last_turn_transfer_received,
+        transfer_sent_turn: cohort.last_turn_transfer_sent,
     }
 }
 
@@ -1096,6 +1105,8 @@ mod tests {
             stores,
             morale: scalar_one(),
             last_food_consumption: 0.0,
+            last_turn_transfer_received: 0.0,
+            last_turn_transfer_sent: 0.0,
             last_morale_delta: scalar_zero(),
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: MoraleContributions::default(),

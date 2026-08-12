@@ -190,10 +190,19 @@ func food_breakdown_lines(band: Dictionary) -> Array[String]:
     #
     # Rendered as income and debit respectively — `food_breakdown_row` takes the sign — and each is
     # omitted at zero, exactly like Pen feed and Lost to raids.
-    var received := DetailFormat.band_transfer_received(band)
+    #
+    # **THEY READ THE PER-TURN PAIR, NEVER THE ACCUMULATING ONE** (issue #517). `transferReceived` /
+    # `transferSent` accumulate over the PUBLICATION window and are cleared the moment the turn's
+    # capture reads them, and the sim re-captures after every dispatched command — so on any frame a
+    # command refreshed they read 0 and both rows vanished, which is what a player saw the instant
+    # they did anything after a transfer landed. Every other row here is a per-turn value that
+    # survives a recapture; `transferReceivedTurn` / `transferSentTurn` put these two on that same
+    # basis. Rendering whichever of the two is non-zero is NOT the fix — it would make a row's
+    # meaning depend on when it was looked at.
+    var received := DetailFormat.band_transfer_received_turn(band)
     if received >= SourceForecast.FOOD_FLOW_MIN:
         lines.append(DetailFormat.food_breakdown_row(received, DetailFormat.FOOD_LABEL_TRANSFER_RECEIVED))
-    var sent := DetailFormat.band_transfer_sent(band)
+    var sent := DetailFormat.band_transfer_sent_turn(band)
     if sent >= SourceForecast.FOOD_FLOW_MIN:
         lines.append(DetailFormat.food_breakdown_row(-sent, DetailFormat.FOOD_LABEL_TRANSFER_SENT))
     return lines

@@ -1,15 +1,34 @@
-//! Supply network — per-faction, throughput-limited goods sharing between nearby bands.
+//! Supply network — throughput-limited goods sharing between **connected** bands standing near
+//! each other.
 //!
 //! Every band is a small logistics node holding a local goods store (`PopulationCohort.stores`).
-//! Each turn `balance_supply_networks` connects same-faction bands within `reach_tiles` into
-//! **supply networks** (connected components) and moves each commodity toward a **per-capita
-//! balance** across the network — capped at `throughput_per_turn` per node and losing `friction`
-//! in transit. So a gatherer band automatically feeds a scouting band it's near, while a detached
-//! band lives off its own larder. Runs in `TurnStage::Logistics` (before `TurnStage::Population`
-//! consumes), so balanced larders are eaten the same turn.
+//! Each turn `balance_supply_networks` joins bands **of one people** that are within `reach_tiles`
+//! of each other **and** hold a live tie in [`crate::connections::ConnectionLedger`] into **supply
+//! networks** (connected components) and moves each commodity toward a **per-capita balance** across
+//! the network — capped at `throughput_per_turn` per node and losing `friction` in transit. So a
+//! gatherer band automatically feeds a scouting band it's near, while a band that is detached, one
+//! nobody has met, or one belonging to another people lives off its own larder. Runs in
+//! `TurnStage::Logistics` (before `TurnStage::Population` consumes), so balanced larders are eaten
+//! the same turn.
 //!
-//! This is the general mechanism the design scales later: raise reach/throughput for settlements
-//! and cities, and add a *trade policy* (consent + priced return flow) on cross-faction edges.
+//! # A logistics link is a rider on a CONNECTION
+//!
+//! The edge used to be derived implicitly from proximity alone, which made this the second
+//! independent implementation of *"goods move between two bands"* beside a trade shipment's tie
+//! gate. It is now the same object: proximity produces a connection, and over a short distance a
+//! logistics link is cheap enough to **hold itself for free** — which is what `reach_tiles` means
+//! now (`docs/plan_contact_and_logistics.md` §Q4). Beyond it a link needs a route to hold it open,
+//! and that state belongs to the route ladder, not here: there is deliberately no `LogisticsLink`
+//! component or resource.
+//!
+//! # The LINK is faction-blind; what the balancer POOLS OVER is policy
+//!
+//! Two questions, deliberately separated. *Does a logistics link exist between these two bands?* is
+//! the arc's edge and asks nothing about faction — see [`tie_is_live`]. *Do they equalize their
+//! larders for free across it?* is this rider's own policy, and the answer is **only within one
+//! people** — see [`pools_freely`]. The connection primitive's discipline ("no faction field on the
+//! edge, no faction branch inside `connections.rs`") governs the edge, not what every rider decides
+//! to do with one.
 //! `docs/plan_settlement_population.md`.
 
 use std::cmp::min;
@@ -19,7 +38,10 @@ use bevy::math::UVec2;
 use bevy::prelude::*;
 
 use crate::{
-    components::{LaborAllocation, MaterialBatch, PopulationCohort, ResidentBand, Tile, FOOD},
+    components::{
+        BandId, LaborAllocation, MaterialBatch, PopulationCohort, ResidentBand, Tile, FOOD,
+    },
+    connections::{ConnectionKey, ConnectionLedger, NO_TIE},
     grid_utils::wrapped_distance_sq,
     materials_config::BandKey,
     orders::FactionId,
@@ -61,6 +83,10 @@ type MaterialKey = (String, BandKey);
 /// so all flows resolve against the turn's opening stores).
 struct Node {
     entity: Entity,
+    /// **The endpoint's identity.** A cohort with no [`BandId`] has nothing to tie, so it is never
+    /// collected as a node at all and simply never joins a network.
+    band: BandId,
+    /// **Whose people this band is** — read by [`pools_freely`], never by the link rule.
     faction: FactionId,
     pos: UVec2,
     /// Per-capita balancing weight = population.
@@ -86,6 +112,46 @@ impl Node {
             .map(|batch| batch.amount)
             .unwrap_or_else(scalar_zero)
     }
+}
+
+/// **The link rule.** An undirected logistics link exists between two resident bands iff they are
+/// within `reach_tiles` of each other *and* the ledger holds a live tie (`strength > NO_TIE`) in at
+/// least one direction.
+///
+/// **Either direction, not both.** A connection is directed — *who found whom* — and whether a
+/// rider requires mutuality is the rider's business (`connections.rs`). This rider does not:
+/// pooling is one undirected mechanism, and requiring both edges would make the commonest traffic
+/// in the game depend on two independent sight sweeps agreeing on the same turn.
+///
+/// **A parked tie does not pool.** `strength == NO_TIE` is the keystone's *"at zero nothing
+/// flows"*: the edge still exists — we know such a people exist — and it carries nothing.
+fn tie_is_live(ledger: &ConnectionLedger, a: BandId, b: BandId) -> bool {
+    [ConnectionKey::new(a, b), ConnectionKey::new(b, a)]
+        .iter()
+        .any(|key| {
+            ledger
+                .get(key)
+                .is_some_and(|connection| connection.strength > NO_TIE)
+        })
+}
+
+/// **The pooling policy — free per-capita equalization is a same-faction affordance.**
+///
+/// The link is faction-blind ([`tie_is_live`]): any two connected neighbours have one. What rides
+/// over it is this rider's decision, and free equalization only makes sense within one people — a
+/// parent band feeding the splinter it just calved has one interest at both ends. Between two
+/// peoples the same move is not trade at all; it is your larder draining into a stranger's because
+/// they camped nearby. Consent and price are a *priced exchange*'s to model (#546) and a shipment's
+/// to carry (#517), so the balancer must not pre-empt that design with an accidental default that
+/// would activate silently the day a second faction lands.
+///
+/// **It gates the UNION, not the balancing of an already-built component**, and that is the
+/// non-obvious part. Partitioning each component by faction afterwards would let bands A and C of
+/// one people — each within reach of a foreign band B, and neither within reach of the other — land
+/// in one component and pool *through* B, relaying goods across a stranger's camp. Gating the union
+/// reproduces exactly the pairing the proximity-only network had, with no relay.
+fn pools_freely(a: &Node, b: &Node) -> bool {
+    a.faction == b.faction
 }
 
 /// Iterative path-halving union-find root lookup.
@@ -160,21 +226,42 @@ fn balance_commodity(
     deltas
 }
 
+/// The bands [`balance_supply_networks`] pools between — named because the tuple grew a fourth
+/// member ([`BandId`], the endpoint identity the link rule reads) and an inline four-tuple query is
+/// what `clippy::type_complexity` exists to stop, exactly as `VisionCohorts` is named next door.
+type SupplyBands<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static mut PopulationCohort,
+        Option<&'static BandId>,
+        Option<&'static mut LaborAllocation>,
+    ),
+    With<ResidentBand>,
+>;
+
 pub fn balance_supply_networks(
     config: Res<SupplyNetworkConfigHandle>,
     sim_config: Res<SimulationConfig>,
     tile_registry: Res<TileRegistry>,
     tiles: Query<&Tile>,
+    // **The edge, read one stage early.** `advance_connections` runs later the same turn, in
+    // `TurnStage::Visibility`, so this pass sees the ledger as of the *previous* turn's contacts —
+    // and on the world's very first turn the ledger is empty, so nothing pools on turn 1. Both are
+    // accepted and neither is worth reordering a stage for: bands open with
+    // `startup.food_reserve_days` of their own food, and two bands standing within `reach_tiles`
+    // see each other every turn, which pins their tie at `FULL_TIE` from turn 2 onward. The
+    // alternative — supply seeding the ledger itself — would make a second producer of contact
+    // that no sight sweep agrees with.
+    ledger: Res<ConnectionLedger>,
     // `With<ResidentBand>`: an expedition manages its own larder — its drop-off is the explicit
     // fold-back on arrival, not a passive supply-network leak — so it is excluded here.
     // **The food ledger's transfer terms ride here**, because this system is one of their writers:
     // a balancing move crosses two larders through neither income nor consumption
     // ([`LaborAllocation::last_transfer_received`]). `Option`, matching how the two sibling ledger
     // terms are read at capture — a band without an allocation reports zero for all four.
-    mut cohorts: Query<
-        (Entity, &mut PopulationCohort, Option<&mut LaborAllocation>),
-        With<ResidentBand>,
-    >,
+    mut cohorts: SupplyBands,
     mut membership: ResMut<SupplyNetworkMembership>,
 ) {
     // Recomputed from scratch every turn; a 0/1-band map (early return below) leaves it empty.
@@ -189,12 +276,17 @@ pub fn balance_supply_networks(
 
     // Pass 1: snapshot each band's position, population weight, and opening stores.
     let mut nodes: Vec<Node> = Vec::new();
-    for (entity, cohort, _) in cohorts.iter() {
+    for (entity, cohort, band, _) in cohorts.iter() {
         let Ok(tile) = tiles.get(cohort.current_tile) else {
+            continue;
+        };
+        // No id, no identity to tie — and therefore no edge this band could ever be an endpoint of.
+        let Some(&band) = band else {
             continue;
         };
         nodes.push(Node {
             entity,
+            band,
             faction: cohort.faction,
             pos: tile.position,
             weight: cohort.total(),
@@ -220,10 +312,13 @@ pub fn balance_supply_networks(
     // Deterministic node order for the union-find and all downstream iteration.
     nodes.sort_by_key(|node| node.entity.to_bits());
 
-    // Union same-faction nodes within reach into supply networks. Rather than an O(n²) all-pairs
-    // scan, bin nodes into a spatial hash of `cell_size`-tile cells (cell_size = reach, so any two
-    // nodes within reach fall in the same or an adjacent cell) keyed by faction, then compare each
-    // node only against candidates in its neighbouring cells.
+    // Union nodes that are linked ([`tie_is_live`]) *and* pool with each other ([`pools_freely`])
+    // into supply networks. Rather than an O(n²) all-pairs scan, bin nodes into a spatial hash of
+    // `cell_size`-tile cells (cell_size = reach, so any two nodes within reach fall in the same or
+    // an adjacent cell), then compare each node only against candidates in its neighbouring cells.
+    // **The bin key is position alone**: the bins are geometry, and both the tie and the pooling
+    // policy are pair predicates, so a foreign neighbour only ever widens the candidate net — which
+    // is negligible at band counts.
     let count = nodes.len();
     let mut parent: Vec<usize> = (0..count).collect();
 
@@ -231,10 +326,10 @@ pub fn balance_supply_networks(
     let num_cells_x = width.div_ceil(cell_size).max(1) as i32;
     let cell_of =
         |pos: UVec2| -> (i32, i32) { ((pos.x / cell_size) as i32, (pos.y / cell_size) as i32) };
-    let mut bins: HashMap<(FactionId, i32, i32), Vec<usize>> = HashMap::new();
+    let mut bins: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
     for (idx, node) in nodes.iter().enumerate() {
         let (cx, cy) = cell_of(node.pos);
-        bins.entry((node.faction, cx, cy)).or_default().push(idx);
+        bins.entry((cx, cy)).or_default().push(idx);
     }
     // With horizontal wrap, a runt seam cell (when width isn't a multiple of cell_size) can leave
     // two within-reach nodes two cells apart across the seam, so search ±2 in x (folded into range)
@@ -258,14 +353,17 @@ pub fn balance_supply_networks(
                 if !seen_cells.insert((ncx, ncy)) {
                     continue; // wrap folding can repeat a cell on tiny maps
                 }
-                let Some(candidates) = bins.get(&(nodes[i].faction, ncx, ncy)) else {
+                let Some(candidates) = bins.get(&(ncx, ncy)) else {
                     continue;
                 };
                 for &j in candidates {
                     if j <= i {
                         continue; // each unordered pair once; also skips self
                     }
-                    if wrapped_distance_sq(nodes[i].pos, nodes[j].pos, width, wrap) <= reach_sq {
+                    if pools_freely(&nodes[i], &nodes[j])
+                        && wrapped_distance_sq(nodes[i].pos, nodes[j].pos, width, wrap) <= reach_sq
+                        && tie_is_live(&ledger, nodes[i].band, nodes[j].band)
+                    {
                         let (a, b) = (find(&mut parent, i), find(&mut parent, j));
                         if a != b {
                             parent[a] = b;
@@ -380,7 +478,7 @@ pub fn balance_supply_networks(
     }
 
     for (entity, commodity, delta) in applied {
-        if let Ok((_, mut cohort, allocation)) = cohorts.get_mut(entity) {
+        if let Ok((_, mut cohort, _, allocation)) = cohorts.get_mut(entity) {
             cohort.stores.add(&commodity, delta);
             // **Only the FOOD key enters the ledger.** The identity the two terms close is the food
             // one; fodder and materials have their own accounts and deliberately no identity of
@@ -401,7 +499,7 @@ pub fn balance_supply_networks(
     }
 
     for (entity, (material, band), delta, reading) in applied_materials {
-        let Ok((_, mut cohort, _)) = cohorts.get_mut(entity) else {
+        let Ok((_, mut cohort, _, _)) = cohorts.get_mut(entity) else {
             continue;
         };
         if delta < scalar_zero() {

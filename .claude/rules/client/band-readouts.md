@@ -768,12 +768,27 @@ not that number and cannot be made into one.
 - **Two named magnitudes, never one signed net**, matching `penFeedUpkeep` and `raidForfeit` beside
   them: a band that both sends and receives inside one window is doing something, and a net renders
   that as nothing having happened.
-- **The window is the SNAPSHOT window, not the turn.** A `send_trade_expedition` debits the larder
-  when the command is applied, between two published frames, so the sim accumulates across exactly
-  the interval a client's own `larder_delta` measures and clears after the capture. Nothing here may
-  re-scale them to a per-turn rate — which is the same fact that keeps them off the headline.
-- **They enter `band_has_food_flow` even so**, or a band whose only movement this window was a
-  transfer loses its net line and its whole breakdown — the rows are what the gate is protecting.
+- **THE ROWS READ THE PER-TURN PAIR, AND THE LEDGER'S PAIR IS NOT RENDERABLE** (issue #517). The wire
+  carries both: `transferReceived` / `transferSent` accumulate over the PUBLICATION window — a
+  `send_trade_expedition` debits the larder when the command is applied, between two published
+  frames, so they span exactly the interval a client's own `larder_delta` measures — and are cleared
+  the moment the turn's capture reads them. The sim then re-captures from live components after every
+  dispatched command, so on any command-refreshed frame that pair reads `0.0` and both rows vanish;
+  a real 0.56-food transfer showed nothing the instant the player did anything. `transferReceivedTurn`
+  / `transferSentTurn` (`DetailFormat.band_transfer_received_turn` / `_sent_turn`) are per-turn state
+  on the cohort, re-read unchanged by a recapture and equal to the accumulating pair on the turn's own
+  frame, and they are what the two `⇄` rows are made of. **Every other row in this breakdown —
+  Gathered, Eaten, pen upkeep, raid forfeit — is a per-turn value that survives a recapture**, so the
+  ledger now reads on one basis throughout, and the accumulating pair stays on the wire for the
+  identity it closes and for nothing this panel draws.
+- **Rendering whichever of the two is non-zero is not the fix.** It would put the launch draw back in
+  the `⇄ To other bands` row the instant the command lands, at the price of a row whose meaning
+  depends on when it was looked at. The cost of not doing it is that a shipment no longer flashes into
+  that row at launch — the larder total drops immediately and the shipment sheet confirms the send.
+- **They enter `band_has_food_flow` even so**, or a band whose only movement this turn was a
+  transfer loses its net line and its whole breakdown — the rows are what the gate is protecting. It
+  reads the **per-turn** pair for the same reason the rows do: a gate on the accumulating pair goes
+  false on a refreshed frame while the rows it protects still have values.
 - **FOOD ONLY.** Materials cross between bands as well (the network pools them per rating, a shipment
   carries them) and there is deliberately no materials identity: a material's account is the batch
   store, and a scalar total of hide and bone is the retired trade axis under a new name.
@@ -792,6 +807,15 @@ carets already draw from.
 **Frames:** `trade_food_ledger` (a band carrying both terms, whose headline states the steady rate
 alone) and `trade_food_transfers` (the same row OPENED, which is the only state that can say the two
 terms are itemized at all — the headline says nothing about them by design).
+
+**The command-refreshed frame is PNG-LESS and is asserted as a PAIR with them** (`chapters/trade.gd`):
+the same band with the accumulating pair zeroed and the per-turn pair intact, asserting both rows are
+still itemized. **A picture cannot make that claim** — the two states differ only in which field the
+rows were read from, and the broken one renders no rows at all rather than wrong ones. The pair is
+what forces the reading: a client on the per-turn pair passes both, and so does one that renders
+whichever term is non-zero, so the accumulator is ZEROED there rather than merely left behind.
+Sabotage-verified — pointing the rows back at the accumulating pair fails exactly those two and
+nothing else in the run.
 
 ## A trade party states WHO IT IS FOR and WHAT IS IN THE PACKS, and nothing else
 

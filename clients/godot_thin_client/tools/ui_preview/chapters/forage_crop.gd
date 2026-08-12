@@ -616,12 +616,14 @@ func run(harness) -> void:
 		committed_sheet_overflow, h.get_viewport().get_visible_rect().size.y])
 	h._assert_hud("a 4-species committed block does not make the compose sheet scroll internally",
 		committed_sheet_overflow <= 1.0)
-	# Clipping is the SYMPTOM the player reported (the `Now 1` line off the top, the Forage button
+	# Clipping is the SYMPTOM the player reported (the top of the sheet off the card, the Forage button
 	# sliced), and a scroll-extent check alone would not see a control sitting outside the card, so
-	# the two ends of the sheet are measured against the card's own rect.
-	var committed_now_line := _label_node_containing(committed_sheet, HudComposeVocab.COMPOSE_NOW_STAFFED_FORMAT % [1, ""])
-	h._assert_hud("…and the staffing line the sheet opens with is inside the card",
-		_rect_contains(committed_sheet._card.get_global_rect(), committed_now_line))
+	# the two ends of the sheet are measured against the card's own rect. The TOP end is the `Band:`
+	# field key — the first control every compose sheet opens with, since the standing-crew line that
+	# used to lead was retired.
+	var committed_first_row := _label_node_containing(committed_sheet, HudWorkVocab.BAND_PICKER_LABEL)
+	h._assert_hud("…and the band picker the sheet opens with is inside the card",
+		_rect_contains(committed_sheet._card.get_global_rect(), committed_first_row))
 	h._assert_hud("…and so is the Forage button it ends with",
 		_rect_contains(committed_sheet._card.get_global_rect(),
 			Q.compose_commit_button(committed_sheet)))

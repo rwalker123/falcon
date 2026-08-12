@@ -36,10 +36,10 @@
 
 use bevy::prelude::Entity;
 use core_sim::{
-    build_headless_app, run_turn, scalar_from_f32, split_band_from_parent, BandId, BandTravel,
-    Expedition, ExpeditionMission, ExpeditionPhase, LaborAllocation, LocalStore, PopulationCohort,
-    ResidentBand, Scalar, SettleConfig, SimulationConfig, SnapshotHistory, StartingUnit, Tile,
-    TileRegistry, FOOD,
+    build_headless_app, recapture_snapshot_in_place, run_turn, scalar_from_f32,
+    split_band_from_parent, BandId, BandTravel, Expedition, ExpeditionMission, ExpeditionPhase,
+    LaborAllocation, LocalStore, PopulationCohort, ResidentBand, Scalar, SettleConfig,
+    SimulationConfig, SnapshotHistory, StartingUnit, Tile, TileRegistry, FOOD,
 };
 
 /// The shipped default `map_seed` is `0` ("seed from entropy"), so a test must pin its own or every
@@ -487,6 +487,119 @@ fn the_transfer_terms_are_cleared_between_snapshots() {
         "and the identity still holds on the quiet turn: delta={delta} vs {} ({quiet:?})",
         quiet.expected_delta()
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// A REFRESHED frame still states the turn's transfers
+// ---------------------------------------------------------------------------------------------
+
+/// **Both transfer pairs off the ENCODED envelope**, through the accessor chain a client uses:
+/// `(transferReceived, transferSent, transferReceivedTurn, transferSentTurn)`. A field that never
+/// reached the codec still passes an in-process assertion.
+fn published_transfers(app: &bevy::prelude::App, band: BandId) -> (f32, f32, f32, f32) {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let row = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section is published")
+        .iter()
+        .find(|cohort| cohort.bandId() == band.0)
+        .expect("the band's row is published");
+    (
+        row.transferReceived(),
+        row.transferSent(),
+        row.transferReceivedTurn(),
+        row.transferSentTurn(),
+    )
+}
+
+/// **A command after the turn must not blank the ⇄ rows.** `recapture_snapshot_in_place` re-runs the
+/// capture against live components after every dispatched command, and by then
+/// `reset_transfer_ledger` has cleared the accumulating pair — so the refreshed frame published
+/// `0.0` for both terms and overwrote the correct turn-end frame in `SnapshotHistory`.
+///
+/// The two pairs are asserted against each other in both frames, which is what makes this a
+/// statement about the *reset*, not about a number:
+///
+/// - on the **turn** frame `transferReceivedTurn == transferReceived` (they are one counter, read a
+///   moment apart), and both are non-zero — the liveness half, without which every assertion here
+///   would pass on a sim that moved no food at all;
+/// - on the **refreshed** frame the accumulating pair reads zero and the per-turn pair is unchanged.
+///
+/// It must go through `recapture_snapshot_in_place` rather than a second `capture_snapshot`: the
+/// recapture path is the one the defect lived on.
+#[test]
+fn a_recapture_still_publishes_the_turns_transfers() {
+    let mut app = world();
+    let (fed, hungry) = two_networked_bands(&mut app);
+    let (fed_id, hungry_id) = (band_id(&app, fed), band_id(&app, hungry));
+
+    run_turn(&mut app);
+
+    // --- the turn's own frame -----------------------------------------------------------------
+    let (fed_received, fed_sent, fed_received_turn, fed_sent_turn) =
+        published_transfers(&app, fed_id);
+    assert!(
+        fed_sent > EPSILON,
+        "liveness: the fed band must have shipped food on this turn, got {fed_sent}"
+    );
+    assert!(
+        (fed_received_turn - fed_received).abs() < EPSILON
+            && (fed_sent_turn - fed_sent).abs() < EPSILON,
+        "on a turn frame the two pairs are one counter read twice: \
+         {fed_received}/{fed_sent} vs {fed_received_turn}/{fed_sent_turn}"
+    );
+
+    let (got_received, got_sent, got_received_turn, got_sent_turn) =
+        published_transfers(&app, hungry_id);
+    assert!(
+        got_received > EPSILON,
+        "liveness: the hungry band must have received food, got {got_received}"
+    );
+    assert!(
+        (got_received_turn - got_received).abs() < EPSILON
+            && (got_sent_turn - got_sent).abs() < EPSILON,
+        "on a turn frame the two pairs agree for the receiver too: \
+         {got_received}/{got_sent} vs {got_received_turn}/{got_sent_turn}"
+    );
+
+    // --- what a command's refresh republishes --------------------------------------------------
+    recapture_snapshot_in_place(&mut app.world);
+
+    let (received, sent, received_turn, sent_turn) = published_transfers(&app, fed_id);
+    assert_eq!(
+        (received, sent),
+        (0.0, 0.0),
+        "the accumulating pair is cleared after the turn capture, so a refreshed frame reads zero"
+    );
+    assert!(
+        (sent_turn - fed_sent).abs() < EPSILON,
+        "the per-turn pair must survive the refresh: {sent_turn} vs {fed_sent}"
+    );
+    assert!(
+        received_turn.abs() < EPSILON,
+        "and a band that received nothing still reports nothing: {received_turn}"
+    );
+
+    let (received, sent, received_turn, sent_turn) = published_transfers(&app, hungry_id);
+    assert_eq!((received, sent), (0.0, 0.0));
+    assert!(
+        (received_turn - got_received).abs() < EPSILON,
+        "the receiver's row survives the refresh too: {received_turn} vs {got_received}"
+    );
+    assert!(sent_turn.abs() < EPSILON);
 }
 
 /// How far to walk a band so no supply network forms with it. Well past the shipped
