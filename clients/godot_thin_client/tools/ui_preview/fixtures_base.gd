@@ -117,6 +117,41 @@ static func seed_forage_rows(tile: Dictionary) -> Dictionary:
 		tile.erase("patch_ceiling_%s" % policy)
 	return tile
 
+## ---- THE BUILD, PRICED IN WORK (`docs/plan_unit_costed_work.md` §8) ---------------------------
+## `intensification_ladder.json`'s own `work_cost` for the two PLANT rungs. One unit is one
+## worker-turn at the food peak with no gear, so the shipped 50 and 75 read themselves — and the
+## pair is what makes the two rungs visibly different jobs rather than one meter filling at
+## unexplained speeds. Stated here so every plant fixture prices its rungs from one place.
+const PLANT_CULTIVATE_WORK_COST := 50.0
+
+const PLANT_SOW_WORK_COST := 75.0
+
+## The SIM's own estimate of what is left on the running build, at this fixture's crew, floor and
+## kit. **The client computes none of it** — it holds neither the crew's output nor the floor
+## multiplier nor the kit's contribution — so a fixture states an ANSWER here exactly as it states a
+## yield forecast. `SourceForecast.BUILD_TURNS_NO_ESTIMATE` is the other reading, and it renders as
+## no line at all.
+const BUILD_TURNS_REMAINING := 11
+
+## **NO PLANT ITEM DECLARES THE BUILD STAT YET** (issue #539 is the hoe), so a plant build's gear
+## contribution is honestly `0` and the tile card renders no gear line. The ANIMAL fixtures carry a
+## real one — `husbandry_gear` ships 8.5 per equipped keeper — which is where that readout is judged.
+const PLANT_BUILD_WORK_FROM_GEAR := 0.0
+
+## Price a tile's two plant rungs in WORK, deriving each meter's `work_done` from the fraction the
+## fixture already states — so a fixture that re-dials its progress cannot end up with a percentage
+## and an absolute that disagree, which is the one thing this readout exists to make visible.
+static func price_plant_build(tile: Dictionary, turns: int = BUILD_TURNS_REMAINING) -> Dictionary:
+	tile["patch_cultivation_work_cost"] = PLANT_CULTIVATE_WORK_COST
+	tile["patch_cultivation_work_done"] = \
+		float(tile.get("patch_cultivation_progress", 0.0)) * PLANT_CULTIVATE_WORK_COST
+	tile["patch_field_work_cost"] = PLANT_SOW_WORK_COST
+	tile["patch_field_work_done"] = \
+		float(tile.get("patch_field_progress", 0.0)) * PLANT_SOW_WORK_COST
+	tile["patch_build_turns_remaining"] = turns
+	tile["patch_build_work_from_gear"] = PLANT_BUILD_WORK_FROM_GEAR
+	return tile
+
 static func food_tile_fixture() -> Dictionary:
 	var tile := {
 		"x": 66, "y": 10,
@@ -214,4 +249,7 @@ static func food_tile_fixture() -> Dictionary:
 		"graze_capacity": 240.0,
 		"graze_ecology_phase": "thriving",
 	}
-	return seed_forage_rows(tile)
+	# The reference plant tile prices BOTH its rungs, because the wire does: `workCost` is published
+	# whether or not a build is in flight, which is what lets the compose sheet quote a rung before
+	# the player commits to it.
+	return seed_forage_rows(price_plant_build(tile))

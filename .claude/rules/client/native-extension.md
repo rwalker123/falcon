@@ -434,6 +434,28 @@ runner fails the run on a caught Rust panic (see the `decode_guard.gd` Key Scrip
 ---
 
 
+## The BUILD, priced in WORK — twelve keys, and one the decoder deliberately DROPPED
+
+`docs/plan_unit_costed_work.md` §8. An improvement costs a fixed number of WORK UNITS now and turns
+are the OUTPUT, so `dict/subsistence.rs` decodes the absolutes beside the `0..1` fractions it already
+carried: `cultivation_work_{done,cost}` / `field_work_{done,cost}` on a patch,
+`tame_work_{done,cost}` / `corral_work_{done,cost}` on a herd, plus **one `build_turns_remaining` and
+one `build_work_from_gear` per SOURCE** (at most one improvement is ever in flight on one).
+
+- **`buildTurnsRemaining` is an `i32` and `-1` is its SENTINEL** — "no estimate", for a stalled build
+  or a source nobody works. It is cast `as i64` and published raw; nothing here may substitute a `0`,
+  which the client would render as a build about to land.
+- **`build_rate` is NO LONGER DECODED, on either kit table** (`KitOption` and the cohort's
+  `BandKitTiers`). The wire keeps the slot frozen at its neutral `1` so a client still compiles, and
+  `buildWorkPerWorker` supersedes it — the work units one equipped worker takes off a build. Leaving
+  the old key decoded is the trap rather than the safe option: every kit then reads "changes no
+  build", which silently strips the husbandry kit's own clause AND withholds it from the herd being
+  tamed (`KitRoster.kit_offer` asks that axis first).
+- **The plant six are TWO wirings, and the guard is what says so.** A patch does not travel whole:
+  `MapView._tile_info_at` copies it key by key, so all six also need the `patch_`-prefixed cross-ref
+  and a `FOW_DISCOVERED_HIDDEN_KEYS` entry. `tools/patch_crossref_guard.gd` caught exactly that
+  omission on this arc — the decoder emitted all six and the panel would have read none.
+
 ## The `connections` section, and the eight cohort fields the shipment arc appended
 
 Arc #527. `dict/connections.rs` → `connections_to_array` is the client's FIRST reader of the contact

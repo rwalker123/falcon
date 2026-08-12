@@ -737,6 +737,41 @@ const FORECAST_BUILD_METER_KEYS := {
     IMPROVEMENT_TAME: "domestication",
     IMPROVEMENT_CORRAL: "corral_progress",
 }
+# **WHAT THE JOB HAS COST SO FAR AND WHAT IT COSTS IN TOTAL, in WORK UNITS**
+# (`docs/plan_unit_costed_work.md` §8). The `*_progress` meter above IS `work_done / work_cost`, so
+# these are never divided here and the fraction is never re-derived from them: one number, one
+# authority. What they add is the sentence a fraction structurally cannot make — *"18 of 50 work"* —
+# which is what makes a rung's SIZE visible now that rungs cost different amounts.
+const FORECAST_BUILD_WORK_DONE_KEYS := {
+    IMPROVEMENT_CULTIVATE: "cultivation_work_done",
+    IMPROVEMENT_SOW: "field_work_done",
+    IMPROVEMENT_TAME: "tame_work_done",
+    IMPROVEMENT_CORRAL: "corral_work_done",
+}
+# The cost half. **It is published WHETHER OR NOT A BUILD IS IN FLIGHT** — the resolved price of that
+# job on THIS source — which is what lets the compose sheet quote a rung BEFORE the player commits.
+const FORECAST_BUILD_WORK_COST_KEYS := {
+    IMPROVEMENT_CULTIVATE: "cultivation_work_cost",
+    IMPROVEMENT_SOW: "field_work_cost",
+    IMPROVEMENT_TAME: "tame_work_cost",
+    IMPROVEMENT_CORRAL: "corral_work_cost",
+}
+# **HOW MANY MORE TURNS THE BUILD NEEDS, AND WHAT THE CREW'S TOOLS TOOK OFF IT.** One of each per
+# SOURCE rather than per rung: at most one improvement is ever in flight on one source.
+#
+# **THE CLIENT CANNOT COMPUTE EITHER.** The turn estimate depends on the crew's output, the
+# assignment's escapement floor and the kit's coverage-weighted contribution, none of which the
+# client holds — so the sim answers, the `pen_upkeep` discipline. Anything here that divided
+# `work_cost - work_done` by a guessed rate would be a second, always-wrong pacing model.
+const FORECAST_BUILD_TURNS_KEY := "build_turns_remaining"
+const FORECAST_BUILD_GEAR_WORK_KEY := "build_work_from_gear"
+## **NO ESTIMATE — and it MUST render as no line at all, never as `0 turns`.** The sim answers this
+## for a stalled build (a crew producing nothing has no finite answer) and for a source nobody is
+## working. A missing line is honest; a zero is a promise the build is about to finish.
+const BUILD_TURNS_NO_ESTIMATE := -1
+## The cost below which a job has no stated price — a source the wire does not price this rung on.
+## The readout falls back to the bare percentage there rather than printing `18 / 0 work`.
+const BUILD_WORK_COST_NONE := 0.0
 # The wire flag/meter that says an improvement's rung is ALREADY BUILT — what turns the control's
 # Running state into its Done state. A bool for the plant rungs (never infer a rung from its float);
 # the animal rungs read `corralled` and a full `domestication` meter, since taming has no bool of its
@@ -3098,6 +3133,37 @@ static func improvement_progress(src: Dictionary, prefix: String, improvement: S
         return 0.0
     return clampf(float(src.get(
         prefix + String(FORECAST_BUILD_METER_KEYS[improvement]), 0.0)), 0.0, 1.0)
+
+## **HOW MUCH WORK THIS IMPROVEMENT HAS ABSORBED SO FAR**, in work units — the numerator of the
+## percentage `improvement_progress` answers, read rather than reconstructed from it.
+static func build_work_done(src: Dictionary, prefix: String, improvement: String) -> float:
+    if not FORECAST_BUILD_WORK_DONE_KEYS.has(improvement):
+        return 0.0
+    return maxf(float(src.get(
+        prefix + String(FORECAST_BUILD_WORK_DONE_KEYS[improvement]), 0.0)), 0.0)
+
+## **WHAT THIS IMPROVEMENT COSTS ON THIS SOURCE**, in work units — a Tame carrying the species' own
+## cost multiplier, a Corral not (a fence is a fence). `BUILD_WORK_COST_NONE` where the wire prices
+## no such job here, which every readout treats as "state the percentage alone".
+static func build_work_cost(src: Dictionary, prefix: String, improvement: String) -> float:
+    if not FORECAST_BUILD_WORK_COST_KEYS.has(improvement):
+        return BUILD_WORK_COST_NONE
+    return maxf(float(src.get(
+        prefix + String(FORECAST_BUILD_WORK_COST_KEYS[improvement]), BUILD_WORK_COST_NONE)),
+        BUILD_WORK_COST_NONE)
+
+## **THE SIM'S OWN TURN ESTIMATE** for whatever this source is building, or `BUILD_TURNS_NO_ESTIMATE`.
+## Per SOURCE, not per rung, so it takes no improvement. A caller MUST test the sentinel and render
+## nothing rather than a zero — see the const.
+static func build_turns_remaining(src: Dictionary, prefix: String) -> int:
+    var turns := int(src.get(prefix + FORECAST_BUILD_TURNS_KEY, BUILD_TURNS_NO_ESTIMATE))
+    return turns if turns >= 0 else BUILD_TURNS_NO_ESTIMATE
+
+## **THE WORK UNITS THE CREW'S TOOLS TOOK OFF THE RUNNING BUILD.** `0` when no build is in flight or
+## the crew carries nothing that helps, which is what every readout gates its gear line on — a
+## `−0 work` line advertises a tool that did nothing.
+static func build_work_from_gear(src: Dictionary, prefix: String) -> float:
+    return maxf(float(src.get(prefix + FORECAST_BUILD_GEAR_WORK_KEY, 0.0)), 0.0)
 
 ## **THE SAME SATURATING QUOTIENT, ASKED OF EVERY ACCOUNT THE AXIS IS NOT** — the crew past which this
 ## source pays nothing MORE in fodder or in any one material. `NO_CREW_ANSWER` when no off-axis

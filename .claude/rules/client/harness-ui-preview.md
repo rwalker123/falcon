@@ -554,11 +554,23 @@ built from the code under test can only agree with itself. **They are the SIM's 
 from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
 payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-**A clean run is 309 frames / 900 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
+**A clean run is 309 frames / 907 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
 three times in one arc and once across a merge, and a running total kept by addition would be wrong
 by now. (The measurement above came back FIVE higher than the 895 recorded before it while the arc
 #527 review added exactly ONE claim — the `Carrying:` mass one. Four `PASS`es had accumulated
 un-recorded, which is the whole reason this line says re-measure.)
+
+**The work-costed build readout added SEVEN `PASS` and NO frame** (`docs/plan_unit_costed_work.md`
+§11): five on the plant A/B in `chapters/improvements.gd` and two on `herd_corral` in
+`chapters/herd_graze_pen.gd`. It **moved frames all over the corpus instead**, which is the shape to
+expect from a readout arc — every meter row now states its job's size, so `food_tile`,
+`forage_cultivate`, `herd_corral` and their siblings changed their answer without changing their
+name. The claims and their three disjoint sabotages are in `selection-card.md` → "The build meter
+says WORK".
+
+**Its fixtures DERIVE `work_done` from the fraction they already state** (`BaseFx.price_plant_build`
+/ `HerdFx.price_animal_build`), and every site that re-dials a meter calls one of them — a fixture
+whose percentage and absolute disagree would render the exact confusion the readout exists to remove.
 
 **`forage_no_food_basket` is the newest frame** (`chapters/forage_accounts.gd`, appended last) and
 carries **fourteen** `PASS`, counting the two compose-sheet fit claims every state in that chapter

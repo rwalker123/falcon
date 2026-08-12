@@ -67,15 +67,23 @@ const KIT_PEN_CARRY_KEY := "pen_carry_per_worker_biomass"
 ## its live wear (`BAND_KIT_TIERS_KEY`), never the roster's fresh vantage.
 const KIT_SCOUT_VANTAGE_KEY := "scout_vantage_range"
 
-## **THE BUILD AXIS — how much faster a rung's per-source meter fills for a party on this kit.** A
-## MULTIPLIER, neutral at `1.0`, so `unequipped_tier` (the roster's MINIMUM on an axis) answers `1.0`
-## off the `none` kit and `kit_uses` reads *"declares more than neutral"* with no special case.
+## **THE BUILD AXIS — the WORK UNITS one equipped worker takes off an improvement's cost.** Neutral
+## `0.0`, so `unequipped_tier` (the roster's MINIMUM on an axis) answers `0.0` off the `none` kit and
+## `kit_uses` reads *"declares more than neutral"* with no special case.
+##
+## **IT SUPERSEDES THE RETIRED `build_rate` MULTIPLIER** (`docs/plan_unit_costed_work.md` §6). That
+## stat multiplied the CREW's output, and a multiplier cancels the job's cost — it saves the same
+## PERCENTAGE of turns on a garden and on a farm alike, which is exactly the shape the work-costed
+## arc exists to escape. Subtracted from the JOB instead, the job's own size decides what the tool is
+## worth. The wire still carries `buildRate`, frozen at its neutral `1`, and this client no longer
+## decodes it: a reader left on it reads "changes no build" for every kit in the game, which silently
+## drops the husbandry kit's own clause AND withholds it from a herd being tamed (see `kit_offer`).
 ##
 ## **IT IS NOT A TIER AND HAS NO HINT-LINE HOME.** The four axes above are rates a readout can quote
-## per worker; this one multiplies a build the sheet is not otherwise talking about, and the surface
-## that states it is the band panel's gear row (`DisclosureController.kit_breakdown_lines`). What it
-## does HERE is decide applicability — see `kit_offer`.
-const KIT_BUILD_RATE_KEY := "build_rate"
+## per worker; this one prices a build the sheet is not otherwise talking about, and the surface that
+## states it is the band panel's gear row (`DisclosureController.kit_breakdown_lines`). What it does
+## HERE is decide applicability — see `kit_offer`.
+const KIT_BUILD_WORK_KEY := "build_work_per_worker"
 
 ## **WHAT THE KIT DOES TO THE QUARRY'S RETREAT** — a multiplier on the species' own wariness, so the
 ## SPECIES decides what a noisy approach costs (`equipment.md`). Neutral at `1.0`; a trap ships `0`.
@@ -680,7 +688,7 @@ static func kit_offer(kits: Array, kit: Dictionary, job: String, quarry: Diction
 	# being pen-only. A kit that can change this source's outcome is offered whatever else it lacks,
 	# so the weapon rule below never runs on it either: hurdles do not have to bring a deer down to
 	# be the right thing to carry while you are gentling one.
-	if kit_uses(kits, kit, KIT_BUILD_RATE_KEY) and RungGates.hunt_rung_remains(quarry, prefix):
+	if kit_uses(kits, kit, KIT_BUILD_WORK_KEY) and RungGates.hunt_rung_remains(quarry, prefix):
 		return _kit_offered()
 	if kit_uses(kits, kit, KIT_PEN_CARRY_KEY) and not penned:
 		return _kit_withheld(HudComposeVocab.KIT_WITHHELD_REASON_PEN_ONLY)

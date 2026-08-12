@@ -641,21 +641,29 @@ clubs assertion, naming `attack 20 defending the camp`.
 
 ### The HANDLING GEAR's row says BOTH the jobs it does
 
-`husbandry_gear` bounds a slaughter at a pen **and** speeds the `Tame` and `Corral` builds (issue
-#515, `.claude/rules/core_sim/equipment.md` → "The build axis"), so a row quoting only the pen rate
-describes the payoff at the top of the ladder and says nothing about the climb that produces it. It
-reads `pen collection 40.0 per keeper · taming and penning ×1.5`.
+`husbandry_gear` bounds a slaughter at a pen **and** takes work off the `Tame` and `Corral` builds
+(issue #515, `.claude/rules/core_sim/equipment.md` → "The build axis"), so a row quoting only the pen
+rate describes the payoff at the top of the ladder and says nothing about the climb that produces it.
+It reads `pen collection 40.0 per keeper · 8.5 work off a tame or a pen, per keeper`.
 
-- **The clause is appended only ABOVE NEUTRAL, and its absence is a real reading.** A multiplier of
-  `1.0` means the gear is changing no build — because it is spent, or because this band's hunt job is
-  on a kit that does not carry it — and `× 1.0` costs a line's width to say *no*. The row's own
+- **IT IS WORK UNITS, NOT A MULTIPLIER, and the wire field changed with the wording.**
+  `EquipmentStat::BuildRate` is retired (`docs/plan_unit_costed_work.md` §6): a multiplier on the
+  crew cancels the job's cost, so `×1.5` saved the same PERCENTAGE of turns on a garden and on a
+  farm — the shape the work-costed arc exists to escape. `KitRoster.KIT_BUILD_WORK_KEY`
+  (`buildWorkPerWorker`) is what the row reads, and the old `buildRate` is **frozen at its neutral
+  `1` on the wire and no longer decoded at all**. That is not tidiness: a reader left on it renders
+  `> 1.0` for no kit in the game, so the clause silently disappears **and** `KitRoster.kit_offer`
+  stops offering the husbandry kit on a herd being tamed, which is the one job the gear is for.
+- **The clause is appended only ABOVE NEUTRAL, and its absence is a real reading.** A contribution of
+  `0` means the gear is changing no build — because it is spent, or because this band's hunt job is
+  on a kit that does not carry it — and `0 work` costs a line's width to say *no*. The row's own
   condition and its stepped-down pen rate already carry that news.
 - **THE VALUE COMES OFF THE BAND'S OWN `kit_tiers` ROW, not a flat cohort field**, and there is no
   flat twin on the wire. The flat per-band fields answer for a readout with *no* kit selected; a build
   always has one (its job's default), so `KitRoster.band_kit_tiers(band, band.kit_id)` is the honest
   lookup — the same one the "quoting the FRESH tier" rule already prescribes. It is also the safe
-  shape: `PopulationCohortState` derives `Default`, which answers `0`, and a build rate of `0` says
-  *this crew builds nothing at all*.
+  shape: `PopulationCohortState` derives `Default`, which answers `0` — which under the work model is
+  the honest neutral rather than the *"this crew builds nothing at all"* a defaulted multiplier was.
 - **Resolved in `DisclosureController`, not `DetailFormat`**, so the pure format layer keeps
   depending on nothing.
 - Pinned **three ways** (`ui_preview`, `compose_rungs`), because each alone passes on a broken

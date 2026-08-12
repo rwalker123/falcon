@@ -319,7 +319,12 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 row.penCarryPerWorkerBiomass() as f64,
             );
             let _ = entry.insert("scout_vantage_range", row.scoutVantageRange() as f64);
-            let _ = entry.insert("build_rate", row.buildRate() as f64);
+            // **THE BUILD AXIS AT THIS BAND'S LIVE WEAR, IN WORK UNITS** — what one equipped worker
+            // takes off an improvement's cost (neutral `0`, the handling gear's flint tier 8.5), so
+            // spent gear steps back to neutral here the way every other axis does. `buildRate` is
+            // retired and frozen at its neutral `1` on the wire, so it is no longer decoded: a
+            // reader kept on it would quote a capability the kit no longer advertises.
+            let _ = entry.insert("build_work_per_worker", row.buildWorkPerWorker() as f64);
             kit_tiers.push(&entry.to_variant());
         }
     }

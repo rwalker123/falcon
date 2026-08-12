@@ -426,13 +426,29 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # an abandoned improvement reverts, and it used to wear the build's own word and ink while doing it.
     var building_rung := String(_band_labor.forage_effort_at(
         int(tile_info.get("x", -1)), int(tile_info.get("y", -1))).get("improvement", ""))
+    # **THE METER SAYS WORK, NOT JUST PERCENT** (`docs/plan_unit_costed_work.md` §11). A rung declares
+    # a fixed size in work units and a crew produces work units per turn, so the same 42% is a
+    # different job on every rung — which a bare percentage cannot say. The absolutes come off the
+    # patch's own `patch_`-prefixed pair and the percentage stays the meter the row always read.
+    var prefix: String = HudComposeVocab.FORAGE_FORECAST_PREFIX
     if bool(tile_info.get("patch_is_cultivated", false)):
         lines.append("Cultivation: %s" % DetailFormat.cultivation_label(1.0, true))
     elif tile_info.has("patch_cultivation_progress"):
         var cultivation_progress := float(tile_info["patch_cultivation_progress"])
         if cultivation_progress > 0.0:
+            var cultivating := building_rung == SourceForecast.IMPROVEMENT_CULTIVATE
             lines.append("Cultivation: %s" % DetailFormat.cultivation_label(cultivation_progress,
-                false, building_rung == SourceForecast.IMPROVEMENT_CULTIVATE))
+                false, cultivating,
+                SourceForecast.build_work_done(
+                    tile_info, prefix, SourceForecast.IMPROVEMENT_CULTIVATE),
+                SourceForecast.build_work_cost(
+                    tile_info, prefix, SourceForecast.IMPROVEMENT_CULTIVATE)))
+            # **THE TURN ESTIMATE AND THE GEAR'S SAVING HANG OFF THE RUNG ACTUALLY BEING BUILT.** Both
+            # wire fields are per SOURCE (at most one improvement is ever in flight on one), so they
+            # attach to whichever meter a crew is filling and to nothing else — under a REVERTING
+            # meter they would describe a build nobody is doing.
+            if cultivating:
+                lines.append_array(DetailFormat.build_estimate_lines(tile_info, prefix))
     # PLANT RUNG 3 — the Field, on its OWN row beside Cultivation. The patch carries TWO independent
     # build meters (a Field may stand on ground that was never tended: seed travels, so `Sow` needs no
     # prior patch), so they are two rows, never one merged "progress" number. This is the per-source
@@ -444,8 +460,13 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     elif tile_info.has("patch_field_progress"):
         var field_progress := float(tile_info["patch_field_progress"])
         if field_progress > 0.0:
+            var sowing := building_rung == SourceForecast.IMPROVEMENT_SOW
             lines.append("%s: %s" % [HudFloraVocab.FIELD_ROW, DetailFormat.field_label(
-                field_progress, false, building_rung == SourceForecast.IMPROVEMENT_SOW)])
+                field_progress, false, sowing,
+                SourceForecast.build_work_done(tile_info, prefix, SourceForecast.IMPROVEMENT_SOW),
+                SourceForecast.build_work_cost(tile_info, prefix, SourceForecast.IMPROVEMENT_SOW))])
+            if sowing:
+                lines.append_array(DetailFormat.build_estimate_lines(tile_info, prefix))
     return lines
 
 ## The FORAGING row (or nothing) — the human-edible web's stock over its ceiling. The exact twin of

@@ -1880,7 +1880,7 @@ something the source already publishes:**
 | rule | what it reads | who it withholds |
 |---|---|---|
 | **the weapon cannot reach the quarry** | `attack_against(kit, body_mass, bare)` through `SourceForecast.hunt_gate_model_at` | a snare against a Red Deer; anything bare-handed against a defended species |
-| **the kit's contribution is an axis this source cannot read** | `kit_uses(…, pen_carry)` against the herd's `corralled`, **and** `kit_uses(…, build_rate)` against `RungGates.hunt_rung_remains` | the husbandry kit on a herd that is neither penned nor able to climb |
+| **the kit's contribution is an axis this source cannot read** | `kit_uses(…, pen_carry)` against the herd's `corralled`, **and** `kit_uses(…, build_work_per_worker)` against `RungGates.hunt_rung_remains` | the husbandry kit on a herd that is neither penned nor able to climb |
 
 - **`none` is NEVER greyed, and nothing spells its id to arrange that.** `kit_supplies_any` asks
   whether the kit beats the roster's bare-handed tier on *any* axis; a kit that beats none of them
@@ -1891,7 +1891,7 @@ something the source already publishes:**
 >
 > The rule the doc stated was *"offer a kit only if something it declares can change this source's
 > outcome"*; the rule the code ran was `kit_uses(pen_carry) and not penned`. Those agreed only while
-> `pen_carry` was the handling kit's whole payload. Once the gear also declared `build_rate` — which
+> `pen_carry` was the handling kit's whole payload. Once the gear also declared a build axis — which
 > speeds `Tame` and `Corral` — the kit was still withheld on the very herd the player was taming,
 > **stating a reason that had become false**: *"what it adds is only used on a penned herd"* is not
 > true of gear that is doing its work on that animal right now.
@@ -2722,10 +2722,28 @@ reversible on the animal web and slow-decaying on the plant one, so a modal woul
 decision the player can simply re-make — and the "End it" confirm that used to guard a policy-pick
 discard is precisely what this axis split removed.
 
-### What remains SERVER-SIDE
+### CLOSED — the build's PRICE and its turn estimate are on the wire now
 
-- **No build RATE on the wire.** `progress_per_turn` is sim-side config, so the control cannot say
-  `~25 turns` / `~10 turns left`; it states the rung, its terms and its meter percent instead.
+This section read *"No build RATE on the wire — `progress_per_turn` is sim-side config, so the
+control cannot say `~25 turns` / `~10 turns left`"*. That was true of a normalized meter and is not
+true of a work-costed one (`docs/plan_unit_costed_work.md` §8): a rung declares a fixed size in WORK
+UNITS, a crew produces work units per turn, and **TURNS ARE THE OUTPUT** — so the sim publishes the
+absolutes AND the answer.
+
+- The improvement control's RUNNING face states the meter in work
+  (`🌱 Cultivating 30 / 50 work (60%) — ≈11 turns`) and its OFFERED face quotes the job before the
+  player commits (`🐄 Pen this herd — 75 work, ≈6 turns`). `workCost` is published whether or not a
+  build is in flight, which is what makes the pre-commit quote possible at all.
+- **The client computes NO part of the turn estimate.** It holds neither the crew's output, nor the
+  assignment's escapement floor, nor the kit's coverage-weighted contribution, so `buildTurnsRemaining`
+  is the sim's answer — the `penFeedUpkeep` discipline. `SourceForecast.BUILD_TURNS_NO_ESTIMATE`
+  (`-1`) means a stalled build or an unworked source and renders as **no clause at all**; a `0` in its
+  place promises a build about to land.
+- The percentage is **still the `*_progress` fraction**, never `workDone / workCost` re-derived here.
+  The wire ships both and they are exactly each other; dividing client-side would be a second
+  authority over one meter. The copy and the composer are
+  `HudSelectionVocab.BUILD_METER_WORK_FORMAT` / `DetailFormat.build_meter_value`, shared with the tile
+  card and the herd drawer so one build cannot read two ways on one screen.
 
 ---
 

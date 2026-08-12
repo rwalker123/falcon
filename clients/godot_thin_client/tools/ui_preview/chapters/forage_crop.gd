@@ -93,6 +93,7 @@ func _four_species_committed_tile_fixture() -> Dictionary:
 	tile["patch_committed_species"] = "wild_emmer"
 	tile["patch_committed_display_name"] = "Wild Emmer"
 	tile["patch_cultivation_progress"] = 0.04
+	BaseFx.price_plant_build(tile)
 	tile["patch_composition"] = [
 		{"species": "wild_emmer", "role": "staple", "display_name": "Wild Emmer", "share": 0.47,
 			"can_cultivate": true, "can_sow": true,

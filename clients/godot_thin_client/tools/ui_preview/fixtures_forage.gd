@@ -597,7 +597,10 @@ static func sowing_tile_fixture() -> Dictionary:
 	tile["patch_is_cultivated"] = true
 	tile["patch_field_progress"] = 0.45
 	tile["patch_is_field"] = false
-	return tile
+	# Re-price after re-dialling the meters: `work_done` is derived FROM the fraction, so a fixture
+	# that moves one without the other would render a percentage and an absolute that disagree —
+	# the one thing this readout exists to make visible.
+	return BaseFx.price_plant_build(tile)
 
 static func field_tile_fixture() -> Dictionary:
 	var tile := sowing_tile_fixture()

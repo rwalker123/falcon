@@ -46,8 +46,6 @@ const BUILD_CREW_IDLE_ON_HAND := 14
 ## only things that can differ between them.
 const REVERTING_METER_PROGRESS := 0.96
 
-const REVERTING_METER_PERCENT := 96
-
 ## The tile the band works INSTEAD in the reverting frame — any tile that is not the one being judged.
 ## The patch under test is then improved, owned and unworked, which is the whole condition.
 const METER_AWAY_TILE_X := 64
@@ -65,11 +63,18 @@ const CULTIVATION_ROW_KEY := "Cultivation"
 # saturation point where the dip costs nothing at all. That coincidence IS the frame's subject.
 const BUILD_CREW_DIPPED_TAKE := "0.96"
 
-## One rung-meter row's rendered VALUE CELL — `[color=#HEX]<verb> 96%[/color]`, exactly as
-## `DetailFormat.detail_bbcode` emits it. Word and tint in ONE needle, because the decaying state was a
-## failure of BOTH and an assertion that pinned only one of them would pass on half a fix.
+## One rung-meter row's rendered VALUE CELL — `[color=#HEX]<verb> 48 / 50 work (96%)[/color]`, exactly
+## as `DetailFormat.detail_bbcode` emits it. Word and tint in ONE needle, because the decaying state
+## was a failure of BOTH and an assertion that pinned only one of them would pass on half a fix.
+##
+## The value itself goes through `DetailFormat.build_meter_value`, so the needle states the job's SIZE
+## the way the row does — and the claim stays about the verb and the ink, which is what moves between
+## these two frames.
 func _meter_value_markup(verb: String, hex: String) -> String:
-	return "[color=#%s]%s %d%%[/color]" % [hex, verb, REVERTING_METER_PERCENT]
+	return "[color=#%s]%s[/color]" % [hex, DetailFormat.build_meter_value(verb,
+		REVERTING_METER_PROGRESS,
+		REVERTING_METER_PROGRESS * BaseFx.PLANT_CULTIVATE_WORK_COST,
+		BaseFx.PLANT_CULTIVATE_WORK_COST)]
 
 ## The staple tile as the COMPOSE SHEET sees it — `BaseFx.food_tile_fixture` already runs through
 ## `BaseFx.seed_forage_rows`, so this is simply the named handle the dip-comparison assertion reads its
@@ -428,6 +433,12 @@ func run(harness) -> void:
 	# between these two frames is who the player band is working.
 	var meter_tile := BaseFx.food_tile_fixture()
 	meter_tile["patch_cultivation_progress"] = REVERTING_METER_PROGRESS
+	# **THE TURN ESTIMATE MOVES WITH THE CREW, because the sim only has one while somebody is
+	# working**: the building half is priced with a live estimate and the reverting half with
+	# `BUILD_TURNS_NO_ESTIMATE`, which renders as no line rather than a `0 turns` that would promise a
+	# build about to land on ground nobody is touching. The WORK PAIR is identical across both, which
+	# is what keeps the A/B's own claim — the verb and the ink — the thing that differs.
+	BaseFx.price_plant_build(meter_tile)
 	#   (a) BUILDING — the band's own Cultivate assignment is on this tile. Neutral ink, build verb.
 	h._hud._band_labor._player_band = BandFx.cultivating_forage_band_fixture()
 	h._hud._band_labor._player_bands = [h._hud._band_labor.player_band()]
@@ -446,6 +457,7 @@ func run(harness) -> void:
 			HudFloraVocab.CULTIVATION_PREPARING_LABEL, HudStyle.INK_HEX)))
 	#   (b) REVERTING — the SAME patch at the SAME percentage with nobody building it. The band is
 	#   working a different tile, so the patch is improved, unworked and bleeding.
+	BaseFx.price_plant_build(meter_tile, SourceForecast.BUILD_TURNS_NO_ESTIMATE)
 	h._hud._band_labor._player_band = BandFx.cultivating_forage_band_fixture(
 		METER_AWAY_TILE_X, int(meter_tile["y"]))
 	h._hud._band_labor._player_bands = [h._hud._band_labor.player_band()]
@@ -465,6 +477,39 @@ func run(harness) -> void:
 	# merely joined — a row reading both would be the same ambiguity in longer form.
 	h._assert_hud("…and the build's own word is GONE from the row, not merely joined by another",
 		not reverting_row.contains(HudFloraVocab.CULTIVATION_PREPARING_LABEL))
+	# **THE TURN ESTIMATE IS A PAIR, and the negative is the whole of `-1`'s contract**
+	# (`docs/plan_unit_costed_work.md` §11): a build under way states what it has left, and one nobody
+	# is working states NOTHING — never `0 turns`, which reads as a build about to land on ground that
+	# is going back to wild. The positive is what stops the negative passing on a card that lost the
+	# line entirely; the whole ROW is the needle, so a stray digit elsewhere on the card cannot satisfy
+	# either half.
+	var turns_row := HudSelectionVocab.BUILD_TURNS_ROW_FORMAT % BaseFx.BUILD_TURNS_REMAINING
+	h._assert_hud("a running build states the sim's own turn estimate beside its meter",
+		building_row.contains(turns_row))
+	# The reverting half states no estimate for the honest reason: nobody works this ground, so the sim
+	# answers `-1`. **The needle is the row's shared TAIL, never a specific count** — one shaped like a
+	# count sails past a row rendering any other, the sentinel's own `≈-1 turns` included.
+	h._assert_hud("…and a meter nobody is building states NO estimate, not a zero",
+		not reverting_row.contains(HudSelectionVocab.BUILD_TURNS_ROW_TAIL))
+	# **THE SENTINEL'S OWN RULE IS SEPARATE, and only a DRIVEN claim reaches it.** The frame above is
+	# silent because its fixture states `-1`, so it would stay silent for a producer that RENDERED the
+	# sentinel — `≈-1 turns at this crew` under a STALLED build (a crew whose output is zero, which the
+	# sim answers `-1` for). Asked of the producer directly, over one source dict in its two states,
+	# since no frame in the corpus stages a stall and the failure is a string either way.
+	var stalled := {SourceForecast.FORECAST_BUILD_TURNS_KEY: SourceForecast.BUILD_TURNS_NO_ESTIMATE}
+	var running := {SourceForecast.FORECAST_BUILD_TURNS_KEY: BaseFx.BUILD_TURNS_REMAINING}
+	h._assert_hud("a STALLED build's `-1` renders no estimate line at all",
+		not "\n".join(DetailFormat.build_estimate_lines(stalled, HudComposeVocab.BARE_FORECAST_PREFIX))
+			.contains(HudSelectionVocab.BUILD_TURNS_ROW_TAIL))
+	h._assert_hud("…while a live one does, so the silence above is the sentinel and not the producer",
+		"\n".join(DetailFormat.build_estimate_lines(running, HudComposeVocab.BARE_FORECAST_PREFIX))
+			.contains(turns_row))
+	# **THE GEAR LINE'S NEGATIVE.** No plant item declares the build stat yet (issue #539 is the hoe),
+	# so a plant build's contribution is honestly `0` and the row must not appear at all — a
+	# `−0 work off this job` advertises a tool that did nothing. Its positive twin is the animal web's
+	# (`herd_corral`), where the shipped handling gear really does take work off the job.
+	h._assert_hud("a build no tool helps states NO gear line, not a zero one",
+		not building_row.contains(HudSelectionVocab.BUILD_GEAR_WORK_ROW_FORMAT.split("%s")[0]))
 
 	# Restore the unassigned near band + a plain Sustain compose for the range states below.
 	h._hud._band_labor._player_band = BandFx.forage_range_bands()[0]

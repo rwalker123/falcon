@@ -137,6 +137,7 @@ func _tame_worker_cap_herd_fixture() -> Dictionary:
 func _fully_herded_herd_fixture() -> Dictionary:
 	var fixture := HerdFx.taming_herd_fixture()
 	fixture["domestication"] = 0.9
+	HerdFx.price_animal_build(fixture)
 	HerdFx.set_managed_herders(fixture, 4)
 	fixture["herded_fraction"] = 0.4
 	return fixture
@@ -151,6 +152,7 @@ func _fully_herded_herd_fixture() -> Dictionary:
 func _under_herded_herd_fixture() -> Dictionary:
 	var fixture := _fully_herded_herd_fixture()
 	fixture["domestication"] = 0.98
+	HerdFx.price_animal_build(fixture)
 	HerdFx.set_managed_herders(fixture, 6)
 	fixture["herded_fraction"] = 1.0
 	return fixture
@@ -222,6 +224,7 @@ func _pastoral_herd_fixture() -> Dictionary:
 	var fixture := HerdFx.herd_fixture()
 	fixture["husbandry_ceiling"] = "pastoral"
 	fixture["domestication"] = 0.6
+	HerdFx.price_animal_build(fixture)
 	fixture["tile_info"] = HerdFx.compact_herd_tile_fixture()
 	return fixture
 
@@ -232,6 +235,7 @@ func _pastoral_herd_fixture() -> Dictionary:
 func _overgrazing_herd_fixture() -> Dictionary:
 	var fixture := HerdFx.herd_fixture()
 	fixture["domestication"] = 0.0
+	HerdFx.price_animal_build(fixture)
 	fixture["biomass"] = 2100.0
 	fixture["carrying_capacity"] = 1352.0
 	fixture["graze_range_radius"] = 1
@@ -247,6 +251,7 @@ func _small_game_herd_fixture() -> Dictionary:
 	fixture["species"] = "Rabbit Warren"
 	fixture["size_class"] = "small"
 	fixture["domestication"] = 0.0
+	HerdFx.price_animal_build(fixture)
 	fixture["biomass"] = 140.0
 	fixture["carrying_capacity"] = 190.0
 	fixture["graze_range_radius"] = 0
@@ -287,6 +292,7 @@ func _depleted_corral_herd_fixture() -> Dictionary:
 	fixture["biomass"] = 260.0
 	fixture["ecology_phase"] = "stressed"
 	fixture["corral_progress"] = 0.0
+	HerdFx.price_animal_build(fixture)
 	# Everything scales off the shrunken herd — including the dip, which is a share of its MSY.
 	fixture["per_worker_yield"] = 0.10
 	# Override the inherited ceiling table's two rows this frame reads — Sustain (the extractive
@@ -720,6 +726,22 @@ func run(harness) -> void:
 		Q.compose_commit_button(h._hud._drawercompose._compose_sheet) != null
 			and Q.compose_commit_button(h._hud._drawercompose._compose_sheet).text
 				== HudComposeVocab.ASSIGN_LOCAL_HERD_BUTTON)
+	# **WHAT THE GEAR TOOK OFF THE JOB** (`docs/plan_unit_costed_work.md` §11) — the readout that is
+	# the ONLY way a player can tell a tool is worth carrying to a garden and not to a farm: the
+	# contribution is a fixed number of work units against a job whose size is not. **The ANIMAL web is
+	# where it is judged**, no plant item declaring the stat yet (issue #539), and this herd's keepers
+	# carry the shipped handling gear.
+	#
+	# Judged as a PAIR with the plant tile beside it, because a line rendered unconditionally would
+	# satisfy the positive alone — and the negative is the `> 0` gate's whole contract: a crew that
+	# carries nothing that helps must read no line, never `−0 work`.
+	var corral_drawer: String = h._hud.occupant_detail.text
+	h._assert_hud("a geared animal build states what its keepers took off the job",
+		corral_drawer.contains(HudSelectionVocab.BUILD_GEAR_WORK_ROW_FORMAT
+			% DetailFormat.format_work_units(HerdFx.ANIMAL_BUILD_WORK_FROM_GEAR)))
+	h._assert_hud("…and it states the sim's own turn estimate beside its meter",
+		corral_drawer.contains(
+			HudSelectionVocab.BUILD_TURNS_ROW_FORMAT % HerdFx.ANIMAL_BUILD_TURNS_REMAINING))
 
 	# State 3d-corral-under-herded — the HERDER-DEFICIT cap fix. A composing-Corral herd needs 2 herders
 	# every turn to hold its tameness, but the Corral rung's take/prepare max-useful is 1. The compose

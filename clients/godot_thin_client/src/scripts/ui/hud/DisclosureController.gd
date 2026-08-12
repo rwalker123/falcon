@@ -251,18 +251,19 @@ func kit_breakdown_lines(band: Dictionary) -> Array[String]:
     # **HANDLING GEAR IS THE PEN'S CARRY AND IT IS NOT THE SLED'S.** A sled drags a carcass in off
     # the range; a pen stands at the camp, so a band on a stalking kit collects its pen at the bare
     # rate however healthy the sled is. Two rows, two tiers, both quoted at the hunt job's default.
-    # **AND IT SPEEDS THE CLIMB, which is the other half of what it is for** (issue #515). The build
-    # multiplier has no flat per-band field — it rides the band's own `kit_tiers` row, resolved here
-    # rather than in `DetailFormat` so the pure format layer keeps depending on nothing.
+    # **AND IT TAKES WORK OFF THE CLIMB, which is the other half of what it is for** (issue #515, and
+    # `docs/plan_unit_costed_work.md` §6 for the change from a rate to work units). The build axis has
+    # no flat per-band field — it rides the band's own `kit_tiers` row, resolved here rather than in
+    # `DetailFormat` so the pure format layer keeps depending on nothing.
     var husbandry_role := DetailFormat.KIT_ROLE_PEN_CARRY_FORMAT % String.num(
         float(band.get(DetailFormat.KIT_TIER_KEY_PEN_CARRY, 0.0)),
         DetailFormat.KIT_CARRY_DECIMALS)
-    var build_rate := float(KitRoster.band_kit_tiers(band, String(band.get(
+    var build_work := float(KitRoster.band_kit_tiers(band, String(band.get(
         DetailFormat.BAND_QUOTED_KIT_ID_KEY, ""))).get(
-            KitRoster.KIT_BUILD_RATE_KEY, DetailFormat.KIT_BUILD_RATE_NEUTRAL))
-    if build_rate > DetailFormat.KIT_BUILD_RATE_NEUTRAL:
-        husbandry_role += DetailFormat.KIT_ROLE_BUILD_RATE_SUFFIX % String.num(
-            build_rate, DetailFormat.KIT_BUILD_RATE_DECIMALS)
+            KitRoster.KIT_BUILD_WORK_KEY, DetailFormat.KIT_BUILD_WORK_NEUTRAL))
+    if build_work > DetailFormat.KIT_BUILD_WORK_NEUTRAL:
+        husbandry_role += DetailFormat.KIT_ROLE_BUILD_WORK_SUFFIX % String.num(
+            build_work, DetailFormat.KIT_BUILD_WORK_DECIMALS)
     lines.append(DetailFormat.kit_breakdown_row(band,
         DetailFormat.KIT_DURABILITY_KEY_HUSBANDRY_GEAR, DetailFormat.KIT_LABEL_HUSBANDRY_GEAR,
         husbandry_role))

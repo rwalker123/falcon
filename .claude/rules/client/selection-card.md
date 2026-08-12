@@ -285,3 +285,79 @@ instead, on the same-tile restate block: one land row loses its `food_module` be
 `reapply_selection`s, with a precondition that the roster really PATCHED (identical child instance ids —
 otherwise a rebuild would launder the bug) and the before/after classes read off `row_icon`.
 Sabotage-verified: dropping the swap fails exactly that one assertion.
+
+
+## The build meter says WORK, and the turns beside it are the SIM's answer
+
+`docs/plan_unit_costed_work.md` §11. Every improvement used to cost the same 25 turns, so
+*"Cultivation: 42%"* was a complete statement. It is not one any more: **a rung declares a fixed size
+in WORK UNITS, a crew produces work units per turn, and TURNS ARE THE OUTPUT** — so the same
+percentage fills at different speeds on different rungs, and fills faster with more hands, a higher
+escapement floor or better tools. None of that is visible in a percentage, which is why the readout
+landed BEFORE the config spread that makes the rungs differ.
+
+Both webs' meter rows go through **one composer**, `DetailFormat.build_meter_value`, so the tile
+card's plant rungs, the herd drawer's animal ones and the compose sheet's running face cannot word
+one build three ways:
+
+```
+Cultivation   Preparing 30 / 50 work (60%)
+                  ≈11 turns at this crew
+                  your gear: −17 work off this job
+```
+
+- **THE PERCENTAGE IS THE WIRE'S FRACTION, NEVER `workDone / workCost`.** The sim publishes the
+  fraction and the two absolutes as separate fields and they are exactly each other; dividing here
+  would be a second authority over one meter, and only the turn they disagreed would say so.
+  `SourceForecast.FORECAST_BUILD_WORK_{DONE,COST}_KEYS` are the two tables, keyed by improvement
+  exactly as `FORECAST_BUILD_METER_KEYS` is.
+- **A `work_cost` of `BUILD_WORK_COST_NONE` states the percentage alone** — the row this always was.
+  That is a source the wire prices no such job on, not a missing field; `18 / 0 work` reads as a
+  defect where a bare percentage reads as an unpriced job.
+- **The COST is published whether or not a build is in flight**, which is what lets the compose sheet
+  quote a rung pre-commit (`labor-ui.md` → "CLOSED — the build's PRICE and its turn estimate").
+- **The REVERTING state states the same pair.** A bleeding meter is losing units off the same job, so
+  only the verb and the WARN ink say which direction it is moving — the distinction the third meter
+  state exists for, unchanged.
+
+### The two sub-rows, and what each one's absence means
+
+`DetailFormat.build_estimate_lines` emits both, indented into `detail_bbcode`'s shared
+full-width neutral branch (`MORALE_BREAKDOWN_INDENT`) so they read as an expansion of the meter above
+them rather than as two more facts about the source. `prefix` spells the keys, so ONE call serves a
+`patch_`-prefixed `tile_info` and a bare herd dict.
+
+- **`≈11 turns at this crew` is the readout that makes "turns are an OUTPUT" legible** — add hands and
+  watch it drop. **The client computes no part of it**: it holds neither the crew's output, nor the
+  assignment's escapement floor, nor the kit's coverage-weighted contribution, so the sim answers
+  (`buildTurnsRemaining`, the `penFeedUpkeep` discipline). The trailing *at this crew* is
+  load-bearing — without it the number reads as a property of the RUNG, which is the fixed-turn model
+  this arc replaced.
+- **`-1` MEANS NO ESTIMATE AND RENDERS AS NO LINE** (`SourceForecast.BUILD_TURNS_NO_ESTIMATE`). The
+  sim answers it for a stalled build and for a source nobody works. A `0 turns` in its place promises
+  a build about to land, which is why the guard is in the producer rather than left to a formatter.
+- **`your gear: −17 work off this job` renders only above zero** (`buildWorkFromGear`). It is the only
+  way a player can tell a tool is worth carrying to a garden and not to a farm — the contribution is a
+  fixed number of units against a job whose size is not, so its share shrinks as the job grows. **The
+  ANIMAL web is where it is judged**: `husbandry_gear` ships 8.5 per equipped keeper, and no plant item
+  declares the stat yet (issue #539).
+- **Both are PER SOURCE, not per rung** — at most one improvement is ever in flight on one source — so
+  they hang off whichever meter a crew is actually filling: the plant card gates them on the band's own
+  `forage_effort_at(...).improvement`, and the herd drawer reads the ladder (an incomplete Tame IS the
+  build; the Corral branch takes them once taming is done). Under a REVERTING meter they would
+  describe a build nobody is doing.
+
+**Frames + assertions.** `tile_meter_building` / `tile_meter_reverting` (`chapters/improvements.gd`)
+carry the plant A/B — the same patch at the same meter, with only the band's assignment moving — plus
+the turn row's presence, the reverting half's silence, and the gear line's NEGATIVE (a plant build no
+tool helps states none). `herd_corral` (`chapters/herd_graze_pen.gd`) carries the animal positive:
+the gear line and the turn row on a keeper crew holding the shipped handling gear. **The `-1` rule
+needs a DRIVEN claim of its own and gets one**: the reverting frame is silent because its fixture
+states `-1`, so it would stay silent for a producer that RENDERED the sentinel — `build_estimate_lines`
+is therefore asked directly, over one source dict in its two states. Sabotage-verified three ways,
+each failing a DISJOINT claim: rendering the sentinel fails the driven negative alone, dropping the
+gear gate fails the plant negative alone, and reading the gear as zero fails the animal positive alone.
+
+**The fixtures DERIVE `work_done` from the fraction they already state** (`BaseFx.price_plant_build` /
+`HerdFx.price_animal_build`), so a fixture that re-dials a meter cannot end up with a percentage and
+an absolute that disagree — which is the one thing this readout exists to make visible.

@@ -82,3 +82,52 @@ const ACTIVITY_GLYPHS := {
     "scout": "🧭",
     "warrior": "🛡",
 }
+
+# ---- THE BUILD READOUT — a rung's price in WORK, and the turns that price buys -------------------
+# `docs/plan_unit_costed_work.md` §11. An improvement declares a fixed size in WORK UNITS, a crew
+# produces work units per turn, and **TURNS ARE THE OUTPUT** — so the same percentage fills at
+# different speeds on different rungs, and fills faster as you add hands, hold a higher escapement
+# floor or carry better tools. A bare `Cultivation: 42%` was a complete statement while every rung
+# cost the same 25 turns; it is not one now, and none of that is visible without these lines.
+#
+# The copy lives HERE, with the selection card and its subject drawer, because that is where both
+# build meters render — the tile card's plant rungs and the herd drawer's animal ones. The compose
+# sheet's pre-commit quote is `HudComposeVocab`'s, composed through the same shared formatters.
+
+# `Preparing 18 / 50 work (42%)` — the verb the row already led with, then the absolutes, then the
+# percentage the meter has always shown. **The percentage is NOT re-derived from the absolutes**: the
+# wire ships the fraction and the pair separately, and dividing here would be a second opinion about
+# one meter.
+const BUILD_METER_WORK_FORMAT := "%s %s / %s work (%d%%)"
+
+# The row as it always was, for a source the wire prices no such job on. Not a missing-field path: a
+# source can carry a meter for a rung it states no cost for, and `18 / 0 work` reads as a defect
+# where a bare percentage reads as an unpriced job.
+const BUILD_METER_PERCENT_FORMAT := "%s %d%%"
+
+# Work units read WHOLE where they are whole (`50`) and to one place where they are not (`17.6`).
+# The shipped costs are integers and a `50.0` beside them claims a precision the config lacks — the
+# rule `_format_danger_scalar` already follows for the same reason.
+const BUILD_WORK_DECIMALS := 1
+
+# `≈11 turns at this crew` — the readout that makes "turns are an OUTPUT" legible: add hands and
+# watch it fall. **The trailing clause is load-bearing.** Without it the number reads as a property
+# of the rung, which is the fixed-turn model this arc exists to replace.
+#
+# **Both forms are SPELLED FROM THE TAIL** rather than each carrying its own copy of it, so a needle
+# for "any turn estimate at all" is one string that cannot go stale — which is what the `-1` rule
+# needs asserting: a row reading `≈-1 turns` is exactly the failure, and a needle built from a
+# specific count passes straight over it (measured — the first cut of that assertion did).
+const BUILD_TURNS_ROW_TAIL := "at this crew"
+
+const BUILD_TURNS_ROW_FORMAT := "≈%d turns " + BUILD_TURNS_ROW_TAIL
+
+# …and its singular, so a build one turn out does not read `≈1 turns at this crew`.
+const BUILD_TURNS_ROW_ONE := "≈1 turn " + BUILD_TURNS_ROW_TAIL
+
+# `your gear: −8.5 work off this job` — what the crew's tools took off the COST, in the units the
+# cost is quoted in. It is the only way a player can tell a tool is worth carrying to a garden and
+# not to a farm: the contribution is a fixed number of units against a job whose size is not, so its
+# share shrinks as the job grows. Rendered only above zero — a `−0` advertises nothing. The minus is
+# U+2212 MINUS SIGN, the stepper faces' own rule.
+const BUILD_GEAR_WORK_ROW_FORMAT := "your gear: −%s work off this job"

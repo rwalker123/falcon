@@ -306,6 +306,7 @@ static func taming_herd_fixture() -> Dictionary:
 	var fixture := herd_fixture()
 	fixture["husbandry_ceiling"] = "pen"
 	fixture["domestication"] = 0.4
+	price_animal_build(fixture)
 	fixture["ecology_phase"] = "thriving"
 	fixture["tile_info"] = compact_herd_tile_fixture()
 	return fixture
@@ -348,6 +349,7 @@ static func investment_pair_boar_herd() -> Dictionary:
 static func fully_tamed_herd_fixture() -> Dictionary:
 	var fixture := taming_herd_fixture()
 	fixture["domestication"] = SourceForecast.DOMESTICATION_COMPLETE
+	price_animal_build(fixture)
 	set_managed_herders(fixture, TAMED_HERD_CREW)
 	return fixture
 
@@ -360,6 +362,40 @@ static func fully_tamed_herd_fixture() -> Dictionary:
 static func set_managed_herders(fixture: Dictionary, needed: int) -> void:
 	fixture[HERDERS_NEEDED_KEY] = needed
 	fixture[HERDERS_NEEDED_IF_MANAGED_KEY] = needed
+
+## ---- THE BUILD, PRICED IN WORK (`docs/plan_unit_costed_work.md` §8) ---------------------------
+## `intensification_ladder.json`'s own `work_cost` for the two ANIMAL rungs, times this species' own
+## cost multiplier for the Tame (penning is flat for every species — a fence is a fence). One unit is
+## one worker-turn at the food peak with no gear.
+const ANIMAL_TAME_WORK_COST := 50.0
+
+const ANIMAL_CORRAL_WORK_COST := 75.0
+
+## The SIM's own estimate of what is left on the running build, at this fixture's keeper crew, floor
+## and kit. The client computes none of it; `SourceForecast.BUILD_TURNS_NO_ESTIMATE` is the other
+## reading and renders as no line at all.
+const ANIMAL_BUILD_TURNS_REMAINING := 6
+
+## What this herd's KEEPERS took off the job with the handling gear — the shipped `husbandry_gear`
+## flint tier at 8.5 per equipped worker, over the reference two-keeper crew. **The animal web is
+## where this readout is judged**, no plant item declaring the stat yet (issue #539).
+const ANIMAL_BUILD_WORK_FROM_GEAR := 17.0
+
+## Price a herd's two rungs in WORK, deriving each meter's `work_done` from the fraction the fixture
+## already states — so a fixture that re-dials a meter cannot end up with a percentage and an
+## absolute that disagree, which is the one thing this readout exists to make visible.
+static func price_animal_build(fixture: Dictionary,
+		turns: int = ANIMAL_BUILD_TURNS_REMAINING,
+		gear: float = ANIMAL_BUILD_WORK_FROM_GEAR) -> Dictionary:
+	fixture["tame_work_cost"] = ANIMAL_TAME_WORK_COST
+	fixture["tame_work_done"] = \
+		float(fixture.get("domestication", 0.0)) * ANIMAL_TAME_WORK_COST
+	fixture["corral_work_cost"] = ANIMAL_CORRAL_WORK_COST
+	fixture["corral_work_done"] = \
+		float(fixture.get("corral_progress", 0.0)) * ANIMAL_CORRAL_WORK_COST
+	fixture["build_turns_remaining"] = turns
+	fixture["build_work_from_gear"] = gear
+	return fixture
 
 ## The world's herd list (Main pushes snapshot["herds"]). Named because the turn-orb starving-pen
 ## state swaps in its own list and must restore this one.
@@ -424,7 +460,11 @@ static func denial_estimate_table(outcome: String, turns_row: Array, low_row: Ar
 	return rows
 
 static func herd_fixture() -> Dictionary:
-	return {
+	# **BOTH RUNGS ARE PRICED, because the wire prices them** — `workCost` is published whether or not
+	# a build is in flight, which is what lets the compose sheet quote a Tame before the player
+	# commits to it. `price_animal_build` derives each meter's `work_done` from the fraction stated
+	# below, so the two halves of a row can never disagree.
+	return price_animal_build({
 		"id": "game_deer_07",
 		"label": "Red Deer (game_deer_07)",
 		"species": "Red Deer",
@@ -479,7 +519,7 @@ static func herd_fixture() -> Dictionary:
 		"tame_build_fraction": 0.23 / 0.90,
 		"corral_build_fraction": 0.23 / 0.90,
 		"tile_info": BaseFx.food_tile_fixture(),
-	}
+	})
 
 ## A DEADLY-TO-HUNT herd (Predators Phase 0): a woolly mammoth — high attack (8) and high ferocity
 ## (0.9, it fights back), but aggression 0 (a grazer never attacks unprovoked). Its drawer shows high
@@ -538,6 +578,7 @@ static func collapsing_herd_fixture() -> Dictionary:
 	fixture["biomass"] = 96.0
 	fixture["ecology_phase"] = "collapsing"
 	fixture["domestication"] = 0.0
+	price_animal_build(fixture)
 	return fixture
 
 ## A compact NON-food tile_info (like the corral fixtures) so the Tile card stays short and the herd
@@ -558,6 +599,7 @@ static func compact_herd_tile() -> Dictionary:
 static func grazing_healthy_herd_fixture() -> Dictionary:
 	var fixture := herd_fixture()
 	fixture["domestication"] = 0.0
+	price_animal_build(fixture)
 	fixture["biomass"] = 1480.0
 	fixture["carrying_capacity"] = 2150.0
 	fixture["graze_range_radius"] = 1
@@ -578,6 +620,7 @@ static func grazing_healthy_herd_fixture() -> Dictionary:
 static func corral_locked_herd_fixture() -> Dictionary:
 	var fixture := corral_ready_herd_fixture()
 	fixture["corral_progress"] = 0.0
+	price_animal_build(fixture)
 	return fixture
 
 ## A fully-domesticated herd whose pen is HALF-BUILT (not yet corralled): the Corral investment rung
@@ -589,6 +632,7 @@ static func corral_ready_herd_fixture() -> Dictionary:
 	fixture["domestication"] = 1.0
 	fixture["corralled"] = false
 	fixture["corral_progress"] = 0.4
+	price_animal_build(fixture)
 	# `pen_upkeep` is the feed this pen WOULD demand once built (the sim projects it at the herd's
 	# current biomass, on the same basis as `corral_yield`) — so the pre-commit row can quote the
 	# real running cost at the moment the player decides, rather than saying "before feed".
@@ -606,6 +650,7 @@ static func corral_ready_herd_fixture() -> Dictionary:
 static func domesticated_herd_fixture() -> Dictionary:
 	var fixture := herd_fixture()
 	fixture["domestication"] = 1.0
+	price_animal_build(fixture)
 	# A fully-domesticated herd is penned: the drawer adds a "🐄 Corralled" row.
 	fixture["corralled"] = true
 	# A PENNED herd is a managed population — it eats from its keeper's larder every turn. Fully fed

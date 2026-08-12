@@ -1743,6 +1743,7 @@ func run(harness) -> void:
 	# its payoff quoted on the checkbox's own face, which is where a not-yet-started rung states terms.
 	var penned_boar := HerdFx.investment_pair_boar_herd()
 	penned_boar["domestication"] = 1.0
+	HerdFx.price_animal_build(penned_boar)
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(penned_boar)
 	h._compose_herd(penned_boar, PELT_FRAME_HUNTERS)

@@ -210,9 +210,9 @@ paths:
   `native/src/lib.rs herds_to_array`) is true, a **Corral** row shows "🐄 Corralled"
   (SIGNAL tint). The herd end of the intensification ladder — a penned, domesticated herd.
   While the pen is still being built under the Corral policy (`corralProgress`, decoded as
-  `corral_progress`; `0 < p < 1`) the SAME row reports the meter — "Corral: Building 40%" —
-  the animal twin of the tile card's "Cultivation N%". See the Cultivate/Corral investment-rung
-  bullet under **Labor allocation UI**.
+  `corral_progress`; `0 < p < 1`) the SAME row reports the meter — the animal twin of the tile card's
+  Cultivation row. See the Cultivate/Corral investment-rung bullet under **Labor allocation UI**, and
+  "The build meter says WORK" below for what a meter row states now.
 - **The pen is a managed POPULATION** (`docs/plan_corral_managed_population.md`; snapshot
   `HerdTelemetryState.penUpkeep` / `penFedFraction` → `pen_upkeep` / `pen_fed_fraction`): a penned
   herd cannot graze, so its keeper hauls it food every turn, and **an underfed herd shrinks**. Two

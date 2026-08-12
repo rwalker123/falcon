@@ -945,11 +945,11 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         var glyph := FoodIcons.for_policy(composed)
         var participle := String(
             HudComposeVocab.IMPROVEMENT_RUNNING_LABELS.get(composed, composed.capitalize()))
-        var percent := HudFormat.progress_percent(
-            SourceForecast.improvement_progress(source, prefix, composed))
-        # **THE METER IS THE WHOLE FACE.** The payoff that used to close it (`· then 1.39 food`) is a
-        # readout row now — it stood one line above a PER TURN box quoting a different number for the
-        # same source, with nothing on either to say which question each was answering.
+        # **THE METER IS THE WHOLE FACE, AND IT NOW STATES THE JOB'S SIZE.** The payoff that used to
+        # close it (`· then 1.39 food`) is a readout row now — it stood one line above a PER TURN box
+        # quoting a different number for the same source, with nothing on either to say which
+        # question each was answering. The work absolutes come from the SAME composer the tile card
+        # and the herd drawer use, so one build never reads two ways on one screen.
         #
         # `kind` here is the LABOR kind (`hunt`/`forage`); the forecast layer speaks SOURCE kinds
         # (`herd`/`forage`). They differ on the animal web, so this conversion is not optional.
@@ -957,7 +957,18 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
             source, SourceForecast.source_kind_for_labor(kind), prefix, floor, composed)
         var notes := _improvement_paused_note(source, prefix)
         var running_face := HudComposeVocab.IMPROVEMENT_RUNNING_BARE_FORMAT % [
-            glyph, participle, percent]
+            glyph, DetailFormat.build_meter_value(participle,
+                SourceForecast.improvement_progress(source, prefix, composed),
+                SourceForecast.build_work_done(source, prefix, composed),
+                SourceForecast.build_work_cost(source, prefix, composed))]
+        # **"ADD HANDS AND WATCH IT DROP" IS THE WHOLE POINT, so it goes on the face beside the crew
+        # stepper that moves it.** The sim answers this; a `-1` means it has no answer (a stalled
+        # build, or nobody working the source) and renders as no clause at all rather than as a `0`
+        # that would promise the build is about to land.
+        var running_turns := SourceForecast.build_turns_remaining(source, prefix)
+        if running_turns != SourceForecast.BUILD_TURNS_NO_ESTIMATE:
+            running_face = HudComposeVocab.IMPROVEMENT_RUNNING_TURNS_FORMAT % [
+                running_face, running_turns]
         if not deal.is_empty():
             var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
             var feed := float(deal["feed"]) * output
@@ -994,10 +1005,21 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
     if offer.is_empty():
         return
     var rung := String(offer["policy"])
-    # The verb alone — the payoff this used to close on now reads in the readout, one register down.
+    # The verb and its PRICE — the payoff this used to close on reads in the readout, one register
+    # down, and what closes it now is what the job COSTS. **A verb with no price was survivable only
+    # while every verb cost the same 25 turns**: rungs declare their own size in work units now, so a
+    # sheet that offers `Sow a field here` without saying it is half again the Cultivate below it
+    # hides the one number the choice turns on. `workCost` is published whether or not a build runs —
+    # that is what makes the quote available pre-commit — and the turns half is the sim's estimate for
+    # THIS crew, dropped entirely when it answers "no estimate".
     var offer_face := HudComposeVocab.IMPROVEMENT_OFFER_BARE_FORMAT % [
         FoodIcons.for_policy(rung),
         String(HudComposeVocab.IMPROVEMENT_OFFER_LABELS.get(rung, rung.capitalize()))]
+    var offer_price := DetailFormat.build_price_clause(
+        SourceForecast.build_work_cost(source, prefix, rung),
+        SourceForecast.build_turns_remaining(source, prefix))
+    if offer_price != "":
+        offer_face = HudComposeVocab.IMPROVEMENT_OFFER_PRICED_FORMAT % [offer_face, offer_price]
     var reasons := RungGates.gate_reasons_for({rung: offer.get("reasons", [])}, rung)
     # **GATED — THE REASON IS THE CONTROL, and the offer text is not shown at all.** This used to
     # render the full offer ("🌱 Cultivate this patch · then 0.04 food · 0.81 fodder") as

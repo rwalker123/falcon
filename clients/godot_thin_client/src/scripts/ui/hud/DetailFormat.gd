@@ -330,18 +330,24 @@ const KIT_ROLE_PEN_CARRY_FORMAT := "pen collection %s per keeper"
 # quoting only the pen rate describes the gear's payoff at the top of the ladder and says nothing
 # about the climb that produces it, which is the whole complaint the build axis was added to answer.
 #
-# **APPENDED ONLY ABOVE NEUTRAL, and its absence is a real reading.** A multiplier of `1.0` means the
+# **APPENDED ONLY ABOVE NEUTRAL, and its absence is a real reading.** A contribution of `0` means the
 # gear is doing nothing to a build — because it is spent, or because this band's hunt job is on a kit
-# that does not carry it — and `× 1.0` is a clause that costs a line's width to say *no*. The row's
+# that does not carry it — and `0 work` is a clause that costs a line's width to say *no*. The row's
 # own condition and its stepped-down pen rate already carry that news.
-const KIT_ROLE_BUILD_RATE_SUFFIX := " · taming and penning ×%s"
-# A multiplier reads to one place: the shipped 1.5 is a playtest dial and a second decimal would
+#
+# **IT READS IN WORK UNITS, NOT AS A MULTIPLIER** (`docs/plan_unit_costed_work.md` §6). `×1.5` said
+# the gear made the crew faster; what it actually does is take a fixed number of units off the JOB,
+# per equipped worker — which is why the same tool is worth a lot on a garden and nearly nothing on a
+# farm, and why a multiplier could never say so. A kit whose gear is spent takes nothing off and the
+# clause disappears, exactly as the neutral multiplier's did.
+const KIT_ROLE_BUILD_WORK_SUFFIX := " · %s work off a tame or a pen, per keeper"
+# The contribution reads to one place: the shipped 8.5 is a playtest dial and a second decimal would
 # imply a precision the number does not have.
-const KIT_BUILD_RATE_DECIMALS := 1
+const KIT_BUILD_WORK_DECIMALS := 1
 # **The value that means "this gear changes no build"** — the schema's own default and what every kit
 # but `husbandry` resolves to. Named so the suffix's suppression reads as a stated rule rather than a
 # comparison against a bare literal.
-const KIT_BUILD_RATE_NEUTRAL := 1.0
+const KIT_BUILD_WORK_NEUTRAL := 0.0
 # Written as `2-tile sight`, not `sight 2 tiles`, because the tier is a small whole number and the
 # unit would otherwise have to be pluralized: a bare-handed scout sees `1`, and `sight 1 tiles` is
 # the row every value-plus-unit phrasing prints at the bottom of this axis.
@@ -432,6 +438,11 @@ const HERDERS_UNDER_FORMAT := "%d / %d — under-herded"
 # construction names the WORK, a finished one wears its own badge word. Each rung's "the meter is
 # full" mark is its own const (progress arrives as 0..1 per rung).
 const CORRAL_BUILDING_LABEL := "Building"
+# The Tame rung's build verb — the animal twin of `HudFloraVocab.CULTIVATION_PREPARING_LABEL`, and
+# the word the plant rungs' own comments already cite ("exactly as the herd's Husbandry row reads
+# 'Domesticating N%'"). It was written inline at its one site until the work readout gave every rung
+# one composer, at which point a literal there would have been the only verb not stated as one.
+const HUSBANDRY_DOMESTICATING_LABEL := "Domesticating"
 const CORRAL_PROGRESS_COMPLETE := 1.0
 const HUSBANDRY_PROGRESS_COMPLETE := 1.0
 const CULTIVATION_PROGRESS_COMPLETE := 1.0
@@ -923,13 +934,88 @@ static func graze_range_label(range_radius: int) -> String:
         return "1 tile"
     return "%d tiles" % tiles
 
+## **THE BUILD METER'S VALUE — one spelling for both webs' four rungs** (`docs/plan_unit_costed_work.md`
+## §11): `Preparing 18 / 50 work (42%)`. The four `*_label` functions below compose through it, so a
+## plant rung and an animal rung state a job's size the same way.
+##
+## **THE PERCENTAGE IS THE CALLER'S, NEVER `work_done / work_cost`.** The wire ships the fraction and
+## the two absolutes as separate fields and they are exactly each other; dividing here would be a
+## second authority over one meter, and the first turn the two disagreed the row would say so.
+##
+## A `work_cost` at `BUILD_WORK_COST_NONE` states the percentage alone — the row this always was. That
+## is a source the wire prices no such job on, not a missing field: `18 / 0 work` reads as a defect
+## where a bare percentage reads as an unpriced job.
+static func build_meter_value(verb: String, progress: float,
+        work_done: float, work_cost: float) -> String:
+    if work_cost <= SourceForecast.BUILD_WORK_COST_NONE:
+        return HudSelectionVocab.BUILD_METER_PERCENT_FORMAT % [
+            verb, HudFormat.progress_percent(progress)]
+    return HudSelectionVocab.BUILD_METER_WORK_FORMAT % [
+        verb, format_work_units(work_done), format_work_units(work_cost),
+        HudFormat.progress_percent(progress)]
+
+## A quantity of WORK UNITS: whole numbers bare (`50`), fractions to one place (`17.6`). One unit is
+## one worker-turn at the food peak with no gear, so a cost reads itself — and the shipped costs are
+## integers, which a trailing `.0` would dress up as a measured figure.
+static func format_work_units(value: float) -> String:
+    if is_equal_approx(value, round(value)):
+        return "%d" % int(round(value))
+    return String.num(value, HudSelectionVocab.BUILD_WORK_DECIMALS)
+
+## **WHAT THE JOB COSTS AND WHAT IT WOULD TAKE — the compose sheet's pre-commit quote**, as
+## `50 work, ≈25 turns` (or `50 work` alone where the sim states no estimate). The turns half is the
+## sim's answer and the client computes none of it; see `SourceForecast.build_turns_remaining`.
+## `""` for a rung the wire prices nothing on, which renders as no clause rather than a bare verb
+## wearing an em-dash.
+static func build_price_clause(work_cost: float, turns: int) -> String:
+    if work_cost <= SourceForecast.BUILD_WORK_COST_NONE:
+        return ""
+    var price := HudComposeVocab.BUILD_PRICE_WORK_FORMAT % format_work_units(work_cost)
+    if turns == SourceForecast.BUILD_TURNS_NO_ESTIMATE:
+        return price
+    return HudComposeVocab.BUILD_PRICE_TURNS_FORMAT % [price, turns]
+
+## **THE TWO SUB-ROWS UNDER A RUNNING BUILD METER** — the sim's turn estimate, and what the crew's
+## tools took off the job — indented so they read as an expansion of the meter row above them rather
+## than as two more facts about the source. Both webs' hosts (the tile card's plant rungs, the herd
+## drawer's animal ones) append this, so neither can grow a shape the other lacks.
+##
+## **A `-1` TURN ESTIMATE RENDERS NO LINE AT ALL.** The sim answers it for a stalled build and for a
+## source nobody works, and a `0 turns` in its place promises a build about to land — the failure
+## `BUILD_TURNS_NO_ESTIMATE` exists to name. The gear line is likewise absent at zero: a `−0 work`
+## advertises a tool that did nothing.
+##
+## `prefix` spells the keys, so one call serves a `patch_`-prefixed `tile_info` and a bare herd dict.
+static func build_estimate_lines(source: Dictionary, prefix: String) -> Array[String]:
+    var lines: Array[String] = []
+    var turns := SourceForecast.build_turns_remaining(source, prefix)
+    if turns != SourceForecast.BUILD_TURNS_NO_ESTIMATE:
+        var row := HudSelectionVocab.BUILD_TURNS_ROW_ONE if turns == BUILD_TURNS_SINGULAR \
+            else HudSelectionVocab.BUILD_TURNS_ROW_FORMAT % turns
+        lines.append("%s%s" % [MORALE_BREAKDOWN_INDENT, row])
+    var gear := SourceForecast.build_work_from_gear(source, prefix)
+    if gear > BUILD_GEAR_WORK_NONE:
+        lines.append("%s%s" % [MORALE_BREAKDOWN_INDENT,
+            HudSelectionVocab.BUILD_GEAR_WORK_ROW_FORMAT % format_work_units(gear)])
+    return lines
+
+## The one turn count that takes the singular row — a build one turn from done.
+const BUILD_TURNS_SINGULAR := 1
+
+## Below this the crew's tools took nothing off the job (no build in flight, or nothing carried that
+## helps), and the gear row is not rendered at all.
+const BUILD_GEAR_WORK_NONE := 0.0
+
 ## Player-facing husbandry label from domestication progress (0.0–1.0). Fully tamed shows a livestock
-## glyph; in-progress shows the percentage. `detail_bbcode` tints a Domesticated value via
+## glyph; in-progress shows the verb, the work the Tame has absorbed and what it costs on THIS herd
+## (a Steppe Runner is several times a rabbit's job). `detail_bbcode` tints a Domesticated value via
 ## `husbandry_value_hex`.
-static func husbandry_label(progress: float) -> String:
+static func husbandry_label(progress: float,
+        work_done: float = 0.0,
+        work_cost: float = SourceForecast.BUILD_WORK_COST_NONE) -> String:
     if progress >= HUSBANDRY_PROGRESS_COMPLETE:
         return "%s Domesticated" % DetailFormat.CORRAL_GLYPH
-    return "Domesticating %d%%" % int(round(progress * HudConst.PROGRESS_PERCENT_SCALE))
+    return build_meter_value(HUSBANDRY_DOMESTICATING_LABEL, progress, work_done, work_cost)
 
 ## BBCode hex for a "Husbandry" value: signal (positive) for a domesticated herd, normal ink while
 ## it's still being tamed. Matched on the label produced by `husbandry_label`.
@@ -970,14 +1056,18 @@ static func herders_value_hex(value: String) -> String:
 ## reverting exactly when its meter is short of complete and no crew is building that rung
 ## (`HudBandLaborState.forage_effort_at(...).improvement`). A test on progress alone cannot tell the
 ## two apart at any value.
-static func cultivation_label(progress: float, cultivated: bool, building: bool = false) -> String:
+static func cultivation_label(progress: float, cultivated: bool, building: bool = false,
+        work_done: float = 0.0,
+        work_cost: float = SourceForecast.BUILD_WORK_COST_NONE) -> String:
     if cultivated or progress >= CULTIVATION_PROGRESS_COMPLETE:
         return "%s Tended Patch" % CULTIVATION_GLYPH
     # Lead with the VERB, exactly as the herd's Husbandry row reads "Domesticating N%" — a bare
     # percentage buried in the tile card was easy to miss and broke parity with the animal side.
+    # The work absolutes ride behind it: a REVERTING meter is losing units off the same job, so the
+    # two states state the same pair and only the verb and the ink say which way it is moving.
     var verb := HudFloraVocab.CULTIVATION_PREPARING_LABEL if building \
         else HudFloraVocab.RUNG_REVERTING_LABEL
-    return "%s %d%%" % [verb, int(round(progress * HudConst.PROGRESS_PERCENT_SCALE))]
+    return build_meter_value(verb, progress, work_done, work_cost)
 
 ## BBCode hex for a "Cultivation" value: signal (positive) for a tended patch, WARN while the meter is
 ## reverting (nobody is building it and the ground is going back), normal ink while it is being built.
@@ -999,11 +1089,13 @@ static func cultivation_value_hex(value: String) -> String:
 ## THREE states here too, and the decaying one shares `cultivation_label`'s word rather than inventing
 ## a rung-specific one: what is happening is the same fact on both rungs — the ground is going back —
 ## and the ROW's name already says which rung is losing it.
-static func field_label(progress: float, is_field: bool, building: bool = false) -> String:
+static func field_label(progress: float, is_field: bool, building: bool = false,
+        work_done: float = 0.0,
+        work_cost: float = SourceForecast.BUILD_WORK_COST_NONE) -> String:
     if is_field or progress >= FIELD_PROGRESS_COMPLETE:
         return "%s %s" % [field_glyph(), FIELD_BADGE_LABEL]
     var verb := FIELD_SOWING_LABEL if building else HudFloraVocab.RUNG_REVERTING_LABEL
-    return "%s %d%%" % [verb, HudFormat.progress_percent(progress)]
+    return build_meter_value(verb, progress, work_done, work_cost)
 
 ## BBCode hex for a "Field" value: signal (positive) for a completed Field, WARN while it reverts,
 ## normal ink while the crop is still going in. Matched on the label from `field_label`, mirroring
@@ -1124,12 +1216,14 @@ static func _flora_biomass_split(entries: Array[Dictionary], stock: float) -> Ar
 ## reads the STARVING state instead of the penned badge — the herd is losing biomass every turn,
 ## which is the one fact the player must not be able to miss. `detail_bbcode` tints via
 ## `corral_value_hex`.
-static func corral_label(progress: float, corralled: bool, fed_fraction: float) -> String:
+static func corral_label(progress: float, corralled: bool, fed_fraction: float,
+        work_done: float = 0.0,
+        work_cost: float = SourceForecast.BUILD_WORK_COST_NONE) -> String:
     if corralled or progress >= CORRAL_PROGRESS_COMPLETE:
         if PenStatus.is_starving(fed_fraction):
             return PEN_STARVING_LABEL % int(round(fed_fraction * HudConst.PROGRESS_PERCENT_SCALE))
         return "%s Corralled" % DetailFormat.CORRAL_GLYPH
-    return "%s %d%%" % [CORRAL_BUILDING_LABEL, int(round(progress * HudConst.PROGRESS_PERCENT_SCALE))]
+    return build_meter_value(CORRAL_BUILDING_LABEL, progress, work_done, work_cost)
 
 ## The "Pen feed" row's value: what this pen demands per turn, plus — when the keeper is short — how
 ## much of it was actually paid. Amber/red-tinted via `pen_feed_value_hex`.
@@ -1673,9 +1767,24 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array, assign
     if ceiling == SourceForecast.HUSBANDRY_CEILING_WILD:
         lines.append(HUSBANDRY_WILD_PREDATOR_HINT if is_predator else HUSBANDRY_WILD_HINT)
     else:
+        # **THE METER SAYS WORK, NOT JUST PERCENT** (`docs/plan_unit_costed_work.md` §11) — the animal
+        # twin of the tile card's rows. A Tame's cost carries the SPECIES' own multiplier, so this is
+        # where a Steppe Runner reads as several times a rabbit's job rather than as the same meter
+        # filling more slowly.
         var domestication := float(herd_data.get("domestication", 0.0))
+        var herd_prefix: String = HudComposeVocab.BARE_FORECAST_PREFIX
         if domestication > 0.0:
-            lines.append("Husbandry: %s" % husbandry_label(domestication))
+            lines.append("Husbandry: %s" % husbandry_label(domestication,
+                SourceForecast.build_work_done(
+                    herd_data, herd_prefix, SourceForecast.IMPROVEMENT_TAME),
+                SourceForecast.build_work_cost(
+                    herd_data, herd_prefix, SourceForecast.IMPROVEMENT_TAME)))
+            # **WHICH RUNG THE ESTIMATE DESCRIBES IS READ OFF THE SOURCE, not off a crew.** The ladder
+            # is strictly sequential and at most one improvement is ever in flight, so an incomplete
+            # Tame IS the build these per-source fields answer for; the Corral branch below takes them
+            # once taming is done. A herd nobody works reports no estimate and renders no line.
+            if domestication < HUSBANDRY_PROGRESS_COMPLETE:
+                lines.append_array(build_estimate_lines(herd_data, herd_prefix))
         # Staffing deficit (fauna neglect-escape arc). A managed herd needs `herders_needed` herders
         # every turn to HOLD its animals — understaffed, it SHEDS whole animals over its labor capacity
         # into a nearby wild herd (they drift off; tameness leaves with them, it is never decayed). The
@@ -1733,7 +1842,15 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array, assign
                 if larder_bill >= SourceForecast.FOOD_FLOW_MIN:
                     lines.append("%s: %s" % [PEN_FEED_ROW, pen_feed_label(larder_bill, fed_fraction)])
             elif corral_progress > 0.0:
-                lines.append("Corral: %s" % corral_label(corral_progress, false, PenStatus.FULLY_FED))
+                lines.append("Corral: %s" % corral_label(corral_progress, false, PenStatus.FULLY_FED,
+                    SourceForecast.build_work_done(
+                        herd_data, herd_prefix, SourceForecast.IMPROVEMENT_CORRAL),
+                    SourceForecast.build_work_cost(
+                        herd_data, herd_prefix, SourceForecast.IMPROVEMENT_CORRAL)))
+                # Penning is a flat job for every species — a fence is a fence — so unlike the Tame
+                # row above this cost carries no species multiplier, and the estimate beside it moves
+                # only with the keeper crew, their floor and their kit.
+                lines.append_array(build_estimate_lines(herd_data, herd_prefix))
         elif ceiling == SourceForecast.HUSBANDRY_CEILING_PASTORAL:
             lines.append(HUSBANDRY_PASTORAL_HINT)
     # **NO `Position` ROW.** These lines render in ONE place — the tile card's subject drawer — and
