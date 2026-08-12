@@ -461,7 +461,7 @@ pub struct HerdTelemetryState {
     #[serde(default = "no_build_turns_estimate")]
     pub build_turns_remaining: i32,
     /// **What the crew's TOOLS took off this build**, in work units — the `t` in
-    /// `effective_cost = max(work_cost × min_build_fraction, work_cost − t)`
+    /// `effective_cost = work_cost − t`
     /// (`docs/plan_unit_costed_work.md` §6).
     ///
     /// **A tool's help lands on the JOB, not on the crew's output**, so `work_done`/`work_cost` above
@@ -809,7 +809,7 @@ pub struct ForagePatchState {
     #[serde(default = "no_build_turns_estimate")]
     pub build_turns_remaining: i32,
     /// **What the crew's TOOLS took off this build**, in work units — the `t` in
-    /// `effective_cost = max(work_cost × min_build_fraction, work_cost − t)`
+    /// `effective_cost = work_cost − t`
     /// (`docs/plan_unit_costed_work.md` §6).
     ///
     /// **A tool's help lands on the JOB, not on the crew's output**, so `work_done`/`work_cost` above

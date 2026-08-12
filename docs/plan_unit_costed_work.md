@@ -254,8 +254,14 @@ Everything else about the stat:
 - **Neutral at `0.0`.** Within one kit it resolves as the max of the live declaring items —
   `dispersion`/`exposure`'s shape, which `BuildRate` already uses — so a spent tool steps back to the
   neutral and a second declarer (#539's hoe beside `husbandry_gear`) is legal by construction.
-- **Clamped**: `effective_cost = max(cost × MIN_BUILD_FRACTION, cost − t)`, so a job cannot be driven
-  to nothing or negative.
+- **Unclamped**: `effective_cost = cost − t`, and nothing floors it. A clamp shipped briefly and was
+  **rejected** (2026-08-12): whether a tool can wipe out a job is decided by the job's `work_cost`
+  and the tool's contribution, which are both dials, so a structural guard against a config outcome
+  is the wrong instrument — and a floor forbids exactly the endgame the design wants, where the
+  right tool reduces a late job to a small fraction of itself and bare hands are impractical. There
+  is no arithmetic hazard to guard either: `build_fraction` divides by the **raw** stamped cost and
+  `build_turns_remaining` by the crew's output, so a bar at or below zero simply completes the build
+  on its first worked turn — the allowed no-cap outcome of §1.2.
 - **Calibration.** `husbandry_gear`'s flint tier declares ×1.5 today, which on a 50-unit build is
   worth ≈17 units total. Against the reference keeper crew of 2 that is **≈8.5 per worker**, and a
   fully-geared animal build lands where it does today while a half-geared one is honestly slower —
@@ -360,9 +366,11 @@ through the tools it unlocks (§5). The wire **gains** `workDone` / `workCost` /
 
 1. **The cost spread itself** — what a Sow, a Corral and an eventual Farm cost relative to a
    Cultivate, and what each lesson costs. Wants measurement against a real campaign, not a decision
-   in advance. It is slice 4.
-2. **`MIN_BUILD_FRACTION`** (§6.2) — the floor a tool contribution cannot shrink a job past. A
-   playtest anchor; 0.25 is a reasonable opening value.
+   in advance. It is slice 5, and it is the only thing left.
+
+The second item this section carried — `MIN_BUILD_FRACTION`, a floor a tool contribution could not
+shrink a job past — is **gone rather than open**. See §6.2: it was a structural guard against an
+outcome the costs and contributions already decide.
 
 ## 11. Slicing
 

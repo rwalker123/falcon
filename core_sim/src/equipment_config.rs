@@ -2004,7 +2004,7 @@ impl EquipmentConfig {
         // **A tool cannot take a NEGATIVE amount off a job** (`docs/plan_unit_costed_work.md` §9).
         // `0` is legal and is the neutral — an item may declare the stat and contribute nothing on a
         // tier that is only a placeholder — but a negative would make the gear *add* work, and an
-        // infinite one would drive every job to its `min_build_fraction` floor from the first turn.
+        // infinite one would finish every job on the first turn it is worked.
         for (id, item) in &self.items {
             for effect in item.every_effect() {
                 if effect.stat != EquipmentStat::BuildWork {

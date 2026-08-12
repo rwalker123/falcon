@@ -428,7 +428,7 @@ pub struct Herd {
     /// `tamed_this_turn`'s cycle: written in Population, cleared by `advance_husbandry` the next turn.
     pub build_turns_remaining: Option<u32>,
     /// **What the keepers' TOOLS took off this herd's running build**, in work units — the `t` in
-    /// `effective_cost = max(cost × min_build_fraction, cost − t)`
+    /// `effective_cost = cost − t`
     /// ([`crate::intensification::build_work_from_gear`]), published as
     /// `HerdTelemetryState.buildWorkFromGear`.
     ///

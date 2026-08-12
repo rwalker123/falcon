@@ -1187,20 +1187,6 @@ impl LadderKnowledge {
 pub struct LadderConfig {
     /// The knowledge dials shared by **both** webs — see [`LadderKnowledge`].
     pub knowledge: LadderKnowledge,
-    /// **THE FLOOR A TOOL CANNOT SHRINK A JOB PAST**, as a fraction of the job's own cost — the
-    /// clamp in [`Self::effective_build_cost`]. `0.25` means *the best-equipped crew imaginable still
-    /// works a quarter of the job by hand*.
-    ///
-    /// **A playtest anchor, so it is a lever rather than a constant** (`docs/plan_unit_costed_work.md`
-    /// §10). It exists because gear is additive off the cost now: nothing else stops a rich enough
-    /// kit driving a cheap rung to zero — or, with a future second declarer, negative — and a rung
-    /// that completes on the turn it is picked is not an investment at all.
-    ///
-    /// It lives on the **ladder** because the ladder owns build costs; the *gear* declares what it
-    /// takes off, and how far that may go is a property of the jobs. Validated `0 < f <= 1`: at `0`
-    /// a job can be driven to nothing, and above `1` the clamp would *raise* a cost it is there to
-    /// bound.
-    pub min_build_fraction: f32,
     pub rungs: Vec<RungDef>,
 }
 
@@ -1248,8 +1234,8 @@ impl LadderConfig {
         })
     }
 
-    /// **THE BAR A GEARED CREW'S METER MUST REACH** — `max(cost × min_build_fraction, cost − t)`,
-    /// where `t` is [`build_work_from_gear`].
+    /// **THE BAR A GEARED CREW'S METER MUST REACH** — `cost − t`, where `t` is
+    /// [`build_work_from_gear`].
     ///
     /// **The stored companion cost on the source stays the RAW job** (`work_cost ×
     /// cost_multiplier`), un-tooled and stable, because that is what `is_cultivated()` and its three
@@ -1259,9 +1245,13 @@ impl LadderConfig {
     /// the units the tool pre-paid, and it is honest: those units were worked, they were simply
     /// worked by the tool.
     ///
-    /// **The clamp is what stops a job being driven to nothing** ([`Self::min_build_fraction`]).
+    /// **Nothing floors it.** How far a kit may shrink a job is decided by the job's `work_cost` and
+    /// the tool's `EquipmentStat::BuildWork` — both dials — and later work is *meant* to be
+    /// impractical bare-handed, which means the right tool must be able to reduce a job to a small
+    /// fraction of itself. A bar at or below zero simply means the build completes on the first turn
+    /// it is worked, which is the same no-cap outcome as putting fifty hands on it.
     pub fn effective_build_cost(&self, cost: f32, gear_work: f32) -> f32 {
-        (cost - gear_work).max(cost * self.min_build_fraction)
+        cost - gear_work
     }
 
     /// **HOW MANY TURNS THIS CREW WOULD NEED TO CLIMB `rung`** — the *projection* half of the wire's
@@ -1361,20 +1351,6 @@ impl LadderConfig {
     /// exactly the failure mode config validation exists to catch.
     pub fn validate(&self) -> Result<(), LadderConfigError> {
         validate_knowledge(&self.knowledge)?;
-        if !self.min_build_fraction.is_finite()
-            || self.min_build_fraction <= 0.0
-            || self.min_build_fraction > 1.0
-        {
-            return Err(LadderConfigError::Invalid {
-                field: "min_build_fraction".to_string(),
-                constraint: "leave a strict fraction of every job for the crew's own hands \
-                             (0 < f <= 1) — at 0 a rich enough kit drives a rung to nothing and it \
-                             completes the turn it is picked, and above 1 the clamp raises the cost \
-                             it exists to bound"
-                    .to_string(),
-                value: format!("min_build_fraction = {}", self.min_build_fraction),
-            });
-        }
 
         let mut seen_ids: HashSet<(RungBranch, &str)> = HashSet::new();
         let mut seen_orders: HashSet<(RungBranch, u32)> = HashSet::new();
@@ -2116,46 +2092,6 @@ mod tests {
             saved(FARM),
             saved(GARDEN)
         );
-    }
-
-    /// **A JOB CANNOT BE DRIVEN TO NOTHING** — `min_build_fraction` is the floor the clamp holds, and
-    /// the reason the ladder needs one at all now that gear is additive off the cost.
-    #[test]
-    fn gear_cannot_shrink_a_job_past_the_ladders_floor() {
-        let ladder = LadderConfig::builtin();
-        const COST: f32 = 50.0;
-        assert_eq!(
-            ladder.effective_build_cost(COST, NO_BUILD_GEAR),
-            COST,
-            "a crew carrying nothing pays the whole job"
-        );
-        assert_eq!(
-            ladder.effective_build_cost(COST, 10.0),
-            COST - 10.0,
-            "and an equipped one pays the job less what its tools took off it"
-        );
-        // An absurdly rich kit — more than the whole job — still leaves the floor's share.
-        assert_eq!(
-            ladder.effective_build_cost(COST, COST * 10.0),
-            COST * ladder.min_build_fraction,
-            "the clamp holds the floor rather than letting the job go to zero or negative"
-        );
-        assert!(
-            ladder.min_build_fraction > 0.0 && ladder.min_build_fraction <= 1.0,
-            "the shipped floor is a strict fraction: {}",
-            ladder.min_build_fraction
-        );
-    }
-
-    /// **A JOB DRIVEN TO NOTHING COMPLETES THE TURN IT IS PICKED**, which is not an investment at
-    /// all — so a `min_build_fraction` of `0` (or above `1`, where the clamp would *raise* the cost)
-    /// is a load failure.
-    #[test]
-    fn rejects_a_build_floor_that_leaves_the_crew_nothing_to_do() {
-        for bad in [0.0, -0.25, 1.5] {
-            let err = reject(|json| json["min_build_fraction"] = (bad).into());
-            assert_rejects(err, "min_build_fraction");
-        }
     }
 
     /// **THE GEAR IS A SUM OVER THE CREW, NEVER AN AVERAGE** (§6.2) — the partly-equipped-party rule

@@ -154,10 +154,6 @@ flint tier declares **8.5**. It is subtracted from the job inside
 > **The fade on a farm is therefore CONFIG's job** — rung 4 is born at ~300 units precisely so the
 > hand tools of the era are noise against it. It is a dial to tune, **not** a property to build into
 > the resolution rule.
->
-> **Clamped**: `effective_cost = max(cost × min_build_fraction, cost − t)`, the ladder's own lever
-> (`intensification_ladder.json`, `0.25`) — a job cannot be driven to nothing or negative, and a rung
-> that completes the turn it is picked is not an investment at all.
 
 **The defect it closes.** The husbandry kit only paid off *once a pen existed* — its `pen_carry` is
 read on a corralled herd and nowhere else — so the gear did nothing across the entire climb that

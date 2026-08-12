@@ -204,7 +204,7 @@ pub(crate) fn herds_to_array(
         // sim answers, exactly as it does for `pen_upkeep` and the yield forecast.
         let _ = dict.insert("build_turns_remaining", herd.buildTurnsRemaining() as i64);
         // WHAT THE CREW'S TOOLS TOOK OFF THIS BUILD, in work units — the `t` in
-        // `effective_cost = max(work_cost × min_build_fraction, work_cost − t)`. `0` = no build in
+        // `effective_cost = work_cost − t`. `0` = no build in
         // flight, or the crew carries nothing that helps. It rides BESIDE the raw job rather than
         // folded into it: the cost above must not move under a tool, or the readout's price would
         // change every time a hurdle wore out.

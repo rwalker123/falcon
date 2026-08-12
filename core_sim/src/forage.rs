@@ -213,7 +213,7 @@ pub struct ForagePatch {
     /// the Snapshot stage captures is always the turn's own.
     pub build_turns_remaining: Option<u32>,
     /// **What the crew's TOOLS took off this patch's running build**, in work units — the `t` in
-    /// `effective_cost = max(cost × min_build_fraction, cost − t)`
+    /// `effective_cost = cost − t`
     /// ([`crate::intensification::build_work_from_gear`]), published as
     /// `ForagePatchState.buildWorkFromGear` so a readout can say *"your hoes: −8 work"* against a
     /// price that does not move under it.
