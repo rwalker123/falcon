@@ -239,18 +239,6 @@ pub fn build_work_from_gear(per_worker: f32, workers: u32) -> f32 {
     (workers as f32 * per_worker).max(NO_BUILD_GEAR)
 }
 
-/// **HOW MANY MORE TURNS THIS BUILD NEEDS at the crew, floor and kit that just worked it** —
-/// `ceil((cost − done) / work_this_turn)`, and THE one place that arithmetic lives so the wire's
-/// `buildTurnsRemaining` cannot drift from the meter it describes.
-///
-/// `None` = **no estimate**, and it means exactly two things, both of which the wire renders as
-/// [`NO_BUILD_TURNS_ESTIMATE`]: the job is already paid for (nothing left to wait for), or the crew
-/// produced nothing this turn and the build is **stalled** — a stall has no finite answer, and
-/// quoting a huge one would read as a promise.
-///
-/// **The sim answers it because the client cannot**: the client holds neither the crew's output, nor
-/// the floor multiplier, nor the kit's build rate — the same division of labour as `penFeedUpkeep`
-/// and the yield forecast.
 /// **THE `0..1` FRACTION THE WIRE PUBLISHES** — `done / cost`, so the meter can store absolute work
 /// units while `cultivationProgress` / `fieldProgress` / `corralProgress` / `domestication` keep the
 /// type, meaning and range every shipped readout already renders. **The sim divides at capture**; the
@@ -267,6 +255,23 @@ pub fn build_fraction(done: f32, cost: f32) -> f32 {
     (done / cost).clamp(0.0, 1.0)
 }
 
+/// **HOW MANY TURNS A JOB NEEDS AT A STATED CREW, FLOOR AND KIT** — `ceil((cost − done) /
+/// work_this_turn)`, and THE one place that arithmetic lives so the wire's `buildTurnsRemaining`
+/// cannot drift from the meter it describes.
+///
+/// Two callers, one expression. The **live** one passes the crew that just worked the source and its
+/// meter (the build in flight); the **projection** ([`LadderConfig::projected_build_turns`]) passes
+/// the same crew against the rung it would climb next, which is what lets the compose sheet quote a
+/// job before the player commits to it.
+///
+/// `None` = **no estimate**, and it means exactly two things, both of which the wire renders as
+/// [`NO_BUILD_TURNS_ESTIMATE`]: the job is already paid for (nothing left to wait for), or the crew
+/// produced nothing this turn and the build is **stalled** — a stall has no finite answer, and
+/// quoting a huge one would read as a promise.
+///
+/// **The sim answers it because the client cannot**: the client holds neither the crew's output, nor
+/// the floor multiplier, nor the kit's build rate — the same division of labour as `penFeedUpkeep`
+/// and the yield forecast.
 pub fn build_turns_remaining(cost: f32, done: f32, work_this_turn: f32) -> Option<u32> {
     if work_this_turn <= 0.0 {
         return None;
@@ -483,6 +488,30 @@ impl RungKey {
             RungKey::PlantField => "field",
             RungKey::AnimalPastoral => "pastoral",
             RungKey::AnimalPen => "pen",
+        }
+    }
+
+    /// **THE RUNG DIRECTLY ABOVE THIS ONE** — what a source standing here would climb next. `None` at
+    /// the top of a branch: there is nothing left to build, and that is the honest answer rather than
+    /// a rung quoted out of the other web.
+    ///
+    /// It is the seam a **projection** resolves through. [`crate::forage::patch_rung`] /
+    /// [`crate::fauna::herd_rung`] answer *where the source stands*; this answers *what it would
+    /// climb*, so the wire's `buildTurnsRemaining` can quote an unstarted job without any call site
+    /// re-deriving the ladder's order from `is_cultivated()`.
+    ///
+    /// **Exhaustive, like `Improvement::valid_for_forage`** — a new rung fails to compile until
+    /// someone states its place in the climb, rather than defaulting to "nothing above it" and
+    /// silently making the rung above unquotable. `ladder_order_matches_the_coded_climb` pins it
+    /// against the shipped records' own `order`, so the coded ladder and the config's cannot drift.
+    pub fn above(self) -> Option<RungKey> {
+        match self {
+            RungKey::PlantWild => Some(RungKey::PlantTended),
+            RungKey::PlantTended => Some(RungKey::PlantField),
+            RungKey::PlantField => None,
+            RungKey::AnimalWild => Some(RungKey::AnimalPastoral),
+            RungKey::AnimalPastoral => Some(RungKey::AnimalPen),
+            RungKey::AnimalPen => None,
         }
     }
 }
@@ -1233,6 +1262,51 @@ impl LadderConfig {
     /// **The clamp is what stops a job being driven to nothing** ([`Self::min_build_fraction`]).
     pub fn effective_build_cost(&self, cost: f32, gear_work: f32) -> f32 {
         (cost - gear_work).max(cost * self.min_build_fraction)
+    }
+
+    /// **HOW MANY TURNS THIS CREW WOULD NEED TO CLIMB `rung`** — the *projection* half of the wire's
+    /// `buildTurnsRemaining`, assembled from exactly the four calls the in-flight stamp makes
+    /// ([`RungDef::build_cost`], [`build_work_from_gear`], [`Self::effective_build_cost`],
+    /// [`RungDef::build_accrual`], then [`build_turns_remaining`]) so a quote for a job nobody has
+    /// started cannot be arithmetic the running build would disagree with.
+    ///
+    /// **It exists because "nothing is being built" is the state the compose sheet is looking at**
+    /// (`docs/plan_unit_costed_work.md` §11). `workCost` answers *what does this job cost*; this
+    /// answers *what would my people take to finish it*, which is the half that makes the arc's
+    /// thesis legible — put more hands on it and watch the number fall. The client cannot derive it:
+    /// it holds neither the crew's output, nor the floor multiplier, nor the kit's contribution. Same
+    /// division of labour, and the same "always meaningful, never zero-because-not-started" rule, as
+    /// `HerdTelemetryState.penUpkeep`.
+    ///
+    /// `banked` is the work already on **that rung's** meter — [`RUNG_UNSTARTED`] for the ordinary
+    /// pre-commit case, and the real figure for a build the player walked away from, so the quote
+    /// agrees with the `workDone` / `workCost` pair published beside it.
+    ///
+    /// `eligible` is the caller's composed gate, exactly as [`RungDef::build_accrual`] takes it: the
+    /// web supplies the rung's own site / ceiling / knowledge / ownership terms. **A projection must
+    /// never quote a rung the gates would refuse**, so a caller that cannot answer one of them passes
+    /// `false` and the wire says "no estimate" instead of naming a job the player cannot take.
+    ///
+    /// `None` — no estimate — for a rung with nothing to build, a gate that refuses, a crew that
+    /// produces nothing, or a meter already past the bar.
+    // The rung, its per-source price, its meter, and the three things a crew brings (hands, floor,
+    // kit) are all genuinely inputs — the same list `build_accrual` + `build_cost` +
+    // `effective_build_cost` take between them.
+    #[allow(clippy::too_many_arguments)]
+    pub fn projected_build_turns(
+        &self,
+        rung: &RungDef,
+        cost_multiplier: f32,
+        banked: f32,
+        floor: f32,
+        workers: u32,
+        gear_per_worker: f32,
+        eligible: bool,
+    ) -> Option<u32> {
+        let cost = rung.build_cost(cost_multiplier)?;
+        let bar = self.effective_build_cost(cost, build_work_from_gear(gear_per_worker, workers));
+        let accrual = rung.build_accrual(rung.verb_improvement(), eligible, floor, workers);
+        build_turns_remaining(bar, banked, accrual)
     }
 
     /// **The reference job every build-quantum readout is quoted against**, in work units — the
@@ -3083,5 +3157,48 @@ mod tests {
             json["rungs"].as_array_mut().expect("array").remove(idx);
         });
         assert_rejects(err, "animal:pen");
+    }
+
+    /// **[`RungKey::above`] and the shipped records' own `order` are ONE ladder** — the coded climb a
+    /// projection walks must be the climb the config declares, or `buildTurnsRemaining` would quote a
+    /// rung the config puts somewhere else entirely.
+    ///
+    /// Asserted both ways round: every key with a rung above it names the record at `order + 1` on its
+    /// own branch, and every key answering `None` really is the top of its branch. The second half is
+    /// the liveness clause — a `above` that answered `None` for everything would pass the first alone,
+    /// and would silently turn every projection into "no estimate".
+    #[test]
+    fn the_coded_climb_matches_the_shipped_ladders_own_order() {
+        let ladder = LadderConfig::builtin();
+        for key in RungKey::ALL {
+            let here = ladder.rung(key);
+            let taller = ladder
+                .rungs
+                .iter()
+                .any(|rung| rung.branch == here.branch && rung.order > here.order);
+            match key.above() {
+                Some(next) => {
+                    let next = ladder.rung(next);
+                    assert_eq!(
+                        next.branch,
+                        here.branch,
+                        "{} climbs its own branch",
+                        key.id()
+                    );
+                    assert_eq!(
+                        next.order,
+                        here.order + 1,
+                        "{}'s next rung is the record directly above it",
+                        key.id()
+                    );
+                }
+                None => assert!(
+                    !taller,
+                    "{} answers 'nothing above' while the ladder declares a taller rung on its \
+                     branch",
+                    key.id()
+                ),
+            }
+        }
     }
 }

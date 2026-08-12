@@ -5,9 +5,11 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 /// **"No estimate"** — the wire value of `buildTurnsRemaining` on either web when the sim cannot name
-/// a number: no build is in flight on that source, or the crew's output is zero and the build is
-/// **stalled**. It sits outside the `>= 0` range a real estimate lives in, so the two states cannot
-/// be confused — the same convention `next_x`/`next_y` use for "no heading".
+/// a number: the source is at the top of its ladder, the next rung's gates refuse it, no crew is
+/// working the source, or the crew's output is zero and a running build is **stalled**. **It is NOT
+/// "nothing is being built here"** — an unstarted source with a crew on it publishes the projected
+/// turns for the rung it would climb next. It sits outside the `>= 0` range a real estimate lives in,
+/// so the two states cannot be confused — the same convention `next_x`/`next_y` use for "no heading".
 ///
 /// It lives here, on the **wire**, because the sentinel is a fact about the published contract rather
 /// than about the sim's arithmetic (`core_sim`'s `build_turns_remaining` answers an `Option<u32>`).
@@ -435,15 +437,27 @@ pub struct HerdTelemetryState {
     /// See [`Self::corral_work_done`].
     #[serde(default)]
     pub corral_work_cost: f32,
-    /// **How many more turns the running build needs**, at the crew, floor and kit that worked this
-    /// source this turn. [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**: no build is in
-    /// flight, or the crew's output is zero and the build is **stalled** (a stall has no finite
-    /// answer, and a huge number would read as a promise).
+    /// **How many more turns a build on this source needs**, at the crew, floor and kit that worked
+    /// it this turn — and a **PROJECTION when nothing is being built**, which is by definition the
+    /// state a compose sheet is looking at. With an improvement in flight it counts down the running
+    /// meter; with none it is what the rung this source would climb **next** would take the crew
+    /// currently working it, from the work already banked on that rung. Always meaningful, never
+    /// `-1`-because-unstarted — the same rule `pen_upkeep` follows one field over.
+    ///
+    /// **Which `*_work_cost` it belongs beside** is the assignment's own `improvement`, and the
+    /// **next rung up** when that is empty (`is_cultivated` / `is_field`, `domestication` /
+    /// `corralled`): the pair is read as *"50 work, ≈13 turns"*, so they must name one rung.
+    ///
+    /// [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**, and it means there is genuinely
+    /// no answer: the source is at the top of its ladder, the next rung's own gates refuse it for
+    /// this faction (a projection must never quote a job the command would reject), or the crew's
+    /// output is zero and a running build is **stalled** — a stall has no finite answer, and a huge
+    /// number would read as a promise.
     ///
     /// **The client cannot compute this** — it holds neither the crew's output, nor the floor
     /// multiplier, nor the kit's build rate — so the sim answers, the `pen_feed_upkeep` discipline.
-    /// One field for both of a web's rungs: at most one improvement is ever in flight on one source.
-    /// Appended (append-only).
+    /// One field for both of a web's rungs: at most one improvement is ever in flight on one source,
+    /// and at most one rung is ever next. Appended (append-only).
     #[serde(default = "no_build_turns_estimate")]
     pub build_turns_remaining: i32,
     /// **What the crew's TOOLS took off this build**, in work units — the `t` in
@@ -771,15 +785,27 @@ pub struct ForagePatchState {
     /// See [`Self::field_work_done`].
     #[serde(default)]
     pub field_work_cost: f32,
-    /// **How many more turns the running build needs**, at the crew, floor and kit that worked this
-    /// source this turn. [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**: no build is in
-    /// flight, or the crew's output is zero and the build is **stalled** (a stall has no finite
-    /// answer, and a huge number would read as a promise).
+    /// **How many more turns a build on this source needs**, at the crew, floor and kit that worked
+    /// it this turn — and a **PROJECTION when nothing is being built**, which is by definition the
+    /// state a compose sheet is looking at. With an improvement in flight it counts down the running
+    /// meter; with none it is what the rung this source would climb **next** would take the crew
+    /// currently working it, from the work already banked on that rung. Always meaningful, never
+    /// `-1`-because-unstarted — the same rule `pen_upkeep` follows one field over.
+    ///
+    /// **Which `*_work_cost` it belongs beside** is the assignment's own `improvement`, and the
+    /// **next rung up** when that is empty (`is_cultivated` / `is_field`, `domestication` /
+    /// `corralled`): the pair is read as *"50 work, ≈13 turns"*, so they must name one rung.
+    ///
+    /// [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**, and it means there is genuinely
+    /// no answer: the source is at the top of its ladder, the next rung's own gates refuse it for
+    /// this faction (a projection must never quote a job the command would reject), or the crew's
+    /// output is zero and a running build is **stalled** — a stall has no finite answer, and a huge
+    /// number would read as a promise.
     ///
     /// **The client cannot compute this** — it holds neither the crew's output, nor the floor
     /// multiplier, nor the kit's build rate — so the sim answers, the `pen_feed_upkeep` discipline.
-    /// One field for both of a web's rungs: at most one improvement is ever in flight on one source.
-    /// Appended (append-only).
+    /// One field for both of a web's rungs: at most one improvement is ever in flight on one source,
+    /// and at most one rung is ever next. Appended (append-only).
     #[serde(default = "no_build_turns_estimate")]
     pub build_turns_remaining: i32,
     /// **What the crew's TOOLS took off this build**, in work units — the `t` in

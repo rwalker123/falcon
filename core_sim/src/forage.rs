@@ -191,14 +191,22 @@ pub struct ForagePatch {
     /// **What this patch's Sow costs, in work units** — the rung-3 twin of [`Self::cultivation_cost`],
     /// with the same stamping rule and the same reason for existing.
     pub field_cost: f32,
-    /// **How many more turns this patch's running build needs, at the crew, floor and kit that worked
-    /// it this turn** — [`crate::intensification::build_turns_remaining`], stamped by the labor arm
-    /// and published as `ForagePatchState.buildTurnsRemaining`.
+    /// **How many more turns a build on this patch needs, at the crew, floor and kit that worked it
+    /// this turn** — stamped by the labor arm and published as
+    /// `ForagePatchState.buildTurnsRemaining`.
     ///
-    /// `None` = **no estimate**: no build is in flight here, or the crew produced nothing this turn
-    /// and the build is stalled. **The client cannot compute it** (it holds neither the crew's output,
-    /// nor the floor multiplier, nor the kit), which is why the sim answers — the `penFeedUpkeep`
-    /// discipline.
+    /// **It is a PROJECTION when nothing is being built**, and that is the field's point: with a verb
+    /// in flight it is [`crate::intensification::build_turns_remaining`] on the running meter, and
+    /// with none it is [`crate::intensification::LadderConfig::projected_build_turns`] on the rung
+    /// this patch would climb **next**, so the compose sheet can quote the job before the player
+    /// commits. Same rule as `HerdTelemetryState.penUpkeep`: always meaningful, never
+    /// zero-because-not-started.
+    ///
+    /// `None` = **no estimate**, and it means there genuinely is no answer: the patch is a Field (the
+    /// top of the plant ladder, nothing left to build), the next rung's own site/knowledge/species
+    /// gates refuse it for this faction, or the crew produced nothing this turn and a running build is
+    /// stalled. **The client cannot compute any of it** (it holds neither the crew's output, nor the
+    /// floor multiplier, nor the kit), which is why the sim answers — the `penFeedUpkeep` discipline.
     ///
     /// Transient per-turn scratch on the same one-turn cycle as [`Self::tended_this_turn`]: written
     /// in Population, cleared by `advance_cultivation` in the *next* turn's Logistics, so the value
@@ -1776,13 +1784,24 @@ fn regrow_patch(patch: &mut ForagePatch, forage: &ForageLaborConfig) {
 /// patch's rung teaches** (`RungDef::knowledge_earned`, slice 4). The plant web has no movement
 /// primitive to dispatch (a patch is a place), so unlike the animal side there is no second caller.
 pub(crate) fn patch_rung<'a>(patch: &ForagePatch, ladder: &'a LadderConfig) -> &'a RungDef {
-    ladder.rung(if patch.is_field() {
+    ladder.rung(patch_rung_key(patch))
+}
+
+/// **[`patch_rung`] without the ladder** — the same top-down reading, answered as the key rather than
+/// the record, for the callers that want to walk the ladder from it ([`RungKey::above`], and the
+/// `RungKey`-taking seams like [`resolve_committed_species`]) instead of reading a record's dials.
+///
+/// It exists so the "sown → field, cultivated → tended, else wild" test has exactly **one** home: a
+/// projection that re-derived it from `is_cultivated()` at its own call site is the second copy this
+/// seam was created to prevent.
+pub(crate) fn patch_rung_key(patch: &ForagePatch) -> RungKey {
+    if patch.is_field() {
         RungKey::PlantField
     } else if patch.is_cultivated() {
         RungKey::PlantTended
     } else {
         RungKey::PlantWild
-    })
+    }
 }
 
 /// The forage counterpart of `fauna::hunt_take`: resolve the **escapement ceiling**, cap it by the

@@ -448,11 +448,13 @@ pub fn advance_labor_allocation(
                     //    where the land waters itself. That is the scarcity the rung is *made of*, and
                     //    the ground the `sow` command refuses up front with the reason (not a
                     //    gathering site / too dry).
-                    let sow_permitted = improvement == Some(Improvement::Sow)
-                        && field_rung.unlock_discovery_id().is_none_or(|knowledge| {
-                            knows(&discovery, faction, knowledge, knowledge_threshold)
-                        })
-                        && tiles.get(tile_entity).is_ok_and(|ground| {
+                    //
+                    // **Hoisted into a closure because the PROJECTION asks the same question of a
+                    // different rung** — "what would rung N+1 take this crew?" is only honest if it
+                    // is judged by the gate that would actually run, so the running `Sow` and the
+                    // quoted next rung resolve one expression rather than two copies of it.
+                    let land_admits = |rung: &RungDef| {
+                        tiles.get(tile_entity).is_ok_and(|ground| {
                             let fresh_water = tile_is_fresh_watered(
                                 ground,
                                 grid_width,
@@ -466,14 +468,20 @@ pub fn advance_labor_allocation(
                                 },
                             );
                             rung_site_refusal(
-                                field_rung,
+                                rung,
                                 ground,
                                 &labor.forage,
                                 food_sites.is_site(ground.position),
                                 fresh_water,
                             )
                             .is_none()
-                        });
+                        })
+                    };
+                    let sow_permitted = improvement == Some(Improvement::Sow)
+                        && field_rung.unlock_discovery_id().is_none_or(|knowledge| {
+                            knows(&discovery, faction, knowledge, knowledge_threshold)
+                        })
+                        && land_admits(field_rung);
                     // **WHICH NAMED PLANT this ground would be committed to** (Flora Roster S1,
                     // `docs/plan_flora_roster.md` §4.3). Resolved through the *same*
                     // `resolve_committed_species` seam the `assign_labor` rejection reads, so a
@@ -1054,6 +1062,70 @@ pub fn advance_labor_allocation(
                         ) {
                             completed.push(idx);
                         }
+                    }
+                    // **THE PROJECTION — "what would the next rung take THIS crew?"**
+                    // (`docs/plan_unit_costed_work.md` §11). Nothing is being built here, which is by
+                    // definition the state the compose sheet is looking at, so a `-1` would withhold
+                    // the one readout that makes the arc's thesis legible at exactly the moment the
+                    // player is deciding. It is the `penUpkeep` rule applied to turns: **always
+                    // meaningful, never `-1`-because-unstarted**.
+                    //
+                    // Quoted at this crew, this floor and this kit against the rung the patch would
+                    // climb next — `patch_rung_key(..).above()`, the ladder's own order — and from the
+                    // work already banked on **that** rung, so a build the player walked away from
+                    // quotes the turns still owed rather than the whole job again. The gates below are
+                    // the ones `validate_cultivate` / `validate_sow` would apply: **a projection must
+                    // never quote a rung the command would refuse**, which is the `sowSiteRefusal`
+                    // failure mode wearing a turn count.
+                    if improvement.is_none() {
+                        patch.build_turns_remaining =
+                            patch_rung_key(patch).above().and_then(|next_key| {
+                                let next = ladder.rung(next_key);
+                                // The **work predicate rides rung 2 only**, exactly as the live arms
+                                // do: `Cultivate`'s `eligible` carries `crew_is_working_the_source`
+                                // and `accrue_field`'s deliberately does not — bare ground stands
+                                // below every floor, so requiring room would make the rung
+                                // create-from-nothing exists for unquotable.
+                                let crew_is_at_work = match next.verb_improvement() {
+                                    Some(Improvement::Cultivate) => working_the_patch,
+                                    _ => true,
+                                };
+                                let eligible = next.unlock_discovery_id().is_none_or(|knowledge| {
+                                    knows(&discovery, faction, knowledge, knowledge_threshold)
+                                }) && crew_is_at_work
+                                    && land_admits(next)
+                                    && patch.owner.is_none_or(|owner| owner == faction)
+                                    // **Something in this basket has to climb**, the same
+                                    // `resolve_committed_species` seam the commit above reads — a
+                                    // patch whose whole basket stops below the rung is one the build
+                                    // meter would never move.
+                                    && resolve_committed_species(
+                                        species.as_deref(),
+                                        &tile_composition,
+                                        &flora,
+                                        next_key,
+                                    )
+                                    .is_ok();
+                                // The meter the quoted rung would fill — the twin of
+                                // `advance_cultivation`'s own verb dispatch over the two plant
+                                // meters.
+                                let banked = match next.verb_improvement() {
+                                    Some(Improvement::Sow) => patch.field_progress,
+                                    _ => patch.cultivation_progress,
+                                };
+                                ladder.projected_build_turns(
+                                    next,
+                                    // A patch is a patch: the ladder's only per-source cost
+                                    // multiplier is a species' `taming_cost_multiplier`, and a plant
+                                    // has no species.
+                                    RUNG_COST_UNSCALED,
+                                    banked,
+                                    *floor,
+                                    workers,
+                                    crew_build_work_per_worker,
+                                    eligible,
+                                )
+                            });
                     }
                     // **The MATERIAL account of the same take** (`docs/plan_crafting_and_materials.md`
                     // §2) — the bast, boll and stem in what the crew carried off the patch, and since
@@ -1918,6 +1990,53 @@ pub fn advance_labor_allocation(
                                 )),
                             ));
                         }
+                    }
+                    // **THE PROJECTION — the animal twin of the Forage arm's** (see there for why a
+                    // `-1` on an unstarted source is the defect, and `penUpkeep`'s precedent). Quoted
+                    // against `herd_rung_key(..).above()` at this crew, floor and kit, from the work
+                    // already banked on that rung; `None` at the top of the ladder (a penned herd has
+                    // nothing left to build — and never reaches here, the tend branch returns first).
+                    if improvement.is_none() {
+                        herd.build_turns_remaining =
+                            fauna::herd_rung_key(herd).above().and_then(|next_key| {
+                                let next = ladder.rung(next_key);
+                                // Each rung's own gates, as `validate_tame` / `validate_corral` state
+                                // them — including the ownership terms the live arms leave to
+                                // `accrue_domestication` / `accrue_corral`, because a quote for a herd
+                                // another people are taming is a job this faction cannot take.
+                                let (gated, banked, cost_multiplier) = match next.verb_improvement()
+                                {
+                                    Some(Improvement::Corral) => (
+                                        herd.can_pen()
+                                            && herd.is_domesticated()
+                                            && herd.owner == Some(faction),
+                                        herd.corral_progress,
+                                        // Penning is a flat job for every species — a fence is a
+                                        // fence; only taming varies.
+                                        RUNG_COST_UNSCALED,
+                                    ),
+                                    _ => (
+                                        herd.can_domesticate()
+                                            && working_the_herd
+                                            && herd.owner.is_none_or(|owner| owner == faction),
+                                        herd.domestication_progress,
+                                        fauna.taming_cost_multiplier_for(&herd.species),
+                                    ),
+                                };
+                                let eligible = gated
+                                    && next.unlock_discovery_id().is_none_or(|knowledge| {
+                                        knows(&discovery, faction, knowledge, knowledge_threshold)
+                                    });
+                                ladder.projected_build_turns(
+                                    next,
+                                    cost_multiplier,
+                                    banked,
+                                    *floor,
+                                    workers,
+                                    crew_build_work_per_worker,
+                                    eligible,
+                                )
+                            });
                     }
                     if provisions > scalar_zero() {
                         cohort.stores.add(FOOD, provisions);

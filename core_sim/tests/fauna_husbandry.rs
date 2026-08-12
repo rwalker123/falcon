@@ -774,6 +774,53 @@ fn taming_is_a_per_species_cost_on_the_shared_rung() {
     );
 }
 
+/// **AN UNTAMED HERD QUOTES THE TAME IT WOULD TAKE ON, AND DOUBLING THE CREW HALVES THE QUOTE** —
+/// `buildTurnsRemaining` is a *projection*, not "`-1` because nothing is being built"
+/// (`docs/plan_unit_costed_work.md` §11).
+///
+/// A compose sheet is by definition looking at a herd nobody has started taming, so a sentinel there
+/// withholds the readout at the one moment it drives the decision. It is the same defect, and the
+/// same remedy, as `HerdTelemetryState.penUpkeep` projecting an unpenned herd's running cost.
+///
+/// The halving is the arc's thesis stated directly — add hands and watch the number fall — and is
+/// asserted as a **relation** rather than against turn literals, because turns are an output of the
+/// crew now. `None` is pinned beside it for a faction that has not learned Herding: a projection must
+/// never quote a rung `validate_tame` would refuse.
+#[test]
+fn an_untamed_herd_quotes_the_tame_it_would_take_on_and_the_quote_halves_with_the_crew() {
+    /// Both runs staff at or above the fixture herd's keeper requirement, so neither is shedding —
+    /// the only thing that differs between them is how many hands are on the job.
+    const SMALL_CREW: u32 = 10;
+
+    let projection = |keepers: u32, herding: bool| -> Option<u32> {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        if herding {
+            grant_herding(&mut app);
+        }
+        // No improvement in flight: this crew is hunting the herd, and deciding.
+        spawn_crew_of(&mut app, &id, MSY_BIOMASS_FRACTION, None, keepers);
+        run_turns_with_hunt(&mut app, 1);
+        herd_of(&app, &id).build_turns_remaining
+    };
+
+    let quoted =
+        projection(SMALL_CREW, true).expect("a wild herd with a crew on it quotes its Tame");
+    let doubled = projection(SMALL_CREW * 2, true).expect("a bigger crew is still quotable");
+    assert_eq!(
+        doubled,
+        quoted.div_ceil(2),
+        "twice the keepers, half the turns: {quoted} at {SMALL_CREW}, {doubled} at {}",
+        SMALL_CREW * 2
+    );
+
+    assert_eq!(
+        projection(SMALL_CREW, false),
+        None,
+        "a faction that has not learned Herding is quoted no Tame at all"
+    );
+}
+
 /// **A BIGGER KEEPER CREW TAMES MATERIALLY FASTER, and that is the arc's own claim on the animal
 /// web** (`docs/plan_unit_costed_work.md` §1.2). Both animal rungs declare `crew_needed: null`, so
 /// before improvements were priced in work they were not merely uncapped but **crew-BLIND**: a Tame

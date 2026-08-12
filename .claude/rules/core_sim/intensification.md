@@ -213,6 +213,12 @@ the whole reason the dials moved out of `labor_config`/`fauna_config` and into t
   work)` lives, so the wire's `buildTurnsRemaining` cannot drift from the meter it describes. `None`
   means **no estimate** — the job is paid for, or the crew produced nothing and the build is
   *stalled*, which has no finite answer.
+- **`LadderConfig::projected_build_turns` — the same question asked of a rung nobody has started.**
+  It assembles exactly the four calls the in-flight stamp makes (`build_cost` →
+  `build_work_from_gear` → `effective_build_cost` → `build_accrual`, then `build_turns_remaining`)
+  against a stated `banked` and the caller's composed `eligible`, so a quote for an unstarted job
+  cannot be arithmetic the running build would disagree with. It is what makes `buildTurnsRemaining`
+  a **projection** rather than a `-1` — see "The build on the wire".
 - **`effective_build_cost` — what the CREW BROUGHT** (issue #515, `equipment.md` → "The build
   axis"). `intensification::build_work_from_gear` sums `EquipmentConfig::build_work_per_worker` over
   the crew through the coverage seam, and the ladder subtracts it from the job:
@@ -536,7 +542,7 @@ Appended (append-only) on both tables:
 |---|---|
 | `cultivationWorkDone` / `cultivationWorkCost`, `fieldWorkDone` / `fieldWorkCost` | the plant meters in **work units**, and what each job costs |
 | `tameWorkDone` / `tameWorkCost`, `corralWorkDone` / `corralWorkCost` | the animal pair, the Tame carrying the species' own cost multiplier |
-| `buildTurnsRemaining` | how many more turns at the crew, floor and kit that worked this source **this turn** |
+| `buildTurnsRemaining` | how many more turns at the crew, floor and kit that worked this source **this turn** — and, with no build in flight, the same question asked of the rung it would climb **next** |
 | `buildWorkFromGear` | what that crew's **tools** took off the job, in work units — the `t` above |
 
 - **`workCost` is the LADDER's price, not the source's stamped one.** It is resolved at capture off
@@ -548,12 +554,53 @@ Appended (append-only) on both tables:
   that does not move under the crew's kit — and the estimate beside it already reflects the tooled
   bar. `0` = no build in flight, or nothing in the crew's hands that helps, which is every **plant**
   build today (issue #539).
-- **`buildTurnsRemaining` is `-1` for NO ESTIMATE** (`sim_schema::NO_BUILD_TURNS_ESTIMATE`): no build
-  in flight, or the crew's output is zero and the build is **stalled**, which has no finite answer.
-  The client cannot compute it — it holds neither the crew's output, nor the floor multiplier, nor the
-  kit — so the sim answers. It is stamped by the labor arm (the only place all three are in hand) as
-  transient per-turn scratch on `tended_this_turn`'s cycle, and cleared by the next turn's Logistics
-  decay pass so an abandoned build stops publishing a finish date.
+- **`buildTurnsRemaining` IS A PROJECTION, never `-1`-because-nothing-is-being-built.** It is stamped
+  by the labor arm (the only place the crew, the floor and the kit are all in hand) as transient
+  per-turn scratch on `tended_this_turn`'s cycle, and cleared by the next turn's Logistics decay pass
+  so an abandoned build stops publishing a finish date. With a verb in flight it is
+  `build_turns_remaining` counting down the running meter; with **none** it is
+  `LadderConfig::projected_build_turns` on the rung the source would climb next, at that same crew,
+  floor and kit, from the work already banked on that rung.
+  > **The compose sheet is BY DEFINITION looking at a source nobody has started**, so a sentinel there
+  > withheld the one readout that makes this arc legible — *turns are an output; add hands and watch
+  > them fall* — at the exact moment the player is deciding. That is the same defect
+  > `HerdTelemetryState.penUpkeep` already fixed on the animal web (`husbandry.md`: *"a **projection**
+  > for an unpenned herd, the **live** demand for a penned one… always meaningful, never
+  > `0`-because-unpenned"*), and it takes the same remedy. The client still cannot compute it — it
+  > holds neither the crew's output, nor the floor multiplier, nor the kit's coverage-weighted
+  > contribution — so the sim answers.
+- **The projection resolves the next rung through the ladder's OWN order** — `RungKey::above`, an
+  exhaustive match, composed onto the two seams that already answer *where does this source stand*
+  (`forage::patch_rung_key`, `fauna::herd_rung_key`, the key-shaped halves of `patch_rung`/`herd_rung`).
+  A new rung fails to compile until someone states its place in the climb, and
+  `the_coded_climb_matches_the_shipped_ladders_own_order` pins the coded climb against the shipped
+  records' `order` **in both directions**, so a `above` that answered `None` for everything — which
+  would silently turn every projection back into "no estimate" — cannot pass.
+- **A PROJECTION MUST NEVER QUOTE A RUNG THE COMMAND WOULD REFUSE.** Turns for a Sow on ground
+  `validate_sow` rejects is the `sowSiteRefusal` failure mode in a new costume, so the quote carries
+  the gates the verb would be judged by: the rung's `unlock_knowledge`, its `site_requirement` (through
+  the same `rung_site_refusal` closure the running `Sow` is gated by), the tile's basket through
+  `resolve_committed_species`, the species' `ceiling_required`, and **ownership** — which the live
+  arms leave to `accrue_cultivation`/`accrue_domestication`, because a quote for a source another
+  people are improving is a job this faction cannot take. Where it cannot answer a term it publishes
+  `-1`: under-promising beats quoting a job the gates would refuse.
+  - **It is the RUNG-2 arms that carry the work predicate**, exactly as the live ones do — rung 3's
+    `eligible` omits `crew_is_working_the_source` on both webs (`accrue_field`'s reason: bare ground
+    stands below every floor), so requiring escapement room would make the create-from-nothing rung
+    unquotable.
+- **`-1` now means there is genuinely NO ANSWER** (`sim_schema::NO_BUILD_TURNS_ESTIMATE`): the source
+  is at the top of its ladder (a Field, a penned herd), one of the gates above refuses it for this
+  faction, **no crew is working the source** (the labor arm never visits it, so nothing is stamped), or
+  the crew's output is zero and a running build is **stalled** — a stall has no finite answer, and a
+  huge number would read as a promise.
+- **`workCost` and the turns must name ONE rung**, because they are read as a pair (*"50 work, ≈25
+  turns"*). Both rungs' costs ship per source, so the client picks: the verb on
+  `LaborAssignment.improvement`, or — when that is empty — the rung above the one the source's own
+  published state says it stands on (`isCultivated`/`isField`, `domestication`/`corralled`). That is
+  the same rung the projection resolved, derived from the same wire fields.
+- **The projection reads the work already BANKED on that rung**, not a fresh `0`. On an unstarted
+  source the two coincide; on one whose build the player abandoned, quoting the whole job again would
+  contradict the `workDone`/`workCost` pair published beside it.
 
 See Also: "Cultivation (Intensification Phase 1a)" (the plant rung 2), "Corral (Intensification Rung 1c)"
 (the animal rung 3), "The husbandry yield ladder" (what each rung *pays*, which this arc does **not**

@@ -627,8 +627,12 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     .rung(RungKey::AnimalPen)
                     .build_cost(RUNG_COST_UNSCALED)
                     .unwrap_or(0.0),
-                // **The turns estimate the labor arm stamped this turn** — `-1` where there is none
-                // (no build in flight, or a stalled one). The client cannot derive it.
+                // **The turns estimate the labor arm stamped this turn** — the running build's, or,
+                // when nothing is being built, the **projection** for the rung this herd would climb
+                // next, so the pair reads "50 work, ≈13 turns" before the player commits. Which
+                // `*WorkCost` it belongs beside is the assignment's own `improvement`, or the next
+                // rung up when that is empty. `-1` only where there is genuinely no answer (penned,
+                // a gate refuses, or a stalled build). The client can derive none of it.
                 build_turns_remaining: herd
                     .and_then(|herd| herd.build_turns_remaining)
                     .map_or(NO_BUILD_TURNS_ESTIMATE, |turns| turns as i32),
@@ -821,7 +825,12 @@ pub(crate) fn snapshot_forage_patches(
                     .rung(RungKey::PlantField)
                     .build_cost(RUNG_COST_UNSCALED)
                     .unwrap_or(0.0),
-                // **The turns estimate the labor arm stamped this turn** — `-1` where there is none.
+                // **The turns estimate the labor arm stamped this turn** — the running build's, or,
+                // when nothing is being built, the **projection** for the rung this patch would climb
+                // next, so the compose sheet can quote the job before the player commits. Read it
+                // beside the `*WorkCost` for the assignment's own `improvement`, or for the next rung
+                // up when that is empty. `-1` only where there is genuinely no answer (a Field, a
+                // gate that refuses, or a stalled build).
                 build_turns_remaining: patch
                     .build_turns_remaining
                     .map_or(NO_BUILD_TURNS_ESTIMATE, |turns| turns as i32),

@@ -504,6 +504,11 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
     **gross** yield (a preview quoting a number the player will never bank). At or below `K/2` the
     projected `corralYield` is honestly `0` (escapement — the pen pays nothing until the herd
     rebuilds).
+    > **`buildTurnsRemaining` is the same rule applied to TIME.** It publishes the turns a running
+    > Tame/Corral still needs, and — with nothing being built — what the rung this herd would climb
+    > next would take the crew currently working it. `-1` only where there is genuinely no answer
+    > (already penned, a gate refuses, no crew, or a stalled build). `intensification.md` → "The build
+    > on the wire" owns the seam, the gates it carries and which `*WorkCost` it belongs beside.
   - **`penFedFraction`** = last turn's fed fraction (`1.0` = fully fed, `< 1` = **starving** — the herd
     and its yield are shrinking, and it recovers when fed again).
   - **Demanded ≠ paid** (load-bearing): a starving pen demands more than it is paid, and

@@ -334,8 +334,18 @@ before this, i.e. map decoration rather than a live rule.
 **Test fixtures must now STATE their sites.** A patch seeded on bare nothing describes a world the sim
 cannot produce, and a fixture that omits the site makes its one worked tile unworkable and silently
 zeroes every yield under measurement. `server::tests::seed_gathering_site` and the `labor.rs` /
-`forage_field.rs` harnesses each declare theirs explicitly; an empty registry is a *valid* map (all
-barren), so no fallback could tell "no sites here" from "the fixture forgot".
+`forage_field.rs` / `forage_cultivation.rs` harnesses each declare theirs explicitly; an empty
+registry is a *valid* map (all barren), so no fallback could tell "no sites here" from "the fixture
+forgot".
+
+**A fixture that writes its `LaborAllocation` directly can stay siteless for a long time**, which is
+how `forage_cultivation.rs` did: the site rule was read only by the `assign_labor` / `cultivate`
+command path those fixtures bypass, and the Cultivate *accrual* carries no site term of its own. The
+`buildTurnsRemaining` **projection** reads it — a quote for a rung the command would refuse is the
+defect that field exists to avoid — so a build fixture without a stated site now measures a refusal
+rather than the rung. On a real map the term is inert for Cultivate, because rung 1 already demands a
+gathering site and a crew could not have been put on the tile otherwise; it bites only for `Sow`,
+whose fresh-water rule rung 1 does not carry.
 
 ## The `Sow` verb + the Field (Intensification rung 3) — the plant twin of the pen
 

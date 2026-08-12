@@ -19,11 +19,12 @@ use core_sim::{
     commit_yield_ratio, default_species_for_rung, scalar_from_f32, scalar_one, scalar_zero,
     spawn_initial_forage, spawn_initial_world, tile_flora_composition, tile_forage_capacity,
     wild_payoff, CommandEventLog, CultureManager, DiscoveryProgressLedger, EcologyPhase, FactionId,
-    FactionInventory, FaunaConfigHandle, FoodModuleTag, ForageRegistry, GenerationId,
-    GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, Improvement, LaborAllocation,
-    LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets,
-    MapPresetsHandle, MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    FactionInventory, FaunaConfigHandle, FoodModule, FoodModuleTag, FoodSiteEntry,
+    FoodSiteRegistry, ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap,
+    HerdRegistry, HerdTelemetry, Improvement, LaborAllocation, LaborAssignment, LaborConfigHandle,
+    LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause,
+    PopulationCohort, RungKey, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle,
     CULTIVATION_DISCOVERY_ID, FOOD, PER_WORKER_OUTPUT, RUNG_COST_UNSCALED,
 };
@@ -180,12 +181,38 @@ fn prime_thriving_patch(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
         patch.biomass = patch.carrying_capacity * STOCKED_STANDING_CROP;
         assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
     }
+    declare_gathering_site(app, coord);
     let entity = app
         .world
         .resource::<TileRegistry>()
         .index(coord.x, coord.y)
         .expect("tile entity resolves");
     (entity, coord)
+}
+
+/// **STATE THE FIXTURE'S GATHERING SITE.** Every plant rung carries
+/// `RungSiteRequirement::requires_gathering_site`, so a patch seeded on ground the curated
+/// `FoodSiteRegistry` does not name is ground no band may legally be put to work on — a world the sim
+/// cannot produce (`.claude/rules/core_sim/cultivation.md` → "Gathering is SITE-BOUND").
+///
+/// It went unnoticed here while the only reader of the rule was the `assign_labor` / `cultivate`
+/// command path, which these fixtures bypass by writing the `LaborAllocation` directly. The
+/// **projection** reads it — a quote for a rung the command would refuse is the defect it exists to
+/// avoid — so the fixture has to say what the map would have said.
+fn declare_gathering_site(app: &mut App, coord: UVec2) {
+    let mut sites = app.world.resource_mut::<FoodSiteRegistry>();
+    if sites.is_site(coord) {
+        return;
+    }
+    let module = FoodModule::SavannaGrassland;
+    let mut entries = sites.sites().to_vec();
+    entries.push(FoodSiteEntry {
+        position: coord,
+        module,
+        kind: module.site_kind(),
+        seasonal_weight: 1.0,
+    });
+    sites.set_sites(entries);
 }
 
 /// Check or clear the **improvement** on a band's (single) Forage assignment — what the client's
@@ -1252,8 +1279,8 @@ fn a_running_build_demands_at_least_its_crew() {
 /// **THE TURNS ESTIMATE IS ANSWERED BY THE SIM, AND IT FALLS WHEN HANDS ARE ADDED** — the
 /// player-facing payoff of pricing improvements in work (`docs/plan_unit_costed_work.md` §8). The
 /// client cannot derive it: it holds neither the crew's output, nor the floor multiplier, nor the
-/// kit. `None` is asserted positively beside it — the "no estimate" answer a source with no build in
-/// flight gives, which the wire renders as `-1`.
+/// kit. `None` is asserted positively beside it — the "no estimate" answer a source whose faction has
+/// not learned the next rung's knowledge gives, which the wire renders as `-1`.
 #[test]
 fn the_build_estimate_is_the_sims_own_and_falls_as_hands_are_added() {
     let estimate = |workers: u32| -> Option<u32> {
@@ -1277,19 +1304,84 @@ fn the_build_estimate_is_the_sims_own_and_falls_as_hands_are_added() {
         "adding hands shortens the same fixed job: {fully} at a crew of {crew} vs {lightly} at one"
     );
 
-    // A patch nobody is building on has no estimate to give.
-    let mut idle = spawn_world();
-    let (tile, coord) = prime_thriving_patch(&mut idle);
-    spawn_forager(&mut idle, tile, coord, None);
-    run_turns_with_forage(&mut idle, 1);
+    // A crew that has not learned Cultivation cannot be quoted the rung above them — the projection
+    // refuses exactly where `validate_cultivate` would.
+    let mut ungated = spawn_world();
+    let (tile, coord) = prime_thriving_patch(&mut ungated);
+    spawn_forager(&mut ungated, tile, coord, None);
+    run_turns_with_forage(&mut ungated, 1);
     assert_eq!(
-        idle.world
+        ungated
+            .world
             .resource::<ForageRegistry>()
             .patch(coord)
             .expect("patch")
             .build_turns_remaining,
         None,
-        "a source with no build in flight quotes nothing"
+        "a rung the faction's knowledge refuses is quoted no turns at all"
+    );
+}
+
+/// **AN UNSTARTED SOURCE QUOTES THE JOB IT WOULD TAKE ON, AND DOUBLING THE CREW HALVES IT** —
+/// `buildTurnsRemaining` is a *projection*, not "`-1` because nothing is being built"
+/// (`docs/plan_unit_costed_work.md` §11).
+///
+/// That is the whole thesis of pricing improvements in work, and it has to be legible at the one
+/// moment it drives a decision: the compose sheet is by definition looking at a patch nobody has
+/// started. Same defect class, and same remedy, as `HerdTelemetryState.penUpkeep` projecting an
+/// unpenned herd's running cost.
+///
+/// The halving is asserted as a **relation**, because the quote must track the crew rather than any
+/// particular pair of literals — and the floor and kit are held equal across the two runs, so the
+/// crew is the only thing that moved.
+#[test]
+fn an_unstarted_patch_quotes_the_next_rungs_job_and_the_quote_halves_with_the_crew() {
+    let projection = |workers: u32| -> Option<u32> {
+        let mut app = spawn_world();
+        let (tile, coord) = prime_thriving_patch(&mut app);
+        grant_cultivation_knowledge(&mut app, FactionId(0));
+        // No improvement in flight: this crew is gathering, and deciding.
+        spawn_forager_of(&mut app, tile, coord, None, workers);
+        run_turns_with_forage(&mut app, 1);
+        app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .expect("patch")
+            .build_turns_remaining
+    };
+
+    let crew = build_crew(&spawn_world());
+    let quoted =
+        projection(crew).expect("an unstarted patch with a crew on it quotes the next rung");
+    assert_eq!(
+        quoted,
+        turns_to_prepare(&spawn_world()),
+        "the projection is the rung's whole job at this crew — the same number a started build \
+         counts down from"
+    );
+
+    let doubled = projection(crew * 2).expect("a bigger crew is still quotable");
+    assert_eq!(
+        doubled,
+        quoted.div_ceil(2),
+        "twice the hands, half the turns: {quoted} at a crew of {crew}, {doubled} at {}",
+        crew * 2
+    );
+
+    // And a patch nobody is working is quoted nothing — there is no crew to quote at.
+    let mut unworked = spawn_world();
+    let (_, coord) = prime_thriving_patch(&mut unworked);
+    grant_cultivation_knowledge(&mut unworked, FactionId(0));
+    run_turns_with_forage(&mut unworked, 1);
+    assert_eq!(
+        unworked
+            .world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .expect("patch")
+            .build_turns_remaining,
+        None,
+        "no crew, no answer"
     );
 }
 

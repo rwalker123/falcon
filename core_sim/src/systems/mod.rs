@@ -48,9 +48,9 @@ use crate::{
     forage::{
         field_fodder, field_provisions, forage_escapement_ceiling, forage_per_worker_biomass,
         forage_provisions, forage_take, managed_per_worker_fodder, managed_per_worker_yield,
-        patch_ecology, patch_provisions_per_biomass, patch_rung, resolve_committed_species,
-        rung_site_refusal, tended_take_fodder, tile_flora_composition, tile_forage_capacity,
-        tile_is_fresh_watered, ForagePatch, ForageRegistry, NO_FORAGE_SEASON,
+        patch_ecology, patch_provisions_per_biomass, patch_rung, patch_rung_key,
+        resolve_committed_species, rung_site_refusal, tended_take_fodder, tile_flora_composition,
+        tile_forage_capacity, tile_is_fresh_watered, ForagePatch, ForageRegistry, NO_FORAGE_SEASON,
     },
     generations::GenerationRegistry,
     heightfield::{build_elevation_field, ElevationField, DEFAULT_SEA_LEVEL},

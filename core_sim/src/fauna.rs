@@ -409,16 +409,23 @@ pub struct Herd {
     /// **What the in-flight fence ring costs, in work units** — the `animal:pen` rung's own
     /// `work_cost`, stamped when the ring is worked. Reset with the meter when a ring completes.
     pub pen_extend_cost: f32,
-    /// **How many more turns this herd's running build needs, at the crew, floor and kit that worked
-    /// it this turn** — [`crate::intensification::build_turns_remaining`], stamped by the labor arm
-    /// (Tame, Corral or a fence ring alike) and published as
+    /// **How many more turns a build on this herd needs, at the crew, floor and kit that worked it
+    /// this turn** — stamped by the labor arm (Tame or Corral) and published as
     /// `HerdTelemetryState.buildTurnsRemaining`.
     ///
-    /// `None` = **no estimate**: no build is in flight, or the crew produced nothing and the build is
-    /// stalled. The client cannot compute it (it holds neither the crew's output, nor the floor
-    /// multiplier, nor the kit), so the sim answers — the `penFeedUpkeep` discipline. Transient
-    /// per-turn scratch on `tamed_this_turn`'s cycle: written in Population, cleared by
-    /// `advance_husbandry` the next turn.
+    /// **It is a PROJECTION when nothing is being built** — the exact rule
+    /// [`Self::pen_fed_fraction`]'s neighbour `penUpkeep` already follows, and for the same reason: the
+    /// pre-commit Corral row is by definition looking at a herd nobody is penning yet. With a verb in
+    /// flight it is [`crate::intensification::build_turns_remaining`] on the running meter; with none
+    /// it is [`crate::intensification::LadderConfig::projected_build_turns`] on the rung this herd
+    /// would climb next.
+    ///
+    /// `None` = **no estimate**, and it means there is genuinely no answer: the herd is penned (the
+    /// top of the animal ladder), the next rung's own ceiling/knowledge/ownership gates refuse it for
+    /// this faction, or the crew produced nothing and a running build is stalled. The client cannot
+    /// compute any of it (it holds neither the crew's output, nor the floor multiplier, nor the kit),
+    /// so the sim answers — the `penFeedUpkeep` discipline. Transient per-turn scratch on
+    /// `tamed_this_turn`'s cycle: written in Population, cleared by `advance_husbandry` the next turn.
     pub build_turns_remaining: Option<u32>,
     /// **What the keepers' TOOLS took off this herd's running build**, in work units — the `t` in
     /// `effective_cost = max(cost × min_build_fraction, cost − t)`
@@ -3074,13 +3081,21 @@ fn owner_camp_tiles(
 /// Hunt arm of `advance_labor_allocation` (**which knowledge this herd's rung teaches** —
 /// `RungDef::knowledge_earned`, slice 4). The plant twin is `forage::patch_rung`.
 pub(crate) fn herd_rung<'a>(herd: &Herd, ladder: &'a LadderConfig) -> &'a RungDef {
-    ladder.rung(if herd.is_corralled() {
+    ladder.rung(herd_rung_key(herd))
+}
+
+/// **[`herd_rung`] without the ladder** — the same reading answered as the key, for the callers that
+/// walk the ladder from it ([`RungKey::above`]) rather than read a record's dials. The plant twin is
+/// `forage::patch_rung_key`, and it exists for the same reason: the "penned → pen, tamed → pastoral,
+/// else wild" test has exactly one home.
+pub(crate) fn herd_rung_key(herd: &Herd) -> RungKey {
+    if herd.is_corralled() {
         RungKey::AnimalPen
     } else if herd.is_domesticated() {
         RungKey::AnimalPastoral
     } else {
         RungKey::AnimalWild
-    })
+    }
 }
 
 /// **The movement primitive a herd actually runs** — the herd's rung movement ([`herd_rung`]),
