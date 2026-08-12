@@ -496,6 +496,7 @@ fn create_herds<'a>(
                 corralWorkCost: herd.corral_work_cost,
                 buildTurnsRemaining: herd.build_turns_remaining,
                 buildWorkFromGear: herd.build_work_from_gear,
+                buildWorkPerWorkerTurn: herd.build_work_per_worker_turn,
             },
         );
         entries.push(entry);
@@ -582,6 +583,7 @@ fn create_forage_patches<'a>(
                 fieldWorkCost: patch.field_work_cost,
                 buildTurnsRemaining: patch.build_turns_remaining,
                 buildWorkFromGear: patch.build_work_from_gear,
+                buildWorkPerWorkerTurn: patch.build_work_per_worker_turn,
             },
         );
         entries.push(entry);

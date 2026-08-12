@@ -209,17 +209,29 @@ pub fn learn_multiplier(floor: f32) -> f32 {
     (floor / crate::fauna::MSY_BIOMASS_FRACTION).max(0.0)
 }
 
-/// **WHAT A CREW OF `workers` PRODUCES IN ONE TURN**, before the floor and the kit scale it — the
-/// first term of [`RungDef::build_accrual`].
+/// **WHAT ONE WORKER BANKS ON A BUILD IN ONE TURN AT THE FOOD PEAK**, before the floor and the kit
+/// scale it — the per-worker half of [`crew_work_output`], and **the sum of terms** the model is
+/// written as (`docs/plan_unit_costed_work.md` §5).
 ///
-/// **Written as a per-worker SUM OF TERMS with exactly one term today**, and that shape is
-/// deliberate rather than premature: `docs/plan_unit_costed_work.md` §5 rules that knowledge does
-/// **not** feed throughput (it reaches it through the tools it unlocks, which §6 prices), so there is
-/// nothing to add here yet — but a future buff mechanic needs a place to land that is not a
-/// re-inversion of the model.
+/// **Exactly one term today**, and that shape is deliberate rather than premature: §5 rules that
+/// knowledge does **not** feed throughput (it reaches it through the tools it unlocks, which §6
+/// prices), so there is nothing to add here yet — but a future buff mechanic needs a place to land
+/// that is not a re-inversion of the model.
+///
+/// **It is a function rather than [`PER_WORKER_OUTPUT`] read directly, because it is PUBLISHED**
+/// (`ForagePatchState.buildWorkPerWorkerTurn` / `HerdTelemetryState.buildWorkPerWorkerTurn`). The
+/// compose sheet evaluates the turn estimate against a crew the player is *proposing*, so it needs
+/// this term rather than the sim's answer for the committed crew — and the day a second term lands
+/// here, the client tracks it with no change of its own.
+pub fn build_work_per_worker_turn() -> f32 {
+    PER_WORKER_OUTPUT
+}
+
+/// **WHAT A CREW OF `workers` PRODUCES IN ONE TURN**, before the floor and the kit scale it — the
+/// first term of [`RungDef::build_accrual`], and [`build_work_per_worker_turn`] summed over the
+/// crew.
 fn crew_work_output(workers: u32) -> f32 {
-    let per_worker = PER_WORKER_OUTPUT;
-    workers as f32 * per_worker
+    workers as f32 * build_work_per_worker_turn()
 }
 
 /// **WHAT THE CREW'S TOOLS TAKE OFF THE JOB** — `Σ over the crew`, which

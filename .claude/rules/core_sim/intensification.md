@@ -544,6 +544,7 @@ Appended (append-only) on both tables:
 | `tameWorkDone` / `tameWorkCost`, `corralWorkDone` / `corralWorkCost` | the animal pair, the Tame carrying the species' own cost multiplier |
 | `buildTurnsRemaining` | how many more turns at the crew, floor and kit that worked this source **this turn** — and, with no build in flight, the same question asked of the rung it would climb **next** |
 | `buildWorkFromGear` | what that crew's **tools** took off the job, in work units — the `t` above |
+| `buildWorkPerWorkerTurn` | what **one** worker banks per turn on this source at the food peak, before the floor multiplier and before gear — `intensification::build_work_per_worker_turn`, today `PER_WORKER_OUTPUT` |
 
 - **`workCost` is the LADDER's price, not the source's stamped one.** It is resolved at capture off
   the rung (and, for a Tame, the species) and published **whether or not a build is in flight** — the
@@ -554,6 +555,34 @@ Appended (append-only) on both tables:
   that does not move under the crew's kit — and the estimate beside it already reflects the tooled
   bar. `0` = no build in flight, or nothing in the crew's hands that helps, which is every **plant**
   build today (issue #539).
+- **`buildWorkPerWorkerTurn` IS THE CREW-OUTPUT TERM OF THE TURN ESTIMATE'S CLOSED FORM**, and it
+  exists because `buildTurnsRemaining` beside it answers for the **committed** crew: a compose sheet
+  drags a crew stepper and needs the answer for a crew the player is *proposing*.
+
+  ```text
+  gear(w)  = min(w, buildWorkSaturatingCrew) × buildWorkPerWorker      ← the band's kitTiers row
+  turns(w) = ceil((workCost − workDone − gear(w)) / (w × buildWorkPerWorkerTurn × floor / foodPeak))
+  ```
+
+  - **The GEAR pair rides `PopulationCohortState.kitTiers[]`, not a source row**, because both of its
+    terms — units held, and each unit's reach — are facts about the **band's ledger**. That is what
+    lets a rung nobody has started be quoted at all, and what makes the sheet's **kit picker**
+    re-price the estimate: picking a different kit reads a different row. The gear term
+    saturates because coverage arms a **prefix** of a party (`EquipmentConfig::build_work_saturating_crew`),
+    so an eleventh keeper with ten sets of hurdles between them takes nothing further off the job.
+  - **The per-worker term is published rather than left a client `1.0`** because
+    `intensification::build_work_per_worker_turn` is deliberately a **sum of terms** with exactly one
+    term today (`docs/plan_unit_costed_work.md` §5) — the day a buff mechanic adds a second, the
+    client tracks it with no change of its own.
+  - **`buildTurnsRemaining` is unchanged and still required.** The tile card and the herd drawer have
+    no stepper and go on rendering it; the sheet draws the curve, the card states the answer. At the
+    committed crew and floor the two agree **exactly**, and so do the gear term and
+    `buildWorkFromGear` — which is the whole safety argument for letting the client evaluate any of
+    it. Pinned on the exported snapshot by `core_sim/tests/build_turns_closed_form.rs`, in both
+    places, across the saturated and the linear gear regime.
+  - **The food peak is NOT published.** The client holds `SourceForecast.FLOOR_FOOD_PEAK`, which must
+    equal `fauna::MSY_BIOMASS_FRACTION` (`learn_multiplier(floor) = floor / MSY_BIOMASS_FRACTION`);
+    the two are separate literals in separate languages and the same test pins them together.
 - **`buildTurnsRemaining` IS A PROJECTION, never `-1`-because-nothing-is-being-built.** It is stamped
   by the labor arm (the only place the crew, the floor and the kit are all in hand) as transient
   per-turn scratch on `tended_this_turn`'s cycle, and cleared by the next turn's Logistics decay pass

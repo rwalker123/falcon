@@ -85,6 +85,20 @@ const KIT_SCOUT_VANTAGE_KEY := "scout_vantage_range"
 ## HERE is decide applicability — see `kit_offer`.
 const KIT_BUILD_WORK_KEY := "build_work_per_worker"
 
+## **HOW MANY OF THIS BAND'S WORKERS THIS KIT CAN ACTUALLY EQUIP FOR A BUILD** — the head count at or
+## above which extra hands take no further work off a job. `0` (the neutral) means the kit carries
+## nothing live that helps, which is every row but the handling gear's on the shipped roster.
+##
+## **IT IS THE OTHER HALF OF THE AXIS ABOVE, and the pair is what makes the gear term a closed form**
+## a compose sheet can evaluate against a crew the player is PROPOSING: coverage arms a prefix of the
+## party, so `gear(w) = min(w, this) × the per-worker worth` — piecewise-linear and SATURATING. Both
+## facts behind it (the units held and each unit's reach) are the BAND's ledger, which is why the pair
+## rides this row rather than a worked source: a rung nobody has started still has a quote, and
+## picking another kit re-prices the whole estimate. `build_work_from_gear` on the SOURCE is the
+## resolved contribution for the crew that worked it this turn — a different question, and not one a
+## stepper can move.
+const KIT_BUILD_SATURATING_CREW_KEY := "build_work_saturating_crew"
+
 ## **WHAT THE KIT DOES TO THE QUARRY'S RETREAT** — a multiplier on the species' own wariness, so the
 ## SPECIES decides what a noisy approach costs (`equipment.md`). Neutral at `1.0`; a trap ships `0`.
 const KIT_DISPERSION_KEY := "dispersion"
@@ -883,6 +897,28 @@ static func role_gear(kits: Array, kit: Dictionary, band: Dictionary, job: Strin
 const ROLE_GEAR_AXIS_KEY := "axis"
 const ROLE_GEAR_TIER_KEY := "tier"
 const ROLE_GEAR_STATED_KEY := "stated"
+
+## **WHAT THIS KIT TAKES OFF A BUILD FOR THIS BAND** — the two halves of the turn estimate's gear
+## term, as `SourceForecast.BUILD_GEAR_PER_WORKER` / `BUILD_GEAR_SATURATING_CREW`, so a caller carries
+## one object rather than two loose floats it could hand over in the wrong order.
+##
+## **BOTH COME OFF THE BAND'S OWN RESOLVED ROW, never the roster's fresh tier** — a kit whose tool has
+## worn out contributes nothing and holds nobody, and quoting the roster there would promise a build
+## that lands sooner than it can. `band_kit_tiers` is the one reader of that row, which is what keeps
+## this and the band panel's gear line from coming from two different ones.
+##
+## `{}` for a kit this band publishes no row for, which `SourceForecast.build_turns_at` reads as the
+## ungeared case — the same direction `TIER_ABSENT` errs in, and the honest answer for a wire this
+## client cannot read.
+static func build_gear(band: Dictionary, kit_id: String) -> Dictionary:
+	var resolved := band_kit_tiers(band, kit_id)
+	if resolved.is_empty():
+		return {}
+	return {
+		SourceForecast.BUILD_GEAR_PER_WORKER: float(resolved.get(KIT_BUILD_WORK_KEY, TIER_ABSENT)),
+		SourceForecast.BUILD_GEAR_SATURATING_CREW: int(resolved.get(
+			KIT_BUILD_SATURATING_CREW_KEY, SourceForecast.BUILD_CREW_NONE)),
+	}
 
 ## **DOES THIS KIT SUPPLY THIS AXIS AT ALL?** — a kit supplies an axis exactly when its FRESH tier
 ## there beats the roster's bare-handed one. It answers an APPLICABILITY question only — *"can this

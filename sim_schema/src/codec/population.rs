@@ -312,6 +312,7 @@ fn create_populations<'a>(
                                 scoutVantageRange: tiers.scout_vantage_range,
                                 buildRate: tiers.build_rate,
                                 buildWorkPerWorker: tiers.build_work_per_worker,
+                                buildWorkSaturatingCrew: tiers.build_work_saturating_crew,
                             },
                         )
                     })

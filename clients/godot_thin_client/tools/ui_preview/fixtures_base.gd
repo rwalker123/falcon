@@ -138,6 +138,13 @@ const BUILD_TURNS_REMAINING := 11
 ## real one — `husbandry_gear` ships 8.5 per equipped keeper — which is where that readout is judged.
 const PLANT_BUILD_WORK_FROM_GEAR := 0.0
 
+## **THE TERMS THE COMPOSE SHEET EVALUATES ITS OWN ESTIMATE FROM**, beside the sim's answer above.
+## The per-worker figure is `intensification::PER_WORKER_OUTPUT` — one worker-turn at the food peak is
+## one work unit, which is what makes the shipped 50 and 75 read as turn counts at a single hand — and
+## it is stated rather than assumed for the reason the wire publishes it: the sim writes worker output
+## as a sum of terms with one term today.
+const BUILD_WORK_PER_WORKER_TURN := 1.0
+
 ## Price a tile's two plant rungs in WORK, deriving each meter's `work_done` from the fraction the
 ## fixture already states — so a fixture that re-dials its progress cannot end up with a percentage
 ## and an absolute that disagree, which is the one thing this readout exists to make visible.
@@ -150,6 +157,7 @@ static func price_plant_build(tile: Dictionary, turns: int = BUILD_TURNS_REMAINI
 		float(tile.get("patch_field_progress", 0.0)) * PLANT_SOW_WORK_COST
 	tile["patch_build_turns_remaining"] = turns
 	tile["patch_build_work_from_gear"] = PLANT_BUILD_WORK_FROM_GEAR
+	tile["patch_build_work_per_worker_turn"] = BUILD_WORK_PER_WORKER_TURN
 	return tile
 
 static func food_tile_fixture() -> Dictionary:

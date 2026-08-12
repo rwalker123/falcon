@@ -505,6 +505,15 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 // number in these units would read as a rate on a field the client renders as one.
                 build_rate: sim_schema::RETIRED_BUILD_RATE,
                 build_work_per_worker: tiers.build_work_per_worker,
+                // **The gear term's other half** — how many of this band's workers this kit could
+                // actually equip for a build, out of what the band holds. Resolved **beside**
+                // `resolve_kit_tiers` rather than inside it, and deliberately: the tiers describe
+                // *what a kit grants a worker* and are quoted over a fresh ledger by
+                // `kit_roster_states`, where a unit count is not a fact about the kit at all. This
+                // is a fact about **this band's ledger**, so it is answered only here.
+                build_work_saturating_crew: kit_levers
+                    .config
+                    .build_work_saturating_crew(&choice, &kit),
             })
         })
         .collect();

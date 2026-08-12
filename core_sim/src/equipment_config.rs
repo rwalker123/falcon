@@ -73,6 +73,15 @@ use crate::intensification::NO_BUILD_GEAR;
 
 pub const BUILTIN_EQUIPMENT_CONFIG: &str = include_str!("data/equipment.json");
 
+/// **A kit that equips NOBODY for a build** — the answer
+/// [`EquipmentConfig::build_work_saturating_crew`] gives for a kit carrying nothing live that helps,
+/// and the published value on every row but the handling gear's today.
+///
+/// Named rather than a bare `0` because it is what makes the client's `min(workers, this) × worth`
+/// self-correcting: a kit that *declares* `BuildWork` and has worn every unit of it out publishes a
+/// positive worth beside a zero crew, and the product is correctly nothing.
+pub const NO_SATURATING_CREW: u32 = 0;
+
 /// **A stat a piece of equipment can set.** The variants are the JSON `stat` keys.
 ///
 /// **Which tier an effect declares is not free choice — it is one-home-per-fact showing through.**
@@ -1817,6 +1826,67 @@ impl EquipmentConfig {
         kit.best_declared(EquipmentStat::BuildWork, wear, self)
     }
 
+    /// **HOW MANY WORKERS THIS KIT CAN ACTUALLY EQUIP FOR A BUILD, out of what the band holds** —
+    /// the head count at or **above** which extra hands take no further work off a job, and the term
+    /// that turns a piecewise-linear resolution into the `min(linear, cap)` form a client can
+    /// evaluate against a *proposed* crew:
+    ///
+    /// ```text
+    /// gear(workers) = min(workers, build_work_saturating_crew) × build_work_per_worker
+    /// ```
+    ///
+    /// # Why a saturation point exists at all
+    ///
+    /// The gear contribution is `Σ over the crews (crew.workers × best_declared(crew's kit))`
+    /// ([`crate::intensification::build_work_from_gear`] over [`KitCoverage::weighted_rate`] × head
+    /// count). Each item covers a **prefix** of the party
+    /// (`min(live units × workers_per_unit, the people brought)`), so adding hands raises the total
+    /// **until every unit is in somebody's hands** and then raises it no further: an eleventh worker
+    /// with ten sets of hurdles between them contributes nothing.
+    ///
+    /// # It is a property of the KIT and the LEDGER — of no source and no crew
+    ///
+    /// Both terms — the units held and each unit's reach — are facts about what the band owns, so
+    /// this rides `PopulationCohortState.kitTiers[]` beside the per-worker worth it caps and is
+    /// answered **per offered kit**. A quote for a kit the player is *considering* therefore gets
+    /// that kit's own saturation point, and a source nobody is working still has one.
+    ///
+    /// # It counts the kit's BEST build tool
+    ///
+    /// [`Self::build_work_per_worker`] is the **maximum** of what the live items declare (a worker
+    /// uses the better tool; two do not compound), so the crew this answers for is the one covered
+    /// by the items declaring that best value. On the shipped roster exactly one item declares
+    /// `BuildWork` at all, so `min(w, this) × worth` **is** the coverage sum — pinned by
+    /// [`the_saturating_crew_reproduces_the_coverage_sum_at_every_crew_size`]. A kit carrying a
+    /// *second*, weaker build tool that reached further would take more off the job than this form
+    /// credits; that test is what makes the day one ships a decision rather than a silent drift.
+    ///
+    /// [`NO_SATURATING_CREW`] where nothing live in the kit helps — including a kit that declares
+    /// `BuildWork` and has worn every unit of it out.
+    pub fn build_work_saturating_crew(
+        &self,
+        kit: &KitChoice,
+        wear: &crate::components::BandEquipment,
+    ) -> u32 {
+        let worth = self.build_work_per_worker(kit, wear);
+        if worth <= NO_BUILD_GEAR {
+            return NO_SATURATING_CREW;
+        }
+        kit.uses
+            .iter()
+            .filter_map(|item| {
+                let live = self.live_item(item, wear)?;
+                // `>=` rather than `==` because `worth` IS one of these values by construction — the
+                // comparison is a "did this item set the maximum" test, not float equality.
+                (live.effect(EquipmentStat::BuildWork)?.value() >= worth).then(|| {
+                    wear.live_units(item, self)
+                        .saturating_mul(live.item.workers_per_unit)
+                })
+            })
+            .max()
+            .unwrap_or(NO_SATURATING_CREW)
+    }
+
     /// **The size window this kit's `attack` applies within**, as `(min, max)` body mass — the
     /// **widest** window its live weapons cover, because the kit can reach whatever its best weapon
     /// reaches. `None` on an end means unbounded there.
@@ -3255,6 +3325,52 @@ mod tests {
             NO_BUILD_GEAR,
             "handling gear that has run dry must take nothing off the job"
         );
+    }
+
+    /// **THE PUBLISHED PAIR IS THE COVERAGE SUM, at every crew size** — `min(w, saturating crew) ×
+    /// per-worker worth` against `weighted_rate × w`, which is the arithmetic a build actually pays.
+    ///
+    /// The client evaluates the left side against a crew the player is *proposing*, and the sim pays
+    /// the right side for the crew that shows up; this is what says they are one number. It sweeps
+    /// **across** the saturation point rather than testing one crew, because below it the two agree
+    /// for the trivial reason that neither term is capped.
+    ///
+    /// **It is also the guard on the one condition the pair assumes.** The saturating crew counts
+    /// the items declaring the kit's *best* build contribution, so a kit carrying a **second,
+    /// weaker** build tool that reached further would take more off the job than the pair credits.
+    /// No shipped item does — `husbandry_gear` is the only declarer — and this is what makes the day
+    /// one ships a decision (publish the envelope) rather than a silent under-quote.
+    #[test]
+    fn the_saturating_crew_reproduces_the_coverage_sum_at_every_crew_size() {
+        /// One set of hurdles, so the saturation point sits at a single worker and the sweep below
+        /// straddles it.
+        const HELD: u32 = 1;
+        let config = EquipmentConfig::builtin();
+        let wear = crate::components::BandEquipment::start_stocked(&config);
+        let husbandry = config
+            .kit("husbandry")
+            .expect("the shipped roster carries the husbandry kit");
+        let worth = config.build_work_per_worker(&husbandry, &wear);
+        let saturating = config.build_work_saturating_crew(&husbandry, &wear);
+        assert_eq!(
+            saturating, HELD,
+            "fixture: the reference ledger holds one set of handling gear, so one worker saturates \
+             it — got {saturating}"
+        );
+
+        for workers in 0..=6u32 {
+            let published = workers.min(saturating) as f32 * worth;
+            let paid = crate::intensification::build_work_from_gear(
+                config
+                    .coverage(&husbandry, workers as f32, &wear)
+                    .weighted_rate(|kit| config.build_work_per_worker(kit, &wear)),
+                workers,
+            );
+            assert_eq!(
+                published, paid,
+                "at {workers} keepers the published pair must equal what the build is charged"
+            );
+        }
     }
 
     #[test]

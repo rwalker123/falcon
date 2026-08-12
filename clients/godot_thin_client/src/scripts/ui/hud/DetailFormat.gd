@@ -963,8 +963,10 @@ static func format_work_units(value: float) -> String:
     return String.num(value, HudSelectionVocab.BUILD_WORK_DECIMALS)
 
 ## **WHAT THE JOB COSTS AND WHAT IT WOULD TAKE — the compose sheet's pre-commit quote**, as
-## `50 work, ≈25 turns` (or `50 work` alone where the sim states no estimate). The turns half is the
-## sim's answer and the client computes none of it; see `SourceForecast.build_turns_remaining`.
+## `50 work, ≈25 turns` (or `50 work` alone where there is no estimate to state). The caller resolves
+## the turns half; on the compose sheet that is `SourceForecast.build_turns_at`, evaluated against
+## the crew and floor the player is proposing, because a quote for a job nobody has started is
+## precisely what the sim's own `buildTurnsRemaining` cannot answer.
 ## `""` for a rung the wire prices nothing on, which renders as no clause rather than a bare verb
 ## wearing an em-dash.
 static func build_price_clause(work_cost: float, turns: int) -> String:

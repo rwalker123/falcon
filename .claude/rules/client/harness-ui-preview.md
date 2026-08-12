@@ -554,11 +554,36 @@ built from the code under test can only agree with itself. **They are the SIM's 
 from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
 payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-**A clean run is 309 frames / 907 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
+**A clean run is 314 frames / 919 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
 three times in one arc and once across a merge, and a running total kept by addition would be wrong
 by now. (The measurement above came back FIVE higher than the 895 recorded before it while the arc
 #527 review added exactly ONE claim — the `Carrying:` mass one. Four `PASS`es had accumulated
 un-recorded, which is the whole reason this line says re-measure.)
+
+**The compose sheet's own turn estimate is worth FIVE frames and TWELVE `PASS`.** Three are one
+A/B plus a drag: `improvement_turns_lone_crew` / `improvement_turns_full_crew` (one patch, one floor,
+crews 1 and 4 — `≈20 turns` against `≈5 turns`) and `improvement_turns_learning_floor` (the same crew
+mid-DRAG at the Learning preset, `≈4 turns`), all three in `chapters/improvements.gd`. **A frame set
+that renders one crew proves nothing here**: the defect was a sheet quoting the sim's committed-crew
+answer, which renders a perfectly plausible number and simply never moves — so the A/B, not either
+half, is the claim, and the negative beside it names the frozen value. The drag is driven through
+`floor_changed(value, committed = false)`, the chart's live half, since only the live-refresh
+registry can make the box follow a gesture that must not rebuild the sheet.
+
+**The GEAR half is a KIT SWAP, and it needs its own frames** — `herd_kit_swap_bare_build` /
+`herd_kit_swap_geared_build` in `chapters/compose_rungs.gd`, one warren at one crew at one floor with
+only the kit picker moving (`≈17 turns` against `≈11`). It lives in that chapter because both gear
+terms ride the kit row and only that chapter stages a roster carrying the handling kit; no plant item
+declares the build stat yet, so the crew A/B's frames exercise the ungeared arm alone. Its
+saturation claims are DRIVEN beside the frames — a crew above the kit's own saturating crew cannot be
+staffed on a frame without putting the assertion at the mercy of the stepper's cap.
+
+Sabotage-verified five ways, each failing a DISJOINT subset: reverting the running face to
+`build_turns_remaining` fails the three crew-A/B claims; building the control outside the live
+registry fails the two drag claims; resolving a FIXED kit instead of the offered one fails the geared
+frame, the two-kits negative and the saturation claim; and dropping the `min` on the head count fails
+the geared frame and both saturation claims while leaving the bare frame green (a kit that arms
+nobody is unaffected by an uncapped head count).
 
 **The work-costed build readout added SEVEN `PASS` and NO frame** (`docs/plan_unit_costed_work.md`
 §11): five on the plant A/B in `chapters/improvements.gd` and two on `herd_corral` in

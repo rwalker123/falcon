@@ -1227,6 +1227,25 @@ table BandKitTiers {
   // The slot above is kept rather than deprecated so a client still compiles against it; a consumer
   // rendering a build axis should read THIS field, and read it as work units rather than a factor.
   buildWorkPerWorker:float = 0;
+  // HOW MANY WORKERS THIS KIT CAN ACTUALLY EQUIP FOR A BUILD out of what this band holds (appended)
+  // - the head count at or ABOVE which extra hands take no further work off a job. `0` = the kit
+  // carries nothing live that helps, which is every row but the handling gear's today.
+  //
+  // IT IS THE OTHER HALF OF THE GEAR TERM, and it is what makes that term a CLOSED FORM the client
+  // can evaluate against a crew the player is PROPOSING:
+  //
+  //   gear(w) = min(w, buildWorkSaturatingCrew) x buildWorkPerWorker
+  //
+  // Coverage arms a PREFIX of a party - each item reaches `live units x workersPerUnit` people - so
+  // the contribution rises with the crew until every unit is in somebody's hands and then stops.
+  // An eleventh keeper with ten sets of hurdles between them takes nothing further off the job.
+  //
+  // IT RIDES THE KIT ROW, not a source row, because both terms behind it (the units held and each
+  // unit's reach) are facts about the BAND'S LEDGER. So a quote for an unstarted rung still has one,
+  // and picking a DIFFERENT kit in a compose sheet re-prices the whole estimate off that kit's row.
+  // The source rows publish `buildWorkFromGear`, which is the RESOLVED contribution for the crew
+  // that worked the source this turn - a different question, and not one a stepper can move.
+  buildWorkSaturatingCrew:uint = 0;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
@@ -2061,6 +2080,27 @@ table ForagePatchState {
   // in flight, or the crew carries nothing that helps - which is every PLANT build today, since no
   // plant item declares the stat yet (issue #539).
   buildWorkFromGear:float = 0;
+  // THE WORK ONE WORKER BANKS ON THIS SOURCE PER TURN, at the food peak, before the floor
+  // multiplier and before any gear (appended). Today `PER_WORKER_OUTPUT` (1.0).
+  //
+  // PUBLISHED RATHER THAN LEFT A CLIENT CONSTANT, because worker output is deliberately written
+  // sim-side as a SUM OF TERMS (docs/plan_unit_costed_work.md section 5) with exactly one term
+  // today - so the day a buff mechanic adds a second, a client hard-coding `1.0` would quote a turn
+  // count the sim disagrees with, and would need its own change to track it.
+  //
+  // IT IS THE CREW-OUTPUT HALF OF THE BUILD'S CLOSED FORM. The gear half rides the band's own
+  // PopulationCohortState.kitTiers row (`buildWorkPerWorker` x `buildWorkSaturatingCrew`), because a
+  // kit's saturation point is a fact about the band's LEDGER and about no source - which is also
+  // what lets a compose sheet re-price the whole estimate when the player picks a DIFFERENT kit:
+  //
+  //   gear(w)  = min(w, buildWorkSaturatingCrew) x buildWorkPerWorker
+  //   turns(w) = ceil((workCost - workDone - gear(w))
+  //                   / (w x buildWorkPerWorkerTurn x floor / foodPeak))
+  //
+  // READ IT BESIDE `buildTurnsRemaining`, NEVER INSTEAD OF IT. That field is the sim's answer for
+  // the COMMITTED crew and is what a card with no stepper renders; this is a term a sheet WITH a
+  // stepper evaluates. The two agree at the committed crew and floor by construction.
+  buildWorkPerWorkerTurn:float = 0;
 }
 
 // One STANCE's ceiling on one tile, in every account the tile's basket pays (issue #426). The plant
@@ -3035,6 +3075,27 @@ table HerdTelemetryState {
   // in flight, or the crew carries nothing that helps - which is every PLANT build today, since no
   // plant item declares the stat yet (issue #539).
   buildWorkFromGear:float = 0;
+  // THE WORK ONE WORKER BANKS ON THIS SOURCE PER TURN, at the food peak, before the floor
+  // multiplier and before any gear (appended). Today `PER_WORKER_OUTPUT` (1.0).
+  //
+  // PUBLISHED RATHER THAN LEFT A CLIENT CONSTANT, because worker output is deliberately written
+  // sim-side as a SUM OF TERMS (docs/plan_unit_costed_work.md section 5) with exactly one term
+  // today - so the day a buff mechanic adds a second, a client hard-coding `1.0` would quote a turn
+  // count the sim disagrees with, and would need its own change to track it.
+  //
+  // IT IS THE CREW-OUTPUT HALF OF THE BUILD'S CLOSED FORM. The gear half rides the band's own
+  // PopulationCohortState.kitTiers row (`buildWorkPerWorker` x `buildWorkSaturatingCrew`), because a
+  // kit's saturation point is a fact about the band's LEDGER and about no source - which is also
+  // what lets a compose sheet re-price the whole estimate when the player picks a DIFFERENT kit:
+  //
+  //   gear(w)  = min(w, buildWorkSaturatingCrew) x buildWorkPerWorker
+  //   turns(w) = ceil((workCost - workDone - gear(w))
+  //                   / (w x buildWorkPerWorkerTurn x floor / foodPeak))
+  //
+  // READ IT BESIDE `buildTurnsRemaining`, NEVER INSTEAD OF IT. That field is the sim's answer for
+  // the COMMITTED crew and is what a card with no stepper renders; this is a term a sheet WITH a
+  // stepper evaluates. The two agree at the committed crew and floor by construction.
+  buildWorkPerWorkerTurn:float = 0;
 }
 
 table CommandEventState {

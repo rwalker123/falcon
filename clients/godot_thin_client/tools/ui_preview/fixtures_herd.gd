@@ -395,6 +395,10 @@ static func price_animal_build(fixture: Dictionary,
 		float(fixture.get("corral_progress", 0.0)) * ANIMAL_CORRAL_WORK_COST
 	fixture["build_turns_remaining"] = turns
 	fixture["build_work_from_gear"] = gear
+	# The compose sheet's own SOURCE term, beside the sim's answer — see `BaseFx` for why the
+	# per-worker output is stated rather than assumed. The gear half is not here: it is the BAND's
+	# ledger, so it rides `BandFx.kit_tiers_rows`.
+	fixture["build_work_per_worker_turn"] = BaseFx.BUILD_WORK_PER_WORKER_TURN
 	return fixture
 
 ## The world's herd list (Main pushes snapshot["herds"]). Named because the turn-orb starving-pen

@@ -474,6 +474,29 @@ pub struct HerdTelemetryState {
     /// helps — which is every **plant** build today (issue #539). Appended (append-only).
     #[serde(default)]
     pub build_work_from_gear: f32,
+    /// **The work ONE worker banks on this source per turn at the food peak**, before the floor
+    /// multiplier and before any gear — `intensification::build_work_per_worker_turn`, today
+    /// `PER_WORKER_OUTPUT` (`1.0`).
+    ///
+    /// **Published rather than left as a client constant** because worker output is deliberately
+    /// written as a **sum of terms** (`docs/plan_unit_costed_work.md` §5) with exactly one term
+    /// today: the day a buff mechanic adds a second, a client hard-coding `1.0` would quote a turn
+    /// count the sim disagrees with, and would need its own change to track it.
+    ///
+    /// **It is the crew-output half of the build's closed form**; the gear half is
+    /// `build_work_per_worker` × `build_work_saturating_crew` on the band's own
+    /// [`crate::state::BandKitTiersState`] row, because a kit's saturation point is a fact about the
+    /// band's ledger and not about any source:
+    ///
+    /// ```text
+    /// gear(w)  = min(w, build_work_saturating_crew) × build_work_per_worker
+    /// turns(w) = ceil((work_cost − work_done − gear(w))
+    ///                 / (w × build_work_per_worker_turn × floor / food_peak))
+    /// ```
+    ///
+    /// Appended (append-only).
+    #[serde(default)]
+    pub build_work_per_worker_turn: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -549,6 +572,7 @@ impl Default for HerdTelemetryState {
             corral_work_cost: 0.0,
             build_turns_remaining: no_build_turns_estimate(),
             build_work_from_gear: 0.0,
+            build_work_per_worker_turn: 0.0,
             corral_material: Vec::new(),
             pastoral_material: Vec::new(),
         }
@@ -822,6 +846,29 @@ pub struct ForagePatchState {
     /// helps — which is every **plant** build today (issue #539). Appended (append-only).
     #[serde(default)]
     pub build_work_from_gear: f32,
+    /// **The work ONE worker banks on this source per turn at the food peak**, before the floor
+    /// multiplier and before any gear — `intensification::build_work_per_worker_turn`, today
+    /// `PER_WORKER_OUTPUT` (`1.0`).
+    ///
+    /// **Published rather than left as a client constant** because worker output is deliberately
+    /// written as a **sum of terms** (`docs/plan_unit_costed_work.md` §5) with exactly one term
+    /// today: the day a buff mechanic adds a second, a client hard-coding `1.0` would quote a turn
+    /// count the sim disagrees with, and would need its own change to track it.
+    ///
+    /// **It is the crew-output half of the build's closed form**; the gear half is
+    /// `build_work_per_worker` × `build_work_saturating_crew` on the band's own
+    /// [`crate::state::BandKitTiersState`] row, because a kit's saturation point is a fact about the
+    /// band's ledger and not about any source:
+    ///
+    /// ```text
+    /// gear(w)  = min(w, build_work_saturating_crew) × build_work_per_worker
+    /// turns(w) = ceil((work_cost − work_done − gear(w))
+    ///                 / (w × build_work_per_worker_turn × floor / food_peak))
+    /// ```
+    ///
+    /// Appended (append-only).
+    #[serde(default)]
+    pub build_work_per_worker_turn: f32,
 }
 
 /// The serde default of a `build_turns_remaining` field — [`crate::NO_BUILD_TURNS_ESTIMATE`], so an

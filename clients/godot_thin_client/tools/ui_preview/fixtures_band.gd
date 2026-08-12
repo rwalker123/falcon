@@ -271,6 +271,15 @@ const KIT_BUILD_WORK_NEUTRAL := 0.0
 ## work units ONE equipped keeper takes off a Tame or a Corral.
 const KIT_BUILD_WORK_HANDLING := 8.5
 
+## **HOW MANY KEEPERS THAT GEAR CAN ARM** — the other half of the axis, and the head count the compose
+## sheet's `min(workers, this)` saturates at. A band holding two sets of hurdles arms two keepers and
+## a third finds none left to carry, which is what makes a crew ABOVE it worth staging.
+const KIT_BUILD_SATURATING_CREW_HANDLING := 2
+
+## …and the neutral, which is every kit that carries nothing helping a build: nobody is armed for one,
+## so the gear term is nothing at any crew size.
+const KIT_BUILD_SATURATING_CREW_NONE := 0
+
 const KIT_PEN_CARRY_BARE := 12.0
 
 ## **WHAT A POSTED SCOUT VANTAGE CAN MAKE OUT** — `labor_config.scout.vantage_range` equipped, the

@@ -2731,14 +2731,61 @@ UNITS, a crew produces work units per turn, and **TURNS ARE THE OUTPUT** — so 
 absolutes AND the answer.
 
 - The improvement control's RUNNING face states the meter in work
-  (`🌱 Cultivating 30 / 50 work (60%) — ≈11 turns`) and its OFFERED face quotes the job before the
-  player commits (`🐄 Pen this herd — 75 work, ≈6 turns`). `workCost` is published whether or not a
+  (`🌱 Cultivating 30 / 50 work (60%) — ≈20 turns`) and its OFFERED face quotes the job before the
+  player commits (`🐄 Pen this herd — 75 work, ≈19 turns`). `workCost` is published whether or not a
   build is in flight, which is what makes the pre-commit quote possible at all.
-- **The client computes NO part of the turn estimate.** It holds neither the crew's output, nor the
-  assignment's escapement floor, nor the kit's coverage-weighted contribution, so `buildTurnsRemaining`
-  is the sim's answer — the `penFeedUpkeep` discipline. `SourceForecast.BUILD_TURNS_NO_ESTIMATE`
-  (`-1`) means a stalled build or an unworked source and renders as **no clause at all**; a `0` in its
-  place promises a build about to land.
+
+#### TWO SURFACES ASK DIFFERENT QUESTIONS, so the estimate has two producers
+
+**The compose sheet EVALUATES the estimate; the tile card and the herd drawer RENDER the sim's.**
+That is the boundary `.claude/rules/core_sim/yield-forecast.md` → "THE BOUNDARY, stated once" draws —
+*where a closed form exists the sim ships the TERMS and the client evaluates it; where one does not,
+the sim ships ANSWERS* — and the build's turn count is the one row that ships **both shapes**,
+because the sheet has a crew stepper and a floor slider and the card has neither.
+
+| surface | producer | why |
+|---|---|---|
+| compose sheet, both faces | `SourceForecast.build_turns_at` — the ceiling's discipline | there is a PROPOSAL to price: the stepper's crew, the slider's floor, the picker's kit. *Add hands and watch it drop* is the whole point of the reading, and it sits beside the control that moves it |
+| tile card · herd drawer | `SourceForecast.build_turns_remaining` — the `penFeedUpkeep` discipline | no crew control, so the only question is *what is happening here*, which is exactly what the sim's answer for the committed crew says |
+
+```text
+gear(w)  = min(w, kitTiers[kit].buildWorkSaturatingCrew) × kitTiers[kit].buildWorkPerWorker
+turns(w) = ceil((workCost − workDone − gear(w)) / (w × buildWorkPerWorkerTurn × learn_multiplier(floor)))
+```
+
+**The SOURCE carries one term and the KIT carries the other**, and which side each sits on is what
+makes the estimate re-price when the picker moves:
+
+| term | rides | why |
+|---|---|---|
+| `buildWorkPerWorkerTurn` | the source row | it is what one worker banks on THIS source. **Read, never assumed to be the `1.0` it is today** — the sim writes worker output as a sum of terms so a future buff can land there, and a client holding the constant would quote a number the sim disagrees with |
+| `buildWorkPerWorker` · `buildWorkSaturatingCrew` | `PopulationCohortState.kitTiers[]`, read through `KitRoster.build_gear` | both facts behind them — the units this band holds and each unit's reach — are the BAND's ledger, so a rung nobody has started still has a quote and the sheet prices the kit the picker is OFFERING rather than whatever the crew last carried |
+
+**The `min` is on the HEAD COUNT, and it is what makes the gear half exact rather than approximate**:
+coverage arms a prefix of the party, so an eleventh worker with ten sets of hurdles between them
+contributes nothing — without it the sheet quotes a build finishing sooner the more hands are added to
+it. The floor term is `learn_multiplier`, not a second spelling of `floor / FLOOR_FOOD_PEAK` — that
+helper is the client's one copy of the sim's `MSY_BIOMASS_FRACTION`, and a peak written out again is
+how the sheet and the chart's teaching rail come to disagree about what a floor buys.
+
+> **`buildWorkFromGear` on the SOURCE is a different question and must not be read here.** It is the
+> RESOLVED contribution for the crew that worked that source this turn — the tile card's and the herd
+> drawer's `−17 work off this job` line — so it answers for a committed crew and a committed kit, and
+> a stepper cannot move it.
+
+**Evaluated at the COMMITTED crew and floor the two producers agree exactly**, and that equality is
+the safety argument for having both: a sheet that could disagree would lie about the very decision
+the card then reports differently. Pinned sim-side on the exported snapshot by
+`core_sim/tests/build_turns_closed_form.rs`.
+
+**The control is in the live-refresh registry**, and by that registry's own rule: its value depends
+on the floor, and a floor DRAG may not rebuild the sheet (the rebuild frees the chart and the gesture
+dies with it). The crew half needs nothing — a stepper tick rebuilds the sheet outright.
+
+`SourceForecast.BUILD_TURNS_NO_ESTIMATE` (`-1`) renders as **no clause at all** on both producers; a
+`0` in its place promises a build about to land. The sheet's producer answers it for a crew of
+nobody, a rung the wire prices nothing on, a floor at which nothing accrues, and a job the gear alone
+already pays off — the sim's own four `None`s.
 - The percentage is **still the `*_progress` fraction**, never `workDone / workCost` re-derived here.
   The wire ships both and they are exactly each other; dividing client-side would be a second
   authority over one meter. The copy and the composer are

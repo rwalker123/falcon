@@ -209,6 +209,22 @@ pub(crate) fn herds_to_array(
         // folded into it: the cost above must not move under a tool, or the readout's price would
         // change every time a hurdle wore out.
         let _ = dict.insert("build_work_from_gear", herd.buildWorkFromGear());
+        // **THE SOURCE'S HALF OF THE ESTIMATE'S TERMS**, beside the sim's own answer above rather
+        // than instead of it (`.claude/rules/core_sim/yield-forecast.md` → "THE BOUNDARY, stated
+        // once"). `build_turns_remaining` answers for the crew ALREADY working the herd, which is the
+        // right and only thing for a card with no stepper; a sheet with one has to answer for the
+        // crew the player is PROPOSING, and this term is what makes that a closed form:
+        //
+        //   gear(w)  = min(w, <the kit row's `build_work_saturating_crew`>)
+        //              × <that row's `build_work_per_worker`>
+        //   turns(w) = ceil((cost − done − gear(w)) / (w × build_work_per_worker_turn × floor/peak))
+        //
+        // It is READ, never assumed to be the `1.0` it is today: the sim writes worker output as a
+        // sum of terms so a future buff lands there, and a client hard-coding the constant would
+        // quote a number the sim disagrees with. **The GEAR half is not here** — both its terms are
+        // facts about the band's ledger, so they ride the kit row (`dict/population.rs`), which is
+        // what lets a compose sheet re-price the whole estimate when the player picks another kit.
+        let _ = dict.insert("build_work_per_worker_turn", herd.buildWorkPerWorkerTurn());
         // Pre-commit yield forecast (food/turn at the herd's CURRENT biomass, exported at
         // output_multiplier 1.0 — the client scales by the acting band's multiplier):
         //   expected(workers, floor) = min(workers * per_worker_yield * dip, ceiling(floor))
@@ -571,6 +587,12 @@ pub(crate) fn forage_patches_to_array(
         let _ = dict.insert("field_work_cost", patch.fieldWorkCost());
         let _ = dict.insert("build_turns_remaining", patch.buildTurnsRemaining() as i64);
         let _ = dict.insert("build_work_from_gear", patch.buildWorkFromGear());
+        // The plant twin of the herd block's estimate TERM — see there for why it rides beside
+        // `build_turns_remaining` rather than replacing it, why the figure is read rather than
+        // assumed, and why the gear half is on the kit row instead. Every forage kit's saturating
+        // crew is `0` today (no plant item declares the build stat yet, issue #539), which the closed
+        // form handles as the ungeared case rather than as a missing term.
+        let _ = dict.insert("build_work_per_worker_turn", patch.buildWorkPerWorkerTurn());
         // WHY this ground will not take seed — "" when it will. "too_poor" / "too_dry" /
         // "too_poor_and_too_dry", resolved server-side through the SAME `RungSiteRequirement::refusal`
         // seam the `sow` command gates on. Shipped as an ANSWER rather than a bool because only ~1% of

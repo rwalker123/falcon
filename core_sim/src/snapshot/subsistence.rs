@@ -10,7 +10,8 @@ use crate::forage::{
     patch_neglect_grace_remaining, patch_provisions_per_biomass, tended_fodder,
 };
 use crate::intensification::{
-    build_fraction, NO_BUILD_GEAR, NO_BUILD_REMAINING_FRACTION, RUNG_COST_UNSCALED,
+    build_fraction, build_work_per_worker_turn, NO_BUILD_GEAR, NO_BUILD_REMAINING_FRACTION,
+    RUNG_COST_UNSCALED,
 };
 use sim_schema::NO_BUILD_TURNS_ESTIMATE;
 
@@ -642,6 +643,16 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 build_work_from_gear: herd
                     .map(|herd| herd.build_work_from_gear)
                     .unwrap_or(NO_BUILD_GEAR),
+                // **The crew-output TERM the compose sheet evaluates its estimate from** (the
+                // boundary rule in `.claude/rules/core_sim/yield-forecast.md`): what one worker banks
+                // per turn. With `*WorkCost` / `*WorkDone` here and the gear pair on the band's own
+                // `kitTiers` row, `turns(workers)` is a closed form the client can evaluate against a
+                // *proposed* crew — which `buildTurnsRemaining` beside it cannot, because it is the
+                // sim's answer for the crew already there.
+                //
+                // **It is the LADDER's term, not a literal.** Published so a second term landing in
+                // `crew_work_output` reaches the client for free.
+                build_work_per_worker_turn: build_work_per_worker_turn(),
             }
         })
         .collect()
@@ -837,6 +848,9 @@ pub(crate) fn snapshot_forage_patches(
                 // The plant twin — `NO_BUILD_GEAR` on every plant build today, since no plant item
                 // declares `EquipmentStat::BuildWork` yet (issue #539).
                 build_work_from_gear: patch.build_work_from_gear,
+                // The plant twin — see the herd row for why the estimate's terms ship beside the
+                // sim's own answer.
+                build_work_per_worker_turn: build_work_per_worker_turn(),
                 // **One gatherer's BIOMASS throughput** — `per_worker_biomass_capacity × seasonal`,
                 // the exact term `forage_take`'s worker cap multiplies by the head-count, through the
                 // shared helper so the wire and the take cannot disagree. `0` in a dead season, like

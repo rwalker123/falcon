@@ -54,6 +54,38 @@ const METER_AWAY_TILE_X := 64
 ## match the rendered VALUE markup, which no other row can produce.
 const CULTIVATION_ROW_KEY := "Cultivation"
 
+## ---- THE TURN-ESTIMATE A/B (`improvement_turns_lone_crew` / `_full_crew`) ---------------------
+## **TWO CREWS ON ONE PATCH AT ONE FLOOR**, which is the only shape that can show the estimate moving.
+## Both are well under the frame's own worker cap, so what differs between the frames is the count and
+## nothing else.
+const TURNS_LONE_CREW := 1
+
+const TURNS_FULL_CREW := 4
+
+## What each of those crews owes, derived HERE from the fixture rather than from the producer under
+## test: the reference tile's Cultivate costs `BaseFx.PLANT_CULTIVATE_WORK_COST` (50) and its meter
+## stands at `patch_cultivation_progress` 0.6, so 20 work units are left; no plant item declares the
+## build stat yet, so the crew's gear takes nothing off that; the floor sits at the food peak, so the
+## learn multiplier is exactly ×1.0; and one worker banks one work unit a turn. 20 ÷ 1 and ⌈20 ÷ 4⌉.
+const TURNS_AT_LONE_CREW := 20
+
+const TURNS_AT_FULL_CREW := 5
+
+## The floor a LIVE drag lands on for the third frame — the `Learning` preset, above the peak. Read
+## off the preset table rather than restated, so the drag lands where the sheet's own mark is.
+const TURNS_DRAG_FLOOR := SourceForecast.FLOOR_PRESET_VALUES[SourceForecast.FLOOR_PRESET_LEARN]
+
+## …and what the full crew owes there: a floor above the peak teaches faster and builds faster by the
+## same multiplier (0.80 ÷ 0.50 = ×1.6), so four hands bank 6.4 work a turn and the same 20 units left
+## come to ⌈20 ÷ 6.4⌉. It is the reading a floor-blind estimate cannot produce.
+const TURNS_AT_FULL_CREW_LEARNING := 4
+
+## **THE PLANT WEB'S GEAR TERM, and it is empty for a structural reason**: no plant item declares the
+## build stat yet (issue #539), so no forage kit arms anybody for a build and every frame in this
+## chapter exercises the ungeared arm. The kit half of the form is
+## `chapters/compose_rungs.gd`'s `_kit_swap_turn_estimate_states`, on the web whose gear exists.
+const NO_BUILD_GEAR := {}
+
 ## The take that crew is paid — `min(2 × 0.32, 0.96 × 0.25)` = the DIPPED ceiling, 0.24 food/turn. It is
 ## the number the green forecast line, the deal's middle term and the sim's own `actual_yield` must all
 ## carry; before the dip reached the forecast the green line quoted 0.64 (the undipped labour take) while
@@ -81,6 +113,12 @@ func _meter_value_markup(verb: String, hex: String) -> String:
 ## forecast from. Naming it keeps that assertion from re-stating which fixture it is judging.
 func _seeded_food_tile() -> Dictionary:
 	return BaseFx.food_tile_fixture()
+
+## The running face's TURN CLAUSE alone — ` — ≈20 turns` — composed through the shipped format with an
+## empty meter half, so the assertion pins the clause and not the meter beside it. The format is the
+## HUD's own; what this chapter states independently is the COUNT.
+func _turns_clause(turns: int) -> String:
+	return HudComposeVocab.IMPROVEMENT_RUNNING_TURNS_FORMAT % ["", turns]
 
 func run(harness) -> void:
 	h = harness
@@ -510,6 +548,68 @@ func run(harness) -> void:
 	# (`herd_corral`), where the shipped handling gear really does take work off the job.
 	h._assert_hud("a build no tool helps states NO gear line, not a zero one",
 		not building_row.contains(HudSelectionVocab.BUILD_GEAR_WORK_ROW_FORMAT.split("%s")[0]))
+
+	# ---- THE TURN ESTIMATE FOLLOWS THE STEPPER (docs/plan_unit_costed_work.md §11) ----------------
+	# **ONE PATCH, ONE FLOOR, TWO CREWS — and a frame set that renders only one crew proves nothing
+	# here.** The sheet read the sim's `buildTurnsRemaining` for a release, which is its answer for the
+	# crew ALREADY on the source: the reported symptom was `Cultivating 0 / 50 work (0%) — ≈32 turns`
+	# holding still as the forager stepper went 1 → 3, on the one panel where that number is the whole
+	# decision. The A/B is the only shape that can tell a moving estimate from a frozen one.
+	h._hud._band_labor._player_band = BandFx.cultivating_forage_band_fixture()
+	h._hud._band_labor._player_bands = [BandFx.cultivating_forage_band_fixture()]
+	h._hud._compose.reset_forage_source()
+	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
+	h._hud._compose.set_forage_count(TURNS_LONE_CREW)
+	h._show_tile(_seeded_food_tile())
+	h._compose_forage(_seeded_food_tile())
+	await h._settle()
+	await h._save("improvement_turns_lone_crew")
+	var lone_face := ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, "cultivate")
+	h._hud._compose.set_forage_count(TURNS_FULL_CREW)
+	h._compose_forage(_seeded_food_tile())
+	await h._settle()
+	await h._save("improvement_turns_full_crew")
+	var full_face := ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, "cultivate")
+	print("ui_preview: build turns  lone=%s  full=%s" % [lone_face, full_face])
+	# **EQUALITY ON THE WHOLE CLAUSE, and the two counts are derived in this chapter rather than
+	# through the producer under test** — an expectation composed from `build_turns_at` could only
+	# agree with itself. `ends_with` because the clause closes the face the meter opens.
+	h._assert_hud("one forager's estimate is the whole remaining job, one turn per work unit",
+		lone_face.ends_with(_turns_clause(TURNS_AT_LONE_CREW)))
+	h._assert_hud("…and four hands quarter it — the estimate moves with the stepper",
+		full_face.ends_with(_turns_clause(TURNS_AT_FULL_CREW)))
+	# The NEGATIVE that names the defect. Both faces reading the same number is exactly what a sheet
+	# quoting the sim's committed-crew answer renders, and it satisfies neither claim above only
+	# because those spell two different counts — this says so directly, and names the frozen value.
+	h._assert_hud("…so the two crews cannot both read the sim's own committed-crew answer",
+		lone_face != full_face and not full_face.contains(_turns_clause(BaseFx.BUILD_TURNS_REMAINING)))
+	# **AND IT FOLLOWS A LIVE FLOOR DRAG, which is a different seam from the stepper.** A stepper tick
+	# rebuilds the whole sheet; a DRAG must not (the rebuild frees the chart and the gesture dies with
+	# it), so the box only tracks the dial by being in the live-refresh registry. The drag is driven
+	# the way this harness drives every other one — `floor_changed` with `committed = false`, the
+	# signal the chart emits while the pointer is still down — and the frame is what a gesture looks
+	# like mid-flight: the dial has moved and the sheet has not been rebuilt around it.
+	var live_chart = Q.find_meta_node(h._hud._drawercompose._compose_sheet,
+		HudWidgets.FLOOR_CHART_META)
+	h._assert_hud("the forage sheet mounts a floor chart to drag at all",
+		live_chart != null)
+	live_chart.emit_signal("floor_changed", TURNS_DRAG_FLOOR, false)
+	await h._settle()
+	await h._save("improvement_turns_learning_floor")
+	var dragged_face := ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, "cultivate")
+	h._assert_hud("a floor above the peak builds faster, and the box says so DURING the drag",
+		dragged_face.ends_with(_turns_clause(TURNS_AT_FULL_CREW_LEARNING)))
+	h._assert_hud("…which the same crew at the peak does not read, so the dial genuinely moved it",
+		TURNS_AT_FULL_CREW_LEARNING != TURNS_AT_FULL_CREW and dragged_face != full_face)
+	# **THE DEGENERATE CREW, asked of the producer** — no frame can stage it, a crew of 0 on a tile
+	# this band works being an UNASSIGN, which offers no improvement control at all. A `0` crew makes
+	# the per-turn work zero, and the honest answer to `remaining / 0` is no clause rather than a huge
+	# number or an infinity.
+	h._assert_hud("a crew of nobody states NO estimate, never a number",
+		SourceForecast.build_turns_at(_seeded_food_tile(),
+			HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_CULTIVATE,
+			SourceForecast.BUILD_CREW_NONE, SourceForecast.FLOOR_FOOD_PEAK,
+			NO_BUILD_GEAR) == SourceForecast.BUILD_TURNS_NO_ESTIMATE)
 
 	# Restore the unassigned near band + a plain Sustain compose for the range states below.
 	h._hud._band_labor._player_band = BandFx.forage_range_bands()[0]

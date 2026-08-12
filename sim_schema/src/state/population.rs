@@ -323,6 +323,28 @@ pub struct BandKitTiersState {
     /// which is the honest reading for every kit but `husbandry` on the shipped roster.
     #[serde(default)]
     pub build_work_per_worker: f32,
+    /// **How many workers this kit can actually equip for a build out of what this band holds** —
+    /// the head count at or **above** which extra hands take no further work off a job. `0` = the
+    /// kit carries nothing live that helps, which is every row but the handling gear's today.
+    ///
+    /// **It is the other half of the gear term**, and it is what makes that term a closed form a
+    /// client can evaluate against a crew the player is *proposing*:
+    ///
+    /// ```text
+    /// gear(w) = min(w, build_work_saturating_crew) × build_work_per_worker
+    /// ```
+    ///
+    /// Coverage arms a **prefix** of a party — each item reaches `live units × workers_per_unit`
+    /// people — so the contribution rises with the crew until every unit is in somebody's hands and
+    /// then stops.
+    ///
+    /// **It rides the KIT row rather than a source row**, because both terms behind it are facts
+    /// about the band's ledger: a quote for a rung nobody has started still has one, and picking a
+    /// different kit re-prices the whole estimate off that kit's row. A source's own
+    /// `build_work_from_gear` is the **resolved** contribution for the crew that worked it this
+    /// turn — a different question, and not one a stepper can move. Appended (append-only).
+    #[serde(default)]
+    pub build_work_saturating_crew: u32,
 }
 
 /// The neutral value of [`BandKitTiersState`]'s three multipliers — `1.0`, never `0`.
@@ -365,6 +387,7 @@ impl Default for BandKitTiersState {
             scout_vantage_range: 0.0,
             build_rate: kit_multiplier_neutral(),
             build_work_per_worker: 0.0,
+            build_work_saturating_crew: 0,
         }
     }
 }
