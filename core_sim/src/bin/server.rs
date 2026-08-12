@@ -10694,7 +10694,12 @@ mod tests {
             .iter_mut()
             .find(|h| h.id == id)
             .unwrap()
-            .accrue_domestication(owner, PART_PREPARED_WORK, PART_PREPARED_JOB);
+            .accrue_domestication(
+                owner,
+                PART_PREPARED_WORK,
+                PART_PREPARED_JOB,
+                PART_PREPARED_JOB,
+            );
         grant_herding(&mut app, intruder);
         spawn_working_band(
             &mut app,

@@ -31,8 +31,8 @@ use crate::{
     hashing::FnvHasher,
     intensification::{
         source_crew_needed, BuildDips, LadderConfig, LadderConfigHandle, RungBranch, RungDef,
-        RungKey, RungMovement, FABRICATED_BUILD_COST, NEGLECT_NONE, NO_NEGLECT_GRACE,
-        RUNG_UNSTARTED,
+        RungKey, RungMovement, FABRICATED_BUILD_COST, NEGLECT_NONE, NO_BUILD_GEAR,
+        NO_NEGLECT_GRACE, RUNG_UNSTARTED,
     },
     mapgen::WorldGenSeed,
     orders::FactionId,
@@ -420,6 +420,16 @@ pub struct Herd {
     /// per-turn scratch on `tamed_this_turn`'s cycle: written in Population, cleared by
     /// `advance_husbandry` the next turn.
     pub build_turns_remaining: Option<u32>,
+    /// **What the keepers' TOOLS took off this herd's running build**, in work units — the `t` in
+    /// `effective_cost = max(cost × min_build_fraction, cost − t)`
+    /// ([`crate::intensification::build_work_from_gear`]), published as
+    /// `HerdTelemetryState.buildWorkFromGear`.
+    ///
+    /// [`crate::intensification::NO_BUILD_GEAR`] when no build is in flight or the crew left the
+    /// handling gear at camp. Transient per-turn scratch on [`Self::build_turns_remaining`]'s cycle,
+    /// and for its reason: the kit is re-read every turn, so no state may record *"this build was
+    /// geared"*.
+    pub build_work_from_gear: f32,
     /// **The `ExtendPen` "extending" state** (2d-β): `true` while a keeper is fencing the next ring
     /// (`pen_extend_progress` accruing, the harvest dipped to `corralling_yield_fraction`), the animal
     /// mirror of a herd's under-construction `corral_progress`. Set by the `ExtendPen` command, cleared
@@ -659,6 +669,7 @@ impl Herd {
             pen_extend_progress: RUNG_UNSTARTED,
             pen_extend_cost: RUNG_UNSTARTED,
             build_turns_remaining: None,
+            build_work_from_gear: NO_BUILD_GEAR,
             pen_extending: false,
             footprint_intake: 0.0,
             pen_pasture_fraction: 0.0,
@@ -736,7 +747,13 @@ impl Herd {
     /// **Returns `true` only when THIS call finished the rung**, matching [`Herd::accrue_corral`] and
     /// `ForagePatch::accrue_cultivation`: `handle_tame` sets the verb on every band hunting the herd,
     /// so a post-hoc `is_domesticated()` test would push one "Tamed the …" feed line per band.
-    pub fn accrue_domestication(&mut self, faction: FactionId, amount: f32, cost: f32) -> bool {
+    pub fn accrue_domestication(
+        &mut self,
+        faction: FactionId,
+        amount: f32,
+        cost: f32,
+        effective_cost: f32,
+    ) -> bool {
         if self.is_domesticated() || !self.can_domesticate() {
             return false;
         }
@@ -747,7 +764,11 @@ impl Herd {
             return false;
         }
         self.domestication_cost = cost;
-        self.domestication_progress = (self.domestication_progress + amount).min(cost);
+        self.domestication_progress = crate::forage::banked_or_paid_off(
+            self.domestication_progress + amount,
+            cost,
+            effective_cost,
+        );
         self.is_domesticated()
     }
 
@@ -756,7 +777,12 @@ impl Herd {
     /// cannot fabricate a domesticated `wild` herd. It replaces the `accrue_domestication(f,
     /// RUNG_COMPLETE)` spelling, which stopped meaning anything the moment a job had a size.
     pub fn tame_outright(&mut self, faction: FactionId) -> bool {
-        self.accrue_domestication(faction, FABRICATED_BUILD_COST, FABRICATED_BUILD_COST)
+        self.accrue_domestication(
+            faction,
+            FABRICATED_BUILD_COST,
+            FABRICATED_BUILD_COST,
+            FABRICATED_BUILD_COST,
+        )
     }
 
     // `decay_domestication` is DELETED (`docs/plan_fauna_neglect_escape.md` §2.1). Its only caller was
@@ -830,13 +856,15 @@ impl Herd {
         faction: FactionId,
         amount: f32,
         cost: f32,
+        effective_cost: f32,
         tile: UVec2,
     ) -> bool {
         if self.is_corralled() || self.owner != Some(faction) {
             return false;
         }
         self.corral_cost = cost;
-        self.corral_progress = (self.corral_progress + amount).min(cost);
+        self.corral_progress =
+            crate::forage::banked_or_paid_off(self.corral_progress + amount, cost, effective_cost);
         if self.corral_progress >= cost {
             // The ceiling is already gated upstream (the `Corral` policy accrual + the commands), so
             // this can only refuse on a bug — and then the pen is genuinely not built, so say so.
@@ -865,12 +893,22 @@ impl Herd {
     /// ring completes — `pen_radius += 1` (saturating at `radius_max`), the meter resets and the
     /// extending state clears. Returns `true` on the completion turn so the caller can announce it.
     /// Called **after** the turn's (dipped) take, mirroring `accrue_corral`.
-    pub(crate) fn accrue_pen_extension(&mut self, amount: f32, cost: f32, radius_max: u32) -> bool {
+    pub(crate) fn accrue_pen_extension(
+        &mut self,
+        amount: f32,
+        cost: f32,
+        effective_cost: f32,
+        radius_max: u32,
+    ) -> bool {
         if !self.pen_extending {
             return false;
         }
         self.pen_extend_cost = cost;
-        self.pen_extend_progress = (self.pen_extend_progress + amount).min(cost);
+        self.pen_extend_progress = crate::forage::banked_or_paid_off(
+            self.pen_extend_progress + amount,
+            cost,
+            effective_cost,
+        );
         if self.pen_extend_progress >= cost {
             self.pen_radius = (self.pen_radius + 1).min(radius_max);
             self.pen_extend_progress = RUNG_UNSTARTED;
@@ -3331,6 +3369,7 @@ pub fn advance_husbandry(
         // away from must stop publishing a finish date, and the labor arm re-stamps it this turn if a
         // crew is still on it (Logistics runs before Population).
         herd.build_turns_remaining = None;
+        herd.build_work_from_gear = NO_BUILD_GEAR;
         // **How well the herd was STAFFED last turn** (slice 8) — the same Population→Logistics lag as
         // `pen_fed_fraction`, read here and reset so it can never go stale. A herd nobody worked reads
         // the `0.0` its keeper never wrote, which is exactly right: no crew, no herding.

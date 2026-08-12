@@ -57,8 +57,9 @@ use crate::{
     hydrology::HydrologyState,
     influencers::{InfluencerCultureResonance, InfluencerImpacts},
     intensification::{
-        build_turns_remaining, knows, source_crew_needed, LadderConfig, LadderConfigHandle,
-        LadderKnowledge, RungDef, RungKey, MANAGED_SOURCE_FLOOR, RUNG_COST_UNSCALED,
+        build_turns_remaining, build_work_from_gear, knows, source_crew_needed, LadderConfig,
+        LadderConfigHandle, LadderKnowledge, RungDef, RungKey, MANAGED_SOURCE_FLOOR,
+        RUNG_COST_UNSCALED,
     },
     labor_config::{LaborConfig, LaborConfigHandle},
     mapgen::MountainType,

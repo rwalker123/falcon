@@ -1214,6 +1214,19 @@ table BandKitTiers {
   // and a buildRate of 0 says "this crew builds nothing at all", a field-not-arrived reading that is
   // wrong in the direction that stops the game.
   buildRate:float = 1;
+  // THE WORK UNITS ONE EQUIPPED WORKER TAKES OFF A BUILD'S COST (appended,
+  // docs/plan_unit_costed_work.md section 6). Neutral `0`; the handling gear ships 8.5.
+  //
+  // IT SUPERSEDES `buildRate` ABOVE, which is retired and now always publishes its neutral `1`.
+  // That stat was a MULTIPLIER on the crew's output, and a multiplier cancels the job's cost - it
+  // saves the same percentage of turns on a garden and on a farm alike, which is the thing the
+  // work-costed arc exists to escape. This is subtracted from the job instead, so the job's own size
+  // decides how much it is worth, and it is summed over the EQUIPPED workers rather than averaged
+  // over the crew.
+  //
+  // The slot above is kept rather than deprecated so a client still compiles against it; a consumer
+  // rendering a build axis should read THIS field, and read it as work units rather than a factor.
+  buildWorkPerWorker:float = 0;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
@@ -2022,6 +2035,21 @@ table ForagePatchState {
   // yield forecast. One field for both plant rungs: at most one improvement is ever in flight on
   // one source.
   buildTurnsRemaining:int = -1;
+  // WHAT THE CREW'S TOOLS TOOK OFF THIS BUILD, in work units (appended,
+  // docs/plan_unit_costed_work.md section 6) - the `t` in
+  // `effective_cost = max(workCost x minBuildFraction, workCost - t)`.
+  //
+  // A tool's help lands on the JOB, not on the crew's output, and that is the whole shape: a
+  // multiplier on the crew cancels the cost, so it saves the same PERCENTAGE of turns on a garden
+  // and on a farm alike. Subtracted from the job, the job's own size decides - which is why
+  // `workDone`/`workCost` above stay the RAW job and this is quoted beside them rather than folded
+  // in. A readout says "your hoes: -8 work" against a price that does not move under it.
+  //
+  // PER EQUIPPED WORKER, SUMMED: a worker holding a tool contributes its worth, a worker without one
+  // contributes nothing (the partly-equipped-party rule the carries already run on). `0` = no build
+  // in flight, or the crew carries nothing that helps - which is every PLANT build today, since no
+  // plant item declares the stat yet (issue #539).
+  buildWorkFromGear:float = 0;
 }
 
 // One STANCE's ceiling on one tile, in every account the tile's basket pays (issue #426). The plant
@@ -2977,6 +3005,21 @@ table HerdTelemetryState {
   // floor and kit that worked this herd this turn. `-1` = NO ESTIMATE — no build in flight, or a
   // stalled one. The client cannot compute it; see the plant twin on `ForagePatchState`.
   buildTurnsRemaining:int = -1;
+  // WHAT THE CREW'S TOOLS TOOK OFF THIS BUILD, in work units (appended,
+  // docs/plan_unit_costed_work.md section 6) - the `t` in
+  // `effective_cost = max(workCost x minBuildFraction, workCost - t)`.
+  //
+  // A tool's help lands on the JOB, not on the crew's output, and that is the whole shape: a
+  // multiplier on the crew cancels the cost, so it saves the same PERCENTAGE of turns on a garden
+  // and on a farm alike. Subtracted from the job, the job's own size decides - which is why
+  // `workDone`/`workCost` above stay the RAW job and this is quoted beside them rather than folded
+  // in. A readout says "your hoes: -8 work" against a price that does not move under it.
+  //
+  // PER EQUIPPED WORKER, SUMMED: a worker holding a tool contributes its worth, a worker without one
+  // contributes nothing (the partly-equipped-party rule the carries already run on). `0` = no build
+  // in flight, or the crew carries nothing that helps - which is every PLANT build today, since no
+  // plant item declares the stat yet (issue #539).
+  buildWorkFromGear:float = 0;
 }
 
 table CommandEventState {
@@ -3340,6 +3383,19 @@ table KitOption {
   // deciding whether to offer a kit must ask what the kit can change on THIS source across EVERY
   // axis it declares, never off one hardcoded key.
   buildRate:float = 1;
+  // THE WORK UNITS ONE EQUIPPED WORKER TAKES OFF A BUILD'S COST (appended,
+  // docs/plan_unit_costed_work.md section 6). Neutral `0`; the handling gear ships 8.5.
+  //
+  // IT SUPERSEDES `buildRate` ABOVE, which is retired and now always publishes its neutral `1`.
+  // That stat was a MULTIPLIER on the crew's output, and a multiplier cancels the job's cost - it
+  // saves the same percentage of turns on a garden and on a farm alike, which is the thing the
+  // work-costed arc exists to escape. This is subtracted from the job instead, so the job's own size
+  // decides how much it is worth, and it is summed over the EQUIPPED workers rather than averaged
+  // over the crew.
+  //
+  // The slot above is kept rather than deprecated so a client still compiles against it; a consumer
+  // rendering a build axis should read THIS field, and read it as work units rather than a factor.
+  buildWorkPerWorker:float = 0;
 }
 
 // ==============================================================================================

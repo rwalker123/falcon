@@ -76,7 +76,10 @@ mod tests {
                     attack_max_body_mass: 0.0,
                     dispersion: 1.0,
                     exposure: 1.0,
-                    build_rate: 1.0,
+                    build_rate: RETIRED_BUILD_RATE,
+                    // Carrying nothing takes NOTHING off a build — the additive stat's neutral is
+                    // `0`, not the retired multiplier's `1`.
+                    build_work_per_worker: 0.0,
                     // Carrying nothing is a real answer, and an EMPTY vector is how it is said.
                     item_ids: Vec::new(),
                 },
@@ -1206,6 +1209,89 @@ mod tests {
             patch.buildTurnsRemaining(),
             NO_BUILD_TURNS_ESTIMATE,
             "no build in flight is -1, never 0"
+        );
+    }
+
+    /// **WHAT THE CREW'S TOOLS TOOK OFF THE JOB SURVIVES THE WIRE, on both webs — and it is quoted
+    /// BESIDE the raw price rather than folded into it** (`docs/plan_unit_costed_work.md` §6). That
+    /// separation is the readout: *"your hurdles: −17 work"* only means anything against a
+    /// `workCost` that does not move under the crew's kit.
+    ///
+    /// `0` is asserted positively on the plant row, because it is both the schema default and the
+    /// honest reading for every plant build today — a codec that dropped the field would decode the
+    /// same `0`, so the live half is asserted beside it.
+    #[test]
+    fn the_gears_contribution_to_a_build_survives_the_wire() {
+        const HERD_GEAR_WORK: f32 = 17.0;
+        const HERD_WORK_COST: f32 = 50.0;
+
+        let snapshot = WorldSnapshot {
+            herds: vec![HerdTelemetryState {
+                tame_work_cost: HERD_WORK_COST,
+                build_work_from_gear: HERD_GEAR_WORK,
+                ..HerdTelemetryState::default()
+            }],
+            forage_patches: vec![ForagePatchState::default()],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("a decodable snapshot envelope");
+        let subsistence = envelope
+            .payload_as_snapshot()
+            .expect("a snapshot payload")
+            .subsistence()
+            .expect("a subsistence section");
+
+        let herd = subsistence.herds().expect("the herds").get(0);
+        assert_eq!(herd.buildWorkFromGear(), HERD_GEAR_WORK);
+        assert_eq!(
+            herd.tameWorkCost(),
+            HERD_WORK_COST,
+            "the price stays the RAW job — the gear's share is quoted beside it, never folded in"
+        );
+        assert_eq!(
+            subsistence
+                .foragePatches()
+                .expect("the forage patches")
+                .get(0)
+                .buildWorkFromGear(),
+            0.0,
+            "no plant item declares the stat yet, so a patch honestly takes nothing off"
+        );
+    }
+
+    /// **THE KIT'S PER-WORKER BUILD CONTRIBUTION SURVIVES THE WIRE, and the retired multiplier's
+    /// slot publishes only its neutral.** Both halves matter: a consumer must be able to read the
+    /// successor, and one still reading `buildRate` must not be handed a number in work units — it
+    /// renders that field as a *factor*, so `8.5` would say *"×8.5 build speed"*.
+    #[test]
+    fn the_kits_build_contribution_supersedes_the_retired_multiplier_on_the_wire() {
+        const PER_WORKER: f32 = 8.5;
+        let snapshot = WorldSnapshot {
+            kits: vec![KitOptionState {
+                id: "husbandry".to_string(),
+                build_rate: RETIRED_BUILD_RATE,
+                build_work_per_worker: PER_WORKER,
+                ..KitOptionState::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("a decodable snapshot envelope");
+        let kit = envelope
+            .payload_as_snapshot()
+            .expect("a snapshot payload")
+            .subsistence()
+            .expect("a subsistence section")
+            .kits()
+            .expect("the kit roster")
+            .get(0);
+        assert_eq!(kit.buildWorkPerWorker(), PER_WORKER);
+        assert_eq!(
+            kit.buildRate(),
+            RETIRED_BUILD_RATE,
+            "the retired slot publishes its own neutral, never the successor's number"
         );
     }
 }

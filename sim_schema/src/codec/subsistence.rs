@@ -335,6 +335,7 @@ fn create_kits<'a>(
                 dispersion: state.dispersion,
                 exposure: state.exposure,
                 buildRate: state.build_rate,
+                buildWorkPerWorker: state.build_work_per_worker,
             },
         ));
     }
@@ -494,6 +495,7 @@ fn create_herds<'a>(
                 corralWorkDone: herd.corral_work_done,
                 corralWorkCost: herd.corral_work_cost,
                 buildTurnsRemaining: herd.build_turns_remaining,
+                buildWorkFromGear: herd.build_work_from_gear,
             },
         );
         entries.push(entry);
@@ -579,6 +581,7 @@ fn create_forage_patches<'a>(
                 fieldWorkDone: patch.field_work_done,
                 fieldWorkCost: patch.field_work_cost,
                 buildTurnsRemaining: patch.build_turns_remaining,
+                buildWorkFromGear: patch.build_work_from_gear,
             },
         );
         entries.push(entry);

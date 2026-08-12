@@ -799,10 +799,29 @@ and a turns conversion would need a forecast of what the band is about to do.
 
 > **AN ITEM ON SEVERAL QUANTA IS QUOTED ON ITS FIRST** (`ItemDefinition::headline_wear`, issue #515 —
 > `equipment.md` → "An item may wear on SEVERAL quanta"). A gauge reads in **one** unit, so the
-> handling gear — worked both at a slaughter and on a `Tame` — has to pick one: `≈12 builds` and
-> `≈2500 biomass butchered` are the same condition counted two ways, and stating both would need the
-> readout to know the usage mix it exists to let the player choose. The item **declares** its headline
-> by writing that quantum first, exactly as `tiers[0]` declares the default tier.
+> handling gear — worked both at a slaughter and on a `Tame` — has to pick one: `≈12 gardens' worth`
+> and `≈2500 biomass butchered` are the same condition counted two ways, and stating both would need
+> the readout to know the usage mix it exists to let the player choose. The item **declares** its
+> headline by writing that quantum first, exactly as `tiers[0]` declares the default tier.
+
+> #### THE BUILD QUANTUM IS THE ONE WHOSE UNIT IS NOT ITS NOUN
+>
+> Since improvements were priced in work (`docs/plan_unit_costed_work.md` §6.3),
+> `WearQuantum::BuildProgress` is charged per **work unit** — one worker-turn at the food peak — while
+> a player holding a hoe thinks in *builds*. `100 / 0.16 = 625` is arithmetically right and says
+> nothing, so the gauge quotes it against a **named reference job**: the noun is *"gardens' worth"*
+> and `quantum_units_per_noun` divides by the `plant:tended` rung's own `work_cost`, giving
+> **"12 gardens' worth left"**.
+>
+> **The reference is the LADDER's** (`intensification::REFERENCE_BUILD_RUNG`), carried on
+> `BandCraftInputs::reference_build_cost` and resolved once per capture — so a retune of the rung
+> moves the readout with it rather than leaving a literal behind. The conversion lives at the readout
+> because `WearQuantum` knows nothing about rungs, and it is `1.0` for every other quantum, whose unit
+> already *is* the thing being counted (a kill is a kill).
+>
+> **The free win this pays out:** because the charge is per work unit, **a bigger job eats more
+> gear with no per-improvement authoring** — a 75-unit Sow burns 1.5× what a 50-unit Cultivate does,
+> and a Steppe Runner's 250-unit `Tame` 5× a rabbit's.
 >
 > **So the gauge is accurate under one usage assumption, not unconditionally** — a band splitting its
 > handling gear between a pen and a climb runs out sooner than the pen-only count says. That is the

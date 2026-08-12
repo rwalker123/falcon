@@ -345,27 +345,24 @@ pub fn advance_labor_allocation(
                     &band_kit,
                 )
             });
-            // **And its BUILD tier** (issue #515) — how much faster this crew's gear fills a rung's
-            // per-source meter, `intensification::NO_BUILD_GEAR` for a crew carrying nothing that
+            // **And its BUILD tier** (issue #515) — the work units **one equipped worker** takes off
+            // a rung's job, `intensification::NO_BUILD_GEAR` (`0.0`) for a crew carrying nothing that
             // helps. It reaches all four build verbs below: `Cultivate` and `Sow` on the forage arm,
             // `Tame` and `Corral` (and a pen's extension ring) on the hunt arm.
             //
-            // **IT IS NOT COVERAGE-AVERAGED, and that is the one place this axis departs from the
-            // three tiers above.** The carries are PER-WORKER rates, so `weighted_rate` divides them
-            // over people exactly — five baskets and sixteen gatherers really do gather with five
-            // baskets. A build rate is a property of the WORK, not of each pair of hands, and both
-            // animal rungs declare no `crew_needed` at all, so their accrual does not scale with the
-            // crew in the first place. Averaging it therefore says *bring fewer keepers and the pen
-            // goes up faster*: measured, one set of hurdles among ten keepers resolved **×1.05**
-            // against the ×1.5 the gear declares, and every un-geared hand added made the build
-            // slower.
+            // **IT IS COVERAGE-WEIGHTED NOW, like the three tiers above** — and that is the change
+            // the cost-side form bought. It was a *multiplier on the crew's output*, deliberately
+            // uncovered because averaging one says *bring fewer keepers and the pen goes up faster*
+            // (measured: one set of hurdles among ten keepers resolved ×1.05 against the ×1.5
+            // declared, and every un-geared hand made the build slower). A **per-worker contribution
+            // off the JOB** is a **sum**, not an average: an un-geared hand adds zero rather than
+            // diluting, which is exactly the partly-equipped-party rule the carries already run on —
+            // five hoed workers and five bare take `5 × worth` off the job.
             //
-            // **A multiplier, so the neutral is `1.0` and a kit declaring nothing changes nothing.**
-            // Every plant build resolves neutral today, because no plant item declares the stat yet
-            // (issue #539). That issue inherits one open question with it: the PLANT rungs *are*
-            // crew-scaled, so a digging tool may want the covered reading the carries take — this is
-            // a per-call seam, so answering it there costs a line and no model change.
-            let crew_build_rate = equipment_cfg.build_rate(&crew_kit, &band_kit);
+            // **The neutral is `0.0`, so a kit declaring nothing takes nothing off.** Every plant
+            // build resolves neutral today, because no plant item declares the stat yet (issue #539).
+            let crew_build_work_per_worker = crew_coverage
+                .weighted_rate(|kit| equipment_cfg.build_work_per_worker(kit, &band_kit));
             // **And its FIGHTING tier** (`docs/plan_hunt_through_combat.md` §4). The kit swaps the
             // whole `attack` tier (`1` bare-handed, `20` speared), which is the gate every take
             // resolves through — so a crew sent out with no spears stops being able to hurt anything
@@ -958,19 +955,22 @@ pub fn advance_labor_allocation(
                         // rung's verb and the gates hold); the patch owns its meter and the
                         // side-effects of completing it. The **floor** is the assignment's own — the
                         // same dial that paced the lesson above paces the build.
-                        let accrual = tended_rung.build_accrual(
-                            improvement,
-                            eligible,
-                            *floor,
-                            workers,
-                            crew_build_rate,
-                        );
+                        let accrual =
+                            tended_rung.build_accrual(improvement, eligible, *floor, workers);
                         // **THE JOB'S PRICE**, in work units — `RUNG_COST_UNSCALED` because a patch
                         // is a patch: the only per-source cost multiplier on the ladder is a
                         // species' `taming_cost_multiplier`, and a plant has no species.
                         let cultivate_cost = tended_rung
                             .build_cost(RUNG_COST_UNSCALED)
                             .expect("a rung a verb builds has a build meter");
+                        // **WHAT THE CREW'S TOOLS TAKE OFF IT** — summed over the crew, then
+                        // subtracted from the job rather than multiplied into the output, so the
+                        // saving is a share of *this* job's size (`docs/plan_unit_costed_work.md`
+                        // §6.1). The stamped cost stays the raw one; only the bar moves.
+                        let cultivate_gear =
+                            build_work_from_gear(crew_build_work_per_worker, workers);
+                        let cultivate_bar =
+                            ladder.effective_build_cost(cultivate_cost, cultivate_gear);
                         // **The feed line rides the TRANSITION, not the state.** `accrue_cultivation`
                         // answers "did this call finish it", so a second band working an
                         // already-tended patch clears its verb (above) without announcing the
@@ -984,15 +984,22 @@ pub fn advance_labor_allocation(
                         // live the day a hoe ships without touching this call site.
                         let progress_before = patch.cultivation_progress;
                         let cultivated = accrual > 0.0
-                            && patch.accrue_cultivation(faction, accrual, cultivate_cost);
+                            && patch.accrue_cultivation(
+                                faction,
+                                accrual,
+                                cultivate_cost,
+                                cultivate_bar,
+                            );
                         // **The turns estimate the wire publishes**, at exactly the crew, floor and
                         // kit that just worked the patch — stamped here because this is the only
-                        // place all three are in hand.
+                        // place all three are in hand. **Against the TOOLED bar**, or the estimate
+                        // lies to a geared crew about the job it is actually finishing.
                         patch.build_turns_remaining = build_turns_remaining(
-                            cultivate_cost,
+                            cultivate_bar,
                             patch.cultivation_progress,
                             accrual,
                         );
+                        patch.build_work_from_gear = cultivate_gear;
                         charge_build_wear(
                             band_equipment.as_deref_mut(),
                             &equipment_cfg,
@@ -1039,7 +1046,8 @@ pub fn advance_labor_allocation(
                             tick.0,
                             *tile,
                             workers,
-                            crew_build_rate,
+                            crew_build_work_per_worker,
+                            &ladder,
                             band_equipment.as_deref_mut(),
                             &equipment_cfg,
                             &crew_kit,
@@ -1543,13 +1551,15 @@ pub fn advance_labor_allocation(
                             true,
                             MANAGED_SOURCE_FLOOR,
                             workers,
-                            crew_build_rate,
                         );
                         // A ring costs what the pen it widens costs — the same rung record, so the
-                        // two can never drift.
+                        // two can never drift — and the same keepers' tools take the same work off
+                        // it.
                         let ring_cost = pen_rung
                             .build_cost(RUNG_COST_UNSCALED)
                             .expect("the pen rung has a build meter");
+                        let ring_gear = build_work_from_gear(crew_build_work_per_worker, workers);
+                        let ring_bar = ladder.effective_build_cost(ring_cost, ring_gear);
                         // Accrue the extension ring **after** the take (mirroring `accrue_corral`), so
                         // this turn pays exactly the dipped yield the forecast promised; the completed
                         // larger footprint's higher K arrives on the next `advance_herds`.
@@ -1575,6 +1585,7 @@ pub fn advance_labor_allocation(
                             && herd.accrue_pen_extension(
                                 pen_extend_accrual,
                                 ring_cost,
+                                ring_bar,
                                 husbandry.pen_radius_max,
                             )
                         {
@@ -1787,13 +1798,8 @@ pub fn advance_labor_allocation(
                         // The **floor** is the assignment's own, the same dial that paced the lesson
                         // above; it rides *beside* the timescale rather than folding into it, because
                         // the timescale reaches the decay and the floor must not.
-                        let accrual = pastoral_rung.build_accrual(
-                            improvement,
-                            eligible,
-                            *floor,
-                            workers,
-                            crew_build_rate,
-                        );
+                        let accrual =
+                            pastoral_rung.build_accrual(improvement, eligible, *floor, workers);
                         // **THE JOB'S PRICE** — the rung's `work_cost` times this species' own
                         // `taming_cost_multiplier` (slice 3c inverted): the rung owns the mechanic,
                         // the species prices it. A Steppe Runner is five times the work, not a crew
@@ -1801,6 +1807,12 @@ pub fn advance_labor_allocation(
                         let tame_cost = pastoral_rung
                             .build_cost(fauna.taming_cost_multiplier_for(&herd.species))
                             .expect("a rung a verb builds has a build meter");
+                        // **The handling gear's whole point** (issue #515): hurdles, halters and a
+                        // butchering stone are animal-handling tools, and a `Tame` is exactly the
+                        // turns a band spends handling animals. Each equipped keeper takes its worth
+                        // off the job; a keeper who left it at camp takes nothing off.
+                        let tame_gear = build_work_from_gear(crew_build_work_per_worker, workers);
+                        let tame_bar = ladder.effective_build_cost(tame_cost, tame_gear);
                         // The TRANSITION, not the state (the Cultivate arm's rule): a second band
                         // taming the same herd clears its verb via the already-built check above
                         // without re-announcing the taming.
@@ -1813,10 +1825,11 @@ pub fn advance_labor_allocation(
                         // Its verb is never cleared either (`hunt_rung_already_built` reads
                         // `is_domesticated`), so it would bleed forever.
                         let progress_before = herd.domestication_progress;
-                        let tamed =
-                            accrual > 0.0 && herd.accrue_domestication(faction, accrual, tame_cost);
+                        let tamed = accrual > 0.0
+                            && herd.accrue_domestication(faction, accrual, tame_cost, tame_bar);
                         herd.build_turns_remaining =
-                            build_turns_remaining(tame_cost, herd.domestication_progress, accrual);
+                            build_turns_remaining(tame_bar, herd.domestication_progress, accrual);
+                        herd.build_work_from_gear = tame_gear;
                         charge_build_wear(
                             band_equipment.as_deref_mut(),
                             &equipment_cfg,
@@ -1864,27 +1877,25 @@ pub fn advance_labor_allocation(
                         // `EcologyPhase::Thriving` gate, and rung 3 never had one on either web.
                         // Fencing a herd is ground work — a pen goes up around a flock already drawn
                         // down to its keeper's own floor.
-                        let accrual = pen_rung.build_accrual(
-                            improvement,
-                            eligible,
-                            *floor,
-                            workers,
-                            crew_build_rate,
-                        );
+                        let accrual =
+                            pen_rung.build_accrual(improvement, eligible, *floor, workers);
                         // Penning is a flat job for every species — a fence is a fence — so the pen
                         // takes no per-species multiplier; only *taming* varies.
                         let pen_cost = pen_rung
                             .build_cost(RUNG_COST_UNSCALED)
                             .expect("a rung a verb builds has a build meter");
+                        let pen_gear = build_work_from_gear(crew_build_work_per_worker, workers);
+                        let pen_bar = ladder.effective_build_cost(pen_cost, pen_gear);
                         // **Charged off the pen meter's own delta** (the Tame arm's rule): the
                         // owner-lock lives in `accrue_corral`, so a keeper the herd refuses spends
                         // nothing structurally rather than by this site re-checking the gate.
                         let pen_tile = herd.position();
                         let progress_before = herd.corral_progress;
                         let penned = accrual > 0.0
-                            && herd.accrue_corral(faction, accrual, pen_cost, pen_tile);
+                            && herd.accrue_corral(faction, accrual, pen_cost, pen_bar, pen_tile);
                         herd.build_turns_remaining =
-                            build_turns_remaining(pen_cost, herd.corral_progress, accrual);
+                            build_turns_remaining(pen_bar, herd.corral_progress, accrual);
+                        herd.build_work_from_gear = pen_gear;
                         charge_build_wear(
                             band_equipment.as_deref_mut(),
                             &equipment_cfg,
@@ -2356,17 +2367,24 @@ fn accrue_field(
     tick: u64,
     tile: UVec2,
     workers: u32,
-    build_rate: f32,
+    // `gear_per_worker` is the work units ONE EQUIPPED WORKER takes off this job
+    // (`EquipmentConfig::build_work_per_worker`, resolved through the crew's coverage). It is summed
+    // over `workers` and subtracted from the COST, never multiplied into the accrual — see
+    // `intensification::build_work_from_gear`.
+    gear_per_worker: f32,
+    ladder: &LadderConfig,
     equipment: Option<&mut BandEquipment>,
     equipment_cfg: &crate::equipment_config::EquipmentConfig,
     crew_kit: &crate::equipment_config::KitChoice,
 ) -> bool {
-    let accrual = field_rung.build_accrual(improvement, eligible, floor, workers, build_rate);
+    let accrual = field_rung.build_accrual(improvement, eligible, floor, workers);
     // **THE JOB'S PRICE** — `RUNG_COST_UNSCALED`, because sowing is a flat job: the only per-source
     // cost multiplier on the ladder is a species' `taming_cost_multiplier`, and a plant has none.
     let sow_cost = field_rung
         .build_cost(RUNG_COST_UNSCALED)
         .expect("a rung a verb builds has a build meter");
+    let sow_gear = build_work_from_gear(gear_per_worker, workers);
+    let sow_bar = ladder.effective_build_cost(sow_cost, sow_gear);
     if accrual <= 0.0 {
         return false;
     }
@@ -2379,8 +2397,9 @@ fn accrue_field(
     // The three equipment arguments ride here rather than the caller charging afterwards because
     // the meter this bills against is the one this function advances.
     let progress_before = patch.field_progress;
-    let sown = patch.accrue_field(faction, accrual, sow_cost);
-    patch.build_turns_remaining = build_turns_remaining(sow_cost, patch.field_progress, accrual);
+    let sown = patch.accrue_field(faction, accrual, sow_cost, sow_bar);
+    patch.build_turns_remaining = build_turns_remaining(sow_bar, patch.field_progress, accrual);
+    patch.build_work_from_gear = sow_gear;
     charge_build_wear(
         equipment,
         equipment_cfg,
@@ -3072,13 +3091,7 @@ mod labor_yield_tests {
     /// count would describe a build nobody here is running. The retired `full_crew` helper existed
     /// because the accrual was capped at the rung's own crew; it is not any more.
     fn build_work_per_turn(rung: &crate::intensification::RungDef, floor: f32) -> f32 {
-        rung.build_accrual(
-            rung.verb_improvement(),
-            true,
-            floor,
-            WORKERS,
-            crate::intensification::NO_BUILD_GEAR,
-        )
+        rung.build_accrual(rung.verb_improvement(), true, floor, WORKERS)
     }
 
     /// **Turns this harness's crew needs to finish `rung`'s whole job**, `ceil(cost / work)`. Turns
@@ -6256,6 +6269,42 @@ mod labor_yield_tests {
         (turn.progress, turn.gear_wear)
     }
 
+    /// Turns of sustained `Tame` on the fixture herd under `kit_id`, so the two kits can be compared
+    /// on the thing the gear now moves: **how long the job takes**, not how fast the meter fills.
+    fn turns_to_tame_on(kit_id: &str, cap_turns: u32) -> u32 {
+        const BIG_HERD_CAP: f32 = 1_000.0;
+        let (mut world, tile) = world_with_source(CAP);
+        reseat_herd(&mut world, BIG_HERD_CAP, BIG_HERD_CAP);
+        grant_knowledge(&mut world, HERDING_DISCOVERY_ID);
+        let equipment = crate::equipment_config::EquipmentConfig::builtin();
+        let band =
+            spawn_band(
+                &mut world,
+                tile,
+                vec![LaborAssignment {
+                    target: LaborTarget::Hunt {
+                        fauna_id: HERD_ID.to_string(),
+                        floor: BUILDER_FLOOR,
+                    },
+                    workers: WORKERS,
+                    improvement: Some(Improvement::Tame),
+                    kit: Some(equipment.kit(kit_id).unwrap_or_else(|| {
+                        panic!("the shipped roster carries the '{kit_id}' kit")
+                    })),
+                }],
+            );
+        world
+            .entity_mut(band)
+            .insert(crate::components::BandEquipment::start_stocked(&equipment));
+        for turn in 1..=cap_turns {
+            world.run_system_once(advance_labor_allocation);
+            if world.resource::<HerdRegistry>().herds[0].is_domesticated() {
+                return turn;
+            }
+        }
+        panic!("a Tame on the '{kit_id}' kit never completed in {cap_turns} turns");
+    }
+
     /// What one turn of a `Tame` assignment left behind — the build meter, the gear it spent, and the
     /// two liveness handles that tell a *refused* build apart from a fixture that never ran at all:
     /// `tame_arm_ran` is the herd's `tamed_this_turn`, which the `Tame` arm sets on entry, and
@@ -6263,6 +6312,9 @@ mod labor_yield_tests {
     struct TameTurn {
         progress: f32,
         gear_wear: f32,
+        /// **What the crew's tools took off the job this turn** — `Herd::build_work_from_gear`, the
+        /// `t` the effective bar subtracts. `0` for a crew carrying nothing that helps.
+        gear_work: f32,
         tame_arm_ran: bool,
         improvement: Option<Improvement>,
     }
@@ -6319,53 +6371,97 @@ mod labor_yield_tests {
             .find(HERD_ID)
             .expect("the fixture herd survives the turn")
             .tamed_this_turn;
+        let gear_work = world
+            .resource::<HerdRegistry>()
+            .find(HERD_ID)
+            .expect("the fixture herd survives the turn")
+            .build_work_from_gear;
         TameTurn {
             progress,
             gear_wear,
+            gear_work,
             tame_arm_ran,
             improvement: only_assignment(&world, band).improvement,
         }
     }
 
-    /// **THE HANDLING GEAR SPEEDS THE CLIMB, and the kit is the only thing that decides it**
+    /// **THE HANDLING GEAR SHORTENS THE CLIMB, and the kit is the only thing that decides it**
     /// (issue #515). Hurdles, halters and a butchering stone are animal-handling tools, and `Tame`
     /// is exactly the turns a band spends handling animals — so a crew that brought them gentles a
-    /// herd faster than one that left them at camp.
+    /// herd sooner than one that left them at camp.
     ///
-    /// **Asserted as the RATIO the config declares, not as two literals**, so retuning
-    /// `build_rate` moves the test with the game rather than breaking it; and the bare arm's
-    /// liveness is asserted too, or *"the geared arm built more"* would also pass for a build that
-    /// only runs with gear.
+    /// **THE TOOL TAKES WORK OFF THE JOB — it does not speed the crew up**
+    /// (`docs/plan_unit_costed_work.md` §6.1), so the two arms are compared on **turns**, and the
+    /// per-turn accrual is asserted to be *identical*. That inversion is the whole slice: a
+    /// multiplier on the crew cancels the job's cost, so it would save the same *percentage* of turns
+    /// on a garden and on a farm alike.
+    ///
+    /// **Asserted as the contribution the config declares, not as two literals**, so retuning
+    /// `build_work` moves the test with the game; and the bare arm's liveness is asserted too, or
+    /// *"the geared arm finished sooner"* would also pass for a build that only runs with gear.
     #[test]
-    fn the_handling_kit_builds_faster_than_one_without_it() {
-        let (geared, _) = tame_one_turn_on("husbandry");
-        let (bare, bare_gear_wear) = tame_one_turn_on("big_game");
-
-        let declared = crate::equipment_config::EquipmentConfig::builtin().build_rate(
-            &crate::equipment_config::EquipmentConfig::builtin()
+    fn the_handling_kit_takes_work_off_the_job_rather_than_speeding_the_crew() {
+        /// Long enough for the un-geared arm to finish — it is the slower of the two by definition.
+        const PATIENCE_TURNS: u32 = 200;
+        let equipment = crate::equipment_config::EquipmentConfig::builtin();
+        let declared = equipment.build_work_per_worker(
+            &equipment
                 .kit("husbandry")
                 .expect("the shipped roster carries the husbandry kit"),
-            &crate::components::BandEquipment::start_stocked(
-                &crate::equipment_config::EquipmentConfig::builtin(),
-            ),
+            &crate::components::BandEquipment::start_stocked(&equipment),
         );
         assert!(
             declared > crate::intensification::NO_BUILD_GEAR,
-            "fixture: the husbandry kit must declare a build rate above neutral, got {declared}"
+            "fixture: the husbandry kit must declare a build contribution above neutral, got \
+             {declared}"
         );
+
+        let geared = tame_one_turn_on_herd_owned_by("husbandry", None);
+        let bare = tame_one_turn_on_herd_owned_by("big_game", None);
+
+        // (1) The ACCRUAL is untouched — the crew's hands are worth what they are worth.
         assert!(
-            bare > 0.0,
+            bare.progress > 0.0,
             "fixture: the un-geared crew must actually be taming, or the comparison is two zeroes"
         );
         assert!(
-            (geared - bare * declared).abs() < 1e-5,
-            "the geared crew must build at exactly the kit's declared rate: \
-             geared={geared} bare={bare} declared={declared}"
+            (geared.progress - bare.progress).abs() < 1e-5,
+            "the gear must not speed the crew up: geared={} bare={}",
+            geared.progress,
+            bare.progress
         );
+
+        // (2) What it moves is the JOB — and **the partly-equipped-party rule decides how much**.
+        // `start_stocked` gives the band exactly ONE set of hurdles, so one of the ten keepers is
+        // equipped and nine are bare: the crew takes **one worker's worth** off the job, not ten.
+        // That is the whole reason the cost-side form can be coverage-weighted at all — it is a
+        // SUM, so the nine bare hands add zero, where averaging the retired multiplier over them
+        // diluted it to ×1.05 and made every extra keeper *slow the build down*.
+        const HURDLE_SETS_A_SPAWN_STOCKS: f32 = 1.0;
+        assert!(
+            (geared.gear_work - HURDLE_SETS_A_SPAWN_STOCKS * declared).abs() < 1e-4,
+            "one set of hurdles among {WORKERS} keepers takes one worker's worth off the job: {} \
+             against {declared}",
+            geared.gear_work
+        );
+        assert_eq!(
+            bare.gear_work,
+            crate::intensification::NO_BUILD_GEAR,
+            "a crew carrying nothing that helps takes nothing off the job"
+        );
+
+        // (3) And so the geared build FINISHES SOONER, which is the player-facing claim.
+        let geared_turns = turns_to_tame_on("husbandry", PATIENCE_TURNS);
+        let bare_turns = turns_to_tame_on("big_game", PATIENCE_TURNS);
+        assert!(
+            geared_turns < bare_turns,
+            "the geared crew must finish the same job sooner: {geared_turns} vs {bare_turns}"
+        );
+
         // **The other half of "the kit decides it"**: a crew that never carried the gear onto the
         // range spends none of it, which is what keeps the two arms a fair comparison.
         assert_eq!(
-            bare_gear_wear, 0.0,
+            bare.gear_wear, 0.0,
             "a crew on a kit without handling gear must not wear handling gear"
         );
     }

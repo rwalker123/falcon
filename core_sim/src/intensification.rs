@@ -222,6 +222,23 @@ fn crew_work_output(workers: u32) -> f32 {
     workers as f32 * per_worker
 }
 
+/// **WHAT THE CREW'S TOOLS TAKE OFF THE JOB** — `Σ over the crew`, which
+/// [`crate::equipment_config::KitCoverage::weighted_rate`] × head count already is
+/// (`docs/plan_unit_costed_work.md` §6.2).
+///
+/// **The tool is WIELDED**: a worker holding one contributes its worth, a worker without one
+/// contributes nothing, so this is a **sum and not an average** — an un-geared hand adds zero rather
+/// than diluting, which is the pathology the retired `BuildRate` multiplier had when averaged
+/// (*bring fewer keepers and the pen goes up faster*). `per_worker` is
+/// [`crate::equipment_config::EquipmentConfig::build_work_per_worker`] resolved through the crew's
+/// coverage, so a partly-equipped party gets exactly the share it carries.
+///
+/// Floored at [`NO_BUILD_GEAR`] so a config that somehow named a negative contribution cannot *add*
+/// work to a job — `EquipmentConfig::validate` rejects one, and this is the arithmetic's own guard.
+pub fn build_work_from_gear(per_worker: f32, workers: u32) -> f32 {
+    (workers as f32 * per_worker).max(NO_BUILD_GEAR)
+}
+
 /// **HOW MANY MORE TURNS THIS BUILD NEEDS at the crew, floor and kit that just worked it** —
 /// `ceil((cost − done) / work_this_turn)`, and THE one place that arithmetic lives so the wire's
 /// `buildTurnsRemaining` cannot drift from the meter it describes.
@@ -284,15 +301,32 @@ pub const MANAGED_SOURCE_FLOOR: f32 = crate::fauna::MSY_BIOMASS_FRACTION;
 /// animal is *more work*, not that the crew is worse at their job. See [`RungDef::build_cost`].
 pub const RUNG_COST_UNSCALED: f32 = 1.0;
 
-/// **The build multiplier of a crew carrying no gear that helps** — the neutral `1.0` a kit resolves
-/// to when none of its live items declares [`crate::equipment_config::EquipmentStat::BuildRate`].
+/// **The work a crew carrying no gear that helps takes off a job** — nothing. The neutral `0.0` a
+/// kit resolves to when none of its live items declares
+/// [`crate::equipment_config::EquipmentStat::BuildWork`].
 ///
-/// It is [`crate::equipment_config::EquipmentConfig::build_rate`]'s answer for every plant build
-/// today (no plant item declares the stat yet — issue #539) and for every animal build whose crew
-/// went out on a kit without handling gear. Named rather than a bare `1.0` at the call sites that
-/// have no band to resolve a kit against — a forecast probe, a test fixture — so *"this crew brought
-/// nothing"* reads as a stated fact rather than an unexplained literal.
-pub const NO_BUILD_GEAR: f32 = 1.0;
+/// **It is `0.0` and not `1.0`, because the gear is ADDITIVE off the job's cost now**
+/// (`docs/plan_unit_costed_work.md` §6): it was the neutral of a *multiplier* on the crew's output,
+/// under which a tool saved the same percentage of turns on a garden and on a farm alike — the
+/// multiplier problem the arc exists to escape. A neutral read as the wrong one of these is a build
+/// either free or unbuildable, which is why the two live on the stat
+/// ([`crate::equipment_config::EquipmentStat::neutral`]) rather than at the call sites.
+///
+/// It is [`crate::equipment_config::EquipmentConfig::build_work_per_worker`]'s answer for every plant
+/// build today (no plant item declares the stat yet — issue #539) and for every animal build whose
+/// crew went out on a kit without handling gear. Named rather than a bare `0.0` at the call sites
+/// that have no band to resolve a kit against — a forecast probe, a test fixture — so *"this crew
+/// brought nothing"* reads as a stated fact rather than an unexplained literal.
+pub const NO_BUILD_GEAR: f32 = 0.0;
+
+/// **THE REFERENCE JOB every build readout is quoted against** — the `plant:tended` rung, the
+/// smallest shipped improvement and the first one a player meets. A work unit means nothing to
+/// someone holding a hoe, so `ItemDefinition::headline_wear`'s life gauge reads *"≈12 gardens'
+/// worth"* rather than *"625 work units"*; the garden is this rung's own `work_cost`.
+///
+/// Named here, on the ladder, because it is a **ladder** fact: the readout must move with a retune of
+/// the rung rather than carrying its own copy of the number.
+pub const REFERENCE_BUILD_RUNG: RungKey = RungKey::PlantTended;
 
 /// **The yield dip of an assignment that is building nothing** — the identity, so a pure harvest pays
 /// its stance's whole ceiling. Named rather than a bare `1.0` at [`LadderConfig::build_dip`]'s `None`
@@ -870,7 +904,7 @@ impl RungDef {
     }
 
     /// **The build seam — the accrual side. THE WORK UNITS THIS CREW PRODUCES THIS TURN**, not a
-    /// fraction of anything: `crew output × learn_multiplier(floor) × build_rate` when `improvement`
+    /// fraction of anything: `crew output × learn_multiplier(floor)` when `improvement`
     /// **is** the rung's verb *and* the caller's rung-specific gates hold (`eligible` — knows the
     /// unlock knowledge, the crew is actually working the source, the species' ceiling allows it, the
     /// faction owns it), otherwise `0`.
@@ -901,27 +935,19 @@ impl RungDef {
     ///
     /// It is applied here and **not** to [`RungDef::build_decay`] — see [`learn_multiplier`].
     ///
-    /// # `build_rate` — what the crew brought to the work
+    /// # THE GEAR IS NOT HERE, and that is the shape of §6
     ///
-    /// The crew's kit ([`crate::equipment_config::EquipmentConfig::build_rate`]), neutral at
-    /// [`NO_BUILD_GEAR`] for a crew carrying nothing that helps — which is every plant build and
-    /// every animal one whose crew left the handling gear at home. Hurdles, halters and a butchering
-    /// stone are animal-handling tools, and `Tame` and `Corral` are exactly the turns a band spends
-    /// handling animals (issue #515).
-    ///
-    /// **It multiplies the crew's output and NOT [`RungDef::build_decay`]**, for the reason `floor`
-    /// gets the same treatment: decay happens on turns nobody works the source, so there is no crew,
-    /// no kit and no gear to read. Better tools make a build arrive sooner; they do not make an
-    /// abandoned one forget more slowly. It does **not** touch
-    /// [`RungDef::yield_fraction_while_building`] either — a faster build already pays the dip for
-    /// fewer turns.
+    /// A tool's help lands on the **job**, not on the crew's output: it takes work units off the cost
+    /// ([`LadderConfig::effective_build_cost`]), because a multiplier on the crew cancels the cost
+    /// (`turns_geared / turns_bare = w / (w + h)` for any job) and therefore saves the same
+    /// *percentage* of turns on a garden and on a farm alike. The retired `build_rate` parameter was
+    /// exactly that multiplier.
     pub fn build_accrual(
         &self,
         improvement: Option<Improvement>,
         eligible: bool,
         floor: f32,
         workers: u32,
-        build_rate: f32,
     ) -> f32 {
         if self.build.is_none() {
             return 0.0;
@@ -929,7 +955,7 @@ impl RungDef {
         if !eligible || improvement.is_none() || self.verb_improvement() != improvement {
             return 0.0;
         }
-        crew_work_output(workers) * learn_multiplier(floor) * build_rate
+        crew_work_output(workers) * learn_multiplier(floor)
     }
 
     /// **The build seam — the cost side. WHAT THIS JOB COSTS ON THIS SOURCE**, in work units:
@@ -959,9 +985,11 @@ impl RungDef {
     /// (both animal rungs declare `null`), but it is the rule that keeps a future decaying rung
     /// correct.
     ///
-    /// **It takes no `floor`, and that asymmetry with the accrual is deliberate.** Decay is what
-    /// happens on a turn nobody works the source: there is no assignment, so there is no floor to
-    /// read. See [`learn_multiplier`].
+    /// **It takes no `floor` and no GEAR, and both asymmetries with the accrual are deliberate.**
+    /// Decay is what happens on a turn nobody works the source: there is no assignment, so there is
+    /// no floor — and no crew, so no kit. It therefore bleeds a fraction of the **raw** job, never of
+    /// the tooled-down [`LadderConfig::effective_build_cost`]: better tools make a build arrive
+    /// sooner, they do not make an abandoned one forget more slowly. See [`learn_multiplier`].
     pub fn build_decay(&self, cost_multiplier: f32) -> f32 {
         self.build.as_ref().map_or(0.0, |build| {
             build
@@ -1130,6 +1158,20 @@ impl LadderKnowledge {
 pub struct LadderConfig {
     /// The knowledge dials shared by **both** webs — see [`LadderKnowledge`].
     pub knowledge: LadderKnowledge,
+    /// **THE FLOOR A TOOL CANNOT SHRINK A JOB PAST**, as a fraction of the job's own cost — the
+    /// clamp in [`Self::effective_build_cost`]. `0.25` means *the best-equipped crew imaginable still
+    /// works a quarter of the job by hand*.
+    ///
+    /// **A playtest anchor, so it is a lever rather than a constant** (`docs/plan_unit_costed_work.md`
+    /// §10). It exists because gear is additive off the cost now: nothing else stops a rich enough
+    /// kit driving a cheap rung to zero — or, with a future second declarer, negative — and a rung
+    /// that completes on the turn it is picked is not an investment at all.
+    ///
+    /// It lives on the **ladder** because the ladder owns build costs; the *gear* declares what it
+    /// takes off, and how far that may go is a property of the jobs. Validated `0 < f <= 1`: at `0`
+    /// a job can be driven to nothing, and above `1` the clamp would *raise* a cost it is there to
+    /// bound.
+    pub min_build_fraction: f32,
     pub rungs: Vec<RungDef>,
 }
 
@@ -1177,6 +1219,31 @@ impl LadderConfig {
         })
     }
 
+    /// **THE BAR A GEARED CREW'S METER MUST REACH** — `max(cost × min_build_fraction, cost − t)`,
+    /// where `t` is [`build_work_from_gear`].
+    ///
+    /// **The stored companion cost on the source stays the RAW job** (`work_cost ×
+    /// cost_multiplier`), un-tooled and stable, because that is what `is_cultivated()` and its three
+    /// siblings compare against and a meter whose bar moved with the crew's kit would un-complete a
+    /// rung the moment a tool wore out. The offset therefore applies at the **completion comparison
+    /// only**, and the accrue helpers set the meter to the raw cost when it is crossed — the jump is
+    /// the units the tool pre-paid, and it is honest: those units were worked, they were simply
+    /// worked by the tool.
+    ///
+    /// **The clamp is what stops a job being driven to nothing** ([`Self::min_build_fraction`]).
+    pub fn effective_build_cost(&self, cost: f32, gear_work: f32) -> f32 {
+        (cost - gear_work).max(cost * self.min_build_fraction)
+    }
+
+    /// **The reference job every build-quantum readout is quoted against**, in work units — the
+    /// [`REFERENCE_BUILD_RUNG`]'s own `work_cost`. See that constant for why the number is the
+    /// ladder's rather than the readout's.
+    pub fn reference_build_cost(&self) -> f32 {
+        self.rung(REFERENCE_BUILD_RUNG)
+            .build_cost(RUNG_COST_UNSCALED)
+            .expect("the reference rung is an investment — it has a build meter")
+    }
+
     /// **THE dip multiplier an assignment's ceiling carries** (`docs/plan_investment_rung_toggle.md`
     /// §2.2): the building rung's `yield_fraction_while_building`, or the identity
     /// [`NO_BUILD_UNDERWAY_DIP`] when the crew is only harvesting.
@@ -1220,6 +1287,20 @@ impl LadderConfig {
     /// exactly the failure mode config validation exists to catch.
     pub fn validate(&self) -> Result<(), LadderConfigError> {
         validate_knowledge(&self.knowledge)?;
+        if !self.min_build_fraction.is_finite()
+            || self.min_build_fraction <= 0.0
+            || self.min_build_fraction > 1.0
+        {
+            return Err(LadderConfigError::Invalid {
+                field: "min_build_fraction".to_string(),
+                constraint: "leave a strict fraction of every job for the crew's own hands \
+                             (0 < f <= 1) — at 0 a rich enough kit drives a rung to nothing and it \
+                             completes the turn it is picked, and above 1 the clamp raises the cost \
+                             it exists to bound"
+                    .to_string(),
+                value: format!("min_build_fraction = {}", self.min_build_fraction),
+            });
+        }
 
         let mut seen_ids: HashSet<(RungBranch, &str)> = HashSet::new();
         let mut seen_orders: HashSet<(RungBranch, u32)> = HashSet::new();
@@ -1732,7 +1813,6 @@ mod tests {
             true,
             FOOD_PEAK_FLOOR,
             reference_crew(rung),
-            NO_BUILD_GEAR,
         )
     }
 
@@ -1861,41 +1941,20 @@ mod tests {
         // `crew × PER_WORKER_OUTPUT` work units.
         let crew = build.crew_needed.expect("the tended rung declares a crew");
         assert_eq!(
-            tended.build_accrual(
-                Some(Improvement::Cultivate),
-                true,
-                FOOD_PEAK_FLOOR,
-                crew,
-                NO_BUILD_GEAR,
-            ),
+            tended.build_accrual(Some(Improvement::Cultivate), true, FOOD_PEAK_FLOOR, crew,),
             crew as f32 * PER_WORKER_OUTPUT
         );
         // Wrong verb → nothing, even though the crew is working the patch.
         assert_eq!(
-            tended.build_accrual(
-                Some(Improvement::Sow),
-                true,
-                FOOD_PEAK_FLOOR,
-                crew,
-                NO_BUILD_GEAR,
-            ),
+            tended.build_accrual(Some(Improvement::Sow), true, FOOD_PEAK_FLOOR, crew,),
             0.0
         );
         // No improvement at all → nothing. A crew that is only harvesting builds nothing, whatever
         // its stance.
-        assert_eq!(
-            tended.build_accrual(None, true, FOOD_PEAK_FLOOR, crew, NO_BUILD_GEAR),
-            0.0
-        );
+        assert_eq!(tended.build_accrual(None, true, FOOD_PEAK_FLOOR, crew), 0.0);
         // Right verb, gate lapsed → nothing accrues (progress is neither lost nor advanced).
         assert_eq!(
-            tended.build_accrual(
-                Some(Improvement::Cultivate),
-                false,
-                FOOD_PEAK_FLOOR,
-                crew,
-                NO_BUILD_GEAR,
-            ),
+            tended.build_accrual(Some(Improvement::Cultivate), false, FOOD_PEAK_FLOOR, crew,),
             0.0
         );
         // The cost is the job, and the decay is a fraction OF that job — both in absolute units.
@@ -1928,13 +1987,7 @@ mod tests {
         ] {
             let rung = ladder.rung(key);
             let work = |workers| {
-                rung.build_accrual(
-                    rung.verb_improvement(),
-                    true,
-                    FOOD_PEAK_FLOOR,
-                    workers,
-                    NO_BUILD_GEAR,
-                )
+                rung.build_accrual(rung.verb_improvement(), true, FOOD_PEAK_FLOOR, workers)
             };
             assert_eq!(work(0), 0.0, "{key:?}: nobody working, nothing built");
             assert_eq!(
@@ -1957,6 +2010,136 @@ mod tests {
                 "{key:?}: doubling the crew halves the turns"
             );
         }
+    }
+
+    /// **A TOOL'S SAVING IS A SHARE OF THE JOB, so it fades as the job grows** — the arithmetic §6.1
+    /// turns on, and the reason the contribution is subtracted from the cost rather than multiplied
+    /// into the crew.
+    ///
+    /// A **multiplier** would save the same *percentage* of turns whatever the job costs
+    /// (`turns_geared / turns_bare = w / (w + h)`, the cost cancels). Subtracted, the same 17 units
+    /// are a third of a 50-unit garden and a seventeenth of a 300-unit farm — **and the tool never
+    /// mentions either improvement by name**. The fade is therefore *config's* job (a Farm is born
+    /// large), not a property of the rule.
+    #[test]
+    fn a_tools_saving_shrinks_as_the_job_grows() {
+        let ladder = LadderConfig::builtin();
+        /// A fully-geared reference keeper crew: two hands, `husbandry_gear`'s 8.5 each.
+        const GEAR_WORK: f32 = 17.0;
+        /// The shipped `plant:tended` cost, and a stand-in for the ~300-unit Farm rung 4 is born at.
+        const GARDEN: f32 = 50.0;
+        const FARM: f32 = 300.0;
+
+        let saved = |cost: f32| (cost - ladder.effective_build_cost(cost, GEAR_WORK)) / cost;
+        assert!(
+            (saved(GARDEN) - GEAR_WORK / GARDEN).abs() < 1e-6,
+            "the tool takes a THIRD off a garden: {}",
+            saved(GARDEN)
+        );
+        assert!(
+            saved(FARM) * 3.0 < saved(GARDEN),
+            "and is noise against a farm — under a third of the share, not the same share: {} vs {}",
+            saved(FARM),
+            saved(GARDEN)
+        );
+    }
+
+    /// **A JOB CANNOT BE DRIVEN TO NOTHING** — `min_build_fraction` is the floor the clamp holds, and
+    /// the reason the ladder needs one at all now that gear is additive off the cost.
+    #[test]
+    fn gear_cannot_shrink_a_job_past_the_ladders_floor() {
+        let ladder = LadderConfig::builtin();
+        const COST: f32 = 50.0;
+        assert_eq!(
+            ladder.effective_build_cost(COST, NO_BUILD_GEAR),
+            COST,
+            "a crew carrying nothing pays the whole job"
+        );
+        assert_eq!(
+            ladder.effective_build_cost(COST, 10.0),
+            COST - 10.0,
+            "and an equipped one pays the job less what its tools took off it"
+        );
+        // An absurdly rich kit — more than the whole job — still leaves the floor's share.
+        assert_eq!(
+            ladder.effective_build_cost(COST, COST * 10.0),
+            COST * ladder.min_build_fraction,
+            "the clamp holds the floor rather than letting the job go to zero or negative"
+        );
+        assert!(
+            ladder.min_build_fraction > 0.0 && ladder.min_build_fraction <= 1.0,
+            "the shipped floor is a strict fraction: {}",
+            ladder.min_build_fraction
+        );
+    }
+
+    /// **A JOB DRIVEN TO NOTHING COMPLETES THE TURN IT IS PICKED**, which is not an investment at
+    /// all — so a `min_build_fraction` of `0` (or above `1`, where the clamp would *raise* the cost)
+    /// is a load failure.
+    #[test]
+    fn rejects_a_build_floor_that_leaves_the_crew_nothing_to_do() {
+        for bad in [0.0, -0.25, 1.5] {
+            let err = reject(|json| json["min_build_fraction"] = (bad).into());
+            assert_rejects(err, "min_build_fraction");
+        }
+    }
+
+    /// **THE GEAR IS A SUM OVER THE CREW, NEVER AN AVERAGE** (§6.2) — the partly-equipped-party rule
+    /// the carries already run on, and the property that lets the cost-side stat be
+    /// coverage-weighted where the retired multiplier could not be.
+    #[test]
+    fn the_gear_contribution_sums_over_the_crew_and_floors_at_neutral() {
+        const PER_WORKER: f32 = 8.5;
+        assert_eq!(build_work_from_gear(PER_WORKER, 0), NO_BUILD_GEAR);
+        assert_eq!(build_work_from_gear(PER_WORKER, 2), 2.0 * PER_WORKER);
+        assert_eq!(build_work_from_gear(PER_WORKER, 20), 20.0 * PER_WORKER);
+        assert_eq!(
+            build_work_from_gear(NO_BUILD_GEAR, 20),
+            NO_BUILD_GEAR,
+            "a crew carrying nothing that helps takes nothing off, however many of them there are"
+        );
+        // A negative contribution cannot *add* work — `EquipmentConfig::validate` rejects one, and
+        // this is the arithmetic's own guard.
+        assert_eq!(build_work_from_gear(-5.0, 2), NO_BUILD_GEAR);
+    }
+
+    /// **A FULLY-GEARED ANIMAL BUILD IS UNMOVED, and that is this slice's pacing proof** — the
+    /// calibration §6.2 sets `husbandry_gear`'s 8.5 by: the retired `build_rate` ×1.5 on a 50-unit
+    /// job at the reference keeper crew of 2 saved 8.33 of 25 turns, i.e. it was worth ≈17 units of
+    /// the job, which is 8.5 **per worker**.
+    #[test]
+    fn a_fully_geared_reference_crew_tames_in_the_turns_the_retired_multiplier_gave() {
+        let ladder = LadderConfig::builtin();
+        let pastoral = ladder.rung(RungKey::AnimalPastoral);
+        /// The reference keeper crew the animal costs were priced against — see
+        /// `the_food_peak_preserves_every_rungs_stated_build_length`.
+        const KEEPERS: u32 = 2;
+        /// What `husbandry_gear`'s flint tier declares, per equipped worker.
+        const PER_WORKER: f32 = 8.5;
+        /// What the retired ×1.5 multiplier bought at this crew: `ceil(50 / (2 × 1.5))`.
+        const GEARED_TURNS: u32 = 17;
+
+        let cost = pastoral
+            .build_cost(RUNG_COST_UNSCALED)
+            .expect("the pastoral rung builds");
+        let accrual =
+            pastoral.build_accrual(pastoral.verb_improvement(), true, FOOD_PEAK_FLOOR, KEEPERS);
+        let bar = ladder.effective_build_cost(cost, build_work_from_gear(PER_WORKER, KEEPERS));
+        assert_eq!(
+            build_turns_remaining(bar, RUNG_UNSTARTED, accrual),
+            Some(GEARED_TURNS),
+            "a fully-geared reference keeper crew must finish where the multiplier left it"
+        );
+        // And a HALF-geared crew is honestly slower, which it was not before: the multiplier was
+        // resolved uncovered, so one set of hurdles among the crew bought the whole ×1.5.
+        let half = ladder.effective_build_cost(cost, build_work_from_gear(PER_WORKER, 1));
+        let half_turns =
+            build_turns_remaining(half, RUNG_UNSTARTED, accrual).expect("a staffed build finishes");
+        assert!(
+            half_turns > GEARED_TURNS,
+            "half the crew equipped must take longer than all of it: {half_turns} vs \
+             {GEARED_TURNS}"
+        );
     }
 
     /// **The turns estimate is `ceil(remaining / this turn's work)`, and a STALL has no estimate.**
@@ -2001,13 +2184,7 @@ mod tests {
                 Some(Improvement::Corral),
             ] {
                 assert_eq!(
-                    wild.build_accrual(
-                        improvement,
-                        true,
-                        FOOD_PEAK_FLOOR,
-                        reference_crew(wild),
-                        NO_BUILD_GEAR,
-                    ),
+                    wild.build_accrual(improvement, true, FOOD_PEAK_FLOOR, reference_crew(wild),),
                     0.0
                 );
             }
@@ -2045,7 +2222,6 @@ mod tests {
                 true,
                 FOOD_PEAK_FLOOR,
                 reference_crew(pastoral),
-                NO_BUILD_GEAR,
             ),
             reference_crew(pastoral) as f32 * PER_WORKER_OUTPUT
         );
@@ -2065,7 +2241,6 @@ mod tests {
                     true,
                     FOOD_PEAK_FLOOR,
                     reference_crew(pastoral),
-                    NO_BUILD_GEAR,
                 ),
                 0.0,
                 "{improvement:?} must not tame a herd — only Tame does"
@@ -2078,7 +2253,6 @@ mod tests {
                 false,
                 FOOD_PEAK_FLOOR,
                 reference_crew(pastoral),
-                NO_BUILD_GEAR,
             ),
             0.0
         );
@@ -2499,13 +2673,7 @@ mod tests {
              term to give them"
         );
         let build = |workers| {
-            tended.build_accrual(
-                tended.verb_improvement(),
-                true,
-                FOOD_PEAK_FLOOR,
-                workers,
-                NO_BUILD_GEAR,
-            )
+            tended.build_accrual(tended.verb_improvement(), true, FOOD_PEAK_FLOOR, workers)
         };
         assert!(
             build(50) > build(1),
@@ -2652,13 +2820,7 @@ mod tests {
             (RungKey::AnimalPen, PEN_REFERENCE_CREW),
         ] {
             let rung = ladder.rung(key);
-            let accrual = rung.build_accrual(
-                rung.verb_improvement(),
-                true,
-                FOOD_PEAK_FLOOR,
-                crew,
-                NO_BUILD_GEAR,
-            );
+            let accrual = rung.build_accrual(rung.verb_improvement(), true, FOOD_PEAK_FLOOR, crew);
             assert_eq!(
                 accrual,
                 crew as f32 * PER_WORKER_OUTPUT,
@@ -2695,13 +2857,7 @@ mod tests {
         ] {
             let rung = ladder.rung(key);
             let accrual = |floor| {
-                rung.build_accrual(
-                    rung.verb_improvement(),
-                    true,
-                    floor,
-                    reference_crew(rung),
-                    NO_BUILD_GEAR,
-                )
+                rung.build_accrual(rung.verb_improvement(), true, floor, reference_crew(rung))
             };
             // Liveness first: an ordering sweep alone would pass on an accrual that returned zero
             // everywhere, which is exactly what a broken gate looks like.
@@ -2729,13 +2885,7 @@ mod tests {
             // false and nothing is built. Asserted here as the seam's half of it — `eligible = false`
             // is always zero, whatever the floor.
             assert_eq!(
-                rung.build_accrual(
-                    rung.verb_improvement(),
-                    false,
-                    1.0,
-                    reference_crew(rung),
-                    NO_BUILD_GEAR,
-                ),
+                rung.build_accrual(rung.verb_improvement(), false, 1.0, reference_crew(rung),),
                 0.0,
                 "{key:?}: watching a source builds nothing, however restrained the watching"
             );

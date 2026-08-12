@@ -1918,7 +1918,11 @@ fn kit_roster_states(
                 // reach, exactly like the three above, so the picker renders the kit and not the
                 // band that happens to be selected.
                 scout_vantage_range: tiers.scout_vantage_range,
-                build_rate: tiers.build_rate,
+                // **The retired multiplier's slot, held at its neutral** — the stat is an
+                // additive per-worker contribution now (`buildWorkPerWorker` beside it), and a
+                // number in these units would read as a rate on a field the client renders as one.
+                build_rate: sim_schema::RETIRED_BUILD_RATE,
+                build_work_per_worker: tiers.build_work_per_worker,
                 // **The attack's size window**, so the client's pre-launch gate resolves this kit
                 // against the quarry in front of it rather than against the kit's best case. `0` on
                 // either end is unbounded, which every weapon but the passive device is.
@@ -2484,6 +2488,10 @@ pub fn capture_snapshot(
                             .get(&cohort.faction)
                             .unwrap_or(&NO_CRAFTS_KNOWN),
                         crafting: &recipes_config.crafting,
+                        // **The ladder's reference job**, resolved once per capture — an equipment
+                        // life gauge quotes a build's wear in *gardens' worth*, not in bare work
+                        // units, and the garden is the `plant:tended` rung's own `work_cost`.
+                        reference_build_cost: ladder_config.reference_build_cost(),
                     },
                 })
             },

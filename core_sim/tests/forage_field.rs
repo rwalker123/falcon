@@ -36,7 +36,7 @@ use core_sim::{
     MapPresetsHandle, MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick,
     SiteRefusal, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
     StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry,
-    WellbeingConfigHandle, FOOD, NO_BUILD_GEAR, RUNG_COST_UNSCALED, SEED_SELECTION_DISCOVERY_ID,
+    WellbeingConfigHandle, FOOD, RUNG_COST_UNSCALED, SEED_SELECTION_DISCOVERY_ID,
 };
 
 /// Grant faction-level **Seed Selection** directly via the ledger — the gate the `Sow` policy checks.
@@ -491,13 +491,7 @@ fn field_build(app: &App) -> (f32, f32) {
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let field = ladder.rung(RungKey::PlantField);
     (
-        field.build_accrual(
-            Some(Improvement::Sow),
-            true,
-            FOOD_PEAK_FLOOR,
-            sow_crew(app),
-            NO_BUILD_GEAR,
-        ),
+        field.build_accrual(Some(Improvement::Sow), true, FOOD_PEAK_FLOOR, sow_crew(app)),
         field.build_decay(RUNG_COST_UNSCALED),
     )
 }

@@ -9,7 +9,9 @@ use crate::forage::{
     field_fodder, forage_per_worker_biomass, patch_ecology, patch_fodder_per_biomass,
     patch_neglect_grace_remaining, patch_provisions_per_biomass, tended_fodder,
 };
-use crate::intensification::{build_fraction, NO_BUILD_REMAINING_FRACTION, RUNG_COST_UNSCALED};
+use crate::intensification::{
+    build_fraction, NO_BUILD_GEAR, NO_BUILD_REMAINING_FRACTION, RUNG_COST_UNSCALED,
+};
 use sim_schema::NO_BUILD_TURNS_ESTIMATE;
 
 /// **No animal pays fodder** — the herd half of the per-biomass yield triple is structurally zero,
@@ -630,6 +632,12 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 build_turns_remaining: herd
                     .and_then(|herd| herd.build_turns_remaining)
                     .map_or(NO_BUILD_TURNS_ESTIMATE, |turns| turns as i32),
+                // **What the keepers' tools took off the running build** — quoted beside the RAW
+                // `*WorkCost` above, never folded into it, so a readout can say "your hurdles: −17
+                // work" against a price that does not move under the crew's kit.
+                build_work_from_gear: herd
+                    .map(|herd| herd.build_work_from_gear)
+                    .unwrap_or(NO_BUILD_GEAR),
             }
         })
         .collect()
@@ -817,6 +825,9 @@ pub(crate) fn snapshot_forage_patches(
                 build_turns_remaining: patch
                     .build_turns_remaining
                     .map_or(NO_BUILD_TURNS_ESTIMATE, |turns| turns as i32),
+                // The plant twin — `NO_BUILD_GEAR` on every plant build today, since no plant item
+                // declares `EquipmentStat::BuildWork` yet (issue #539).
+                build_work_from_gear: patch.build_work_from_gear,
                 // **One gatherer's BIOMASS throughput** — `per_worker_biomass_capacity × seasonal`,
                 // the exact term `forage_take`'s worker cap multiplies by the head-count, through the
                 // shared helper so the wire and the take cannot disagree. `0` in a dead season, like

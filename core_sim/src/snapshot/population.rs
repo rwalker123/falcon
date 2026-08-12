@@ -500,7 +500,11 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 // sim collected 12, and a vantage of 2 tiles against a reveal at 1.
                 pen_carry_per_worker_biomass: tiers.pen_carry_per_worker_biomass,
                 scout_vantage_range: tiers.scout_vantage_range,
-                build_rate: tiers.build_rate,
+                // **The retired multiplier's slot, held at its neutral** — the stat is an
+                // additive per-worker contribution now (`buildWorkPerWorker` beside it), and a
+                // number in these units would read as a rate on a field the client renders as one.
+                build_rate: sim_schema::RETIRED_BUILD_RATE,
+                build_work_per_worker: tiers.build_work_per_worker,
             })
         })
         .collect();

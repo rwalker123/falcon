@@ -446,6 +446,20 @@ pub struct HerdTelemetryState {
     /// Appended (append-only).
     #[serde(default = "no_build_turns_estimate")]
     pub build_turns_remaining: i32,
+    /// **What the crew's TOOLS took off this build**, in work units — the `t` in
+    /// `effective_cost = max(work_cost × min_build_fraction, work_cost − t)`
+    /// (`docs/plan_unit_costed_work.md` §6).
+    ///
+    /// **A tool's help lands on the JOB, not on the crew's output**, so `work_done`/`work_cost` above
+    /// stay the **raw** job and this is quoted beside them rather than folded in — a readout says
+    /// *"your hoes: −8 work"* against a price that does not move under it. A multiplier on the crew
+    /// would cancel the cost and save the same *percentage* of turns on a garden and on a farm alike.
+    ///
+    /// **Per equipped worker, summed**: a worker holding a tool contributes its worth, a worker
+    /// without one contributes nothing. `0` = no build in flight, or the crew carries nothing that
+    /// helps — which is every **plant** build today (issue #539). Appended (append-only).
+    #[serde(default)]
+    pub build_work_from_gear: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -520,6 +534,7 @@ impl Default for HerdTelemetryState {
             corral_work_done: 0.0,
             corral_work_cost: 0.0,
             build_turns_remaining: no_build_turns_estimate(),
+            build_work_from_gear: 0.0,
             corral_material: Vec::new(),
             pastoral_material: Vec::new(),
         }
@@ -767,6 +782,20 @@ pub struct ForagePatchState {
     /// Appended (append-only).
     #[serde(default = "no_build_turns_estimate")]
     pub build_turns_remaining: i32,
+    /// **What the crew's TOOLS took off this build**, in work units — the `t` in
+    /// `effective_cost = max(work_cost × min_build_fraction, work_cost − t)`
+    /// (`docs/plan_unit_costed_work.md` §6).
+    ///
+    /// **A tool's help lands on the JOB, not on the crew's output**, so `work_done`/`work_cost` above
+    /// stay the **raw** job and this is quoted beside them rather than folded in — a readout says
+    /// *"your hoes: −8 work"* against a price that does not move under it. A multiplier on the crew
+    /// would cancel the cost and save the same *percentage* of turns on a garden and on a farm alike.
+    ///
+    /// **Per equipped worker, summed**: a worker holding a tool contributes its worth, a worker
+    /// without one contributes nothing. `0` = no build in flight, or the crew carries nothing that
+    /// helps — which is every **plant** build today (issue #539). Appended (append-only).
+    #[serde(default)]
+    pub build_work_from_gear: f32,
 }
 
 /// The serde default of a `build_turns_remaining` field — [`crate::NO_BUILD_TURNS_ESTIMATE`], so an
@@ -1042,18 +1071,32 @@ pub struct KitOptionState {
     /// (`none` carries nothing and wears nothing), never "unknown".
     #[serde(default)]
     pub item_ids: Vec<String>,
-    /// **How much faster a rung's per-source build meter fills for a party carrying this kit**, at
-    /// the FRESH tier. `1.0` is neutral — a kit declaring nothing that helps changes no build at
-    /// all; the handling gear ships `1.5`.
+    /// **RETIRED — it publishes [`crate::RETIRED_BUILD_RATE`] and nothing else.** It carried a
+    /// *multiplier* on the crew's build output; the stat is now an **additive per-worker contribution
+    /// off the job** ([`Self::build_work_per_worker`] beside it). The slot is held at its neutral
+    /// rather than removed because the FlatBuffers `(deprecated)` keyword drops the accessor and a
+    /// client still calls it.
     ///
-    /// **IT IS WHAT MAKES THE HUSBANDRY KIT APPLICABLE BEFORE A PEN EXISTS.** Its other axis,
+    /// **ITS SUCCESSOR IS WHAT MAKES THE HUSBANDRY KIT APPLICABLE BEFORE A PEN EXISTS**, and that
+    /// argument transfers verbatim. The kit's other axis,
     /// [`Self::pen_carry_per_worker_biomass`], is read on a corralled herd and nowhere else, so a
     /// picker testing that axis alone withholds the kit on the very herd the player is taming —
     /// which is the work hurdles and halters are physically for. A consumer deciding whether to
     /// offer a kit must ask what the kit can change on *this* source across **every** axis it
-    /// declares, never off one hardcoded key.
+    /// declares, never off one hardcoded key — and this is the axis it must now read as
+    /// [`Self::build_work_per_worker`].
     #[serde(default = "multiplier_neutral")]
     pub build_rate: f32,
+    /// **The work units ONE EQUIPPED WORKER carrying this kit takes off a build's cost**
+    /// (`docs/plan_unit_costed_work.md` §6). Neutral `0.0`; the handling gear ships `8.5`.
+    ///
+    /// **It supersedes [`Self::build_rate`]**, which is retired and now publishes only its neutral:
+    /// that stat multiplied the *crew's output*, and a multiplier cancels the job's cost, so it saved
+    /// the same *percentage* of turns on a garden and on a farm alike. This is subtracted from the
+    /// job, so the job's own size decides what it is worth — and it is **summed over the equipped
+    /// workers**, never averaged over the crew.
+    #[serde(default)]
+    pub build_work_per_worker: f32,
 }
 
 /// **Hand-written rather than derived, for the same reason [`HerdTelemetryState`]'s is**: three of
@@ -1083,6 +1126,7 @@ impl Default for KitOptionState {
             // the kit does not hold.
             item_ids: Vec::new(),
             build_rate: multiplier_neutral(),
+            build_work_per_worker: 0.0,
         }
     }
 }

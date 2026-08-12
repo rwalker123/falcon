@@ -285,13 +285,7 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
                 // health check and no work predicate, deliberately: sown ground draws nothing.
                 _ => true,
             };
-            let accrual = rung.build_accrual(
-                improvement,
-                eligible,
-                floor,
-                full_crew(rung),
-                crate::intensification::NO_BUILD_GEAR,
-            );
+            let accrual = rung.build_accrual(improvement, eligible, floor, full_crew(rung));
             let cost = rung
                 .build_cost(RUNG_COST_UNSCALED)
                 .expect("a rung a verb builds has a build meter");
@@ -299,10 +293,12 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
                 // The completion bool is the labor arm's feed-line trigger; this probe reads the
                 // meter itself just below, so it is deliberately discarded here.
                 let _completed_this_turn = match verb {
+                    // **The probe carries no gear**, so the effective bar IS the raw cost
+                    // (`NO_BUILD_GEAR` takes nothing off) — it measures the ladder's own pacing.
                     Improvement::Cultivate => {
-                        patch.accrue_cultivation(PROBE_FACTION, accrual, cost)
+                        patch.accrue_cultivation(PROBE_FACTION, accrual, cost, cost)
                     }
-                    _ => patch.accrue_field(PROBE_FACTION, accrual, cost),
+                    _ => patch.accrue_field(PROBE_FACTION, accrual, cost, cost),
                 };
                 let done = match verb {
                     Improvement::Cultivate => patch.is_cultivated(),
@@ -508,19 +504,13 @@ fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOu
                 .provisions;
             let eligible =
                 herd.can_pen() && herd.is_domesticated() && herd.owner == Some(PROBE_FACTION);
-            let accrual = pen.build_accrual(
-                improvement,
-                eligible,
-                floor,
-                full_crew(pen),
-                crate::intensification::NO_BUILD_GEAR,
-            );
+            let accrual = pen.build_accrual(improvement, eligible, floor, full_crew(pen));
             let cost = pen
                 .build_cost(RUNG_COST_UNSCALED)
                 .expect("the pen rung has a build meter");
             if accrual > 0.0 {
                 let tile = herd.position();
-                if herd.accrue_corral(PROBE_FACTION, accrual, cost, tile) {
+                if herd.accrue_corral(PROBE_FACTION, accrual, cost, cost, tile) {
                     turns_to_complete = Some(turn);
                     fraction_at_completion = herd.biomass / cap;
                 }
@@ -583,15 +573,9 @@ fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutc
             // gone (`docs/plan_harvest_floor.md` §3.2); what replaced it is the **escapement room**,
             // read pre-take and pre-quantisation, never "an animal died".
             let eligible = herd.can_domesticate() && standing_above_floor > 0.0;
-            let accrual = pastoral.build_accrual(
-                improvement,
-                eligible,
-                floor,
-                full_crew(pastoral),
-                crate::intensification::NO_BUILD_GEAR,
-            );
+            let accrual = pastoral.build_accrual(improvement, eligible, floor, full_crew(pastoral));
             if accrual > 0.0 {
-                herd.accrue_domestication(PROBE_FACTION, accrual, tame_cost);
+                herd.accrue_domestication(PROBE_FACTION, accrual, tame_cost, tame_cost);
                 if herd.is_domesticated() {
                     turns_to_complete = Some(turn);
                     fraction_at_completion = herd.biomass / cap;
@@ -1170,20 +1154,8 @@ fn probe_build_and_teach_axis() {
                 )),
                 format!("{floor:.2}K"),
                 rung.build_cost(RUNG_COST_UNSCALED).unwrap_or(0.0),
-                rung.build_accrual(
-                    verb,
-                    true,
-                    floor,
-                    full_crew(rung),
-                    crate::intensification::NO_BUILD_GEAR,
-                ),
-                rung.build_accrual(
-                    verb,
-                    false,
-                    floor,
-                    full_crew(rung),
-                    crate::intensification::NO_BUILD_GEAR,
-                ),
+                rung.build_accrual(verb, true, floor, full_crew(rung)),
+                rung.build_accrual(verb, false, floor, full_crew(rung)),
                 rung.build_decay(RUNG_COST_UNSCALED),
             );
         }
