@@ -433,7 +433,7 @@ adding unrelated states therefore conflicted as a matter of course, and one merg
 | `tools/ui_preview.gd` | The harness `Node`: `_settle` / `_save` / `_capture` / `_assert_hud`, the canvas + prefs + tween plumbing, the prologue that stands the HUD up, the icon-probe epilogue, `CHAPTERS` + `_instantiate_chapters`, and the one exit `_finish()` |
 | `tools/ui_preview/chapters/*.gd` | One `RefCounted` per arc (`hunt`, `forage_crop`, `herd_graze_pen`, `event_dock`, `button_faces`, `forecast_seam`, …), each `run(harness)` plus the fixtures only it uses. A chapter need not render a frame — `button_faces` and `forecast_seam` are both PNG-less, and that is a normal shape |
 | `tools/ui_preview/fixtures_*.gd` | Pure `static func` fixtures shared by two or more chapters — `base` (the primitives the other three build on), `band`, `herd`, `forage`, `tile`, `world` |
-| `tools/ui_preview/node_query.gd`, `readouts.gd`, `compose_vocab.gd`, `input_probe.gd` | Shared `static` helpers: finding a control by identity, reading values back out of rendered text, the compose spine vocabulary, and driving real pointer input through `Viewport.push_input` (the canvas→window conversion, a hover, the two gestures, a wheel notch, a press-and-cancelled-release click) |
+| `tools/ui_preview/node_query.gd`, `readouts.gd`, `compose_vocab.gd`, `input_probe.gd` | Shared `static` helpers: finding a control by identity, reading values back out of rendered text, the compose spine vocabulary, and driving real pointer input through `Viewport.push_input` (the canvas→window conversion, a hover, the two gestures, a wheel notch, a press-and-cancelled-release click, and the `press_left` / `release_left` pair a caller drives apart when the press itself opens a popup) |
 
 **Where a new thing goes.** A state → the chapter that owns its arc. A fixture used by one chapter
 → a method on that chapter. A fixture used by two → a `fixtures_*.gd` `static func`. **`ui_preview.gd`
@@ -554,9 +554,11 @@ built from the code under test can only agree with itself. **They are the SIM's 
 from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
 payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-**A clean run is 301 frames / 867 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
+**A clean run is 309 frames / 900 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
 three times in one arc and once across a merge, and a running total kept by addition would be wrong
-by now.
+by now. (The measurement above came back FIVE higher than the 895 recorded before it while the arc
+#527 review added exactly ONE claim — the `Carrying:` mass one. Four `PASS`es had accumulated
+un-recorded, which is the whole reason this line says re-measure.)
 
 **`forage_no_food_basket` is the newest frame** (`chapters/forage_accounts.gd`, appended last) and
 carries **fourteen** `PASS`, counting the two compose-sheet fit claims every state in that chapter
@@ -750,3 +752,77 @@ outbound leg — plus the no-lever fallback to the bare hedge. **The pair is the
 ignored `travel` satisfies the first alone and one that always shifted satisfies the second alone. It
 is driven rather than rendered because no denial fixture in either harness stages a `horizon` row, and
 a sentence is a string — a frame shows a plausible verdict whichever clock it quotes.
+
+## `chapters/trade.gd` — the cargo picker and a shipment in flight (arc #527, issue #517)
+
+**Appended LAST in `CHAPTERS`**, after `crafting_bench`. Seven frames and twenty-eight `PASS` — plus
+one more in `chapters/event_dock.gd`, where the shipment's `destination=` label swap belongs
+beside the band-label trio it extends rather than in a chapter that instantiates no dock. It
+injects a real `BandCityPanel` docked RIGHT on the PARTIES tab, drives the whole compose act through
+the panel's own controls, and releases the panel and hands the reference band back before it ends —
+so a chapter appended after it starts where every other one does.
+
+**Every control is driven, not set.** The footer's mission button is pressed (by
+`HudWidgets.MISSION_LAUNCH_META`, never by face), the destination is chosen with REAL POINTER INPUT
+(below), the party is raised through its stepper's `+` reading `PARTY_STEPPER_COUNT_META`
+back on each press, and each cargo row is loaded by repeated presses of its OWN `+` — which is what
+exercises the clamp-to-the-pile and the per-press rebuild rather than the members behind them.
+
+**THE DESTINATION PICK IS TWO REAL PRESSES, AND IT USED TO BE A FAKED SIGNAL THAT COULD NOT FAIL.**
+`picker.emit_signal("item_selected", 0)` calls the connected lambda by hand, so every step between a
+click and `on_pick` — the popup opening, the entry being reachable, and the engine deciding whether a
+pick is a CHANGE at all — went untested, and the chapter stayed green through a picker that was dead
+in play (`labor-ui.md` → "A PICKER STATES ITS OWN SELECTION"). It now presses the picker's face
+(`InputProbe.press_left` / `release_left`: an `OptionButton` runs at `ACTION_MODE_BUTTON_PRESS`, so the
+popup is up before the release exists and the two halves must be driven apart) and then presses the
+entry, both through `Viewport.push_input`. Four claims ride it, and the sabotage that reverts the fix
+fails three of them plus the whole downstream chain — **twelve in all, and NOT the fourth**: the press
+really does land on entry 0 either way, and what the bug swallows is the pick, which is exactly the
+decomposition those two claims are separated to show.
+
+**Three things about driving a popup that are not obvious, all measured here:**
+- **The popup is an EMBEDDED subwindow, and `push_input` un-stretches an event into canvas space
+  before forwarding to one** — so the press goes through `InputProbe.canvas_to_window` like every other
+  probe. A raw canvas point misses it entirely.
+- **Hover feedback is not available**: `PopupMenu.get_focused_item()` answers `-1` for every pushed
+  motion (the accessor works — `set_focused_item` round-trips), so the `_find_open_map_point` style of
+  hover-search cannot find a row here. The entry's point is derived from the popup's own rect and item
+  count, and `index_pressed` is LISTENED to so the derivation is CHECKED rather than trusted.
+- **The popup is FREED under the probe** — the pick runs `on_pick` → `rerender()` → `queue_free` on the
+  row the picker hangs off — so its teardown is `is_instance_valid`-guarded and the answer is read off a
+  MEMBER. An unguarded `disconnect` raises, which aborts the call, and an aborted GDScript call answers
+  with its return type's default: `0` is a legal entry index, so the "landed on entry 0" claim passed
+  for a helper that never finished. That is `_instantiate_chapters`' own lesson met a second time.
+- **A lambda captures a local by VALUE**, so a witness assigning to a `var` outside it reports nothing
+  ever happened. It cost a run.
+
+**The claims that only a driven run can make:**
+
+| claim | why nothing else says it |
+|---|---|
+| the picker lists BOTH ties, the parked one disabled with its reason in its own label | a picker that filtered parked ties renders a shorter list that looks perfectly correct |
+| the destination's position is worded as REMEMBERED, and the walk wears `≈` | the arc's keystone; a live-position render is indistinguishable in a screenshot |
+| a material row names the pile's RATING | the fixture holds TWO `hide` piles at different ratings, which is the only shape that can fail |
+| mass and cap composed from the FIXTURE's side | the harness and the sheet arrive at one number from opposite ends |
+| an over-cap manifest disables the send | the client's courtesy, reached by shrinking the party rather than by growing the cargo, so the cap moves and the manifest does not |
+| the shipment's materials are **not** summed | asserted as an ABSENCE — a row that added hide to bone still renders two plausible numbers and every other assertion passes |
+| the in-flight `Carrying:` row weighs the WHOLE PACK against the cap | composed from the fixture's own terms (`12 food + 2.0 × (4.0 + 1.2)` = 22.4 of 40), so the row and the compose sheet's meter arrive at one number from opposite ends. It read `12.0 / 40.0` — the cargo's FOOD over the MASS cap — and every other claim on that row passed |
+| the destination `BandId` never appears on screen | the id is distinctive (`BandFx.FIXTURE_BAND_ID_OFFSET + entity`), so a leak has something to find |
+| the `Bound for` row names the band anyway | the fixture publishes `expeditionDestinationName` as `""` — the LIVE shape, bands having no names — so the row can only read `Band 2` by joining the roster on the id beside it |
+
+**`trade_footer` exists for the GLYPH, and that is not decoration.** A mark missing from this
+client's fallback font renders as an INVISIBLE GAP — no tofu box, nothing an assertion can see — and
+that is exactly what 🤝 did on the Food breakdown's transfer rows before it was replaced. The frame
+is the only thing that catches it, and it caught the fifth footer button being clipped off the edge
+of a 354px column in the same pass.
+
+**The party fixture carries `expedition_trade_material_carry_weight`**, which the native decoder
+echoes onto every cohort. Without it the `Carrying:` row prices the pack at its food and the mass
+claim above goes green on the defect it exists for.
+
+**The Food-ledger half opens the disclosure, and it is now the ONLY thing that can see the two
+terms**: the headline states the steady rate and deliberately says nothing about a transfer
+(`band-readouts.md` → "The Food line's TRANSFERS are breakdown rows"). **Its label search starts at the HARNESS ROOT, not the
+HUD**: a player band's detail renders into the Band/City panel, which is a sibling `CanvasLayer`
+rather than a child of the HUD, so a HUD-rooted walk finds nothing and the click silently never
+happens.

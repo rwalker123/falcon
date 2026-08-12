@@ -54,6 +54,11 @@ var _panel_band: Dictionary = {}
 var _player_expeditions: Array = []
 # Every herd in the snapshot — the live position + label source for hunted-herd rows (herds migrate).
 var _world_herds: Array = []
+# The viewer's CONTACT TIES (arc #527), whole-section replaced each snapshot that carries them. One
+# DIRECTED row per edge — `observer_band_id` knows `subject_band_id` — already filtered sim-side to
+# this faction's observers, so nothing here re-filters and nothing here asks about faction: faction
+# is a property of the endpoint and never a column on the row.
+var _connections: Array = []
 # Optimistic pending labor per band entity: {turn, assign:{key->{...}}, move:{x,y}} (see the HUD).
 var _pending_labor: Dictionary = {}
 # The authoritative snapshot turn (header tick) — reconciles pending against the server's processing.
@@ -286,6 +291,60 @@ func set_grid(width: int, height: int, wrap_horizontal_flag: bool) -> void:
 func set_world_herds(herds: Array) -> void:
 	_world_herds = herds
 	changed.emit(&"world_herds")
+
+## Ingest the viewer's contact ties. A whole-section replace, like the herd list above: the sim
+## re-sends the vector whenever any edge moves and omits it otherwise, so a non-Array is ignored and
+## the last value stands (`set_kit_roster`'s rule) — a delta that carried no ties means "unchanged",
+## never "you have forgotten everyone".
+func set_connections(connections_variant: Variant) -> void:
+	if not (connections_variant is Array):
+		return
+	_connections = connections_variant
+	changed.emit(&"connections")
+
+func connections() -> Array:
+	return _connections
+
+## **WHAT THIS CLIENT CALLS THE BAND WITH THIS DURABLE `band_id`** — `""` when the roster holds no
+## such band, which is the answer a caller must be able to act on rather than a name it can print.
+##
+## **THERE IS EXACTLY ONE BAND-NAMING RULE IN THIS CLIENT AND THIS IS THE JOIN ONTO IT.** A band's
+## name is its ROSTER POSITION (`HudFormat.band_display_name`) — the cycler, the band picker, the
+## faction page and the event dock's `band=` substitution all say `Band 2` for the same band because
+## they all resolve it that way. Anything that holds a band by its id and needs a label — a shipment's
+## destination, a connection's subject — comes here, so a band cannot be called two things on two
+## surfaces. (The dock keeps its own `{band_id: name}` dictionary rather than calling this, because it
+## must relabel rows it is already holding when the roster changes; it is built from the same
+## `band_display_name` in the same pass, so the two cannot disagree.)
+func band_label_for_id(band_id: int) -> String:
+	if band_id == HudConst.NO_BAND_ID:
+		return ""
+	for i in range(_player_bands.size()):
+		var candidate: Dictionary = _player_bands[i]
+		if int(candidate.get("band_id", HudConst.NO_BAND_ID)) == band_id:
+			return HudFormat.band_display_name(candidate, i + 1)
+	return ""
+
+## **THE TIES ONE BAND HOLDS**, in the ledger's own order (the sim publishes a stable `BTreeMap`
+## walk, so the picker's rows do not reshuffle frame to frame).
+##
+## Keyed on the DURABLE `band_id`, never the entity: a tie outlives a rollback and the command that
+## spends it addresses the band the same way.
+##
+## **A PARKED EDGE (strength 0) IS RETURNED, not filtered.** It means "we know such a people exist
+## and have no current tie", which the destination picker shows disabled with that as its reason —
+## dropping it here would hide from the player the very fact that the tie is what gates trade.
+func connections_for_band(band_id: int) -> Array:
+	var rows: Array = []
+	if band_id == HudConst.NO_BAND_ID:
+		return rows
+	for row_variant in _connections:
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		if int(row.get("observer_band_id", HudConst.NO_BAND_ID)) == band_id:
+			rows.append(row)
+	return rows
 
 ## Ingest the world's kit roster and the FOUR job defaults. **They ride ONE call**, because they are
 ## one fact: a roster whose defaults name kits it does not contain would let every picker open on an

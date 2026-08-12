@@ -51,6 +51,11 @@ use sim_runtime::commands::CommandPayload;
 /// Where the Godot half writes what it emitted.
 const EMITTED: &str = "clients/godot_thin_client/ui_preview_out/emitted_band_commands.json";
 
+/// The per-entry field a shipment drive states its piles in — `{cargo id: ticks}`, in the sim's own
+/// fixed point. **Ticks rather than a decimal**, because the assertion is exactly about the last
+/// digits: a JSON float would re-round the pile this gate is comparing against.
+const HELD_TICKS_FIELD: &str = "cargo_held_ticks";
+
 pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let mut build_native = true;
     for arg in &args {
@@ -133,6 +138,11 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     // precondition**: if none do, every kit assertion below is the vacuous `""` case and a
     // `Main._kit_token` that emitted nothing would pass unnoticed — exactly the hole this closes.
     let mut kit_bearing_lines = 0_usize;
+    // …and how many carried a manifest drawn from a FRACTIONAL pile. **The gate's third
+    // precondition, and it is the same shape as the two above**: a manifest of whole units survives
+    // any rounding at all, so a suite of round piles would assert nothing about the emitted amount
+    // and a client that rounded every one of them UP would pass.
+    let mut fractional_manifest_lines = 0_usize;
     for entry in commands {
         // **The object form is required, and a bare string is a hard error.** A string entry
         // carries no `expected_kit`, so accepting one would silently opt that line out of the kit
@@ -235,6 +245,39 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         if let Some(failure) = kit_failure(&label, &line, &payload, &expected_kit) {
             failures.push(failure);
         }
+
+        // **THE MANIFEST, against the piles it was drawn from.** Only a shipment carries one, and
+        // the pile sizes come off the drive rather than out of this file — see `manifest_failures`.
+        if let CommandPayload::SendTradeExpedition { cargo, .. } = &payload {
+            let held = map.get(HELD_TICKS_FIELD).and_then(Value::as_object);
+            let Some(held) = held else {
+                failures.push(format!(
+                    "{label}: carries no `{HELD_TICKS_FIELD}`. A shipment drive must state the \
+                     piles it composed from, in the sim's own fixed-point ticks, or the emitted \
+                     amounts are compared against nothing. Line: `{line}`"
+                ));
+                continue;
+            };
+            if held.values().any(|ticks| {
+                ticks
+                    .as_i64()
+                    .is_some_and(|t| t % sim_runtime::FIXED_POINT_SCALE != 0)
+            }) {
+                fractional_manifest_lines += 1;
+            }
+            failures.extend(manifest_failures(&label, &line, cargo, held));
+        }
+    }
+
+    // The gate's manifest precondition — see `fractional_manifest_lines`.
+    if fractional_manifest_lines == 0 {
+        return Err(
+            "command-guard: not one emitted shipment was composed from a FRACTIONAL pile, so the \
+             manifest assertions are vacuous — a whole-unit amount survives any rounding, which is \
+             precisely what the emitted amount must not rely on. The Godot half's shipment drive \
+             must load a pile the fixed point can express and a tenth cannot."
+                .into(),
+        );
     }
 
     // The gate's kit precondition, and the twin of the differing-handles check above: with every
@@ -263,8 +306,9 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
 
     println!(
         "command-guard: PASS — {} emitted command(s) parsed by the real server parser, every band \
-         handle resolved to the fixture's BandId (and none to its entity), and every `kit <id>` \
-         tail resolved to the kit the drive composed ({kit_bearing_lines} non-default)",
+         handle resolved to the fixture's BandId (and none to its entity), every `kit <id>` tail \
+         resolved to the kit the drive composed ({kit_bearing_lines} non-default), and every cargo \
+         amount landed inside the pile it was drawn from ({fractional_manifest_lines} fractional)",
         commands.len()
     );
     Ok(())
@@ -304,6 +348,7 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         | CommandPayload::SendExpedition { band_id, .. }
         | CommandPayload::SendDenialRaid { band_id, .. }
         | CommandPayload::SendHuntExpedition { band_id, .. }
+        | CommandPayload::SendTradeExpedition { band_id, .. }
         | CommandPayload::SplitBand { band_id, .. } => *band_id,
         CommandPayload::RecallExpedition {
             expedition_band_id, ..
@@ -340,7 +385,8 @@ fn kit_token(payload: &CommandPayload) -> KitToken {
     let optional = match payload {
         CommandPayload::AssignLabor { kit_id, .. }
         | CommandPayload::SendDenialRaid { kit_id, .. }
-        | CommandPayload::SendHuntExpedition { kit_id, .. } => kit_id.clone(),
+        | CommandPayload::SendHuntExpedition { kit_id, .. }
+        | CommandPayload::SendTradeExpedition { kit_id, .. } => kit_id.clone(),
         _ => return KitToken::NotKitBearing,
     };
     match optional {
@@ -384,6 +430,55 @@ fn kit_failure(
             }
         )),
     }
+}
+
+/// The amount an emitted decimal is worth **once the server has finished with it** — the parse into
+/// `f32` has already happened (that is `amount`), and this is the `Scalar` quantisation that follows
+/// it, mirroring `core_sim::Scalar::from_f32`. **The multiply is deliberately done in `f32`**,
+/// exactly as the sim does it: at 137 units an `f32` product of `x × 10^6` steps in 16s, and doing
+/// this arithmetic in `f64` here would make the gate agree with a client the server refuses.
+fn scalar_ticks(amount: f32) -> i64 {
+    (amount * sim_runtime::FIXED_POINT_SCALE as f32).round() as i64
+}
+
+/// Does this shipment name more of anything than the band was holding? One string per line that
+/// does; empty means every amount landed inside its pile.
+///
+/// **THE COMPARISON IS THE SERVER'S OWN, AND IT IS STRICT.** `resolve_shipment` refuses on
+/// `held < amount` after quantising the parsed `f32` to a `Scalar`, so an amount rounded up by a
+/// single tick is a refused shipment — and the compose sheet's `+` clamps a press to the pile, which
+/// means the documented one-press way to load a fractional pile puts the EXACT held amount on the
+/// row. A formatter that rounds (`%.1f` did) turns that press into *"the band holds 21.05
+/// provisions, not 21.10"*, and nothing else in this repo would have caught it: the emitted line
+/// parses perfectly, names the right band and carries the right kit.
+fn manifest_failures(
+    label: &str,
+    line: &str,
+    cargo: &[sim_runtime::TradeCargoItem],
+    held: &serde_json::Map<String, Value>,
+) -> Vec<String> {
+    let mut failures = Vec::new();
+    for item in cargo {
+        let Some(held_ticks) = held.get(&item.id).and_then(Value::as_i64) else {
+            failures.push(format!(
+                "{label}: names `{}` in the manifest, which the drive never said the band holds — \
+                 so the emitted amount is compared against nothing. Line: `{line}`",
+                item.id
+            ));
+            continue;
+        };
+        let sent_ticks = scalar_ticks(item.amount);
+        if sent_ticks > held_ticks {
+            failures.push(format!(
+                "{label}: the manifest names {} of `{}` — {sent_ticks} ticks once the server has \
+                 parsed and quantised it — but the band holds {held_ticks}. `resolve_shipment` \
+                 compares strictly and REFUSES this shipment; the emitted amount must be floored, \
+                 never rounded. Line: `{line}`",
+                item.amount, item.id
+            ));
+        }
+    }
+    failures
 }
 
 fn u64_field(doc: &Value, key: &str) -> Result<u64, Box<dyn Error>> {
@@ -461,6 +556,63 @@ mod tests {
         assert!(
             axis_failure.contains("carries no kit"),
             "a kitless VARIANT must not report as a dropped tail — the remedies differ: {axis_failure}"
+        );
+    }
+
+    /// The band's larder in the fixture, in ticks — `21.050001`, and it is adversarial on PURPOSE.
+    /// A tenth rounds it UP to `21.1`; flooring it onto the fixed-point grid alone still emits
+    /// `21.050001`, which the server's `f32` parse-then-quantise lands one tick ABOVE the pile. Only
+    /// an amount that also backs off the 32-bit wire's own rounding survives.
+    const HELD_FOOD_TICKS: i64 = 21_050_001;
+
+    fn held_food() -> serde_json::Map<String, Value> {
+        let mut held = serde_json::Map::new();
+        held.insert(
+            sim_runtime::commands::FOOD_CARGO_KEY.to_string(),
+            Value::from(HELD_FOOD_TICKS),
+        );
+        held
+    }
+
+    fn manifest_of(line: &str) -> Vec<sim_runtime::TradeCargoItem> {
+        match parse(line) {
+            CommandPayload::SendTradeExpedition { cargo, .. } => cargo,
+            other => panic!("the fixture line must parse as a shipment, got {other:?}"),
+        }
+    }
+
+    /// **The defect this half of the gate exists for**: a manifest spelled with a ROUNDED amount.
+    /// Both spellings below parse, name the right band and carry no kit — every other assertion in
+    /// this module is green on them — and both name more provisions than the band holds, so the
+    /// server refuses the shipment the compose sheet's own `+` composed.
+    #[test]
+    fn an_amount_rounded_above_the_pile_is_a_failure() {
+        for over in [
+            "send_trade_expedition 0 71204 2 71301 food 21.1",
+            "send_trade_expedition 0 71204 2 71301 food 21.050001",
+        ] {
+            let failures = manifest_failures("shipment", over, &manifest_of(over), &held_food());
+            assert_eq!(
+                failures.len(),
+                1,
+                "an amount above the pile must be reported: {over}"
+            );
+            assert!(
+                failures[0].contains("the band holds"),
+                "the failure must state the pile it exceeded: {}",
+                failures[0]
+            );
+        }
+    }
+
+    /// The liveness half — the FLOORED spelling `Main.cargo_wire_amount` emits must pass, or the
+    /// assertion above is satisfied by a gate that rejects every shipment.
+    #[test]
+    fn the_floored_amount_lands_inside_the_pile() {
+        let floored = "send_trade_expedition 0 71204 2 71301 food 21.049995";
+        assert!(
+            manifest_failures("shipment", floored, &manifest_of(floored), &held_food()).is_empty(),
+            "the floored amount must survive the server's parse-and-quantise"
         );
     }
 

@@ -39,6 +39,9 @@ const PANEL_EXPEDITION_HUNT_GLYPH := "🏹"
 ## The DENIAL raid's mark (`docs/plan_denial_raid.md`) — the same 💀 its footer button and its map
 ## marker wear, so the mission reads identically at every scale.
 const PANEL_EXPEDITION_DENY_GLYPH := "💀"
+## The SHIPMENT's mark (arc #527) — the same 📦 its footer button and its map marker wear, the rule
+## the denial glyph above states: one mission, one glyph, at every scale.
+const PANEL_EXPEDITION_TRADE_GLYPH := "📦"
 ## Positional band names ("Band 1", "Band 2", …), matching the roster's numbering.
 const BAND_DISPLAY_NAME_FORMAT := "Band %d"
 ## The band's hex coordinates in the Band/City panel HEADER, beside its stage word — the header's
@@ -298,7 +301,35 @@ static func expedition_phase_suffix(phase: String) -> String:
 ## to a species needs the roster + the current selection + the snapshot herd list, which is HUD state
 ## this stateless layer must not hold (the `HudWidgets.build_worker_stepper` `current_turn` precedent).
 ## It is called ONLY on the hunt branch, so a scout row resolves nothing.
-static func panel_expedition_summary(exp: Dictionary, herd_label_for_id: Callable) -> String:
+## **WHAT A SHIPMENT'S DESTINATION IS CALLED** — the sim's published name when it has one, else
+## whatever THIS CLIENT calls that band, joined on `expedition_destination_band`.
+##
+## **`expeditionDestinationName` IS EMPTY ON EVERY LIVE SHIPMENT TODAY, AND THAT IS DELIBERATE.**
+## Bands have no names in this game, so the sim publishes nothing rather than guessing — it briefly
+## published the unit ARCHETYPE (`"BandForager"`, the same string for every band), which made the row
+## disagree with the label the rest of the HUD gives that same band. Empty means "no name", exactly as
+## an empty material row means "no row".
+##
+## **The published name still wins when it is non-empty**, and that is the half that matters later:
+## the day a second faction lands (#513) a foreign band's name can only come from the sim, because
+## this client holds no roster to resolve one from.
+##
+## `band_label_for_id` is `HudBandLaborState.band_label_for_id` threaded in as a PARAMETER, the
+## `herd_label_for_id` treatment: a stateless layer must not reach for the roster that resolver reads.
+## `""` when neither tier answers — a caller renders no destination at all rather than the raw
+## `BandId`, which is a database key.
+static func expedition_destination_label(exp: Dictionary,
+        band_label_for_id: Callable = Callable()) -> String:
+    var published := String(exp.get("expedition_destination_name", "")).strip_edges()
+    if published != "":
+        return published
+    if not band_label_for_id.is_valid():
+        return ""
+    return String(band_label_for_id.call(
+        int(exp.get("expedition_destination_band", HudConst.NO_BAND_ID)))).strip_edges()
+
+static func panel_expedition_summary(exp: Dictionary, herd_label_for_id: Callable,
+        band_label_for_id: Callable = Callable()) -> String:
     var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
     var phase_suffix := expedition_phase_suffix(expedition_phase_key(exp))
     # The party's FLOOR as its zone glyph — the same mark the work board gives a resident crew, so a
@@ -319,6 +350,18 @@ static func panel_expedition_summary(exp: Dictionary, herd_label_for_id: Callabl
     if mission == HudExpeditionVocab.EXPEDITION_MISSION_DENY:
         var quarry := String(herd_label_for_id.call(String(exp.get("expedition_target_herd", "")).strip_edges()))
         return "%s %s%s" % [PANEL_EXPEDITION_DENY_GLYPH, quarry, phase_suffix]
+    # A SHIPMENT names WHO IT IS FOR — never by `expedition_destination_band`, which is the key the
+    # command addresses. `expedition_destination_label` is the one resolution (the sim's published
+    # name, else this client's own label for that band), so this row, the drawer's `Bound for` row and
+    # the destination picker cannot call one band three things.
+    # No floor glyph: a shipment harvests nothing, so it has no pressure to mark.
+    if mission == HudExpeditionVocab.EXPEDITION_MISSION_TRADE:
+        var destination := expedition_destination_label(exp, band_label_for_id)
+        # An unresolvable destination leaves the row as the mission's mark and its phase, rather than
+        # an orphaned separator in front of nothing.
+        if destination == "":
+            return "%s%s" % [PANEL_EXPEDITION_TRADE_GLYPH, phase_suffix]
+        return "%s %s%s" % [PANEL_EXPEDITION_TRADE_GLYPH, destination, phase_suffix]
     var x := int(exp.get("current_x", -1))
     var y := int(exp.get("current_y", -1))
     return "%s → (%d, %d)%s%s" % [

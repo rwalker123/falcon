@@ -52,6 +52,11 @@ signal send_hunt_expedition_requested(payload: Dictionary)
 # (`send_denial_raid <faction> <band> <party_workers> <fauna_id>`) — a fifth is a hard parse error —
 # so a payload that could carry a floor or a fill target would be a payload the parser rejects.
 signal send_denial_raid_requested(payload: Dictionary)
+# A SHIPMENT was loaded and sent to another band (arc #527) — relayed to
+# HudLayer.send_trade_expedition_requested. **Its own signal for the same reason denial has one**:
+# `send_trade_expedition`'s tail is a repeated `food <amount>` / `material <id> <amount>` manifest,
+# so its payload carries a CARGO LIST that no other party verb's grammar could express.
+signal send_trade_expedition_requested(payload: Dictionary)
 # A party was ordered home — relayed to HudLayer.recall_expedition_requested.
 signal recall_expedition_requested(payload: Dictionary)
 # A band was split in two where it stands (issue #511) — relayed to HudLayer.split_band_requested.
@@ -226,6 +231,17 @@ const FACTION_ZONE_LAYOUT: Array[Dictionary] = [
         BandCityPanel.ZONE_SPEC_LABEL: HudWorkVocab.ZONE_TAB_PARTIES,
         BandCityPanel.ZONE_SPEC_WIDTH: BandCityPanel.ZONE_PARTY_WIDTH},
 ]
+## --- THE SHIPMENT MANIFEST'S OWN HANDLES (arc #527, see `_fill_trade_compose_sheet`) -------------
+## The food row's key in `_trade_cargo_rows`. It is a MANIFEST-ROW handle, not a store key: the food
+## row's identity has to be distinguishable from every material batch key, and the batch keys are
+## built out of a material id plus its ratings.
+const TRADE_FOOD_ROW_KEY := "cargo:food"
+## What joins a batch key's parts. `|` because neither a material id nor a rating band name contains
+## one, so two different piles can never key to one string.
+const TRADE_BATCH_KEY_SEPARATOR := "|"
+## The mass meter, as `Label` meta — the stable handle a harness reads it by. Its face carries live
+## numbers and a block-glyph bar, so a text search would find whichever Label happened to hold them.
+const TRADE_MASS_METER_META := "trade_mass_meter"
 ## The parties compose sheet: open, and which mission has been picked ("" = none yet, which is what
 ## keeps the party size / floor / forecast fields hidden until the mission decides them).
 var _party_compose_open: bool = false
@@ -234,6 +250,21 @@ var _party_compose_mission: String = ""
 ## bounded by different pools (a party comes out of IDLE workers, a split out of ALL of them), so
 ## sharing the field would clamp one of them against the other's ceiling.
 var _split_workers: int = 1
+## --- THE SHIPMENT BEING LOADED (arc #527) ----------------------------------------------------
+## The destination band's DURABLE `band_id` — the key `send_trade_expedition` addresses, never a
+## rendered label. `NO_BAND_ID` = nothing chosen yet, which is what keeps the Send disabled.
+var _trade_destination_band: int = HudConst.NO_BAND_ID
+## How much FOOD the manifest carries. One number, because the larder is one commodity.
+var _trade_food: float = 0.0
+## How much of each MATERIAL BATCH the manifest carries: `batch key -> amount`, where the key
+## identifies a pile of one material AT ONE RATING (`_trade_batch_key`). Keyed per BATCH rather than
+## per material because that is what the band actually holds — the sim's store is a `BTreeMap` of
+## `(material, rating band)` — and because summing two hide piles into one row would rebuild the
+## retired trade scalar out of the vector that replaced it.
+## The manifest belongs to ONE composing act and never survives one: `_clear_trade_manifest` is
+## reached by every teardown path (the ✕, a send, a mission button, a panel-band change), because a
+## manifest left standing would offer the next band goods it does not hold.
+var _trade_materials: Dictionary = {}
 ## The live PARTIES zone column, the parties twin of `_work_zone_host` — held so the deferred
 ## measurement below can read what the zone's content demands off the REAL laid-out tree rather than
 ## off a detached one. `HudWidgets.wrap_zone` anchors this column full-rect into the panel's zone host,
@@ -2126,7 +2157,8 @@ func _build_parties_inspector(exp: Dictionary) -> PanelContainer:
     var head := HBoxContainer.new()
     head.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
     var title := Label.new()
-    title.text = HudFormat.panel_expedition_summary(exp, _herd_label_for_id)
+    title.text = HudFormat.panel_expedition_summary(exp, _herd_label_for_id,
+        _band_labor.band_label_for_id)
     title.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     title.clip_text = true
     title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -2162,7 +2194,8 @@ func _build_party_row(exp: Dictionary) -> HBoxContainer:
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
     var body := Button.new()
-    body.text = HudFormat.panel_expedition_summary(exp, _herd_label_for_id)
+    body.text = HudFormat.panel_expedition_summary(exp, _herd_label_for_id,
+        _band_labor.band_label_for_id)
     body.alignment = HORIZONTAL_ALIGNMENT_LEFT
     body.focus_mode = Control.FOCUS_NONE
     body.clip_text = true
@@ -2271,8 +2304,14 @@ func _build_party_footer(band: Dictionary) -> VBoxContainer:
     # so the float dies here rather than on a list of conditionals that can miss one.
     _party_compose_sheet = null
     _dismiss_compose_float()
-    var missions := HBoxContainer.new()
-    missions.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    # **A GRID, NOT A ROW, SINCE THE FIFTH VERB ARRIVED.** Five buttons across a 354px dock column
+    # leave each ~48px, which `📦 Trade` does not fit — and the zone `clip_contents`, so the fifth
+    # was sliced off the edge rather than merely cramped. `HudComposeVocab.PARTY_FOOTER_COLUMNS`
+    # wraps them 3 + 2, the same treatment `build_floor_picker` gives its six rungs.
+    var missions := GridContainer.new()
+    missions.columns = HudComposeVocab.PARTY_FOOTER_COLUMNS
+    missions.add_theme_constant_override("h_separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    missions.add_theme_constant_override("v_separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     missions.add_child(_build_mission_launch_button(HudComposeVocab.COMPOSE_MISSION_SCOUT,
         HudComposeVocab.COMPOSE_MISSION_LABEL_SCOUT, HudComposeVocab.SEND_EXPEDITION_HINT, idle))
     missions.add_child(_build_mission_launch_button(HudComposeVocab.COMPOSE_MISSION_HUNT,
@@ -2283,6 +2322,15 @@ func _build_party_footer(band: Dictionary) -> VBoxContainer:
     # unclamp. Same button, same idle gate — the difference is entirely in the form it opens.
     missions.add_child(_build_mission_launch_button(HudComposeVocab.COMPOSE_MISSION_DENY,
         HudComposeVocab.COMPOSE_MISSION_LABEL_DENY, HudComposeVocab.SEND_DENIAL_RAID_HINT, idle))
+    # **THE FOURTH MISSION** (arc #527, issue #517). A shipment is a party that walks it: it names
+    # another BAND rather than a herd, and it carries a manifest drawn off this band's own stores.
+    # Same idle gate as the other three — a shipment needs hands to haul it — and the thing it needs
+    # BESIDES hands, a live tie, is stated inside the form rather than by greying this button: a band
+    # with no ties has a legible empty picker and a sentence saying how ties form, where a dead button
+    # would say only that trade is unavailable.
+    missions.add_child(_build_mission_launch_button(HudComposeVocab.COMPOSE_MISSION_TRADE,
+        HudComposeVocab.COMPOSE_MISSION_LABEL_TRADE, HudComposeVocab.SEND_TRADE_EXPEDITION_HINT,
+        idle))
     # **THE FOURTH BUTTON IS NOT A MISSION** (issue #511) — a split makes a band rather than sending a
     # party. It sits here because this is where the player already comes to divide people out of a
     # band, and it is gated on WORKERS rather than on idle workers: splitting is not staffing a job,
@@ -2311,6 +2359,9 @@ func _build_mission_launch_button(mission: String, label: String, hint: String,
         _party_compose_mission = mission
         # A fresh compose act starts with no quarry — never a herd left over from a cancelled one.
         _clear_party_quarry()
+        # …and with an empty manifest, for exactly the same reason: goods loaded for a shipment the
+        # player cancelled are not goods they asked to send now.
+        _clear_trade_manifest()
         # **THE DENIAL SHEET ALWAYS OPENS ON THE PARTY THE SIM QUOTES**, so the seed is armed by the
         # sheet OPENING as well as by a quarry being adopted — a sheet that came back up on a quarry
         # it still remembered would otherwise present whatever count the last composition left behind.
@@ -2327,6 +2378,7 @@ func _build_mission_launch_button(mission: String, label: String, hint: String,
 func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
     var is_hunt := _party_compose_mission == HudComposeVocab.COMPOSE_MISSION_HUNT
     var is_deny := _party_compose_mission == HudComposeVocab.COMPOSE_MISSION_DENY
+    var is_trade := _party_compose_mission == HudComposeVocab.COMPOSE_MISSION_TRADE
     var sheet := HudWidgets.make_zone_block()
     var head := HBoxContainer.new()
     var title := Label.new()
@@ -2335,6 +2387,8 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
         title.text = HudComposeVocab.COMPOSE_TITLE_HUNT
     elif is_deny:
         title.text = HudComposeVocab.COMPOSE_TITLE_DENY
+    elif is_trade:
+        title.text = HudComposeVocab.COMPOSE_TITLE_TRADE
     elif _party_compose_mission == HudComposeVocab.COMPOSE_MISSION_SPLIT:
         title.text = HudComposeVocab.COMPOSE_TITLE_SPLIT
     title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -2353,6 +2407,9 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
         return sheet
     if is_deny:
         _fill_denial_compose_sheet(sheet, band, idle)
+        return sheet
+    if is_trade:
+        _fill_trade_compose_sheet(sheet, band, idle)
         return sheet
     if _party_compose_mission == HudComposeVocab.COMPOSE_MISSION_SPLIT:
         _fill_split_compose_sheet(sheet, band)
@@ -2951,6 +3008,403 @@ func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: in
         _close_party_compose())
     sheet.add_child(confirm)
 
+## **THE SHIPMENT FORM** (arc #527, issue #517): DESTINATION → PARTY → CARGO → the mass meter → send.
+##
+## **IT SHARES NO FIELD WITH THE HUNT FORM, which is why it is a mission and not a mode of one.** No
+## quarry, no floor, no policy picker, no trip forecast: what a shipment needs to know is who it is
+## for, how many hands carry it and what goes in the packs. Every one of those is a control the hunt
+## grammar has nowhere to put, and every hunt control is a lever `send_trade_expedition` cannot carry.
+##
+## **THE TIE IS THE GATE, AND THE FORM TEACHES IT.** A destination is a band this one holds a live
+## connection with; a PARKED tie (strength 0 — "we know such a people exist and have no current
+## dealings") is listed DISABLED with that as its reason rather than hidden, because the thing the
+## player has to learn is that the tie is what gates trade, not that some bands are missing.
+##
+## **THE DESTINATION IS REMEMBERED, NEVER SEEN.** A connection can only ever grant `Discovered`
+## (`.claude/rules/core_sim/connections.md` → the keystone), so the position under the picker is
+## where they WERE and the walk quoted from it wears a `≈`. A remembered band behaves exactly like a
+## remembered herd, which the player has already been taught by every herd that moved.
+##
+## **THE MASS METER IS A COURTESY, NOT THE AUTHORITY.** `send_trade_expedition` refuses an over-cap
+## manifest and its refusal names both numbers; this meter exists so the player never meets it. Both
+## terms come off the wire (`expedition_trade_per_worker_carry`,
+## `expedition_trade_material_carry_weight`) — a lever typed here would be one config edit from a
+## meter that disagrees with the refusal it exists to prevent.
+func _fill_trade_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int) -> void:
+    var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+    var ties := _band_labor.connections_for_band(band_id)
+    sheet.add_child(_build_destination_row(band, ties))
+    if ties.is_empty():
+        # Visible-and-disabled-with-its-reason, the hunt form's own convention for a form whose first
+        # question has no answer yet. The sentence says how a tie FORMS, because that is the action
+        # the player has to take and no control on this sheet can take it for them.
+        sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_DESTINATION_NO_TIES))
+        sheet.add_child(_blocked_send_button(HudComposeVocab.SEND_TRADE_EXPEDITION_BUTTON,
+            HudComposeVocab.COMPOSE_DESTINATION_NO_TIES))
+        return
+    # Re-resolve the chosen tie LIVE each render, the hunt form's rule: a tie decays, and a band that
+    # was a destination when the sheet opened can be parked by the time it is sent. A form rendered
+    # against a stale choice would quote a walk to a band nothing can flow to.
+    var tie := _live_trade_tie(ties)
+    if tie.is_empty():
+        sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_DESTINATION_HINT))
+        sheet.add_child(_blocked_send_button(HudComposeVocab.SEND_TRADE_EXPEDITION_BUTTON,
+            HudComposeVocab.COMPOSE_DESTINATION_HINT))
+        return
+    for line in _trade_destination_notes(band, tie):
+        sheet.add_child(HudWidgets.alloc_hint_label(line))
+    # **THE PARTY IS THE CAP'S OTHER TERM**, so it is settled before the manifest is priced — the
+    # "resolve the cap above the readout" ordering all three compose sheets follow. Its ceiling is the
+    # band's IDLE WORKERS and nothing else: the sim carries no rules cap on party size, and a
+    # shipment's own bound is the mass meter below rather than a head count.
+    var party_max: int = maxi(idle, HudConst.WORKER_STEP)
+    _send_expedition_count = clampi(_send_expedition_count, HudConst.WORKER_STEP, party_max)
+    sheet.add_child(HudWidgets.build_party_stepper_row(_send_expedition_count, party_max,
+        func(n: int) -> void:
+            _send_expedition_count = clampi(n, HudConst.WORKER_STEP, party_max)
+            rerender()))
+    sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_OF_IDLE_FORMAT % idle))
+    sheet.add_child(HudWidgets.alloc_section_label(HudComposeVocab.COMPOSE_CARGO_SECTION))
+    var rows := _trade_cargo_rows(band)
+    if rows.is_empty():
+        sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_CARGO_NO_STORES))
+        sheet.add_child(_blocked_send_button(HudComposeVocab.SEND_TRADE_EXPEDITION_BUTTON,
+            HudComposeVocab.COMPOSE_CARGO_NO_STORES))
+        return
+    for row_variant in rows:
+        sheet.add_child(_build_cargo_row(row_variant as Dictionary))
+    var mass := _trade_manifest_mass(band, rows)
+    var cap := _trade_carry_cap(band)
+    sheet.add_child(_build_mass_meter(mass, cap))
+    var reason := ""
+    if mass <= 0.0:
+        reason = HudComposeVocab.COMPOSE_CARGO_EMPTY_REASON
+    elif cap > 0.0 and mass > cap:
+        reason = HudComposeVocab.COMPOSE_CARGO_OVER_CAP_REASON
+    if reason != "":
+        sheet.add_child(HudWidgets.alloc_hint_label(reason))
+        sheet.add_child(_blocked_send_button(HudComposeVocab.SEND_TRADE_EXPEDITION_BUTTON, reason))
+        return
+    var confirm := Button.new()
+    confirm.text = HudComposeVocab.SEND_TRADE_EXPEDITION_BUTTON
+    confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    confirm.tooltip_text = HudComposeVocab.SEND_TRADE_EXPEDITION_HINT
+    confirm.set_meta(HudWidgets.SEND_TRADE_CONFIRM_META, true)
+    HudStyle.apply_button(confirm, "primary")
+    var destination_band := int(tie.get("subject_band_id", HudConst.NO_BAND_ID))
+    var destination_label := _connection_subject_label(tie)
+    confirm.pressed.connect(func() -> void:
+        emit_signal("send_trade_expedition_requested", {
+            "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+            "band_id": band_id,
+            "party_workers": _send_expedition_count,
+            # The KEY the command addresses, and beside it the string the feed note renders — the
+            # `fauna_id` / `fauna_label` pairing, for the same reason: a raw id is a database handle.
+            "destination_band_id": destination_band,
+            "destination_label": destination_label,
+            "cargo": _trade_manifest_lines(rows),
+        })
+        _close_party_compose())
+    sheet.add_child(confirm)
+
+## A send that cannot be pressed, showing its own reason — the "visible and disabled with its reason"
+## convention this zone uses everywhere, in one place because the shipment form reaches it from four
+## different dead ends (no ties, no destination, no stores, an unsendable manifest).
+func _blocked_send_button(face: String, reason: String) -> Button:
+    var blocked := Button.new()
+    blocked.text = face
+    blocked.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    blocked.disabled = true
+    blocked.tooltip_text = reason
+    blocked.set_meta(HudWidgets.SEND_TRADE_CONFIRM_META, true)
+    HudStyle.apply_button(blocked, "ghost")
+    return blocked
+
+## The DESTINATION row — the Band and Kit rows' shape, and a genuine `OptionButton` rather than the
+## quarry row's map-pick button: a tie is a row in a list the sim publishes, so the candidates ARE
+## enumerable and a dropdown promises exactly what it delivers.
+func _build_destination_row(band: Dictionary, ties: Array) -> HBoxContainer:
+    var row := HBoxContainer.new()
+    row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    row.add_child(HudWidgets.build_field_key(HudComposeVocab.COMPOSE_FIELD_DESTINATION))
+    var entries: Array = []
+    var selected_index := HudWidgets.NO_ENTRY_SELECTED
+    var face := HudComposeVocab.COMPOSE_DESTINATION_CHOOSE
+    for tie_variant in ties:
+        var tie: Dictionary = tie_variant as Dictionary
+        var subject := int(tie.get("subject_band_id", HudConst.NO_BAND_ID))
+        var label := _connection_subject_label(tie)
+        # **A PARKED TIE IS AN ENTRY, DISABLED, CARRYING ITS REASON IN ITS OWN LABEL** — the kit
+        # picker's convention for an unavailable choice, and the one that teaches the rule here.
+        var parked := not _tie_is_live(tie)
+        if parked:
+            entries.append({
+                "label": HudComposeVocab.COMPOSE_DESTINATION_ENTRY_PARKED_FORMAT % [
+                    label, HudComposeVocab.COMPOSE_DESTINATION_PARKED_REASON],
+                "disabled": true,
+                "tooltip": HudComposeVocab.COMPOSE_DESTINATION_PARKED_REASON,
+            })
+            continue
+        if subject == _trade_destination_band:
+            selected_index = entries.size()
+            face = label
+        entries.append({
+            "label": label,
+            "on_pick": func() -> void:
+                _trade_destination_band = subject
+                rerender(),
+        })
+    row.add_child(HudWidgets.build_option_picker(entries, selected_index, face,
+        HudComposeVocab.COMPOSE_DESTINATION_HINT))
+    return row
+
+## **A LIVE TIE IS ONE WITH STRENGTH ABOVE ZERO** — the sim's own gate (`strength > NO_TIE`), read in
+## one place so the picker's greying, the live re-resolve and the send can never disagree about which
+## destinations a shipment may name.
+func _tie_is_live(tie: Dictionary) -> bool:
+    return float(tie.get("strength", 0.0)) > HudConst.TIE_STRENGTH_NONE
+
+## The chosen tie, re-read out of THIS render's rows — `{}` when nothing is chosen or when the choice
+## has since parked or been reaped.
+func _live_trade_tie(ties: Array) -> Dictionary:
+    if _trade_destination_band == HudConst.NO_BAND_ID:
+        return {}
+    for tie_variant in ties:
+        var tie: Dictionary = tie_variant as Dictionary
+        if int(tie.get("subject_band_id", HudConst.NO_BAND_ID)) == _trade_destination_band \
+                and _tie_is_live(tie):
+            return tie
+    return {}
+
+## **WHAT IS KNOWN ABOUT WHERE THEY ARE, WORDED AS SOMETHING REMEMBERED.** One line for the sighting
+## the tie recorded, and — only where the band publishes a move rate and both tiles are known — one
+## for the approximate walk. Never a live position and never a bare number of turns.
+func _trade_destination_notes(band: Dictionary, tie: Dictionary) -> Array[String]:
+    var lines: Array[String] = []
+    var x := int(tie.get("last_seen_x", -1))
+    var y := int(tie.get("last_seen_y", -1))
+    if x < 0 or y < 0:
+        return lines
+    lines.append(HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT % [
+        x, y, int(tie.get("last_seen_turn", 0))])
+    # **ONE DEFINITION OF TRAVEL IN THIS CLIENT.** `outbound_travel_turns` is the walk OUT, the same
+    # reading the denial verdict takes, asked here about the REMEMBERED tile — which is why the
+    # sentence says "if they are still there" rather than quoting the arrival as a fact.
+    var out_turns := SourceForecast.outbound_travel_turns(band, {"x": x, "y": y},
+        _band_labor.grid_width(), _band_labor.wrap_horizontal())
+    if out_turns > 0:
+        lines.append(HudComposeVocab.COMPOSE_DESTINATION_ETA_FORMAT % out_turns)
+    return lines
+
+## **THE NAME A TIE'S SUBJECT IS SHOWN UNDER.** A band this faction still holds in its roster is named
+## exactly as the cycler, the band picker and the event dock name it — one band, one name across every
+## surface. A subject the roster cannot resolve is a band we only REMEMBER, so it is named by where it
+## was: the raw `BandId` is a database key and never reaches a player-facing label.
+func _connection_subject_label(tie: Dictionary) -> String:
+    var label := _band_labor.band_label_for_id(
+        int(tie.get("subject_band_id", HudConst.NO_BAND_ID)))
+    if label != "":
+        return label
+    return HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_LABEL_FORMAT % [
+        int(tie.get("last_seen_x", -1)), int(tie.get("last_seen_y", -1))]
+
+## **THE MANIFEST'S ROWS, ONE PER THING THE BAND ACTUALLY HOLDS** — the food larder as one row (one
+## commodity), then one row per MATERIAL BATCH, which is one pile of one material AT ONE RATING.
+##
+## **A BATCH IS NEVER MERGED WITH ANOTHER OF THE SAME MATERIAL.** A mammoth hide and a hare pelt are
+## both `hide`; a row that summed them would offer the player a quantity of something that does not
+## exist, and it would be the retired trade scalar rebuilt out of the vector that replaced it.
+func _trade_cargo_rows(band: Dictionary) -> Array:
+    var rows: Array = []
+    var held_food := DetailFormat.band_provisions(band)
+    if held_food >= SourceForecast.FOOD_FLOW_MIN:
+        rows.append({
+            "key": TRADE_FOOD_ROW_KEY,
+            "is_material": false,
+            "id": HudConst.STORE_ITEM_PROVISIONS,
+            "label": HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL,
+            "held": held_food,
+            "amount": minf(_trade_food, held_food),
+        })
+    for batch_variant in band.get(HudCraftingVocab.BAND_MATERIAL_BATCHES_KEY, []):
+        if not (batch_variant is Dictionary):
+            continue
+        var batch: Dictionary = batch_variant
+        var material_id := String(batch.get(HudCraftingVocab.BATCH_MATERIAL_ID_KEY, "")).strip_edges()
+        var held := float(batch.get(HudCraftingVocab.BATCH_AMOUNT_KEY, 0.0))
+        if material_id == "" or not SourceForecast.has_component(held):
+            continue
+        var key := _trade_batch_key(batch)
+        rows.append({
+            "key": key,
+            "is_material": true,
+            "id": material_id,
+            "label": _trade_material_label(batch),
+            "held": held,
+            "amount": minf(float(_trade_materials.get(key, 0.0)), held),
+        })
+    return rows
+
+## A batch's identity across renders: the material AND the rating it is held at, which is exactly how
+## the sim's own store keys it (a `BTreeMap` of `(material, rating band)`). The stepper's amount is
+## remembered under this, so a snapshot that moves a pile's size cannot silently move the player's
+## choice onto a different pile.
+func _trade_batch_key(batch: Dictionary) -> String:
+    var parts: Array[String] = [String(batch.get(HudCraftingVocab.BATCH_MATERIAL_ID_KEY, ""))]
+    for reading_variant in batch.get(HudCraftingVocab.BATCH_READINGS_KEY, []):
+        if reading_variant is Dictionary:
+            parts.append(String((reading_variant as Dictionary).get(
+                HudCraftingVocab.READING_BAND_NAME_KEY, "")))
+    return TRADE_BATCH_KEY_SEPARATOR.join(parts)
+
+## `hide · tough: excellent` — **THE RATING IS WHAT MAKES THE ROW MEAN ANYTHING.** The readings are
+## the band's own, in the material's declared axis order, spelled with the Crafting panel's keys so
+## a pile reads the same wherever it is quoted. A material with no readings reads as its bare id.
+func _trade_material_label(batch: Dictionary) -> String:
+    var terms: Array[String] = []
+    for reading_variant in batch.get(HudCraftingVocab.BATCH_READINGS_KEY, []):
+        if not (reading_variant is Dictionary):
+            continue
+        var reading: Dictionary = reading_variant
+        terms.append(HudComposeVocab.COMPOSE_CARGO_READING_FORMAT % [
+            String(reading.get(HudCraftingVocab.READING_AXIS_KEY, "")),
+            String(reading.get(HudCraftingVocab.READING_BAND_NAME_KEY, ""))])
+    var material_id := String(batch.get(HudCraftingVocab.BATCH_MATERIAL_ID_KEY, ""))
+    if terms.is_empty():
+        return material_id
+    return HudComposeVocab.COMPOSE_CARGO_MATERIAL_FORMAT % [material_id,
+        HudComposeVocab.COMPOSE_CARGO_READING_SEPARATOR.join(terms)]
+
+## One manifest row: what it is, how much of it is loaded, and how much the band still holds. The
+## `+` steps by a whole unit and CLAMPS TO THE PILE, so a 0.6 pile is reachable in one press rather
+## than being unshippable for want of a fractional control.
+func _build_cargo_row(row: Dictionary) -> HBoxContainer:
+    var line := HBoxContainer.new()
+    line.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    var name_label := Label.new()
+    name_label.text = String(row.get("label", ""))
+    name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    # **ELLIPSIS, NOT A FLUSH CLIP, AND NEVER A DROPPED AXIS.** A rating vector is verbose by nature
+    # (`hide · tough: excellent · supple: poor`) and this row will not get wider, so it has to be
+    # SHORTENED — but shortening the STRING is the only thing allowed: the axes are the whole reason a
+    # hide and a pelt are different rows, so the underlying label always carries every one of them and
+    # the tooltip below states them in full. `clip_text` alone cut mid-word with no mark
+    # (`bone · dense: excellent · long: fa`), which reads as a broken label rather than a shortened
+    # one; `OVERRUN_TRIM_ELLIPSIS` says "there is more" and the hover says what.
+    name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    name_label.add_theme_color_override("font_color", HudStyle.INK)
+    # **THE FACE CLIPS AND THE TOOLTIP DOES NOT.** A pile's full rating (`hide · tough: excellent ·
+    # supple: poor`) is wider than a 354px dock column, so the row ellipses — and the whole row,
+    # rating included, is repeated in the hover text beside what the band still holds. Nothing is
+    # unreachable; the narrow surface just says the first axis first.
+    HudWidgets.set_label_tooltip(name_label, HudComposeVocab.COMPOSE_CARGO_TOOLTIP_FORMAT % [
+        String(row.get("label", "")),
+        HudComposeVocab.COMPOSE_CARGO_HELD_FORMAT
+            % (HudCraftingVocab.BATCH_AMOUNT_FORMAT % float(row.get("held", 0.0)))])
+    line.add_child(name_label)
+    var held := float(row.get("held", 0.0))
+    var amount := float(row.get("amount", 0.0))
+    var key := String(row.get("key", ""))
+    var is_material := bool(row.get("is_material", false))
+    var minus := Button.new()
+    minus.text = HudWorkVocab.STEPPER_MINUS_FACE
+    minus.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH, 0)
+    minus.disabled = amount <= 0.0
+    HudStyle.apply_button(minus, "ghost")
+    minus.pressed.connect(func() -> void:
+        _set_cargo_amount(key, is_material, amount - HudComposeVocab.COMPOSE_CARGO_STEP, held))
+    line.add_child(minus)
+    var value := Label.new()
+    value.text = HudCraftingVocab.BATCH_AMOUNT_FORMAT % amount
+    value.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_VALUE_WIDTH, 0)
+    value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    value.add_theme_color_override("font_color",
+        HudStyle.INK if amount > 0.0 else HudStyle.INK_FAINT)
+    line.add_child(value)
+    var plus := Button.new()
+    plus.text = HudWorkVocab.STEPPER_PLUS_FACE
+    plus.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH, 0)
+    plus.disabled = amount >= held
+    HudStyle.apply_button(plus, "ghost")
+    plus.pressed.connect(func() -> void:
+        _set_cargo_amount(key, is_material, amount + HudComposeVocab.COMPOSE_CARGO_STEP, held))
+    line.add_child(plus)
+    return line
+
+## Load `amount` of one row, clamped to what the band holds. The food row is one commodity and so one
+## number; every material row is remembered under its own batch key.
+func _set_cargo_amount(key: String, is_material: bool, amount: float, held: float) -> void:
+    var loaded := clampf(amount, 0.0, held)
+    if is_material:
+        _trade_materials[key] = loaded
+    else:
+        _trade_food = loaded
+    rerender()
+
+## What the composed manifest weighs, through the ONE shared expression
+## (`DetailFormat.shipment_mass`) — the in-flight `Carrying:` row prices the same pack with it, so the
+## meter a player sends against and the row they watch afterwards cannot disagree. This half only
+## splits the sheet's mixed row list into the two accounts that expression takes.
+func _trade_manifest_mass(band: Dictionary, rows: Array) -> float:
+    var food := 0.0
+    var material_total := 0.0
+    for row_variant in rows:
+        var row: Dictionary = row_variant as Dictionary
+        var amount := float(row.get("amount", 0.0))
+        if bool(row.get("is_material", false)):
+            material_total += amount
+        else:
+            food += amount
+    return DetailFormat.shipment_mass(food, material_total,
+        float(band.get("expedition_trade_material_carry_weight", 0.0)))
+
+## `party_workers × expedition_trade_per_worker_carry` — the SHIPMENT pack, never the hunt one. A band
+## publishing no lever answers 0, which the meter renders as an unknown ceiling rather than as a cap
+## of zero that would refuse every manifest.
+func _trade_carry_cap(band: Dictionary) -> float:
+    return float(_send_expedition_count) \
+        * float(band.get("expedition_trade_per_worker_carry", 0.0))
+
+## The live mass meter — `Mass ▰▰▰▱▱ 30.0 / 40.0`, tinted DANGER once the manifest is over the cap the
+## server will refuse it at.
+func _build_mass_meter(mass: float, cap: float) -> Label:
+    var meter := Label.new()
+    var filled := clampf(mass / cap, 0.0, 1.0) * HudConst.PROGRESS_PERCENT_SCALE if cap > 0.0 else 0.0
+    meter.text = "%s %s" % [HudComposeVocab.COMPOSE_CARGO_MASS_LABEL,
+        HudComposeVocab.COMPOSE_CARGO_MASS_FORMAT % [
+            HudFormat.meter_bar(filled, HudComposeVocab.COMPOSE_CARGO_MASS_CELLS),
+            HudCraftingVocab.BATCH_AMOUNT_FORMAT % mass,
+            HudCraftingVocab.BATCH_AMOUNT_FORMAT % cap]]
+    meter.add_theme_color_override("font_color",
+        HudStyle.DANGER if cap > 0.0 and mass > cap else HudStyle.INK_DIM)
+    meter.set_meta(TRADE_MASS_METER_META, true)
+    return meter
+
+## The manifest as the command's own repeated tail: one `{id, is_material, amount}` line per LOADED
+## row, in the order the sheet lists them. Rows at zero are dropped — a line naming no quantity is not
+## a line the player asked for.
+func _trade_manifest_lines(rows: Array) -> Array:
+    var lines: Array = []
+    for row_variant in rows:
+        var row: Dictionary = row_variant as Dictionary
+        var amount := float(row.get("amount", 0.0))
+        if amount <= 0.0:
+            continue
+        lines.append({
+            "id": String(row.get("id", "")),
+            "is_material": bool(row.get("is_material", false)),
+            "amount": amount,
+        })
+    return lines
+
+## Empty the manifest and forget the destination. **One act**, for `_clear_party_quarry`'s reason: a
+## destination without its cargo, or cargo without its destination, is a half-composed shipment that
+## the next composing act would inherit without ever being shown.
+func _clear_trade_manifest() -> void:
+    _trade_destination_band = HudConst.NO_BAND_ID
+    _trade_food = 0.0
+    _trade_materials = {}
+
 ## Drop the composed quarry AND the fill target it was counted in. **They are one act** — a target is
 ## a count of a SPECIFIC herd's animals, so a target outliving its quarry would be handed to the next
 ## one, where `raid_load` answers a target at or above capacity by returning the pack — which is why
@@ -3084,6 +3538,9 @@ func _close_party_compose() -> void:
     _party_compose_mission = ""
     _split_workers = 1
     _clear_party_quarry()
+    # …and the manifest with it: goods loaded for a shipment the player cancelled are not goods they
+    # asked to send. `_clear_trade_manifest` carries the pairing rule.
+    _clear_trade_manifest()
     _targeting.cancel_pick_quarry()
     # The measured requirement belongs to ONE composing act — see `_party_compose_needed`. Carrying a
     # closed form's high-water mark into the next one would float a sheet that has not been measured.
@@ -3299,6 +3756,7 @@ func render_band(unit: Dictionary) -> void:
     if _panel_is_faction:
         _panel_is_faction = false
         _clear_party_quarry()
+        _clear_trade_manifest()
         _party_compose_open = false
         _party_compose_mission = ""
         _split_workers = 1
@@ -3311,6 +3769,7 @@ func render_band(unit: Dictionary) -> void:
     # `_close_party_compose`, which re-renders, and this IS the render.
     if int(unit.get("entity", -1)) != int(_band_labor.panel_band().get("entity", -1)):
         _clear_party_quarry()
+        _clear_trade_manifest()
         _party_compose_open = false
         _party_compose_mission = ""
         _split_workers = 1
@@ -3375,6 +3834,7 @@ func render_faction() -> void:
     # — the identical rule `render_band` applies to a band-to-band cycle, and the float must come down
     # with it (it lives outside the panel and no zone rebuild reaches it).
     _clear_party_quarry()
+    _clear_trade_manifest()
     _party_compose_open = false
     _party_compose_mission = ""
     _split_workers = 1
@@ -3644,6 +4104,7 @@ func refresh_snapshot() -> void:
         _party_compose_open = false
         _party_compose_mission = ""
         _split_workers = 1
+        _clear_trade_manifest()
         _party_compose_needed = 0.0
         _party_compose_measured_box = Vector2.ZERO
         _party_compose_sheet = null

@@ -140,6 +140,29 @@ const FOOD_LABEL_PEN_FEED := "%s Pen feed (animals)" % CORRAL_GLYPH
 const RAID_GLYPH := "⚔"
 const FOOD_LABEL_RAID_FORFEIT := "%s Lost to raids" % RAID_GLYPH
 
+# The TRANSFER pair (arc #527): food that crossed between bands, in or out. They are the fifth and
+# sixth terms of the larder identity
+#   larder_delta == income − consumption − pen_feed − raid_forfeit + received − sent
+# and they close a hole that was NEVER about trade alone: `balance_supply_networks` has been pooling
+# food between neighbouring larders every turn since turn one, so any two co-networked bands had a
+# Food line that silently did not add up — by the whole transfer, not a rounding drift.
+#
+# TWO ROWS, NOT ONE SIGNED ONE, matching the two debit rows above and the wire's own shape: a band
+# that both sends and receives in one window is doing something, and a net would render that as
+# nothing having happened. The received row is an INCOME row (▲ green) and the sent row a DEBIT
+# (▼ amber), which the shared `food_breakdown_row` decides from the sign it is handed.
+#
+# **A PLAIN ARROW PAIR, NOT A HANDSHAKE OR A CART**, for two reasons. What these rows report is
+# neighbours pooling as often as it is a shipment arriving, so a trade glyph would promise a deal the
+# supply network never made. And the emoji that says "deal" (🤝) is not in this client's fallback
+# font: it renders as an INVISIBLE gap — no tofu box, just a wider indent — which is the silent
+# failure mode `Typography.gd` is retired for. ⇄ is in the Arrows block the ▸/◀/▲▼ carets already
+# come from, so it draws everywhere they do. **One glyph for both rows**, unlike Pen feed and Lost to
+# raids: these two are ONE fact in two directions, and the row's own words say which way.
+const TRANSFER_GLYPH := "⇄"
+const FOOD_LABEL_TRANSFER_RECEIVED := "%s From other bands" % TRANSFER_GLYPH
+const FOOD_LABEL_TRANSFER_SENT := "%s To other bands" % TRANSFER_GLYPH
+
 # ---- THE THREE KITS (`docs/plan_hunt_through_combat.md` §4.8) ------------------------------------
 # ONE KIT, ONE JOB: spears raise a hunter's `attack`, a SLED is the HUNT's carry (a carcass is one
 # lumpy object you drag out whole), BASKETS are the FORAGE web's (berries are loose and bounded by
@@ -1190,16 +1213,34 @@ static func morale_is_concerning(unit_data: Dictionary) -> bool:
 # =====================================================================================
 
 ## Net per-turn food flow: income − what the PEOPLE eat − what the band's penned ANIMALS eat − what
-## PREDATORS raided off the larder this turn. Positive → the larder is growing. `pen_feed_upkeep` is
+## PREDATORS raided off the larder this turn.
+##
+## **THE TRANSFER PAIR IS DELIBERATELY NOT A TERM HERE** (arc #527). `transfer_received` /
+## `transfer_sent` are what CROSSED between larders over the snapshot window — a past event, not a
+## rate — and they are itemized as their own two breakdown rows (`⇄ From other bands` / `⇄ To other
+## bands`) where a past event belongs. Folding them into this headline made it a different quantity
+## from the runway printed BESIDE IT on the same row: the sim's `turnsOfFood` is computed from
+## per-source income and excludes transfers entirely, so `-39.0/turn (20 turns)` would be two numbers
+## on one line computing on different bases. Matching the sim's basis is the point.
+##
+## A shipment is also bounded only by the manifest the player builds — up to the whole larder —
+## unlike `raid_forfeit`, which is capped at a fraction of one turn's income, so a band with income 6
+## and consumption 5 that sent 40 read `-39.0` in DANGER red with a WARN caret on an economy that had
+## not changed, and `+1.0` again the next frame. **Closing the real gap is sim-side work** (issues
+## #547 / #548 — the sim projecting a steady transfer forward), so until then this headline does NOT
+## reflect a neighbour's recurring supply-network contribution, and no client-side fold-in may fake
+## one.
+##
+## Positive → the larder is growing. `pen_feed_upkeep` is
 ## the sim's own answer for the third term (`PopulationCohortState.penFeedUpkeep` — the food this band
 ## actually PAID for pen feed this turn, summed across every pen it keeps) and `raid_forfeit` is the
 ## fourth (`PopulationCohortState.raidForfeit`, Predators Phase 3 — food lost to raids this turn); the
 ## client must NOT re-derive either, and the full identity
-## `larder_delta == income − consumption − pen_feed − raid_forfeit` is pinned sim-side
-## (`integration_tests/tests/{pen_food_ledger,raid_food_ledger}.rs`). Including both keeps this headline
-## equal to the sum of the itemized breakdown rows; omitting a term makes the row LIE. Raids are
-## EPISODIC, so this net can swing the turn one lands — the forward food-outlook chart deliberately
-## does NOT project raid_forfeit forward (a past loss is not a steady drain).
+## `larder_delta == income − consumption − pen_feed − raid_forfeit + transfers` is pinned sim-side
+## (`integration_tests/tests/{pen_food_ledger,raid_food_ledger,transfer_food_ledger}.rs`) — the
+## BREAKDOWN is what states it in full, this headline being the steady rate rather than the ledger.
+## Raids are EPISODIC, so this net can swing the turn one lands — the forward food-outlook chart
+## deliberately does NOT project raid_forfeit forward (a past loss is not a steady drain).
 static func band_net_food(band: Dictionary) -> float:
     return band_food_income(band) \
         - float(band.get("food_consumption", 0.0)) \
@@ -1226,6 +1267,22 @@ static func band_pen_feed(band: Dictionary) -> float:
 ## 0 when no raid landed — the ledger then omits the row entirely, exactly like Pen feed.
 static func band_raid_forfeit(band: Dictionary) -> float:
     return float(band.get("raid_forfeit", 0.0))
+
+## Food that CROSSED IN from another band over the snapshot window
+## (`PopulationCohortState.transferReceived`) — a supply-network pooling, a shipment landing, a
+## party's pack coming home. 0 for a band nobody sent to, which the ledger renders as no row at all.
+##
+## **THE WINDOW IS THE SNAPSHOT WINDOW, NOT THE TURN**, because a launch draw happens when a command
+## is applied, between two published frames. The sim accumulates across exactly the interval a
+## client's own `larder_delta` measures and clears after the capture.
+static func band_transfer_received(band: Dictionary) -> float:
+    return float(band.get("transfer_received", 0.0))
+
+## …and what crossed OUT (`PopulationCohortState.transferSent`). Its own magnitude rather than a
+## signed net with the term above: a band that both sends and receives in one window is doing
+## something, and a net would render that as nothing having happened.
+static func band_transfer_sent(band: Dictionary) -> float:
+    return float(band.get("transfer_sent", 0.0))
 
 ## The band's larder (provisions) as a float — the starting point of the food-outlook projection and
 ## the number the Food summary row prints (rounded there). Here beside the rest of the band food
@@ -1266,7 +1323,9 @@ static func band_has_food_flow(band: Dictionary) -> bool:
     return band_food_income(band) >= SourceForecast.FOOD_FLOW_MIN \
         or float(band.get("food_consumption", 0.0)) >= SourceForecast.FOOD_FLOW_MIN \
         or band_pen_feed(band) >= SourceForecast.FOOD_FLOW_MIN \
-        or band_raid_forfeit(band) >= SourceForecast.FOOD_FLOW_MIN
+        or band_raid_forfeit(band) >= SourceForecast.FOOD_FLOW_MIN \
+        or band_transfer_received(band) >= SourceForecast.FOOD_FLOW_MIN \
+        or band_transfer_sent(band) >= SourceForecast.FOOD_FLOW_MIN
 
 ## Sum of per-source `realized_yield` (the STEADY per-source average, food/turn) across this band's
 ## labor assignments of one kind — the category total behind the Food breakdown (Gathered = forage,
@@ -1279,6 +1338,46 @@ static func sum_realized_yield(band: Dictionary, kind: String) -> float:
             var d := a as Dictionary
             total += float(d["realized_yield"]) if d.has("realized_yield") else float(d.get("actual_yield", 0.0))
     return total
+
+# =====================================================================================
+#  SHIPMENT ARITHMETIC (arc #527, issue #517)
+#  What a trade party's packs are carrying, in the ONE expression the sim checks a manifest with.
+#  Two surfaces ask it about the same pack — the compose sheet's live mass meter, which prices a
+#  manifest before it is sent (`BandPanelController._trade_manifest_mass`), and the in-flight
+#  `Carrying:` row, which reports one already walking (`BandDetailLines._shipment_summary_lines`) —
+#  so it lives here, beside the band food arithmetic, for the reason that family does: two copies of
+#  a formula are two answers about one pack.
+# =====================================================================================
+
+## **THE SIM'S OWN MASS EXPRESSION, HELD VERBATIM** — food counts as itself, and every unit of every
+## material costs `expedition_trade_material_carry_weight` of pack space. That lever is a per-cohort
+## echo of the sim's config, so a tuning change moves both surfaces and the server's refusal together.
+##
+## **THE FOOD TERM ALONE IS NOT THE MASS**, and reading it as one is what this exists to stop: a party
+## carrying 2 food and 10 hide against a cap of 12 is FULL, and a row dividing the 2 by the 12 renders
+## a full pack as one-sixth full.
+static func shipment_mass(food: float, material_total: float, material_carry_weight: float) -> float:
+    return food + material_total * material_carry_weight
+
+## Σ of an IN-FLIGHT party's per-material cargo amounts (`expedition_cargo_materials`, the wire's
+## per-material total across the batches it holds). **A pack-space input, never a readout** — the
+## materials are rendered one term per material and are never summed on screen, a total of hide and
+## bone being the retired trade axis under a new name.
+static func shipment_cargo_material_total(unit_data: Dictionary) -> float:
+    var total := 0.0
+    for row_variant in unit_data.get("expedition_cargo_materials", []):
+        if row_variant is Dictionary:
+            total += float((row_variant as Dictionary).get(HudCraftingVocab.BATCH_AMOUNT_KEY, 0.0))
+    return total
+
+## The mass an in-flight party's cargo store weighs — `shipment_mass` over the two wire accounts and
+## the cohort's own carry-weight lever, so the `Carrying:` row's numerator is the number the compose
+## sheet's meter showed for the same manifest.
+static func shipment_cargo_mass(unit_data: Dictionary) -> float:
+    return shipment_mass(
+        float(unit_data.get("expedition_cargo_food", 0.0)),
+        shipment_cargo_material_total(unit_data),
+        float(unit_data.get("expedition_trade_material_carry_weight", 0.0)))
 
 # =====================================================================================
 #  **THE BAND TRADE ARITHMETIC IS RETIRED** (arc #527)

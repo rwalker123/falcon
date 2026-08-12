@@ -382,14 +382,64 @@ negligible-take floor that ends the loop). Reuses the shared model helpers (`reg
 (append-only). **The `actual` value and the ledger identity are unchanged — `realized` is a parallel
 steady value, never a replacement.** `PopulationCohortState.foodIncome` = Σ `actual` stays exactly as
 it is: it is the real arrivals and is load-bearing for the
-`larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit` ledger identity.
+`larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit + transferReceived −
+transferSent` ledger identity.
+
+> **The last two terms are the food that CROSSED BETWEEN BANDS** —
+> `PopulationCohortState.transferReceived` / `transferSent`
+> (`LaborAllocation::last_transfer_received` / `last_transfer_sent`, arc #527). Every other term is
+> about *this* band: what its own workers produced, what its own people ate, what its own pen and its
+> own raid cost it. Food that **moves between larders** therefore fits nowhere in it, and three
+> things move food between larders: `balance_supply_networks`, every turn since turn one; a **trade
+> expedition** carrying a shipment (`.claude/rules/core_sim/expeditions.md` → "A shipment is a party
+> that walks it"); and a **band split** handing the new band its share of the parent's stores
+> (`.claude/rules/core_sim/fission.md` → "The dowry is a transfer, and it is booked as one").
+>
+> **`found_settlement`'s `SETTLEMENT_PROVISION_COST` debit is a KNOWN-OPEN hole of a different
+> shape.** That food is *destroyed* — spent on standing a settlement up, not handed to another band —
+> so booking it as `transferSent` would name a recipient that does not exist. It wants a term of its
+> own (a consumption-outside-eating line, the shape `penFeedUpkeep` already has), which is a
+> deliberate decision rather than a mechanical fix, and it is not made here.
+>
+> **The supply-network half was a pre-existing hole, and it is measured rather than asserted.** The
+> two sibling ledger tests each stand up a *single* band, so no network forms
+> (`MIN_NETWORK_MEMBERS` is 2) and the identity was never exercised against a transfer at all;
+> `transfer_food_ledger::the_pre_transfer_identity_is_short_by_exactly_the_move` reproduces the gap
+> and shows it is exactly the move, on both bands, in opposite directions.
+>
+> **One pair of terms for every producer, not one pair per producer.** A supply-network move, a
+> shipment landing, an expedition's launch draw and a party's pack coming home are one fact — *food
+> that crossed between bands outside income and consumption* — and minting a term per mechanism is
+> how a ledger acquires five fields that answer one question. **Two named magnitudes rather than one
+> signed net**, matching `penFeedUpkeep` and `raidForfeit`: a band that both sends and receives in
+> one turn is doing something, and a signed net would render that as nothing happening.
+>
+> **The window is the SNAPSHOT window, not the turn.** Unlike the other four terms this pair has
+> writers *outside* `run_turn` — a `send_trade_expedition` (or `send_expedition`) command debits the
+> larder when it is applied, between two published frames. So every writer **adds** and exactly one
+> system clears: `systems::reset_transfer_ledger`, in the Snapshot stage **after**
+> `capture_snapshot`. Clearing at the top of the turn instead would drop every command-time draw and
+> leave the identity short by exactly the shipments the player sent.
+>
+> **Food only.** Materials cross between bands too — the network pools them per rating, a shipment
+> carries them — and there is deliberately **no materials identity**: a material's account is the
+> batch store itself, and a scalar total of hide and bone is the retired trade axis under a new name.
+>
+> Pinned by `integration_tests/tests/transfer_food_ledger.rs` against real turns and the real
+> exported snapshot, over every producer. **A producer that fires between two captures needs a case
+> that fires it between two captures**: the split half of that file survived a real hole because the
+> other fixtures split while *building* themselves and then overwrote both larders, which erases the
+> move being measured. `the_food_ledger_reconciles_when_a_band_splits_mid_window` splits after the
+> first published frame and touches nothing afterwards, and the shared fixture now publishes one
+> frame between its split and its forced larders so the counters it clears describe what happened.
 
 > **The ledger identity gained a fourth term with Predators Phase 3 (`combat.md`).**
 > `PopulationCohortState.raidForfeit` (`LaborAllocation::last_raid_forfeit`) is the food a
 > casualty-causing predator raid forfeits — `predators.raid_yield_forfeit_fraction` of that turn's
 > income, a real `LocalStore::take` debit that lands in **neither** `foodIncome` nor `foodConsumption`,
-> exactly like `penFeedUpkeep`. So the identity is now
-> `larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit`, pinned through a real
+> exactly like `penFeedUpkeep`. It brought the identity to
+> `larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit` (the transfer pair
+> above is the next two terms), pinned through a real
 > raid turn by `integration_tests/tests/raid_food_ledger.rs`. **It is a PAST-turn stochastic debit, not
 > a recurring cost, so — unlike `penFeedUpkeep` — it does NOT enter the `turnsOfFood` forward-runway
 > drain** (the runway drains only by `consumption + penFeedUpkeep`; see the runway callout above).

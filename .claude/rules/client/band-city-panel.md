@@ -2879,3 +2879,133 @@ switch; it went with the lever.) Sabotage-verified on three DISJOINT mutations, 
 different subset: rendering the chooser at one candidate fails the absence claim alone; building the
 entries as plain items fails the two marking claims; and dropping `choose_quarry`'s re-render fails
 the re-rendered-row claim alone, naming the stale `Rabbit Warren`.
+
+## A SHIPMENT IS THE FIFTH FOOTER BUTTON, AND IT SHARES NO FIELD WITH THE HUNT FORM (arc #527, issue #517)
+
+`BandPanelController._fill_trade_compose_sheet`. The parties footer offers **`📦 Trade`** beside
+Scout / Hunt / Deny / Split, and it is a MISSION rather than a mode of the hunt form for the plainest
+reason available: there is no field the two have in common. A shipment names another BAND, not a
+herd; it carries a manifest, not a floor; and its readout is a mass meter, not a trip forecast. The
+form is **DESTINATION → PARTY → CARGO → the mass meter → send**.
+
+**The launch grammar is its own** — `send_trade_expedition <faction> <band> <party_workers>
+<destination_band_id> [food <amount>] [material <material_id> <amount>]... [kit <id>]` — whose tail
+is a REPEATED manifest, so the HUD carries a **`send_trade_expedition_requested`** signal of its own
+whose payload holds a cargo LIST. That is the `send_denial_raid_requested` precedent: a grammar no
+other party verb's payload could express gets its own signal, and `Main.format_send_trade_expedition`
+is its own builder for the same reason.
+
+### The two hunting entry points stay in step; a shipment has only ONE site
+
+The standing rule is that the dock's hunt sheet and the herd drawer's expedition branch present ONE
+decision surface — and it is about HUNTING PARTIES, both of which compose a raid on a herd. A
+shipment's subject is a band drawn from the connections list, and the drawer's expedition branch is
+reached by selecting a HERD, so there is no second site for trade to stay in step with.
+`DrawerComposeController` is deliberately untouched.
+
+### THE TIE IS THE GATE, AND THE FORM TEACHES IT RATHER THAN ENFORCING IT SILENTLY
+
+The destination picker lists the selected band's own connections
+(`HudBandLaborState.connections_for_band`, keyed on the durable `band_id`) and nothing else, because
+`ConnectionLedger::get(..).strength > NO_TIE` is what the sim gates the launch on.
+
+- **A PARKED tie (strength 0) is listed, DISABLED, carrying its reason** — never hidden. Zero means
+  *"we know such a people exist and have no current dealings"*, which is a different statement from
+  never having met them, and the thing the player has to learn is that the TIE is what gates trade.
+  Hiding a decayed destination teaches that some bands are simply missing.
+- **A band with no ties at all gets the sentence, not a dead button.** The `📦 Trade` button is gated
+  on IDLE WORKERS like the other three and never on the ties, so the empty case opens a legible form
+  saying how a tie forms — an action no control on this sheet can take.
+- **The chosen tie is re-resolved LIVE every render**, the hunt form's rule: a tie decays, so a
+  destination that was live when the sheet opened can be parked by the time it is sent.
+
+### THE DESTINATION IS REMEMBERED, NEVER SEEN — the arc's keystone, rendered
+
+A connection can only ever grant `Discovered` (`.claude/rules/core_sim/connections.md`), so
+`lastSeen{X,Y,Turn}` is where the subject WAS and nothing on this sheet may render it as a live
+position. `_trade_destination_notes` states the sighting and its turn in those words, and the walk
+quoted from it wears a **`≈`** and the clause *"if they are still there"*. A remembered band behaves
+exactly like a remembered herd, which every player has already been taught by a herd that moved.
+
+**The walk is `SourceForecast.outbound_travel_turns`, this client's ONE definition of travel**, asked
+about the remembered tile — not a second `distance ÷ move_rate` free to drift from the one the hunt
+readout and the server's own launch feed use. It is omitted entirely when the band publishes no move
+rate or either tile is unknown, rather than quoting a fabricated 0.
+
+**A tie carries only ids, so the subject's NAME is resolved client-side** through
+`HudBandLaborState.band_label_for_id` — the ONE band-naming join in this client, and the same one the
+shipment's `Bound for` row and the parties-strip row use, so a band cannot be called three things on
+three surfaces. A subject still in `player_bands` is named exactly as the cycler names it (a roster
+POSITION, `HudFormat.band_display_name`); one the roster cannot resolve is named by where it was
+(`Band near (44, 9)`). The raw `BandId` is a database key and never reaches a label.
+
+### THE MANIFEST IS ONE ROW PER PILE, AND A MATERIAL ROW SHOWS ITS RATING
+
+The larder is one commodity and so one `Food` row; the materials are one row per BATCH, which is one
+pile of one material AT ONE RATING — the shape the sim's own store keeps (`BTreeMap` of
+`(material, rating band)`). **A mammoth hide and a hare pelt are both `hide`**, and a row that merged
+them would offer a quantity of something the band does not hold. The row's face is
+`hide · tough: excellent · supple: poor`, spelled with the Crafting panel's own keys so one pile
+reads the same wherever it is quoted.
+
+- **The face ELLIPSES and the tooltip carries the whole rating.** A rating vector is verbose by
+  nature and this row will not get wider, so the STRING is shortened —
+  `OVERRUN_TRIM_ELLIPSIS`, never `clip_text`, which cut mid-word with no mark
+  (`bone · dense: excellent · long: fa`) and read as a broken label rather than a shortened one. The
+  hover text repeats the whole face beside what the band still holds, so nothing is unreachable.
+  **AN AXIS IS NEVER DROPPED FROM THE DATA to make it fit**: the axes are the whole reason a hide and
+  a pelt are different rows, so the underlying label always carries every one of them.
+- **The `+` steps a whole unit and CLAMPS TO THE PILE**, so a 0.6 pile is reachable in one press
+  rather than being unshippable for want of a fractional control.
+- **…and the amount that press leaves is EXACT, so the emitted one is FLOORED, never rounded**
+  (`Main.cargo_wire_amount`). The clamp puts the band's precise holding on the row — `137.456789` food
+  — and `resolve_shipment` refuses on `held < amount`, so a tenth of a unit of legibility on the
+  command line is a refused shipment: *"the band holds 137.46 provisions, not 137.50"*, on the very
+  press this sheet teaches. Rounding can also carry the manifest's mass over the cap the meter above
+  just said it was under. **Two grids bind, and above ~8 units the coarser one is the WIRE's**: the
+  line is text, so the server parses it back through an `f32` before quantising to `Scalar`, and an
+  amount floored onto the fixed-point grid alone still reconstructs above the pile about 40% of the
+  time. The FEED NOTE keeps one decimal — it is prose for a person, and it is not what the server
+  reads. `cargo xtask command-guard` drives a fractional pile end to end and compares what the real
+  parser reconstructs against the pile in ticks.
+- **The state is remembered per BATCH KEY** (`material id | rating bands`), so a snapshot that moves a
+  pile's size cannot silently move the player's choice onto a different pile.
+- **The command emits one `material <id> <amount>` line per ROW**, in the order the sheet lists them.
+  The parser keeps each line separately, so two piles of hide leave as two lines. **Only the FOOD
+  lines are summed**, and only because `food` names one commodity.
+
+### THE MASS METER IS A COURTESY; THE SERVER'S REFUSAL REMAINS THE AUTHORITY
+
+```text
+mass = Σ food rows + expeditionTradeMaterialCarryWeight × Σ material row amounts
+cap  = party_workers × expeditionTradePerWorkerCarry
+```
+
+Both terms are per-cohort echoes of the sim's own config, so a tuning change moves the meter and the
+refusal together. **Neither is a literal here** — `expeditionPerWorkerCarry` is the HUNT pack and a
+client composing a trade cap out of it would be one config edit from quoting a cap
+`send_trade_expedition` refuses.
+
+**The mass expression itself lives in ONE place, `DetailFormat.shipment_mass`**, because the in-flight
+`Carrying:` row prices the same pack (`band-readouts.md` → "A trade party states WHO IT IS FOR"). This
+sheet's `_trade_manifest_mass` only splits its mixed row list into the two accounts that expression
+takes. Two copies of a formula are two answers about one pack, and the row's copy had already drifted:
+it divided the cargo's FOOD by the mass cap. The meter exists so the player never meets that refusal; an over-cap
+or empty manifest disables the send with its reason, which is the "visible and disabled with its
+reason" convention this zone uses everywhere.
+
+**The party stepper's ceiling is the band's IDLE WORKERS and nothing else**, the rule all four launch
+verbs follow. What bounds a shipment is the meter, not a head count.
+
+### THE FIFTH BUTTON MADE THE FOOTER A GRID
+
+Four launch buttons fit a 354px column at ~62px each; a fifth takes them to ~48, which `📦 Trade`
+does not fit — and the zone `clip_contents`, so what shipped for one render was a button **sliced off
+the edge** rather than a narrower row. The footer is a `GridContainer` at
+`HudComposeVocab.PARTY_FOOTER_COLUMNS` (3) now, wrapping 3 + 2 — the treatment `build_floor_picker`
+already gives its six rungs. The second row costs the footer one row of height, which the parties
+LIST above it gives up (it is the `EXPAND_FILL` child).
+
+**Frames:** `trade_footer` (all five buttons, and the frame that proves the glyph DRAWS — a mark
+missing from this client's fallback font renders as an invisible gap that no assertion catches),
+`trade_picker_empty`, `trade_picker_destination`, `trade_cargo_loaded`, `trade_cargo_over_cap`.

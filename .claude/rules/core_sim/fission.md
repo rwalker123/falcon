@@ -102,6 +102,27 @@ of nobody is not a band, so `min_founding_workers ≥ 1` is validated.
   `reconcile_band_culture_layers`, whose no-layer case seeds from the province — identical today,
   since both halves are co-located, and wrong the moment the new band moves before the reconcile runs.
 
+### The dowry is a transfer, and it is booked as one
+
+The share of the larder that walks out with the new band is **food that crossed between two larders**,
+so it is booked into the food ledger's transfer pair: `last_transfer_sent` on the parent,
+`last_transfer_received` on the child, the same pair `balance_supply_networks` and a trade shipment
+write (`.claude/rules/core_sim/campaign.md` → the transfer callout, which owns the identity).
+
+**A split is a command, so it lands *between* two captures** — inside the interval a client's
+`larder_delta` measures. Without the booking the parent publishes a frame whose Food line is short by
+exactly the provisions and the child's opens at food it never grew, and the identity
+`larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit + transferReceived −
+transferSent` is simply false on the turn a band splits. The child receives it on the
+`LaborAllocation` it is spawned with, because its first published frame is the one that has to
+account for it.
+
+**FOOD only.** The child inherits a share of every good, but materials deliberately have no identity
+of their own — a material's account is the batch store itself.
+
+Pinned by `transfer_food_ledger::the_food_ledger_reconciles_when_a_band_splits_mid_window`, which
+splits after a published frame and asserts the identity on **both** halves.
+
 **There is deliberately NO breeding stock**, and the reason is structural rather than a balance call:
 a band's stores hold `provisions`, `fodder` and material batches and nothing else; a corralled `Herd` carries
 `corralled_at` and a `pen_radius`, so it is fenced land and neither it nor a fraction of it travels;

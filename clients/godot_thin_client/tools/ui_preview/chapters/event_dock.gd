@@ -275,10 +275,22 @@ const EVENT_DOCK_UNKNOWN_BAND_LABEL := "A child came of age in Band 9"
 
 const EVENT_DOCK_DIGIT_BOUNDARY_LABEL := "Four left Band 1 for Band 30"
 
+## Both roles re-labelled in ONE line (arc #527): the sender through `band=`, the destination through
+## `destination=`. `Band 3` → `Band 1` and `band 30` → `Band 2`, off the same roster.
+const EVENT_DOCK_SHIPMENT_RELABELLED := "Band 1 delivered 12 food to Band 2"
+
 func _event_dock_band_label_fixture() -> Array:
 	return [
 		{"tick": 62, "kind": "came_of_age", "faction": 0,
 			"label": "A child came of age in Band 3", "detail": "band=3 count=1", "seq": 601},
+		# A shipment landing (arc #527): the SENDING band in the sim's capitalised spelling
+		# (`systems::population::band_label`) and the RECEIVING one in the lower-case spelling
+		# `ExpeditionMission::destination_display` falls back to, with both ids in `detail`. One line
+		# carrying BOTH tokens is the only shape that can show the two roles resolving separately
+		# rather than one overwriting the other.
+		{"tick": 62, "kind": "trade_delivered", "faction": 0,
+			"label": "Band 3 delivered 12 food to band 30",
+			"detail": "status=delivered band=3 destination=30 expedition=7", "seq": 604},
 		{"tick": 62, "kind": "came_of_age", "faction": 0,
 			"label": "A child came of age in Band 9", "detail": "band=9 count=1", "seq": 602},
 		{"tick": 62, "kind": "migrated", "faction": 0,
@@ -706,6 +718,12 @@ func run(harness) -> void:
 		_preview_event_label_count(event_dock, EVENT_DOCK_UNKNOWN_BAND_LABEL, true) == 1)
 	h._assert_hud("band label: the substitution stops at a DIGIT boundary (`Band 3` ≠ `Band 30`)",
 		_preview_event_label_count(event_dock, EVENT_DOCK_DIGIT_BOUNDARY_LABEL, true) == 1)
+	# **A SHIPMENT'S `destination=` TAKES THE SAME SWAP** (arc #527), and it needed a SECOND spelling
+	# rather than a second use of the first: the sim writes a sending band as `Band 3` and a
+	# shipment's destination as `band 30` — different case, different producer — so one shared format
+	# would have looked right and never fired. Both roles resolve in this one line.
+	h._assert_hud("band label: a shipment's `destination=` id is re-labelled too",
+		_preview_event_label_count(event_dock, EVENT_DOCK_SHIPMENT_RELABELLED, true) == 1)
 	event_dock.set_band_labels({})
 
 	# THE PREFS FILE THAT EXISTS BUT HAS NO `[events]` SECTION — i.e. every player upgrading into

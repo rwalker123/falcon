@@ -14,6 +14,15 @@ const WORKER_STEPPER_VALUE_WIDTH := 32.0
 
 const WORKER_STEPPER_SEPARATION := 6
 
+# The two stepper FACES. One spelling, because two stepper families now draw them — the worker/party
+# steppers (`HudWidgets.add_stepper_controls`) and the shipment manifest's per-row cargo stepper,
+# which counts a FLOAT quantity of goods and so cannot share that builder's integer count. The minus
+# is U+2212 MINUS SIGN, not a hyphen: it matches the `+`'s stroke weight and optical width, which a
+# hyphen at this size visibly does not.
+const STEPPER_MINUS_FACE := "−"
+
+const STEPPER_PLUS_FACE := "+"
+
 # Policy-picker layout: the two-line rung buttons (name over product line) wrap at most 3 per row, so
 # the six-rung forage/local-hunt pickers read as two tidy rows of three and the four extractive rungs
 # read as 3 + 1 with Eradicate alone on the second row. THREE IS A CEILING, NOT A TARGET — a picker

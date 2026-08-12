@@ -23,6 +23,13 @@ const LAND_SUBJECT_ID := -1
 # Provisions is the food item under a band's larder `stores`.
 const STORE_ITEM_PROVISIONS := "provisions"
 
+# **A TIE AT THIS STRENGTH IS PARKED, AND AT ZERO NOTHING FLOWS** (arc #527) — the client's reading of
+# the sim's own `connections::NO_TIE` gate. A parked edge is a published row meaning "we know such a
+# people exist and have no current dealings", NOT an absent one, so a reader that dropped it would
+# hide the very fact that the tie is what gates a shipment. It is a floor to compare ABOVE, never a
+# tolerance: the sim gates on `strength > NO_TIE` and the client must ask the same question.
+const TIE_STRENGTH_NONE := 0.0
+
 # **`STORE_ITEM_TRADE_GOODS` IS RETIRED** (arc #527) along with the `TRADE_GOODS` commodity itself:
 # the sim writes no such key onto a band's `stores` map any more. What a harvest pays beyond food and
 # fodder is MATERIALS, which are batches on the cohort (`material_batches`) rather than a scalar in

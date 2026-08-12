@@ -513,6 +513,58 @@ impl LocalStore {
         }
     }
 
+    /// **Peel `amount` of `material` off the store IN ITS OWN ORDER, splitting the last batch** —
+    /// the shipper's draw, and the twin of [`Self::drain_materials_into`] for a *partial* move.
+    ///
+    /// It is deliberately **not** [`Self::take_material`]: that one sorts worst-first on a named
+    /// **axis**, which is the crafting bench's question (*"spend the poor hide before the good
+    /// one"*). A shipment names no axis — a trader says *"four hide"*, not *"four hide by
+    /// suppleness"* — so the order here is the store's own band-key order, which is deterministic by
+    /// construction ([`BTreeMap`]) and the same order the checkpoint and every readout already walk.
+    ///
+    /// **A SPLIT IS NOT A MERGE.** A batch is a quantity of one identical material, so half of it is
+    /// still that material at exactly that rating: each draw carries the source batch's readings
+    /// verbatim, and the amounts a caller re-deposits keep every rating that left. Averaging enters
+    /// only where two *different* batches meet, which is [`Self::deposit_material`]'s job.
+    ///
+    /// Returns what actually came out, which is short of `amount` when the store is short — the
+    /// availability question is the caller's, asked with [`Self::material_total`].
+    pub fn take_material_batches(&mut self, material: &str, amount: Scalar) -> Vec<MaterialDraw> {
+        let mut remaining = amount.max(scalar_zero());
+        let mut drawn = Vec::new();
+        if remaining <= scalar_zero() {
+            return drawn;
+        }
+        let Some(batches) = self.materials.get_mut(material) else {
+            return drawn;
+        };
+        let order: Vec<crate::materials_config::BandKey> = batches.keys().cloned().collect();
+        for key in order {
+            if remaining <= scalar_zero() {
+                break;
+            }
+            let batch = batches.get_mut(&key).expect("key came from this map");
+            let taken = min(remaining, batch.amount);
+            if taken <= scalar_zero() {
+                continue;
+            }
+            batch.amount -= taken;
+            remaining -= taken;
+            drawn.push(MaterialDraw {
+                band: key.clone(),
+                amount: taken,
+                characteristics: batch.characteristics.clone(),
+            });
+            if batch.amount <= scalar_zero() {
+                batches.remove(&key);
+            }
+        }
+        if batches.is_empty() {
+            self.materials.remove(material);
+        }
+        drawn
+    }
+
     /// **Withdraw from ONE named batch** — the supply network's move, which knows exactly which
     /// rating it is shipping and must not re-sort by anything. Returns what was actually taken.
     pub fn take_material_batch(
@@ -1111,6 +1163,43 @@ pub enum ExpeditionMission {
         /// pruned from the herd list by the raid succeeding.
         target_species: String,
     },
+    /// **Carry a shipment to another band** — the first rider on the connection primitive
+    /// (`docs/plan_contact_and_logistics.md` §Q5, arc #527, slice #517).
+    ///
+    /// **A shipment is a party that walks it.** There is deliberately no persistent link component
+    /// underneath: what maintains a link is a *route*, the route ladder holds that state, and
+    /// building link state before any route exists to hold it would be inventing the ladder's model
+    /// in advance. So the rider is an expedition verb, and the cargo is [`Expedition::cargo`].
+    ///
+    /// **It is one-way.** The party carries goods out, deposits them, and walks home empty; a priced
+    /// return flow is a later slice, not an omission here.
+    ///
+    /// **There is no faction on it, and no same-faction branch anywhere it is read.** Faction is a
+    /// property of the endpoint (`.claude/rules/core_sim/connections.md`), so a shipment to another
+    /// people works by construction rather than by a clause.
+    Trade {
+        /// **The destination band's durable id** — the key, never rendered. A [`BandId`] rather than
+        /// an `Entity` for the reason every other durable handle in this file is one: the band
+        /// outlives any entity index, and the party must still name it after a rollback.
+        destination_band: BandId,
+        /// **The destination's display name, resolved ONCE at launch — and EMPTY today, because
+        /// bands have no names in this game.**
+        ///
+        /// The field exists for the reason [`ExpeditionMission::Hunt::target_species`] does: the
+        /// party outlives its target's presence in the viewer's world, so a name that can only be
+        /// resolved at launch has to be *carried*. The moment a second faction lands (#513) a
+        /// foreign band's name must come from here, because the client has no roster to resolve one
+        /// from.
+        ///
+        /// **It is empty rather than guessed.** It was briefly filled from `StartingUnit.kind`,
+        /// which is the unit *archetype* (`"BandForager"`) and not a name at all: every band in the
+        /// game published the same string, and it disagreed with the positional label
+        /// ("Band 2") the rest of the HUD uses for the same band. Empty means **"no name"** — the
+        /// same *"empty is no row, never a zero"* contract this arc's material readouts use — and a
+        /// client falls back to whatever it calls that band everywhere else. Inventing a naming
+        /// scheme to fill it is a separate piece of design, not a field default.
+        destination_name: String,
+    },
 }
 
 /// **The orders a party works a herd under** — what [`ExpeditionMission::Hunt`] and
@@ -1133,14 +1222,24 @@ impl ExpeditionMission {
             ExpeditionMission::Scout => "scout",
             ExpeditionMission::Hunt { .. } => "hunt",
             ExpeditionMission::Deny { .. } => "deny",
+            ExpeditionMission::Trade { .. } => "trade",
         }
     }
 
     /// Parse a mission from its wire keys (snapshot restore). `"hunt"` reconstructs
     /// `Hunt { fauna_id, target_species, floor }` from `target_herd` + `target_species` + `floor`;
     /// `"deny"` reconstructs `Deny { fauna_id, target_species }` from the two strings alone — it
-    /// carries no number; anything else is `Scout`.
-    pub fn from_wire(kind: &str, target_herd: &str, target_species: &str, floor: f32) -> Self {
+    /// carries no number; `"trade"` reconstructs `Trade { destination_band, destination_name }` from
+    /// the destination pair, which shares nothing with the herd pair (a shipment names a *people*);
+    /// anything else is `Scout`.
+    pub fn from_wire(
+        kind: &str,
+        target_herd: &str,
+        target_species: &str,
+        floor: f32,
+        destination_band: u64,
+        destination_name: &str,
+    ) -> Self {
         match kind {
             "hunt" => ExpeditionMission::Hunt {
                 fauna_id: target_herd.to_string(),
@@ -1151,7 +1250,65 @@ impl ExpeditionMission {
                 fauna_id: target_herd.to_string(),
                 target_species: target_species.to_string(),
             },
+            "trade" => ExpeditionMission::Trade {
+                destination_band: BandId(destination_band),
+                destination_name: destination_name.to_string(),
+            },
             _ => ExpeditionMission::Scout,
+        }
+    }
+
+    /// **The band a shipment is bound for**, for the one mission that names one — `None` for every
+    /// other verb. The key the command addresses and the connection gate is keyed on; its display
+    /// twin is [`Self::destination_display`].
+    pub fn destination_band(&self) -> Option<BandId> {
+        match self {
+            ExpeditionMission::Trade {
+                destination_band, ..
+            } => Some(*destination_band),
+            _ => None,
+        }
+    }
+
+    /// **The destination's name as it will be PUBLISHED** — [`Self::destination_band`]'s display
+    /// twin, and empty when there is none. `""` for every non-`Trade` mission.
+    ///
+    /// **This is what crosses the wire, and it is deliberately not
+    /// [`Self::destination_display`].** The display form falls back to the band's raw id so the
+    /// sim's own event feed always has *something* to print; a wire field must not, because the
+    /// client already has a label for a band and an id-shaped string would fight it. Empty means
+    /// "no name", and the client uses whatever it calls that band everywhere else.
+    pub fn destination_name(&self) -> &str {
+        match self {
+            ExpeditionMission::Trade {
+                destination_name, ..
+            } => destination_name,
+            _ => "",
+        }
+    }
+
+    /// **The string the SIM'S OWN EVENT FEED prints for a shipment's destination** — the name when
+    /// there is one, the band's id as a last resort, exactly as [`Self::target_display`] falls back
+    /// for a quarry. Empty for every non-`Trade` mission.
+    ///
+    /// **The id tier is the normal path today**, not an edge case: bands have no names, so every
+    /// live shipment prints `band <id>`. That is the honest floor for a line the sim has to be able
+    /// to write on its own — and the `detail` token beside it carries `destination=<id>`, so a
+    /// client that would rather print its own label for that band has the key to do it with.
+    /// **Never published**: the wire takes [`Self::destination_name`].
+    pub fn destination_display(&self) -> String {
+        match self {
+            ExpeditionMission::Trade {
+                destination_band,
+                destination_name,
+            } => {
+                if destination_name.is_empty() {
+                    format!("band {}", destination_band.0)
+                } else {
+                    destination_name.clone()
+                }
+            }
+            _ => String::new(),
         }
     }
 
@@ -1162,7 +1319,7 @@ impl ExpeditionMission {
             ExpeditionMission::Hunt { fauna_id, .. } | ExpeditionMission::Deny { fauna_id, .. } => {
                 fauna_id
             }
-            ExpeditionMission::Scout => "",
+            ExpeditionMission::Scout | ExpeditionMission::Trade { .. } => "",
         }
     }
 
@@ -1177,7 +1334,7 @@ impl ExpeditionMission {
         match self {
             ExpeditionMission::Hunt { target_species, .. }
             | ExpeditionMission::Deny { target_species, .. } => target_species,
-            ExpeditionMission::Scout => "",
+            ExpeditionMission::Scout | ExpeditionMission::Trade { .. } => "",
         }
     }
 
@@ -1213,7 +1370,7 @@ impl ExpeditionMission {
         match self {
             ExpeditionMission::Hunt { floor, .. } => *floor,
             ExpeditionMission::Deny { .. } => STRIP_IT_BARE,
-            ExpeditionMission::Scout => NO_RAID_FLOOR,
+            ExpeditionMission::Scout | ExpeditionMission::Trade { .. } => NO_RAID_FLOOR,
         }
     }
 
@@ -1223,9 +1380,9 @@ impl ExpeditionMission {
     pub fn engagement_stop(&self) -> crate::fauna::EngagementStop {
         match self {
             ExpeditionMission::Deny { .. } => crate::fauna::EngagementStop::Never,
-            ExpeditionMission::Hunt { .. } | ExpeditionMission::Scout => {
-                crate::fauna::EngagementStop::WhenPackFull
-            }
+            ExpeditionMission::Hunt { .. }
+            | ExpeditionMission::Scout
+            | ExpeditionMission::Trade { .. } => crate::fauna::EngagementStop::WhenPackFull,
         }
     }
 
@@ -1234,7 +1391,7 @@ impl ExpeditionMission {
     /// denial raid through the same code with the differences carried as data.
     pub fn raid_orders(&self) -> Option<RaidOrders<'_>> {
         match self {
-            ExpeditionMission::Scout => None,
+            ExpeditionMission::Scout | ExpeditionMission::Trade { .. } => None,
             _ => Some(RaidOrders {
                 fauna_id: self.target_herd(),
                 floor: self.hunt_floor(),
@@ -1331,6 +1488,28 @@ pub struct Expedition {
     /// A scouting party carries the hunt job's default: its roadside kills resolve through the same
     /// hunt seams, and `send_expedition` names no kit.
     pub kit: crate::equipment_config::KitChoice,
+    /// **The shipment this party is carrying**, for an [`ExpeditionMission::Trade`] party (empty for
+    /// every other verb) — food under the [`FOOD`] key and materials as batches, exactly as a band's
+    /// store holds them.
+    ///
+    /// **It is a SECOND store, not the party's own `stores`, and that separation is the whole
+    /// point.** A party eats out of `cohort.stores` — the scout upkeep drains it every turn — so a
+    /// shipment parked there would be quietly eaten by the people hauling it, one turn at a time,
+    /// with nothing to notice until it arrived short.
+    ///
+    /// **Materials ride as batches with their exact readings.** Drawing the cargo off the sending
+    /// band peels whole batches in the store's own order and splits only the last one
+    /// ([`LocalStore::take_material_batches`]), so two ratings of one material leave as two batches
+    /// and land as two batches — a mammoth hide is never averaged into a hare pelt by being shipped.
+    ///
+    /// **It rides the checkpoint whole**, like every other field here: `capture_sim_state` clones
+    /// the entire `Expedition` into `ExpeditionRecord` and restore clones it back, so a rollback
+    /// cannot silently zero a shipment in flight.
+    ///
+    /// **An undeliverable shipment comes home in it.** If the destination cannot be resolved the
+    /// party turns for home still carrying the cargo, and [`crate::systems::fold_party_into_band`]
+    /// settles it into the home band beside the party's own pack.
+    pub cargo: LocalStore,
 }
 
 /// Permanent settlement seeded by a founding action.
@@ -2457,6 +2636,47 @@ pub struct LaborAllocation {
     /// Same treatment as `last_pen_feed_upkeep`: reset then re-levied each turn by
     /// `advance_predator_raids`, and **excluded from equality** below.
     pub last_raid_forfeit: f32,
+    /// **Food this band RECEIVED from another band this turn** — supply-network balancing, an
+    /// arriving trade shipment, or an expedition of its own handing its pack back.
+    ///
+    /// # It closes a hole the two terms above left open
+    ///
+    /// Food that crosses between two larders passes through **neither** `food_income` (Σ per-source
+    /// `actual`, which is what this band's own workers produced) nor `food_consumption` (what its
+    /// people ate) — exactly the situation [`Self::last_pen_feed_upkeep`] and
+    /// [`Self::last_raid_forfeit`] were each minted for. The identity is therefore
+    ///
+    /// ```text
+    /// larder_delta == food_income − food_consumption − pen_feed_upkeep − raid_forfeit
+    ///                 + transfer_received − transfer_sent
+    /// ```
+    ///
+    /// pinned against real turns by `integration_tests/tests/transfer_food_ledger.rs`.
+    ///
+    /// **ONE pair of terms for every band-to-band movement, not one per producer.** A supply-network
+    /// transfer and a trade shipment are the same fact — *food that crossed between bands outside
+    /// income and consumption* — and minting a term per mechanism is how a ledger acquires five
+    /// fields that answer one question.
+    ///
+    /// **Two named magnitudes rather than one signed net**, matching the style of the two terms
+    /// above: a band that both sends and receives in one turn is doing something, and a signed net
+    /// would render that as nothing happening.
+    ///
+    /// # The window is the SNAPSHOT window, not the turn
+    ///
+    /// Unlike its two siblings, this pair has writers **outside** `run_turn`: a
+    /// `send_trade_expedition` (or `send_expedition`) command debits the larder when it is applied,
+    /// which is between one capture and the next. So it accumulates — every writer **adds** — and
+    /// `systems::reset_transfer_ledger` clears it in the Snapshot stage *after* the capture has read
+    /// it. That makes the window exactly the interval a client sees between two published frames,
+    /// which is the interval its `larder_delta` measures.
+    ///
+    /// Excluded from equality below, like the rest of the per-turn telemetry.
+    pub last_transfer_received: f32,
+    /// **Food this band GAVE UP to another band this turn** — supply-network balancing, or a party
+    /// drawn off it walking away with cargo and provisions. See [`Self::last_transfer_received`] for
+    /// the identity both terms close and why there is one pair rather than one per producer.
+    pub last_transfer_sent: f32,
 }
 
 /// Equality is **intent only** — two allocations with equal `assignments` are equal regardless of

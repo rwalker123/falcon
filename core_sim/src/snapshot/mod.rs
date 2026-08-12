@@ -1339,6 +1339,8 @@ mod tests {
         };
         let levers = ExpeditionLevers {
             hunt_per_worker_carry: 0.0,
+            trade_per_worker_carry: 0.0,
+            trade_material_carry_weight: 0.0,
             hunt_per_worker_provisions: 0.0,
             hunt_viability_warn_turns: 0,
             hunt_forecast_horizon_turns: 0,
@@ -1437,6 +1439,8 @@ mod tests {
             ],
             last_pen_feed_upkeep: 0.0,
             last_raid_forfeit: 0.0,
+            last_transfer_received: 0.0,
+            last_transfer_sent: 0.0,
         };
         let (mut cohort, allocation) = food_test_cohort(
             Scalar::from_f32(0.0),
@@ -1532,6 +1536,8 @@ mod tests {
             ],
             last_pen_feed_upkeep: 0.0,
             last_raid_forfeit: 0.0,
+            last_transfer_received: 0.0,
+            last_transfer_sent: 0.0,
         };
         let (cohort, allocation) = food_test_cohort(
             Scalar::from_f32(0.0),
@@ -1580,6 +1586,8 @@ mod tests {
             last_yields: Vec::new(),
             last_pen_feed_upkeep: 0.0,
             last_raid_forfeit: 0.0,
+            last_transfer_received: 0.0,
+            last_transfer_sent: 0.0,
         };
         let (cohort, allocation) = food_test_cohort(
             Scalar::from_f32(0.0),

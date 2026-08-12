@@ -119,6 +119,34 @@ the click's `herd_selected` → `Hud.show_herd_selection` → `select_herd` land
 so the following snapshot's `refresh_selection_payload` answers `"herd"` and `reapply_selection`
 restates it.
 
+## THE SELECTION OUTLINE WRAPS — a single tile named by its DATA column must be stamped on the
+## copy the viewport is over
+
+`selected_tile` and `_hovered_tile` hold **data** columns: `_point_to_offset` posmods the pick into
+`[0, grid_width)`. The terrain loop draws a different space — `logical_x` runs past both ends of the
+grid and resolves its data through `posmod`, so on a wrapping map the hex under the cursor is
+routinely a COPY of its column, a whole map width from where that column's canonical position sits.
+An outline drawn from the raw `_hex_center` therefore lands off-frame, and the two spaces agree only
+while the viewport happens not to straddle the seam.
+
+**The symptom is not "the outline is in the wrong place" — it is a click that appears not to
+register.** Everything else about the selection worked: the tile panel filled in, the roster listed
+the hex's occupants, the cycle advanced. Only the white box was missing, on exactly the tiles the
+seam had pushed into a wrapped copy — so it read as a flaky hit-test rather than a draw, and the
+tiles it happened to on moved with the camera.
+
+So `_draw_tile_selection_highlight` uses **`_outline_hex_wrapped`** (`_hex_center_wrapped`, the
+marker idiom) for both outlines. **`_outline_hex` stays, and is still the right call for the range
+disks**: `BandOverlayRenderer` resolves the ANCHOR's effective column once (`_band_effective_col`)
+and walks its neighbourhood as `eff_col + delta`, so those columns are already in the drawn space —
+wrapping each one again would snap every tile back toward the viewport centre independently and tear
+a seam-crossing disk into two halves. The rule is which space the column is already in: a data
+column wraps, a resolved or logical one does not.
+
+Guarded by `map_preview`'s PNG-less `_assert_selection_outline_wraps` — see
+`harness-map-probes.md`, which also says why it reads PIXELS rather than re-asking
+`_hex_center_wrapped` the question the draw asks it.
+
 ## A POINTER-DRIVEN NAVIGATION INPUT IS DECLINED WHERE A CONTROL CLAIMS THE PIXEL
 
 **The GUI pass stops a press for the map and stops a scroll for nobody.** Measured in Godot 4.7 by

@@ -20,6 +20,20 @@ const EXPEDITION_MISSION_HUNT := "hunt"
 ## and what a denial party shows instead is its COLLAPSE VERDICT.
 const EXPEDITION_MISSION_DENY := "deny"
 
+## **THE FOURTH MISSION** (arc #527, issue #517) — a shipment is a party that WALKS IT. It names no
+## herd and takes no floor; what it names is another BAND, and what it carries is a manifest drawn
+## off its home band's stores (`expedition_cargo_food` + `expedition_cargo_materials`).
+##
+## **THE DESTINATION HAS A KEY AND A DISPLAY TWIN, and only one of them may be rendered** — the
+## `EXPEDITION_MISSION_HUNT` rule exactly: `expedition_destination_band` is the `BandId`
+## `send_trade_expedition` addresses, `expedition_destination_name` is the string a readout shows,
+## resolved sim-side at launch and carried for the party's life because the party outlives its
+## destination's presence in the viewer's world.
+##
+## It reuses the phases that already exist (`outbound` → deposit → `returning`), so no phase word is
+## added here.
+const EXPEDITION_MISSION_TRADE := "trade"
+
 const EXPEDITION_PHASE_OUTBOUND := "outbound"
 
 # One source: the phase key `awaiting` is also the status-glyph key + the orb producer's key.
@@ -35,6 +49,7 @@ const EXPEDITION_MISSION_LABELS := {
 	"scout": "Scouting expedition",
 	"hunt": "Hunting expedition",
 	"deny": "Denial raid",
+	"trade": "Trade party",
 }
 
 const EXPEDITION_PHASE_LABELS := {

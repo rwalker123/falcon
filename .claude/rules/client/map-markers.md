@@ -87,3 +87,15 @@ stack, land included (`map-renderers.md` → Select-then-cycle). The marks SIGNA
 **A ready source is deliberately NOT promoted into a visible slot.** Slot fill is sequential precisely
 so icons never jump between frames; reordering on a state change would make a herd swap corners the
 turn a knowledge track completes. Frame: `map_overflow_worked`.
+
+## An expedition's disc wears its MISSION's mark, and there are four of them
+
+`BandMarkerRenderer._draw_expedition_body`: ⚑ scout · 🏹 hunt · 💀 denial · **📦 trade** (arc #527).
+One mission, one glyph, on all three surfaces it appears on — the map marker, the parties-strip row
+(`HudFormat.PANEL_EXPEDITION_*_GLYPH`) and the footer button that launches it
+(`HudComposeVocab.COMPOSE_MISSION_LABEL_*`) — so a party's mark means the same thing at every scale.
+
+**The phase decorations stay gated on `is_hunt`, and the shipment is the second mission to want
+that.** The green pip means *"carrying a haul HOME"*; a denial party's haul is a rounding error it
+should not advertise, and a trade party's goods are going the OTHER way. Both therefore take the
+glyph and none of the decorations.

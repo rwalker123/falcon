@@ -1123,13 +1123,34 @@ func _turn_stamp(tick: int) -> String:
 ##
 ## **The swap is bounded at a DIGIT boundary**, or the sim's `Band 3` would also rewrite the `Band 3`
 ## inside `Band 30`. A plain `String.replace` is exactly that bug.
+## **EVERY TOKEN THAT NAMES A BAND IS SWAPPED, not just `band=`** (arc #527). A shipment's landing
+## line names the band it landed at through the sim's own fallback spelling (`band <id>`, from
+## `ExpeditionMission::destination_display`) and repeats the id as `destination=<id>` — so without a
+## second entry in `HudEventVocab.BAND_ID_TOKEN_LABELS` the feed would print one band's raw id beside
+## the `Bound for Band 2` the parties strip prints for the same party. Two surfaces naming one band
+## differently is the defect the `band=` swap exists to remove; a table is what stops it regrowing
+## once per producer.
 func _row_label(event: Dictionary) -> String:
 	var label := String(event["label"])
-	var raw_id := _detail_token(String(event["detail"]), HudEventVocab.DETAIL_BAND_KEY)
+	var detail := String(event["detail"])
+	for token_key in HudEventVocab.BAND_ID_TOKEN_LABELS:
+		label = _swap_band_label(label, detail, String(token_key),
+			String(HudEventVocab.BAND_ID_TOKEN_LABELS[token_key]))
+	return label
+
+## One token's swap: replace the SIM's rendering of the band named by `token_key` with the client's
+## own name for it. `label` unchanged when the token is absent, the roster does not know the id, or
+## the two names already agree.
+##
+## **The swap is bounded at a DIGIT boundary**, or the sim's `Band 3` would also rewrite the `Band 3`
+## inside `Band 30`. A plain `String.replace` is exactly that bug.
+func _swap_band_label(label: String, detail: String, token_key: String,
+		sim_format: String) -> String:
+	var raw_id := _detail_token(detail, token_key)
 	if raw_id == "" or not _band_labels.has(raw_id):
 		return label
 	var client_name := String(_band_labels[raw_id])
-	var sim_name: String = HudEventVocab.SIM_BAND_LABEL_FORMAT % int(raw_id)
+	var sim_name: String = sim_format % int(raw_id)
 	if client_name == sim_name:
 		return label
 	var at := label.find(sim_name)

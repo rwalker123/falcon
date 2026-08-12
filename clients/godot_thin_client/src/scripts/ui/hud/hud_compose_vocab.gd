@@ -776,6 +776,130 @@ const COMPOSE_MISSION_LABEL_DENY := "💀 Deny"
 
 const COMPOSE_MISSION_LABEL_SPLIT := "⌂ Split"
 
+# =====================================================================================
+#  THE SHIPMENT (arc #527, issue #517) — the FIFTH footer button and the FOURTH mission
+# =====================================================================================
+
+## **THE FOURTH MISSION.** A shipment is a party that walks it: it names another BAND rather than a
+## herd or a tile, and what it carries is a manifest drawn off its home band's own stores. It is a
+## mission and not a mode of the hunt form for the plainest possible reason — it shares no field with
+## one. No quarry, no floor, no policy, no trip forecast; a destination, a party and a cargo list.
+const COMPOSE_MISSION_TRADE := "trade"
+
+## 📦 is the mark the shipment wears on all three surfaces — this button, the parties row and the map
+## marker — the `💀` rule: one mission, one glyph, so a party's mark means the same thing wherever it
+## is drawn.
+const COMPOSE_MISSION_LABEL_TRADE := "📦 Trade"
+
+## **HOW MANY LAUNCH BUTTONS FIT ONE ROW OF THE PARTIES FOOTER, and the fifth is what forced the
+## question.** Four fit a 354px dock column at ~62px each; a fifth takes them to ~48, which
+## `📦 Trade` does not fit — and the zone `clip_contents`, so what shipped for one render was a
+## button SLICED OFF THE EDGE rather than a narrower row. A `GridContainer` at this ceiling wraps to
+## 3 + 2, the `build_floor_picker` idiom for exactly this shape (its six rungs wrap 3 + 3), and the
+## second row costs the footer one row of height in a zone whose list above it is the `EXPAND_FILL`
+## child that gives it up.
+const PARTY_FOOTER_COLUMNS := 3
+
+const COMPOSE_TITLE_TRADE := "Load a shipment…"
+
+## The footer button's hover text. It names the one thing that gates the verb — a live tie — because
+## a player whose bands have met nobody will find every destination greyed out and must be told why
+## by something other than the empty list.
+const SEND_TRADE_EXPEDITION_HINT := "Detach a party to carry food and materials to another band you have a tie with."
+
+const SEND_TRADE_EXPEDITION_BUTTON := "Send shipment…"
+
+## The destination row's key. `To` rather than `Destination`: the row is one of the field stack that
+## `COMPOSE_FIELD_KEY_WIDTH` (64px, sized for `Quarry`) lines up, and the short word leaves the
+## picker its whole share of a 354px dock column.
+const COMPOSE_FIELD_DESTINATION := "To"
+
+const COMPOSE_DESTINATION_CHOOSE := "Choose…"
+
+## **WHY THE LIST IS EMPTY, WHEN IT IS.** A band that has met nobody holds no ties, and a picker with
+## no entries says nothing at all — so the sheet states the gate in the sim's own terms rather than
+## rendering a dead control.
+const COMPOSE_DESTINATION_NO_TIES := "This band knows no other band yet. Ties form by standing where you can see each other."
+
+const COMPOSE_DESTINATION_HINT := "Choose who the shipment is for — the manifest below is drawn from this band's stores."
+
+## **A PARKED TIE IS SHOWN, DISABLED, WITH THIS AS ITS REASON — never hidden.** Strength `0` means
+## *"we know such a people exist and have no current dealings"*, which is a different statement from
+## having never met them, and it is the thing the player has to learn: the TIE is what gates trade,
+## so a destination that has decayed out of reach must be visible decaying rather than absent.
+const COMPOSE_DESTINATION_PARKED_REASON := "no current tie — nothing can flow"
+
+const COMPOSE_DESTINATION_ENTRY_PARKED_FORMAT := "%s — %s"
+
+## **THE REMEMBERED POSITION, WORDED AS ONE.** A connection grants `Discovered` and never `Seen`
+## (`.claude/rules/core_sim/connections.md` → the keystone), so where a band was the last time this
+## one saw them is ALL that is known — a remembered band behaves exactly like a remembered herd. The
+## sentence therefore states the turn it was learned and never a live position, and every figure
+## derived from it wears the `≈` below.
+const COMPOSE_DESTINATION_REMEMBERED_FORMAT := "Last seen at (%d, %d), turn %d — they may have moved since."
+
+## **WHAT A BAND THIS FACTION CANNOT NAME IS CALLED.** A tie's subject that is still in the roster is
+## named exactly as the cycler and the band picker name it; one that is not is a band we only
+## REMEMBER, and the only thing known about it is where it stood — so it is named by that. The raw
+## `BandId` is a database key and never reaches a player-facing label.
+const COMPOSE_DESTINATION_REMEMBERED_LABEL_FORMAT := "Band near (%d, %d)"
+
+## The approximate walk, off the remembered position. `≈` is load-bearing: the distance is measured
+## to where they WERE, so the party may arrive to find nobody and walk on. Omitted entirely when the
+## band publishes no move rate or either tile is unknown, rather than quoting a fabricated 0.
+const COMPOSE_DESTINATION_ETA_FORMAT := "≈%d turns out, if they are still there."
+
+const COMPOSE_CARGO_SECTION := "Cargo"
+
+## The FOOD row's face. The larder is one commodity, so it is one row — beside one row per MATERIAL
+## PILE, which are never summed into a second scalar (the retired trade axis under a new name).
+const COMPOSE_CARGO_FOOD_LABEL := "Food"
+
+## `4.0 hide · tough: excellent` — **THE RATING IS THE ROW'S POINT.** A mammoth hide and a hare pelt
+## are both `hide`; a manifest that named only the material would let a player ship the wrong one and
+## never know. The readings are the band's own, in the material's declared axis order.
+const COMPOSE_CARGO_MATERIAL_FORMAT := "%s · %s"
+
+const COMPOSE_CARGO_READING_FORMAT := "%s: %s"
+
+const COMPOSE_CARGO_READING_SEPARATOR := " · "
+
+## What the band still holds behind a row — the ceiling every row's `+` clamps to, stated so the
+## player can see the pile shrink as the manifest grows.
+const COMPOSE_CARGO_HELD_FORMAT := "of %s"
+
+## The row's hover text: the WHOLE face — rating included — beside what the band still holds. The
+## face itself clips in a 354px dock column, so this is where a long rating stays readable rather
+## than lost; the row is ellipsed, never truncated away.
+const COMPOSE_CARGO_TOOLTIP_FORMAT := "%s — %s"
+
+## **HOW MUCH ONE PRESS MOVES.** Whole units, because that is how a shipment is talked about; the
+## clamp to the pile means a `+` on a 0.6 pile still loads 0.6 rather than refusing, so no fraction
+## is unreachable.
+const COMPOSE_CARGO_STEP := 1.0
+
+## The live mass meter — `▰▰▰▱▱ 30 / 40`. **Both numbers come off the wire**
+## (`expedition_trade_per_worker_carry` × the party, and `expedition_trade_material_carry_weight` on
+## the material total), never a literal: the sim refuses an over-cap manifest naming both, and a
+## client quoting a lever of its own would be one config edit from a meter that disagrees with the
+## refusal it exists to prevent.
+const COMPOSE_CARGO_MASS_FORMAT := "%s  %s / %s"
+
+const COMPOSE_CARGO_MASS_CELLS := 10
+
+const COMPOSE_CARGO_MASS_LABEL := "Mass"
+
+## **THE SERVER'S REFUSAL STAYS THE AUTHORITY; these two only stop the player meeting it.** An
+## over-cap manifest and an empty one are both command failures with a reason — the meter and this
+## sentence exist so the send button can say so before it is pressed.
+const COMPOSE_CARGO_OVER_CAP_REASON := "Too heavy for this party — add hands or take goods off."
+
+const COMPOSE_CARGO_EMPTY_REASON := "Nothing loaded yet — a shipment carries something."
+
+## The band holds nothing a shipment could carry. A different statement from an empty manifest: there
+## is nothing to load, so the rows are absent rather than sitting at zero.
+const COMPOSE_CARGO_NO_STORES := "This band has no food or materials to send."
+
 ## **HOW MUCH THE COMPOSE SHEET MAY OVERSHOOT THE PARTIES ZONE BEFORE IT LEAVES IT** (see
 ## `BandComposeFloat` and `BandPanelController._party_compose_floats`). The requirement is summed from
 ## per-control minimum sizes while the box is a laid-out rect, so the two can differ by a subpixel on a

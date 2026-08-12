@@ -278,6 +278,28 @@ pub enum CommandPayload {
         /// mission. Same rule as [`Self::SendHuntExpedition::kit_id`].
         kit_id: Option<String>,
     },
+    /// **Outfit and launch a TRADE EXPEDITION** — the first rider on the connection primitive
+    /// (`docs/plan_contact_and_logistics.md` §Q5, arc #527). Proto field 55.
+    ///
+    /// **A shipment is a party that walks it.** There is no persistent link component underneath in
+    /// this slice: what maintains a link is a *route*, and the route ladder is what will hold that
+    /// state.
+    ///
+    /// **Gated on a CONNECTION, never on a faction.** The sending band must hold a live tie to the
+    /// destination band; there is deliberately no same-faction check anywhere, because faction is a
+    /// property of the endpoint.
+    SendTradeExpedition {
+        faction_id: u32,
+        band_id: Option<u64>,
+        party_workers: u32,
+        /// The destination's `BandId` — a durable id, never an entity.
+        destination_band_id: u64,
+        /// What the party is loaded with. **Empty is a command failure**, not an empty shipment.
+        cargo: Vec<TradeCargoItem>,
+        /// **The kit the party is sent out with**, resolved once at launch — same rule as
+        /// [`Self::SendHuntExpedition::kit_id`].
+        kit_id: Option<String>,
+    },
     ExportMap {
         path: Option<String>,
     },
@@ -395,6 +417,30 @@ pub mod query_error {
     pub const INVALID_FLOOR: &str = "invalid_floor";
     /// A party of zero. There is no raid to project, so there is no answer to give.
     pub const INVALID_PARTY: &str = "invalid_party";
+}
+
+/// **The FOOD commodity key a shipment's food line names** — the same string `core_sim`'s
+/// `components::FOOD` is, restated here because `sim_runtime` deliberately does not depend on the
+/// sim.
+///
+/// **The duplication is safe because the server does not trust it.** A non-material cargo line whose
+/// `id` is not the larder's key is a command **failure** with a reason, so if the two ever drift the
+/// shipment is refused rather than quietly loaded with the wrong good.
+pub const FOOD_CARGO_KEY: &str = "provisions";
+
+/// **One line of a shipment** — a quantity of one thing, out of the sending band's own store
+/// (`docs/plan_contact_and_logistics.md` §Q5).
+///
+/// **`is_material` disambiguates two namespaces that share a string key space.** `id` is either a
+/// FOOD commodity key (the larder's `provisions`) or a `materials.json` material id, and the two
+/// tables are authored independently — nothing stops a material one day being called `provisions`.
+/// A flag rather than two repeated fields keeps the order the player named the lines in, and makes a
+/// third account (fodder) a value rather than a schema change.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TradeCargoItem {
+    pub id: String,
+    pub is_material: bool,
+    pub amount: f32,
 }
 
 /// **One material a projection lands, and how much of it** — the runtime twin of the snapshot's
@@ -1057,6 +1103,30 @@ impl CommandEnvelope {
                 fauna_id: fauna_id.clone(),
                 kit_id: kit_id.clone(),
             }),
+            CommandPayload::SendTradeExpedition {
+                faction_id,
+                band_id,
+                party_workers,
+                destination_band_id,
+                cargo,
+                kit_id,
+            } => {
+                pb::command_envelope::Command::SendTradeExpedition(pb::SendTradeExpeditionCommand {
+                    faction_id: *faction_id,
+                    band_id: *band_id,
+                    party_workers: *party_workers,
+                    destination_band_id: *destination_band_id,
+                    cargo: cargo
+                        .iter()
+                        .map(|item| pb::TradeCargoItem {
+                            id: item.id.clone(),
+                            is_material: item.is_material,
+                            amount: item.amount,
+                        })
+                        .collect(),
+                    kit_id: kit_id.clone(),
+                })
+            }
             CommandPayload::ExportMap { path } => {
                 pb::command_envelope::Command::ExportMap(pb::ExportMapCommand {
                     path: path.clone(),
@@ -1392,6 +1462,24 @@ impl CommandEnvelope {
                 fauna_id: cmd.fauna_id,
                 kit_id: cmd.kit_id,
             },
+            pb::command_envelope::Command::SendTradeExpedition(cmd) => {
+                CommandPayload::SendTradeExpedition {
+                    faction_id: cmd.faction_id,
+                    band_id: cmd.band_id,
+                    party_workers: cmd.party_workers,
+                    destination_band_id: cmd.destination_band_id,
+                    cargo: cmd
+                        .cargo
+                        .into_iter()
+                        .map(|item| TradeCargoItem {
+                            id: item.id,
+                            is_material: item.is_material,
+                            amount: item.amount,
+                        })
+                        .collect(),
+                    kit_id: cmd.kit_id,
+                }
+            }
             pb::command_envelope::Command::ExportMap(cmd) => {
                 CommandPayload::ExportMap { path: cmd.path }
             }

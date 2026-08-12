@@ -125,6 +125,28 @@
     }
   ],
   "command_events_retention_turns": 197,
+  "connections": [
+    {
+      "first_contact_turn": 140,
+      "last_contact_turn": 150,
+      "last_seen_turn": 11,
+      "last_seen_x": 80,
+      "last_seen_y": 69,
+      "observer_band_id": 139,
+      "strength": 34.299999,
+      "subject_band_id": 197
+    },
+    {
+      "first_contact_turn": 33,
+      "last_contact_turn": 9,
+      "last_seen_turn": 174,
+      "last_seen_x": 171,
+      "last_seen_y": 182,
+      "observer_band_id": 26,
+      "strength": 48.959999,
+      "subject_band_id": 10
+    }
+  ],
   "corruption": {
     "audit_capacity": 55,
     "entries": [
@@ -1811,7 +1833,20 @@
           "tier_id": "populations[0].equipment_batches[3].tier_id"
         }
       ],
+      "expedition_cargo_food": 6.41,
+      "expedition_cargo_materials": [
+        {
+          "amount": 85.93,
+          "material_id": "populations[0].expedition_cargo_materials[0].material_id"
+        },
+        {
+          "amount": 109.699997,
+          "material_id": "populations[0].expedition_cargo_materials[1].material_id"
+        }
+      ],
       "expedition_carry_cap": 64.029999,
+      "expedition_destination_band": 96,
+      "expedition_destination_name": "populations[0].expedition_destination_name",
       "expedition_eta_turns": 125,
       "expedition_floor": 69.809998,
       "expedition_forecast_horizon_turns": 148,
@@ -1822,6 +1857,8 @@
       "expedition_recurring": true,
       "expedition_target_herd": "populations[0].expedition_target_herd",
       "expedition_target_species": "populations[0].expedition_target_species",
+      "expedition_trade_material_carry_weight": 39.889999,
+      "expedition_trade_per_worker_carry": 78.449997,
       "expedition_trip_bound": "populations[0].expedition_trip_bound",
       "expedition_viability_warn_turns": 89,
       "faction": 182,
@@ -2120,6 +2157,8 @@
         "populations[0].stores[1].item": 0.000072
       },
       "supply_network_id": 60,
+      "transfer_received": 60.07,
+      "transfer_sent": 27.65,
       "travel_target_x": 79,
       "travel_target_y": 90,
       "turns_of_food": 62.830002,
@@ -2348,7 +2387,20 @@
           "tier_id": "populations[1].equipment_batches[3].tier_id"
         }
       ],
+      "expedition_cargo_food": 53.810001,
+      "expedition_cargo_materials": [
+        {
+          "amount": 1.07,
+          "material_id": "populations[1].expedition_cargo_materials[0].material_id"
+        },
+        {
+          "amount": 51.380001,
+          "material_id": "populations[1].expedition_cargo_materials[1].material_id"
+        }
+      ],
       "expedition_carry_cap": 0.73,
+      "expedition_destination_band": 19,
+      "expedition_destination_name": "populations[1].expedition_destination_name",
       "expedition_eta_turns": 200,
       "expedition_floor": 33.860001,
       "expedition_forecast_horizon_turns": 115,
@@ -2359,6 +2411,8 @@
       "expedition_recurring": true,
       "expedition_target_herd": "populations[1].expedition_target_herd",
       "expedition_target_species": "populations[1].expedition_target_species",
+      "expedition_trade_material_carry_weight": 81.660004,
+      "expedition_trade_per_worker_carry": 57.099998,
       "expedition_trip_bound": "populations[1].expedition_trip_bound",
       "expedition_viability_warn_turns": 190,
       "faction": 141,
@@ -2657,6 +2711,8 @@
         "populations[1].stores[1].item": 0.000153
       },
       "supply_network_id": 199,
+      "transfer_received": 44.830002,
+      "transfer_sent": 83.919998,
       "travel_target_x": 128,
       "travel_target_y": 117,
       "turns_of_food": 103.459999,

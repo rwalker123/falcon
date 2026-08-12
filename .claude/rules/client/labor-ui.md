@@ -1577,6 +1577,30 @@ where a hex genuinely holds more than one eligible quarry.
 **The PARTY stepper row is deliberately not in the family.** It is a control you operate rather than a
 value box, so its key still expands and its `−/+` sits at the row's trailing edge.
 
+#### A PICKER STATES ITS OWN SELECTION, INCLUDING "NOTHING"
+
+`HudWidgets.build_option_picker` calls `button.select(…)` **unconditionally** — the caller's
+`selected_index`, or `HudWidgets.NO_ENTRY_SELECTED` where the caller has nothing chosen — and it calls
+it BEFORE the `face` write, which selecting overwrites.
+
+**`OptionButton.add_item` SELECTS the first selectable item it is handed** (measured: a fresh button
+reads `selected == -1`, and reads `0` the moment one item is added). So a picker built for an
+unanswered field came back internally holding an entry while `face` painted `Choose…` over it — and
+Godot then **declines to report a pick of the entry it believes is already current**: no
+`item_selected`, so no `on_pick`. The one entry a player could not choose was the very one the widget
+had seated itself on, which is the FIRST live entry of every list.
+
+**It shipped as a dead control**, because the shipment sheet's destination list had exactly one live
+tie: the popup opened, the entry highlighted, the click closed it, and nothing happened — no face
+change, no message, `Send shipment…` still greyed. The kit picker and the drawer's `Band:` picker
+carry the same swallow whenever they are handed no selection; one `select` fixes all three, because
+the defect is the widget lying about its state rather than anything the callers do.
+
+**A caller passes `NO_ENTRY_SELECTED` rather than a bare `-1`**, so "nothing is chosen" is a thing a
+call site can say. Re-picking the entry a picker already shows is still a no-op — that IS the state
+`select` now states truthfully, and nothing is lost by it, since a pick that changes nothing has
+nothing to re-render.
+
 ### The `Band:` picker opens on the band the player is LOOKING AT
 
 `Hud._resolve_assign_band` answers which band a sheet composes for — and every command it can emit
