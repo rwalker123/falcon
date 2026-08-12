@@ -405,6 +405,74 @@ the only way the player can tell a hoe is worth carrying to a garden and not to 
 
 Slices 1–3 and 5 are `server-dev`; slice 4 is `client-dev`.
 
+## 12. Prepared ground — a rung can declare what eases it
+
+**Settled 2026-08-12, unbuilt.** A follow-on to this arc rather than one of its slices.
+
+Sowing a field on ground you already cultivated should be less work than sowing raw ground, and
+under the old model it could not be: every job cost the same 25 turns, so going back to Cultivate
+first was pure loss — you paid a rung you were about to overwrite. Once jobs have sizes the question
+becomes real, and the ladder should be able to answer it.
+
+**It is declared on the CONSUMING rung, and that is the load-bearing choice.** `plant:field` says
+what helps it; `plant:tended` says nothing about what it helps. Ladder order implies nothing —
+*"it is up to the next tech to say the previous ones benefit me."* The early rungs happen to build on
+each other, but a later one may not benefit from anything below it, and a rung two steps down may
+help more than the one directly beneath. Deriving the relationship from `requires_rung` would bake
+in a claim that is only true today.
+
+```json
+"plant:field": {
+  "build": {
+    "work_cost": 90,
+    "eased_by": [
+      { "when": "plant:tended",                         "cost_multiplier": 0.7 },
+      { "when": { "all": ["x", "y"] },                  "cost_multiplier": 0.5 },
+      { "when": { "any": ["p", { "all": ["q", "r"] }] }, "cost_multiplier": 0.8 }
+    ]
+  }
+}
+```
+
+**The condition and the effect are separate fields, and keeping them apart is what makes it
+tunable.** `when` is a *condition*: a rung id, or a nestable tree of them under `any` / `all`, to any
+depth. `cost_multiplier` is what that alternative is *worth*. So a condition may be as complicated as
+the design needs without the arithmetic becoming so.
+
+**It is a FACTOR ON THE COST, not units off the job, and the contrast with gear is the reason.** A
+tool contributes a fixed number of units (§6.1) precisely so a hoe fades on a farm — a hoe is a hoe
+whatever it is pointed at. Prepared ground is the opposite: clearing a farm's worth of ground is
+proportionally more help than clearing a garden's. A multiplier therefore keeps its meaning as the
+costs spread (§3), where a fixed discount would quietly become irrelevant at rung 4 and need
+re-tuning every time a cost moved.
+
+**Composition: among the alternatives whose condition holds, the best multiplier wins.** The
+compound case — *"these two together are worth more than either alone"* — is expressed by declaring
+it as its **own alternative with its own number**, which is what the `all` group is for. Multiplying
+two satisfied alternatives together is rejected: `0.7 × 0.8 = 0.56` is a number nobody chose, and it
+makes each entry unreadable in isolation, so tuning becomes tuning combinations. Best-of is also the
+house pattern — `dispersion`, `exposure` and `BuildWork` all resolve best-of within a kit.
+
+**A rung counts only when COMPLETE.** A half-cultivated patch earning half the discount invites the
+obvious play: start a Cultivate, stop partway, switch to Sow, and buy the discount cheaper than
+either rung costs. Complete-or-not is one test with no exploit.
+
+**The discount is stamped with the cost, so it cannot move under a running build.** The per-source
+cost is written when the build starts (§1, the companion cost field), so a tended rung that goes
+feral mid-Sow leaves the banked discount intact — you did clear that ground — and a job never gets
+more expensive while a crew is working it.
+
+Validation: every rung a condition names resolves to a real rung, an empty `any`/`all` group is
+rejected, and `0 < cost_multiplier <= 1`. A value above 1 would say a prior improvement makes the
+next job *harder* — expressible, but far likelier a typo than a design.
+
+**It pairs with #539**, which wants the hoe to declare two contributions, *"one for breaking ground
+and one for already-prepared ground"*. That is the same distinction on the tool side, and the two
+should land together: the tool's two numbers only mean something once the job itself agrees that
+broken and unbroken ground are different work.
+
+The numbers are a tuning question and belong with §3's spread.
+
 ---
 
 See also: `.claude/rules/core_sim/intensification.md` → "The build engine — THE seam both tracks
