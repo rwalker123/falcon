@@ -906,7 +906,6 @@ mod tests {
     use crate::forage::ForagePatch;
     use crate::power::PowerNodeId;
     use crate::{
-        intensification::RUNG_COMPLETE,
         labor_config::LaborConfig,
         orders::FactionId,
         power::PowerIncidentSeverity as GridIncidentSeverity,
@@ -2157,7 +2156,7 @@ mod tests {
         let wild = ForagePatch::new(UVec2::new(1, 0), 100.0);
         // A tended (cultivated) patch owned by faction 3.
         let mut tended = ForagePatch::new(UVec2::new(0, 1), 100.0);
-        tended.cultivation_progress = 1.0;
+        tended.complete_cultivation(FactionId(0));
         tended.owner = Some(FactionId(3));
         registry.patches.insert(wild.tile, wild);
         registry.patches.insert(tended.tile, tended);
@@ -2435,7 +2434,7 @@ mod tests {
         let mut registry = HerdRegistry::default();
         let mut mine = herd_at("herd_mine", UVec2::new(40, 40));
         // The real accrual path, so the fixture cannot fabricate an ownership the sim would refuse.
-        mine.accrue_domestication(VIEWER, RUNG_COMPLETE);
+        mine.tame_outright(VIEWER);
         assert_eq!(
             mine.owner,
             Some(VIEWER),
@@ -2841,7 +2840,7 @@ mod tests {
             0.05,
             SNAPSHOT_BODY_MASS,
         );
-        mobile.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+        mobile.tame_outright(FactionId(0));
         registry.herds.push(mobile);
         // The same herd, penned — its upkeep must read the same at the same biomass.
         let mut penned = Herd::new(
@@ -2855,7 +2854,7 @@ mod tests {
             0.05,
             SNAPSHOT_BODY_MASS,
         );
-        penned.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+        penned.tame_outright(FactionId(0));
         assert!(
             penned.corral_at(UVec2::new(3, 3)),
             "the fixture species must be pennable"

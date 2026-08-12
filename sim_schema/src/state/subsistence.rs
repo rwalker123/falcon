@@ -4,6 +4,15 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+/// **"No estimate"** — the wire value of `buildTurnsRemaining` on either web when the sim cannot name
+/// a number: no build is in flight on that source, or the crew's output is zero and the build is
+/// **stalled**. It sits outside the `>= 0` range a real estimate lives in, so the two states cannot
+/// be confused — the same convention `next_x`/`next_y` use for "no heading".
+///
+/// It lives here, on the **wire**, because the sentinel is a fact about the published contract rather
+/// than about the sim's arithmetic (`core_sim`'s `build_turns_remaining` answers an `Option<u32>`).
+pub const NO_BUILD_TURNS_ESTIMATE: i32 = -1;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct SedentarizationState {
     pub faction: u32,
@@ -402,6 +411,41 @@ pub struct HerdTelemetryState {
     /// [`Self::pastoral_yield`] reads its provisions from. Appended (append-only).
     #[serde(default)]
     pub pastoral_material: Vec<MaterialPayoff>,
+    /// **The build, PRICED IN WORK** (`docs/plan_unit_costed_work.md` §8). An improvement costs a
+    /// fixed amount of work now, not a fixed number of turns: a crew produces work units per turn
+    /// (head count × floor discipline × kit) and **turns are the output**.
+    ///
+    /// `work_done` is the source's own meter, in work units. `work_cost` is what that job costs **on
+    /// this source**, resolved off the ladder at capture and published **whether or not a build is in
+    /// flight** — that is the point, since the compose sheet must quote the price *before* the player
+    /// commits. The `*_progress` fraction beside it is exactly `work_done / work_cost`. Appended
+    /// (append-only).
+    ///
+    /// The tame pair carries the **species' own** cost multiplier (a Steppe Runner is five times the
+    /// work of a rabbit); the pen pair does not, because penning is a flat job for every species — a
+    /// fence is a fence.
+    #[serde(default)]
+    pub tame_work_done: f32,
+    /// See [`Self::tame_work_done`].
+    #[serde(default)]
+    pub tame_work_cost: f32,
+    /// The rung-3 twin of [`Self::tame_work_done`].
+    #[serde(default)]
+    pub corral_work_done: f32,
+    /// See [`Self::corral_work_done`].
+    #[serde(default)]
+    pub corral_work_cost: f32,
+    /// **How many more turns the running build needs**, at the crew, floor and kit that worked this
+    /// source this turn. [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**: no build is in
+    /// flight, or the crew's output is zero and the build is **stalled** (a stall has no finite
+    /// answer, and a huge number would read as a promise).
+    ///
+    /// **The client cannot compute this** — it holds neither the crew's output, nor the floor
+    /// multiplier, nor the kit's build rate — so the sim answers, the `pen_feed_upkeep` discipline.
+    /// One field for both of a web's rungs: at most one improvement is ever in flight on one source.
+    /// Appended (append-only).
+    #[serde(default = "no_build_turns_estimate")]
+    pub build_turns_remaining: i32,
 }
 
 impl Default for HerdTelemetryState {
@@ -471,6 +515,11 @@ impl Default for HerdTelemetryState {
             // No material — the ordinary case, and an EMPTY list rather than a row of zeros.
             material_per_biomass: Vec::new(),
             per_worker_material: Vec::new(),
+            tame_work_done: 0.0,
+            tame_work_cost: 0.0,
+            corral_work_done: 0.0,
+            corral_work_cost: 0.0,
+            build_turns_remaining: no_build_turns_estimate(),
             corral_material: Vec::new(),
             pastoral_material: Vec::new(),
         }
@@ -685,6 +734,45 @@ pub struct ForagePatchState {
     /// honestly **empty in a dead season**. Appended (append-only).
     #[serde(default)]
     pub per_worker_material: Vec<MaterialPayoff>,
+    /// **The build, PRICED IN WORK** (`docs/plan_unit_costed_work.md` §8). An improvement costs a
+    /// fixed amount of work now, not a fixed number of turns: a crew produces work units per turn
+    /// (head count × floor discipline × kit) and **turns are the output**.
+    ///
+    /// `work_done` is the source's own meter, in work units. `work_cost` is what that job costs **on
+    /// this source**, resolved off the ladder at capture and published **whether or not a build is in
+    /// flight** — that is the point, since the compose sheet must quote the price *before* the player
+    /// commits. The `*_progress` fraction beside it is exactly `work_done / work_cost`. Appended
+    /// (append-only).
+    #[serde(default)]
+    pub cultivation_work_done: f32,
+    /// See [`Self::cultivation_work_done`].
+    #[serde(default)]
+    pub cultivation_work_cost: f32,
+    /// The rung-3 twin of [`Self::cultivation_work_done`]. Two rungs keep two pairs, the
+    /// `cultivate_build_fraction` / `sow_build_fraction` rule: independently tunable jobs must not
+    /// share a number.
+    #[serde(default)]
+    pub field_work_done: f32,
+    /// See [`Self::field_work_done`].
+    #[serde(default)]
+    pub field_work_cost: f32,
+    /// **How many more turns the running build needs**, at the crew, floor and kit that worked this
+    /// source this turn. [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**: no build is in
+    /// flight, or the crew's output is zero and the build is **stalled** (a stall has no finite
+    /// answer, and a huge number would read as a promise).
+    ///
+    /// **The client cannot compute this** — it holds neither the crew's output, nor the floor
+    /// multiplier, nor the kit's build rate — so the sim answers, the `pen_feed_upkeep` discipline.
+    /// One field for both of a web's rungs: at most one improvement is ever in flight on one source.
+    /// Appended (append-only).
+    #[serde(default = "no_build_turns_estimate")]
+    pub build_turns_remaining: i32,
+}
+
+/// The serde default of a `build_turns_remaining` field — [`crate::NO_BUILD_TURNS_ESTIMATE`], so an
+/// absent value reads as *"no estimate"* rather than as a build finishing this turn.
+fn no_build_turns_estimate() -> i32 {
+    crate::NO_BUILD_TURNS_ESTIMATE
 }
 
 /// **One material a commitment would pay, and how much of it per turn** — a row of

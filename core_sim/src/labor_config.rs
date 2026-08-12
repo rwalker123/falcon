@@ -137,7 +137,7 @@ const DEFAULT_CULTIVATION_TENDED_CONVERSION_GAIN: f32 = 2.0;
 ///
 /// A patch worked with the **Cultivate** improvement in flight ([`crate::components::Improvement::Cultivate`])
 /// — faction knows Cultivation, patch is **Thriving** — accrues the `plant:tended` rung's
-/// `progress_per_turn` toward cultivation (`1.0` = cultivated) while yielding only that rung's
+/// work units toward the `plant:tended` rung's `work_cost` while yielding only that rung's
 /// `yield_fraction_while_building ×` the assignment's own stance ceiling (the investment cost). A cultivated patch that isn't tended any given
 /// turn goes **feral**, its progress decaying by the rung's `decay_per_turn` back below `1.0`
 /// (reverting to a wild gather patch). A tended patch is **still a wild stand** — the tending buys it

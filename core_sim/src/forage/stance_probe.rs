@@ -34,24 +34,22 @@ use crate::fauna::{
 };
 use crate::fauna_config::{FaunaConfig, HusbandryCeiling, SizeClass};
 use crate::flora_config::FloraConfig;
-use crate::intensification::{
-    LadderConfig, RungDef, RungKey, RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED,
-};
+use crate::intensification::{LadderConfig, RungDef, RungKey, RUNG_COST_UNSCALED};
 use crate::labor_config::LaborConfig;
 use crate::systems::hunt_take;
 use sim_runtime::TerrainType;
 
 // ---- Probe constants (harness parameters, not gameplay levers) --------------------------------
 
-/// **Every build in this probe is staffed to its full crew**, so the figures it reports are the
-/// rung's own pace rather than a staffing shortfall's. A rung that declares no `crew_needed` (both
-/// animal rungs) is unscaled by crew, so one worker measures its true rate there.
+/// **Every build in this probe is staffed to its rung's REFERENCE crew**, so the figures it reports
+/// are the turns the config comment quotes rather than an arbitrary staffing level's. A rung that
+/// declares no `crew_needed` (both animal rungs) is probed at one worker.
 fn full_crew(rung: &RungDef) -> u32 {
     rung.build_crew_needed().unwrap_or(SOLE_WORKER)
 }
 
-/// The crew a rung with no declared crew is probed at — one, because the scale is the identity there
-/// and any other number would imply the probe had chosen a staffing level.
+/// The crew a rung with no declared crew is probed at — one worker, so its figures read directly in
+/// work units per turn and any other number would imply the probe had chosen a staffing level.
 const SOLE_WORKER: u32 = 1;
 
 /// Turns each run is driven for. Long enough for every stance on both webs to reach its fixed point
@@ -291,16 +289,20 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
                 improvement,
                 eligible,
                 floor,
-                RUNG_TIMESCALE_UNSCALED,
                 full_crew(rung),
                 crate::intensification::NO_BUILD_GEAR,
             );
+            let cost = rung
+                .build_cost(RUNG_COST_UNSCALED)
+                .expect("a rung a verb builds has a build meter");
             if accrual > 0.0 {
                 // The completion bool is the labor arm's feed-line trigger; this probe reads the
                 // meter itself just below, so it is deliberately discarded here.
                 let _completed_this_turn = match verb {
-                    Improvement::Cultivate => patch.accrue_cultivation(PROBE_FACTION, accrual),
-                    _ => patch.accrue_field(PROBE_FACTION, accrual),
+                    Improvement::Cultivate => {
+                        patch.accrue_cultivation(PROBE_FACTION, accrual, cost)
+                    }
+                    _ => patch.accrue_field(PROBE_FACTION, accrual, cost),
                 };
                 let done = match verb {
                     Improvement::Cultivate => patch.is_cultivated(),
@@ -477,7 +479,7 @@ fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOu
     let pen = ladder.rung(RungKey::AnimalPen);
     let improvement = Some(Improvement::Corral);
     let mut herd = probe_herd(&fauna, species_key, start_fraction);
-    herd.accrue_domestication(PROBE_FACTION, RUNG_COMPLETE);
+    herd.tame_outright(PROBE_FACTION);
     let cap = herd_capacity(&herd, &fauna);
     let hunt_yield = fauna.hunt_yield_for(&herd.species);
 
@@ -510,13 +512,15 @@ fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOu
                 improvement,
                 eligible,
                 floor,
-                RUNG_TIMESCALE_UNSCALED,
                 full_crew(pen),
                 crate::intensification::NO_BUILD_GEAR,
             );
+            let cost = pen
+                .build_cost(RUNG_COST_UNSCALED)
+                .expect("the pen rung has a build meter");
             if accrual > 0.0 {
                 let tile = herd.position();
-                if herd.accrue_corral(PROBE_FACTION, accrual, tile) {
+                if herd.accrue_corral(PROBE_FACTION, accrual, cost, tile) {
                     turns_to_complete = Some(turn);
                     fraction_at_completion = herd.biomass / cap;
                 }
@@ -534,7 +538,7 @@ fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOu
 
 /// Drive a herd under `(stance, Tame)` and accrue the rung-2 meter exactly as
 /// `advance_labor_allocation` does — after the take, gated on the herd being `Thriving` and its
-/// species' husbandry ceiling allowing domestication, at the species' own `taming_rate` timescale.
+/// species' husbandry ceiling allowing domestication, against the species' own taming COST.
 fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutcome {
     let fauna = probe_fauna();
     let labor = LaborConfig::builtin();
@@ -544,7 +548,9 @@ fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutc
     let mut herd = probe_herd(&fauna, species_key, start_fraction);
     let cap = herd_capacity(&herd, &fauna);
     let hunt_yield = fauna.hunt_yield_for(&herd.species);
-    let timescale = fauna.taming_rate_for(&herd.species);
+    let tame_cost = pastoral
+        .build_cost(fauna.taming_cost_multiplier_for(&herd.species))
+        .expect("the pastoral rung has a build meter");
 
     let mut provisions_over_build = 0.0;
     let mut turns_to_complete = None;
@@ -581,12 +587,11 @@ fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutc
                 improvement,
                 eligible,
                 floor,
-                timescale,
                 full_crew(pastoral),
                 crate::intensification::NO_BUILD_GEAR,
             );
             if accrual > 0.0 {
-                herd.accrue_domestication(PROBE_FACTION, accrual);
+                herd.accrue_domestication(PROBE_FACTION, accrual, tame_cost);
                 if herd.is_domesticated() {
                     turns_to_complete = Some(turn);
                     fraction_at_completion = herd.biomass / cap;
@@ -1055,8 +1060,8 @@ fn probe_animal_stances() {
         }
         for (label, start) in [("from K", FULL_HERD), ("from K/2", HALF_K_HERD)] {
             println!(
-                "  Tame in flight, {label} (taming_rate x{}):",
-                fauna.taming_rate_for(&def.display_name)
+                "  Tame in flight, {label} (taming cost x{}):",
+                fauna.taming_cost_multiplier_for(&def.display_name)
             );
             println!(
                 "  {:<10} {:>9} {:>11} {:>10} {:>10} {:>8} {:>11} {:>11} {:>9}",
@@ -1143,31 +1148,32 @@ fn probe_build_and_teach_axis() {
     }
 
     println!(
-        "\n=== Part 3 — what each rung BUILDS per turn, per floor (RungDef::build_accrual) ==="
+        "\n=== Part 3 — WORK UNITS each rung builds per turn, per floor (RungDef::build_accrual) ==="
     );
     println!(
-        "(the floor IS an argument now — it paces the build exactly as it paces the lesson; decay takes no floor)"
+        "(the floor IS an argument now — it paces the build exactly as it paces the lesson; decay takes no floor. \
+         `cost` is the whole job; the accrual columns are one turn of the rung's reference crew.)"
     );
     println!(
-        "{:<16} {:>10} {:<10} {:>16} {:>16} {:>10}",
-        "rung", "dip", "floor", "accrual eligible", "accrual !eligible", "decay"
+        "{:<16} {:>10} {:<10} {:>10} {:>16} {:>16} {:>10}",
+        "rung", "dip", "floor", "cost", "accrual eligible", "accrual !eligible", "decay"
     );
     for (label, key, verb) in rungs {
         let rung = ladder.rung(key);
         for floor in REPORT_FLOORS {
             println!(
-                "{:<16} {:>10} {:<10} {:>16.4} {:>16.4} {:>10.4}",
+                "{:<16} {:>10} {:<10} {:>10.2} {:>16.4} {:>16.4} {:>10.4}",
                 label,
                 verb.map_or("-".to_string(), |v| format!(
                     "x{}",
                     ladder.build_dip(Some(v))
                 )),
                 format!("{floor:.2}K"),
+                rung.build_cost(RUNG_COST_UNSCALED).unwrap_or(0.0),
                 rung.build_accrual(
                     verb,
                     true,
                     floor,
-                    RUNG_TIMESCALE_UNSCALED,
                     full_crew(rung),
                     crate::intensification::NO_BUILD_GEAR,
                 ),
@@ -1175,11 +1181,10 @@ fn probe_build_and_teach_axis() {
                     verb,
                     false,
                     floor,
-                    RUNG_TIMESCALE_UNSCALED,
                     full_crew(rung),
                     crate::intensification::NO_BUILD_GEAR,
                 ),
-                rung.build_decay(RUNG_TIMESCALE_UNSCALED),
+                rung.build_decay(RUNG_COST_UNSCALED),
             );
         }
     }

@@ -52,7 +52,9 @@ fn herd_registry_biomass_and_position_rewind_on_rollback() {
         herd.biomass = biomass0 + 5_000.0;
         herd.current_pos = mutated_pos;
         herd.route.push(UVec2::new(23, 15));
-        herd.domestication_progress = 0.9;
+        // Part-tamed: banked work against a job it has not paid off.
+        herd.domestication_progress = core_sim::FABRICATED_BUILD_COST / 2.0;
+        herd.domestication_cost = core_sim::FABRICATED_BUILD_COST;
         herd.owner = Some(FactionId(7));
     }
     assert_ne!(mutated_pos, pos0, "mutation must actually move the herd");
@@ -174,7 +176,8 @@ fn under_herded_edge_state_rewinds_on_rollback() {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().next().expect("a herd spawned");
         herd.owner = Some(FactionId(0));
-        herd.domestication_progress = 1.0;
+        herd.domestication_progress = core_sim::FABRICATED_BUILD_COST;
+        herd.domestication_cost = core_sim::FABRICATED_BUILD_COST;
         herd.herded_fraction = 0.0; // no herders → it will shed
         herd.under_herded = false;
         herd.id.clone()

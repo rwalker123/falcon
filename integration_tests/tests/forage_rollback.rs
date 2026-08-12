@@ -84,8 +84,9 @@ fn forage_registry_cultivation_rewinds_on_rollback() {
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(tile).expect("mutable patch");
-        patch.cultivation_progress = 1.0;
-        patch.owner = Some(FactionId(3));
+        // A completed rung is `progress >= cost > 0` now, so the fixture pays a nominal one-worker
+        // job rather than writing a bare `1.0` that no longer completes anything.
+        patch.complete_cultivation(FactionId(3));
         assert!(patch.is_cultivated());
     }
 

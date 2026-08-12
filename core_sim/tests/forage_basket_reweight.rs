@@ -45,8 +45,11 @@ const FORAGE_WORKERS: u32 = 5000;
 /// The quotes and rates here are taken at neutral productivity, as the shipped per-patch forecast is.
 const NEUTRAL_MULTIPLIER: f32 = 1.0;
 
-/// A completed improvement meter.
-const RUNG_COMPLETE: f32 = 1.0;
+/// **Whose ground a hand-seated fixture patch belongs to.** These tests write finished rungs
+/// straight onto the registry — what is under test is a completed rung's basket, not the build that
+/// gets there — and a completed meter needs an owner, so the faction is stated rather than left as a
+/// bare `FactionId(0)` at each site.
+const FIXTURE_OWNER: FactionId = FactionId(0);
 
 /// **The patch's standing crop as a fraction of its capacity** — deliberately **above** Sustain's
 /// escapement floor (`K/2`), so a Sustain gather has standing stock to take. At `K/2` exactly a
@@ -92,9 +95,9 @@ fn patch_on_rung(species: Option<&str>, field: bool) -> ForagePatch {
     patch.species = species.map(str::to_string);
     if species.is_some() {
         if field {
-            patch.field_progress = RUNG_COMPLETE;
+            patch.complete_field(FIXTURE_OWNER);
         } else {
-            patch.cultivation_progress = RUNG_COMPLETE;
+            patch.complete_cultivation(FIXTURE_OWNER);
         }
     }
     patch
@@ -660,7 +663,7 @@ fn the_published_composition_is_the_patchs_effective_basket() {
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).expect("patch exists");
-        patch.field_progress = RUNG_COMPLETE;
+        patch.complete_field(FIXTURE_OWNER);
     }
     let field = published(&mut app);
     assert_eq!(field.len(), 1, "a Field publishes one plant: {field:?}");
@@ -714,8 +717,10 @@ fn the_published_field_yield_never_inherits_the_tended_rungs_basket() {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).expect("patch exists");
         patch.species = Some(crop.clone());
-        patch.cultivation_progress = RUNG_COMPLETE;
-        patch.field_progress = if field { RUNG_COMPLETE } else { 0.0 };
+        patch.complete_cultivation(FIXTURE_OWNER);
+        if field {
+            patch.complete_field(FIXTURE_OWNER);
+        }
         patch.biomass = patch.carrying_capacity;
     };
 
@@ -789,9 +794,9 @@ fn the_composition_seam_answers_the_rung_it_is_asked_about_not_the_one_the_patch
     let mut wild = ForagePatch::new(UVec2::ZERO, 1.0);
     wild.species = Some("wild_emmer".to_string());
     let mut tended = wild.clone();
-    tended.cultivation_progress = RUNG_COMPLETE;
+    tended.complete_cultivation(FIXTURE_OWNER);
     let mut field = wild.clone();
-    field.field_progress = RUNG_COMPLETE;
+    field.complete_field(FIXTURE_OWNER);
 
     for (name, patch) in [("building", &wild), ("tended", &tended), ("field", &field)] {
         let planted = core_sim::composition_for_rung(
@@ -1092,8 +1097,9 @@ fn seat_patch(app: &mut App, coord: UVec2, crop: Option<&str>) {
     let mut registry = app.world.resource_mut::<ForageRegistry>();
     let patch = registry.patch_mut(coord).expect("patch exists");
     patch.species = crop.map(str::to_string);
-    patch.cultivation_progress = if crop.is_some() { RUNG_COMPLETE } else { 0.0 };
-    patch.field_progress = 0.0;
+    if crop.is_some() {
+        patch.complete_cultivation(FIXTURE_OWNER);
+    }
     patch.biomass = patch.carrying_capacity * STOCKED_STANDING_CROP;
 }
 

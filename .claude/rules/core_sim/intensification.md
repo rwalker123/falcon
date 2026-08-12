@@ -15,7 +15,7 @@ paths:
 
 | File | Purpose |
 |------|---------|
-| `src/data/intensification_ladder.json` | **THE INTENSIFICATION LADDER** — one grammar for both food webs (`intensification.rs`, env override **`INTENSIFICATION_LADDER_PATH`**; design `docs/plan_intensification_ladder.md` §5). A `knowledge` block (**`progress_per_turn` 0.05 / `completion_threshold` 1.0 / `lesson_per_crafted_item` 0.2** — the third is the **crafting** arc's dial and a *sibling* of the first rather than a reading of it, because the quantum differs: a ladder lesson is charged per **turn worked** and scaled by the crew's floor, a craft lesson per **item completed at a bench**, on the same quantum as that bench tool's wear. So `completion_threshold / lesson_per_crafted_item` is a craft's length in **items** (`1.0 / 0.2` → 5), where the two beside it give a rung lesson's length in turns. It lives here rather than in `recipes.json` so every knowledge pace in the game is tuned in one file — the same reason the other two moved here in slice 4 — and `validate` rejects a non-positive value, which would leave every craft unlearnable and every bench tool permanently unreachable. See `.claude/rules/core_sim/crafting.md`. — the **base** pace of EVERY rung's `earns_knowledge` (scaled per call by the assignment's floor, `intensification::learn_multiplier`, so 0.05 is what the food peak pays) and the bar at which a faction may act on one, ~20 turns per lesson at the peak; **moved here in slice 4 from the two identical per-web copies** in `labor_config`'s `forage.cultivation` and `fauna_config`'s `husbandry`, once the earn path became one rung-driven seam — the number paces *both* webs, so it belongs to the ladder, exactly like the build dials) plus a flat `rungs` list; each record is one rung of one branch (`plant` = forage patches, `animal` = herds): `id`/`branch`/`order`, `verb` (the **`Improvement`** — `cultivate`/`sow`/`tame`/`corral` — that fills this rung's per-source build meter — **`null` = no verb drives this rung today, and the engine skips it**), `unlock_knowledge`/`earns_knowledge` (knowledge ids the rung gates on / **teaches when practised** — `null` = ungated / teaches nothing; **both are LIVE**: `unlock_knowledge` is what every gate resolves through, and `earns_knowledge` drives `RungDef::knowledge_accrual`, the one earn seam), `requires_rung` (the rung directly below on the ladder — the ladder is strictly sequential; **a claim about the ladder's SHAPE, not a per-source precondition** — no code reads it as one, and the per-source rule differs per branch: `corral` demands a herd you already tamed, `sow` demands a gathering site and fresh water — it used to demand no prior patch at all, which #464 reversed), `ceiling_required` (the per-species `husbandry_ceiling` gate, animal branch only), **`site_requirement`** (`{ requires_gathering_site, min_forage_capacity, requires_fresh_water }` — **what the LAND must be** for the rung to be placed on a tile; the plant twin of `ceiling_required`, keyed on the ground instead of the species. `null` = the rung asks nothing of the site, i.e. **every ANIMAL rung** — a herd carries its own site with it. **All three PLANT rungs state one** (issue #464): rungs 1–3 each `requires_gathering_site`, and rung 3 adds `requires_fresh_water` on top. `min_forage_capacity` is **0 on every shipped rung** — it carried rung 3's scarcity at 195 until the gathering-site rule took that job, and stacking both demanded a curated site that also landed on one of three biomes; it stays a live dial because **rung 4 (Farm) is the rung that needs it**. **Rung 4 IS this record with `requires_gathering_site: false` and the fertility floor put back** — that is the whole of what Farm unlocks, and it is a config edit), `build` (`progress_per_turn`/`decay_per_turn`/**`grace_turns`**/**`crew_needed`**/**`yield_fraction_while_building`** — the per-source meter's **full-crew, food-peak** rate (the accrual is scaled by the assignment's floor too), its abandon-decay (**`null` = this rung's meter does not bleed at all**, which is the whole animal branch), the **neglect grace** (consecutive un-worked turns forgiven before the rung's penalty starts — a meter bleed on plants, the shed on animals: one trigger, two penalties), the **build crew** (`null` = this web sizes its crew off the SOURCE, not the rung — both animal rungs, where `herders_needed` comes from the herd's own size; on the plant rungs it both floors the source's `workers_needed` and scales the accrual by `min(workers/crew_needed, 1)`), and the **investment dip**, which multiplies the CREW'S THROUGHPUT while it prepares instead of harvests — never the take ceiling, `docs/plan_harvest_floor.md` §3.1; `null` on a rung with nothing to build), and `behavior` (the bounded coded primitives `movement` ∈ `fixed|roam|drift_to_owner|pursue` — **read by `fauna::advance_herds`, the first live primitive (slice 3b)**; `pursue` (Predators Phase 2) is currently **diet-resolved** for a wild carnivore in `fauna::movement_primitive`, not assigned by a rung record, because the husbandry rungs are diet-orthogonal — `feeding` ∈ `photosynthesis|forage|self_graze`, `harvest` ∈ `worker_take|worker_tend|passive` — the last two still **parsed and validated only**). **Shipped rungs** (`build` quoted as `progress`/`decay`/`grace`/`crew`/`dip`): plant `wild`(1, earns `cultivation`)/`tended`(2, verb `cultivate`, gate `cultivation`, **earns `seed_selection`**, build `0.04`/`0.01`/**`2`**/**`2`**/`0.50`)/**`field`(3, verb `sow`, gate `seed_selection`, earns nothing, build `0.04`/`0.01`/**`1`**/**`3`**/`0.50`, `fixed`, site `{ requires_gathering_site true, min_forage_capacity 0, requires_fresh_water true }` → **174 of 4160 tiles clear the water rule** on the standard map, of which the **130–134 curated gathering markers** are what a band can actually reach — see "Placed, not conjured" in `cultivation.md`, and note the **49** this row carried until #466 came from a partial-chain test harness)**; animal `wild`(1, earns `herding`, `roam`)/`pastoral`(2, verb `tame`, gate `herding`, ceiling `pastoral`, **earns `penning`**, build `0.04`/**`null`**/**`2`**/**`null`**/`0.50`, **`drift_to_owner` + `worker_take`**)/`pen`(3, verb `corral`, gate **`penning`** (slice 4's §4.3 reshuffle — was `herding`), ceiling `pen`, **earns `foddering`** (Flora Roster F3 — running a pen teaches you to hay it; unlocks the fodder-draw, not a rung), build `0.04`/**`null`**/**`6`**/**`null`**/`0.50`, `fixed`). **The two webs' graces are not monotone in the same direction, and that is why the dial is per-rung**: on plants the NEWEST rung is the most fragile (a standing crop wants hands every turn; the cleared ground under it keeps its clearing longer), on animals the HIGHEST is the most forgiving (the fence does the holding). All four are playtest anchors. **The file describes what the sim does TODAY, deliberately** — later slices change behaviour by *editing it*. **Validated** — `LadderConfig::validate()` runs inside `from_json_str` (every load path, the `fauna_config.rs` convention): unique `(branch, id)` and `(branch, order)`, exactly one order-1 rung per branch, `requires_rung` resolving to a real same-branch rung at `order - 1` (and `null` iff `order == 1`), `verb` parsing to a real `Improvement`, `unlock_knowledge`/`earns_knowledge` resolving to a known discovery id, `0 < progress_per_turn`, `0 < decay_per_turn < progress_per_turn` **when present** (a `null` means the meter does not bleed; a parked **`0` is rejected** because it means the same thing while reading like a live dial — that is exactly how `animal:pastoral`'s dead `0.01` survived for slices, documenting a tameness-bleed the sim does not have), **`grace_turns < 1 / progress_per_turn`** (a grace that outlasts its own build makes walking away free for the whole span it took to build — a penalty evaporating silently, the time-axis twin of the site rule that requires nothing), **`crew_needed != Some(0)`** (a build wanting nobody would accrue at `min(workers/0, 1)`, i.e. never — say `null` for *no crew model*), `0 < yield_fraction_while_building < 1`, a `site_requirement`'s `min_forage_capacity` finite & `>= 0` **and the requirement actually requiring something** (a floor of `0` with `requires_fresh_water: false` **and `requires_gathering_site: false`** admits every tile — a placement rule that places no rule, which is how a rung's scarcity evaporates silently; say `null` instead), **`knowledge.progress_per_turn > 0`** (else nothing is ever learned and the ladder silently freezes at rung 1) and **`0 < knowledge.completion_threshold <= 1`** (at `0` every gate opens on turn 1; above `1` no gate can ever open, since the ledger clamps accrual to `1.0`) — both **stated once, for both webs**, having moved from each web's own config — and **every rung the engine names by hand (`RungKey`) present** (so a broken override cannot silently no-op a shipped rung); a broken invariant is logged at **error** level (`intensification_ladder.invalid_rejected`) and the builtin is used. See "The Intensification Ladder" |
+| `src/data/intensification_ladder.json` | **THE INTENSIFICATION LADDER** — one grammar for both food webs (`intensification.rs`, env override **`INTENSIFICATION_LADDER_PATH`**; design `docs/plan_intensification_ladder.md` §5). A `knowledge` block (**`progress_per_turn` 0.05 / `completion_threshold` 1.0 / `lesson_per_crafted_item` 0.2** — the third is the **crafting** arc's dial and a *sibling* of the first rather than a reading of it, because the quantum differs: a ladder lesson is charged per **turn worked** and scaled by the crew's floor, a craft lesson per **item completed at a bench**, on the same quantum as that bench tool's wear. So `completion_threshold / lesson_per_crafted_item` is a craft's length in **items** (`1.0 / 0.2` → 5), where the two beside it give a rung lesson's length in turns. It lives here rather than in `recipes.json` so every knowledge pace in the game is tuned in one file — the same reason the other two moved here in slice 4 — and `validate` rejects a non-positive value, which would leave every craft unlearnable and every bench tool permanently unreachable. See `.claude/rules/core_sim/crafting.md`. — the **base** pace of EVERY rung's `earns_knowledge` (scaled per call by the assignment's floor, `intensification::learn_multiplier`, so 0.05 is what the food peak pays) and the bar at which a faction may act on one, ~20 turns per lesson at the peak; **moved here in slice 4 from the two identical per-web copies** in `labor_config`'s `forage.cultivation` and `fauna_config`'s `husbandry`, once the earn path became one rung-driven seam — the number paces *both* webs, so it belongs to the ladder, exactly like the build dials) plus a flat `rungs` list; each record is one rung of one branch (`plant` = forage patches, `animal` = herds): `id`/`branch`/`order`, `verb` (the **`Improvement`** — `cultivate`/`sow`/`tame`/`corral` — that fills this rung's per-source build meter — **`null` = no verb drives this rung today, and the engine skips it**), `unlock_knowledge`/`earns_knowledge` (knowledge ids the rung gates on / **teaches when practised** — `null` = ungated / teaches nothing; **both are LIVE**: `unlock_knowledge` is what every gate resolves through, and `earns_knowledge` drives `RungDef::knowledge_accrual`, the one earn seam), `requires_rung` (the rung directly below on the ladder — the ladder is strictly sequential; **a claim about the ladder's SHAPE, not a per-source precondition** — no code reads it as one, and the per-source rule differs per branch: `corral` demands a herd you already tamed, `sow` demands a gathering site and fresh water — it used to demand no prior patch at all, which #464 reversed), `ceiling_required` (the per-species `husbandry_ceiling` gate, animal branch only), **`site_requirement`** (`{ requires_gathering_site, min_forage_capacity, requires_fresh_water }` — **what the LAND must be** for the rung to be placed on a tile; the plant twin of `ceiling_required`, keyed on the ground instead of the species. `null` = the rung asks nothing of the site, i.e. **every ANIMAL rung** — a herd carries its own site with it. **All three PLANT rungs state one** (issue #464): rungs 1–3 each `requires_gathering_site`, and rung 3 adds `requires_fresh_water` on top. `min_forage_capacity` is **0 on every shipped rung** — it carried rung 3's scarcity at 195 until the gathering-site rule took that job, and stacking both demanded a curated site that also landed on one of three biomes; it stays a live dial because **rung 4 (Farm) is the rung that needs it**. **Rung 4 IS this record with `requires_gathering_site: false` and the fertility floor put back** — that is the whole of what Farm unlocks, and it is a config edit), `build` (**`work_cost`**/**`decay_fraction_per_turn`**/**`grace_turns`**/**`crew_needed`**/**`yield_fraction_while_building`** — **THE SIZE OF THE JOB IN WORK UNITS** (one unit = one worker-turn at the food peak with no gear; turns are the *output*, see "An improvement costs WORK, not turns"), the fraction **of that cost** bled per unworked turn (**`null` = this rung's meter does not bleed at all**, which is the whole animal branch), the **neglect grace** (consecutive un-worked turns forgiven before the rung's penalty starts — a meter bleed on plants, the shed on animals: one trigger, two penalties), the **staffing floor** on the source's `workers_needed` (`null` = this web sizes its crew off the SOURCE, not the rung — both animal rungs, where `herders_needed` comes from the herd's own size; it no longer scales the accrual), and the **investment dip**, which multiplies the CREW'S THROUGHPUT while it prepares instead of harvests — never the take ceiling, `docs/plan_harvest_floor.md` §3.1; `null` on a rung with nothing to build), and `behavior` (the bounded coded primitives `movement` ∈ `fixed|roam|drift_to_owner|pursue` — **read by `fauna::advance_herds`, the first live primitive (slice 3b)**; `pursue` (Predators Phase 2) is currently **diet-resolved** for a wild carnivore in `fauna::movement_primitive`, not assigned by a rung record, because the husbandry rungs are diet-orthogonal — `feeding` ∈ `photosynthesis|forage|self_graze`, `harvest` ∈ `worker_take|worker_tend|passive` — the last two still **parsed and validated only**). **Shipped rungs** (`build` quoted as `progress`/`decay`/`grace`/`crew`/`dip`): plant `wild`(1, earns `cultivation`)/`tended`(2, verb `cultivate`, gate `cultivation`, **earns `seed_selection`**, build `50`/`0.01`/**`2`**/**`2`**/`0.50`)/**`field`(3, verb `sow`, gate `seed_selection`, earns nothing, build `75`/`0.01`/**`1`**/**`3`**/`0.50`, `fixed`, site `{ requires_gathering_site true, min_forage_capacity 0, requires_fresh_water true }` → **174 of 4160 tiles clear the water rule** on the standard map, of which the **130–134 curated gathering markers** are what a band can actually reach — see "Placed, not conjured" in `cultivation.md`, and note the **49** this row carried until #466 came from a partial-chain test harness)**; animal `wild`(1, earns `herding`, `roam`)/`pastoral`(2, verb `tame`, gate `herding`, ceiling `pastoral`, **earns `penning`**, build `50`/**`null`**/**`2`**/**`null`**/`0.50`, **`drift_to_owner` + `worker_take`**)/`pen`(3, verb `corral`, gate **`penning`** (slice 4's §4.3 reshuffle — was `herding`), ceiling `pen`, **earns `foddering`** (Flora Roster F3 — running a pen teaches you to hay it; unlocks the fodder-draw, not a rung), build `75`/**`null`**/**`6`**/**`null`**/`0.50`, `fixed`). **The two webs' graces are not monotone in the same direction, and that is why the dial is per-rung**: on plants the NEWEST rung is the most fragile (a standing crop wants hands every turn; the cleared ground under it keeps its clearing longer), on animals the HIGHEST is the most forgiving (the fence does the holding). All four are playtest anchors. **The file describes what the sim does TODAY, deliberately** — later slices change behaviour by *editing it*. **Validated** — `LadderConfig::validate()` runs inside `from_json_str` (every load path, the `fauna_config.rs` convention): unique `(branch, id)` and `(branch, order)`, exactly one order-1 rung per branch, `requires_rung` resolving to a real same-branch rung at `order - 1` (and `null` iff `order == 1`), `verb` parsing to a real `Improvement`, `unlock_knowledge`/`earns_knowledge` resolving to a known discovery id, `0 < work_cost` finite, `0 < decay_fraction_per_turn < 1` **when present** (a `null` means the meter does not bleed; a parked **`0` is rejected** because it means the same thing while reading like a live dial — that is exactly how `animal:pastoral`'s dead `0.01` survived for slices, documenting a tameness-bleed the sim does not have), **`grace_turns < work_cost / reference_output`** where `reference_output = crew_needed.unwrap_or(1) × PER_WORKER_OUTPUT` (a grace that outlasts its own build makes walking away free for the whole span it took to build — a penalty evaporating silently, the time-axis twin of the site rule that requires nothing), **`crew_needed != Some(0)`** (a staffing floor of nobody is nonsense — say `null` for *no crew model*), `0 < yield_fraction_while_building < 1`, a `site_requirement`'s `min_forage_capacity` finite & `>= 0` **and the requirement actually requiring something** (a floor of `0` with `requires_fresh_water: false` **and `requires_gathering_site: false`** admits every tile — a placement rule that places no rule, which is how a rung's scarcity evaporates silently; say `null` instead), **`knowledge.progress_per_turn > 0`** (else nothing is ever learned and the ladder silently freezes at rung 1) and **`0 < knowledge.completion_threshold <= 1`** (at `0` every gate opens on turn 1; above `1` no gate can ever open, since the ledger clamps accrual to `1.0`) — both **stated once, for both webs**, having moved from each web's own config — and **every rung the engine names by hand (`RungKey`) present** (so a broken override cannot silently no-op a shipped rung); a broken invariant is logged at **error** level (`intensification_ladder.invalid_rejected`) and the builtin is used. See "The Intensification Ladder" |
 ## The Intensification Ladder
 
 **One grammar for both food webs** (`intensification.rs`, config `src/data/intensification_ladder.json`;
@@ -23,7 +23,65 @@ authoritative design: `docs/plan_intensification_ladder.md`). Plants and animals
 three-rung ladder — rung 1 you take what's there, rung 2 you manage the wild source in place, rung 3 you
 control its reproduction — and every rung-transition is the same **Cultivate-shaped verb**: pick it → the
 source pays a **reduced** yield while the crew prepares rather than harvests → a **per-source build
-meter** climbs → it decays if you walk away → at `1.0` the source steps up a rung.
+meter** climbs → it decays if you walk away → at the job's declared cost the source steps up a rung.
+
+### An improvement costs WORK, not turns
+
+**A rung declares a fixed [`RungBuild::work_cost`] in WORK UNITS; a crew produces work units per
+turn; TURNS ARE THE OUTPUT** (`docs/plan_unit_costed_work.md`).
+
+```text
+work_this_turn = workers × PER_WORKER_OUTPUT × learn_multiplier(floor) × build_rate
+progress      += work_this_turn                       // absolute units on the source's own meter
+complete when  progress >= cost
+cost           = rung.work_cost × source_cost_multiplier
+```
+
+**One unit is one worker-turn at the food peak with no gear** (`intensification::PER_WORKER_OUTPUT`
+= 1.0), so `work_cost: 50` reads itself and needs no second dial to interpret. It is deliberately
+**not** a config lever: a tunable worker output would be a second authority over the same pacing, and
+the cost side is the one this arc exists to expose. Worker output is written as a **sum of terms**
+with exactly one term today — knowledge does **not** feed throughput, it reaches it through the tools
+it unlocks — so a future buff mechanic has somewhere to land.
+
+**What the normalized `0..1` meter made unreachable**, and this is why it was inverted rather than
+retuned: every improvement on both webs was literally the same 25-turn job (all four rungs declared
+`progress_per_turn: 0.04` against a `RUNG_COMPLETE` of `1.0`), a rung up the ladder could only be a
+*bigger* job by declaring the crew *worse at it*, a tool could only be a multiplier and a multiplier
+cannot be scale-sensitive, and gear cost was size-blind because every build totalled `1.0`.
+
+- **`RUNG_COMPLETE` is RETIRED. Each rung has its own completion value**, and — because
+  `is_cultivated()` / `is_field()` / `is_domesticated()` have ~a hundred call sites all over both
+  webs and cannot each take a config — **every meter carries a stored companion cost**:
+  `ForagePatch::cultivation_cost` / `field_cost`, `Herd::domestication_cost` / `corral_cost` /
+  `pen_extend_cost`. The accrual seam **stamps** the live resolved cost while the meter is incomplete
+  and **never re-stamps once complete**, so a later config retune that raises a price cannot silently
+  *un*-cultivate ground the player already paid for; decay floors the meter at `RUNG_UNSTARTED` and
+  resets the companion with it. Every predicate is `cost > RUNG_UNSTARTED && progress >= cost` — the
+  positive-cost half is load-bearing, since `0 >= 0` would read every wild source on the map as
+  finished. The costs ride the checkpoint for free (`SimState` clones the whole
+  `ForageRegistry`/`HerdRegistry`).
+- **THERE IS NO CREW CAP.** `crew_scale` (`min(workers / crew_needed, 1)`) and `FULL_CREW_SCALE` are
+  **deleted**: fifty workers finish a Cultivate in a turn, and that is allowed. The constraint is
+  opportunity cost across systems, not a rule forbidding a play style — today only food pushes back;
+  crafting throughput, defence and trade arrive as those systems land. `crew_needed` survives with
+  **one job instead of two**: it floors the source's `workers_needed` (`source_crew_needed`, on the
+  wire as `cultivateCrewNeeded` / `sowCrewNeeded`) and no longer touches the accrual.
+- **The ANIMAL web's turn counts MOVED, and that is the point.** Both animal rungs declare
+  `crew_needed: null` and were therefore not merely uncapped but **crew-BLIND** — a `Tame` took 25
+  turns whether two hands or twenty worked the herd. Every build is crew-scaled now, so animal pacing
+  moves with `herders_needed`: on a real fixture herd a boar's `Tame` is a handful of turns rather
+  than ~31, and the wild→pen climb is **knowledge-paced** (the two ~20-turn lessons dominate the two
+  build legs). **Under-crewing an animal build to slow it down is not available** — an under-herded
+  flock *sheds* — so an animal build's pace is the herd's own keeper crew, not the player's choice.
+- **The plant web is PACING-NEUTRAL at the reference crew**, which is this slice's own proof:
+  `50 / crew 2 = 25` turns for a Cultivate and `75 / crew 3 = 25` for a Sow, exactly as before. The
+  animal costs (50, 75) are a **reference-crew choice** — 2 keepers and 3 — rather than a derivation,
+  because those rungs had no crew to multiply by.
+- **On the wire the meter is still a `0..1` fraction.** `intensification::build_fraction` divides at
+  **capture**, against the source's *own stamped* cost, so `cultivationProgress` / `fieldProgress` /
+  `corralProgress` / `domestication` and `isCultivated` / `isField` / `corralled` are unchanged in
+  type, meaning and range and every shipped readout keeps working. See "The build on the wire".
 
 **The ladder is DATA over a bounded set of coded primitives.** A rung is a [`RungDef`] record, the ladder
 is a list, and adding a rung that recombines existing primitives is a one-record edit. See the
@@ -118,45 +176,51 @@ live in two slots:
 
 ### The build engine — THE seam both tracks call
 
-`RungDef::build_accrual(improvement, eligible, floor, timescale, workers)` / `build_decay(timescale)` /
-`yield_fraction_while_building()` are the
+`RungDef::build_accrual(improvement, eligible, floor, workers, build_rate)` /
+`build_cost(cost_multiplier)` / `build_decay(cost_multiplier)` / `yield_fraction_while_building()` are
+the
 **single** source of a rung's build math. Both food webs call them instead of reaching for their own
-bespoke accrue/decay/dip levers, so the two ladders **cannot drift apart numerically** — that is the
-whole reason the dials moved out of `labor_config`/`fauna_config` and into the ladder.
+bespoke accrue/cost/decay/dip levers, so the two ladders **cannot drift apart numerically** — that is
+the whole reason the dials moved out of `labor_config`/`fauna_config` and into the ladder.
 
-- **`build_accrual`** returns
-  `progress_per_turn × learn_multiplier(floor) × timescale × crew_scale(workers) × build_rate`
-  **only** when
+- **`build_accrual`** returns **the WORK UNITS this crew produces this turn** —
+  `workers × PER_WORKER_OUTPUT × learn_multiplier(floor) × build_rate` — **only** when
   `improvement` **is** the rung's own `verb` *and* the caller's rung-specific gates hold (`eligible` —
   knows the unlock knowledge, **the crew took something**, species ceiling allows, faction owns it);
   otherwise `0`. **A rung with `verb: null` is never driven** — which is what keeps the two `wild`
   rungs (nothing to build) out of the engine.
+- **`build_cost` — the completion target**, `work_cost × cost_multiplier`, `None` for a rung with
+  nothing to build. The caller stamps it onto the source's companion cost field and completes the
+  rung when the meter reaches it.
+- **`build_turns_remaining(cost, done, work_this_turn)`** is the one place `ceil((cost − done) /
+  work)` lives, so the wire's `buildTurnsRemaining` cannot drift from the meter it describes. `None`
+  means **no estimate** — the job is paid for, or the crew produced nothing and the build is
+  *stalled*, which has no finite answer.
 - **`build_rate` — what the CREW BROUGHT** (issue #515, `equipment.md` → "The build axis"). The
   crew's kit multiplies the accrual: `EquipmentConfig::build_rate`, `intensification::NO_BUILD_GEAR`
   (`1.0`) for a crew carrying nothing that helps — which is every plant build today and every animal
   one whose crew left the handling gear at camp. It **multiplies the accrual and not `build_decay`**,
-  the opposite of `timescale` and for `floor`'s reason: decay is what happens on turns nobody works
+  for `floor`'s reason: decay is what happens on turns nobody works
   the source, so there is no crew and no kit to read. It does **not** touch
   `yield_fraction_while_building` — a faster build already pays the dip for fewer turns, and a second
   lever on the same turns would be a rate axis with nothing asking for one. It is resolved off the
   crew's kit **without** the coverage averaging the carries take; the reason is on the stat.
 - **`learn_multiplier(floor)` — the same rate the lesson rides** (`docs/plan_harvest_floor.md` §3).
   See "The knowledge pattern" for the shape and both degenerate ends; what matters here is that it
-  scales the **accrual only**. `build_decay` takes the same `timescale` and deliberately **not** the
-  floor: decay happens on turns nobody works the source, so there is no assignment and no floor in
+  scales the **accrual only**. `build_decay` takes the same *cost multiplier* and deliberately **not**
+  the floor: decay happens on turns nobody works the source, so there is no assignment and no floor in
   play, and scaling it would multiply by a number that does not exist in that state. **Two build
   sites deliberately pass a floor that is not the assignment's**: `accrue_field` and the `Corral` arm
   omit the work predicate from `eligible` (rung 3 never had the `Thriving` gate it replaced, and bare
   ground stands below every floor by construction), and `ExtendPen` passes
   `MANAGED_SOURCE_FLOOR` because a ring is only ever built around a herd whose floor axis has already
   collapsed.
-- **`crew_scale` — `min(workers / crew_needed, 1)`, `herded_fraction`'s exact shape** (and a rung with
-  `crew_needed: null` is unscaled by crew, which is both animal rungs today). Full crew builds at the
-  rung's stated rate, half a crew takes twice as long, over-crewing buys nothing — so
-  **`progress_per_turn` is a FULL-CREW rate** and the ladder's "25 turns" means "25 turns at full
-  crew". It rides *inside* the one build seam rather than at the call sites, because the other half of
-  the same dial — `RungDef::build_crew_needed` flooring the source's `workers_needed` — is read
-  elsewhere, and a demand the panel reports while the sim ignores it is worse than no demand at all.
+- **`crew_needed` is a STAFFING FLOOR and nothing else.** The retired `crew_scale`
+  (`min(workers / crew_needed, 1)`, `herded_fraction`'s exact shape) capped the accrual at the rung's
+  stated rate, so over-crewing bought nothing; the crew *is* the throughput now. What survives is
+  `RungDef::build_crew_needed` flooring the source's `workers_needed` through `source_crew_needed`, so
+  committing to a build never asks for fewer hands than the harvest it replaced — see "An improvement
+  costs WORK, not turns".
 - **`neglect_grace_turns` — the consecutive un-worked turns a rung forgives** before its penalty
   starts, the twin of `build_decay` on the *time* axis. Both webs count neglect the same way (a
   `neglect_turns: u16` on `ForagePatch`/`Herd`, reset by any turn the source's upkeep requirement was
@@ -169,16 +233,21 @@ whole reason the dials moved out of `labor_config`/`fauna_config` and into the l
   same seam**, so a published "lapses in N turns" cannot describe a rung the sim is not acting on.
   `intensification::neglect_grace_remaining` owns the arithmetic: `(grace + 1) − neglect`, floored at
   zero, so **`0` means the penalty is biting now** and the client subtracts nothing.
-- **`timescale` — the rung owns the mechanic, the source scales it** (slice 3c). `build_accrual` and
-  `build_decay` take the **same** factor, so it dilates a source's whole build *timescale* and the
-  rung's build:decay ratio is invariant. Today the only scaler is a species' **`taming_rate`** on
-  `animal:pastoral` (`FaunaConfig::taming_rate_for`, resolved live by display name); every other
-  caller passes **`RUNG_TIMESCALE_UNSCALED`** (the plant `tended` patch, the `pen` and its `ExtendPen`
-  rings — penning is a flat build for every species). See "The `Tame` verb" for why scaling both is
-  load-bearing.
+- **The COST MULTIPLIER — the rung owns the mechanic, the source is priced.** `build_cost` and
+  `build_decay` read the **same** scaled cost, so the rung's build:decay ratio is invariant under any
+  per-source multiplier **for free** — a beast that takes a lifetime to gentle does not go feral in a
+  season, and no per-species restatement of the decay bound is needed. (Moot on the animal branch
+  today, where both rungs declare `decay_fraction_per_turn: null`; the rule is what keeps a future
+  decaying rung correct.) Today the only multiplier is a species' **`taming_cost_multiplier`** on
+  `animal:pastoral` (`FaunaConfig::taming_cost_multiplier_for`, resolved live by display name); every
+  other caller passes **`RUNG_COST_UNSCALED`** (the plant `tended` patch and `field`, the `pen` and
+  its `ExtendPen` rings — penning is a flat job for every species: a fence is a fence). See "The
+  `Tame` verb" for the inversion from the retired `taming_rate`.
 - **The per-source state does not move.** `ForagePatch::cultivation_progress`,
-  `Herd::domestication_progress` and `Herd::corral_progress` stay where they live: the engine supplies the *amount*, and the source owns its meter, the clamp to
-  `RUNG_COMPLETE`, and the side-effects of completing it (ownership, `corralled_at`, the feed line).
+  `Herd::domestication_progress` and `Herd::corral_progress` stay where they live — each now beside a
+  **stored companion cost** — and the engine supplies the *amount*, while the source owns its meter,
+  the clamp to that cost, and the side-effects of completing it (ownership, `corralled_at`, the feed
+  line).
 - **Callers.** Accrual: the `Cultivate`, **`Tame`** and `Corral` arms of `advance_labor_allocation`
   (Population) — the *same* call, once per rung. Decay: `forage::advance_cultivation` and
   `fauna::advance_husbandry` (both Logistics; **the one-turn lag is deliberate** — each reads a flag
@@ -317,11 +386,20 @@ file earns them, and `discovery_id_for` reaches them only by delegating to
 by a config.
 
 **The pacing consequence — measured** (`fauna_husbandry::the_full_wild_to_pen_climb_is_paced_by_practising_each_rung`,
-Wild Boar): a pen is a **four-leg, ~97-turn climb** — Sustain-hunt wild → **Herding** (20) → `Tame`
-(32, at the boar's `taming_rate` 0.8) → Sustain-hunt the *pastoral* herd → **Penning** (20) →
-`Corral` (25). The **Penning leg is new** (§4.3): pre-slice-4 Herding gated `Corral` directly, so the
-climb was ~77 turns. **Intended** — one knowledge per transition, and you cannot skip a rung you have
-not practised.
+Wild Boar, on that fixture's herd): a pen is a **four-leg, ~46-turn climb** — Sustain-hunt wild →
+**Herding** (20) → `Tame` (3) → Sustain-hunt the *pastoral* herd → **Penning** (20) → `Corral` (3).
+The **Penning leg is new** (§4.3): pre-slice-4 Herding gated `Corral` directly. **Intended** — one
+knowledge per transition, and you cannot skip a rung you have not practised.
+
+> **The two BUILD legs collapsed from ~32 and ~25 turns once improvements were priced in work**
+> (`docs/plan_unit_costed_work.md` §1.2), and the climb is now emphatically **knowledge-paced**: the
+> lessons are crew-blind (credited once per source per turn) while a build's turns are
+> `work_cost / crew output`, and an animal build's crew is the herd's own `herders_needed` — a real
+> boar herd wants enough keepers to clear a 62.5-unit `Tame` in a handful of turns. **Under-crewing
+> it to slow the build down is not available**: an under-herded flock *sheds*, so the keeper crew
+> belongs to the herd rather than to the player. That is the accepted consequence of removing the
+> crew cap, not a regression — the rung was **crew-blind** before, taking 25 turns whether two hands
+> or twenty worked the herd.
 
 ### Behavior primitives — `movement` is live; `feeding`/`harvest` are still declarative
 
@@ -363,6 +441,36 @@ stands on, and the per-web `knowledge_progress_per_turn` copies that used to dri
 gates `corral` + `extend_pen` (the §4.3 reshuffle; pinned by `builtin_ladder_describes_todays_rungs`,
 which asserts no two rungs share an unlock gate); and **both the build dials *and* the knowledge dials
 now live here**, so the two webs can only be tuned — and paced — together.
+
+### The build on the wire — the fraction stays, the WORK is appended
+
+**The meter stores absolute work units; the wire keeps publishing a `0..1` fraction, and the sim
+divides at capture** (`docs/plan_unit_costed_work.md` §8 — the client does zero arithmetic, the
+`penFeedUpkeep` discipline). `ForagePatchState.cultivationProgress` / `fieldProgress`,
+`HerdTelemetryState.corralProgress` / `domestication` and the `isCultivated` / `isField` /
+`corralled` bools are **unchanged in type, meaning and range**, so every shipped readout keeps
+working untouched. `intensification::build_fraction` is the one divisor, and it divides by the
+source's **own stamped** cost so a finished rung reads exactly `1.0` beside a predicate that already
+says so.
+
+Appended (append-only) on both tables:
+
+| Field | Answers |
+|---|---|
+| `cultivationWorkDone` / `cultivationWorkCost`, `fieldWorkDone` / `fieldWorkCost` | the plant meters in **work units**, and what each job costs |
+| `tameWorkDone` / `tameWorkCost`, `corralWorkDone` / `corralWorkCost` | the animal pair, the Tame carrying the species' own cost multiplier |
+| `buildTurnsRemaining` | how many more turns at the crew, floor and kit that worked this source **this turn** |
+
+- **`workCost` is the LADDER's price, not the source's stamped one.** It is resolved at capture off
+  the rung (and, for a Tame, the species) and published **whether or not a build is in flight** — the
+  compose sheet has to quote a rung's price *before* the player commits, and a source nobody has
+  started carries a stamped cost of `0`.
+- **`buildTurnsRemaining` is `-1` for NO ESTIMATE** (`sim_schema::NO_BUILD_TURNS_ESTIMATE`): no build
+  in flight, or the crew's output is zero and the build is **stalled**, which has no finite answer.
+  The client cannot compute it — it holds neither the crew's output, nor the floor multiplier, nor the
+  kit — so the sim answers. It is stamped by the labor arm (the only place all three are in hand) as
+  transient per-turn scratch on `tended_this_turn`'s cycle, and cleared by the next turn's Logistics
+  decay pass so an abandoned build stops publishing a finish date.
 
 See Also: "Cultivation (Intensification Phase 1a)" (the plant rung 2), "Corral (Intensification Rung 1c)"
 (the animal rung 3), "The husbandry yield ladder" (what each rung *pays*, which this arc does **not**

@@ -77,7 +77,7 @@ use crate::{
     food::FoodModuleTag,
     intensification::{
         BuildDips, LadderConfig, LadderConfigHandle, RungBranch, RungDef, RungKey, SiteRefusal,
-        NEGLECT_NONE, RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED, RUNG_UNSTARTED,
+        FABRICATED_BUILD_COST, NEGLECT_NONE, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
     },
     labor_config::{ForageLaborConfig, LaborConfigHandle, NO_FORAGE_CAPACITY},
     materials_config::MaterialPayoff,
@@ -150,23 +150,60 @@ pub struct ForagePatch {
     /// Coarse health band (Thriving/Stressed/Collapsing), recomputed each turn from biomass vs
     /// `carrying_capacity`. Lights the client over-forage readout the same way herds do.
     pub ecology_phase: EcologyPhase,
-    /// Cultivation progress in `[0.0, 1.0]`; `1.0` = cultivated. Accrues **only** while a band works
-    /// this patch with the [`crate::components::Improvement::Cultivate`] verb in flight (faction knows
-    /// Cultivation + patch Thriving); decays on a patch nobody is working (see `advance_cultivation`).
-    /// The plant mirror of `Herd::corral_progress`.
+    /// Cultivation progress **in absolute work units**; the patch is cultivated once it reaches
+    /// [`Self::cultivation_cost`]. Accrues **only** while a band works this patch with the
+    /// [`crate::components::Improvement::Cultivate`] verb in flight (faction knows Cultivation);
+    /// decays on a patch nobody is working (see `advance_cultivation`). The plant mirror of
+    /// `Herd::corral_progress`.
+    ///
+    /// **It is no longer a `0..1` fraction** (`docs/plan_unit_costed_work.md`): a job has a size now,
+    /// and a normalized meter cannot express one. The **wire** still publishes the fraction — the sim
+    /// divides at capture, so every shipped readout is untouched.
     pub cultivation_progress: f32,
-    /// **Field**-build progress in `[0.0, 1.0]`; `1.0` = a sown Field (the plant ladder's **rung 3**).
-    /// Accrues only while a band works this patch with [`crate::components::Improvement::Sow`] in
-    /// flight (faction knows **Seed Selection**); decays on a patch nobody is working (see
-    /// `advance_cultivation`). The plant mirror of `Herd::corral_progress` — and, exactly like the
-    /// herd's two meters, it is **its own** meter rather than a second reading of
-    /// `cultivation_progress`: a branch with two investment rungs carries two meters, one per rung.
+    /// **What this patch's Cultivate costs, in work units** — the companion of
+    /// [`Self::cultivation_progress`], and what [`Self::is_cultivated`] compares it against.
+    ///
+    /// # Why the cost is STORED rather than looked up
+    ///
+    /// `is_cultivated()` has ~a hundred call sites, most of them nowhere near the ladder, and a
+    /// predicate that took a config would spread that config through the whole plant web. So the
+    /// accrual seam **stamps** the live resolved cost here while the meter is incomplete, and every
+    /// reader asks the source.
+    ///
+    /// **It is never re-stamped once the rung is complete**, which is the point: a later config
+    /// retune that raises the cost must not silently *un*-cultivate ground the player already paid
+    /// for. And it resets to [`RUNG_UNSTARTED`] when the meter decays to zero — the patch is
+    /// unstarted again, and `cost > 0` is what stops `0 >= 0` reading a wild patch as finished.
+    pub cultivation_cost: f32,
+    /// **Field**-build progress in absolute work units; the patch is a sown Field (the plant ladder's
+    /// **rung 3**) once it reaches [`Self::field_cost`]. Accrues only while a band works this patch
+    /// with [`crate::components::Improvement::Sow`] in flight (faction knows **Seed Selection**);
+    /// decays on a patch nobody is working (see `advance_cultivation`). The plant mirror of
+    /// `Herd::corral_progress` — and, exactly like the herd's two meters, it is **its own** meter
+    /// rather than a second reading of `cultivation_progress`: a branch with two investment rungs
+    /// carries two meters, one per rung.
     ///
     /// **Independent of `cultivation_progress`, deliberately.** `Sow` needs no prior patch (§2 — seed
     /// travels), so a Field may stand on ground that was never tended, and a Field that lapses simply
     /// reveals whatever rung the tile still supports underneath (today: wild, since the same untended
     /// turn bleeds both meters).
     pub field_progress: f32,
+    /// **What this patch's Sow costs, in work units** — the rung-3 twin of [`Self::cultivation_cost`],
+    /// with the same stamping rule and the same reason for existing.
+    pub field_cost: f32,
+    /// **How many more turns this patch's running build needs, at the crew, floor and kit that worked
+    /// it this turn** — [`crate::intensification::build_turns_remaining`], stamped by the labor arm
+    /// and published as `ForagePatchState.buildTurnsRemaining`.
+    ///
+    /// `None` = **no estimate**: no build is in flight here, or the crew produced nothing this turn
+    /// and the build is stalled. **The client cannot compute it** (it holds neither the crew's output,
+    /// nor the floor multiplier, nor the kit), which is why the sim answers — the `penFeedUpkeep`
+    /// discipline.
+    ///
+    /// Transient per-turn scratch on the same one-turn cycle as [`Self::tended_this_turn`]: written
+    /// in Population, cleared by `advance_cultivation` in the *next* turn's Logistics, so the value
+    /// the Snapshot stage captures is always the turn's own.
+    pub build_turns_remaining: Option<u32>,
     /// **The named plant this patch is COMMITTED to** — a `flora_config.json` species key, or `None`
     /// for the **wild mixed basket** (`docs/plan_flora_roster.md` §4.2/§4.3). Stored as the config
     /// key rather than the display name because the key is what `FloraConfig::species` and
@@ -194,7 +231,7 @@ pub struct ForagePatch {
     /// `advance_labor_allocation`, Population). `advance_cultivation` (Logistics, the *next* turn —
     /// Logistics runs before Population) reads it to decide feral/decay vs. spared, then clears it.
     /// Sparing a *preparing* patch too is what makes the investment accrue at the full
-    /// `progress_per_turn` (25 turns) rather than net-of-decay. **Not** on the client wire (derived,
+    /// crew output (25 turns at the rung's own crew) rather than net-of-decay. **Not** on the client wire (derived,
     /// transient), but it **does survive a rollback**: the checkpoint clones the whole
     /// `ForageRegistry` (`SimState::forage`), so a restored patch resumes with exactly the worked flag
     /// it was captured with. That is what keeps the first post-restore Logistics decay pass — which
@@ -227,8 +264,11 @@ impl ForagePatch {
             biomass: carrying_capacity,
             carrying_capacity,
             ecology_phase: EcologyPhase::Thriving,
-            cultivation_progress: 0.0,
-            field_progress: 0.0,
+            cultivation_progress: RUNG_UNSTARTED,
+            cultivation_cost: RUNG_UNSTARTED,
+            field_progress: RUNG_UNSTARTED,
+            field_cost: RUNG_UNSTARTED,
+            build_turns_remaining: None,
             species: None,
             owner: None,
             tended_this_turn: false,
@@ -264,8 +304,11 @@ impl ForagePatch {
     /// each turn (place-local, in `advance_labor_allocation`) and is not gather-drawn. Reverts to a
     /// wild gather patch the moment `cultivation_progress` decays below `1.0` (feral — see
     /// `advance_cultivation`). The plant mirror of `Herd::is_domesticated`.
+    ///
+    /// **`cost > RUNG_UNSTARTED` is load-bearing, not defensive**: a wild patch carries `0` in both
+    /// fields, and `0 >= 0` would read every untouched stand on the map as a tended crop.
     pub fn is_cultivated(&self) -> bool {
-        self.cultivation_progress >= RUNG_COMPLETE
+        self.cultivation_cost > RUNG_UNSTARTED && self.cultivation_progress >= self.cultivation_cost
     }
 
     /// A fully-sown **Field** (the plant ladder's rung 3): pays the band that works it a *higher*
@@ -273,7 +316,7 @@ impl ForagePatch {
     /// gather-drawn. Reverts the moment `field_progress` decays below `1.0` (see
     /// `advance_cultivation`). The plant mirror of `Herd::is_corralled`.
     pub fn is_field(&self) -> bool {
-        self.field_progress >= RUNG_COMPLETE
+        self.field_cost > RUNG_UNSTARTED && self.field_progress >= self.field_cost
     }
 
     /// Is this patch a **completed improvement** — a Field or a tended patch? The single predicate
@@ -297,7 +340,16 @@ impl ForagePatch {
     /// patch, so a post-hoc `is_cultivated()` test would announce "Cultivated patch at (x, y)" once
     /// per band. Whether a band's *improvement* should be cleared is a different question (it should,
     /// whoever finished it) and is answered separately by the caller.
-    pub(crate) fn accrue_cultivation(&mut self, faction: FactionId, amount: f32) -> bool {
+    ///
+    /// `cost` is the job's size in work units ([`RungDef::build_cost`]), **stamped onto the patch**
+    /// while the meter is incomplete so that [`Self::is_cultivated`] needs no config — see
+    /// [`Self::cultivation_cost`].
+    pub(crate) fn accrue_cultivation(
+        &mut self,
+        faction: FactionId,
+        amount: f32,
+        cost: f32,
+    ) -> bool {
         if self.is_cultivated() {
             return false;
         }
@@ -307,8 +359,17 @@ impl ForagePatch {
         if self.owner != Some(faction) {
             return false;
         }
-        self.cultivation_progress = (self.cultivation_progress + amount).min(RUNG_COMPLETE);
+        self.cultivation_cost = cost;
+        self.cultivation_progress = (self.cultivation_progress + amount).min(cost);
         self.is_cultivated()
+    }
+
+    /// **A fixture's already-tended patch** — the honest replacement for writing
+    /// `cultivation_progress = 1.0`, which no longer means anything now that a job has a size. It
+    /// runs the real accrual against [`FABRICATED_BUILD_COST`], so ownership and the owner-lock
+    /// behave exactly as they do in play.
+    pub fn complete_cultivation(&mut self, faction: FactionId) -> bool {
+        self.accrue_cultivation(faction, FABRICATED_BUILD_COST, FABRICATED_BUILD_COST)
     }
 
     /// Accrue **Field**-build progress for `faction` (the sowing band, working the patch with
@@ -316,7 +377,7 @@ impl ForagePatch {
     /// rung up, with the same
     /// owner-locking, the same clamp, the same "no-op once complete", and the same
     /// this-call-finished-it return.
-    pub(crate) fn accrue_field(&mut self, faction: FactionId, amount: f32) -> bool {
+    pub(crate) fn accrue_field(&mut self, faction: FactionId, amount: f32, cost: f32) -> bool {
         if self.is_field() {
             return false;
         }
@@ -326,8 +387,14 @@ impl ForagePatch {
         if self.owner != Some(faction) {
             return false;
         }
-        self.field_progress = (self.field_progress + amount).min(RUNG_COMPLETE);
+        self.field_cost = cost;
+        self.field_progress = (self.field_progress + amount).min(cost);
         self.is_field()
+    }
+
+    /// **A fixture's already-sown Field** — the rung-3 twin of [`Self::complete_cultivation`].
+    pub fn complete_field(&mut self, faction: FactionId) -> bool {
+        self.accrue_field(faction, FABRICATED_BUILD_COST, FABRICATED_BUILD_COST)
     }
 
     /// Decay cultivation progress toward zero by `amount`. Applies to **any** patch — a completed
@@ -336,13 +403,20 @@ impl ForagePatch {
     /// Mirrors `Herd::decay_domestication` (minus the domesticated short-circuit — a tended patch left
     /// untended is meant to go feral).
     ///
-    /// **Returns `true` only when THIS call took the rung back below [`RUNG_COMPLETE`]** — the feral
+    /// **Returns `true` only when THIS call took the rung back below its cost** — the feral
     /// *edge*, the exact mirror of [`Self::accrue_cultivation`]'s "did this call finish it". The
     /// caller announces on that edge and nowhere else: a 25-turn investment's payoff has just been
     /// destroyed, and the feed says so once rather than every turn of the long bleed that follows.
+    ///
+    /// **A meter that reaches zero forgets its cost too** ([`Self::cultivation_cost`] back to
+    /// [`RUNG_UNSTARTED`]): the ground is unstarted again, and a stranded cost would leave a wild
+    /// patch quoting a price nobody is paying.
     pub(crate) fn decay_cultivation(&mut self, amount: f32) -> bool {
         let was_cultivated = self.is_cultivated();
-        self.cultivation_progress = (self.cultivation_progress - amount).max(0.0);
+        self.cultivation_progress = (self.cultivation_progress - amount).max(RUNG_UNSTARTED);
+        if self.cultivation_progress <= RUNG_UNSTARTED {
+            self.cultivation_cost = RUNG_UNSTARTED;
+        }
         self.reconcile_owner();
         was_cultivated && !self.is_cultivated()
     }
@@ -352,11 +426,14 @@ impl ForagePatch {
     /// *gradual* bleed for the same reason cultivation bleeds gradually: **a patch is a place and a
     /// herd is not**, so leftover progress still refers to the same ground.
     ///
-    /// **Returns `true` only when THIS call took the rung back below [`RUNG_COMPLETE`]** — see
+    /// **Returns `true` only when THIS call took the rung back below its cost** — see
     /// [`Self::decay_cultivation`] for why the announcement rides the edge.
     pub(crate) fn decay_field(&mut self, amount: f32) -> bool {
         let was_field = self.is_field();
-        self.field_progress = (self.field_progress - amount).max(0.0);
+        self.field_progress = (self.field_progress - amount).max(RUNG_UNSTARTED);
+        if self.field_progress <= RUNG_UNSTARTED {
+            self.field_cost = RUNG_UNSTARTED;
+        }
         self.reconcile_owner();
         was_field && !self.is_field()
     }
@@ -382,7 +459,7 @@ impl ForagePatch {
     /// the tile's whole mixed basket rather than one plant somebody once chose. Re-committing then
     /// costs the full build again, at whatever the tile now favours.
     fn reconcile_owner(&mut self) {
-        if self.cultivation_progress <= 0.0 && self.field_progress <= 0.0 {
+        if self.cultivation_progress <= RUNG_UNSTARTED && self.field_progress <= RUNG_UNSTARTED {
             self.owner = None;
             self.species = None;
         }
@@ -1118,6 +1195,12 @@ pub fn rung_payoff(
 /// patch on it actually stands: the drawn-down rungs at their MSY operating point (Sustain settles a
 /// patch at `K/2`), and a Field at its capacity, because a Field is never drawn down and regrows to
 /// it. For a rung already built, that is the number the shipped `tendedYield`/`fieldYield` read too.
+/// **Whose ground the per-species quote imagines** — nobody's in particular. A committed meter needs
+/// an owner (the accrual sets one on first progress), and the quote is a pure function of ground and
+/// config, so the faction it names cannot matter; it is stated rather than spelled `FactionId(0)` at
+/// the two call sites so the *irrelevance* travels with the value.
+const HYPOTHETICAL_OWNER: FactionId = FactionId(0);
+
 fn hypothetical_patch(
     tile: UVec2,
     tile_capacity: f32,
@@ -1128,10 +1211,13 @@ fn hypothetical_patch(
     patch.biomass = tile_capacity * settled_biomass_fraction(rung);
     if let Some(key) = species {
         patch.species = Some(key.to_string());
+        // The hypothetical is a *quote*, not a source anyone paid for, so it fabricates the
+        // completed meter rather than pricing one — the rate seams only ask `is_field()` /
+        // `is_cultivated()`.
         match rung {
-            RungKey::PlantField => patch.field_progress = RUNG_COMPLETE,
-            _ => patch.cultivation_progress = RUNG_COMPLETE,
-        }
+            RungKey::PlantField => patch.complete_field(HYPOTHETICAL_OWNER),
+            _ => patch.complete_cultivation(HYPOTHETICAL_OWNER),
+        };
     }
     patch
 }
@@ -1442,7 +1528,7 @@ pub fn advance_forage_regrowth(
 /// patch, at a higher-than-wild rate — see that system. This pass now only handles **decay/feral**:
 /// - A patch **worked as an improvement this turn** (`tended_this_turn`) is **spared**. That covers
 ///   a completed patch/Field being worked *and* one being prepared under `Improvement::Cultivate` /
-///   `Improvement::Sow` — so an investment accrues at the full `progress_per_turn` (25 turns at the
+///   `Improvement::Sow` — so an investment accrues at the crew's full output (25 turns at the
 ///   shipped default) instead of net-of-decay.
 /// - An **untended** cultivated patch **goes feral**: `cultivation_progress` decays by
 ///   `decay_per_turn`, dropping below `1.0` so it reverts to a wild depletable gather patch, and keeps
@@ -1472,7 +1558,7 @@ pub fn advance_forage_regrowth(
 /// whatever rung 2 the ground already had — which may be nothing — and never pays the deserter a rung
 /// they did not build.
 ///
-/// **A lost rung is ANNOUNCED.** Crossing back below [`RUNG_COMPLETE`] destroys a 25-turn investment's
+/// **A lost rung is ANNOUNCED.** Crossing back below its own cost destroys a 25-turn investment's
 /// payoff, so each decay call reports that edge and this pass pushes the rung's own feed line
 /// (`CommandEventKind::Cultivate` / `Sow`) — once, on the transition, the way the animal web has always
 /// announced a lost pen (`fauna::announce_pen_lost`). The long bleed to zero that follows says nothing
@@ -1541,7 +1627,7 @@ pub fn advance_cultivation(
             // it says.
             if let Some(rung) = patch_unwinding_rung(patch, &ladder) {
                 if neglect > rung.neglect_grace_turns() {
-                    let decay = rung.build_decay(RUNG_TIMESCALE_UNSCALED);
+                    let decay = rung.build_decay(RUNG_COST_UNSCALED);
                     let verb = rung.verb_improvement();
                     let lost = if verb == Some(Improvement::Sow) {
                         patch.decay_field(decay)
@@ -1556,11 +1642,15 @@ pub fn advance_cultivation(
         }
         // Clear the transient per-turn flag after reading it (re-set next Population stage if worked).
         patch.tended_this_turn = false;
+        // **And the turns estimate with it**, on the same one-turn cycle: a build the player
+        // abandoned must stop publishing a finish date, and the labor arm re-stamps it this turn if
+        // a crew is still on it (Logistics runs before Population).
+        patch.build_turns_remaining = None;
     }
 }
 
 /// **Announce a lost plant rung** — the plant twin of `fauna::announce_pen_lost`, and pushed on the
-/// same edge: the turn a *completed* improvement crosses back below [`RUNG_COMPLETE`]. A completed rung
+/// same edge: the turn a *completed* improvement crosses back below its own cost. A completed rung
 /// is 25 turns of forgone harvest, so losing it is never silent; the partial bleed that follows is not
 /// announced, because the thing that mattered has already happened.
 ///
@@ -3045,48 +3135,69 @@ mod tests {
         }
     }
 
+    /// The Cultivate job every patch-level test below is priced against — the shipped `plant:tended`
+    /// cost, so the arithmetic reads in the units the config states.
+    const CULTIVATE_COST: f32 = 50.0;
+
     #[test]
     fn cultivation_accrual_is_owner_locked_and_clamped() {
         let mut patch = ForagePatch::new(UVec2::new(1, 1), 120.0);
-        // First accrual claims ownership for the acting faction.
-        patch.accrue_cultivation(FactionId(0), 0.3);
+        // First accrual claims ownership for the acting faction, and stamps the job's cost.
+        patch.accrue_cultivation(FactionId(0), 15.0, CULTIVATE_COST);
         assert_eq!(patch.owner, Some(FactionId(0)));
-        assert!((patch.cultivation_progress - 0.3).abs() < 1e-6);
+        assert!((patch.cultivation_progress - 15.0).abs() < 1e-6);
+        assert_eq!(patch.cultivation_cost, CULTIVATE_COST);
         // A different faction cannot accrue on an already-owned patch.
-        patch.accrue_cultivation(FactionId(1), 0.5);
+        patch.accrue_cultivation(FactionId(1), 25.0, CULTIVATE_COST);
         assert_eq!(patch.owner, Some(FactionId(0)));
-        assert!((patch.cultivation_progress - 0.3).abs() < 1e-6);
-        // Owner accrues; progress clamps at 1.0 and latches cultivated.
-        patch.accrue_cultivation(FactionId(0), 0.9);
+        assert!((patch.cultivation_progress - 15.0).abs() < 1e-6);
+        // Owner accrues; progress clamps at the job's cost and latches cultivated.
+        patch.accrue_cultivation(FactionId(0), 45.0, CULTIVATE_COST);
         assert!(patch.is_cultivated());
-        assert_eq!(patch.cultivation_progress, 1.0);
-        // A cultivated patch is a no-op for further accrual.
-        patch.accrue_cultivation(FactionId(0), 0.5);
-        assert_eq!(patch.cultivation_progress, 1.0);
+        assert_eq!(patch.cultivation_progress, CULTIVATE_COST);
+        // A cultivated patch is a no-op for further accrual — including for its stamped cost, so a
+        // later retune cannot un-cultivate ground the player has already paid for.
+        patch.accrue_cultivation(FactionId(0), 25.0, CULTIVATE_COST * 2.0);
+        assert_eq!(patch.cultivation_progress, CULTIVATE_COST);
+        assert_eq!(patch.cultivation_cost, CULTIVATE_COST);
+        assert!(patch.is_cultivated());
+    }
+
+    /// **An unstarted patch is not a finished one**, and `progress >= cost` alone would say it was:
+    /// a wild stand carries `0` in both fields. The cost being positive is the predicate's other half.
+    #[test]
+    fn a_wild_patch_is_not_cultivated_even_though_both_meters_read_zero() {
+        let patch = ForagePatch::new(UVec2::new(7, 7), 120.0);
+        assert_eq!(patch.cultivation_progress, RUNG_UNSTARTED);
+        assert_eq!(patch.cultivation_cost, RUNG_UNSTARTED);
+        assert!(!patch.is_cultivated());
+        assert!(!patch.is_field());
+        assert!(!patch.is_managed());
     }
 
     #[test]
     fn cultivation_decay_clears_owner_at_zero_and_takes_cultivated_feral() {
         let mut patch = ForagePatch::new(UVec2::new(2, 2), 120.0);
-        patch.accrue_cultivation(FactionId(0), 0.05);
-        patch.decay_cultivation(0.02);
-        assert!((patch.cultivation_progress - 0.03).abs() < 1e-6);
-        assert_eq!(patch.owner, Some(FactionId(0)), "owner held above zero");
-        // Decaying to zero clears ownership so another faction can later tend it.
+        patch.accrue_cultivation(FactionId(0), 2.5, CULTIVATE_COST);
         patch.decay_cultivation(1.0);
-        assert_eq!(patch.cultivation_progress, 0.0);
+        assert!((patch.cultivation_progress - 1.5).abs() < 1e-6);
+        assert_eq!(patch.owner, Some(FactionId(0)), "owner held above zero");
+        // Decaying to zero clears ownership so another faction can later tend it — and the stamped
+        // cost with it, since the ground is unstarted again.
+        patch.decay_cultivation(CULTIVATE_COST);
+        assert_eq!(patch.cultivation_progress, RUNG_UNSTARTED);
+        assert_eq!(patch.cultivation_cost, RUNG_UNSTARTED);
         assert_eq!(patch.owner, None);
         // Rung 1a: a cultivated patch now DOES decay when decayed (an untended tended patch goes
-        // feral) — it reverts to wild the moment progress drops below 1.0.
-        patch.cultivation_progress = 1.0;
-        patch.owner = Some(FactionId(1));
+        // feral) — it reverts to wild the moment progress drops below its own cost.
+        patch.accrue_cultivation(FactionId(1), CULTIVATE_COST, CULTIVATE_COST);
         assert!(patch.is_cultivated());
-        patch.decay_cultivation(0.5);
+        patch.decay_cultivation(CULTIVATE_COST * 0.5);
         assert!(
             !patch.is_cultivated(),
             "an untended tended patch reverts to wild"
         );
-        assert!((patch.cultivation_progress - 0.5).abs() < 1e-6);
+        assert!((patch.cultivation_progress - CULTIVATE_COST * 0.5).abs() < 1e-4);
     }
 
     /// **The commitment is recorded once and released only by going fully feral** (Flora Roster S1).
@@ -3102,17 +3213,17 @@ mod tests {
         assert_eq!(patch.species.as_deref(), Some("wild_emmer"));
 
         // A patch with *either* meter still standing keeps its crop...
-        patch.accrue_cultivation(FactionId(0), RUNG_COMPLETE);
-        patch.accrue_field(FactionId(0), RUNG_COMPLETE);
-        patch.decay_field(RUNG_COMPLETE);
+        patch.complete_cultivation(FactionId(0));
+        patch.complete_field(FactionId(0));
+        patch.decay_field(FABRICATED_BUILD_COST);
         assert_eq!(
             patch.species.as_deref(),
             Some("wild_emmer"),
             "a lapsed Field over a standing tended patch is still that crop"
         );
         // ...and lapses only when nothing is left of either.
-        patch.decay_cultivation(RUNG_COMPLETE);
-        assert_eq!(patch.cultivation_progress, 0.0);
+        patch.decay_cultivation(FABRICATED_BUILD_COST);
+        assert_eq!(patch.cultivation_progress, RUNG_UNSTARTED);
         assert_eq!(
             patch.species, None,
             "a fully feral patch is the wild basket again"
@@ -3130,15 +3241,16 @@ mod tests {
         // The feral rate is the `plant:tended` rung's build decay — the same value
         // `advance_cultivation` bleeds.
         let ladder = LadderConfig::builtin();
-        let decay = ladder
-            .rung(RungKey::PlantTended)
-            .build_decay(RUNG_TIMESCALE_UNSCALED);
+        let tended_rung = ladder.rung(RungKey::PlantTended);
+        let decay = tended_rung.build_decay(RUNG_COST_UNSCALED);
+        let cost = tended_rung
+            .build_cost(RUNG_COST_UNSCALED)
+            .expect("the tended rung builds");
         assert!(decay > 0.0);
 
         // Tended every turn → never decays, stays cultivated.
         let mut tended = ForagePatch::new(UVec2::new(1, 1), forage.capacity_for(TEST_BIOME));
-        tended.cultivation_progress = 1.0;
-        tended.owner = Some(FactionId(0));
+        tended.accrue_cultivation(FactionId(0), cost, cost);
         for _ in 0..200 {
             tended.tended_this_turn = true; // labor arm marks it worked
             if !(tended.is_cultivated() && tended.tended_this_turn) {
@@ -3151,8 +3263,7 @@ mod tests {
 
         // Untended → feral. Reverts to wild after the first untended turn, then fully decays to 0.
         let mut feral = ForagePatch::new(UVec2::new(2, 2), forage.capacity_for(TEST_BIOME));
-        feral.cultivation_progress = 1.0;
-        feral.owner = Some(FactionId(0));
+        feral.accrue_cultivation(FactionId(0), cost, cost);
         // Turn 1 untended: decays below 1.0 → no longer cultivated.
         if !(feral.is_cultivated() && feral.tended_this_turn) {
             feral.decay_cultivation(decay);
@@ -3162,15 +3273,18 @@ mod tests {
             !feral.is_cultivated(),
             "one untended turn reverts a farm to wild"
         );
-        // Over ~1/decay_per_turn total turns it fully decays and clears ownership.
-        let turns_to_zero = (1.0_f32 / decay).ceil() as usize + 2;
+        // Over ~cost/decay total turns it fully decays and clears ownership.
+        let turns_to_zero = (cost / decay).ceil() as usize + 2;
         for _ in 0..turns_to_zero {
             if !(feral.is_cultivated() && feral.tended_this_turn) {
                 feral.decay_cultivation(decay);
             }
             feral.tended_this_turn = false;
         }
-        assert_eq!(feral.cultivation_progress, 0.0, "feral patch fully reverts");
+        assert_eq!(
+            feral.cultivation_progress, RUNG_UNSTARTED,
+            "feral patch fully reverts"
+        );
         assert_eq!(feral.owner, None, "ownership lapses once fully feral");
     }
 
@@ -3178,11 +3292,9 @@ mod tests {
     fn cultivated_count_filters_by_owner() {
         let mut registry = ForageRegistry::default();
         let mut a = ForagePatch::new(UVec2::new(0, 0), 120.0);
-        a.cultivation_progress = 1.0;
-        a.owner = Some(FactionId(0));
+        a.complete_cultivation(FactionId(0));
         let mut b = ForagePatch::new(UVec2::new(1, 0), 120.0);
-        b.cultivation_progress = 1.0;
-        b.owner = Some(FactionId(1));
+        b.complete_cultivation(FactionId(1));
         let uncultivated = ForagePatch::new(UVec2::new(2, 0), 120.0);
         registry.patches.insert(a.tile, a);
         registry.patches.insert(b.tile, b);

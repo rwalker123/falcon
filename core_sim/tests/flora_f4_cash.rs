@@ -249,6 +249,10 @@ fn first_patch_tile(app: &App) -> (bevy::prelude::Entity, UVec2) {
     panic!("the pinned map must carry at least one forage patch");
 }
 
+/// **Whose Field the fixture seats** — the harness's one faction, so the owner-lock the accrual
+/// applies is satisfied.
+const FIELD_OWNER: FactionId = FactionId(0);
+
 /// Turn the patch at `coord` into a completed **Field** of `species` standing at `biomass`. Written
 /// straight onto the registry: what is under test is the *harvest routing* of a finished rung, not
 /// the build that gets there.
@@ -256,7 +260,9 @@ fn seat_field(app: &mut App, coord: UVec2, species: &str, biomass: f32) {
     let mut registry = app.world.resource_mut::<ForageRegistry>();
     let patch = registry.patch_mut(coord).expect("patch exists");
     patch.species = Some(species.to_string());
-    patch.field_progress = 1.0;
+    // The rung is FINISHED here. A meter set to a bare `1.0` no longer completes anything now that a
+    // job has a size (`docs/plan_unit_costed_work.md`), so this runs the real accrual.
+    patch.complete_field(FIELD_OWNER);
     patch.carrying_capacity = biomass;
     patch.biomass = biomass;
 }

@@ -21,7 +21,7 @@ use bevy::prelude::Entity;
 use core_sim::{
     build_headless_app, run_turn, scalar_from_f32, scalar_one, DiscoveryProgressLedger, FactionId,
     GrazeRegistry, HerdRegistry, LaborAllocation, LaborAssignment, LaborTarget, PopulationCohort,
-    SimulationConfig, SnapshotHistory, Tile, FODDER, FODDERING_DISCOVERY_ID, FOOD, RUNG_COMPLETE,
+    SimulationConfig, SnapshotHistory, Tile, FODDER, FODDERING_DISCOVERY_ID, FOOD,
 };
 
 /// The shipped default `map_seed` is `0` ("seed from entropy"), so a test must pin its own or every
@@ -95,7 +95,7 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32) -> (f32, f32, f32, f32, f32, f
                     .then_with(|| b.id.cmp(&a.id))
             })
             .expect("the map must spawn at least one pennable herd");
-        herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+        herd.tame_outright(FactionId(0));
         assert!(
             herd.is_domesticated(),
             "{} must actually tame — a pen is built on a herd you own",

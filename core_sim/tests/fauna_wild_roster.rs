@@ -47,8 +47,8 @@ fn wild_additions_are_huntable_in_their_host_biomes() {
             "{key} should omit animals_per_herder"
         );
         assert_eq!(
-            def.taming_rate, wild_exemplar.taming_rate,
-            "{key} should omit taming_rate"
+            def.taming_cost_multiplier, wild_exemplar.taming_cost_multiplier,
+            "{key} should omit taming_cost_multiplier"
         );
 
         let candidates = config.game_species_for_biome(biome);

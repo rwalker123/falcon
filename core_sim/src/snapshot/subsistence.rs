@@ -9,7 +9,8 @@ use crate::forage::{
     field_fodder, forage_per_worker_biomass, patch_ecology, patch_fodder_per_biomass,
     patch_neglect_grace_remaining, patch_provisions_per_biomass, tended_fodder,
 };
-use crate::intensification::NO_BUILD_REMAINING_FRACTION;
+use crate::intensification::{build_fraction, NO_BUILD_REMAINING_FRACTION, RUNG_COST_UNSCALED};
+use sim_schema::NO_BUILD_TURNS_ESTIMATE;
 
 /// **No animal pays fodder** — the herd half of the per-biomass yield triple is structurally zero,
 /// and stated rather than defaulted so a reader sees it is a fact about animals and not an
@@ -608,6 +609,27 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // `assign_labor … hunt <herd> <n>` resolves with no `kit` token. Off the single
                 // `quoted` resolution above, so it names the kit the row's own tiers came from.
                 default_kit_id: quoted.kit_id.clone(),
+                // **THE BUILD, PRICED IN WORK** (`docs/plan_unit_costed_work.md` §8). `work_done` is
+                // the herd's own meter; `work_cost` is what that job costs **on this herd**, resolved
+                // LIVE off the ladder (times the species' `taming_cost_multiplier` for the Tame) and
+                // published **whether or not a build is in flight** — the compose sheet has to quote
+                // the price before the player commits, and the herd's *stamped* cost is `0` until
+                // someone starts. Penning takes no species multiplier: a fence is a fence.
+                tame_work_done: herd.map(|herd| herd.domestication_progress).unwrap_or(0.0),
+                tame_work_cost: ladder
+                    .rung(RungKey::AnimalPastoral)
+                    .build_cost(fauna.taming_cost_multiplier_for(&entry.species))
+                    .unwrap_or(0.0),
+                corral_work_done: herd.map(|herd| herd.corral_progress).unwrap_or(0.0),
+                corral_work_cost: ladder
+                    .rung(RungKey::AnimalPen)
+                    .build_cost(RUNG_COST_UNSCALED)
+                    .unwrap_or(0.0),
+                // **The turns estimate the labor arm stamped this turn** — `-1` where there is none
+                // (no build in flight, or a stalled one). The client cannot derive it.
+                build_turns_remaining: herd
+                    .and_then(|herd| herd.build_turns_remaining)
+                    .map_or(NO_BUILD_TURNS_ESTIMATE, |turns| turns as i32),
             }
         })
         .collect()
@@ -689,7 +711,13 @@ pub(crate) fn snapshot_forage_patches(
             ForagePatchState {
                 x: patch.tile.x,
                 y: patch.tile.y,
-                cultivation_progress: patch.cultivation_progress,
+                // **The wire keeps the 0..1 fraction; the meter is in work units** — divided here
+                // against the patch's OWN stamped cost, so a tended patch reads exactly `1.0`
+                // beside an `is_cultivated` that is already true.
+                cultivation_progress: build_fraction(
+                    patch.cultivation_progress,
+                    patch.cultivation_cost,
+                ),
                 is_cultivated: patch.is_cultivated(),
                 owner: patch.owner.map(|faction| faction.0),
                 biomass: patch.biomass,
@@ -705,7 +733,7 @@ pub(crate) fn snapshot_forage_patches(
                 // Field may stand on ground that was never tended — and its own preparing/payoff
                 // pair. `field_provisions` is the same helper the labor arm pays a Field with, so the
                 // client's "then Y" is the number the sim will hand over.
-                field_progress: patch.field_progress,
+                field_progress: build_fraction(patch.field_progress, patch.field_cost),
                 is_field: patch.is_field(),
                 field_yield: field_provisions(
                     patch,
@@ -769,6 +797,26 @@ pub(crate) fn snapshot_forage_patches(
                     forage_per_worker_biomass(equipped_gather_rate, seasonal),
                     FORECAST_OUTPUT_MULTIPLIER,
                 ),
+                // **THE BUILD, PRICED IN WORK** (`docs/plan_unit_costed_work.md` §8). `work_done` is
+                // the patch's own meter; `work_cost` is what that job costs, resolved LIVE off the
+                // ladder and published **whether or not a build is in flight** — the compose sheet
+                // has to quote the price before the player commits, and the patch's *stamped* cost is
+                // `0` until someone starts. `RUNG_COST_UNSCALED` on both: the only per-source cost
+                // multiplier on the ladder is a species' taming cost, and a plant has no species.
+                cultivation_work_done: patch.cultivation_progress,
+                cultivation_work_cost: ladder
+                    .rung(RungKey::PlantTended)
+                    .build_cost(RUNG_COST_UNSCALED)
+                    .unwrap_or(0.0),
+                field_work_done: patch.field_progress,
+                field_work_cost: ladder
+                    .rung(RungKey::PlantField)
+                    .build_cost(RUNG_COST_UNSCALED)
+                    .unwrap_or(0.0),
+                // **The turns estimate the labor arm stamped this turn** — `-1` where there is none.
+                build_turns_remaining: patch
+                    .build_turns_remaining
+                    .map_or(NO_BUILD_TURNS_ESTIMATE, |turns| turns as i32),
                 // **One gatherer's BIOMASS throughput** — `per_worker_biomass_capacity × seasonal`,
                 // the exact term `forage_take`'s worker cap multiplies by the head-count, through the
                 // shared helper so the wire and the take cannot disagree. `0` in a dead season, like

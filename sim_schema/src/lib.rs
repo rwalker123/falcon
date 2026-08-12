@@ -1124,4 +1124,88 @@ mod tests {
             "an unstated role is empty, never a category"
         );
     }
+
+    /// **THE BUILD'S WORK PAIRS AND ITS TURNS ESTIMATE SURVIVE THE WIRE, on both webs.**
+    ///
+    /// Encoded → decoded through the generated reader, because a field appended behind an existing
+    /// one is exactly the shape that silently fails to serialize — and each of these is the number
+    /// the compose sheet quotes a rung's price and finish date from, so an absent one reads as
+    /// "no build" rather than as a missing field.
+    ///
+    /// **`-1` is asserted positively**: it is the "no estimate" sentinel
+    /// ([`NO_BUILD_TURNS_ESTIMATE`]), and a codec that dropped the field would decode the schema
+    /// default — which is the same `-1` — so the live half is asserted beside it.
+    #[test]
+    fn the_build_work_pairs_and_the_turns_estimate_survive_the_wire() {
+        const TAME_DONE: f32 = 18.0;
+        const TAME_COST: f32 = 250.0;
+        const CORRAL_DONE: f32 = 5.0;
+        const CORRAL_COST: f32 = 75.0;
+        const HERD_TURNS: i32 = 12;
+        const CULTIVATION_DONE: f32 = 30.0;
+        const CULTIVATION_COST: f32 = 50.0;
+        const FIELD_DONE: f32 = 0.0;
+        const FIELD_COST: f32 = 75.0;
+
+        let snapshot = WorldSnapshot {
+            herds: vec![HerdTelemetryState {
+                tame_work_done: TAME_DONE,
+                tame_work_cost: TAME_COST,
+                corral_work_done: CORRAL_DONE,
+                corral_work_cost: CORRAL_COST,
+                build_turns_remaining: HERD_TURNS,
+                ..HerdTelemetryState::default()
+            }],
+            forage_patches: vec![ForagePatchState {
+                cultivation_work_done: CULTIVATION_DONE,
+                cultivation_work_cost: CULTIVATION_COST,
+                field_work_done: FIELD_DONE,
+                field_work_cost: FIELD_COST,
+                build_turns_remaining: NO_BUILD_TURNS_ESTIMATE,
+                ..ForagePatchState::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("a decodable snapshot envelope");
+        let subsistence = envelope
+            .payload_as_snapshot()
+            .expect("a snapshot payload")
+            .subsistence()
+            .expect("a subsistence section");
+
+        let herd = subsistence.herds().expect("the herds").get(0);
+        assert_eq!(herd.tameWorkDone(), TAME_DONE);
+        assert_eq!(
+            herd.tameWorkCost(),
+            TAME_COST,
+            "a Tame's price carries the species' own cost multiplier"
+        );
+        assert_eq!(herd.corralWorkDone(), CORRAL_DONE);
+        assert_eq!(herd.corralWorkCost(), CORRAL_COST);
+        assert_eq!(herd.buildTurnsRemaining(), HERD_TURNS);
+
+        let patch = subsistence
+            .foragePatches()
+            .expect("the forage patches")
+            .get(0);
+        assert_eq!(patch.cultivationWorkDone(), CULTIVATION_DONE);
+        assert_eq!(patch.cultivationWorkCost(), CULTIVATION_COST);
+        assert_eq!(
+            patch.fieldWorkDone(),
+            FIELD_DONE,
+            "an unstarted rung banks nothing…"
+        );
+        assert_eq!(
+            patch.fieldWorkCost(),
+            FIELD_COST,
+            "…and still quotes its price, so the sheet can offer it"
+        );
+        assert_eq!(
+            patch.buildTurnsRemaining(),
+            NO_BUILD_TURNS_ESTIMATE,
+            "no build in flight is -1, never 0"
+        );
+    }
 }

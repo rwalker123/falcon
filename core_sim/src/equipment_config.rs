@@ -368,18 +368,21 @@ pub enum WearQuantum {
     /// herd is continuous work that shows up only as the meter moving. The meter's own increment is
     /// therefore what a use *is* — the same treatment the two biomass quanta give a take.
     ///
-    /// **Every build totals [`crate::intensification::RUNG_COMPLETE`] of progress, so a build costs
-    /// a FIXED amount of gear** whatever else is true of it. A Steppe Runner's 125-turn `Tame` and a
-    /// rabbit's 25-turn one burn identical hurdles, and a crew building at a shallow floor halves
-    /// its accrual and doubles its turns to arrive at the same total. That invariance is the reason
-    /// to prefer it over a per-worker-turn charge, which would be a clock in a per-use costume and
-    /// would additionally make the gear's cost track a species' `taming_rate` — the same
-    /// species-dependence `equipment.md` rejected for `body_mass` on the learning rate.
+    /// **A BIGGER JOB EATS MORE GEAR, with no per-improvement authoring** — the meter's increment is
+    /// in **work units** (`docs/plan_unit_costed_work.md` §6.3), so a 75-unit Sow burns 1.5× what a
+    /// 50-unit Cultivate does and a Steppe Runner's 250-unit `Tame` burns 5× a rabbit's. The gear's
+    /// cost tracks the **size of the job** rather than a species' *rate*, which is the
+    /// species-dependence `equipment.md` rejects; a crew building at a shallow floor banks less work
+    /// per turn and pays proportionally less for it.
     ///
-    /// The total is **exactly** `RUNG_COMPLETE` because the charge is the source meter's own
-    /// *delta* across the turn's accrual, not the accrual the rung offered: the completing turn is
-    /// billed for the sliver of progress it actually banked, not for the full turn's offer the
-    /// meter clamped away.
+    /// It replaced a normalized meter under which every build totalled `1.0`, so a build cost a fixed
+    /// amount of gear whatever else was true of it — the thing `equipment.md` recorded as impossible.
+    /// The shipped amount was divided by the reference job's cost when the meters inverted, so gear
+    /// life per reference build is exactly unchanged.
+    ///
+    /// The total is **exact** because the charge is the source meter's own *delta* across the turn's
+    /// accrual, not the accrual the rung offered: the completing turn is billed for the sliver of
+    /// progress it actually banked, not for the full turn's offer the meter clamped away.
     ///
     /// **Still not a clock.** A stalled build accrues nothing and pays nothing: a crew below its
     /// rung's knowledge gate, on a source it is not working, holding no build verb at all, or one
@@ -401,10 +404,12 @@ impl WearQuantum {
     /// "biomass" is not a countable event and inventing a per-turn conversion here would need a
     /// forecast of what the band is about to do.
     ///
-    /// **[`Self::BuildProgress`] reads as a count and is not an exception to that.** It is a
-    /// continuous quantum like the biomasses, but its unit is *already* the whole event: a rung
-    /// completes at [`crate::intensification::RUNG_COMPLETE`] `== 1.0`, so one unit of progress is
-    /// one finished build and "builds" is the unit rather than a conversion of it.
+    /// **[`Self::BuildProgress`] reads as a count, and since improvements were priced in work that
+    /// is no longer strictly true.** It is a continuous quantum like the biomasses; its unit used to
+    /// be *already* the whole event (a rung completed at `1.0`, so one unit of progress was one
+    /// finished build), and it is now one **worker-turn at the food peak** — so a life readout in
+    /// "builds" over-counts by the size of the job. Quoting it against a named reference job —
+    /// *"≈12 gardens' worth"* — is `docs/plan_unit_costed_work.md` §6.3, a later slice.
     ///
     /// **An item wearing on SEVERAL quanta is quoted on its FIRST** — see
     /// [`ItemDefinition::headline_wear`], which is where that choice is argued.

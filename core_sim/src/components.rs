@@ -3007,7 +3007,7 @@ pub fn raid_is_recurring(floor: f32) -> bool {
 /// carries — a deliberate **yield dip**, because they are preparing the ground / gentling the herd /
 /// building the pen instead of harvesting it — and the source's build meter
 /// (`ForagePatch::cultivation_progress` / `field_progress`, `Herd::domestication_progress` /
-/// `corral_progress`) accrues the rung's `progress_per_turn`. At progress `1.0` the source becomes a
+/// `corral_progress`) accrues the crew's work output. At the job's own cost the source becomes a
 /// **tended patch / Field / pastoral herd / penned herd** and pays the full managed yield.
 ///
 /// **The dip multiplies the CREW, never the escapement ceiling** (`docs/plan_harvest_floor.md`

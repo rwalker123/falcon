@@ -14,7 +14,7 @@ use core_sim::{
     MapPresetsHandle, MoraleCause, PopulationCohort, Scalar, SedentarizationConfigHandle,
     SedentarizationScore, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, FOOD, RUNG_COMPLETE,
+    StartProfileKnowledgeTagsHandle, FOOD,
 };
 
 fn spawn_world() -> App {
@@ -117,7 +117,7 @@ fn domesticate(app: &mut App, faction: FactionId, count: usize) {
         .take(count);
     let mut tamed = 0;
     for herd in tameable {
-        herd.accrue_domestication(faction, RUNG_COMPLETE);
+        herd.tame_outright(faction);
         tamed += 1;
     }
     assert_eq!(

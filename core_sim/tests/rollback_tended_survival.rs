@@ -58,7 +58,8 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
     let (faction, available) = resident_band(&mut app);
 
     // --- Set up a completed, worked Field on a real forage patch. ------------------------------
-    // A Field (rung 3): both improvement meters at 1.0, so `is_managed()` (and `is_field()`) holds.
+    // A Field (rung 3): both improvement meters paid off, so `is_managed()` (and `is_field()`) holds.
+    // The meters are in WORK UNITS now, so a completed rung reads its own cost rather than `1.0`.
     let field_tile: UVec2 = {
         let mut forage = app.world.resource_mut::<ForageRegistry>();
         let patch = forage
@@ -66,8 +67,8 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
             .values_mut()
             .next()
             .expect("worldgen seeds forage patches");
-        patch.cultivation_progress = 1.0;
-        patch.field_progress = 1.0;
+        patch.complete_cultivation(faction);
+        patch.complete_field(faction);
         patch.owner = Some(faction);
         patch.biomass = patch.carrying_capacity;
         // As a band that worked it this turn would have left it (the flag the restore drops):
@@ -91,11 +92,18 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
             .expect("worldgen seeds herds");
         let herd = &mut herds.herds[index];
         let tile = herd.current_pos;
-        herd.domestication_progress = 1.0;
+        // **Written straight onto the herd, gates and all** — worldgen picks whichever species is
+        // first on the map and it may be `wild`-ceiling, while what is under test is that the
+        // *checkpoint* carries a finished rung. A completed meter is `progress >= cost > 0`, so both
+        // halves are set: the fabricated one-worker-turn job (`FABRICATED_BUILD_COST`) says "this
+        // rung is paid for" without pretending to the ladder's own price.
+        herd.domestication_progress = core_sim::FABRICATED_BUILD_COST;
+        herd.domestication_cost = core_sim::FABRICATED_BUILD_COST;
         herd.owner = Some(faction);
         herd.corralled_at = Some(tile);
         herd.pen_radius = 1;
-        herd.corral_progress = 1.0;
+        herd.corral_progress = core_sim::FABRICATED_BUILD_COST;
+        herd.corral_cost = core_sim::FABRICATED_BUILD_COST;
         herd.biomass = herd.carrying_capacity;
         // The one-turn "keeper tended it" grace the restore drops:
         herd.corralled_tended_this_turn = true;

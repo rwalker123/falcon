@@ -31,7 +31,8 @@ use crate::{
     hashing::FnvHasher,
     intensification::{
         source_crew_needed, BuildDips, LadderConfig, LadderConfigHandle, RungBranch, RungDef,
-        RungKey, RungMovement, NEGLECT_NONE, NO_NEGLECT_GRACE,
+        RungKey, RungMovement, FABRICATED_BUILD_COST, NEGLECT_NONE, NO_NEGLECT_GRACE,
+        RUNG_UNSTARTED,
     },
     mapgen::WorldGenSeed,
     orders::FactionId,
@@ -341,9 +342,23 @@ pub struct Herd {
     /// Coarse health band (Thriving/Stressed/Collapsing), recomputed each turn from
     /// biomass vs `carrying_capacity`. Surfaced to the client and the domestication hook.
     pub ecology_phase: EcologyPhase,
-    /// Husbandry progress in `[0.0, 1.0]`; `1.0` = domesticated. Accrues while a band
-    /// Sustain-follows this (Thriving) group and decays otherwise (see `advance_husbandry`).
+    /// Husbandry progress **in absolute work units**; the herd is domesticated once it reaches
+    /// [`Self::domestication_cost`]. Accrues while a band works this herd with the `Tame` improvement
+    /// in flight (see `advance_labor_allocation`); monotone-up — neglect sheds *animals*, never
+    /// tameness.
+    ///
+    /// **It is no longer a `0..1` fraction** (`docs/plan_unit_costed_work.md`): a job has a size now,
+    /// and a normalized meter cannot express one. The **wire** still publishes the fraction — the sim
+    /// divides at capture.
     pub domestication_progress: f32,
+    /// **What taming THIS herd costs, in work units** — the `animal:pastoral` rung's `work_cost` times
+    /// the species' `taming_cost_multiplier`, stamped by the accrual seam while the meter is
+    /// incomplete and never re-stamped once [`Self::is_domesticated`] latches.
+    ///
+    /// It is **stored** rather than looked up for the reason `ForagePatch::cultivation_cost` is: the
+    /// completion predicate has call sites all over the animal web and must not take a config. A
+    /// `0` here means *nobody has started* — which is why the predicate asks `cost > 0` as well.
+    pub domestication_cost: f32,
     /// Faction tending/owning this group (`Some` iff `domestication_progress > 0`).
     pub owner: Option<FactionId>,
     /// Corral (Rung 1c): the tile a **penned** herd is fixed at, or `None` for a mobile herd.
@@ -359,8 +374,7 @@ pub struct Herd {
     /// Pen-construction progress in `[0.0, 1.0]`; `1.0` = the pen is built (and `corralled_at` is set
     /// that same turn). Accrues **only** while a band works this herd with the
     /// [`crate::components::Improvement::Corral`] verb in flight (faction knows **Penning** + owns the
-    /// *domesticated* herd), at
-    /// `husbandry.corral_build_progress_per_turn`. The animal mirror of
+    /// *domesticated* herd), at the crew's own work output. The animal mirror of
     /// `ForagePatch::cultivation_progress`, and the investment the `corralling_yield_fraction` dip
     /// buys. Authoritative sim state — rewound by rollback with the cloned registry, so a rollback
     /// rewinds a half-built pen rather than losing it. Unlike cultivation it does **not** decay
@@ -368,7 +382,14 @@ pub struct Herd {
     /// (materials on the ground, not a field growing back over), while a **completed pen that
     /// escapes** (`advance_husbandry`) resets it to `0.0` — the pen is lost along with the herd that
     /// roamed off it, so re-penning pays the full investment again.
+    ///
+    /// **In absolute work units** since `docs/plan_unit_costed_work.md`; the pen is finished at
+    /// [`Self::corral_cost`], and the wire still publishes `corral_progress / corral_cost`.
     pub corral_progress: f32,
+    /// **What this herd's pen costs, in work units** — the `animal:pen` rung's `work_cost` (penning is
+    /// a flat job for every species: a fence is a fence). Stamped by the accrual seam; the twin of
+    /// [`Self::domestication_cost`].
+    pub corral_cost: f32,
     /// **The pen's footprint radius** (Grazing 2d) — the hex range, centred on `corralled_at`, of the
     /// *fenced land* a penned herd grazes and derives its `K` over (`hex_range_tiles(corralled_at,
     /// pen_radius)`). `0` = today's single tile; each ring the `ExtendPen` command (2d-β) works off
@@ -377,11 +398,28 @@ pub struct Herd {
     /// registry.
     pub pen_radius: u32,
     /// Pen-**extension** build progress `[0.0, 1.0]` for the in-flight ring (the `ExtendPen` labor
-    /// ladder, 2d-β), accrued each turn the keeper tends an *extending* pen at
-    /// `husbandry.corral_build_progress_per_turn`; at `1.0` the ring completes (`pen_radius += 1`, this
-    /// resets to `0.0`, `pen_extending` clears). Exported as `penExtendProgress` for a "Fencing N%"
+    /// ladder, 2d-β), accrued each turn the keeper tends an *extending* pen at that crew's own work
+    /// output; at [`Self::pen_extend_cost`] the ring completes (`pen_radius += 1`, this meter and its
+    /// cost reset, `pen_extending` clears). Exported as `penExtendProgress` for a "Fencing N%"
     /// badge. Authoritative sim state, alongside `pen_radius`.
+    ///
+    /// **In absolute work units**, completing at [`Self::pen_extend_cost`] — a ring rides the *same*
+    /// `animal:pen` rung as the pen it widens, so it cannot drift from the initial build.
     pub pen_extend_progress: f32,
+    /// **What the in-flight fence ring costs, in work units** — the `animal:pen` rung's own
+    /// `work_cost`, stamped when the ring is worked. Reset with the meter when a ring completes.
+    pub pen_extend_cost: f32,
+    /// **How many more turns this herd's running build needs, at the crew, floor and kit that worked
+    /// it this turn** — [`crate::intensification::build_turns_remaining`], stamped by the labor arm
+    /// (Tame, Corral or a fence ring alike) and published as
+    /// `HerdTelemetryState.buildTurnsRemaining`.
+    ///
+    /// `None` = **no estimate**: no build is in flight, or the crew produced nothing and the build is
+    /// stalled. The client cannot compute it (it holds neither the crew's output, nor the floor
+    /// multiplier, nor the kit), so the sim answers — the `penFeedUpkeep` discipline. Transient
+    /// per-turn scratch on `tamed_this_turn`'s cycle: written in Population, cleared by
+    /// `advance_husbandry` the next turn.
+    pub build_turns_remaining: Option<u32>,
     /// **The `ExtendPen` "extending" state** (2d-β): `true` while a keeper is fencing the next ring
     /// (`pen_extend_progress` accruing, the harvest dipped to `corralling_yield_fraction`), the animal
     /// mirror of a herd's under-construction `corral_progress`. Set by the `ExtendPen` command, cleared
@@ -488,7 +526,7 @@ pub struct Herd {
     /// The animal twin of `ForagePatch::tended_this_turn`, with the same **deliberate one-turn lag**
     /// (Logistics reads what Population wrote last turn) and the same rule: a herd under active taming
     /// neither goes feral nor bleeds its partial progress, so the investment accrues at the **full**
-    /// `progress_per_turn` rather than net-of-decay. It is set even when a gate lapses mid-run
+    /// crew output rather than net-of-decay. It is set even when a gate lapses mid-run
     /// (mirroring the plant side) — a crew that showed up and worked keeps the herd from reverting.
     ///
     /// Distinct from a plain hunt at any other policy: a Sustain hunt *harvests* a herd, it does not
@@ -611,12 +649,16 @@ impl Herd {
             husbandry_ceiling: HusbandryCeiling::default(),
             // Refreshed against the ecology config at spawn/each turn; Thriving until then.
             ecology_phase: EcologyPhase::Thriving,
-            domestication_progress: 0.0,
+            domestication_progress: RUNG_UNSTARTED,
+            domestication_cost: RUNG_UNSTARTED,
             owner: None,
             corralled_at: None,
-            corral_progress: 0.0,
+            corral_progress: RUNG_UNSTARTED,
+            corral_cost: RUNG_UNSTARTED,
             pen_radius: 0,
-            pen_extend_progress: 0.0,
+            pen_extend_progress: RUNG_UNSTARTED,
+            pen_extend_cost: RUNG_UNSTARTED,
+            build_turns_remaining: None,
             pen_extending: false,
             footprint_intake: 0.0,
             pen_pasture_fraction: 0.0,
@@ -654,8 +696,12 @@ impl Herd {
 
     /// A fully-tamed (managed livestock) group: yields provisions each turn and is
     /// immune to the overhunting collapse.
+    ///
+    /// **`cost > RUNG_UNSTARTED` is load-bearing**: a wild herd carries `0` in both fields, and
+    /// `0 >= 0` would read every animal on the map as tame.
     pub fn is_domesticated(&self) -> bool {
-        self.domestication_progress >= 1.0
+        self.domestication_cost > RUNG_UNSTARTED
+            && self.domestication_progress >= self.domestication_cost
     }
 
     /// **Can this herd be tamed** (Grazing 2d-δ)? Gated by the species' `husbandry_ceiling` — a `Wild`
@@ -673,14 +719,14 @@ impl Herd {
     /// Accrue taming progress for `faction` (the band working this herd with
     /// [`crate::components::Improvement::Tame`] in flight).
     /// Sets ownership on the first accrual; only the owner makes progress. Clamped to 1.0
-    /// (auto-domestication at [`crate::intensification::RUNG_COMPLETE`]). Mirrors
+    /// (auto-domestication at the job's own `cost`). Mirrors
     /// `ForagePatch::accrue_cultivation`.
     ///
     /// **A `Wild`-ceiling species never accrues** (Grazing 2d-δ) — self-guarded here so the "hunt-only"
     /// invariant holds regardless of the call site (and no wild herd ever picks up an `owner`).
     ///
     /// **`pub` so tests can build a tamed herd** by running the *real* path to completion
-    /// (`accrue_domestication(f, RUNG_COMPLETE)`). It replaces the retired `claim_domestication`,
+    /// ([`Self::tame_outright`]). It replaces the retired `claim_domestication`,
     /// which snapped progress to `1.0` for the `domesticate` early-claim: with that command gone the
     /// primitive had no production caller, and a "skip the investment" method left lying in the API
     /// is precisely what the ladder exists to delete. Going through the accrual instead means a test
@@ -690,7 +736,7 @@ impl Herd {
     /// **Returns `true` only when THIS call finished the rung**, matching [`Herd::accrue_corral`] and
     /// `ForagePatch::accrue_cultivation`: `handle_tame` sets the verb on every band hunting the herd,
     /// so a post-hoc `is_domesticated()` test would push one "Tamed the …" feed line per band.
-    pub fn accrue_domestication(&mut self, faction: FactionId, amount: f32) -> bool {
+    pub fn accrue_domestication(&mut self, faction: FactionId, amount: f32, cost: f32) -> bool {
         if self.is_domesticated() || !self.can_domesticate() {
             return false;
         }
@@ -700,8 +746,17 @@ impl Herd {
         if self.owner != Some(faction) {
             return false;
         }
-        self.domestication_progress = (self.domestication_progress + amount).min(1.0);
+        self.domestication_cost = cost;
+        self.domestication_progress = (self.domestication_progress + amount).min(cost);
         self.is_domesticated()
+    }
+
+    /// **A fixture's already-tamed herd.** Runs the *real* accrual against
+    /// [`FABRICATED_BUILD_COST`], so the husbandry ceiling and the owner-lock still apply — you
+    /// cannot fabricate a domesticated `wild` herd. It replaces the `accrue_domestication(f,
+    /// RUNG_COMPLETE)` spelling, which stopped meaning anything the moment a job had a size.
+    pub fn tame_outright(&mut self, faction: FactionId) -> bool {
+        self.accrue_domestication(faction, FABRICATED_BUILD_COST, FABRICATED_BUILD_COST)
     }
 
     // `decay_domestication` is DELETED (`docs/plan_fauna_neglect_escape.md` §2.1). Its only caller was
@@ -753,7 +808,12 @@ impl Herd {
         self.corralled_at = Some(tile);
         self.current_pos = tile;
         self.next_pos = None;
-        self.corral_progress = 1.0;
+        // The pen is finished, so its meter reads its own cost. A fixture that pens a herd outright
+        // never stamped one, so it takes the fabricated job's — see [`FABRICATED_BUILD_COST`].
+        if self.corral_cost <= RUNG_UNSTARTED {
+            self.corral_cost = FABRICATED_BUILD_COST;
+        }
+        self.corral_progress = self.corral_cost;
         self.corralled_tended_this_turn = true;
         true
     }
@@ -765,12 +825,19 @@ impl Herd {
     /// pen completes, so the caller can announce it. The animal mirror of
     /// `ForagePatch::accrue_cultivation` (which latches via `is_cultivated`); called **after** the
     /// turn's take so the pre-commit forecast can't lie about which yield this turn pays.
-    pub(crate) fn accrue_corral(&mut self, faction: FactionId, amount: f32, tile: UVec2) -> bool {
+    pub(crate) fn accrue_corral(
+        &mut self,
+        faction: FactionId,
+        amount: f32,
+        cost: f32,
+        tile: UVec2,
+    ) -> bool {
         if self.is_corralled() || self.owner != Some(faction) {
             return false;
         }
-        self.corral_progress = (self.corral_progress + amount).min(1.0);
-        if self.corral_progress >= 1.0 {
+        self.corral_cost = cost;
+        self.corral_progress = (self.corral_progress + amount).min(cost);
+        if self.corral_progress >= cost {
             // The ceiling is already gated upstream (the `Corral` policy accrual + the commands), so
             // this can only refuse on a bug — and then the pen is genuinely not built, so say so.
             return self.corral_at(tile);
@@ -788,7 +855,8 @@ impl Herd {
             return false;
         }
         self.pen_extending = true;
-        self.pen_extend_progress = 0.0;
+        self.pen_extend_progress = RUNG_UNSTARTED;
+        self.pen_extend_cost = RUNG_UNSTARTED;
         true
     }
 
@@ -797,14 +865,16 @@ impl Herd {
     /// ring completes — `pen_radius += 1` (saturating at `radius_max`), the meter resets and the
     /// extending state clears. Returns `true` on the completion turn so the caller can announce it.
     /// Called **after** the turn's (dipped) take, mirroring `accrue_corral`.
-    pub(crate) fn accrue_pen_extension(&mut self, amount: f32, radius_max: u32) -> bool {
+    pub(crate) fn accrue_pen_extension(&mut self, amount: f32, cost: f32, radius_max: u32) -> bool {
         if !self.pen_extending {
             return false;
         }
-        self.pen_extend_progress = (self.pen_extend_progress + amount).min(1.0);
-        if self.pen_extend_progress >= 1.0 {
+        self.pen_extend_cost = cost;
+        self.pen_extend_progress = (self.pen_extend_progress + amount).min(cost);
+        if self.pen_extend_progress >= cost {
             self.pen_radius = (self.pen_radius + 1).min(radius_max);
-            self.pen_extend_progress = 0.0;
+            self.pen_extend_progress = RUNG_UNSTARTED;
+            self.pen_extend_cost = RUNG_UNSTARTED;
             self.pen_extending = false;
             return true;
         }
@@ -982,7 +1052,7 @@ pub fn herd_capacity(herd: &Herd, _fauna: &FaunaConfig) -> f32 {
 /// **wild** herd by [`DEFAULT_HUSBANDRY_DENSITY`] (`1.0`, so its `K` is byte-identical). Mirrors
 /// `herd_ecology`'s rung dispatch exactly.
 ///
-/// Resolved **live** by display name (`pen_density_for` / `pastoral_density_for`, the `taming_rate_for`
+/// Resolved **live** by display name (`pen_density_for` / `pastoral_density_for`, the `taming_cost_multiplier_for`
 /// path), never cached on the `Herd`, so a config retune reaches herds already on the map. Applied at
 /// the single K seam [`ecological_carrying_capacity`] (the one place `herd.carrying_capacity` is
 /// written), covering both the graze-derived and the fallback constant K.
@@ -1152,7 +1222,7 @@ pub fn herders_needed(biomass: f32, body_mass: f32, animals_per_herder: f32) -> 
 }
 
 /// [`herders_needed`] for a herd, resolving its species' `animals_per_herder` live off the config (the
-/// `taming_rate_for` path — a retune reaches herds already on the map). `0` for a herd that is not on
+/// `taming_cost_multiplier_for` path — a retune reaches herds already on the map). `0` for a herd that is not on
 /// a managed rung: a **wild** herd has no keepers, by design (see [`herders_needed`]).
 ///
 /// # "Managed" is `is_corralled() || owner.is_some()` — a herd you have STARTED to tame, not only a
@@ -1280,13 +1350,16 @@ pub struct HerdTelemetryEntry {
     pub huntable: bool,
     /// Ecological health band string (see `EcologyPhase::as_str`).
     pub ecology_phase: String,
-    /// Husbandry progress in `[0.0, 1.0]` (`1.0` = domesticated).
+    /// Husbandry progress as a `[0.0, 1.0]` **fraction** of this herd's own taming job
+    /// ([`crate::intensification::build_fraction`]) — the meter itself is in absolute work units, and
+    /// the sim divides here so the wire keeps the range every shipped readout already renders.
     pub domestication: f32,
     /// Rung 1c corral state: `true` iff the herd is penned (`Herd::is_corralled`). Client shows a
     /// place-bound corral indicator distinct from a mobile domesticated herd.
     pub corralled: bool,
-    /// Pen-construction progress in `[0.0, 1.0]` (`Herd::corral_progress`) — the client's "pen
-    /// building N%" meter while a keeper works the herd with the `Corral` improvement in flight.
+    /// Pen-construction progress as a `[0.0, 1.0]` **fraction** of this herd's own pen job — the
+    /// client's "pen building N%" meter while a keeper works the herd with the `Corral` improvement
+    /// in flight. Divided at capture, like `domestication` above.
     pub corral_progress: f32,
     pub position: UVec2,
     pub biomass: f32,
@@ -3254,6 +3327,10 @@ pub fn advance_husbandry(
         // consumer, the retired tameness decay, is GONE (`docs/plan_fauna_neglect_escape.md` §2.1):
         // `domestication_progress` is monotone-up now, never bled by neglect.
         herd.tamed_this_turn = false;
+        // **And the turns estimate with it**, on the same one-turn cycle: a build the keeper walked
+        // away from must stop publishing a finish date, and the labor arm re-stamps it this turn if a
+        // crew is still on it (Logistics runs before Population).
+        herd.build_turns_remaining = None;
         // **How well the herd was STAFFED last turn** (slice 8) — the same Population→Logistics lag as
         // `pen_fed_fraction`, read here and reset so it can never go stale. A herd nobody worked reads
         // the `0.0` its keeper never wrote, which is exactly right: no crew, no herding.
@@ -3673,7 +3750,7 @@ fn nearest_wild_merge_target(
             !source_indices.contains(i)
                 && h.owner.is_none()
                 && !h.is_corralled()
-                && h.domestication_progress == 0.0
+                && h.domestication_progress == RUNG_UNSTARTED
                 && h.species == event.species
                 && hex_distance_wrapped(h.position(), event.from_pos, width, wrap) <= 1
         })
@@ -6900,9 +6977,18 @@ fn to_entry(herd: &Herd) -> HerdTelemetryEntry {
         // All fauna are huntable in Phase B; Phase C/D may differentiate.
         huntable: true,
         ecology_phase: herd.ecology_phase.as_str().to_string(),
-        domestication: herd.domestication_progress,
+        // **The wire keeps the 0..1 fraction; the meter is in work units.** Divided against the
+        // herd's OWN stamped cost, so a tamed herd reads exactly `1.0` beside an `is_domesticated()`
+        // that is already true.
+        domestication: crate::intensification::build_fraction(
+            herd.domestication_progress,
+            herd.domestication_cost,
+        ),
         corralled: herd.is_corralled(),
-        corral_progress: herd.corral_progress,
+        corral_progress: crate::intensification::build_fraction(
+            herd.corral_progress,
+            herd.corral_cost,
+        ),
         position: herd.position(),
         biomass: herd.biomass,
         route_length: herd.route_length() as u32,
@@ -7286,7 +7372,7 @@ mod tests {
     use super::*;
     use crate::components::NO_IMPROVEMENT_UNDERWAY;
     use crate::fauna_config::ShoreRequirement;
-    use crate::intensification::{NO_BUILD_UNDERWAY_DIP, RUNG_COMPLETE};
+    use crate::intensification::NO_BUILD_UNDERWAY_DIP;
     use crate::scalar::{scalar_from_f32, scalar_one, scalar_zero};
     use crate::terrain::terrain_definition;
     use sim_runtime::TerrainType;
@@ -8807,14 +8893,14 @@ mod tests {
         let mut wild = herd_of_size(SizeClass::Big, 600.0, 1200.0, 0.05);
         wild.husbandry_ceiling = HusbandryCeiling::Wild;
         assert!(!wild.can_domesticate() && !wild.can_pen());
-        wild.accrue_domestication(faction, 1.0);
+        wild.tame_outright(faction);
         assert_eq!(wild.domestication_progress, 0.0, "a wild herd never tames");
         assert_eq!(wild.owner, None, "and never picks up an owner");
 
         let mut pastoral = herd_of_size(SizeClass::Migratory, 4000.0, 9000.0, 0.05);
         pastoral.husbandry_ceiling = HusbandryCeiling::Pastoral;
         assert!(pastoral.can_domesticate() && !pastoral.can_pen());
-        pastoral.accrue_domestication(faction, 1.0);
+        pastoral.tame_outright(faction);
         assert!(
             pastoral.is_domesticated() && pastoral.owner == Some(faction),
             "a pastoral herd tames fine"
@@ -9024,7 +9110,7 @@ mod tests {
     /// husbandry ceiling still has its say.
     fn tame_the_herd(world: &mut bevy::prelude::World, faction: FactionId) {
         let mut registry = world.resource_mut::<HerdRegistry>();
-        registry.herds[0].accrue_domestication(faction, RUNG_COMPLETE);
+        registry.herds[0].tame_outright(faction);
         assert!(registry.herds[0].is_domesticated());
     }
 

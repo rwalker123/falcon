@@ -21,7 +21,7 @@ use bevy::math::UVec2;
 
 use core_sim::{
     advance_forage_regrowth, FactionId, FaunaConfigHandle, ForageRegistry, HerdRegistry,
-    HerdTelemetry, SimulationConfig, SnapshotHistory, RUNG_COMPLETE,
+    HerdTelemetry, SimulationConfig, SnapshotHistory,
 };
 
 /// The map every fixture here stands on — the standard seed the rest of the suite quotes against.
@@ -149,7 +149,7 @@ fn a_herds_published_bands_bracket_its_published_phase_at_every_rung() {
                 .iter_mut()
                 .find(|herd| herd.id == id)
                 .expect("the fixture herd");
-            herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+            herd.tame_outright(FactionId(0));
             assert!(herd.is_domesticated(), "the herd stands on rung 2");
         }
         for fraction in SWEPT_STOCK_FRACTIONS {

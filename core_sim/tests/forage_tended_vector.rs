@@ -59,8 +59,10 @@ const PINNED_SEED: u64 = 119_304_647;
 /// scales per band.
 const NEUTRAL_MULTIPLIER: f32 = 1.0;
 
-/// The completed rung-2 meter — a patch whose `cultivation_progress` has reached `RUNG_COMPLETE`.
-const CULTIVATION_COMPLETE: f32 = 1.0;
+/// **Whose ground the fixture's tended patch belongs to.** A completed meter needs an owner (the
+/// accrual sets one on first progress); the harness runs one faction, so it is the same one that
+/// harvests.
+const PATCH_OWNER: core_sim::FactionId = core_sim::FactionId(0);
 
 /// **Sustain's escapement floor as a fraction of capacity** — `K/2`, the MSY operating point a
 /// Sustain gather holds a patch at. The seat helpers put the patch here and then run **one turn of
@@ -203,7 +205,7 @@ fn seat_tended_patch(app: &mut App, coord: UVec2, species: &str) {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).expect("patch exists");
         patch.species = Some(species.to_string());
-        patch.cultivation_progress = CULTIVATION_COMPLETE;
+        patch.complete_cultivation(PATCH_OWNER);
         patch.biomass = patch.carrying_capacity * SUSTAIN_ESCAPEMENT_FLOOR;
     }
     grow_one_turn(app);

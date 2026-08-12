@@ -31,7 +31,6 @@ use core_sim::{
     SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
-    RUNG_COMPLETE,
 };
 
 /// A pinned earthlike map (`map_seed` is otherwise entropy — pin it). Only used to stand up a real
@@ -153,7 +152,7 @@ fn seat_pen(
         r,
         body_mass,
     );
-    herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+    herd.tame_outright(FactionId(0));
     assert!(herd.corral_at(tile), "the fixture species must be pennable");
     herd.pen_radius = radius;
     registry.herds.push(herd);
@@ -511,8 +510,20 @@ fn begin_extension(app: &mut App, id: &str, radius_max: u32) -> bool {
 fn extend_pen_accrues_a_ring_flips_the_radius_raises_k_and_caps_at_max() {
     const FODDER: f32 = 0.10;
     const WILD_R: f32 = 0.35;
-    // corral_build_progress_per_turn = 0.04 → 25 turns per ring; give a couple turns of slack.
+    // **A ring is paid in HANDS now** (`docs/plan_unit_costed_work.md` §1.2): it is raised by the
+    // keepers on the tending assignment, at `animal:pen`'s own `work_cost`. This harness staffs
+    // [`KEEPER_WORKERS`] so tending is never worker-limited, so its ring goes up in a single turn —
+    // which is the model, not a fixture bug. The window below is generous slack around that.
     const RING_TURNS: u32 = 28;
+    let ring_turns_expected = core_sim::build_turns_remaining(
+        core_sim::LadderConfig::builtin()
+            .rung(core_sim::RungKey::AnimalPen)
+            .build_cost(core_sim::RUNG_COST_UNSCALED)
+            .expect("the pen rung builds"),
+        core_sim::RUNG_UNSTARTED,
+        KEEPER_WORKERS as f32 * core_sim::PER_WORKER_OUTPUT,
+    )
+    .expect("a staffed ring finishes");
 
     let radius_max = FaunaConfigHandle::default().get().husbandry.pen_radius_max;
     assert!(
@@ -567,9 +578,9 @@ fn extend_pen_accrues_a_ring_flips_the_radius_raises_k_and_caps_at_max() {
         }
     }
     let flipped_on = flipped_on.expect("the ring completes within its build window");
-    assert!(
-        (24..=RING_TURNS).contains(&flipped_on),
-        "the ring takes ~25 turns at the corral build rate (flipped on turn {flipped_on})"
+    assert_eq!(
+        flipped_on, ring_turns_expected,
+        "the ring takes `work_cost / this keeper crew's output` turns (flipped on turn {flipped_on})"
     );
     let (r1, extending1, _) = pen_state(&app, &id);
     assert_eq!(
@@ -645,10 +656,10 @@ fn the_husbandry_density_ladder_scales_carrying_capacity_per_species() {
         match rung {
             Rung::Wild => {}
             Rung::Pastoral => {
-                herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+                herd.tame_outright(FactionId(0));
             }
             Rung::Pen => {
-                herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+                herd.tame_outright(FactionId(0));
                 assert!(
                     herd.corral_at(tile),
                     "the fixture herd defaults to the full ladder"

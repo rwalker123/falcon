@@ -485,6 +485,15 @@ fn create_herds<'a>(
                 // The two investment rungs' material payoffs — appended last (append-only wire).
                 corralMaterial: Some(corral_material),
                 pastoralMaterial: Some(pastoral_material),
+                // **The build, priced in WORK** — appended last (append-only wire,
+                // docs/plan_unit_costed_work.md §8). The `domestication`/`corralProgress` fractions
+                // above are exactly `workDone / workCost`; these two are what let the UI say
+                // "18 of 50 work", and `workCost` is quoted whether or not a build is in flight.
+                tameWorkDone: herd.tame_work_done,
+                tameWorkCost: herd.tame_work_cost,
+                corralWorkDone: herd.corral_work_done,
+                corralWorkCost: herd.corral_work_cost,
+                buildTurnsRemaining: herd.build_turns_remaining,
             },
         );
         entries.push(entry);
@@ -563,6 +572,13 @@ fn create_forage_patches<'a>(
                 // the material story. An EMPTY vector is "no row", never "zero".
                 materialPerBiomass: Some(material_per_biomass),
                 perWorkerMaterial: Some(per_worker_material),
+                // **The build, priced in WORK** — appended last (append-only wire,
+                // docs/plan_unit_costed_work.md §8). The plant twin of the herd's pairs.
+                cultivationWorkDone: patch.cultivation_work_done,
+                cultivationWorkCost: patch.cultivation_work_cost,
+                fieldWorkDone: patch.field_work_done,
+                fieldWorkCost: patch.field_work_cost,
+                buildTurnsRemaining: patch.build_turns_remaining,
             },
         );
         entries.push(entry);

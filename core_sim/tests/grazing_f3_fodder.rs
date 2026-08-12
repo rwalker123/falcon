@@ -33,7 +33,7 @@ use core_sim::{
     SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FODDER,
-    FODDERING_DISCOVERY_ID, FOOD, RUNG_COMPLETE,
+    FODDERING_DISCOVERY_ID, FOOD,
 };
 
 const MAP_SEED: u64 = 119304647;
@@ -165,7 +165,7 @@ fn seat_pen(app: &mut App, tile: UVec2, cap: f32, biomass: f32) -> String {
         WILD_R,
         PEN_BODY_MASS,
     );
-    herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+    herd.tame_outright(FactionId(0));
     assert!(herd.corral_at(tile), "the fixture species must be pennable");
     registry.herds.push(herd);
     "pen_0".to_string()

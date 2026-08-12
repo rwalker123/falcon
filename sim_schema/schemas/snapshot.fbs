@@ -1994,6 +1994,34 @@ table ForagePatchState {
   // EMPTY MEANS "NO ROW", NEVER "ZERO" - most baskets grow nothing anyone builds with.
   materialPerBiomass:[MaterialPayoff];
   perWorkerMaterial:[MaterialPayoff];
+  // --- THE BUILD, PRICED IN WORK (appended, docs/plan_unit_costed_work.md section 8) -------------
+  // An improvement costs a fixed amount of WORK now, not a fixed number of turns: a crew produces
+  // work units per turn (head count x floor discipline x kit) and TURNS ARE THE OUTPUT. The three
+  // fields below are what makes that visible; the `*Progress` fractions above are unchanged in type,
+  // meaning and range, and are exactly `workDone / workCost`.
+  //
+  //   workDone  = the source's own meter, in work units.
+  //   workCost  = what that job costs ON THIS SOURCE, resolved off the ladder (and, for a Tame, the
+  //               species' own cost multiplier) AT CAPTURE. It is published WHETHER OR NOT a build
+  //               is in flight, which is the point: the compose sheet quotes the price BEFORE the
+  //               player commits. It is NOT the source's stamped cost, which is 0 on an unstarted
+  //               source.
+  //
+  // Two rungs keep two pairs, the `cultivateBuildFraction`/`sowBuildFraction` rule: independently
+  // tunable jobs must not share a number.
+  cultivationWorkDone:float = 0;
+  cultivationWorkCost:float = 0;
+  fieldWorkDone:float = 0;
+  fieldWorkCost:float = 0;
+  // HOW MANY MORE TURNS the running build needs, at the crew, floor and kit that worked this patch
+  // this turn. `-1` = NO ESTIMATE: no build is in flight here, or the crew's output is zero and the
+  // build is STALLED (a stall has no finite answer, and a huge number would read as a promise).
+  //
+  // THE CLIENT CANNOT COMPUTE THIS. It holds neither the crew's output, nor the floor multiplier,
+  // nor the kit's build rate — so the sim answers, exactly as it does for `penFeedUpkeep` and the
+  // yield forecast. One field for both plant rungs: at most one improvement is ever in flight on
+  // one source.
+  buildTurnsRemaining:int = -1;
 }
 
 // One STANCE's ceiling on one tile, in every account the tile's basket pays (issue #426). The plant
@@ -2925,6 +2953,30 @@ table HerdTelemetryState {
   // never touches it. EMPTY on a herd that never offers the rung, and EMPTY means "no row".
   corralMaterial:[MaterialPayoff];
   pastoralMaterial:[MaterialPayoff];
+  // --- THE BUILD, PRICED IN WORK (appended, docs/plan_unit_costed_work.md section 8) -------------
+  // An improvement costs a fixed amount of WORK now, not a fixed number of turns: a crew produces
+  // work units per turn (head count x floor discipline x kit) and TURNS ARE THE OUTPUT. The three
+  // fields below are what makes that visible; the `*Progress` fractions above are unchanged in type,
+  // meaning and range, and are exactly `workDone / workCost`.
+  //
+  //   workDone  = the source's own meter, in work units.
+  //   workCost  = what that job costs ON THIS SOURCE, resolved off the ladder (and, for a Tame, the
+  //               species' own cost multiplier) AT CAPTURE. It is published WHETHER OR NOT a build
+  //               is in flight, which is the point: the compose sheet quotes the price BEFORE the
+  //               player commits. It is NOT the source's stamped cost, which is 0 on an unstarted
+  //               source.
+  //
+  // The tame pair carries the SPECIES' OWN cost (a Steppe Runner is five times the work of a
+  // rabbit); the pen pair does not, because penning is a flat job for every species — a fence is a
+  // fence. `domestication` and `corralProgress` above are their fractions.
+  tameWorkDone:float = 0;
+  tameWorkCost:float = 0;
+  corralWorkDone:float = 0;
+  corralWorkCost:float = 0;
+  // HOW MANY MORE TURNS the running build needs (Tame, Corral or a fence ring alike), at the crew,
+  // floor and kit that worked this herd this turn. `-1` = NO ESTIMATE — no build in flight, or a
+  // stalled one. The client cannot compute it; see the plant twin on `ForagePatchState`.
+  buildTurnsRemaining:int = -1;
 }
 
 table CommandEventState {
