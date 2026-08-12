@@ -554,7 +554,7 @@ built from the code under test can only agree with itself. **They are the SIM's 
 from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
 payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-**A clean run is 309 frames / 908 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
+**A clean run is 309 frames / 910 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
 three times in one arc and once across a merge, and a running total kept by addition would be wrong
 by now. (The measurement above came back FIVE higher than the 895 recorded before it while the arc
 #527 review added exactly ONE claim — the `Carrying:` mass one. Four `PASS`es had accumulated
@@ -585,6 +585,22 @@ Sabotage-verified by making `path_for` answer `""`: exactly the SIX species-tier
 tile splits `0 species + 3 role`, i.e. the pre-art state restored) while all four role-tier claims
 stay green — the demonstration that the two tiers are independently asserted rather than one claim
 wearing two hats.
+
+**THAT SABOTAGE REACHES `path_for` ALONE, AND FOR A WHILE THAT WAS THE WHOLE COVERAGE.** Every
+`FloraSprites` claim in this harness went through the `RichTextLabel` host, so the OTHER accessor —
+`texture_for`, whose one call site is `DrawerComposeController._build_crop_picker` — had no claim
+anywhere: deleting the row's `if crop_art != null: btn.icon = …` block left the run at **exit 0 with
+the full `PASS` tally** and nothing naming it. A frame diff is not the missing signal either, "A
+harness renders the IMPORT CACHE" being the reason a picture cannot answer whether art resolved.
+**Two `PASS` and no frame** now close it, in `chapters/forage_crop.gd` after
+`forage_crop_picker_fodder` — that fixture being the one basket holding a species WITH art beside
+the one that permanently has none. Asserted as a **pair** (a lone positive passes on a picker that
+icons every row; a lone negative on one that resolves nothing), and reached by SPECIES KEY through
+`HudWidgets.FLORA_CROP_ROW_SPECIES_META` / `ForageFx.find_crop_row_by_species`, never by face: a
+row's label is a different axis from the id its art is composed from, and these fixtures pair
+`wild_emmer` with "Wild Grain" on purpose. Sabotage-verified by disabling that `btn.icon` block —
+exactly the POSITIVE claim fails (909 `PASS`, exit 1) and nothing else in the run does, the negative
+correctly staying green.
 
 **The flora-species precedence block (issue #339) added SEVEN `PASS` and NO frame**, in
 `chapters/land_readouts.gd` beside `_assert_food_layer_rows`. It was written while `FloraSprites`

@@ -801,6 +801,16 @@ const COMPOSE_COMMIT_META := "compose_commit"
 ## or running (`button_pressed` tells them apart) and a `Label` is done.
 const IMPROVEMENT_CONTROL_META := "improvement"
 
+## The PLANT a crop-picker row stands for, as `Button` meta — its `FloraShareInfo.species` key, which
+## is the sim's own id and the very string the row's art is composed from (`FloraSprites`). The
+## stable-handle reasoning of the three consts above, plus one this family has of its own: the row's
+## FACE is `<display name> <share>% · <payoff>`, so every other handle onto a row goes through the
+## LABEL — a different axis from the key, and deliberately allowed to disagree with it (a fixture
+## pairs the roster id `wild_emmer` with the label "Wild Grain" on purpose). A harness asking whether
+## THIS SPECIES' art reached the row must ask by the key it was resolved with, or the claim is about
+## the label instead.
+const FLORA_CROP_ROW_SPECIES_META := "flora_crop_row_species"
+
 ## **THE IMPROVEMENT CONTROL** (issue #442) — the second axis's whole widget, in the ONE of four
 ## states the caller resolved, plus its trailing notes.
 ##

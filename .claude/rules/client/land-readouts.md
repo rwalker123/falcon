@@ -119,9 +119,11 @@ paths:
     → `crop_role_spacer` → `FLORA_ROLE_ICON_UNSTATED`. **SPECIES OUTRANKS ROLE BECAUSE IT IS THE MORE
     SPECIFIC FACT**: the icon's job on this list is to make a row findable at a glance, and *"this is
     Wild Emmer"* locates a row that *"this is a staple"* cannot — three marks cannot separate five
-    rows. The role is not demoted by that; it remains the reading on every row without species art,
-    which today is EVERY row (`FloraSprites` coverage is zero, so the chain falls straight through and
-    the shipped card is byte-identical to before the tier existed). **The two never render TOGETHER**
+    rows. The role is not demoted by that; it remains the reading on every row without species art —
+    **coverage is 32 of 33**, and the one gap is PERMANENT rather than pending: `hay_grass` is the
+    roster's only `fodder` species, so the fodder mark already names it uniquely and `icon_prompts.txt`
+    ships 32 prompts for 33 species by design. So the role tier is what a hay row wears, not a state
+    the family is passing through. **The two never render TOGETHER**
     — species art REPLACES the role mark rather than sitting beside it, because two glyph families
     adjacent at one weight is the axis collision `labor-ui.md` records twice. **There is deliberately
     NO per-species emoji fallback**: the palette collapses the roster (grains all 🌾, nuts 🌰, berries
