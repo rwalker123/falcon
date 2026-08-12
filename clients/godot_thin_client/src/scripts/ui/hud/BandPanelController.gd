@@ -3128,7 +3128,7 @@ func _build_destination_row(band: Dictionary, ties: Array) -> HBoxContainer:
     row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     row.add_child(HudWidgets.build_field_key(HudComposeVocab.COMPOSE_FIELD_DESTINATION))
     var entries: Array = []
-    var selected_index := -1
+    var selected_index := HudWidgets.NO_ENTRY_SELECTED
     var face := HudComposeVocab.COMPOSE_DESTINATION_CHOOSE
     for tie_variant in ties:
         var tie: Dictionary = tie_variant as Dictionary

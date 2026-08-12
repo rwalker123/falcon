@@ -217,6 +217,15 @@ abandon test passed under sabotage because its fixture sat in the one state the 
 - **Assert the RENDER, not the model the harness just wrote.** `_compose.forage_policy() == "sustain"`
   is a test that the harness can set a field. Read the rung's own selected fill back instead
   (`Readout.rung_is_selected`).
+- **Drive the CONTROL, never `emit_signal` its own signal on its behalf.** `picker.emit_signal(
+  "item_selected", 0)` calls the connected lambda directly, so it passes on a control whose popup never
+  opens, whose entries cannot be reached, and — the case that shipped — whose selection **the engine
+  declines to change**, which is precisely the branch where no signal is emitted at all. A test that
+  fakes the signal cannot fail for a broken widget; it only asserts that the callback the harness just
+  invoked runs. Push real input through `InputProbe` (`ui_preview/input_probe.gd`) instead, and where
+  the gesture is more than one press — a popup opens on the press, so the release is a separate
+  event — drive the halves apart. `chapters/trade.gd`'s destination pick is the worked example, in
+  `harness-ui-preview.md`.
 - **Count the terms a "states all THREE" claim names.** Matching the middle term alone survives losing
   either of the others.
 - **A fixture that cannot reach the state being claimed makes the assertion decorative** — check the

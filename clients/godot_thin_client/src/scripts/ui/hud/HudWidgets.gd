@@ -537,8 +537,9 @@ static func build_field_key(text: String) -> Label:
 ##
 ## `entries` is an ordered array of `{label, disabled, tooltip, on_pick}` — `build_section_menu`'s
 ## contract minus `MENU_ENTRY_CHECKED`, which a native selector OWNS: `selected_index` is both the
-## entry the face opens on and the one the popup marks, and passing a second, hand-rolled mark would
-## let the two disagree. (No `MENU_ENTRY_ICON` either: neither caller has per-entry art, and repeating
+## entry the face opens on and the one the popup marks (`NO_ENTRY_SELECTED` for a field nothing has
+## been chosen in — and it must be PASSED, never left to Godot; see the deselect in the body), and
+## passing a second, hand-rolled mark would let the two disagree. (No `MENU_ENTRY_ICON` either: neither caller has per-entry art, and repeating
 ## ONE glyph down every row is noise rather than a distinction.)
 ##
 ## **`disabled` is the SAME key `_fill_menu_popup` already honours**, so the two menu families state
@@ -557,6 +558,10 @@ static func build_field_key(text: String) -> Label:
 ## key label — and without the clip a long entry name widens the row past the dock column.
 ## `fit_to_longest_item` is OFF for that same reason: it sets the minimum width from the widest ENTRY,
 ## which is exactly the dock-widening `clip_text` is here to prevent.
+## `selected_index` for a field nothing has been chosen in yet. Godot's own "no item is selected"
+## index, named because every caller of `build_option_picker` has to be able to SAY it.
+const NO_ENTRY_SELECTED := -1
+
 static func build_option_picker(entries: Array, selected_index: int, face: String,
         tooltip: String) -> OptionButton:
     var button := OptionButton.new()
@@ -579,8 +584,18 @@ static func build_option_picker(entries: Array, selected_index: int, face: Strin
             button.set_item_tooltip(index, entry_tooltip)
         var pick: Variant = entry.get("on_pick", null)
         picks.append(pick if pick is Callable else Callable())
-    if selected_index >= 0 and selected_index < picks.size():
-        button.select(selected_index)
+    # **THE PICKER STATES ITS OWN SELECTION, ALWAYS — INCLUDING "NOTHING".** `OptionButton.add_item`
+    # selects the first SELECTABLE item it is handed, so a picker built for a field nothing has been
+    # chosen in comes back holding an entry anyway, while the `face` write below paints `Choose…`
+    # over it. Godot then refuses to report a pick of the entry it believes is already current — no
+    # `item_selected`, no `on_pick` — so the one entry a player cannot choose is the very one the
+    # widget seated itself on, and the popup closes as if nothing was clicked. That is not a corner:
+    # it is the FIRST live entry of every list, which on the shipment sheet was the only one.
+    # `select(NO_ENTRY_SELECTED)` is Godot's own deselect, and it runs BEFORE the face write because
+    # selecting rewrites `text`.
+    var chosen := selected_index if selected_index >= 0 and selected_index < picks.size() \
+        else NO_ENTRY_SELECTED
+    button.select(chosen)
     button.text = face
     button.item_selected.connect(func(index: int) -> void:
         if index >= 0 and index < picks.size() and picks[index].is_valid():

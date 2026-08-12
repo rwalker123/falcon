@@ -433,7 +433,7 @@ adding unrelated states therefore conflicted as a matter of course, and one merg
 | `tools/ui_preview.gd` | The harness `Node`: `_settle` / `_save` / `_capture` / `_assert_hud`, the canvas + prefs + tween plumbing, the prologue that stands the HUD up, the icon-probe epilogue, `CHAPTERS` + `_instantiate_chapters`, and the one exit `_finish()` |
 | `tools/ui_preview/chapters/*.gd` | One `RefCounted` per arc (`hunt`, `forage_crop`, `herd_graze_pen`, `event_dock`, `button_faces`, `forecast_seam`, …), each `run(harness)` plus the fixtures only it uses. A chapter need not render a frame — `button_faces` and `forecast_seam` are both PNG-less, and that is a normal shape |
 | `tools/ui_preview/fixtures_*.gd` | Pure `static func` fixtures shared by two or more chapters — `base` (the primitives the other three build on), `band`, `herd`, `forage`, `tile`, `world` |
-| `tools/ui_preview/node_query.gd`, `readouts.gd`, `compose_vocab.gd`, `input_probe.gd` | Shared `static` helpers: finding a control by identity, reading values back out of rendered text, the compose spine vocabulary, and driving real pointer input through `Viewport.push_input` (the canvas→window conversion, a hover, the two gestures, a wheel notch, a press-and-cancelled-release click) |
+| `tools/ui_preview/node_query.gd`, `readouts.gd`, `compose_vocab.gd`, `input_probe.gd` | Shared `static` helpers: finding a control by identity, reading values back out of rendered text, the compose spine vocabulary, and driving real pointer input through `Viewport.push_input` (the canvas→window conversion, a hover, the two gestures, a wheel notch, a press-and-cancelled-release click, and the `press_left` / `release_left` pair a caller drives apart when the press itself opens a popup) |
 
 **Where a new thing goes.** A state → the chapter that owns its arc. A fixture used by one chapter
 → a method on that chapter. A fixture used by two → a `fixtures_*.gd` `static func`. **`ui_preview.gd`
@@ -753,18 +753,46 @@ a sentence is a string — a frame shows a plausible verdict whichever clock it 
 
 ## `chapters/trade.gd` — the cargo picker and a shipment in flight (arc #527, issue #517)
 
-**Appended LAST in `CHAPTERS`**, after `crafting_bench`. Seven frames and twenty-three `PASS` — plus
-a twenty-fourth in `chapters/event_dock.gd`, where the shipment's `destination=` label swap belongs
+**Appended LAST in `CHAPTERS`**, after `crafting_bench`. Seven frames and twenty-seven `PASS` — plus
+one more in `chapters/event_dock.gd`, where the shipment's `destination=` label swap belongs
 beside the band-label trio it extends rather than in a chapter that instantiates no dock. It
 injects a real `BandCityPanel` docked RIGHT on the PARTIES tab, drives the whole compose act through
 the panel's own controls, and releases the panel and hands the reference band back before it ends —
 so a chapter appended after it starts where every other one does.
 
 **Every control is driven, not set.** The footer's mission button is pressed (by
-`HudWidgets.MISSION_LAUNCH_META`, never by face), the destination is chosen through the picker's own
-`item_selected`, the party is raised through its stepper's `+` reading `PARTY_STEPPER_COUNT_META`
+`HudWidgets.MISSION_LAUNCH_META`, never by face), the destination is chosen with REAL POINTER INPUT
+(below), the party is raised through its stepper's `+` reading `PARTY_STEPPER_COUNT_META`
 back on each press, and each cargo row is loaded by repeated presses of its OWN `+` — which is what
 exercises the clamp-to-the-pile and the per-press rebuild rather than the members behind them.
+
+**THE DESTINATION PICK IS TWO REAL PRESSES, AND IT USED TO BE A FAKED SIGNAL THAT COULD NOT FAIL.**
+`picker.emit_signal("item_selected", 0)` calls the connected lambda by hand, so every step between a
+click and `on_pick` — the popup opening, the entry being reachable, and the engine deciding whether a
+pick is a CHANGE at all — went untested, and the chapter stayed green through a picker that was dead
+in play (`labor-ui.md` → "A PICKER STATES ITS OWN SELECTION"). It now presses the picker's face
+(`InputProbe.press_left` / `release_left`: an `OptionButton` runs at `ACTION_MODE_BUTTON_PRESS`, so the
+popup is up before the release exists and the two halves must be driven apart) and then presses the
+entry, both through `Viewport.push_input`. Four claims ride it, and the sabotage that reverts the fix
+fails three of them plus the whole downstream chain — **twelve in all, and NOT the fourth**: the press
+really does land on entry 0 either way, and what the bug swallows is the pick, which is exactly the
+decomposition those two claims are separated to show.
+
+**Three things about driving a popup that are not obvious, all measured here:**
+- **The popup is an EMBEDDED subwindow, and `push_input` un-stretches an event into canvas space
+  before forwarding to one** — so the press goes through `InputProbe.canvas_to_window` like every other
+  probe. A raw canvas point misses it entirely.
+- **Hover feedback is not available**: `PopupMenu.get_focused_item()` answers `-1` for every pushed
+  motion (the accessor works — `set_focused_item` round-trips), so the `_find_open_map_point` style of
+  hover-search cannot find a row here. The entry's point is derived from the popup's own rect and item
+  count, and `index_pressed` is LISTENED to so the derivation is CHECKED rather than trusted.
+- **The popup is FREED under the probe** — the pick runs `on_pick` → `rerender()` → `queue_free` on the
+  row the picker hangs off — so its teardown is `is_instance_valid`-guarded and the answer is read off a
+  MEMBER. An unguarded `disconnect` raises, which aborts the call, and an aborted GDScript call answers
+  with its return type's default: `0` is a legal entry index, so the "landed on entry 0" claim passed
+  for a helper that never finished. That is `_instantiate_chapters`' own lesson met a second time.
+- **A lambda captures a local by VALUE**, so a witness assigning to a `var` outside it reports nothing
+  ever happened. It cost a run.
 
 **The claims that only a driven run can make:**
 

@@ -19,6 +19,10 @@ const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 
+## The shared pointer-input layer — the destination pick below goes through the engine's real
+## dispatch, the `crafting_bench` gesture probe's convention.
+const InputProbe := preload("res://tools/ui_preview/input_probe.gd")
+
 ## `Main`'s reservation rules, borrowed rather than restated — the `crafting_bench` convention.
 const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 
@@ -26,6 +30,9 @@ const BAND_PANEL_RESERVER := &"band_panel"
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
+
+## Which popup entry the last driven press landed on, written by `_press_popup_entry`'s witness.
+var _popup_entry_pressed := POPUP_NO_ENTRY_PRESSED
 
 ## The SENDING band and the two bands it holds ties with — their own entities, so the states below
 ## cannot be confused with the reference band the rest of the run uses. `BandFx.with_band_id` derives
@@ -52,6 +59,26 @@ const TRADE_PARTY_WORKERS := 4
 ## manifest cannot fit into. The refusal is the CLIENT's courtesy — the server's own is unchanged and
 ## remains the authority — so the state exists to show the player never has to meet it.
 const OVER_CAP_PARTY_WORKERS := 1
+
+## **THE LIVE TIE IS THE FIRST ENTRY THE PICKER LISTS, AND THAT IS THE INTERESTING SEAT.** The
+## `connections` fixture puts the live tie ahead of the parked one, so the entry a player must reach
+## is index 0 — the seat an `OptionButton` selects on its own as the first item is added, and
+## therefore the one seat a pick can be swallowed on. A probe aimed anywhere else tests a picker in a
+## state the reported defect cannot occur in.
+const LIVE_TIE_ENTRY := 0
+
+## Where in an entry's own row the press is aimed: the middle of it, on both axes. The popup's rows
+## are drawn rather than published as nodes, so the row is derived from the popup's height and its
+## item count — and aiming at the CENTRE is what keeps the derivation honest against a theme that
+## pads a row, since a press that lands on the wrong row is caught by the assertion beside it.
+const POPUP_ROW_CENTRE := 0.5
+
+## The popup reported no entry under the press at all — a failure, never a skip.
+const POPUP_NO_ENTRY_PRESSED := -1
+
+## **AN UNCHOSEN PICKER HOLDS NO SELECTION.** `OptionButton.selected` when nothing has been picked,
+## and the reading that must agree with the `Choose…` face beside it.
+const PICKER_NOTHING_CHOSEN := -1
 
 ## A full tie and a PARKED one. Zero is not "no tie" — it is the tie at rest, "we know such a people
 ## exist and have no current dealings" — and the picker must list it, disabled, rather than hide it.
@@ -146,17 +173,35 @@ func run(harness) -> void:
 		h._assert_hud("…with the PARKED tie shown, disabled, carrying its reason",
 			picker.is_item_disabled(1) and picker.get_item_text(1).contains(
 				HudComposeVocab.COMPOSE_DESTINATION_PARKED_REASON))
+		# **THE PICKER'S OWN SELECTION MUST SAY WHAT ITS FACE SAYS**, and this is the reading the
+		# reported defect fails: `OptionButton.add_item` seats `current` on the first selectable entry
+		# it is handed, so a picker showing `Choose…` was quietly holding entry 0 — and Godot then
+		# refuses to report a pick of the entry it believes is already current, which is exactly the
+		# entry the player has to click. Asserted beside the face, because either alone looks right.
+		h._assert_hud("…and the picker holds NO selection while its face says %s"
+				% HudComposeVocab.COMPOSE_DESTINATION_CHOOSE,
+			picker.selected == PICKER_NOTHING_CHOSEN
+				and picker.text == HudComposeVocab.COMPOSE_DESTINATION_CHOOSE)
 	# **AN UNCHOSEN DESTINATION CANNOT SEND**, and the button says so rather than vanishing.
 	var blocked := Q.find_meta_node(_parties_zone(), HudWidgets.SEND_TRADE_CONFIRM_META)
 	h._assert_hud("…and the send is present and disabled until a destination is named",
 		blocked is Button and (blocked as Button).disabled)
 
-	# **STATE — A DESTINATION CHOSEN.** Picked through the picker's own `item_selected`, so the real
-	# `on_pick` runs; setting the member would test the harness instead.
+	# **STATE — A DESTINATION CHOSEN.** Picked with REAL POINTER INPUT — a press on the picker's face
+	# and a press on the popup entry, both through `Viewport.push_input`. See
+	# `_pick_destination_through_the_popup` for why an `emit_signal("item_selected", …)` cannot say
+	# anything about this control.
 	if picker != null:
-		picker.emit_signal("item_selected", 0)
+		await _pick_destination_through_the_popup(picker, LIVE_TIE_ENTRY)
 	await h._settle()
 	await h._save("trade_picker_destination")
+	# The sheet rebuilt around the choice, so the picker is a NEW control — and it must come back
+	# holding the chosen entry under the chosen band's name, the same face/selection pairing asked of
+	# the empty one above.
+	var chosen := _destination_picker()
+	h._assert_hud("the rebuilt picker wears the chosen band's name over the chosen entry",
+		chosen != null and chosen.selected == LIVE_TIE_ENTRY
+			and chosen.text == NEIGHBOUR_DISPLAY_NAME)
 	var sheet_text := _sheet_text()
 	# THE KEYSTONE, RENDERED: the position under the picker is where they WERE, and it says so.
 	h._assert_hud("the destination's position is worded as REMEMBERED, not live",
@@ -315,6 +360,82 @@ func _find_mission_button(root: Node, mission: String) -> Button:
 		if found != null:
 			return found
 	return null
+
+## **THE PICK IS DRIVEN AS A POINTER GESTURE, BECAUSE THAT IS THE PART THAT BROKE.** A player's pick
+## is a press on the picker's face — which opens the popup, `OptionButton` running at
+## `ACTION_MODE_BUTTON_PRESS` — and then a press on an entry INSIDE that popup, which is the only
+## thing that reaches `OptionButton`'s own selection path and therefore the only thing that decides
+## whether `item_selected` fires at all.
+##
+## **A `picker.emit_signal("item_selected", i)` cannot fail**: it calls the connected lambda by hand,
+## so it passes on a picker whose popup never opens, whose entries cannot be reached, and — the
+## reported defect — whose selection the engine silently declines to change, `add_item` having already
+## seated `current` on the entry the player is about to click. This state was rewritten from that
+## faked signal to these two presses because the faked one was green throughout.
+##
+## Both presses are delivered in WINDOW coordinates through `InputProbe`: the popup is an embedded
+## subwindow, and `Viewport.push_input` un-stretches an event into canvas space before forwarding it
+## to one, so a raw canvas point misses it. Every step fails loudly through `_assert_hud` — a probe
+## that quietly found nothing would leave every state after it rendering the unchosen sheet.
+func _pick_destination_through_the_popup(picker: OptionButton, entry: int) -> void:
+	var viewport: Viewport = h.get_viewport()
+	var face := InputProbe.canvas_to_window(viewport, h.get_window(),
+		picker.get_global_rect().get_center())
+	InputProbe.hover(viewport, face)
+	InputProbe.press_left(viewport, face)
+	await h.get_tree().process_frame
+	InputProbe.release_left(viewport, face)
+	await h.get_tree().process_frame
+	var popup := picker.get_popup()
+	h._assert_hud("a press on the destination picker's face opens its popup", popup.visible)
+	if not popup.visible:
+		return
+	await _press_popup_entry(popup, entry)
+	# The point pressed is DERIVED from the popup's own rect (an item's rect is not published), so the
+	# claim is checked rather than trusted: the popup itself says which entry the press hit, and a
+	# theme or a third tie that moved the rows fails here instead of quietly picking the parked band.
+	# **Read off the MEMBER, never off a return value.** A press that lands commits the pick, which
+	# rerenders the sheet and FREES this popup — so the helper runs on a node that may die under it, and
+	# an aborted GDScript call answers with its return type's DEFAULT. `0` is a legal entry index, so a
+	# returned answer would have reported "landed on entry 0" for a helper that never finished. The
+	# member's own sentinel is what fails instead.
+	h._assert_hud("…and the press lands on the live tie's own entry (%d, wanted %d)"
+			% [_popup_entry_pressed, entry],
+		_popup_entry_pressed == entry)
+
+## Press one entry of the OPEN popup, leaving `_popup_entry_pressed` holding the entry the popup says
+## the press hit (`POPUP_NO_ENTRY_PRESSED` when it hit none). The signal is only LISTENED to; the press
+## itself is a real pointer gesture, which is the whole point of this state.
+##
+## **The witness writes to a MEMBER, not to a local.** A GDScript lambda captures a local by VALUE, so
+## a `var landed` assigned inside the callback keeps the closure's own copy and the caller reads the
+## initial value forever — which reports every press as having landed on nothing, whatever really
+## happened. It cost a run to find; the member is captured through `self` and does propagate.
+##
+## **THE POPUP IS FREED UNDER THIS FUNCTION, AND THAT IS THE CONTROL BEHAVING CORRECTLY.** A pick runs
+## the entry's `on_pick`, which rerenders the sheet, which `queue_free`s the row the picker and its
+## popup hang off — so by the frame after the release the popup is gone. The deferred free is what
+## makes it safe (nothing is freed while Godot is still inside `activate_item`), and the teardown here
+## is guarded rather than assumed: an unguarded `disconnect` raises, which ABORTS this call, and an
+## aborted call answers with its return type's default rather than failing.
+func _press_popup_entry(popup: PopupMenu, entry: int) -> void:
+	var viewport: Viewport = h.get_viewport()
+	_popup_entry_pressed = POPUP_NO_ENTRY_PRESSED
+	var witness := func(index: int) -> void:
+		_popup_entry_pressed = index
+	popup.index_pressed.connect(witness)
+	var row_height := float(popup.size.y) / float(maxi(popup.item_count, 1))
+	var point := InputProbe.canvas_to_window(viewport, h.get_window(), Vector2(
+		float(popup.position.x) + float(popup.size.x) * POPUP_ROW_CENTRE,
+		float(popup.position.y) + row_height * (float(entry) + POPUP_ROW_CENTRE)))
+	InputProbe.hover(viewport, point)
+	await h.get_tree().process_frame
+	InputProbe.press_left(viewport, point)
+	await h.get_tree().process_frame
+	InputProbe.release_left(viewport, point)
+	await h.get_tree().process_frame
+	if is_instance_valid(popup):
+		popup.index_pressed.disconnect(witness)
 
 ## The destination picker — the sheet's one `OptionButton`, which is also the only one in this zone.
 func _destination_picker() -> OptionButton:
