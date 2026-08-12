@@ -3341,17 +3341,22 @@ func _set_cargo_amount(key: String, is_material: bool, amount: float, held: floa
         _trade_food = loaded
     rerender()
 
-## **THE SIM'S OWN MASS EXPRESSION, HELD VERBATIM** — food counts as itself, and every unit of every
-## material costs `expedition_trade_material_carry_weight` of pack space. The lever is a per-cohort
-## echo of the sim's config, so a tuning change moves this meter and the server's refusal together.
+## What the composed manifest weighs, through the ONE shared expression
+## (`DetailFormat.shipment_mass`) — the in-flight `Carrying:` row prices the same pack with it, so the
+## meter a player sends against and the row they watch afterwards cannot disagree. This half only
+## splits the sheet's mixed row list into the two accounts that expression takes.
 func _trade_manifest_mass(band: Dictionary, rows: Array) -> float:
-    var material_weight := float(band.get("expedition_trade_material_carry_weight", 0.0))
-    var mass := 0.0
+    var food := 0.0
+    var material_total := 0.0
     for row_variant in rows:
         var row: Dictionary = row_variant as Dictionary
         var amount := float(row.get("amount", 0.0))
-        mass += amount * material_weight if bool(row.get("is_material", false)) else amount
-    return mass
+        if bool(row.get("is_material", false)):
+            material_total += amount
+        else:
+            food += amount
+    return DetailFormat.shipment_mass(food, material_total,
+        float(band.get("expedition_trade_material_carry_weight", 0.0)))
 
 ## `party_workers × expedition_trade_per_worker_carry` — the SHIPMENT pack, never the hunt one. A band
 ## publishing no lever answers 0, which the meter renders as an unknown ceiling rather than as a cap

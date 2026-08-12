@@ -2957,6 +2957,17 @@ reads the same wherever it is quoted.
   a pelt are different rows, so the underlying label always carries every one of them.
 - **The `+` steps a whole unit and CLAMPS TO THE PILE**, so a 0.6 pile is reachable in one press
   rather than being unshippable for want of a fractional control.
+- **…and the amount that press leaves is EXACT, so the emitted one is FLOORED, never rounded**
+  (`Main.cargo_wire_amount`). The clamp puts the band's precise holding on the row — `137.456789` food
+  — and `resolve_shipment` refuses on `held < amount`, so a tenth of a unit of legibility on the
+  command line is a refused shipment: *"the band holds 137.46 provisions, not 137.50"*, on the very
+  press this sheet teaches. Rounding can also carry the manifest's mass over the cap the meter above
+  just said it was under. **Two grids bind, and above ~8 units the coarser one is the WIRE's**: the
+  line is text, so the server parses it back through an `f32` before quantising to `Scalar`, and an
+  amount floored onto the fixed-point grid alone still reconstructs above the pile about 40% of the
+  time. The FEED NOTE keeps one decimal — it is prose for a person, and it is not what the server
+  reads. `cargo xtask command-guard` drives a fractional pile end to end and compares what the real
+  parser reconstructs against the pile in ticks.
 - **The state is remembered per BATCH KEY** (`material id | rating bands`), so a snapshot that moves a
   pile's size cannot silently move the player's choice onto a different pile.
 - **The command emits one `material <id> <amount>` line per ROW**, in the order the sheet lists them.
@@ -2973,7 +2984,13 @@ cap  = party_workers × expeditionTradePerWorkerCarry
 Both terms are per-cohort echoes of the sim's own config, so a tuning change moves the meter and the
 refusal together. **Neither is a literal here** — `expeditionPerWorkerCarry` is the HUNT pack and a
 client composing a trade cap out of it would be one config edit from quoting a cap
-`send_trade_expedition` refuses. The meter exists so the player never meets that refusal; an over-cap
+`send_trade_expedition` refuses.
+
+**The mass expression itself lives in ONE place, `DetailFormat.shipment_mass`**, because the in-flight
+`Carrying:` row prices the same pack (`band-readouts.md` → "A trade party states WHO IT IS FOR"). This
+sheet's `_trade_manifest_mass` only splits its mixed row list into the two accounts that expression
+takes. Two copies of a formula are two answers about one pack, and the row's copy had already drifted:
+it divided the cargo's FOOD by the mass cap. The meter exists so the player never meets that refusal; an over-cap
 or empty manifest disables the send with its reason, which is the "visible and disabled with its
 reason" convention this zone uses everywhere.
 

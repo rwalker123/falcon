@@ -554,9 +554,11 @@ built from the code under test can only agree with itself. **They are the SIM's 
 from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
 payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-**A clean run is 309 frames / 895 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
+**A clean run is 309 frames / 900 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
 three times in one arc and once across a merge, and a running total kept by addition would be wrong
-by now.
+by now. (The measurement above came back FIVE higher than the 895 recorded before it while the arc
+#527 review added exactly ONE claim — the `Carrying:` mass one. Four `PASS`es had accumulated
+un-recorded, which is the whole reason this line says re-measure.)
 
 **`forage_no_food_basket` is the newest frame** (`chapters/forage_accounts.gd`, appended last) and
 carries **fourteen** `PASS`, counting the two compose-sheet fit claims every state in that chapter
@@ -753,7 +755,7 @@ a sentence is a string — a frame shows a plausible verdict whichever clock it 
 
 ## `chapters/trade.gd` — the cargo picker and a shipment in flight (arc #527, issue #517)
 
-**Appended LAST in `CHAPTERS`**, after `crafting_bench`. Seven frames and twenty-seven `PASS` — plus
+**Appended LAST in `CHAPTERS`**, after `crafting_bench`. Seven frames and twenty-eight `PASS` — plus
 one more in `chapters/event_dock.gd`, where the shipment's `destination=` label swap belongs
 beside the band-label trio it extends rather than in a chapter that instantiates no dock. It
 injects a real `BandCityPanel` docked RIGHT on the PARTIES tab, drives the whole compose act through
@@ -804,6 +806,7 @@ decomposition those two claims are separated to show.
 | mass and cap composed from the FIXTURE's side | the harness and the sheet arrive at one number from opposite ends |
 | an over-cap manifest disables the send | the client's courtesy, reached by shrinking the party rather than by growing the cargo, so the cap moves and the manifest does not |
 | the shipment's materials are **not** summed | asserted as an ABSENCE — a row that added hide to bone still renders two plausible numbers and every other assertion passes |
+| the in-flight `Carrying:` row weighs the WHOLE PACK against the cap | composed from the fixture's own terms (`12 food + 2.0 × (4.0 + 1.2)` = 22.4 of 40), so the row and the compose sheet's meter arrive at one number from opposite ends. It read `12.0 / 40.0` — the cargo's FOOD over the MASS cap — and every other claim on that row passed |
 | the destination `BandId` never appears on screen | the id is distinctive (`BandFx.FIXTURE_BAND_ID_OFFSET + entity`), so a leak has something to find |
 | the `Bound for` row names the band anyway | the fixture publishes `expeditionDestinationName` as `""` — the LIVE shape, bands having no names — so the row can only read `Band 2` by joining the roster on the id beside it |
 
@@ -813,8 +816,13 @@ that is exactly what 🤝 did on the Food breakdown's transfer rows before it wa
 is the only thing that catches it, and it caught the fifth footer button being clipped off the edge
 of a 354px column in the same pass.
 
-**The Food-ledger half opens the disclosure**, because the headline alone passes on a client that
-folded the transfer into some other row. **Its label search starts at the HARNESS ROOT, not the
+**The party fixture carries `expedition_trade_material_carry_weight`**, which the native decoder
+echoes onto every cohort. Without it the `Carrying:` row prices the pack at its food and the mass
+claim above goes green on the defect it exists for.
+
+**The Food-ledger half opens the disclosure, and it is now the ONLY thing that can see the two
+terms**: the headline states the steady rate and deliberately says nothing about a transfer
+(`band-readouts.md` → "The Food line's TRANSFERS are breakdown rows"). **Its label search starts at the HARNESS ROOT, not the
 HUD**: a player band's detail renders into the Band/City panel, which is a sibling `CanvasLayer`
 rather than a child of the HUD, so a HUD-rooted walk finds nothing and the click silently never
 happens.

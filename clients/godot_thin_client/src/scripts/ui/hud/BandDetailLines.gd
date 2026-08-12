@@ -134,10 +134,15 @@ const PARTY_PACK_ENTRY_FORMAT := "%s %s"
 # The destination is the sim's `expeditionDestinationName`, resolved at LAUNCH and carried, rendered
 # verbatim. Its key twin `expeditionDestinationBand` is what the command addresses and NEVER appears.
 const TRADE_DESTINATION_ROW := "Bound for"
-# `Carrying: 18.0 / 24.0 · 4.0 hide · 1.2 bone` — the shipment beside the pack it fills, and the
+# `Carrying: 23.2 / 24.0 · 4.0 hide · 1.2 bone` — the shipment beside the pack it fills, and the
 # materials as ONE TERM PER MATERIAL, never summed (`_shipment_cargo_clause`). The cap is
 # `expedition_carry_cap`, which resolves per MISSION, so this quotes the shipment pack rather than a
 # hunt's provisions ceiling.
+#
+# **THE NUMBER BEFORE THE SLASH IS THE WHOLE PACK'S MASS** (`DetailFormat.shipment_cargo_mass` —
+# 18 food + 4 hide + 1.2 bone at a carry weight of 1.0 is the 23.2 above), never the food term alone:
+# the cap is what the sim weighs `food + weight × Σ materials` against, and the materials trailing it
+# are the SPELLING of that mass, not a second cargo beside it.
 const TRADE_CARGO_ROW := "Carrying"
 const TRADE_CARGO_CAP_FORMAT := "%s: %s / %s%s"
 const TRADE_CARGO_NO_CAP_FORMAT := "%s: %s%s"
@@ -518,16 +523,20 @@ func _shipment_summary_lines(unit_data: Dictionary, context: DetailFormat.Contex
     # The party's own runway still tints the cargo row, the `Carried:` contract: a shipment eats out
     # of its provisions on the road exactly as a scout does, and the walk is where a haul's cost lives.
     context.food_turns = float(unit_data.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
-    var cargo_food := float(unit_data.get("expedition_cargo_food", 0.0))
+    # **THE NUMERATOR IS THE PACK'S MASS, NOT ITS FOOD** — `expedition_carry_cap` is what the sim
+    # checks `food + weight × Σ materials` against, so putting the food alone over it renders a full
+    # pack as a near-empty one. `DetailFormat.shipment_cargo_mass` is the compose sheet's own meter
+    # expression, shared so the pre-launch price and the in-flight report answer for one pack.
+    var cargo_mass := DetailFormat.shipment_cargo_mass(unit_data)
     var cargo := _shipment_cargo_clause(unit_data)
     var cap := float(unit_data.get("expedition_carry_cap", 0.0))
     if cap > 0.0:
         lines.append(TRADE_CARGO_CAP_FORMAT % [TRADE_CARGO_ROW,
-            HudCraftingVocab.BATCH_AMOUNT_FORMAT % cargo_food,
+            HudCraftingVocab.BATCH_AMOUNT_FORMAT % cargo_mass,
             HudCraftingVocab.BATCH_AMOUNT_FORMAT % cap, cargo])
     else:
         lines.append(TRADE_CARGO_NO_CAP_FORMAT % [TRADE_CARGO_ROW,
-            HudCraftingVocab.BATCH_AMOUNT_FORMAT % cargo_food, cargo])
+            HudCraftingVocab.BATCH_AMOUNT_FORMAT % cargo_mass, cargo])
     var pos_array: Array = Array(unit_data.get("pos", []))
     if pos_array.size() == 2:
         lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])

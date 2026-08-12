@@ -817,6 +817,32 @@ SHORT tier renders three fewer rows than the TALL one.
   pulled out of the loop and unit-tested (`cargo test -p xtask`) over lines the real parser produces,
   so the regression is reachable without launching Godot.
 
+## `command_guard`'s SHIPMENT drive asserts an AMOUNT, not a handle (arc #527, issue #517)
+
+`_drive_send_trade_expedition` is the one drive whose subject is a number. Everything else in this
+gate asks *"is this the right band / the right kit"*; a manifest asks *"is this an amount the band
+actually holds"*, and a client that gets it wrong emits a line that parses, names the right band and
+carries the right kit — every other assertion in the file green.
+
+- **The piles are FRACTIONAL and authored in the sim's own TICKS** (`TRADE_FOOD_HELD_TICKS`
+  21_050_001, `TRADE_HIDE_HELD_TICKS` 4_567_891), so the entry's `cargo_held_ticks` and the Rust
+  half's comparison are exact — a decimal here would re-round the very thing being compared. The food
+  pile is adversarial TWICE: a tenth rounds it up to `21.1`, and flooring it onto the fixed-point grid
+  alone still emits `21.050001`, which the parser's `f32` round-trip lands one tick ABOVE the pile.
+- **The cargo is loaded through the rows' own `+`, to the end of each pile.** `_set_cargo_amount`
+  clamps a press to what the band holds, so the last press leaves the exact held amount on the row —
+  the path the sheet documents. A drive that wrote the manifest itself would test its own arithmetic.
+- **The Rust half quantises what the parser recovered the way the SIM does** (`scalar_ticks`, the
+  `f32` multiply included — `f64` here would agree with a client the server refuses) and refuses a run
+  in which no shipment was composed from a fractional pile, the vacuity twin of the kit and
+  differing-handles preconditions: whole units survive any rounding.
+- **The destination is seated directly, not picked through the popup.** An `OptionButton`'s popup is
+  an embedded subwindow and this half runs `--headless`; WHICH tie is chosen is `ui_preview`'s
+  `trade_picker_destination`, where the pick is a real pointer gesture.
+- **`manifest_failures` is unit-tested** (`cargo test -p xtask`) over lines the real parser produces —
+  both rounded spellings failing, the floored one passing — so the regression is reachable without
+  launching Godot, the treatment `kit_failure` already has.
+
 ## The RECALL VERB pair, and the compose float's two LATCH guards
 
 Four claims added to `band_panel_preview`, none of which a frame can carry: three of them are about a

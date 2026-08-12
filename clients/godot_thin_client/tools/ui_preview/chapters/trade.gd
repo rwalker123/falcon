@@ -254,8 +254,9 @@ func run(harness) -> void:
 		_sheet_text().contains(HudComposeVocab.COMPOSE_CARGO_OVER_CAP_REASON))
 
 	# **STATE — THE FOOD LINE WITH A TRANSFER IN IT.** Not a trade readout: the supply network moves
-	# food between neighbouring larders every turn, so any co-networked band carries these two terms
-	# and the Food line was short by exactly them before this arc.
+	# food between neighbouring larders every turn, so any co-networked band carries these two terms.
+	# They are itemized in the BREAKDOWN and deliberately absent from the `/turn` headline, which is
+	# the STEADY rate on the sim's own basis — see `DetailFormat.band_net_food`.
 	h._hud._bandpanel._close_party_compose()
 	panel.set_active_tab(BandCityPanel.ZONE_BAND)
 	var transferring := _shipper_band()
@@ -312,6 +313,17 @@ func run(harness) -> void:
 	h._assert_hud("…and are never summed into one figure",
 		not cargo_row.contains(
 			HudCraftingVocab.BATCH_AMOUNT_FORMAT % (PARTY_CARGO_HIDE + PARTY_CARGO_BONE)))
+	# **THE FIGURE AGAINST THE CAP IS THE WHOLE PACK'S MASS**, the same expression the compose sheet's
+	# meter priced this manifest with (`DetailFormat.shipment_mass`). Composed here from the fixture's
+	# own terms, so the row and the meter arrive at one number from opposite ends — a `Carrying:` that
+	# put the food alone over the cap rendered a full pack as one-sixth full and every other assertion
+	# on this row still passed.
+	var expected_party_mass := PARTY_CARGO_FOOD \
+		+ TRADE_MATERIAL_CARRY_WEIGHT * (PARTY_CARGO_HIDE + PARTY_CARGO_BONE)
+	h._assert_hud("the shipment is weighed as a whole pack, against the pack's own cap",
+		cargo_row.contains("%s / %s" % [
+			HudCraftingVocab.BATCH_AMOUNT_FORMAT % expected_party_mass,
+			HudCraftingVocab.BATCH_AMOUNT_FORMAT % PARTY_CARGO_CAP]))
 	# The hunt-only rows must be ABSENT: a shipment carries no floor and no stop to report.
 	h._assert_hud("a shipment states no ORDERS row — it carries no floor",
 		not party_text.contains(TRADE_ABSENT_ORDERS_KEY))
@@ -673,6 +685,10 @@ func _trade_party() -> Dictionary:
 			{"material_id": "bone", "amount": PARTY_CARGO_BONE},
 		],
 		"expedition_carry_cap": PARTY_CARGO_CAP,
+		# **THE CARRY-WEIGHT LEVER RIDES EVERY COHORT**, party included (the native decoder echoes it
+		# onto each one), and the `Carrying:` row needs it: what the cap is checked against is
+		# `food + weight × Σ materials`, so a fixture without it would price this pack at its food.
+		"expedition_trade_material_carry_weight": TRADE_MATERIAL_CARRY_WEIGHT,
 		"tile_info": {
 			"x": 67, "y": 20,
 			"terrain_label": "Prairie Steppe",

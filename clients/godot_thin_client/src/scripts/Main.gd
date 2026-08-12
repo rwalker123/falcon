@@ -123,10 +123,29 @@ const COMMAND_HOST = "127.0.0.1"
 const COMMAND_PORT = 41001
 const PLAYER_FACTION_ID = 0
 # --- THE SHIPMENT MANIFEST'S SPELLING (arc #527, see `format_send_trade_expedition`) --------------
-# One decimal on every cargo amount, on the COMMAND LINE and in the feed note alike. The parser reads
-# a float, so this is about legibility rather than precision: `%s` on a GDScript float prints
-# `4.5000001` for a value the picker clamped to a stored pile, and a command log is read by people.
-const TRADE_CARGO_AMOUNT_FORMAT := "%.1f"
+# **THE COMMAND LINE AND THE FEED NOTE SPELL AN AMOUNT DIFFERENTLY, because they are read by
+# different readers.** The note is prose for a person and rounds to one decimal; the LINE is an order
+# the server checks against a store, and rounding it is a defect — see `cargo_wire_amount`.
+#
+# One decimal on the note only: `%s` on a GDScript float prints `4.5000001` for a value the picker
+# clamped to a stored pile, and the command feed is read by people.
+const TRADE_CARGO_NOTE_AMOUNT_FORMAT := "%.1f"
+# **THE SIM'S FIXED-POINT PRECISION**, mirroring `core_sim::Scalar::SCALE` / `sim_runtime::
+# FIXED_POINT_SCALE` (10^6). It is the finest amount a store can hold, so it is the finest amount a
+# manifest may name; `cargo xtask command-guard` drives a fractional pile through the REAL server
+# parser, so a drift from the sim's own scale fails there rather than in play.
+const SIM_SCALAR_DECIMALS := 6
+# **THE OTHER GRID THE AMOUNT HAS TO SURVIVE, and the coarser of the two above ~8 units.** The
+# command line is text: the server parses it back with `parse_f32` and only then quantises it to
+# `Scalar`, so the value that reaches the store comparison has been through a 32-bit float twice (the
+# parse, and the ×10^6 that follows it). `1.1920929e-7` is that float's relative step — `f32::EPSILON`
+# — and a 6-decimal amount at 137 units sits ~40 of them apart from its neighbours, so an amount
+# floored onto the fixed-point grid ALONE still lands above the pile about 40% of the time.
+const WIRE_FLOAT_EPSILON := 1.1920929e-7
+# How many of those steps to back off before emitting: one for the parse, one for the multiply, so
+# the reconstructed value cannot land above the pile. The cost is the crumb left behind — at 300 food
+# it is 0.0002, four orders of magnitude under the tenth of a unit the readouts render.
+const WIRE_FLOAT_BACKOFF_STEPS := 2.0
 # The feed note's manifest clause — `12.0 food · 4.0 hide`. The ` · ` is the separator this HUD spends
 # on separating accounts everywhere else, and the material terms are NEVER merged into a total.
 const TRADE_CARGO_TERM_SEPARATOR := " · "
@@ -1035,6 +1054,9 @@ static func format_send_denial_raid(payload: Dictionary) -> Dictionary:
 ## **AN EMPTY MANIFEST IS NOT REFUSED HERE.** It parses, and the SERVER answers whether a shipment
 ## with nothing in it is legal — that question is about the band and its packs. What this refuses is
 ## a line it cannot address: no band, no destination, or no party.
+##
+## **EVERY AMOUNT IS FLOORED, NEVER ROUNDED** — `cargo_wire_amount`, and the reason it is a
+## correctness rule rather than a formatting one is written there.
 static func format_send_trade_expedition(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
@@ -1061,16 +1083,25 @@ static func format_send_trade_expedition(payload: Dictionary) -> Dictionary:
             var material_id := String(row.get("id", "")).strip_edges()
             if material_id == "":
                 continue
-            line += " material %s %s" % [material_id, TRADE_CARGO_AMOUNT_FORMAT % amount]
-            material_terms.append("%s %s" % [TRADE_CARGO_AMOUNT_FORMAT % amount, material_id])
+            # Each material row is emitted on its own — the server sums the rows of one id itself —
+            # so each is floored on its own, and the sum of floors is still inside the pile.
+            var material_amount := cargo_wire_amount(amount)
+            if material_amount <= 0.0:
+                continue
+            line += " material %s %s" % [material_id, cargo_wire_text(material_amount)]
+            material_terms.append("%s %s" % [
+                TRADE_CARGO_NOTE_AMOUNT_FORMAT % material_amount, material_id])
         else:
             # **THE FOOD LINES ARE SUMMED INTO ONE TOKEN, and only the food lines.** `food` names one
             # commodity, so two rows of it are one quantity; two rows of `hide` are two PILES at two
             # ratings and merging them would rebuild the retired trade scalar out of the vector that
             # replaced it. The sheet composes one food row anyway — this is the guard, not a feature.
             food_total += amount
+    # …and the food TOTAL is floored once, after the sum: the server compares the whole `food` token
+    # against one larder, so flooring the parts would spend the allowance twice.
+    food_total = cargo_wire_amount(food_total)
     if food_total > 0.0:
-        line += " food %s" % (TRADE_CARGO_AMOUNT_FORMAT % food_total)
+        line += " food %s" % cargo_wire_text(food_total)
     # …and the kit LAST, as a named pair, the `format_send_hunt_expedition` convention: the parser
     # lifts it out of the tail, but a human reading the log sees the positional grammar unbroken.
     line += _kit_token(payload)
@@ -1080,7 +1111,7 @@ static func format_send_trade_expedition(payload: Dictionary) -> Dictionary:
     if destination_label == "":
         destination_label = str(destination_band_id)
     var manifest := TRADE_CARGO_TERM_SEPARATOR.join(
-        ([TRADE_CARGO_FOOD_TERM_FORMAT % (TRADE_CARGO_AMOUNT_FORMAT % food_total)] if food_total > 0.0 else [])
+        ([TRADE_CARGO_FOOD_TERM_FORMAT % (TRADE_CARGO_NOTE_AMOUNT_FORMAT % food_total)] if food_total > 0.0 else [])
         + material_terms)
     if manifest == "":
         manifest = TRADE_CARGO_EMPTY_TERM
@@ -1089,6 +1120,40 @@ static func format_send_trade_expedition(payload: Dictionary) -> Dictionary:
         "message": "Send shipment (%d) to %s carrying %s." % [
             party_workers, destination_label, manifest],
     }
+
+## **A CARGO AMOUNT AS THE COMMAND LINE MAY NAME IT — FLOORED, NEVER ROUNDED** (arc #527, issue #517).
+##
+## **Rounding is wrong in one direction, and the direction is fatal.** `resolve_shipment` compares
+## STRICTLY (`held < amount` refuses) against a `Scalar` store, and the compose sheet's own `+` clamps
+## a press to the pile — `BandPanelController._set_cargo_amount`, whose documented one-press path
+## therefore leaves the EXACT fractional held amount on the row (`137.456789` food, a `4.56789` hide
+## batch). A `%.1f` there emits `137.5`, and the server answers *"the band holds 137.46 provisions,
+## not 137.50"*: the one-press path the sheet teaches is refused. The same rounding can push the
+## manifest's mass over the cap AFTER this client's own meter said it fit.
+##
+## So the emitted amount may never exceed the held one, and this floors it onto **both** grids it has
+## to survive:
+##
+## 1. the sim's fixed-point grid (`SIM_SCALAR_DECIMALS`), the finest quantity a store can hold;
+## 2. the 32-bit float the command TEXT is parsed back through (`WIRE_FLOAT_EPSILON` ×
+##    `WIRE_FLOAT_BACKOFF_STEPS`), which above ~8 units is the coarser of the two — an amount floored
+##    onto the fixed-point grid alone still reconstructs ABOVE the pile roughly 40% of the time,
+##    because `parse_f32` and the `×10^6` that follows it each round to nearest.
+##
+## Answers `0.0` for anything that does not survive as a positive amount, which the caller drops:
+## a `food 0.000000` token is a command failure with a reason, not an empty shipment.
+static func cargo_wire_amount(amount: float) -> float:
+    if amount <= 0.0:
+        return 0.0
+    var scale := pow(10.0, SIM_SCALAR_DECIMALS)
+    var floored := floorf(amount * scale) / scale
+    var backoff := floored * WIRE_FLOAT_EPSILON * WIRE_FLOAT_BACKOFF_STEPS
+    return maxf(floorf((floored - backoff) * scale) / scale, 0.0)
+
+## …and how it is SPELLED — every digit the sim's fixed point can hold, so the floored value survives
+## the trip as text. The digit count is the sim's own precision rather than a literal.
+static func cargo_wire_text(amount: float) -> String:
+    return ("%%.%df" % SIM_SCALAR_DECIMALS) % amount
 
 ## `recall_expedition <faction_id> <expedition_band_id>` — a detached party is a band, addressed by
 ## the same durable id. Non-optional, unlike the `[band_id]` of `scout` / `cancel_order`.
