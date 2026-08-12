@@ -4,11 +4,16 @@ class_name FloraSprites
 ## Bundled PNG art for individual FLORA SPECIES — the sixth art family behind `IconSprites`, and the
 ## per-plant tier above `CropRoleSprites`' three role marks (issue #339).
 ##
-## **COVERAGE IS ZERO TODAY. The fallback is not a defensive branch — it is the whole behaviour.**
-## No PNG has been drawn yet, so every call here answers `""` / `null` and every consumer falls
-## through to the mark it renders now. That is deliberate: the wiring lands first so a species'
-## art is a file drop rather than a code change, and until the art exists the HUD renders exactly
-## what it rendered before this file existed.
+## **COVERAGE IS 32 OF 33, AND THE ONE GAP IS DELIBERATE AND PERMANENT.** `hay_grass` is the roster's
+## only `fodder` species, so the fodder ROLE mark — a bound bale — already names it exactly and
+## uniquely, and a standing-grass silhouette would collide with the grass spikes it shares a basket
+## with; `assets/icons/icon_prompts.txt` ships **32 prompts for 33 species** and says so. Every other
+## species answers a real path / texture here, and `hay_grass` is the row the fallback below is now
+## aimed at — the one miss that cannot be closed by drawing another PNG.
+##
+## The wiring shipped BEFORE any art existed, when every call answered `""` / `null`. That is why a
+## species' art was a file drop rather than a code change when it landed, and why the fallback is an
+## EXERCISED path rather than an assumed one — but "no art anywhere" is history, not the state.
 ##
 ## WHY A PER-SPECIES TIER AT ALL: the roster's plants collapse under the emoji palette — every grain
 ## is 🌾, every nut 🌰, every berry 🫐, every mushroom 🍄 — so a basket row could not tell Wild Emmer
@@ -49,25 +54,29 @@ class_name FloraSprites
 ## `CropRoleSprites._path_if_loadable` rule), so a bad path can never put a broken-image box in the
 ## middle of a text row.
 ##
-## **THE ONE BEHAVIOUR IT DOES NOT SHARE IS THE WARNING, and that follows from coverage being zero
-## by design.** For the other five an absent path is a DEFECT and the warning is how it surfaces;
-## here a row with no art falls back to its role mark AS INTENDED, so warning would fire up to once
-## per roster species per session for the expected state — 33 lines saying the feature is behaving —
-## and that noise is exactly what would bury a real one. It would also say the wrong thing: the
-## shared message names *the emoji marker*, and this family falls back to the CROP-ROLE mark.
+## **THE ONE BEHAVIOUR IT DOES NOT SHARE IS THE WARNING, and that follows from coverage being
+## deliberately INCOMPLETE.** For the other five an absent path is a DEFECT and the warning is how it
+## surfaces; here a row with no art falls back to its role mark AS INTENDED, so the warning would fire
+## for a state that is correct. **The magnitude has collapsed — one species now, not the 33 it was
+## before any art existed (16 warnings in one `ui_preview` run, measured) — and the argument is
+## unchanged by that, because it is about KIND rather than volume:** a family that warns once per
+## session for a row that is behaving teaches the reader to skip its messages, which is what buries
+## the real one.
+## It would also say the wrong thing: the shared message names *the emoji marker*, and this family
+## falls back to the CROP-ROLE mark.
 ##
 ## So the shared call is made quietly (`warn = false`) and this file warns on the ONE case that is a
 ## defect rather than a state: **a source PNG sitting in the directory with no imported resource
 ## behind it**, which is the missing-`.png.import`-sidecar failure `cargo xtask fauna-icon-guard`
 ## exists to catch on the fauna side — art that works in the author's checkout and silently draws
 ## the fallback in every other one. `_note_absent_once` is that check, and it is deliberately the
-## only thing left that can speak: "no file at all" is not worth a word until someone draws one.
+## only thing left that can speak: "no file at all" is `hay_grass`'s permanent, correct answer.
 ##
 ## Static-only by design, same reasoning as `FoodIcons` and the five sibling tables.
 
 ## Where a species' art lives. **NO directory is created for it here**: `IconSprites.texture_for`
 ## guards on `ResourceLoader.exists`, and git cannot track an empty directory anyway — the folder
-## arrives with the first PNG.
+## arrived with the first PNG.
 const SPRITE_DIR := "res://assets/icons/flora/"
 
 const SPRITE_EXTENSION := ".png"
@@ -81,11 +90,15 @@ const KEY_ALPHABET := "abcdefghijklmnopqrstuvwxyz0123456789_"
 ## on `ClientSettings.config_path_override` — static, and it isolates the files a test sees from the
 ## ones the player gets.
 ##
-## **IT EXISTS BECAUSE COVERAGE IS ZERO.** With no flora art on disk the SPECIES tier of the basket
-## row's precedence chain is unreachable, so it would ship completely unexercised and the day the
-## first PNG lands would be the first time that branch ever ran. `ui_preview` points this at a
-## directory that does ship PNGs (`CropRoleSprites.SPRITE_DIR`) and drives the real producer through
-## it, then clears it — see `chapters/land_readouts.gd`.
+## **IT WAS ADDED BECAUSE COVERAGE WAS ZERO.** With no flora art on disk the SPECIES tier of the
+## basket row's precedence chain was unreachable, so it would have shipped completely unexercised and
+## the day the first PNG landed would have been the first time that branch ever ran.
+##
+## **IT STILL EARNS ITS KEEP AT 32 OF 33**, for a reason that does not expire: it is the only way to
+## drive the precedence chain against a directory whose CONTENTS THE HARNESS CONTROLS, so a claim
+## about the tier keeps meaning the same thing as art is drawn, renamed or retired. `ui_preview`
+## points it at a directory that ships PNGs under keys it chose (`CropRoleSprites.SPRITE_DIR`), drives
+## the real producer through it, then clears it — see `chapters/land_readouts.gd`.
 static var sprite_dir_override := ""
 
 ## Paths `_note_absent_once` has already answered for, so the sidecar report costs one
@@ -96,9 +109,10 @@ static var _reported: Dictionary = {}
 ## Bundled art path for a flora SPECIES key, or `""` when there is no art for it (the caller then
 ## falls back to the crop-ROLE mark — `FoodIcons.for_flora_species` states that chain).
 ##
-## Answers `""` today for every key, coverage being zero. The path is handed back only once the
-## texture has actually loaded, so a caller embedding it in `[img]` BBCode cannot render a
-## broken-image box.
+## Answers `""` for the one species that ships no art of its own (`hay_grass`), for any species whose
+## PNG has yet to be drawn, and for a key this family will not compose a path from. The path is handed
+## back only once the texture has actually loaded, so a caller embedding it in `[img]` BBCode cannot
+## render a broken-image box.
 static func path_for(species: String) -> String:
 	var path := _path_for_key(species)
 	if path == "":
@@ -132,8 +146,8 @@ static func _texture_at(path: String) -> Texture2D:
 ## missing-`.png.import`-sidecar case, which renders correctly for whoever generated the art and
 ## falls back to the role mark in every other checkout.
 ##
-## **A path with no file behind it says nothing**, that being the expected state of every species
-## until its art is drawn.
+## **A path with no file behind it says nothing** — that is `hay_grass`'s permanent state and the
+## expected state of any species whose art has yet to be drawn.
 ##
 ## `FileAccess.file_exists` on a `res://` source is a DEV-RUN check: an exported build ships the
 ## imported `.ctex` and not the PNG, so this is silent there. That is the right scope — the failure

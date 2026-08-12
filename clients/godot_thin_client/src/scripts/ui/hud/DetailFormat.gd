@@ -1087,8 +1087,8 @@ static func flora_composition_lines(
         # **SPECIES OUTRANKS ROLE BECAUSE IT IS THE MORE SPECIFIC FACT.** An icon's job on this list
         # is to make a row findable at a glance, and "this is Wild Emmer" locates a row that "this is
         # a staple" cannot — three marks cannot separate five rows. The role is not demoted to
-        # decoration by that: it remains the reading on every row with no species art, which today is
-        # every row (`FloraSprites` coverage is zero), and it will stay the reading on any plant whose
+        # decoration by that: it remains the reading on every row with no species art — `hay_grass`
+        # today, the roster's one permanent gap (`FloraSprites` covers 32 of 33), and any plant whose
         # art has not been drawn yet.
         #
         # **THE TWO NEVER RENDER TOGETHER**, deliberately: species art REPLACES the role mark rather

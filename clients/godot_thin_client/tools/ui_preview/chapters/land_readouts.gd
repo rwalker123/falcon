@@ -133,17 +133,20 @@ func _assert_food_layer_rows() -> void:
 
 ## ---- THE BASKET ROW'S FOUR-STEP PRECEDENCE: SPECIES ART → ROLE MARK → SPACER → TEXT (issue #339) --
 ##
-## PNG-LESS BY CONSTRUCTION, AND THAT IS THE POINT. `FloraSprites` coverage is ZERO — no species art
-## has been drawn — so every shipped row falls straight through to the role mark it wore before the
-## species tier existed and **no frame moves**. What has to be pinned is therefore all driven: that
-## the tier is REAL, that it OUTRANKS the role rather than coinciding with it, that the degradation
-## is the shipped behaviour, and that a wire key cannot compose a path it should not.
+## DRIVEN AND PNG-LESS BY CONSTRUCTION — and that is a property of THIS BLOCK, not of the family.
+## `FloraSprites` covers 32 of the roster's 33 species, and those 32 icons MOVED 100 FRAMES when they
+## landed (`harness-ui-preview.md` lists them). Nothing below saves a frame because everything below
+## drives the producer directly: what has to be pinned is that the tier is REAL, that it OUTRANKS the
+## role rather than coinciding with it, that the degradation is the shipped behaviour, and that a
+## wire key cannot compose a path it should not — none of which a picture can state.
 ##
-## `FloraSprites.sprite_dir_override` is what makes the first two reachable at all — it points at
-## `CropRoleSprites.SPRITE_DIR`, which ships real PNGs, so a composition whose species key is
-## `staple` resolves through the SPECIES tier to that directory's `staple.png`. Without it the tier
-## would ship completely unexercised and the day the first PNG lands would be the first time that
-## branch ever ran.
+## **`FloraSprites.sprite_dir_override` IS WHAT MAKES THOSE CLAIMS INDEPENDENT OF WHICH SPECIES
+## HAPPEN TO SHIP ART.** It points the species tier at `CropRoleSprites.SPRITE_DIR`, a directory
+## whose contents this block chooses, so a composition keyed `staple` resolves through the SPECIES
+## tier to that directory's `staple.png` — and goes on doing so as flora art is drawn, renamed or
+## retired. The two tiers are therefore exercised deterministically here, and the claims that must
+## be about the SHIPPED directory are made separately below, aimed at the two species that cannot
+## change: `wild_emmer`, which has art, and `hay_grass`, which permanently has none.
 func _assert_flora_species_precedence() -> void:
 	# The SAME box the drawer renders with, read from where it reads it — a literal would pass
 	# against a drawer that had stopped tracking its label's font size.
@@ -168,13 +171,18 @@ func _assert_flora_species_precedence() -> void:
 	# it. Without this the row could carry both and still satisfy the claim above.
 	h._assert_hud("…and the ROLE mark is nowhere on that row — species REPLACES it, never joins it",
 		species_rows.size() == 1 and not species_rows[0].contains(role_mark))
-	# **THE CHARSET GUARD, ASKED WHERE IT CAN ACTUALLY FAIL.** With no override the whole family
-	# answers `""` for every key — coverage is zero — so a guard claim made there is the empty-needle
-	# vacuity this harness's own rules name: it passes with `_is_valid_key` deleted. Under the
-	# override both of these keys COMPOSE A PATH THAT LOADS (measured: `ResourceLoader.exists` answers
-	# true for the `..` form and, on a case-insensitive filesystem, for the capitalised one), so an
-	# unguarded resolve really would hand back a shipped PNG. The traversal half is the portable one;
-	# the capitalised half is the display-name shape a careless wire could carry.
+	# **THE CHARSET GUARD, ASKED WHERE IT CAN ACTUALLY FAIL.** It is asked under the OVERRIDE because
+	# the two keys below compose a path that really loads there (measured: `ResourceLoader.exists`
+	# answers true for the `..` form and, on a case-insensitive filesystem, for the capitalised one),
+	# so an unguarded resolve would hand back a real PNG rather than the `""` an absent file produces
+	# for free. That was the whole claim while flora coverage was zero and every key answered `""` at
+	# the shipped directory — the empty-needle vacuity this harness's own rules name, which passes
+	# with `_is_valid_key` deleted. **With 32 PNGs on disk it is no longer only the override that
+	# makes this live**: `Wild_Emmer` composes a path a case-insensitive filesystem resolves to the
+	# shipped `wild_emmer.png`, so the guard now bites in the shipped directory too. Asking it here
+	# keeps the claim true on a case-SENSITIVE filesystem and independent of the art roster. The
+	# traversal half is the portable one; the capitalised half is the display-name shape a careless
+	# wire could carry.
 	h._assert_hud("a key outside `[a-z0-9_]` is REFUSED even where the composed path would load",
 		FloraSprites.path_for(TRAVERSAL_KEY) == "" and FloraSprites.path_for(CAPITALISED_KEY) == "")
 	FloraSprites.sprite_dir_override = ""
@@ -201,8 +209,14 @@ func _assert_flora_species_precedence() -> void:
 			and degraded_rows.size() == 1 and degraded_rows[0].begins_with(
 				DetailFormat.MORALE_BREAKDOWN_INDENT + degraded_mark + " "))
 	# …and the CONTRACT in full, at the shipped directory: empty, a traversal, a display name
-	# (spaces + capitals) and a hyphenated near-miss. Vacuous while coverage is zero — which is what
-	# the claim above is for — and it states the rule the day art lands.
+	# (spaces + capitals) and a hyphenated near-miss. **STILL DELIBERATELY VACUOUS — but for a
+	# different reason than it once was.** It used to pass for free because coverage was zero and
+	# every key answered `""`; with 32 PNGs on disk it passes for free because none of these four
+	# SHAPES names a file that exists — `Wild Emmer` and `wild-emmer` miss `wild_emmer.png` on the
+	# space and on the hyphen even where the filesystem ignores case. The claim that can actually
+	# FAIL is the under-override one above; note that a capitalised key with the right punctuation
+	# (`Wild_Emmer`) would now resolve in the shipped directory too, so the guard is live there and
+	# not merely stated. This group writes the rule down in full; it does not test it.
 	var guarded := FloraSprites.path_for("") == "" \
 		and FloraSprites.path_for("../../../evil") == "" \
 		and FloraSprites.path_for("Wild Emmer") == "" \
@@ -682,8 +696,9 @@ func run(harness) -> void:
 	# The three claims a PICTURE cannot carry, asserted over the REAL producer's lines (the harness
 	# pokes `_drawer` directly, the `tile_panel_*` idiom). Each is sabotage-verified.
 	_assert_food_layer_rows()
-	# The basket row's SPECIES tier (issue #339) — driven and PNG-less, coverage being zero, so
-	# nothing it asserts can move a frame.
+	# The basket row's SPECIES tier (issue #339) — driven and PNG-less: it composes lines through the
+	# real producer and saves none of them, so nothing it asserts can move a frame. (The 32 shipped
+	# icons certainly did move frames; that is the tier landing, not this block.)
 	_assert_flora_species_precedence()
 	# The FOG half of the same pair (issue #462) — what each web states on a hex the player remembers
 	# but cannot see. `tile_sight_remembered` is its frame; these are the claims that frame cannot make.

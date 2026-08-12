@@ -233,9 +233,10 @@ static func crop_role_spacer(icon_px: int = 0) -> String:
 
 ## ---- WHAT THIS PLANT IS — the per-SPECIES mark that outranks the role -------------------------
 ## Inline art for one flora SPECIES (`FloraShareInfo.species`), or `""` when the species has no
-## bundled art — which is EVERY species today, coverage in `FloraSprites` being zero. The empty
-## answer is what hands the basket row back to its crop-ROLE mark, so with no art on disk a row
-## renders byte-for-byte what it rendered before this function existed.
+## bundled art — `hay_grass` today, `FloraSprites` covering 32 of the roster's 33 species and that
+## one gap being permanent by design. The empty answer is what hands the basket row back to its
+## crop-ROLE mark, so a species with no art renders byte-for-byte what its row rendered before this
+## function existed. That was every row while the art was being drawn; it is now the fodder row.
 ##
 ## **THERE IS DELIBERATELY NO PER-SPECIES EMOJI FALLBACK, and that is the whole design of this
 ## function.** The palette COLLAPSES the roster — every grain is 🌾, every nut 🌰, every berry 🫐,

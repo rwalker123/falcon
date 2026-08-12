@@ -34,6 +34,16 @@ const SOW_LOCKED_REFUSAL_KEY := "too_dry"
 
 const SOW_LOCKED_SEED_SELECTION := 0.12
 
+## The two plants `ForageFx.fodder_basket_tile_fixture` holds, named because the crop picker's ART
+## claims are made on the pair. They are chosen for what CANNOT change about them: `wild_emmer` ships
+## `assets/icons/flora/wild_emmer.png`, and `hay_grass` is the roster's only `fodder` species, so the
+## fodder ROLE mark already names it uniquely and `icon_prompts.txt` ships 32 prompts for 33 species
+## by design. A species that merely has no art YET would put the negative half in a race with the
+## next batch of PNGs — the trap `chapters/land_readouts.gd`'s liveness precondition already sprang.
+const PICKER_ART_SPECIES := "wild_emmer"
+
+const PICKER_NO_ART_SPECIES := "hay_grass"
+
 ## The Label NODE carrying `needle`, for the assertions that measure WHERE a row sits rather than
 ## what it says. A text lookup answers the TEXT; a clipping check needs the NODE, for its rect.
 func _label_node_containing(root: Node, needle: String) -> Label:
@@ -805,6 +815,34 @@ func run(harness) -> void:
 	h._compose_forage(ForageFx.fodder_basket_tile_fixture())
 	await h._settle()
 	await h._save("forage_crop_picker_fodder")
+
+	# **THE PICKER ROW'S SPECIES ART, AND THE ONLY CALL SITE OF `FloraSprites.texture_for`** (issue
+	# #339). The BASKET row's species tier is asserted in `chapters/land_readouts.gd`, but every claim
+	# there goes through `path_for` — the `RichTextLabel` host — so the `Button` host had no claim of
+	# its own at all: deleting `_build_crop_picker`'s `btn.icon` block left the run at exit 0 with
+	# nothing naming it. **A frame diff is not the missing signal**, either: a harness renders the
+	# IMPORT CACHE rather than the art on disk (`test-harnesses.md`), so a picture is not evidence
+	# about whether art resolved.
+	#
+	# **A PAIR, AND NEITHER HALF IS WORTH ANYTHING ALONE** — the basket block's own rule: the positive
+	# passes on a picker that puts an icon on every row, the negative on one that resolves nothing.
+	# This fixture is the basket that can state both, holding `wild_emmer` (which ships art) beside
+	# `hay_grass` (which permanently does not). Reached by SPECIES KEY, never by face: the face
+	# carries live numbers, and a row's label is a different axis from the id its art is composed
+	# from.
+	var art_row := ForageFx.find_crop_row_by_species(
+		h._hud._drawercompose._compose_sheet, PICKER_ART_SPECIES)
+	var bare_row := ForageFx.find_crop_row_by_species(
+		h._hud._drawercompose._compose_sheet, PICKER_NO_ART_SPECIES)
+	# Asserted against the family's OWN answer as well as non-null, so a row wearing some other
+	# texture fails too — while the non-null half is what catches `texture_for` going silent, which a
+	# bare equality would pass (`null == null`).
+	h._assert_hud("a crop-picker row wears its SPECIES' own art (`%s`)" % PICKER_ART_SPECIES,
+		art_row != null and art_row.icon != null
+			and art_row.icon == FloraSprites.texture_for(PICKER_ART_SPECIES))
+	h._assert_hud("…while the row for the species with no art carries NO icon (`%s`)"
+			% PICKER_NO_ART_SPECIES,
+		bare_row != null and bare_row.icon == null)
 
 	# State F4 cash crop — a basket with a CASH crop under Sow. Flax pays a MATERIAL, not provisions or
 	# fodder, so its provisions ratio is 0 and the ordinary "N.N×" row would read it as worthless; the
