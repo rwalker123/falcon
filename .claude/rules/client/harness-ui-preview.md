@@ -554,7 +554,7 @@ built from the code under test can only agree with itself. **They are the SIM's 
 from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
 payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-**A clean run is 309 frames / 902 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
+**A clean run is 313 frames / 942 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
 three times in one arc and once across a merge, and a running total kept by addition would be wrong
 by now. (The measurement above came back FIVE higher than the 895 recorded before it while the arc
 #527 review added exactly ONE claim — the `Carrying:` mass one. Four `PASS`es had accumulated
@@ -722,6 +722,42 @@ a panel band the resolver now prefers. A resolver variant that returned the STOR
 entity is absent from the roster failed four unrelated assertions in `tile_panel` and `compose_rungs`
 for exactly that reason. The shipped one falls through to `player_band()` instead — which is also the
 correct live behaviour, an unresolvable panel entity being a band that has left the world.
+
+### …and on a WORKED source it opens on the working band, and a switch re-seeds
+
+**`compose_working_band_forage` / `compose_band_switch_forage` and their hunt twins**
+(`chapters/hunt.gd`, appended after the pair above) — four frames and forty `PASS`. The behaviour is
+`labor-ui.md`'s; what belongs here is the shape of the fixture and of the drive.
+
+**The roster is the assertion, again, and one band more than the pair above needs.** Three bands: the
+ladder's own answer works NEITHER source, and the other two work BOTH. With the ladder's band among
+the workers the tie goes to the ladder and the state passes with the rung removed; with only two bands
+there is nowhere for a band SWITCH to go that is also a working band.
+
+**The two standing crews are 2 and 3, and neither may be `HudConst.WORKER_STEP`** — a stepper reading
+1 cannot tell a re-seed from the no-standing-assignment fallback. Both sit under either source's
+max-useful ceiling, so what is rendered is the seed rather than a clamp of it.
+
+**Four claims per state, because they fail apart**: the picker's FACE (what the player reads), the
+STEPPER (what a commit would send), the commit VERB, and the improvement control's PRESENCE. A
+vacuity guard rides between the two switches — the crew dialed to 0 on a band that really does work
+the source, asserting the sheet really does say `Unassign` and really does drop the control, without
+which "not `Unassign`" passes on a sheet that can no longer say it.
+
+**The `Band:` picker is driven with REAL POINTER INPUT** (`_pick_actor_band`: the face, then the popup
+row, through `InputProbe`), the three gotchas `chapters/trade.gd`'s destination pick records —
+`canvas_to_window` for the embedded subwindow, the popup's own `index_pressed` as the witness for a
+derived point, and an `is_instance_valid` guard on the teardown, the pick having freed the popup by
+rebuilding the sheet.
+
+Sabotage-verified on two DISJOINT mutations: restoring the bare `set_*_band` write fails **eight** —
+the re-seed claims on both webs, reading `got Unassign` and a missing improvement control, i.e. the
+played defect — while the default claims stay green; returning `_resolve_assign_band()` unchanged from
+`_band_working_source` fails exactly **four**, the default claims, at `Band 2, got Band 1`.
+
+**Thirty-six existing frames moved with the standing-crew line's removal**, every one a compose sheet
+on a source with a standing crew, plus `herd_band_picker_b`, whose switched band now re-seeds to the
+`WORKER_STEP` floor instead of being hand-clamped by the chapter.
 
 ## The UNBOUNDED-RAID floor: one frame, three equalities, and a driven denial pair
 

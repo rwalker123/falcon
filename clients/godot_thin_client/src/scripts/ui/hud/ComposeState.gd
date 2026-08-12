@@ -27,6 +27,11 @@ const KIND_NONE := ""
 const KIND_FORAGE := "forage"
 const KIND_HERD := "herd"
 
+## "No band" for every band-ENTITY slot here — the picked actor and the band a composition was last
+## seeded for. Distinct from `HudConst.NO_BAND_ID`, which is the WIRE's band id; these hold the
+## cohort's `entity`, and a resolver that finds no band answers a dict with no `entity` key at all.
+const NO_BAND_ENTITY := -1
+
 # ---- Forage compose (the tile card's "assign foragers" block) ------------------------------------
 # The source this compose belongs to ("x,y"), so a per-snapshot re-render preserves the dialed count
 # but a NEW tile re-seeds it from that tile's standing staffing.
@@ -46,8 +51,12 @@ var _forage_improvement: String = ""
 # which is VALID and yields the sim's own default (`default_species_for_rung` — the highest-share
 # legal plant). Re-resolved every render, so it can never name a plant this tile/rung cannot take.
 var _forage_species: String = ""
-# The band-picker selection (actor band entity); -1 means "fall back to the resolved band".
-var _forage_band: int = -1
+# The band-picker selection (actor band entity); `NO_BAND_ENTITY` means "fall back to the resolved band".
+var _forage_band: int = NO_BAND_ENTITY
+# WHICH BAND THE COMPOSITION ABOVE WAS SEEDED FOR. A crew, a floor and a build are all facts about ONE
+# band's standing assignment, so switching the actor invalidates them exactly as switching the source
+# does — see `seed_forage`.
+var _forage_seeded_band: int = NO_BAND_ENTITY
 
 # ---- Hunt compose (the herd drawer's "assign hunters/herders" block) -----------------------------
 var _hunt_key: String = ""
@@ -57,7 +66,9 @@ var _hunt_floor: float = SourceForecast.DEFAULT_HARVEST_FLOOR
 var _hunt_improvement: String = ""
 # The hunt twin of `_forage_autofill` — same one-shot contract.
 var _hunt_autofill := false
-var _hunt_band: int = -1
+var _hunt_band: int = NO_BAND_ENTITY
+# The hunt twin of `_forage_seeded_band` — same contract.
+var _hunt_seeded_band: int = NO_BAND_ENTITY
 
 # ---- Party compose (the Band panel's PARTIES zone — NOT drawer state) ----------------------------
 # The quarry the party compose sheet is aimed at (a world herd id), "" until one is picked. It is the
@@ -113,6 +124,12 @@ func forage_improvement() -> String:
 func forage_band() -> int:
 	return _forage_band
 
+## The band the composed count/floor/crop/improvement were last seeded from — `NO_BAND_ENTITY` until a
+## first seed. The compose builder re-seeds when this disagrees with the band it has resolved, which is
+## how switching the ACTOR re-reads the standing assignment the same way switching the SOURCE does.
+func forage_seeded_band() -> int:
+	return _forage_seeded_band
+
 # ---- Forage mutators -----------------------------------------------------------------------------
 
 ## A DIFFERENT tile is being composed: adopt its key and default the actor band. Re-seeding the
@@ -122,16 +139,23 @@ func begin_forage_source(key: String, band_entity: int) -> void:
 	_forage_key = key
 	_forage_band = band_entity
 
-## Re-seed the composed count + floor from the newly-resolved band's staffing on the new tile. The
+## Re-seed the composed count + floor from the newly-resolved band's staffing on the tile. The
 ## crop selection is cleared with them: a crop pick belongs to the PATCH it was made on, and a new
 ## tile has a different basket.
 ## `improvement` re-seeds from the standing assignment's OWN second-axis field, so a patch already
 ## being cultivated opens with its box checked rather than looking untouched.
+##
+## **IT RECORDS THE BAND IT SEEDED FROM**, because a composition is a statement about ONE band's
+## standing assignment: the crew, the floor and the build all come from that band's row, so the actor
+## changing invalidates them exactly as the source changing does. Without the record the sheet went on
+## showing the previous band's crew — most damagingly a 0, which turns the commit into an Unassign
+## against the crew the newly-picked band really has on the tile.
 func seed_forage(count: int, floor: float, improvement: String) -> void:
 	_forage_count = count
 	_forage_floor = SourceForecast.clamp_floor(floor)
 	_forage_improvement = improvement
 	_forage_species = ""
+	_forage_seeded_band = _forage_band
 
 ## Forget which tile the forage compose belongs to, so the NEXT render takes the source-changed path
 ## and re-seeds count/floor/crop from the band's standing staffing. (`""` matches no real "x,y" key.)
@@ -139,6 +163,10 @@ func seed_forage(count: int, floor: float, improvement: String) -> void:
 func reset_forage_source() -> void:
 	_forage_key = ""
 
+## The picked actor band, and NOTHING ELSE. It deliberately does not re-seed: the caller has to resolve
+## the band dict before it can read that band's standing staffing, which is the same two-step
+## `begin_forage_source` + `seed_forage` exists for. `forage_seeded_band` is what lets the builder
+## notice the write on the next render.
 func set_forage_band(entity: int) -> void:
 	_forage_band = entity
 
@@ -196,6 +224,10 @@ func hunt_floor() -> float:
 func hunt_band() -> int:
 	return _hunt_band
 
+## The hunt twin of `forage_seeded_band` — same contract.
+func hunt_seeded_band() -> int:
+	return _hunt_seeded_band
+
 ## The improvement this compose will commit to on the herd — `IMPROVEMENT_NONE` for none.
 func hunt_improvement() -> String:
 	return _hunt_improvement
@@ -219,17 +251,19 @@ func begin_hunt_source(key: String, band_entity: int) -> void:
 func reset_hunt_kit() -> void:
 	_hunt_kit_id = KitRoster.NO_KIT_ID
 
-## Re-seed the composed count + stance + improvement from the newly-resolved band's staffing on the
-## new herd — the hunt twin of `seed_forage`.
+## Re-seed the composed count + floor + improvement from the newly-resolved band's staffing on the
+## herd — the hunt twin of `seed_forage`, including the seeded-band record.
 func seed_hunt(count: int, floor: float, improvement: String) -> void:
 	_hunt_count = count
 	_hunt_floor = SourceForecast.clamp_floor(floor)
 	_hunt_improvement = improvement
+	_hunt_seeded_band = _hunt_band
 
 ## The hunt twin of `reset_forage_source` — forget the herd so the next render re-seeds.
 func reset_hunt_source() -> void:
 	_hunt_key = ""
 
+## The hunt twin of `set_forage_band` — a bare write, for the same reason.
 func set_hunt_band(entity: int) -> void:
 	_hunt_band = entity
 
