@@ -900,12 +900,25 @@ collapse reaches zero in finite turns. So a hunt/follow draws a group down in
 `Population`; it regrows (or, past the threshold, collapses) in the next turn's
 `Logistics`; sustained overhunting drives it extinct permanently.
 
-**Ecology phase + domestication hook** — each `Herd` carries a coarse `EcologyPhase`
-(`Thriving` / `Stressed` / `Collapsing`), recomputed every turn from biomass vs
-`ecology.stressed_fraction`/`collapse_fraction` (`classify_ecology_phase`) and exported in
-the snapshot (`HerdTelemetryState.ecologyPhase`) so the client warns the player before a
-group is doomed. This derived state also **gates domestication** (below): husbandry
-progress accrues only while a `Thriving` herd is Sustain-hunted (a Sustain Hunt assignment).
+**Ecology phase** — each `Herd` carries a coarse `EcologyPhase` (`Thriving` / `Stressed` /
+`Collapsing`), stamped by `Herd::refresh_ecology_phase` at the end of every `advance_herds`
+pass from biomass vs `ecology.stressed_fraction`/`collapse_fraction` (`classify_ecology_phase`),
+against the rung's own ecology and capacity (`herd_ecology` / `herd_capacity`), so the client can
+warn the player before a group is doomed.
+
+**It is a READOUT: nothing in the sim gates on it.** It used to gate domestication — husbandry
+progress accrued only on a `Thriving` herd — and the same `EcologyPhase::Thriving` term stood on
+every build and knowledge-earn site on both food webs. The harvest-floor arc replaced all of them
+with the floor's learn multiplier (`docs/plan_harvest_floor.md` §3.2: *how deep are you drawing?*
+rather than *is the source healthy?*), so a build now slows rather than stopping outright. What still
+reads the stored word is the analytics log line, the display mirror `to_entry`, and the Telling's
+`fauna.collapsing_group_count` / `most_collapsed_species` nouns.
+
+**The word on the wire is RE-DERIVED at capture**, not copied from the stored one — see
+`husbandry.md` → "A herd row is assembled from TWO frames", which owns the provenance rule. The
+stored word is a turn old by the time the row is built, and the cut points published beside it come
+from the live `herd_ecology`, so copying it made a completing Tame or Corral publish a word and a set
+of cuts describing different rungs.
 
 **Immigration** — `repopulate_fauna` (`fauna.rs`, `TurnStage::Logistics` right after
 `advance_herds`) gives a low per-turn chance (`immigration.chance_per_turn`) to respawn one

@@ -545,7 +545,7 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
   **Phase 2 (deferred):** the pen's upkeep is drawn *first* from the tile's `ForagePatch` biomass (the
   animals eat grass — a resource humans can't), and only the **shortfall** is hauled from the larder.
 
-### A herd row is assembled from TWO frames, and the build meters must come from the live one
+### A herd row is assembled from TWO frames, and it must describe ONE turn
 
 `herd_snapshot_entries` walks the display **`HerdTelemetry`** entries and resolves each one's live
 **`Herd`** out of the registry (`registry.find(&entry.id)`), then fills the row from *both*. The two
@@ -553,29 +553,70 @@ are not the same frame:
 
 | source | written | what it is as of |
 |---|---|---|
-| `HerdTelemetry` entry | Startup, then Logistics — `advance_herds` and `repopulate_fauna` | **the previous turn**, for anything Population touches |
+| `HerdTelemetry` entry | Startup, then Logistics — the end of `advance_herds`, and `repopulate_fauna` on an immigration | **the previous turn** for anything `advance_husbandry` or Population touches |
 | live `Herd` | authoritative at all times | this turn |
 
-Everything the build engine writes accrues in **`advance_labor_allocation`, at Population** — after
-both telemetry writes — so **`domestication`, `corralled` and `corralProgress` are read off the live
-herd**, through `intensification::build_fraction`, with the entry kept only as the fallback for the
-unreachable "in telemetry, gone from the registry" case. They used to be taken from the entry, which
-made every one of them exactly one turn late.
+Three stages of writes land **after** the last telemetry write and before the capture: the rest of
+Logistics (`advance_predation`, then `advance_husbandry`'s shed / starve / despawn), the whole of
+Population (`advance_labor_allocation` — the build accrual, the hunt take, `corral_at`), and every
+stage between. So **every field a row takes from the entry is a turn behind every field it takes
+live**, and a row that mixes the two lets the player *see* the contradiction — which is worse than a
+row that is uniformly late.
+
+**The governing rule: two fields describing one fact must agree in the frame they ship in.** What is
+left on the entry, and why:
+
+| field | source | why |
+|---|---|---|
+| `id` · `label` · `species` · `sizeClass` · `huntable` | entry | identity and shape; nothing writes them after spawn |
+| `x` / `y` | entry | **kept as a pair with the fog gate**, which decided this row's visibility against `entry.position` — publishing a different tile beside it would describe a herd whose presence was judged somewhere else. They cannot differ in any case: the only Population-stage writer of `current_pos` is `Herd::corral_at`, and the tile it is handed is `herd.position()`, the hex the herd already stands on |
+| everything else | **live `Herd`** | see below |
+
+- **The build meters** — `domestication`, `corralled`, `corralProgress` — through
+  `intensification::build_fraction`, because the build engine accrues in `advance_labor_allocation`
+  at Population.
+- **`biomass`**, because `advance_husbandry`'s shed/starve shrink and the Population hunt take both
+  land after the entry. This one is **not cosmetic**: the client composes the escapement ceiling as
+  `max(0, B − floor·K) × rate`, taking `B` from here and `K` from the live `carryingCapacity`, so a
+  stale `B` quoted every yield preview from two different turns, every turn.
+- **`ecologyPhase`**, **re-derived at capture** from the same stock, capacity and ecology the row
+  publishes beside it (`classify_ecology_phase(biomass, herd_capacity, herd_ecology)` — the same
+  three seams `Herd::refresh_ecology_phase` uses, so it restates the sim's own call rather than
+  modelling it again). The entry's copy was classified in Logistics, while the cut points beside it
+  (`collapseFraction` / `stressedFraction`) and `regrowthSamples` are read live off `herd_ecology`,
+  which switches rung the instant a Tame or Corral completes — so on a completing turn the published
+  word and the published cuts described **different rungs**. Re-deriving is safe because **nothing in
+  the sim gates on `Herd::ecology_phase`**: the rung health gates were replaced by the floor's learn
+  multiplier, and its only remaining readers are the analytics log line, the display mirror, and the
+  Telling's `fauna.collapsing_group_count` / `most_collapsed_species`, which sample the stored word
+  and are untouched. There is no behaviour for the wire to disagree with.
+- **The heading** — `nextX` / `nextY`, and `routeLength` beside them — because `Herd::corral_at`
+  clears `next_pos` in Population, so a herd penned this turn published the heading of the roam its
+  pen had just ended and the map drew a migration arrow on an animal that cannot move. (`routeLength`
+  is live for uniformity only; a herd's route is built at spawn and never rewritten.)
 
 **The lag became a contradiction when the work pair joined it in the same sentence.** `tameWorkDone`
 / `tameWorkCost` are live, so a completed Tame published as *"Domesticating 50 / 50 work (99%)"* —
 one row, one meter, two frames — and read Domesticated the turn after, with nothing in the sim having
-reverted. Two fields describing one meter must agree **in the frame they ship in**;
-`core_sim/tests/build_turns_closed_form.rs` asserts that equality on a real resolved climb of both
-animal rungs, on the turn each completes, because that is the turn the disagreement is visible on.
-It is the only herd test that runs the real stage order (`advance_herds` →
-`advance_labor_allocation` → capture) — the snapshot unit tests fabricate the telemetry from the
-registry in the same instant, so the two halves can never disagree there.
+reverted.
 
-**The narrow fix was deliberate.** Rebuilding `HerdTelemetry` after Population would also refresh
-`biomass` / `x` / `y` / `ecologyPhase`, and its blast radius covers the herds `advance_husbandry`
-sheds or despawns later in Logistics, which today publish with no registry herd and a zeroed
-forecast. Those fields remain published from the Logistics frame.
+**The three tests that can see this class of defect all resolve a turn in STAGE ORDER**, which is the
+only arrangement in which the two frames can disagree; the snapshot unit tests fabricate the telemetry
+from the registry in the same instant and are structurally blind to it.
+`core_sim/tests/build_turns_closed_form.rs` pins each build meter against its work pair on the turn
+that rung completes. `core_sim/tests/ecology_bands_on_the_wire.rs` pins the phase word against its own
+published cuts on the turn a Tame completes — **and it authors distinct pastoral bands to do it**,
+because the shipped `husbandry.pastoral.ecology` block is `{}` and inherits the wild cuts, so on the
+shipped numbers a rung transition moves the ecology object without moving its cut points and no
+assertion could tell the two rungs apart. `core_sim/tests/herd_row_one_frame.rs` pins the stock
+against a real post-telemetry writer (a starving pen) and the heading against the turn the pen
+completes.
+
+**`HerdTelemetry` is NOT rebuilt after Population, deliberately.** Per-field live reads were chosen
+over a second rebuild because a rebuild's blast radius covers the herds `advance_husbandry` sheds or
+despawns later in Logistics, which today publish with no registry herd and a zeroed forecast. The
+`entry` copy survives on every live-read field as the fallback for the unreachable "in telemetry,
+gone from the registry" case.
 
 See Also: "Cultivation (Intensification Phase 1a)" under Depletable Forage — the plant twin of this
 mechanic (the two are near-mechanical transposes).

@@ -2,8 +2,8 @@ use sim_runtime::MaterialPayoff;
 
 use super::*;
 use crate::fauna::{
-    herd_capacity, herd_ecology, net_biomass_delta, reseeding_logistic_regrowth,
-    NO_RETREAT_STAGE_STAY, ONE_UNIT_OF_BIOMASS,
+    classify_ecology_phase, herd_capacity, herd_ecology, net_biomass_delta,
+    reseeding_logistic_regrowth, NO_RETREAT_STAGE_STAY, ONE_UNIT_OF_BIOMASS,
 };
 use crate::forage::{
     field_fodder, forage_per_worker_biomass, patch_ecology, patch_fodder_per_biomass,
@@ -322,31 +322,74 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
             // edge of your sight would hand you a free look at where it is going. `-1` (the existing
             // "no heading" sentinel the client already renders as no arrow) covers both "loitering"
             // and "you cannot see that far", which the client has no reason to distinguish.
-            let next_position = entry
-                .next_position
+            //
+            // **OFF THE LIVE HERD.** `Herd::corral_at` clears `next_pos` in **Population**, after the
+            // display entry was written, so a herd penned this turn published the heading of the roam
+            // its pen had just ended — a migration arrow on an animal that cannot move.
+            let next_position = herd
+                .map(|herd| herd.next_position())
+                .unwrap_or(entry.next_position)
                 .filter(|pos| inputs.herd_is_visible(herd, *pos));
             // The neglect countdown, off the live registry herd (the display `entry` carries no
             // counter). A herd the registry cannot resolve has nothing at risk to report.
             let neglect_grace =
                 herd.and_then(|herd| crate::fauna::herd_neglect_grace_remaining(herd, ladder));
             // **The herd's own ecology — the rung's, not the wild block's.** `herd_ecology` picks
-            // wild / pastoral / pen, and it is the seam `refresh_ecology_phase` classified the
-            // published `ecology_phase` word with, so the bands below cannot describe a different
-            // source than the word does.
+            // wild / pastoral / pen, and it is the seam `refresh_ecology_phase` classifies the
+            // `ecology_phase` word with, so the bands below cannot describe a different source than
+            // the word does. Resolved once and used for the cuts, the sampled curve **and** the word,
+            // which is what makes that agreement structural rather than a convention.
             let ecology = herd.map(|herd| herd_ecology(herd, fauna));
             HerdTelemetryState {
                 id: entry.id.clone(),
                 label: entry.label.clone(),
                 species: entry.species.clone(),
+                // **`x`/`y` stay on the display entry, as a PAIR with the fog gate above.** The gate
+                // decided this row's visibility against `entry.position`, so publishing a different
+                // tile beside it would describe a herd whose presence was judged somewhere else. They
+                // cannot disagree in any case: the only Population-stage writer of `current_pos` is
+                // `Herd::corral_at`, and the pen tile it is handed is `herd.position()` — the hex the
+                // herd already stands on. Ordinary movement happens in `advance_herds`, before the
+                // entry is written.
                 x: entry.position.x,
                 y: entry.position.y,
-                biomass: entry.biomass,
-                route_length: entry.route_length,
+                // **THE STOCK COMES OFF THE LIVE HERD.** Two writers land after the last telemetry
+                // write: `advance_husbandry`'s shed/starve shrink (later in Logistics) and the hunt
+                // take in `advance_labor_allocation` (Population). This is not cosmetic — the client
+                // composes the escapement ceiling as `max(0, B − floor·K) × rate` with `B` from here
+                // and `K` from the live `carrying_capacity` below, so a stale `B` quoted a yield
+                // preview assembled from two different turns, every turn.
+                biomass: herd.map(|herd| herd.biomass).unwrap_or(entry.biomass),
+                // Live for uniformity with the heading it sits beside; a `Herd`'s route is built at
+                // spawn and never rewritten, so this cannot currently differ from the entry's copy.
+                route_length: herd
+                    .map(|herd| herd.route_length() as u32)
+                    .unwrap_or(entry.route_length),
                 next_x: next_position.map(|pos| pos.x as i32).unwrap_or(-1),
                 next_y: next_position.map(|pos| pos.y as i32).unwrap_or(-1),
                 size_class: entry.size_class.clone(),
                 huntable: entry.huntable,
-                ecology_phase: entry.ecology_phase.clone(),
+                // **THE WORD IS RE-DERIVED AT CAPTURE, from the same stock, capacity and ecology the
+                // row publishes beside it.** The entry's copy was classified in Logistics; the cuts
+                // and `regrowthSamples` next to it come from the live `herd_ecology`, which switches
+                // rung the instant a Tame or Corral completes in Population — so on a completing turn
+                // the published word and the published cuts described *different rungs*. This is the
+                // same classification `Herd::refresh_ecology_phase` makes, through the same two seams,
+                // so it is a restatement of the sim's own call and not a second model.
+                //
+                // **Nothing in the sim gates on `Herd::ecology_phase`** (the rung health gates were
+                // deleted): its only readers are the analytics log line, the display mirror, and the
+                // Telling's `fauna.collapsing_group_count` / `most_collapsed_species`, which sample
+                // the stored word and are untouched here. So re-deriving cannot make the wire
+                // disagree with behaviour — there is no behaviour to disagree with.
+                ecology_phase: match (herd, ecology.as_ref()) {
+                    (Some(herd), Some(ecology)) => {
+                        classify_ecology_phase(herd.biomass, herd_capacity(herd, fauna), ecology)
+                            .as_str()
+                            .to_string()
+                    }
+                    _ => entry.ecology_phase.clone(),
+                },
                 // **THE BUILD METERS COME OFF THE LIVE HERD, NOT THE DISPLAY ENTRY.**
                 // `HerdTelemetry` is written in Startup and Logistics, and the build accrual runs
                 // in `advance_labor_allocation` at **Population** — after both — so `entry`'s copy
