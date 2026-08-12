@@ -34,6 +34,12 @@ const SOW_LOCKED_REFUSAL_KEY := "too_dry"
 
 const SOW_LOCKED_SEED_SELECTION := 0.12
 
+## The RETIRED patch-ecology refusal, by its stem — `forage_cultivate_stressed` asserts it appears
+## nowhere. A LITERAL because the vocabulary const that spelled it is deleted, and because a needle
+## built out of the code under test can only ever agree with it; the stem alone, so a reworded return
+## of the same rule is caught too.
+const RETIRED_PHASE_GATE_NEEDLE := "ease workers off and let it regrow"
+
 ## The Label NODE carrying `needle`, for the assertions that measure WHERE a row sits rather than
 ## what it says. A text lookup answers the TEXT; a clipping check needs the NODE, for its rect.
 func _label_node_containing(root: Node, needle: String) -> Label:
@@ -629,14 +635,44 @@ func run(harness) -> void:
 	h._compose_forage(BaseFx.food_tile_fixture())
 	await h._settle()
 
-	# State 2-cultivate-stressed — knowledge known, but the patch is ⚠ Stressed: Cultivate stays visible
-	# and greyed with the OTHER reason — "Patch is Stressed — ease workers off and let it regrow to
-	# Thriving" (the ecology gate, not the knowledge one). The remedy is deliberately NOT "Sustain it":
-	# a fully staffed Sustain takes the whole regrowth and holds a Stressed patch Stressed forever.
+	# State 2-cultivate-stressed — **CULTIVATE IS OFFERED ON A PATCH THAT IS NOT THRIVING.** Knowledge is
+	# the whole of this rung's gate; the ecology is not part of it on either web.
+	#
+	# **THE FRAME'S SUBJECT IS THE OPPOSITE OF WHAT IT WAS, and the reversal is the sim's.** It staged a
+	# greyed Cultivate carrying "Patch is Stressed — ease workers off and let it regrow to Thriving",
+	# which `validate_cultivate` has no counterpart for: `docs/plan_harvest_floor.md` §3.2 replaced that
+	# cliff with a RATE, so a crew pulling hard on the ground it is clearing builds slowly in proportion
+	# to its escapement floor rather than being stopped, and with nothing left to lapse the gate had
+	# nothing to guard. The client went on refusing a command the server accepts — and gave a reason for
+	# it, which is worse than a bare refusal.
+	#
+	# It is an A/B against `forage_cultivate_locked` above: the SAME wild basket, refused there because
+	# the craft is half-learned and offered here because it is known, with the Stressed ecology the only
+	# thing that differs between this frame and `forage_cultivate` — and deciding nothing.
 	h._show_tile(TileFx.stressed_tile_fixture())
 	h._compose_forage(TileFx.stressed_tile_fixture())
 	await h._settle()
 	await h._save("forage_cultivate_stressed")
+	var stressed_box = ForageFx.find_improvement_control(
+		h._hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
+	# The PRECONDITION, without which the three claims below are made about a frame that never staged
+	# the case: the phase the retired gate keyed off is genuinely non-Thriving here.
+	h._assert_hud("the patch really is not Thriving, so the retired gate would have fired",
+		String(TileFx.stressed_tile_fixture()["patch_ecology_phase"])
+			!= HudFloraVocab.ECOLOGY_PHASE_THRIVING)
+	h._assert_hud("…yet Cultivate is OFFERED — a live checkbox, not a refusal",
+		stressed_box is CheckBox and not (stressed_box as CheckBox).disabled)
+	# **THE ABSENCE IS ASKED OF THE WHOLE SHEET, not of the control**, because the gated form put its
+	# lead reason in the control's own text while a second-and-later one lands on the note slot beneath
+	# — a sheet-wide search is the only one covering both places it could come back. The needle is the
+	# retired reason's own stem, spelled as a LITERAL: the vocabulary const is gone, and a needle
+	# recomposed from a live format could only ever describe whatever the code still says.
+	h._assert_hud("…and no ecology refusal is stated anywhere on the sheet",
+		not Q.has_label_containing(h._hud._drawercompose._compose_sheet, RETIRED_PHASE_GATE_NEEDLE))
+	# An OFFER carries its crop list — committing is what a gated rung refuses — so the picker is what
+	# separates a real offer from a gated control that merely lost its words.
+	h._assert_hud("…and the crop list renders with it, committing no longer being refused",
+		ForageFx.find_crop_row(h._hud._drawercompose._compose_sheet, ForageFx.GATED_CROP_NEEDLE) != null)
 
 	# ---- Sow + the Field: plant RUNG 3 (slice 6b) -------------------------------------------------
 	# State 6b-sow-locked — Seed Selection is only 12% learned AND this ordinary prairie refuses seed,

@@ -25,12 +25,17 @@ extends RefCounted
 ## available. Mirrors the sim's `assign_labor` validation.
 ##
 ## The two rungs gate on DIFFERENT things, which is the ladder made legible:
-##   • Cultivate — Cultivation knowledge + a Thriving patch (you improve what is already there).
-##   • Sow — Seed Selection knowledge + ground that will take seed. It needs NO prior patch and no
-##     Thriving gate (seed travels, and sown ground starts at the reseed floor — i.e. Collapsing — so
-##     a health gate would forbid the very case the rung exists for). What it needs instead is the
-##     LAND: `patch_sow_site_refusal` is the sim's verdict on this ground, and it is the only gate
+##   • Cultivate — Cultivation knowledge, and nothing else.
+##   • Sow — Seed Selection knowledge + ground that will take seed. What it needs beyond the craft is
+##     the LAND: `patch_sow_site_refusal` is the sim's verdict on this ground, and it is the only gate
 ##     reason on either web that the player answers by MOVING rather than by working.
+##
+## **NO RUNG ON EITHER WEB CARRIES A HEALTH GATE** (docs/plan_harvest_floor.md §3.2). A crew pulling
+## hard on the ground it is clearing builds SLOWLY, in proportion to its escapement floor
+## (`intensification::learn_multiplier`), rather than being stopped — so a source's ecology phase
+## paces the build instead of forbidding it, and the sheet states that pace live in the aside's
+## teaching line ("Building at ×1.60 — a higher floor builds faster"). A phase term here would refuse
+## a command the sim accepts, which is the defect class this file exists to keep out of the client.
 ##
 ## `tile_info` is the `patch_`-PREFIXED tile cross-ref, not the bare wire patch dict —
 ## `forage_gates_from_patch` below is the bare-keyed twin.
@@ -45,10 +50,6 @@ static func forage_gates(tile_info: Dictionary, knowledge: Dictionary) -> Dictio
     if cultivation < HudConst.KNOWLEDGE_COMPLETE:
         cultivate_reasons.append(HudFloraVocab.GATE_REASON_CULTIVATION_KNOWLEDGE_FORMAT % [
             HudFormat.progress_percent(cultivation), sustain_icon])
-    var phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges().to_lower()
-    if phase != HudFloraVocab.ECOLOGY_PHASE_THRIVING:
-        var phase_label := phase.capitalize() if phase != "" else HudFloraVocab.GATE_PHASE_UNKNOWN_LABEL
-        cultivate_reasons.append(HudFloraVocab.GATE_REASON_PATCH_THRIVING_FORMAT % phase_label)
     if not cultivate_reasons.is_empty():
         gates[HudConst.LABOR_POLICY_CULTIVATE] = cultivate_reasons
     var sow_reasons: Array[String] = []
@@ -154,11 +155,10 @@ static func wild_fodder_reason(committed_species: String, knowledge: Dictionary)
 ## `patch_cultivation_progress` joined their already-prefixed rung-3 twins when
 ## `SourceForecast.improvement_is_done` started spelling every key as `prefix + name` and the lone
 ## exception would have made it answer "not built" on a tended patch. So this adapter is a plain
-## re-spelling of the two keys `forage_gates` still reads, and there is no longer a mixed convention
+## re-spelling of the one key `forage_gates` still reads, and there is no longer a mixed convention
 ## to write down.
 static func forage_gates_from_patch(patch: Dictionary, knowledge: Dictionary) -> Dictionary:
     return forage_gates({
-        "patch_ecology_phase": String(patch.get("ecology_phase", "")),
         "patch_sow_site_refusal": String(patch.get("sow_site_refusal", "")),
     }, knowledge)
 

@@ -197,9 +197,20 @@ one of the two frames the SUPPRESSION rule is judged on, `forage_cultivate_locke
 one: each asserts the ABSENCE of any improvement control, no crop list, and — in the same frame — a
 LIVE teaching line naming the craft being earned, which is what makes the removal a progression
 rather than a hole. The gated control's SHAPE moved to a SOURCE gate that survives
-(`improvement_offered_gated`, re-fixtured onto a Stressed patch with Cultivation known), and
-`forage_sow_locked` pins both halves at once by staging BOTH kinds of reason and asserting the
-ground's refusal leads while the knowledge line appears nowhere.
+(`improvement_offered_gated`, re-fixtured onto a TENDED patch on ground that will never take seed,
+with Seed Selection KNOWN — `Sow`'s site refusal is the only source gate this sheet can still render,
+`Cultivate` gating on knowledge alone and `Corral`'s ownership half being unreachable where only the
+next rung is offered), and `forage_sow_locked` pins both halves at once by staging BOTH kinds of
+reason and asserting the ground's refusal leads while the knowledge line appears nowhere.
+
+**`forage_cultivate_stressed` IS THE POSITIVE HALF OF THAT MOVE, and it was asserting the bug.** No
+rung on either web carries a health gate (`labor-ui.md` → the gate reshuffle's callout), so a Stressed
+patch with Cultivation known OFFERS Cultivate; the frame's four claims are the non-Thriving
+PRECONDITION, the live checkbox, the crop list beside it, and the ABSENCE of the retired ecology
+refusal anywhere on the sheet. The needle for that absence is a chapter LITERAL
+(`RETIRED_PHASE_GATE_NEEDLE`), the vocabulary const having gone with the gate. Sabotage-verified by
+restoring the phase term: exactly those three claims fail — the precondition rightly does not — while
+the gated frame beside them stays green.
 
 **Re-fixture, never re-describe**: a frame whose stated subject stops occurring must get a fixture
 that brings the subject back, since rewriting the comment lowers the bar to whatever the code
@@ -554,7 +565,7 @@ built from the code under test can only agree with itself. **They are the SIM's 
 from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
 payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-**A clean run is 314 frames / 919 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
+**A clean run is 314 frames / 923 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
 three times in one arc and once across a merge, and a running total kept by addition would be wrong
 by now. (The measurement above came back FIVE higher than the 895 recorded before it while the arc
 #527 review added exactly ONE claim — the `Carrying:` mass one. Four `PASS`es had accumulated

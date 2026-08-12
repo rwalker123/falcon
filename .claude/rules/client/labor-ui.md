@@ -3343,7 +3343,7 @@ already pays off — the sim's own four `None`s.
       `This herd is 40% tamed — ◎ Tame it to finish`.
       **THE GATE RESHUFFLE (§4.3) — one knowledge per transition, and the client encodes it in
       `_hunt_policy_gates` / `_forage_policy_gates`** (mirroring the sim's `assign_labor` validation):
-      * `Cultivate` ← `cultivation >= 1` **and** a Thriving patch **and the rung not already built —
+      * `Cultivate` ← `cultivation >= 1` **and the rung not already built —
         which is `is_cultivated` OR `is_field`**, since Sow can skip rung 2 (see "A FIELD IS NOT
         NECESSARILY `is_cultivated`") —
         a finished patch retires Cultivate outright (`GATE_REASON_ALREADY_TENDED_FORMAT`, "Already a
@@ -3356,15 +3356,29 @@ already pays off — the sim's own four `None`s.
         sheet-renders-the-standing-rung invariant below.
       * `Sow` ← `seed_selection >= 1` **and** the ground will take seed (see the Sow site gate below)
         **and NOT already `patch_is_field`** — a finished Field retires Sow the same way
-        (`GATE_REASON_ALREADY_FIELD_FORMAT`). Deliberately **no** Thriving gate: sown ground starts at
-        the reseed floor (i.e. Collapsing), so a health gate would forbid the very case the rung exists for.
+        (`GATE_REASON_ALREADY_FIELD_FORMAT`).
       * `Tame` ← `herding >= 1`. **Herding gates Tame ALONE now** — it no longer gates Corral.
       * `Corral` ← **`penning >= 1`** (the new rung-3 knowledge) **and** `domestication >= 1`.
-      Two more remedies are the *opposite* of "work harder", because their conditions are stocks, not
-      policies: the **patch-ecology** gate (a fully staffed Sustain takes the whole regrowth and holds
-      a Stressed patch Stressed forever) reads `Patch is Stressed — ease workers off and let it regrow
-      to Thriving`; and `_tame_stalled_hint` (below) says the same of a stalled tame. The gates are
-      re-validated every render, since a source can leave Thriving under a standing selection.
+
+      > **NO RUNG ON EITHER WEB CARRIES A HEALTH GATE, and `Sow`'s site refusal is the only SOURCE
+      > gate the compose sheet can still render.** `docs/plan_harvest_floor.md` §3.2 replaced a CLIFF
+      > with a RATE: a crew pulling hard on the ground it is clearing builds slowly, in proportion to
+      > its escapement floor (`intensification::learn_multiplier`), rather than being stopped — so the
+      > phase PACES a build and never forbids one, and with nothing left to lapse the gate had nothing
+      > to guard. `validate_cultivate` says so in as many words, and `server::tests::
+      > cultivate_is_accepted_on_a_stressed_patch` pins the absence positively. Sowable ground starts
+      > at the reseed floor (i.e. Collapsing), which is why rung 3 never had one either. **A phase term
+      > in `RungGates` would refuse a command the sim accepts** — the defect class issue #464 records
+      > for the gathering-site rule, arriving from the other direction.
+      >
+      > What the player is told instead is the PACE, live and quantified: the compose sheet's aside
+      > reads `Building at ×1.60 — a higher floor builds faster` (see "THE ASIDE'S TEACHING LINE"),
+      > and a build whose source has left Thriving states its PAUSE on the running control
+      > (`_improvement_paused_note` — the one surviving reader of
+      > `HudFloraVocab.ECOLOGY_PHASE_THRIVING` on this web). Neither is a gate.
+
+      The one remedy here that is the *opposite* of "work harder" is `_tame_stalled_hint` (below),
+      whose condition is a stock rather than a policy. The gates are re-validated every render.
       **Known gap (pre-existing):** `_hunt_policy_gates` does NOT check herd
       **ownership** — the tracks are per-faction, so a herd tamed by ANOTHER faction reads as
       available client-side while the sim rejects the assign.
@@ -3603,7 +3617,9 @@ already pays off — the sim's own four `None`s.
       (Penning 34% climbing in the top strip) / `food_tile` (the "Cultivation Preparing 60%" row).
     - ui_preview: `forage_cultivate` (enabled + the Preparing→then forecast + the feed nudge) /
       `forage_cultivate_locked` (1 reason — knowledge + its Sustain-forage remedy) /
-      `forage_cultivate_stressed` (1 reason — the ease-off-and-regrow ecology remedy) / `herd_corral`
+      `forage_cultivate_stressed` (the SAME wild basket ⚠ Stressed with Cultivation KNOWN — an OFFERED
+      live checkbox over its crop list, and no ecology refusal anywhere on the sheet; the A/B partner
+      of the frame above, and the frame the no-health-gate rule is judged on) / `herd_corral`
       (enabled + `Corral: Building 40%`) / **`herd_corral_gated` + `herd_corral_ungated`** (the
       Penning gate as an A/B on ONE fully-tamed herd: the reason as the control's own text, then the
       live box once Penning is known — nothing about the animal changes between them, which is the

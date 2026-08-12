@@ -60,11 +60,12 @@ const GATE_REASON_WILD_FODDER_FORMAT := "Hay stays in the field: your people kno
 # is the exact hidden rule the arc exists to kill.
 const GATE_REASON_HERD_DOMESTICATED_FORMAT := "This herd is %d%% tamed — %s Tame it to finish"
 
-# The patch-ecology gate is a STOCK condition, not a policy one, so its remedy is the opposite advice:
-# a fully staffed Sustain takes the whole regrowth and holds a Stressed patch Stressed forever. The
-# patch only climbs back to Thriving when the take is LESS than the growth — fewer workers, or none.
-# %s = the live `patch_ecology_phase`, capitalized.
-const GATE_REASON_PATCH_THRIVING_FORMAT := "Patch is %s — ease workers off and let it regrow to Thriving"
+# **THE PATCH-ECOLOGY GATE REASON IS GONE** ("Patch is Stressed — ease workers off and let it regrow
+# to Thriving"), with `GATE_PHASE_UNKNOWN_LABEL`, the "not Thriving" phrase it fell back to on a
+# redacted tile. No rung on either web gates on a source's health: a crew drawing the ground down
+# builds slowly in proportion to its escapement floor rather than not at all
+# (docs/plan_harvest_floor.md §3.2), and the sheet's teaching line states that pace live. A reason
+# has nothing left to refuse.
 
 # **THE THREE "already built" GATE REASONS ARE GONE** (issue #442). They greyed a completed rung
 # that was still standing in the policy picker — "Already a Tended Patch — Sustain-forage it to
@@ -116,10 +117,6 @@ const SOW_REFUSAL_REASONS := {
 # An unrecognized refusal key still refuses (fail CLOSED — the sim gates the command regardless, so a
 # button offered here would simply fail), and says the one thing we do know.
 const SOW_REFUSAL_FALLBACK := "This ground will not take seed — your people cannot yet work land like this."
-
-# A patch with no streamed phase (redacted remembered tile) still fails the Thriving
-# test; it reads as unknown rather than asserting a phase we don't have.
-const GATE_PHASE_UNKNOWN_LABEL := "not Thriving"
 
 # **THE GATE-REASON LAYOUT VOCABULARY IS GONE** (issue #442) — the one-liner + header/bullet pair,
 # the two COLLAPSED formats and the tooltip separator all served `HudWidgets.build_policy_picker`'s

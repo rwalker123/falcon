@@ -20,7 +20,9 @@ const IMPROVEMENT_PAUSED_NEEDLE := "ease off and it resumes"
 
 ## The offer wording that must NOT appear while the rung is gated — the imperative the gated state
 ## exists to remove. Kept as a literal so a reworded offer cannot silently pass this assertion.
-const GATED_OFFER_NEEDLE := "Cultivate this patch"
+## It names SOW because Sow's site refusal is the only SOURCE gate the compose sheet can still
+## render: the plant web's other rung, Cultivate, gates on knowledge alone.
+const GATED_OFFER_NEEDLE := "Sow a field here"
 
 ## **THE REPORTED PAIR, in numbers** — a burst and a holding rate the MODEL can tell apart and the
 ## READOUT cannot: both render `0.26` at `SourceForecast.YIELD_DECIMALS`, so a gate asked of the raw
@@ -414,40 +416,40 @@ func run(harness) -> void:
 	# is SHOWN, UNCHECKED and EXPLAINED: discovering the rung exists and what it costs to unlock must
 	# not require already having unlocked it.
 	#
-	# **THE FIXTURE MOVED FROM THE KNOWLEDGE GATE TO A SOURCE GATE, and that is the rule change rather
-	# than a weakening.** It staged a wild Thriving patch with Cultivation 35% known, i.e. a rung gated
-	# on KNOWLEDGE ALONE — and the compose sheet now renders NO control there at all (the aside two
-	# rows up says the same lesson live and quantified, and the reason's remedy named the very work the
-	# sheet was composing). A Stressed patch with Cultivation fully known keeps this frame's actual
-	# subject — the gated control's SHAPE — on a gate that survives. The suppressed case is not lost
-	# either: `forage_cultivate_locked` already staged exactly this fixture and is now the frame the
-	# suppression rule is judged on.
+	# **THE FIXTURE FOLLOWED THE ONLY SURVIVING SOURCE GATE, twice, and neither move weakened it.** It
+	# first staged a wild Thriving patch gated on KNOWLEDGE ALONE — a state this sheet now renders no
+	# control for at all — and then a Stressed patch, whose ecology gate is retired above. What is left
+	# on either web is **`Sow`'s site refusal**: `Tame` gates on knowledge alone, and `Corral`'s
+	# ownership half is unreachable here (only the source's NEXT rung is offered, so a part-tamed herd
+	# is offered Tame). So the fixture is a tended patch on ground that will never take seed, with Seed
+	# Selection KNOWN — the source gate standing alone, which is exactly this frame's subject.
+	# `forage_sow_locked` is the neighbouring case where BOTH kinds of reason are live at once.
 	h._hud._band_labor._player_band = BandFx.forage_range_bands()[0]
 	h._hud._compose.reset_forage_source()
 	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 0.0, "penning": 0.0,
+		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 0.0,
 	}])
-	h._show_tile(TileFx.stressed_tile_fixture())
-	h._compose_forage(TileFx.stressed_tile_fixture())
+	h._show_tile(TileFx.tended_tile_fixture())
+	h._compose_forage(TileFx.tended_tile_fixture())
 	await h._settle()
 	await h._save("improvement_offered_gated")
-	var gated_box = ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "cultivate")
+	var gated_box = ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "sow")
 	# **A GATED RUNG IS A LABEL, NOT A DISABLED CHECKBOX** — the control's SHAPE says whether this is a
 	# choice or a fact, and an unmet prerequisite is a fact. The greyed-checkbox form this replaced put
-	# an offer the player cannot accept ("Cultivate this patch · then 0.04 food …") directly above the
+	# an offer the player cannot accept ("Sow a field here · then 2.40 food …") directly above the
 	# sentence explaining that they cannot accept it.
 	h._assert_hud("a gated improvement is SHOWN, never hidden — the rung stays discoverable",
 		gated_box != null)
 	h._assert_hud("…as a LABEL rather than a checkbox, because it is a state and not a choice",
 		not (gated_box is CheckBox))
-	# Matched WHOLE, not by needle: this reason is the one the ecology raises, and a `contains` on a
+	# Matched WHOLE, not by needle: this reason is the one the GROUND raises, and a `contains` on a
 	# fragment would still pass if the remedy clause (the half that says what to DO) went missing.
 	h._assert_hud("…whose own text is the REASON, so nothing offers what cannot be taken",
-		ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
+		ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_SOW)
 			== HudComposeVocab.IMPROVEMENT_GATED_FORMAT % [
-				FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CULTIVATE),
-				HudFloraVocab.GATE_REASON_PATCH_THRIVING_FORMAT % String(
-					TileFx.stressed_tile_fixture()["patch_ecology_phase"]).capitalize()])
+				FoodIcons.for_policy(SourceForecast.IMPROVEMENT_SOW),
+				String(HudFloraVocab.SOW_REFUSAL_REASONS[String(
+					TileFx.tended_tile_fixture()["patch_sow_site_refusal"])])])
 	h._assert_hud("…and the offer wording is gone entirely, not merely greyed",
 		not Q.has_label_containing(h._hud._drawercompose._compose_sheet, GATED_OFFER_NEEDLE))
 	# THE CROP LIST IS PART OF COMMITTING, so a refused commitment offers none. Shipped once with the
