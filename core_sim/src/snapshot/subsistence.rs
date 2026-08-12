@@ -347,9 +347,27 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 size_class: entry.size_class.clone(),
                 huntable: entry.huntable,
                 ecology_phase: entry.ecology_phase.clone(),
-                domestication: entry.domestication,
-                corralled: entry.corralled,
-                corral_progress: entry.corral_progress,
+                // **THE BUILD METERS COME OFF THE LIVE HERD, NOT THE DISPLAY ENTRY.**
+                // `HerdTelemetry` is written in Startup and Logistics, and the build accrual runs
+                // in `advance_labor_allocation` at **Population** — after both — so `entry`'s copy
+                // of these three is always the meter as of the *previous* turn. That was invisible
+                // while the row said only "Domesticating 96%", and became a self-contradiction once
+                // the live `tameWorkDone`/`tameWorkCost` pair joined it in the same sentence: a
+                // finished Tame published as "50 / 50 work (99%)". Read live, as
+                // `penExtendProgress` below already is. `entry` remains the fallback for the
+                // unreachable "in telemetry, gone from the registry" case, exactly like every other
+                // field here.
+                domestication: herd
+                    .map(|herd| {
+                        build_fraction(herd.domestication_progress, herd.domestication_cost)
+                    })
+                    .unwrap_or(entry.domestication),
+                corralled: herd
+                    .map(|herd| herd.is_corralled())
+                    .unwrap_or(entry.corralled),
+                corral_progress: herd
+                    .map(|herd| build_fraction(herd.corral_progress, herd.corral_cost))
+                    .unwrap_or(entry.corral_progress),
                 per_worker_yield: forecast.per_worker_yield.provisions,
                 // The Corral investment rung's (gross) payoff once penned; the preparing dip is
                 // `hunt_policy_ceilings[stance] × corral_build_fraction` (issue #442).

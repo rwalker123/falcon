@@ -545,6 +545,38 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
   **Phase 2 (deferred):** the pen's upkeep is drawn *first* from the tile's `ForagePatch` biomass (the
   animals eat grass — a resource humans can't), and only the **shortfall** is hauled from the larder.
 
+### A herd row is assembled from TWO frames, and the build meters must come from the live one
+
+`herd_snapshot_entries` walks the display **`HerdTelemetry`** entries and resolves each one's live
+**`Herd`** out of the registry (`registry.find(&entry.id)`), then fills the row from *both*. The two
+are not the same frame:
+
+| source | written | what it is as of |
+|---|---|---|
+| `HerdTelemetry` entry | Startup, then Logistics — `advance_herds` and `repopulate_fauna` | **the previous turn**, for anything Population touches |
+| live `Herd` | authoritative at all times | this turn |
+
+Everything the build engine writes accrues in **`advance_labor_allocation`, at Population** — after
+both telemetry writes — so **`domestication`, `corralled` and `corralProgress` are read off the live
+herd**, through `intensification::build_fraction`, with the entry kept only as the fallback for the
+unreachable "in telemetry, gone from the registry" case. They used to be taken from the entry, which
+made every one of them exactly one turn late.
+
+**The lag became a contradiction when the work pair joined it in the same sentence.** `tameWorkDone`
+/ `tameWorkCost` are live, so a completed Tame published as *"Domesticating 50 / 50 work (99%)"* —
+one row, one meter, two frames — and read Domesticated the turn after, with nothing in the sim having
+reverted. Two fields describing one meter must agree **in the frame they ship in**;
+`core_sim/tests/build_turns_closed_form.rs` asserts that equality on a real resolved climb of both
+animal rungs, on the turn each completes, because that is the turn the disagreement is visible on.
+It is the only herd test that runs the real stage order (`advance_herds` →
+`advance_labor_allocation` → capture) — the snapshot unit tests fabricate the telemetry from the
+registry in the same instant, so the two halves can never disagree there.
+
+**The narrow fix was deliberate.** Rebuilding `HerdTelemetry` after Population would also refresh
+`biomass` / `x` / `y` / `ecologyPhase`, and its blast radius covers the herds `advance_husbandry`
+sheds or despawns later in Logistics, which today publish with no registry herd and a zeroed
+forecast. Those fields remain published from the Logistics frame.
+
 See Also: "Cultivation (Intensification Phase 1a)" under Depletable Forage — the plant twin of this
 mechanic (the two are near-mechanical transposes).
 

@@ -29,12 +29,12 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 
 use core_sim::{
-    advance_herds, advance_labor_allocation, build_headless_app, recapture_snapshot_in_place,
-    scalar_from_f32, scalar_one, scalar_zero, BandEquipment, DiscoveryProgressLedger,
-    EquipmentConfig, FactionId, FaunaConfigHandle, GenerationId, HerdRegistry, Improvement,
-    LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MoraleCause, PopulationCohort,
-    ResidentBand, SimulationConfig, SnapshotHistory, TileRegistry, HERDING_DISCOVERY_ID,
-    MSY_BIOMASS_FRACTION,
+    advance_herds, advance_labor_allocation, build_fraction, build_headless_app,
+    recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero, BandEquipment,
+    DiscoveryProgressLedger, EquipmentConfig, FactionId, FaunaConfigHandle, GenerationId,
+    HerdRegistry, Improvement, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
+    MoraleCause, PopulationCohort, ResidentBand, SimulationConfig, SnapshotHistory, TileRegistry,
+    HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
 };
 
 /// **The species the fixture reshapes its herd into** — a `pen`-ceiling row, so `can_domesticate()`
@@ -352,6 +352,158 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
     assert!(
         saw_linear,
         "fixture: one arm must hold a unit per hand, or saturation is the only regime under test"
+    );
+}
+
+/// A watchdog on the fixture's climb of both animal rungs, **not a model number**: at the shipped
+/// costs, this crew and this floor both builds land in a handful of turns each, so a run that
+/// exhausts it has stalled rather than been paced.
+const MAX_BUILD_TURNS: u32 = 200;
+
+/// One resolved turn in the **real stage order** — `advance_herds` (Logistics, where the display
+/// telemetry is rebuilt) then `advance_labor_allocation` (Population, where the build accrues) then
+/// the capture. That ordering is the whole point of this file: it is the only place a herd row is
+/// assembled from a telemetry entry that is genuinely a turn older than the registry beside it.
+fn resolve_one_turn(app: &mut App) {
+    app.world.run_system_once(advance_herds);
+    app.world.run_system_once(advance_labor_allocation);
+    recapture_snapshot_in_place(&mut app.world);
+}
+
+/// Hand the keeper band its next verb — the fixture climbs Tame → Corral on one crew, because the
+/// pen rung is what publishes `corralled`.
+fn set_improvement(app: &mut App, band: bevy::prelude::Entity, improvement: Improvement) {
+    let mut band = app.world.entity_mut(band);
+    let mut allocation = band
+        .get_mut::<LaborAllocation>()
+        .expect("the keeper band keeps its allocation across the completed build");
+    allocation
+        .assignments
+        .first_mut()
+        .expect("the keeper band keeps its one assignment")
+        .improvement = Some(improvement);
+}
+
+/// **TWO FIELDS DESCRIBING ONE METER MUST AGREE IN THE FRAME THEY SHIP IN.**
+///
+/// A herd row is assembled from two sources — the display `HerdTelemetry` entry, written in
+/// Logistics, and the live `Herd` in the registry, whose build meters accrue in Population *after*
+/// it. So the entry's copy of `domestication` / `corralled` / `corralProgress` is always the meter
+/// as of the **previous** turn, while `tameWorkDone` / `corralWorkDone` beside them are this turn's.
+/// A player finishing a Tame read *"Domesticating 50 / 50 work (99%)"* on the completing turn: one
+/// sentence, two frames.
+///
+/// Asserted **every** turn of a real climb and, pointedly, **on the completing turn**, which is the
+/// turn the disagreement is visible on — a `0/0` equality on an untouched herd is vacuous, so the
+/// fixture is required to reach completion on both rungs and to have passed through a genuine
+/// partial on each.
+#[test]
+fn a_herds_published_build_meters_agree_with_their_work_pairs_on_the_turn_they_complete() {
+    let (mut app, id, pos) = world_with_a_tameable_herd();
+    // Both rungs' unlock knowledge up front: this file is about which *frame* a meter is published
+    // from, so a knowledge gate that paced the climb would only lengthen the fixture.
+    app.world
+        .resource_mut::<DiscoveryProgressLedger>()
+        .add_progress(FactionId(0), PENNING_DISCOVERY_ID, scalar_one());
+    let keepers = spawn_taming_keepers(&mut app, pos, &id, GearHeld::APartysWorth);
+
+    let mut tamed_on = None;
+    let mut penned_on = None;
+    let mut saw_partial_tame = false;
+    let mut saw_partial_pen = false;
+
+    for turn in 1..=MAX_BUILD_TURNS {
+        resolve_one_turn(&mut app);
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let herd = snapshot
+            .herds
+            .iter()
+            .find(|row| row.id == id)
+            .expect("the watched herd is on the wire");
+
+        assert_eq!(
+            herd.domestication,
+            build_fraction(herd.tame_work_done, herd.tame_work_cost),
+            "turn {turn}: the published `domestication` must be the published work pair's own \
+             fraction — {} / {}",
+            herd.tame_work_done,
+            herd.tame_work_cost
+        );
+        assert_eq!(
+            herd.corral_progress,
+            build_fraction(herd.corral_work_done, herd.corral_work_cost),
+            "turn {turn}: the published `corralProgress` must be the published work pair's own \
+             fraction — {} / {}",
+            herd.corral_work_done,
+            herd.corral_work_cost
+        );
+
+        if herd.domestication > 0.0 && herd.domestication < 1.0 {
+            saw_partial_tame = true;
+        }
+        if herd.corral_progress > 0.0 && herd.corral_progress < 1.0 {
+            saw_partial_pen = true;
+        }
+
+        if tamed_on.is_none() {
+            if herd.tame_work_done >= herd.tame_work_cost {
+                tamed_on = Some(turn);
+                assert_eq!(
+                    herd.domestication, 1.0,
+                    "turn {turn}: the Tame's meter reached its cost, so the row must read a \
+                     finished build in the same frame, not last turn's 99%"
+                );
+                assert!(
+                    !herd.corralled,
+                    "turn {turn}: a tamed herd is not yet penned"
+                );
+                set_improvement(&mut app, keepers, Improvement::Corral);
+            }
+            continue;
+        }
+
+        if herd.corral_work_done >= herd.corral_work_cost {
+            penned_on = Some(turn);
+            assert_eq!(
+                herd.corral_progress, 1.0,
+                "turn {turn}: the pen's meter reached its cost, so the row must read a finished \
+                 build in the same frame"
+            );
+            assert!(
+                herd.corralled,
+                "turn {turn}: `corralled` must flip the instant the pen's meter fills — it is the \
+                 same fact the meter is stating"
+            );
+            break;
+        }
+        assert!(
+            !herd.corralled,
+            "turn {turn}: `corralled` must not lead its own meter ({} / {})",
+            herd.corral_work_done, herd.corral_work_cost
+        );
+    }
+
+    let tamed_on = tamed_on.expect("fixture: the Tame must complete, or the equality is vacuous");
+    let penned_on = penned_on.expect("fixture: the pen must complete, or the equality is vacuous");
+    assert!(
+        penned_on > tamed_on,
+        "fixture: the pen is the rung above the Tame, so it must complete later (tamed {tamed_on}, \
+         penned {penned_on})"
+    );
+    assert!(
+        saw_partial_tame,
+        "fixture: the Tame must be seen part-built, or the row never had two frames to disagree \
+         across"
+    );
+    assert!(
+        saw_partial_pen,
+        "fixture: the pen must be seen part-built, or the row never had two frames to disagree \
+         across"
     );
 }
 

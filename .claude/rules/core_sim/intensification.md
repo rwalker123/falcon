@@ -536,6 +536,18 @@ working untouched. `intensification::build_fraction` is the one divisor, and it 
 source's **own stamped** cost so a finished rung reads exactly `1.0` beside a predicate that already
 says so.
 
+**THE FRACTION AND THE WORK PAIR MUST BE CAPTURED FROM THE SAME FRAME.** A build meter accrues in
+`advance_labor_allocation`, at **Population**, so anything the capture reads out of a display cache
+written *earlier in the turn* is a turn behind the `*WorkDone` beside it. On the animal web that
+cache is `HerdTelemetry` (Logistics), and `domestication` / `corralled` / `corralProgress` were taken
+from it: a finished Tame shipped as *"50 / 50 work (99%)"* — the same meter stated twice, from two
+turns, in one sentence. All three now read the live `Herd`; `husbandry.md` → "A herd row is assembled
+from TWO frames" owns the provenance table. The plant web never had the defect — `ForagePatch` is
+captured straight from the registry — and the guard against a recurrence on either web is the
+equality itself: **`<rung>Progress == build_fraction(<rung>WorkDone, <rung>WorkCost)` in the frame it
+ships in**, asserted on a real resolved turn in `core_sim/tests/build_turns_closed_form.rs`, on the
+turn each build completes.
+
 Appended (append-only) on both tables:
 
 | Field | Answers |
