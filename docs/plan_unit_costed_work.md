@@ -225,44 +225,43 @@ effective_cost = cost − t          saving = t / cost
 Now the job's own size decides. A tool contribution of 8 units is 16% of a 50-unit garden and 2.7%
 of a 300-unit farm, and **the hoe never mentions either improvement by name**. This is the shape.
 
-### 6.2 `t` scales with how many workers are holding one — by COVERAGE
+### 6.2 `t` is PER WORKER — the partly-equipped-party rule, already shipped
 
-**The correction.** An earlier draft said the contribution was counted once per distinct item type,
-which is wrong: a hoe is wielded, so ten hoed workers must beat five. But `t` also cannot be a plain
-per-worker sum (`n_equipped × worth`), because then a large enough crew drives any job's cost to
-zero and the fade on a farm disappears — a farm is worked by more people, which is exactly when the
-tool is supposed to stop mattering.
-
-**So the tool declares what it is worth to a job when the WHOLE crew has one, and the crew's actual
-coverage scales it:**
+**The tool is wielded. A worker holding one contributes its worth; a worker without one does not.**
 
 ```
-t = Σ over declaring items ( worth × share of the crew holding it )
+t = Σ over the crew ( work units this worker's tool takes off the job )
 ```
 
-Ten workers with ten hoes get the full worth; ten workers with five hoes get half of it; two workers
-with two hoes get the full worth on a job that is much smaller. That is Ray's objection honored and
-the fade preserved, and it needs **no new machinery** — `EquipmentCoverage::weighted_rate` already
-computes `Σ share × value(crew's kit)`, which is this expression exactly.
+That is not a new rule — it is the **existing** one. `EquipmentCoverage` already resolves every
+per-worker effect this way (`equipment.md` → "The partly-equipped party — ten spears arm ten hunters,
+and the eleventh goes bare"), and `weighted_rate` is the seam: `Σ share × value(crew's kit)`, times
+the head count, is exactly the sum above. Five hoed workers and five bare answer `5 × worth`, the
+same shape as five sledded hunters and five sledless hauling `5 × 40 + 5 × 12`.
 
-It also settles the question `equipment.md` left open on `BuildRate` ("whether a digging tool wants
-the covered reading instead"): **yes, covered.** The old stat was deliberately *not* coverage-averaged
-because averaging a rate said *"bring fewer keepers and the pen goes up faster"* — a multiplier's
-pathology, which the cost-side form does not have.
+So the new stat is a **per-worker work contribution**, and it plugs into machinery that already
+exists. It also answers the question `equipment.md` left open on `BuildRate` ("whether a digging tool
+wants the covered reading instead"): **yes** — the old stat was uncovered only because averaging a
+*multiplier* said "bring fewer keepers and the pen goes up faster", a pathology the per-worker
+cost-side form does not have.
+
+**The fade on a farm comes from the job's declared cost, which is config's job** (§3): a Farm is born
+at ~300 units precisely so the hand tools of the era are noise against it, and that is a dial to tune,
+not a property to build into the resolution rule.
 
 Everything else about the stat:
 
-- **Neutral at `0.0`**, resolved as the **SUM** across declaring items — not the max. Summing is what
-  "additive" means and is the only way a hoe and a mattock both count; the max
-  (`dispersion`/`exposure`'s shape, and what `BuildRate` uses today) would make the second tool
-  worthless. A new resolution rule in `equipment_config.rs`, and it should be stated as one.
-- **Clamped**: `effective_cost = max(cost × MIN_BUILD_FRACTION, cost − t)`, so a tool worth more than
-  a small job cannot make it instant or negative.
+- **Neutral at `0.0`.** Within one kit it resolves as the max of the live declaring items —
+  `dispersion`/`exposure`'s shape, which `BuildRate` already uses — so a spent tool steps back to the
+  neutral and a second declarer (#539's hoe beside `husbandry_gear`) is legal by construction.
+- **Clamped**: `effective_cost = max(cost × MIN_BUILD_FRACTION, cost − t)`, so a job cannot be driven
+  to nothing or negative.
 - **Calibration.** `husbandry_gear`'s flint tier declares ×1.5 today, which on a 50-unit build is
-  worth `50 × (1 − 1/1.5) ≈ 17` units at full coverage. Ship **17** and a fully-geared animal build
-  stays where it is; a partly-geared one is now honestly slower, which it was not before.
-- **Evaluated live each turn** off the crew's current kit and coverage, so gaining or wearing out a
-  tool mid-build takes effect immediately and no state records "this build was geared."
+  worth ≈17 units total. Against the reference keeper crew of 2 that is **≈8.5 per worker**, and a
+  fully-geared animal build lands where it does today while a half-geared one is honestly slower —
+  which it was not before.
+- **Evaluated live each turn** off the crew's current kit, so gaining or wearing out a tool mid-build
+  takes effect immediately and no state records "this build was geared."
 
 ### 6.3 Wear — the free win the arc pays out
 
@@ -350,8 +349,9 @@ call sites of this change.
 ## 10. Decided, and what is left
 
 **Settled (2026-08-11):** ship pacing-neutral first, with the cost spread as a config-only follow-up
-(§3). The tool's contribution lands on the **job**, not the crew's output, and scales by **coverage**
-(§6.1–6.2). Source decay stays a **fraction of the rung's cost** (§3.2). The animal web **becomes
+(§3). The tool's contribution lands on the **job**, not the crew's output, and is **per equipped
+worker** on the existing partly-equipped-party seam (§6.1–6.2). Source decay stays a **fraction of
+the rung's cost** (§3.2). The animal web **becomes
 crew-scaled** and that is accepted (§1.2). Knowledge does **not** feed throughput — it reaches it
 through the tools it unlocks (§5). The wire **gains** `workDone` / `workCost` / `buildTurnsRemaining`
 (§8). `headline_wear` quotes a **reference job** (§6.3).
