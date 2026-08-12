@@ -2028,7 +2028,16 @@ func _fill_hex(col: int, row: int, radius: float, origin: Vector2, fill: Color) 
 	draw_polygon(pts, PackedColorArray([fill, fill, fill, fill, fill, fill]))
 
 func _outline_hex(col: int, row: int, radius: float, origin: Vector2, color: Color, width: float) -> void:
-	var center := _hex_center(col, row, radius, origin)
+	_outline_hex_at(_hex_center(col, row, radius, origin), radius, color, width)
+
+## Seam-aware twin of `_outline_hex`: stamps the outline on the copy of `col` the viewport is
+## actually over. Use it for a SINGLE tile named by its DATA column (the selection, the hover);
+## `_outline_hex` stays right for a tile whose caller already resolved an effective column
+## (`_band_effective_col`, the range disks) or that came off a logical-column draw loop.
+func _outline_hex_wrapped(col: int, row: int, radius: float, origin: Vector2, color: Color, width: float) -> void:
+	_outline_hex_at(_hex_center_wrapped(col, row, radius, origin), radius, color, width)
+
+func _outline_hex_at(center: Vector2, radius: float, color: Color, width: float) -> void:
 	var pts := _hex_points(center, radius)
 	var outline := PackedVector2Array([pts[0], pts[1], pts[2], pts[3], pts[4], pts[5], pts[0]])
 	draw_polyline(outline, color, width, true)
@@ -2037,11 +2046,16 @@ func _outline_hex(col: int, row: int, radius: float, origin: Vector2, color: Col
 ## hover == selection). Replaces the old brown-circle-as-selection feel; the hex-shape
 ## outline is the sole selection cue — there is NO per-token ring, and the active band in a
 ## stack reads by full brightness over its darkened/shrunk back cards.
+##
+## **BOTH OUTLINES WRAP.** `selected_tile` / `_hovered_tile` hold DATA columns — `_point_to_offset`
+## posmods the pick — while the terrain loop draws each column at whatever LOGICAL copy the
+## viewport is over, so on a wrapping map an unwrapped outline is stamped a whole map-width away
+## and the click reads as "the selection didn't take" on every tile the seam pushed into a copy.
 func _draw_tile_selection_highlight(radius: float, origin: Vector2) -> void:
 	if selected_tile.x >= 0 and selected_tile.y >= 0:
-		_outline_hex(selected_tile.x, selected_tile.y, radius, origin, SELECTED_HEX_OUTLINE_COLOR, SELECTED_HEX_OUTLINE_WIDTH)
+		_outline_hex_wrapped(selected_tile.x, selected_tile.y, radius, origin, SELECTED_HEX_OUTLINE_COLOR, SELECTED_HEX_OUTLINE_WIDTH)
 	if _hovered_tile.x >= 0 and _hovered_tile.y >= 0 and _hovered_tile != selected_tile:
-		_outline_hex(_hovered_tile.x, _hovered_tile.y, radius, origin, HOVER_HEX_OUTLINE_COLOR, HOVER_HEX_OUTLINE_WIDTH)
+		_outline_hex_wrapped(_hovered_tile.x, _hovered_tile.y, radius, origin, HOVER_HEX_OUTLINE_COLOR, HOVER_HEX_OUTLINE_WIDTH)
 func _draw_label(pos: Vector2, text: String, max_width: float, font_size: int, color: Color) -> void:
 	var font: Font = ThemeDB.fallback_font
 	if font != null:

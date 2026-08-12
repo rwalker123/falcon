@@ -40,6 +40,15 @@ const TERRAIN_ID := 5  # arbitrary land biome for a legible backdrop
 const STACK_ENTITY_BASE := 9100   # co-located band entities are STACK_ENTITY_BASE + i
 const TRAVEL_SEAM_BAND_X := 1      # band column near the left edge for the seam-crossing case
 const TRAVEL_SEAM_TARGET_X := 14   # target near the right edge → short path wraps LEFT across seam
+# The seam-selection guard's probe: a point at the middle of the frame, after a half-map-width pan
+# has put the WRAPPED copies of the low columns there (see `_assert_selection_outline_wraps`).
+const SEAM_PROBE_FRACTION := Vector2(0.5, 0.5)
+const SEAM_PAN_MAP_WIDTHS := 0.5
+# A 3px-wide outline around a fitted hex runs to a few thousand pixels; the floor only has to be
+# clear of antialiasing noise, so it is set an order of magnitude under the measured count.
+const SEAM_OUTLINE_MIN_PIXELS := 200
+# The clicked box, in hex radii from the pressed pixel — see `_assert_selection_outline_wraps`.
+const SEAM_BOX_RADII := 2.0
 const TRAVEL_EXPEDITION_ENTITY := 9301
 const HERD_ON_TILE_ID := "game_boar_03"   # herd id used by the selected-hex herd fixture
 # Quarry-targeting state: the band's hunt reach and the two herd offsets that straddle it (one inside
@@ -823,6 +832,11 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_travel_seam")
 
+	# A PNG-LESS guard riding the same wrapping fixture — see `_assert_selection_outline_wraps`. It
+	# repans the map, so it comes AFTER the frame it borrows the snapshot from; the next state's
+	# `_fit_map_to_view` puts the camera back.
+	await _assert_selection_outline_wraps()
+
 	# State P — selected TRAVELLING expedition: a detached scout party in transit draws the same
 	# destination reticle + line (the draw is unit-agnostic — band OR expedition).
 	_map.set_fow_enabled(false)
@@ -1433,6 +1447,90 @@ func _assert_zoom_ladder() -> void:
 		_map.zoom_step(1)
 		walk.append("%.1f" % _map.zoom_factor)
 	print("map_preview: zoom ladder = ", " → ".join(walk))
+
+## **THE SELECTION OUTLINE IS STAMPED WHERE THE CLICK LANDED**, on a wrapping map as much as a flat
+## one. It SAVES NO PNG (the frame set stays a bit-identity reference) and could not usefully be one
+## anyway: the failure is an outline drawn a whole map width away, i.e. a frame with nothing in it —
+## indistinguishable by eye from a hex that was never selected, which is exactly how it shipped.
+##
+## `selected_tile` holds a DATA column (`_point_to_offset` posmods the pick) while the terrain loop
+## draws each column at whatever LOGICAL copy the viewport is over, so an unwrapped outline lands on
+## the canonical copy off-frame. In game it read as "clicking some hexes doesn't select them" — the
+## panel filled in correctly every time, and only the white box was missing, on exactly the tiles the
+## seam had pushed into a wrapped copy.
+##
+## The three assertions are one claim in three parts. The first is the PREMISE — the probe really is
+## over a wrapped copy — and without it the rest pass on any map at all, seam or no seam. The other
+## two READ PIXELS, deselected against selected, because a geometry assertion could only re-ask
+## `_hex_center_wrapped` the question the DRAW asks it, and would stay green if the draw stopped
+## calling it. Ink appearing in the clicked hex's own box, and nowhere else in the frame, is the
+## thing a player actually reports missing.
+func _assert_selection_outline_wraps() -> void:
+	_map.selected_tile = Vector2i(-1, -1)
+	_map._fit_map_to_view()
+	# Pan half a map west: the low columns' wrapped copies move into the middle of the frame, a whole
+	# map width from where their canonical copy sits.
+	_map.pan_offset.x = -_map.last_map_size.x * SEAM_PAN_MAP_WIDTHS
+	_map.queue_redraw()
+	await _settle()
+
+	var radius: float = _map.last_hex_radius
+	var origin: Vector2 = _map.last_origin
+	var viewport := Rect2(Vector2.ZERO, _map._get_adjusted_viewport_size())
+	var probe := viewport.size * SEAM_PROBE_FRACTION
+
+	# The round trip a player makes: press a pixel, get a tile — then the tile's outline has to come
+	# back to the pixel that was pressed.
+	var tile: Vector2i = _map._point_to_offset(probe)
+	var canonical: Vector2 = _map._hex_center(tile.x, tile.y, radius, origin)
+	_assert_map(
+		"seam probe lands on a WRAPPED copy — tile %d,%d draws its canonical copy at x=%.0f, off a %.0f-wide frame"
+			% [tile.x, tile.y, canonical.x, viewport.size.x],
+		not viewport.has_point(canonical)
+	)
+
+	var before: Image = await _capture()
+	_map.selected_tile = tile
+	_map.queue_redraw()
+	await _settle()
+	var after: Image = await _capture()
+	if before == null or after == null:
+		return
+
+	# Logical map units → captured-image pixels. The capture matches the pinned WINDOW while the
+	# viewport reports the `expand` projection, so the two spaces differ by a constant factor.
+	var to_image: float = float(before.get_width()) / viewport.size.x
+	# TWO radii around the click, not one: the press lands anywhere inside the hex, so the outline
+	# reaches a full radius past it on the far side. A tighter box splits the ring and the
+	# "inks nothing else" half fails on the outline's own far edge.
+	var reach: Vector2 = Vector2(radius, radius) * SEAM_BOX_RADII * to_image
+	var box := Rect2i(Vector2i(probe * to_image - reach), Vector2i(reach * 2.0))
+	var inked_in_box: int = _count_changed_pixels(before, after, box)
+	var inked_elsewhere: int = _count_changed_pixels(before, after, Rect2i()) - inked_in_box
+
+	_assert_map(
+		"selecting tile %d,%d inks its own hex — %d px changed in the clicked box (min %d)"
+			% [tile.x, tile.y, inked_in_box, SEAM_OUTLINE_MIN_PIXELS],
+		inked_in_box >= SEAM_OUTLINE_MIN_PIXELS
+	)
+	_assert_map(
+		"and inks nothing else — %d px changed outside the clicked box" % inked_elsewhere,
+		inked_elsewhere == 0
+	)
+	_map.selected_tile = Vector2i(-1, -1)
+
+## Pixels differing between two captures of the same frame, within `rect` (an EMPTY rect means the
+## whole image). The images are the same scene rendered twice with one thing changed, and this
+## harness freezes `Engine.time_scale`, so every differing pixel is that one thing.
+func _count_changed_pixels(before: Image, after: Image, rect: Rect2i) -> int:
+	var bounds := Rect2i(Vector2i.ZERO, before.get_size())
+	var region: Rect2i = bounds if not rect.has_area() else rect.intersection(bounds)
+	var changed := 0
+	for y in range(region.position.y, region.end.y):
+		for x in range(region.position.x, region.end.x):
+			if before.get_pixel(x, y) != after.get_pixel(x, y):
+				changed += 1
+	return changed
 
 ## Same shape as `ui_preview`'s `_assert_hud`: PASS prints, FAIL goes through `_fail` — the harness's
 ## ONE sink, so the run's exit status counts this claim. It used to print its own `FAIL` line and
