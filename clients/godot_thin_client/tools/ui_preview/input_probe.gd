@@ -59,6 +59,28 @@ static func wheel(viewport: Viewport, window_point: Vector2, button_index: int) 
 	release.position = window_point
 	viewport.push_input(release)
 
+## A left press ALONE, left latched. The half of a click a control that opens a POPUP answers on:
+## `OptionButton` and `MenuButton` run at `ACTION_MODE_BUTTON_PRESS`, so the popup is up before the
+## release exists, and a probe that must look at the popup — or click INTO it — needs the two halves
+## driven apart with frames in between. Pair it with `release_left` at the point the gesture ends;
+## leaving a press unreleased latches `gui.mouse_focus` and routes every later press to this control.
+static func press_left(viewport: Viewport, window_point: Vector2) -> void:
+	var press := InputEventMouseButton.new()
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = true
+	press.position = window_point
+	viewport.push_input(press)
+
+## The release half of the pair above, delivered where the gesture ENDS — which is not always where it
+## began: a popup entry is picked by a press-and-release over the entry, and a `BaseButton` that saw
+## the pointer leave answers a release elsewhere by cancelling instead of firing.
+static func release_left(viewport: Viewport, window_point: Vector2) -> void:
+	var release := InputEventMouseButton.new()
+	release.button_index = MOUSE_BUTTON_LEFT
+	release.pressed = false
+	release.position = window_point
+	viewport.push_input(release)
+
 ## A left click, pressed AND released. The release is not optional: a press on its own latches
 ## `gui.mouse_focus`, and Godot then routes later presses to that control without re-picking, so
 ## probe 2 onwards would report probe 1's answer wherever it landed. The pointer is moved AWAY first

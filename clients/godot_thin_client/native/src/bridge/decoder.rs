@@ -9,6 +9,7 @@ use crate::dict::campaign::{
     campaign_profiles_to_array, command_events_to_array, pending_forks_to_array,
     stance_axes_to_array, victory_state_to_dict, voice_medium_to_array,
 };
+use crate::dict::connections::connections_to_array;
 use crate::dict::culture::{
     axis_bias_to_dict, culture_layers_to_array, culture_tensions_to_array, influencers_to_array,
     sentiment_to_dict,
@@ -766,6 +767,14 @@ fn decode_delta_against(
 
     if let Some(power_metrics) = delta.governance().and_then(|s| s.powerMetrics()) {
         frame.insert_changed("power_metrics", &power_metrics_to_dict(power_metrics));
+    }
+
+    // **THE CONTACT TIES** (arc #527) — the same whole-section replace as `culture_tensions` below,
+    // and `insert_changed` for the same reason: the sim diffs the section as a `Whole<Vec<_>>`, so
+    // presence on a delta IS the change signal. Present-and-EMPTY means "you hold no ties now",
+    // which a `!is_empty()` gate here would swallow — the defect that blanked the culture tensions.
+    if let Some(connections) = delta.connections().and_then(|s| s.connections()) {
+        frame.insert_changed("connections", &connections_to_array(connections));
     }
 
     // NOT a keyed diff — a whole-section replace, so present (even EMPTY) means "this is the roster

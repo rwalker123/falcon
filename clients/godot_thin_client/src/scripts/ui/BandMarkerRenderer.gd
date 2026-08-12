@@ -187,7 +187,7 @@ func _draw_band_task_arrow(unit: Dictionary, center: Vector2, radius: float, ori
 
 ## Draw an expedition's map body (docs/plan_exploration_and_sites.md §2 / §2b): a hollow,
 ## faction-tinted disc — visually distinct from a resident band's solid dot — carrying a mission
-## glyph (scout = ⚑ flag, hunt = 🏹 bow). Phase decorations: a scout `awaiting` party pulses an
+## glyph (scout = ⚑ flag, hunt = 🏹 bow, denial = 💀 skull, trade = 📦 pack). Phase decorations: a scout `awaiting` party pulses an
 ## amber ring (needs a command); a hunt `delivering` party shows a green food pip (carrying a haul
 ## home). The shared label / travel arrow / selection ring stay in `_draw_unit`.
 
@@ -204,7 +204,7 @@ func _travel_arrow_color(task_kind: String) -> Color:
 
 ## Draw an expedition's map body (docs/plan_exploration_and_sites.md §2 / §2b): a hollow,
 ## faction-tinted disc — visually distinct from a resident band's solid dot — carrying a mission
-## glyph (scout = ⚑ flag, hunt = 🏹 bow). Phase decorations: a scout `awaiting` party pulses an
+## glyph (scout = ⚑ flag, hunt = 🏹 bow, denial = 💀 skull, trade = 📦 pack). Phase decorations: a scout `awaiting` party pulses an
 ## amber ring (needs a command); a hunt `delivering` party shows a green food pip (carrying a haul
 ## home). The shared label / travel arrow / selection ring stay in `_draw_unit`.
 func _draw_expedition_body(unit: Dictionary, center: Vector2, marker_radius: float, color: Color) -> void:
@@ -219,6 +219,11 @@ func _draw_expedition_body(unit: Dictionary, center: Vector2, marker_radius: flo
 		glyph = _view.EXPEDITION_HUNT_GLYPH
 	elif mission == _view.EXPEDITION_DENY_MISSION:
 		glyph = _view.EXPEDITION_DENY_GLYPH
+	# A SHIPMENT gets its own mark for the denial raid's reason: it engages nothing and brings nothing
+	# home, so both the bow and the skull would misdescribe it. Its phase decorations stay off too —
+	# the green pip means "carrying a haul HOME", and a shipment's goods are going the other way.
+	elif mission == _view.EXPEDITION_TRADE_MISSION:
+		glyph = _view.EXPEDITION_TRADE_GLYPH
 	# Dark backing disc keeps the glyph legible over any terrain (mirrors the site/herd markers).
 	_view.draw_circle(center, marker_radius, Color(0.04, 0.06, 0.07, _view.EXPEDITION_DISC_ALPHA))
 	# Hollow faction ring — no solid fill, so it never reads as a resident band's dot.

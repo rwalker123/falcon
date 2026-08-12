@@ -234,6 +234,14 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "send_denial_raid <faction_id> <band_id> <party_workers> <fauna_id> [kit <id>]",
     },
     CommandVerbHelp {
+        verb: "send_trade_expedition",
+        aliases: &[],
+        summary: "Outfit a party to carry a shipment to another band — needs a live connection to \
+                  the destination, and fails closed on cargo the band does not hold or cannot carry.",
+        usage: "send_trade_expedition <faction_id> <band_id> <party_workers> <destination_band_id> \
+                [food <amount>] [material <material_id> <amount>]... [kit <id>]",
+    },
+    CommandVerbHelp {
         verb: "export_map",
         aliases: &["export"],
         summary: "Write the current world map (terrain + seed) to a JSON file for inspection and tests.",
@@ -1240,6 +1248,82 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 kit_id,
             })
         }
+        // **The shipment's grammar is a NAMED TAIL, and it is closed to everything else.** The
+        // four positional tokens name who is sending what-sized party where; the cargo is a
+        // repeated `food <amount>` / `material <id> <amount>` list, because a shipment has no fixed
+        // arity and a positional list could not say which of two namespaces an id belongs to. Any
+        // token that is not one of those three names is a misunderstanding of the verb and is
+        // refused (`UnexpectedArgument`) rather than dropped — the same fail-closed reading
+        // `send_denial_raid` takes, and the one an empty shipment gets at the server.
+        "send_trade_expedition" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let workers_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("party_workers"))?;
+            let destination_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("destination_band_id"))?;
+            let mut cargo: Vec<crate::TradeCargoItem> = Vec::new();
+            let mut kit_id: Option<String> = None;
+            while let Some(token) = parts.next() {
+                match token.to_ascii_lowercase().as_str() {
+                    "food" => {
+                        let amount = parts.next().ok_or(CommandParseError::MissingArgument(
+                            "send_trade_expedition food amount",
+                        ))?;
+                        cargo.push(crate::TradeCargoItem {
+                            // The FOOD commodity key the band larder is stored under. Named here
+                            // rather than typed by the caller: `food` is the word a player uses, and
+                            // the key is the sim's spelling of it.
+                            id: crate::commands::FOOD_CARGO_KEY.to_string(),
+                            is_material: false,
+                            amount: parse_f32(amount, "send_trade_expedition food amount")?,
+                        });
+                    }
+                    "material" => {
+                        let id = parts.next().ok_or(CommandParseError::MissingArgument(
+                            "send_trade_expedition material id",
+                        ))?;
+                        let amount = parts.next().ok_or(CommandParseError::MissingArgument(
+                            "send_trade_expedition material amount",
+                        ))?;
+                        cargo.push(crate::TradeCargoItem {
+                            id: id.to_string(),
+                            is_material: true,
+                            amount: parse_f32(amount, "send_trade_expedition material amount")?,
+                        });
+                    }
+                    "kit" => {
+                        let id = parts.next().ok_or(CommandParseError::MissingArgument(
+                            "send_trade_expedition kit id",
+                        ))?;
+                        // A second `kit` is an order that contradicts itself, so it is refused
+                        // rather than resolved by a last-wins rule nobody stated.
+                        if kit_id.is_some() {
+                            return Err(CommandParseError::UnexpectedArgument(token.to_string()));
+                        }
+                        kit_id = Some(id.to_string());
+                    }
+                    _ => return Err(CommandParseError::UnexpectedArgument(token.to_string())),
+                }
+            }
+            Ok(CommandPayload::SendTradeExpedition {
+                faction_id: parse_u32(faction_str, "send_trade_expedition faction")?,
+                band_id: Some(parse_u64(band_str, "send_trade_expedition band_id")?),
+                party_workers: parse_u32(workers_str, "send_trade_expedition party_workers")?,
+                destination_band_id: parse_u64(
+                    destination_str,
+                    "send_trade_expedition destination_band_id",
+                )?,
+                cargo,
+                kit_id,
+            })
+        }
         "resync" => Ok(CommandPayload::Resync),
         "export" | "export_map" => {
             // Remaining tokens (if any) form the destination path; join so
@@ -1405,6 +1489,7 @@ fn parse_security_policy(token: &str) -> Result<SecurityPolicyKind, CommandParse
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::{TradeCargoItem, FOOD_CARGO_KEY};
 
     #[test]
     fn parse_follow_herd_optional_args() {
@@ -1508,6 +1593,78 @@ mod tests {
         assert!(matches!(
             parse_command_line("send_denial_raid 0 7 4"),
             Err(CommandParseError::MissingArgument("fauna_id"))
+        ));
+    }
+
+    /// **A shipment's manifest is a NAMED, REPEATABLE tail**, and everything outside it is refused.
+    ///
+    /// A shipment has no fixed arity — it is a list of lines — and a positional list could not say
+    /// which of two namespaces an id belongs to (`provisions` is a commodity key, `hide` is a
+    /// material id, and the two tables are authored independently). So the grammar is `food
+    /// <amount>` / `material <id> <amount>` repeated, plus the `kit <id>` pair every party verb
+    /// takes, and any other token is a misunderstanding of the verb rather than a value to ignore.
+    #[test]
+    fn parse_send_trade_expedition_reads_a_repeated_manifest_and_refuses_anything_else() {
+        assert_eq!(
+            parse_command_line("send_trade_expedition 0 7 4 12 food 5.5").unwrap(),
+            CommandPayload::SendTradeExpedition {
+                faction_id: 0,
+                band_id: Some(7),
+                party_workers: 4,
+                destination_band_id: 12,
+                cargo: vec![TradeCargoItem {
+                    id: FOOD_CARGO_KEY.to_string(),
+                    is_material: false,
+                    amount: 5.5,
+                }],
+                kit_id: None,
+            }
+        );
+        // Several lines, in the order the player named them, with the kit anywhere in the tail.
+        let CommandPayload::SendTradeExpedition { cargo, kit_id, .. } = parse_command_line(
+            "send_trade_expedition 0 7 4 12 food 2 material hide 3 kit none material bone 1",
+        )
+        .unwrap() else {
+            panic!("the verb parses to its own payload");
+        };
+        assert_eq!(kit_id.as_deref(), Some("none"));
+        assert_eq!(
+            cargo
+                .iter()
+                .map(|item| (item.id.as_str(), item.is_material, item.amount))
+                .collect::<Vec<_>>(),
+            vec![
+                (FOOD_CARGO_KEY, false, 2.0),
+                ("hide", true, 3.0),
+                ("bone", true, 1.0),
+            ],
+            "every line survives, in order, with its namespace intact"
+        );
+        // **An EMPTY manifest parses.** Whether a shipment with nothing in it is legal is a question
+        // about the band and its packs, which only the server can answer — so it refuses there, with
+        // a reason, rather than here as a grammar error.
+        assert!(matches!(
+            parse_command_line("send_trade_expedition 0 7 4 12"),
+            Ok(CommandPayload::SendTradeExpedition { .. })
+        ));
+        // A stray token is refused rather than dropped.
+        assert!(matches!(
+            parse_command_line("send_trade_expedition 0 7 4 12 food 2 0.42"),
+            Err(CommandParseError::UnexpectedArgument(_))
+        ));
+        // A named token with nothing after it is a missing argument, not a value to shrug at.
+        assert!(matches!(
+            parse_command_line("send_trade_expedition 0 7 4 12 material hide"),
+            Err(CommandParseError::MissingArgument(_))
+        ));
+        // And a second `kit` contradicts the first rather than quietly winning.
+        assert!(matches!(
+            parse_command_line("send_trade_expedition 0 7 4 12 kit none kit big_game"),
+            Err(CommandParseError::UnexpectedArgument(_))
+        ));
+        assert!(matches!(
+            parse_command_line("send_trade_expedition 0 7 4"),
+            Err(CommandParseError::MissingArgument("destination_band_id"))
         ));
     }
 

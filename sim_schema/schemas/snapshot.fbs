@@ -650,9 +650,21 @@ table PopulationCohortState {
   // field or the client). Client draws `icon` directly and shows `label` in the tooltip. Appended
   // last (append-only schema discipline).
   settlementStage:SettlementStageView;
-  // Hunt expedition only: carry cap = party_workers × expedition_config.hunt.per_worker_carry (the
-  // provisions ceiling the party fills to before auto-Delivering). Capture-only, `0` for scouts +
-  // normal bands. The client shows carried/cap (carried = stores/turnsOfFood) + a FULL state.
+  // THIS PARTY'S PACK: carry cap = party_workers × the per-worker carry of the pack its MISSION
+  // fills. Capture-only, `0` for a scout and for a normal band. The client shows carried/cap
+  // (carried = stores/turnsOfFood for a raid, expeditionCargoFood + materials for a shipment) and a
+  // FULL state.
+  //
+  // *** WHICH LEVER FILLS IT DEPENDS ON THE MISSION, and that is the whole reason this is one
+  // field. *** A hunt or denial party fills `expedition_config.hunt.per_worker_carry` — the
+  // provisions ceiling it reaches before auto-Delivering. A TRADE party fills
+  // `expedition_config.trade.per_worker_carry` — a different pack, on a different lever, measured in
+  // what its people can carry out rather than in food they can haul home. A client that reached for
+  // the hunt lever to price a shipment would be one config edit away from quoting a cap the launch
+  // command refuses.
+  //
+  // For the PRE-LAUNCH question — pricing a manifest for a party that does not exist yet — read
+  // `expeditionTradePerWorkerCarry` below instead; there is no party to read a cap off.
   expeditionCarryCap:float = 0;
   // Hunt mission only: the target herd id (`HerdRegistry` fauna_id). Empty for scout/normal bands.
   // A string (not uint) because herd ids are non-numeric (e.g. "herd_3_00") — matches
@@ -769,7 +781,8 @@ table PopulationCohortState {
   // line, the raid twin of penFeedUpkeep. A casualty-causing raid costs the band a fraction of that
   // turn's food income (the people were defending/fleeing, not gathering), debited from the larder and
   // capped at what it held. Extends the ledger identity to
-  //   larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit  (pinned by a sim test)
+  //   larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit
+  //                   + transferReceived − transferSent            (see those two fields below)
   // It is a PAST-turn stochastic debit, NOT a recurring cost — do not add it to the turnsOfFood runway
   // drain. Append-only.
   raidForfeit:float = 0;
@@ -1015,6 +1028,123 @@ table PopulationCohortState {
   // rest of the party. A readout that shows only hunterAttack on a mixed band is right about the
   // people holding spears and wrong, in the reassuring direction, about everybody else.
   huntCrews:[BandKitCrew];
+  // --- THE SHIPMENT A TRADE PARTY IS CARRYING (appended last, arc #527 / issue #517) -------------
+  //
+  // A trade expedition (`expeditionMission == "trade"`) walks a shipment to another band and hands
+  // it over. All four are 0/""/empty for every other mission and for a resident band.
+  //
+  // *** THE KEY AND ITS DISPLAY TWIN, the expeditionTargetHerd/expeditionTargetSpecies rule. ***
+  // expeditionDestinationBand is the BandId every command addresses the destination by, and a player
+  // must never see a raw id. expeditionDestinationName is the name to render — resolved at LAUNCH
+  // and carried on the mission, because the destination is exactly the thing a party outlives: a
+  // band walks away, leaves the viewer's sight, or is gone from the world entirely while the
+  // shipment is still bound for it.
+  //
+  // *** IT IS EMPTY TODAY, AND EMPTY MEANS "NO NAME". *** Bands have no names in this game, so the
+  // sim has nothing to put here and declines to guess — the same "empty is no row, never a zero"
+  // contract this arc's material readouts use. A client renders whatever it already calls that band
+  // (its own positional label), joined on expeditionDestinationBand.
+  //
+  // It was briefly filled from the sending path's `StartingUnit.kind` — the unit ARCHETYPE
+  // ("BandForager"), the same string for every seeded band — which made every in-flight row read
+  // "Bound for BandForager" and disagree with the label the rest of the HUD gives that same band.
+  // A wrong name is worse than none: none has a fallback, and a plausible-looking one does not.
+  //
+  // The field stays, and is not cosmetic: the moment a second faction lands (#513) a foreign band's
+  // name HAS to come from the sim, because the client holds no roster to resolve one from. Filling
+  // it means designing a band naming scheme, which is its own piece of work and not a field default.
+  //
+  // *** THERE IS NO FACTION FIELD, AND THAT IS THE ARC'S DISCIPLINE. *** Faction is a property of
+  // the endpoint (`.claude/rules/core_sim/connections.md`), never a branch: a shipment to your own
+  // splinter and a shipment to strangers are the same row.
+  expeditionDestinationBand:ulong = 0;
+  expeditionDestinationName:string;
+  // What the party is carrying, in the two accounts a band store holds. `expeditionCargoFood` is the
+  // FOOD commodity; `expeditionCargoMaterials` is one row per material id, reusing MaterialPayoff
+  // rather than minting a second table.
+  //
+  // Same three contracts as every material readout in this arc: NEVER SUMMED (a total of hide and
+  // bone is the retired trade axis under a new name), EMPTY MEANS "NO ROW" rather than zero, and the
+  // key is always present. The per-material amount is the total across the batches the party holds;
+  // the batches themselves — with their exact characteristic readings — ride the ungated
+  // `materialBatches` above for the party's own pack, and land unaveraged in the receiving band's.
+  expeditionCargoFood:float = 0;
+  expeditionCargoMaterials:[MaterialPayoff];
+  // --- FOOD THAT CROSSED BETWEEN BANDS (appended last, arc #527 / issue #517) --------------------
+  //
+  // The last two terms of the food-ledger identity, which now reads
+  //
+  //   larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit
+  //                   + transferReceived − transferSent
+  //
+  // pinned against real turns by integration_tests/tests/transfer_food_ledger.rs.
+  //
+  // *** WHY THEY EXIST. *** Food moving from one band's larder to another passes through NEITHER
+  // foodIncome (Sum of per-source actual — what THIS band's workers produced) nor foodConsumption
+  // (what its people ate) — exactly the hole penFeedUpkeep and raidForfeit were each minted for.
+  // Before these fields a client watching two co-networked bands saw both larders move for no stated
+  // reason every turn, because balance_supply_networks equalizes them and exported nothing.
+  //
+  // *** ONE PAIR FOR EVERY PRODUCER, NOT ONE PAIR PER PRODUCER. *** Supply-network balancing, a
+  // trade shipment landing, an expedition's launch draw and its pack coming home are all the same
+  // fact — food that crossed between bands outside income and consumption — and minting a term per
+  // mechanism is how a ledger acquires five fields that answer one question.
+  //
+  // *** TWO NAMED MAGNITUDES, NOT ONE SIGNED NET. *** Matching the style of the two terms above. A
+  // band that both sends and receives in the same turn is doing something, and a signed net would
+  // render that as nothing having happened.
+  //
+  // *** THE WINDOW IS THE SNAPSHOT WINDOW, NOT THE TURN. *** A send_trade_expedition command debits
+  // the larder when it is applied, which is between two published frames. So these accumulate across
+  // the whole interval a client's own larder_delta measures, and are cleared after the capture reads
+  // them (core_sim `systems::reset_transfer_ledger`).
+  //
+  // *** FOOD ONLY. *** Materials move between bands too (the supply network pools them per rating,
+  // and a shipment carries them), and there is deliberately no materials identity: a material's
+  // account is the batch store itself, and a scalar total of hide and bone is the retired trade axis
+  // under a new name.
+  transferReceived:float = 0;
+  transferSent:float = 0;
+  // --- ONE PERSON'S SHIPMENT PACK (appended last, arc #527 / issue #517) ------------------------
+  //
+  // `expedition_config.trade.per_worker_carry` — a global lever echoed onto EVERY cohort, the same
+  // idiom as expeditionPerWorkerCarry / huntPerWorkerProvisions / expeditionForecastHorizonTurns.
+  //
+  // *** THIS IS THE ONE THE OUTFIT UI NEEDS. *** The player builds a shipment's manifest for a party
+  // that DOES NOT EXIST YET, so no per-party field can serve that screen: the cap is
+  // `party_workers × this`, and `party_workers` is what the stepper is choosing. Once the party is
+  // on the map its own pack is `expeditionCarryCap` above.
+  //
+  // *** IT IS NOT expeditionPerWorkerCarry. *** That one is the HUNT pack — a raid's provisions
+  // ceiling. A shipment's pack is a different number on a different lever, and a client composing a
+  // trade cap out of the hunt lever is one config edit away from quoting a cap
+  // `send_trade_expedition` will refuse.
+  //
+  // ALWAYS POSITIVE. `trade.per_worker_carry` is validated `> 0` at load, and a `0` here would let a
+  // client render a zero cap and refuse every manifest the player could build — the same failure
+  // expeditionForecastHorizonTurns is asserted positive against.
+  expeditionTradePerWorkerCarry:float = 0;
+  // The other half of a shipment's MASS: `expedition_config.trade.material_carry_weight`, what one
+  // unit of a material costs in pack space relative to one unit of food. Same every-cohort lever
+  // echo as the field above. Together they give the client the sim's own expression:
+  //
+  //   mass = expeditionCargoFood + expeditionTradeMaterialCarryWeight × Sum(material amounts)
+  //   cap  = party_workers × expeditionTradePerWorkerCarry
+  //
+  // *** IT SHIPS BECAUSE THE SIM OTHERWISE REFUSES A MANIFEST ON A RULE THE CLIENT CANNOT
+  // EVALUATE. *** Without it the cargo picker is a guessing game: the player adds hide rows one at a
+  // time against a cap meter that cannot move, and finds out on submit. `send_trade_expedition`'s
+  // refusal is unchanged and stays the authority — it names both numbers — but a refusal tells the
+  // player what went wrong AFTER they got it wrong, and a live meter stops them getting it wrong.
+  //
+  // (That it is a v1 simplification — every material weighs the same per unit, until the materials
+  // arc gives mass a density axis — is not a reason to withhold it. Every lever this subsystem
+  // echoes is provisional; when this one gains a model the lever changes, the client's expression
+  // changes with it, and both move in the same PR.)
+  //
+  // FINITE AND >= 0, not positive: `0` is a legitimate setting here ("materials are weightless"),
+  // unlike the pack lever above, which is why the two carry different wire assertions.
+  expeditionTradeMaterialCarryWeight:float = 0;
 }
 
 // What ONE kit would grant ONE band at its current wear - a row of

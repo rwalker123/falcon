@@ -124,6 +124,15 @@ const RUNG_BY_KIND := {
 	"expedition_returned": RUNG_NOTABLE,
 	"tame": RUNG_NOTABLE,
 	"born": RUNG_NOTABLE,
+	# **A SHIPMENT LANDING IS NOTABLE, NOT AN ALERT** (arc #527). It is the one expedition event that
+	# happens where OTHER PEOPLE live, which is what earns it a kind of its own — but the ladder asks
+	# how loudly, not how novel, and the Notable rung is for a change in the world worth knowing
+	# about. It sits exactly beside `expedition_arrived`: a party reached where it was going and did
+	# the thing it was sent to do. Alert is for violence, an investment lost and an irreversible
+	# player-initiated act (`band_founded`), and a delivery the player asked for turns ago is none of
+	# those. A REFUSED shipment is not this kind at all — a rejected command rides `system`, which is
+	# already Alert.
+	"trade_delivered": RUNG_NOTABLE,
 	# Routine — bracket transitions, and receipts for things the player asked for.
 	"came_of_age": RUNG_ROUTINE,
 	"aged": RUNG_ROUTINE,
@@ -216,6 +225,30 @@ const DETAIL_BAND_KEY := "band"
 ## either side silently turns the substitution into a no-op rather than an error. Substituted only at
 ## a digit boundary, or `Band 3` would also rewrite the `Band 3` inside `Band 30`.
 const SIM_BAND_LABEL_FORMAT := "Band %d"
+
+## **THE SECOND TOKEN THAT NAMES A BAND** (arc #527): the band a SHIPMENT was sent to or landed at,
+## repeated as `destination=<id>` beside a label that names it through the sim's own fallback
+## spelling. Its own key because it is a different ROLE in the sentence — a line can name the sending
+## band as `band=` and the receiving one as `destination=` at once — and one of the two would be
+## rewritten with the other's name if they shared a key.
+const DETAIL_DESTINATION_KEY := "destination"
+
+## **THE SIM'S OWN SPELLING FOR THE DESTINATION, and it is LOWER-CASE** —
+## `ExpeditionMission::destination_display`'s last-resort tier, `format!("band {}", id)`, which is the
+## normal path today because bands have no names. Byte-identical to the sim or the substitution is a
+## silent no-op, exactly as `SIM_BAND_LABEL_FORMAT` warns; it is a SEPARATE const rather than a reuse
+## precisely because the two producers differ in case, and sharing one would have made the swap look
+## correct while never firing.
+const SIM_DESTINATION_LABEL_FORMAT := "band %d"
+
+## **EVERY `detail` TOKEN THAT NAMES A BAND, and the sim's rendering of each.** `EventDockPanel` walks
+## this rather than carrying one hand-written swap per producer — the client's band name is a ROSTER
+## POSITION and the sim's is a durable id, so every place the sim writes a band into a sentence needs
+## the same join, and a table is what stops the next producer growing a fifth copy of it.
+const BAND_ID_TOKEN_LABELS := {
+	DETAIL_BAND_KEY: SIM_BAND_LABEL_FORMAT,
+	DETAIL_DESTINATION_KEY: SIM_DESTINATION_LABEL_FORMAT,
+}
 
 # ---- rendering a detail as PROSE -------------------------------------------
 ## **THE `key=value` TOKENS ARE A MACHINE CONTRACT, NEVER A STRING TO SHOW.** The dock used to print

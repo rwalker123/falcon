@@ -128,6 +128,31 @@ fn step_toward(from: UVec2, to: UVec2, max_step: u32, width: u32, wrap_horizonta
     UVec2::new(nx, ny)
 }
 
+/// **Clear the band-to-band food transfer counters, once the capture has published them.**
+///
+/// [`LaborAllocation::last_transfer_received`] / `last_transfer_sent` are the ledger's terms for food
+/// that crossed between larders, and they are the one pair of per-turn counters with writers
+/// **outside** `run_turn`: a `send_trade_expedition` or `send_expedition` command debits the sending
+/// band when it is applied, which is between one snapshot and the next. So every writer *adds*, and
+/// exactly one system clears — here, in the Snapshot stage after `capture_snapshot`.
+///
+/// **The reset point is what defines the window**, and it has to be the *snapshot* window rather than
+/// the turn: a client's `larder_delta` is the difference between two published frames, so a term
+/// cleared at the top of the turn would drop every command-time draw and leave the identity short by
+/// exactly the shipments the player sent.
+///
+/// It is deliberately **not** gated on `not_replaying` (its stage-mate `capture_snapshot` is): a
+/// replayed turn publishes nothing, so leaving the counters standing would carry one turn's
+/// transfers into the next frame that *is* published.
+pub fn reset_transfer_ledger(mut allocations: Query<&mut LaborAllocation>) {
+    for mut allocation in allocations.iter_mut() {
+        // Written through the fields rather than `Default` — the rest of the allocation is intent,
+        // not telemetry, and must survive.
+        allocation.last_transfer_received = 0.0;
+        allocation.last_transfer_sent = 0.0;
+    }
+}
+
 mod crafting;
 mod expeditions;
 mod fission;

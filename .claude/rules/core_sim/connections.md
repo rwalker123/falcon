@@ -188,6 +188,18 @@ nothing moved.
 client uses — not on the in-process ledger. A section that never reaches the codec still passes an
 in-process assertion, and this one has no client reader yet to notice.
 
+## The first rider exists, and it is an expedition
+
+**Cargo (#517)** is the first thing built on top of this primitive. A shipment is a **party that
+walks it** — `ExpeditionMission::Trade`, gated at launch on `ConnectionLedger::get(..).strength >
+NO_TIE` and on nothing about either endpoint's faction. There is no `LogisticsLink` component: what
+maintains a link is a route, and the route ladder is what will hold that state.
+
+Two things the rider does that this module deliberately does not know about: it carries its own
+state (`Expedition::cargo`), and it re-reads the ledger **only at launch** — a tie that decays while
+the party walks does not stop the delivery, because the party is standing there. See
+`.claude/rules/core_sim/expeditions.md` → "A shipment is a party that WALKS IT".
+
 ## Metrics
 
 `SimulationMetrics` carries `connections_live` / `connections_formed` / `connections_reaped`, written

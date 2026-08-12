@@ -38,6 +38,15 @@ signal send_hunt_expedition_requested(payload: Dictionary)
 ## CLOSED at four tokens, so a floor or a fill target on this payload would be a hard parse error
 ## rather than an ignored extra. Main formats the `send_denial_raid …` command.
 signal send_denial_raid_requested(payload: Dictionary)
+## TRADE shipment (arc #527, issue #517) — the fourth mission, launched from the parties zone's own
+## compose sheet. Payload keys: { faction, band_id, party_workers, destination_band_id,
+## destination_label, cargo }, where `cargo` is an ORDERED array of `{ id, is_material, amount }`
+## rows — the manifest the player built, in the order they built it, because
+## `send_trade_expedition`'s tail is a REPEATED `food <amount>` / `material <id> <amount>` list and a
+## shipment has no fixed arity. `destination_band_id` is the DATABASE KEY the command addresses;
+## `destination_label` is what the command-feed note reads, the `fauna_id` / `fauna_label` rule.
+## Main formats the `send_trade_expedition …` command.
+signal send_trade_expedition_requested(payload: Dictionary)
 ## Emitted when the player recalls the selected in-flight expedition (folds it home). Payload
 ## keys: { faction, expedition }. Main formats the `recall_expedition …` command.
 signal recall_expedition_requested(payload: Dictionary)
@@ -465,6 +474,8 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: send_hunt_expedition_requested.emit(payload))
     _bandpanel.send_denial_raid_requested.connect(
         func(payload: Dictionary) -> void: send_denial_raid_requested.emit(payload))
+    _bandpanel.send_trade_expedition_requested.connect(
+        func(payload: Dictionary) -> void: send_trade_expedition_requested.emit(payload))
     _bandpanel.recall_expedition_requested.connect(
         func(payload: Dictionary) -> void: recall_expedition_requested.emit(payload))
     _bandpanel.split_band_requested.connect(
@@ -791,6 +802,12 @@ func update_herds(herds_variant: Variant) -> void:
     if not (herds_variant is Array):
         return
     _band_labor.set_world_herds(herds_variant)
+
+## Ingests the viewer's CONTACT TIES (arc #527) — one directed row per edge, already filtered
+## sim-side to this faction's observing bands. The trade compose sheet's destination picker is their
+## one consumer: a tie is what gates a shipment, so the picker lists a band's ties and nothing else.
+func update_connections(connections_variant: Variant) -> void:
+    _band_labor.set_connections(connections_variant)
 
 ## Ingests MapView's terrain-stamped food sites (x/y/module/kind + terrain_id) into the per-tile map
 ## the Forage row reads, so its glyph matches the map marker (riverine split included). The per-tile

@@ -1024,6 +1024,10 @@ fn seed_snapshot() -> WorldSnapshot {
             // reason `arrival_schedule` is: an empty one is a field the decode guard cannot see.
             assignment.material_yield = rows();
         }
+        // **A trade party's shipment** (arc #527) — a repeated field on the cohort, seeded for the
+        // same reason the assignment's material account above is: an empty one is a field the decode
+        // guard cannot see.
+        cohort.expedition_cargo_materials = rows();
         cohort.pending_reveal_x = vec![0u32; ROWS];
         cohort.pending_reveal_y = vec![0u32; ROWS];
         cohort.knowledge_fragments = rows();

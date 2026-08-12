@@ -733,3 +733,107 @@ claims about the verdict's structure (a `repelled` outcome carrying a full turn 
 number; an unbounded `past_recovery` still names its outcome; and the two degenerate band forms). Each
 is sabotage-verified against a different mutation. The launch half and the vocabulary live in
 `band-city-panel.md` → "DENIAL is a third MISSION on the parties footer".
+
+## The Food line's TRANSFERS are breakdown rows, and the headline is the four-term STEADY rate
+
+Arc #527, issue #517. The larder identity the sim pins is
+
+```text
+larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit
+                + transferReceived − transferSent
+```
+
+**The BREAKDOWN states all six; `DetailFormat.band_net_food` sums the first four.** The two are
+answering different questions and the split is deliberate: the headline is a per-turn RATE, and the
+transfer pair is what CROSSED a larder over the snapshot window — a past event, which the itemized
+rows are the right place for.
+
+**The reason the pair cannot ride the headline is the number printed BESIDE it.** The sim's
+`turnsOfFood` runway is computed from per-source income and excludes transfers entirely, so a folded-in
+headline makes the `/turn` rate and the `(N turns)` runway *on the same row* compute on different
+bases — two numbers on one line that cannot agree. Matching the sim's basis is the point; the red
+flash is only how it shows.
+
+And it does flash. A shipment is bounded only by the manifest the player builds — up to the whole
+larder — unlike `raidForfeit`, which is capped at a fraction of one turn's income. A band with income
+6 and consumption 5 that sends 40 printed **`-39.0` in DANGER red under a WARN caret**, then `+1.0`
+the next frame, on an economy that had not changed.
+
+**What this costs, stated plainly: the steady headline does NOT reflect a neighbour's recurring
+supply-network contribution.** `balance_supply_networks` moves food between co-networked larders every
+turn, and that genuinely is a standing part of a band's economy. Closing it properly means the SIM
+projecting steady transfers forward (issues #547 / #548) — a client-side fold-in of a past window is
+not that number and cannot be made into one.
+
+- **Two named magnitudes, never one signed net**, matching `penFeedUpkeep` and `raidForfeit` beside
+  them: a band that both sends and receives inside one window is doing something, and a net renders
+  that as nothing having happened.
+- **The window is the SNAPSHOT window, not the turn.** A `send_trade_expedition` debits the larder
+  when the command is applied, between two published frames, so the sim accumulates across exactly
+  the interval a client's own `larder_delta` measures and clears after the capture. Nothing here may
+  re-scale them to a per-turn rate — which is the same fact that keeps them off the headline.
+- **They enter `band_has_food_flow` even so**, or a band whose only movement this window was a
+  transfer loses its net line and its whole breakdown — the rows are what the gate is protecting.
+- **FOOD ONLY.** Materials cross between bands as well (the network pools them per rating, a shipment
+  carries them) and there is deliberately no materials identity: a material's account is the batch
+  store, and a scalar total of hide and bone is the retired trade axis under a new name.
+
+**The breakdown gets a row each** (`DisclosureController.food_breakdown_lines`) — `⇄ From other
+bands` as an income row, `⇄ To other bands` as a debit — each omitted at zero exactly like Pen feed
+and Lost to raids, so a band nobody trades with renders the ledger it always did.
+
+**ONE glyph for both rows, and it is an ARROW rather than a handshake.** Pen feed and Lost to raids
+each carry their own mark because they are different debits; these two are one fact in two
+directions, and the row's own words say which way. The emoji that says "deal" (🤝) is **not in this
+client's fallback font and renders as an invisible gap** — no tofu box, nothing to notice — which is
+the silent-failure class `Typography.gd` was retired for; `⇄` comes from the Arrows block the ▸/◀/▲▼
+carets already draw from.
+
+**Frames:** `trade_food_ledger` (a band carrying both terms, whose headline states the steady rate
+alone) and `trade_food_transfers` (the same row OPENED, which is the only state that can say the two
+terms are itemized at all — the headline says nothing about them by design).
+
+## A trade party states WHO IT IS FOR and WHAT IS IN THE PACKS, and nothing else
+
+`BandDetailLines._shipment_summary_lines`, reached by an early return from
+`expedition_summary_lines` — a shipment borrows NONE of the raid's rows. It has no quarry, no floor,
+no delivery ETA and no trip bound, so every `is_hunt` / `is_raid` branch stays closed to it, and the
+`Provisions:` row beneath them would restate a pack this mission states properly. Four rows at most
+(`Mission` / `Bound for` / `Phase` / `Carrying`, plus `Position` in the drawer), comfortably inside
+the parties strip's seven-line worst case, which is a HUNT party's.
+
+- **`Bound for` renders a NAME and never `expeditionDestinationBand`** — the id is the key
+  `send_trade_expedition` addresses and must never reach a label. The name comes from
+  `HudFormat.expedition_destination_label`, which is **the one resolution the parties-strip row and
+  the destination picker also use**, so a band cannot be called three things on three surfaces:
+  - **the sim's published `expeditionDestinationName` when it is non-empty** — it is resolved at
+    LAUNCH and carried on the mission, because the destination is precisely the thing a party
+    outlives (a band walks away, leaves the viewer's sight, or is gone while the shipment is still
+    bound for it), and the day a second faction lands (#513) a FOREIGN band's name can only come from
+    the sim, this client holding no roster to resolve one from;
+  - **else this client's own label for that band**, joined on the id through
+    `HudBandLaborState.band_label_for_id` — a roster POSITION, the same `Band 2` the cycler, the band
+    picker and the event dock's `band=` swap give it.
+  **It is empty on every live shipment today, and that is the sim declining to guess.** Bands have no
+  names in this game; the field was briefly filled from the sending path's `StartingUnit.kind` — the
+  unit ARCHETYPE, the same `"BandForager"` for every seeded band — which made the row disagree with
+  what the rest of the HUD called that same band. A wrong name is worse than none: none has a
+  fallback. A destination neither tier can name renders **no row**, rather than the raw `BandId`.
+- **`Carrying` weighs the WHOLE PACK against `expeditionCarryCap`, whose lever is the MISSION's.** A
+  raid's cap is the provisions ceiling it fills before delivering; a shipment's is what its people can
+  carry out, and what the sim checks it against is `food + expeditionTradeMaterialCarryWeight × Σ
+  materials`. So the numerator is that mass — `DetailFormat.shipment_cargo_mass` — and the materials
+  trailing the row are its SPELLING, not a second cargo beside it. Reading `expeditionCargoFood` alone
+  over that cap rendered a party carrying 2 food and 10 hide against a cap of 12 as `2.0 / 12.0`: a
+  full pack shown as one-sixth full.
+- **ONE mass expression, shared with the compose sheet's meter** (`DetailFormat.shipment_mass`, called
+  by `BandPanelController._trade_manifest_mass` and by this row). The pre-launch price and the
+  in-flight report are the same pack asked about twice, and two copies of the formula are two answers.
+- **`_shipment_cargo_clause` is NOT `_party_pack_clause`.** The pack clause reads `material_batches`,
+  the party's OWN kit — what a scout skinned on the road, and what a trade escort carries for
+  itself — while the shipment is the cargo store beside it. Rendering one for the other would let an
+  escort's gear read as goods bound for another people. **One term per material, never summed**, the
+  same contract; the frame asserts the SUM is absent, because a row that added hide to bone still
+  renders two plausible numbers and every other assertion passes.
+
+Frame: `trade_party_panel`.

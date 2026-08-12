@@ -271,6 +271,27 @@ the same row, deliberately NOT touching it: two adjacent hexes' labels crowd eac
 they say, so an adjacent pair could not separate the plate's own REACH from ordinary neighbour
 crowding
 
+### `_assert_selection_outline_wraps` — the selection outline at the SEAM, read off the pixels
+
+A **PNG-less** block riding the `map_travel_seam` fixture (it repans the camera, so it comes after
+the frame it borrows the snapshot from; the next state's `_fit_map_to_view` puts the camera back).
+It pans half a map width so the low columns' WRAPPED copies sit in the middle of the frame, converts
+the centre pixel to a tile the way a click does (`_point_to_offset`), and makes three assertions: the
+PREMISE that the probe really is over a wrapped copy — without it the other two pass on any map at
+all — then, deselected against selected, that ink appears **inside the clicked hex's own box** and
+**nowhere else in the frame**.
+
+**It reads pixels because a geometry assertion could only re-ask `_hex_center_wrapped` the question
+the draw asks it**, and would stay green the moment the draw stopped calling it — which is precisely
+the regression. Sabotage-verified: reverting `_draw_tile_selection_highlight` to the unwrapped
+`_outline_hex` reports **0 px changed anywhere in the frame**, i.e. the reported bug exactly — a
+click that draws nothing at all. The box is **two radii** around the pressed pixel, since the press
+lands anywhere inside the hex and the outline reaches a full radius past it on the far side; at one
+radius the ring is split and the "inks nothing else" half fails on the outline's own far edge.
+
+**It saves no PNG and moves none** — the frame set was byte-identical across the fix, the outline
+being unwrapped and wrapped to the same place on every non-wrapping fixture here.
+
 ## `tools/blend_probe.gd` / `.tscn`
 
 Dev-only **edge-blend probe rendered at the GAME's on-screen hex radius** — the other harnesses

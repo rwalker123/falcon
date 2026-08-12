@@ -1102,7 +1102,7 @@ static func build_kit_row(kits: Array, job: String, selected_id: String, default
 	# **THE SELECTION IS AN INDEX, because an `OptionButton` marks the current entry itself.** The
 	# roster order IS the list order (this layer sorts nothing), so the index of the resolved kit is
 	# the whole of what the control needs to open on it and to draw its radio dot.
-	var selected_index := -1
+	var selected_index := HudWidgets.NO_ENTRY_SELECTED
 	for kit_variant in offered:
 		var kit: Dictionary = kit_variant
 		var kit_id := String(kit.get(KIT_ID_KEY, ""))

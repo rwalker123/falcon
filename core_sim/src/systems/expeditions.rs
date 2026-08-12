@@ -11,6 +11,11 @@ use crate::intensification::NO_BUILD_UNDERWAY_DIP;
 /// reader tell the failure from the success.
 const HERD_GONE_MID_HUNT: &str = "herd_gone";
 
+/// **The reason token for a SHIPMENT whose destination vanished under it** — the band it was bound
+/// for despawned while the party walked, so there is nobody left to hand the cargo to. The party
+/// turns for home still carrying it; the twin of [`HERD_GONE_MID_HUNT`] on the trade verb.
+const DESTINATION_GONE_MID_TRADE: &str = "destination_gone";
+
 /// **Everything one detached party is, as a query tuple.** Named because the tuple grew past the
 /// point of readability when the party's own kit joined it: **a detached party carries its OWN kit**
 /// (`docs/plan_denial_raid.md` §1.2). It leaves outfitted — a party with no ledger of its own falls
@@ -32,9 +37,15 @@ type ExpeditionParty = (
 /// [`ResidentBand`] marker that makes a band a legal contact *subject* — seeing another people's
 /// scouts is a different beat and is out of scope for the connection primitive.
 type ExpeditionHomeBands = (
+    Entity,
     &'static mut PopulationCohort,
     Option<&'static BandId>,
     Option<&'static ResidentBand>,
+    // The band's food ledger. A party handing its pack (or a shipment) over crosses two larders
+    // through neither income nor consumption, so the crossing is recorded on
+    // `LaborAllocation::last_transfer_received`. `Option`, matching how the sibling ledger terms
+    // are read at capture.
+    Option<&'static mut LaborAllocation>,
 );
 
 /// The config handles [`advance_expeditions`] reads, bundled into one `SystemParam` so the system
@@ -189,12 +200,18 @@ pub fn advance_expeditions(
     // and probed per observed tile below. `HashMap` because it is only ever probed: the order that
     // has to be deterministic is the per-party `pending_contacts` buffer's, which is keyed.
     let mut occupancy: HashMap<UVec2, Vec<BandId>> = HashMap::new();
-    for (cohort, band_id, resident) in bands.iter() {
+    // **Where each resident band stands, by the durable id a shipment addresses it with** — built in
+    // the same pass, and probed rather than iterated (hence `HashMap`, the occupancy rule beside it).
+    // A trade party retargets its destination's LIVE tile every turn, because bands are nomadic and a
+    // shipment aimed at where a people used to camp arrives nowhere.
+    let mut resident_positions: HashMap<BandId, (Entity, UVec2)> = HashMap::new();
+    for (band_entity, cohort, band_id, resident, _) in bands.iter() {
         let (Some(id), Some(_)) = (band_id, resident) else {
             continue;
         };
         if let Ok(tile) = tiles.get(cohort.current_tile) {
             occupancy.entry(tile.position).or_default().push(*id);
+            resident_positions.insert(*id, (band_entity, tile.position));
         }
     }
 
@@ -252,14 +269,14 @@ pub fn advance_expeditions(
         let home_pos = bands
             .get(expedition.home_band)
             .ok()
-            .and_then(|(band, _, _)| tiles.get(band.current_tile).ok())
+            .and_then(|(_, band, _, _, _)| tiles.get(band.current_tile).ok())
             .map(|tile| tile.position);
         // **Who a contact report is filed under.** A party's findings belong to the band that
         // outfitted it, never to the party — the party is a detached crew and owns nothing.
         let home_band_id = bands
             .get(expedition.home_band)
             .ok()
-            .and_then(|(_, band_id, _)| band_id.copied());
+            .and_then(|(_, _, band_id, _, _)| band_id.copied());
         // "Near enough to run home" — the shared proximity for the scout fold-back, hunt delivery,
         // and comm-range flush.
         let near_home = home_pos
@@ -310,6 +327,45 @@ pub fn advance_expeditions(
                     Some(format!(
                         "status=returning reason={} expedition={}",
                         reason,
+                        entity.to_bits()
+                    )),
+                ));
+            }
+        }
+
+        // **A shipment whose destination cannot be resolved turns for home CARRYING THE CARGO** —
+        // the trade verb's twin of the lost-herd guard above, and the same shape: the party is not
+        // stranded waiting for a rendezvous that can never happen, and what it holds is not
+        // destroyed. The goods settle back into the band that sent them on fold-back
+        // ([`fold_party_into_band`]).
+        //
+        // **The kind is `ExpeditionRecalled`, which means "this party has been turned for home"** —
+        // the same state change the recall verb makes, arrived at for a different reason, exactly as
+        // the lost-herd guard reuses `Hunt`. `TradeDelivered` would be a lie about a shipment that
+        // has not been delivered.
+        if let Some(destination) = mission.destination_band() {
+            if !resident_positions.contains_key(&destination)
+                && !matches!(expedition.phase, ExpeditionPhase::Returning)
+            {
+                expedition.phase = ExpeditionPhase::Returning;
+                event_log.push(CommandEventEntry::new(
+                    current_turn,
+                    CommandEventKind::ExpeditionRecalled,
+                    faction,
+                    format!(
+                        "Trade party lost {} — returning home with its cargo",
+                        mission.destination_display()
+                    ),
+                    // **`destination=` rides along, exactly as on the launch and delivery lines.**
+                    // The label above names the band through `destination_display()`, whose
+                    // fallback is the sim's positional `band <id>` spelling; the client swaps that
+                    // for its own roster label by keying on this token
+                    // (`EventDockPanel::_swap_band_label`). Omitting it is what makes one row of a
+                    // shipment's life print a raw id while its siblings print the band's name.
+                    Some(format!(
+                        "status=returning reason={} destination={} expedition={}",
+                        DESTINATION_GONE_MID_TRADE,
+                        destination.0,
                         entity.to_bits()
                     )),
                 ));
@@ -373,9 +429,20 @@ pub fn advance_expeditions(
             }
         }
 
-        // ---- Scout-only: provisions upkeep + opportunistic replenish (hunt lives off its kills) ----
-        if matches!(mission, ExpeditionMission::Scout) {
-            // c. Provisions depletion (scouts only — hunt parties live off their kills). Non-fatal.
+        // ---- Provisioned parties: upkeep + opportunistic replenish (a raid lives off its kills) ----
+        // **A trade party is provisioned like a SCOUT**, and takes this arm whole rather than a
+        // trade-shaped copy of it. It is a walking party carrying no quarry, so what feeds it is the
+        // larder it left with and whatever game it meets — the same two facts about a scout. This is
+        // also where the trip's cost lives: a farther destination draws a bigger launch larder and
+        // burns more turns of upkeep, which is why the trade block has no friction lever of its own.
+        //
+        // **The upkeep drains `cohort.stores`, never `expedition.cargo`.** The two are separate
+        // stores precisely so a hungry party cannot eat the shipment it is hauling.
+        if matches!(
+            mission,
+            ExpeditionMission::Scout | ExpeditionMission::Trade { .. }
+        ) {
+            // c. Provisions depletion (a raid lives off its kills instead). Non-fatal.
             let upkeep = scalar_from_f32(workers as f32 * cfg.provision_upkeep_per_worker);
             if upkeep > scalar_zero() {
                 cohort.stores.take(FOOD, upkeep);
@@ -510,6 +577,83 @@ pub fn advance_expeditions(
 
         // ---- Phase machine ----
         match expedition.phase {
+            ExpeditionPhase::Outbound if mission.destination_band().is_some() => {
+                // **A shipment walks its destination down and hands the cargo over.** It reuses the
+                // scout's `Outbound` and the shared `Returning`; there is deliberately no trade
+                // phase, because the party does exactly two things — carry the goods there, walk
+                // home — and both already have a phase.
+                //
+                // The destination resolves here by construction: the guard above turned the party
+                // for home if it did not.
+                let destination = mission
+                    .destination_band()
+                    .expect("this arm is gated on a trade mission");
+                if let Some(&(host_entity, host_pos)) = resident_positions.get(&destination) {
+                    // **RETARGET EVERY TURN, at the destination's LIVE tile** — bands are nomadic,
+                    // so a shipment aimed once at where a people were camped arrives nowhere. Same
+                    // rule as the `Hunting` arm's herd retarget.
+                    let arrived = crate::grid_utils::hex_distance_wrapped(
+                        exp_pos,
+                        host_pos,
+                        grid_width,
+                        wrap_horizontal,
+                    ) <= comm_range;
+                    if !arrived {
+                        commands
+                            .entity(entity)
+                            .insert(BandTravel { target: host_pos });
+                    } else {
+                        // **ARRIVAL IS NOT RE-GATED ON THE TIE.** If the connection decayed to
+                        // nothing while the party walked, the shipment still lands: the party is
+                        // standing in their camp, and presence beats the ledger. The tie gates the
+                        // *launch* — deciding to send goods to a people you have no dealings with —
+                        // and that decision was made turns ago.
+                        let carried_food = expedition.cargo.get(FOOD);
+                        let carried_materials = materials_carried(&expedition.cargo);
+                        let landed = bands.get_mut(host_entity).ok().map(
+                            |(_, mut host, _, _, allocation)| {
+                                let moved = expedition.cargo.take(FOOD, carried_food);
+                                if moved > scalar_zero() {
+                                    host.stores.add(FOOD, moved);
+                                }
+                                // **Batch by batch into the HOST's store** — the shipment's ratings
+                                // are what make it a shipment of goods rather than of a number, so
+                                // two ratings of one material arrive as two batches.
+                                expedition.cargo.drain_materials_into(&mut host.stores);
+                                // The receiving half of the food ledger's transfer pair. The
+                                // *sending* half was booked at launch, against the band the party
+                                // was drawn off.
+                                if let Some(mut allocation) = allocation {
+                                    allocation.last_transfer_received += moved.to_f32();
+                                }
+                                moved
+                            },
+                        );
+                        if let Some(moved) = landed {
+                            event_log.push(CommandEventEntry::new(
+                                current_turn,
+                                CommandEventKind::TradeDelivered,
+                                faction,
+                                format!(
+                                    "Trade party delivered {} to {}",
+                                    describe_haul(moved.to_i64_whole(), carried_materials),
+                                    mission.destination_display()
+                                ),
+                                Some(format!(
+                                    "status=delivered destination={} materials={:.*} expedition={}",
+                                    destination.0,
+                                    HAUL_MATERIAL_DECIMALS,
+                                    carried_materials,
+                                    entity.to_bits()
+                                )),
+                            ));
+                            // One-way in this slice: the party walks home empty rather than
+                            // carrying a priced return flow, which is a later slice's model.
+                            expedition.phase = ExpeditionPhase::Returning;
+                        }
+                    }
+                }
+            }
             ExpeditionPhase::Outbound => {
                 // Scout arrived when `advance_band_movement` (earlier this turn) removed the travel
                 // order → awaiting orders (the decision point) + a one-shot feed line.
@@ -551,8 +695,19 @@ pub fn advance_expeditions(
                     // before the party despawns and its pack goes with it. No home band left to
                     // receive them means the haul is simply lost, exactly as the carried food is.
                     let mut banked_materials = 0.0;
-                    if let Ok((mut home, _, _)) = bands.get_mut(expedition.home_band) {
-                        banked_materials = fold_party_into_band(&mut cohort, &mut home);
+                    if let Ok((_, mut home, _, _, allocation)) = bands.get_mut(expedition.home_band)
+                    {
+                        // **The undelivered shipment comes home too** — a party that turned back
+                        // because its destination could not be resolved is still carrying real
+                        // goods, and they settle into the band that sent them.
+                        let fold =
+                            fold_party_into_band(&mut cohort, &mut expedition.cargo, &mut home);
+                        banked_materials = fold.materials;
+                        // The pack and the cargo landing in the band's larder is food crossing from
+                        // a party into a band, which is neither income nor consumption.
+                        if let Some(mut allocation) = allocation {
+                            allocation.last_transfer_received += fold.food.to_f32();
+                        }
                     }
                     event_log.push(expedition_returned_event(
                         current_turn,
@@ -979,7 +1134,8 @@ pub fn advance_expeditions(
                     // one band store, so the credit matches the raid forecast this trip was quoted
                     // against.
                     let mut banked_materials = 0.0;
-                    if let Ok((mut home, _, _)) = bands.get_mut(expedition.home_band) {
+                    if let Ok((_, mut home, _, _, allocation)) = bands.get_mut(expedition.home_band)
+                    {
                         if delivered > scalar_zero() {
                             home.stores.add(FOOD, delivered);
                         }
@@ -987,6 +1143,11 @@ pub fn advance_expeditions(
                         // hide is never averaged into a hare pelt on the walk home.
                         banked_materials = materials_carried(&cohort.stores);
                         cohort.stores.drain_materials_into(&mut home.stores);
+                        // A drop-off is food crossing from a party into a band's larder — the same
+                        // ledger term a shipment's arrival takes.
+                        if let Some(mut allocation) = allocation {
+                            allocation.last_transfer_received += delivered.to_f32();
+                        }
                     }
                     event_log.push(CommandEventEntry::new(
                         current_turn,
@@ -1081,16 +1242,49 @@ fn materials_carried(store: &crate::LocalStore) -> f32 {
 /// because a batch carries a characteristic vector and "hand it over" is a move rather than a copy of
 /// a number. **Two call sites, one routine** — the two paths differ only in *when* they fire, never
 /// in what a homecoming pays.
-pub fn fold_party_into_band(party: &mut PopulationCohort, home: &mut PopulationCohort) -> f32 {
+///
+/// **`cargo` is the UNDELIVERED SHIPMENT, and it settles here too.** A trade party turned back
+/// because its destination could not be resolved — or cancelled in camp before it ever left — is
+/// still holding real goods, and the one thing a homecoming must not do is quietly destroy them. It
+/// is a *separate* store from the pack on the way out (a hungry party must not eat its own
+/// shipment); on the way in, both land in the same band store, which is where the distinction stops
+/// mattering.
+pub fn fold_party_into_band(
+    party: &mut PopulationCohort,
+    cargo: &mut crate::LocalStore,
+    home: &mut PopulationCohort,
+) -> FoldBack {
     home.working += party.working;
     let leftover = party.stores.get(FOOD);
     if leftover > scalar_zero() {
         home.stores.add(FOOD, leftover);
     }
-    let banked_materials = materials_carried(&party.stores);
+    // The cargo's food is genuinely taken rather than read: unlike the pack, the caller may hold the
+    // party a moment longer, and a shipment counted twice is a shipment invented.
+    let undelivered = cargo.take(FOOD, cargo.get(FOOD));
+    if undelivered > scalar_zero() {
+        home.stores.add(FOOD, undelivered);
+    }
+    let materials = materials_carried(&party.stores) + materials_carried(cargo);
     party.stores.drain_materials_into(&mut home.stores);
+    cargo.drain_materials_into(&mut home.stores);
     home.sync_size();
-    banked_materials
+    FoldBack {
+        food: leftover + undelivered,
+        materials,
+    }
+}
+
+/// **What a homecoming handed over**, so a caller can both narrate it and book it.
+///
+/// The material total is the feed line's *"is the pack really empty"* reading; the food is the
+/// **food ledger's** transfer term ([`LaborAllocation::last_transfer_received`]) — a party's pack
+/// landing in a band's larder passes through neither income nor consumption, exactly like a
+/// supply-network move. Returning both from one routine is what stops the prose and the ledger
+/// disagreeing about one arrival.
+pub struct FoldBack {
+    pub food: Scalar,
+    pub materials: f32,
 }
 
 /// The `ExpeditionReturned` feed line a fold-back publishes, built in one place so the two call

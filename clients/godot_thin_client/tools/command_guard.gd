@@ -42,6 +42,14 @@ extends Node
 ## harness would prove nothing at all — sending the wrong handle would produce the right number.
 ## That coincidence is exactly how the defect hid.
 ##
+## **THE SHIPMENT'S MANIFEST IS ASSERTED AGAINST THE PILES IT WAS DRAWN FROM**, and the piles are
+## FRACTIONAL on purpose (`TRADE_FOOD_HELD_TICKS`). The cargo row's `+` clamps a press to the pile,
+## so loading one to the end leaves the EXACT held amount on the row — and the server compares
+## strictly, refusing a manifest naming a tick more than the band holds. An amount ROUNDED for
+## legibility is therefore a refused shipment, and nothing else here could see it: the line parses,
+## names the right band and carries the right kit. Each shipment entry records `cargo_held_ticks`,
+## and the Rust half quantises what the real parser recovered and compares the two.
+##
 ##   cargo xtask command-guard                                    # the whole gate
 ##   godot --headless --path . res://tools/command_guard.tscn     # this half alone
 ##
@@ -113,6 +121,45 @@ const RAID_ANIMALS := 8
 const RAID_TURNS := 6
 const RAID_MAX_PARTY := 8
 
+# ---- The SHIPMENT's fixture (arc #527, issue #517) ----------------------------------------------
+
+## The band the shipment is bound for, and the tie that lets it be. A THIRD durable id, unlike either
+## of the two above so a destination confused with a sender is visible in the emitted line.
+const DESTINATION_ID := 71309
+const DESTINATION_LAST_SEEN_X := 46
+const DESTINATION_LAST_SEEN_Y := 21
+const DESTINATION_LAST_SEEN_TURN := 11
+## Any strength above `TIE_STRENGTH_NONE` will do — the sheet's gate is `> 0`, and what this harness
+## asserts is the LINE, not the ledger.
+const TIE_STRENGTH_LIVE := 0.6
+
+## **THE TWO PILES, AUTHORED IN THE SIM'S OWN FIXED-POINT TICKS** (`Scalar`, 10^6 to the unit) rather
+## than as decimals, because the whole assertion is about the last digits: the Rust half compares what
+## the server parser reconstructs against these exact integers.
+##
+## **21.050001 IS ADVERSARIAL ON PURPOSE, twice over.** A tenth rounds it UP to 21.1, which the server
+## refuses outright; and flooring it onto the fixed-point grid alone still emits `21.050001`, which the
+## parser's `f32` round-trip lands one tick ABOVE the pile. Only an amount that also backs off the
+## 32-bit wire's own rounding survives, which is what `Main.cargo_wire_amount` does.
+const TRADE_FOOD_HELD_TICKS := 21_050_001
+## The material pile, fractional for the first of those two reasons. A batch is one pile of one
+## material AT ONE RATING, so this one carries its reading like a real store row.
+const TRADE_HIDE_HELD_TICKS := 4_567_891
+const TRADE_HIDE_MATERIAL := "hide"
+const TRADE_HIDE_AXIS := "tough"
+const TRADE_HIDE_AXIS_VALUE := 0.9
+const TRADE_HIDE_AXIS_BAND := "excellent"
+
+## The shipment pack levers, sized so both piles fit at the drive's party — the meter gates the send,
+## and a cargo this harness cannot send emits no line to parse.
+const TRADE_PER_WORKER_CARRY := 120.0
+const TRADE_MATERIAL_CARRY_WEIGHT := 1.0
+
+## The most `+` presses one cargo row may take before the drive gives up. A whole-unit step over a
+## ~21-unit pile needs 22, so this is generous rather than tight; it exists so a row whose `+` stops
+## disabling fails HERE instead of spinning the harness forever.
+const CARGO_LOAD_MAX_PRESSES := 64
+
 ## Frames to let the HUD/panel rebuild between drives. Nothing renders, so this is layout settling
 ## only — the controls have to exist before a button can be pressed.
 const SETTLE_FRAMES := 3
@@ -150,6 +197,9 @@ func _ready() -> void:
 	_hud.update_kit_roster(BandFx.kit_roster_fixture(),
 		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,
 		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR)
+	# The band's TIES, which are what the shipment form draws its destinations from — a sheet with no
+	# live tie renders a sentence instead of a send, and the trade drive would have nothing to press.
+	_hud.update_connections(_connection_fixtures())
 	await _settle()
 
 	await _drive_assign_labor()
@@ -162,6 +212,7 @@ func _ready() -> void:
 	await _drive_send_hunt_expedition_from_herd_drawer()
 	await _drive_send_denial_raid()
 	await _drive_assign_labor_kits()
+	await _drive_send_trade_expedition()
 
 	_assert_every_command_emitted()
 	_write_emitted()
@@ -314,6 +365,67 @@ func _drive_assign_labor_kits() -> void:
 		BandFx.KIT_ID_NONE)
 	await _settle()
 
+## `send_trade_expedition` (arc #527, issue #517) — the parties compose sheet's FIFTH mission, and the
+## one drive whose subject is an AMOUNT rather than a handle.
+##
+## **THE CARGO IS LOADED THROUGH THE ROWS' OWN `+`, TO THE END OF EACH PILE**, which is the whole
+## point: `_set_cargo_amount` clamps a press to what the band holds, so the last press leaves the
+## exact fractional held amount on the row — the documented one-press way to load a pile the stepper's
+## whole-unit step cannot reach. What is under test is the AMOUNT the client then spells, so a drive
+## that wrote the manifest directly would test its own arithmetic instead of the sheet's.
+##
+## The destination is seated directly rather than picked through the popup: an `OptionButton`'s popup
+## is an embedded subwindow and this half runs `--headless`, and WHICH tie is chosen is asserted by
+## `ui_preview`'s `trade_picker_destination`, where the pick is a real pointer gesture.
+func _drive_send_trade_expedition() -> void:
+	_hud._selection.clear()
+	_panel.set_active_tab(&"parties")
+	_hud._bandpanel._party_compose_open = true
+	_hud._bandpanel._party_compose_mission = HudComposeVocab.COMPOSE_MISSION_TRADE
+	_hud._bandpanel._trade_destination_band = DESTINATION_ID
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _load_whole_pile(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL)
+	await _load_whole_pile(TRADE_HIDE_MATERIAL)
+	_press_meta_button(_panel, HudWidgets.SEND_TRADE_CONFIRM_META, "band panel trade compose")
+	await _settle()
+
+## Press one cargo row's `+` until the pile is loaded whole — the button DISABLES at the ceiling, which
+## is the harness's signal that the clamp has left the exact held amount on the row.
+func _load_whole_pile(needle: String) -> void:
+	var presses := 0
+	while presses < CARGO_LOAD_MAX_PRESSES:
+		var plus := _cargo_plus_button(_panel, needle)
+		if plus == null:
+			_fail("no cargo row for `%s` on the shipment sheet" % needle)
+			return
+		if plus.disabled:
+			break
+		plus.pressed.emit()
+		presses += 1
+		await _settle()
+	if presses == 0 or presses >= CARGO_LOAD_MAX_PRESSES:
+		_fail("the cargo row for `%s` never filled (%d presses) — the pile must be loadable and its `+` must stop"
+			% [needle, presses])
+
+## The `+` of the cargo row whose name label contains `needle`. A cargo row is a name label followed by
+## the shared stepper faces, so the `+` is the row's LAST child — found structurally, since a text match
+## would find every stepper on the sheet.
+func _cargo_plus_button(root: Node, needle: String) -> Button:
+	if root is HBoxContainer:
+		var row := root as HBoxContainer
+		var count := row.get_child_count()
+		if count > 0 and row.get_child(0) is Label \
+				and (row.get_child(0) as Label).text.contains(needle):
+			var last := row.get_child(count - 1)
+			if last is Button and (last as Button).text == HudWorkVocab.STEPPER_PLUS_FACE:
+				return last as Button
+	for child in root.get_children():
+		var found := _cargo_plus_button(child, needle)
+		if found != null:
+			return found
+	return null
+
 ## Push the band through a REAL MapView and click its hex, so the HUD's selected unit is the marker
 ## `_rebuild_unit_markers` built — not the cohort dict the snapshot path holds.
 func _select_band_marker_from_map() -> void:
@@ -379,6 +491,14 @@ func _connect_recorders() -> void:
 		_record("split_band", p, MAIN_SCRIPT.format_split_band(p)))
 	_hud.cancel_order_requested.connect(func(band: Dictionary, scope: String) -> void:
 		_record("cancel_order", band, MAIN_SCRIPT.format_cancel_order(band, scope)))
+	# **THE SHIPMENT RECORDS ITS PILES BESIDE ITS LINE.** They are the only thing the emitted amounts
+	# mean anything against, and they are stated in the sim's own TICKS so the comparison is exact —
+	# see the header. The cargo ids are the sender's own store keys, which is what the parser rebuilds.
+	_hud.send_trade_expedition_requested.connect(func(p: Dictionary) -> void:
+		_record("send_trade_expedition", p, MAIN_SCRIPT.format_send_trade_expedition(p), {
+			HudConst.STORE_ITEM_PROVISIONS: TRADE_FOOD_HELD_TICKS,
+			TRADE_HIDE_MATERIAL: TRADE_HIDE_HELD_TICKS,
+		}))
 
 ## The commands whose grammar carries a `kit <id>` tail. Every OTHER kind records `expected_kit` as
 ## `""` — a command with no kit axis names no kit, which is what the Rust half's `NotKitBearing`
@@ -401,7 +521,13 @@ const KIT_BEARING_KINDS := {
 ## of `_kit_token`'s rule. The one case that would make it circular is a drive composing the job
 ## DEFAULT, where the token is legitimately omitted and the assertion could never fail; that is a
 ## fixture error and fails here rather than passing quietly.
-func _record(kind: String, payload: Dictionary, formatted: Dictionary) -> void:
+##
+## `held_ticks` is the SHIPMENT's own extra: `{cargo id: ticks}` for every pile the drive composed
+## from, which the Rust half compares the parsed amounts against. Empty for every other kind — a
+## command with no manifest names no pile — and its absence on a shipment is a hard error there rather
+## than a skip, absence being the state that silently checks nothing.
+func _record(kind: String, payload: Dictionary, formatted: Dictionary,
+		held_ticks: Dictionary = {}) -> void:
 	if formatted.is_empty():
 		_fail("%s: Main declined to build a line — a required field was missing from %s" % [kind, payload])
 		return
@@ -412,7 +538,10 @@ func _record(kind: String, payload: Dictionary, formatted: Dictionary) -> void:
 		if expected_kit != "" and expected_kit == job_default:
 			_fail("%s: the drive composed the JOB DEFAULT (%s), so `Main._kit_token` omits the tail and this line asserts nothing about the kit" % [kind, expected_kit])
 			return
-	_emitted.append({"kind": kind, "line": String(formatted["line"]), "expected_kit": expected_kit})
+	var entry := {"kind": kind, "line": String(formatted["line"]), "expected_kit": expected_kit}
+	if not held_ticks.is_empty():
+		entry["cargo_held_ticks"] = held_ticks
+	_emitted.append(entry)
 
 ## The commands this guard must see. Missing one is a failure: a driver that quietly stopped
 ## reaching its emit site would otherwise turn this guard green by producing nothing to check.
@@ -433,6 +562,8 @@ const EXPECTED_KINDS := {
 	"send_hunt_expedition": 2,
 	# ONE — the parties compose sheet is the denial raid's only launch site.
 	"send_denial_raid": 1,
+	# ONE — the shipment's only launch site is that same sheet, and one line carries both piles.
+	"send_trade_expedition": 1,
 }
 
 func _assert_every_command_emitted() -> void:
@@ -491,7 +622,15 @@ func _band_fixture() -> Dictionary:
 		"elders": BAND_SIZE - BAND_WORKING_AGE - BAND_CHILDREN,
 		"turns_of_food": 20.0,
 		"morale": 0.8,
-		"stores": {"provisions": 80.0},
+		# **THE LARDER IS A FRACTIONAL PILE, and that is the shipment drive's whole subject** — see
+		# `TRADE_FOOD_HELD_TICKS`. Nothing else in this file reads the store.
+		"stores": {HudConst.STORE_ITEM_PROVISIONS: _units(TRADE_FOOD_HELD_TICKS)},
+		# One pile of one material AT ONE RATING, the shape the sim's own store keeps.
+		HudCraftingVocab.BAND_MATERIAL_BATCHES_KEY: [_hide_batch_fixture()],
+		# The two shipment pack levers, so the manifest the drive composes is one the meter passes and
+		# the send button therefore exists to be pressed.
+		"expedition_trade_per_worker_carry": TRADE_PER_WORKER_CARRY,
+		"expedition_trade_material_carry_weight": TRADE_MATERIAL_CARRY_WEIGHT,
 		"output_multiplier": 1.0,
 		"work_range": BAND_WORK_RANGE,
 		"hunt_reach": BAND_HUNT_REACH,
@@ -500,6 +639,39 @@ func _band_fixture() -> Dictionary:
 		"hunt_per_worker_provisions": 0.4,
 		"labor_assignments": [],
 	}
+
+## The band's one material pile. Its rating is what makes it a BATCH rather than a quantity of `hide`,
+## and the sheet's row key is built from it.
+func _hide_batch_fixture() -> Dictionary:
+	return {
+		HudCraftingVocab.BATCH_MATERIAL_ID_KEY: TRADE_HIDE_MATERIAL,
+		HudCraftingVocab.BATCH_AMOUNT_KEY: _units(TRADE_HIDE_HELD_TICKS),
+		HudCraftingVocab.BATCH_READINGS_KEY: [{
+			HudCraftingVocab.READING_AXIS_KEY: TRADE_HIDE_AXIS,
+			HudCraftingVocab.READING_VALUE_KEY: TRADE_HIDE_AXIS_VALUE,
+			HudCraftingVocab.READING_BAND_NAME_KEY: TRADE_HIDE_AXIS_BAND,
+		}],
+	}
+
+## **THE BAND'S ONE LIVE TIE**, which is what the shipment form draws its destinations from. The
+## ledger's own shape: two durable ids, a strength, and where the subject was last seen.
+func _connection_fixtures() -> Array:
+	return [{
+		"observer_band_id": BAND_ID,
+		"subject_band_id": DESTINATION_ID,
+		"strength": TIE_STRENGTH_LIVE,
+		"last_seen_x": DESTINATION_LAST_SEEN_X,
+		"last_seen_y": DESTINATION_LAST_SEEN_Y,
+		"last_seen_turn": DESTINATION_LAST_SEEN_TURN,
+		"last_contact_turn": DESTINATION_LAST_SEEN_TURN,
+		"first_contact_turn": DESTINATION_LAST_SEEN_TURN,
+	}]
+
+## A pile stated in the sim's fixed-point TICKS, as the wire's own decode would hand it to this client
+## — `Scalar` over its scale, with the digit count read off `Main` rather than typed here, so the
+## fixture and the formatter under test cannot disagree about the sim's precision.
+func _units(ticks: int) -> float:
+	return float(ticks) / pow(10.0, MAIN_SCRIPT.SIM_SCALAR_DECIMALS)
 
 ## A detached hunting party homed on the band above — the `recall_expedition` subject.
 func _party_fixture() -> Dictionary:

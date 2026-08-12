@@ -294,6 +294,22 @@ pub fn split_band_from_parent(
         parent_cohort.sync_size();
     }
 
+    // **The food that walked out with them is booked as a transfer, on both ends.** A split is a
+    // command applied *between* two captures, so the parent publishes a frame whose larder fell by
+    // the share it handed over — food that passed through neither `food_income` nor
+    // `food_consumption`. Without this the published identity
+    // (`LaborAllocation::last_transfer_received`) is simply false on the turn a band splits, short
+    // by exactly the provisions.
+    //
+    // **FOOD only**, and the same pair of terms `balance_supply_networks` and a trade shipment use:
+    // the identity is the food one, and materials deliberately have no identity of their own.
+    if provisions > scalar_zero() {
+        if let Some(mut allocation) = world.get_mut::<LaborAllocation>(parent) {
+            // Added, never assigned — a band can split, ship and balance inside one snapshot window.
+            allocation.last_transfer_sent += provisions.to_f32();
+        }
+    }
+
     // **The kit is inherited WORN** (`docs/plan_band_fission.md` §Q4). `BandEquipment` is a wear
     // ledger, so handing the new band a `default()` would mint a fresh kit out of nothing every time
     // a band splits, permanently — which trivially defeats the pull into the crafting economy that
@@ -318,8 +334,13 @@ pub fn split_band_from_parent(
             // unreportable (`demographic_events::every_resident_band_carries_a_flow_accumulator`).
             DemographicFlowAccumulator::default(),
             // Labor assignments are the parent's intent about the parent's sources; the new band
-            // starts idle and the player staffs it.
-            LaborAllocation::default(),
+            // starts idle and the player staffs it. The **receiving** half of the food ledger's
+            // transfer pair opens on it, though: the dowry is food that crossed between larders, and
+            // the new band's first published frame is the one that has to account for it.
+            LaborAllocation {
+                last_transfer_received: provisions.to_f32(),
+                ..LaborAllocation::default()
+            },
             equipment,
             unit,
         ))

@@ -12,6 +12,10 @@
     "viability_warn_turns": 20,
     "forecast_horizon_turns": 60
   },
+  "trade": {
+    "per_worker_carry": 6.0,
+    "material_carry_weight": 1.0
+  },
   "replenish": {
     "low_turns": 3,
     "reach_tiles": 1
