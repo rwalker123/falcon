@@ -158,8 +158,9 @@ fn spawn_hunter(app: &mut App, herd_id: &str, policy: f32) -> bevy::prelude::Ent
 /// `a_bigger_keeper_crew_tames_materially_faster`.
 fn keeper_crew(app: &App, herd_id: &str) -> u32 {
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
     let herd = herd_of(app, herd_id);
-    core_sim::would_be_herders_needed(&herd, &fauna)
+    core_sim::would_be_herders_needed(&herd, &fauna, &ladder)
 }
 
 /// A band hunting `herd_id` at the food peak while **building** `improvement`, staffed at the herd's
@@ -238,6 +239,14 @@ fn spawn_crew_of(
     // **The same crew staffs the build**, which is what this fixture meant when one crew did every
     // job (`docs/plan_standing_upkeep.md` §2.2).
     let builders = improvement.map_or(NO_CREW_ON_THIS_ACTIVITY, |_| hunters);
+    // **And the keeping is staffed as generously as the take is.** These fixtures measure *rates* —
+    // what a rung pays, how fast a build runs — so the keeping must never be the binding term, and
+    // [`HUNT_WORKERS`] is chosen for exactly that reason on the take side. It is also what they got
+    // for free until slice 4: the retired `herded_fraction = min(1, workers / needed)` read the
+    // **take** crew, so a 5000-hand hunting party held any flock outright. The fixtures that are
+    // about staffing seat the keeping themselves (`seat_keeping` / `run_understaffed_turns`) and
+    // never run the labor arm.
+    let keepers = hunters;
     app.world
         .spawn((
             PopulationCohort {
@@ -253,7 +262,7 @@ fn spawn_crew_of(
                 // rather than at the assignment because several fixtures set the verb *later*
                 // (the full climb sets one per leg), when the pool is already fixed. Idle hands cost
                 // these fixtures nothing: every take is capped by the crew the assignment names.
-                working: scalar_from_f32((hunters + hunters) as f32),
+                working: scalar_from_f32((hunters + hunters + keepers) as f32),
                 elders: scalar_zero(),
                 stores: LocalStore::new(),
                 morale: scalar_one(),
@@ -288,7 +297,12 @@ fn spawn_crew_of(
                     improvement,
                     kit: None,
                     improvement_workers: builders,
-                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
+                    // **AND THE KEEPERS.** A managed herd is owed its keeping every turn since
+                    // `docs/plan_standing_upkeep.md` §2.4, and hunting it is not keeping it — a band
+                    // that staffed none would watch its own flock drift off while it worked. Sized
+                    // at the herd's own demand (`keeper_crew`), which is what a player reading
+                    // `upkeepWorkersNeeded` would staff.
+                    maintain_workers: keepers,
                 }],
                 ..Default::default()
             },
@@ -321,9 +335,32 @@ fn run_turns_untended(app: &mut App, turns: u32) {
     }
 }
 
-/// **Nobody is holding this flock** — the `herded_fraction` a fixture seats to make a herd fully
+/// **Nobody is holding this flock** — the staffing fraction a fixture seats to make a herd fully
 /// under-contained. The sim's own `NOT_HERDED`, restated here because it is crate-internal.
 const NOT_HERDED_FIXTURE: f32 = 0.0;
+
+/// **What holding this herd costs, per turn, off the shipped ladder** — the rung's `upkeep_demand`
+/// at the herd's own keeper load (`docs/plan_standing_upkeep.md` §2.4). A fixture multiplies a
+/// staffing *fraction* by this to get the work its keepers supplied.
+fn keeping_demand(app: &App, id: &str) -> f32 {
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    core_sim::herd_upkeep_demand(&herd_of(app, id), &fauna, &ladder)
+}
+
+/// **Seat the herd's keeping at `fraction` of what it owes** — the fixture's stand-in for
+/// `maintain <faction> hunt <herd_id> <workers>`, and the one place a staffing fraction becomes the
+/// work units the sim actually stores. `1.0` holds the herd outright; `0.0` is nobody at all.
+fn seat_keeping(app: &mut App, id: &str, fraction: f32) {
+    let supplied = fraction * keeping_demand(app, id);
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    registry
+        .herds
+        .iter_mut()
+        .find(|h| h.id == id)
+        .unwrap()
+        .upkeep_supplied = supplied;
+}
 
 /// **The neglect grace of the rung a managed herd stands on**, read off the shipped ladder rather
 /// than restated as a literal — so a retune moves these tests with the game. `animal:pen` for a
@@ -337,22 +374,25 @@ fn neglect_grace(app: &App, id: &str) -> u32 {
         } else {
             RungKey::AnimalPastoral
         })
-        .neglect_grace_turns()
+        // **The UPKEEP's grace** — the animal branch counts consecutive turns of unmet keeping now
+        // (`docs/plan_standing_upkeep.md` §2.4), so `build.grace_turns` is `null` on both rungs and
+        // this is the live number.
+        .upkeep_grace_turns()
 }
 
-/// **Run `turns` under-herded turns, re-seating the staffing each one.** `advance_husbandry` resets
-/// `herded_fraction` after reading it (the Population→Logistics lag the labor arm writes across), so
-/// a fixture that seats it once would read "fully abandoned" from the second turn on — and this
+/// **Run `turns` under-herded turns, re-seating the keeping each one.** `advance_husbandry` clears
+/// `upkeep_supplied` after reading it (the Population→Logistics lag the labor arm writes across), so
+/// a fixture that seated it once would read "fully abandoned" from the second turn on — and this
 /// helper exists precisely because the neglect grace made *multiple* under-herded turns the normal
 /// case in these tests. Runs the husbandry pass alone (no regrowth), so the only biomass change is
 /// the shed.
+///
+/// **Re-seated every turn against the herd's CURRENT demand**, which is what makes a partial
+/// staffing mean the same thing as the herd shrinks: the demand falls with the head count, so a
+/// fraction stays a fraction.
 fn run_understaffed_turns(app: &mut App, id: &str, herded_fraction: f32, turns: u32) {
     for _ in 0..turns {
-        {
-            let mut registry = app.world.resource_mut::<HerdRegistry>();
-            let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-            herd.herded_fraction = herded_fraction;
-        }
+        seat_keeping(app, id, herded_fraction);
         app.world.run_system_once(advance_husbandry);
     }
 }
@@ -451,10 +491,12 @@ fn reseat(app: &mut App, id: &str, cap: f32, biomass: f32) {
 /// row measuring it silently measures a **wild** herd instead. Seating `herded_fraction` too says "a
 /// crew was already with them last turn", which is exactly the state the fixture is claiming.
 fn domesticate(app: &mut App, id: &str) {
-    let mut registry = app.world.resource_mut::<HerdRegistry>();
-    let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-    herd.tame_outright(FactionId(0));
-    herd.herded_fraction = FULLY_HERDED;
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.tame_outright(FactionId(0));
+    }
+    seat_keeping(app, id, FULLY_HERDED);
 }
 
 /// The single band's FOOD larder.
@@ -988,11 +1030,7 @@ fn domesticated_herd_is_collapse_immune() {
 
     // A keeper is with the herd every turn (full staffing), so it does not shed — it just regrows.
     for _ in 0..10 {
-        {
-            let mut registry = app.world.resource_mut::<HerdRegistry>();
-            let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-            herd.herded_fraction = FULLY_HERDED;
-        }
+        seat_keeping(&mut app, &id, FULLY_HERDED);
         app.world.run_system_once(advance_herds);
         app.world.run_system_once(advance_husbandry);
     }
@@ -1251,7 +1289,6 @@ fn corral_herd(app: &mut App, id: &str) -> UVec2 {
     herd.tame_outright(FactionId(0));
     // A freshly-penned herd has a crew (`corral_at` grants the tending grace for the same reason) —
     // see `domesticate` for why the meter alone is not enough.
-    herd.herded_fraction = FULLY_HERDED;
     let tile = herd.position();
     assert!(herd.corral_at(tile), "the fixture species must be pennable");
     tile
@@ -2227,21 +2264,301 @@ fn species_shed_params(app: &App, id: &str) -> (f32, f32) {
     (fauna.animals_per_herder_for(&herd.species), herd.body_mass)
 }
 
-/// Seat the herd's `herded_fraction` exactly as the labor arm would for a keeper of `herders` hands —
-/// `min(1, herders / needed)` — so the shed's `capacity = herded_fraction × needed × aph = herders × aph`
-/// tracks the herd as it shrinks (the §2.2 convergence, without running the labor system). **Reads the
-/// SAME `needed` the shed reads** (the stabilized `Herd::herders_needed`, falling back to the raw `ceil`
-/// before the herd has been stabilized): if the seated staffing and the shed disagreed on `needed`, the
-/// reconstructed capacity would drift from `herders × aph` during the downward-hysteresis lag.
-fn seat_staffing(app: &mut App, id: &str, herders: f32, aph: f32) {
+/// **Seat the keeping exactly as `herders` hands would supply it** — `herders` worker-turns, which is
+/// what the labor arm stamps for a `maintain` crew of that size. The shed's capacity is then
+/// `herders × animals_per_herder` by construction, so it tracks the herd as it shrinks (the §2.2
+/// convergence, without running the labor system).
+///
+/// **It seats WORK, not a fraction**, which is the whole of what slice 4 changed: a keeper is worth a
+/// worker-turn wherever they stand, so a fixture no longer has to reconstruct `needed` to express
+/// "two hands are on this herd" — and cannot disagree with the shed about what `needed` was.
+fn seat_staffing(app: &mut App, id: &str, herders: f32, _aph: f32) {
     let mut registry = app.world.resource_mut::<HerdRegistry>();
     let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-    let needed = if herd.herders_needed > 0 {
-        herd.herders_needed as f32
-    } else {
-        (herd.biomass / herd.body_mass / aph).ceil().max(1.0)
+    herd.upkeep_supplied = herders * core_sim::PER_WORKER_OUTPUT;
+}
+
+/// **MEASUREMENT HARNESS — what a band pays to HOLD a herd, per species.** Not a guard; run with
+/// `--ignored --nocapture`. These are the numbers the animal web's keeper burden should be judged on
+/// (`docs/plan_standing_upkeep.md` §2.4).
+#[test]
+#[ignore = "measurement harness — run with --ignored --nocapture"]
+fn probe_the_price_of_holding_a_herd() {
+    /// Herd sizes to quote each species at, in **ANIMALS** — deliberately the same head counts for
+    /// every species, because the whole point of `animals_per_herder` is that the same flock costs
+    /// different hands depending on what is in it.
+    const HEADS: [f32; 3] = [20.0, 100.0, 500.0];
+    let app = spawn_world();
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+
+    println!("\nWHAT IT COSTS TO HOLD A HERD, per turn, forever:");
+    println!(
+        "  rung rates: pastoral {:.2} work/keeper-load (grace {}), pen {:.2} (grace {})",
+        ladder
+            .rung(RungKey::AnimalPastoral)
+            .upkeep_demand(core_sim::ONE_KEEPER_LOAD),
+        ladder.rung(RungKey::AnimalPastoral).upkeep_grace_turns(),
+        ladder
+            .rung(RungKey::AnimalPen)
+            .upkeep_demand(core_sim::ONE_KEEPER_LOAD),
+        ladder.rung(RungKey::AnimalPen).upkeep_grace_turns(),
+    );
+    println!(
+        "\n  {:<18} {:>9}  {:>26}",
+        "species", "an/keeper", "keepers at 20 / 100 / 500 head"
+    );
+    let mut rows: Vec<(String, f32, Vec<u32>)> = Vec::new();
+    for species in fauna.species.values() {
+        if !matches!(
+            species.husbandry_ceiling,
+            core_sim::HusbandryCeiling::Pastoral | core_sim::HusbandryCeiling::Pen
+        ) {
+            continue;
+        }
+        let aph = fauna.animals_per_herder_for(&species.display_name);
+        let mut counts = Vec::new();
+        for heads in HEADS {
+            let mut herd = herd_of(&app, &prime_thriving_herd(&mut spawn_world()));
+            herd.species = species.display_name.clone();
+            herd.body_mass = species.body_mass;
+            herd.biomass = heads * species.body_mass;
+            herd.tame_outright(FactionId(0));
+            herd.herders_needed = 0;
+            counts.push(core_sim::herd_herders_needed(&herd, &fauna, &ladder));
+        }
+        rows.push((species.display_name.clone(), aph, counts));
+    }
+    rows.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+    for (name, aph, counts) in rows {
+        println!(
+            "  {name:<18} {aph:>9.0}  {:>10} {:>8} {:>8}",
+            counts[0], counts[1], counts[2]
+        );
+    }
+    println!(
+        "\n  A keeper is owed EVERY TURN, on wait turns too, and the count moves with the herd: \
+         grow the flock past what your hands hold and the overage drifts off."
+    );
+}
+
+/// **THE SHIPPED ROSTER ASKS FOR EXACTLY THE KEEPERS IT ALWAYS ASKED FOR** — the pacing-neutrality
+/// claim of `docs/plan_standing_upkeep.md` §2.4's animal half, asserted per species.
+///
+/// The keeper demand stopped being a declared **head count** and became **work per turn**: the rung
+/// declares `work_per_turn: 1.0, scaled_by: source_load` and the species supplies the load
+/// (`head count / animals_per_herder`). Since one worker-turn is `PER_WORKER_OUTPUT`, `ceil(demand)`
+/// is the same `ceil((biomass/body_mass)/animals_per_herder)` the retired helper computed — so a
+/// shepherd still minds 200 fowl and a cowherd still minds 12 aurochs.
+///
+/// **Asserted against the retired arithmetic restated here, not against a table of literals**, so a
+/// roster retune moves the expectation with the game and only a change to the *model* can fail it.
+#[test]
+fn every_species_asks_for_the_keepers_it_asked_for_before() {
+    /// The demand `fauna::herders_needed` computed before it became an upkeep — the one thing this
+    /// test may not read off the sim, because reproducing it is the whole assertion.
+    fn retired_herders_needed(biomass: f32, body_mass: f32, animals_per_herder: f32) -> u32 {
+        let animals = biomass / body_mass;
+        ((animals / animals_per_herder).ceil() as u32).max(1)
+    }
+
+    let app = spawn_world();
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let mut checked = 0;
+    for species in fauna.species.values() {
+        // A `wild`-ceiling species is never herded, so it declares no `animals_per_herder` and has
+        // no keeper demand to be neutral about.
+        if !matches!(
+            species.husbandry_ceiling,
+            core_sim::HusbandryCeiling::Pastoral | core_sim::HusbandryCeiling::Pen
+        ) {
+            continue;
+        }
+        let aph = fauna.animals_per_herder_for(&species.display_name);
+        let body_mass = species.body_mass;
+        // Sweep head counts across several `animals_per_herder` boundaries — the `ceil` is where an
+        // inversion like this goes wrong, so the boundaries are the point.
+        for heads in [1.0_f32, aph - 0.5, aph, aph + 0.5, aph * 3.0, aph * 7.25] {
+            let mut herd = herd_of(&app, &prime_thriving_herd(&mut spawn_world()));
+            herd.species = species.display_name.clone();
+            herd.body_mass = body_mass;
+            herd.biomass = heads * body_mass;
+            herd.tame_outright(FactionId(0));
+            herd.herders_needed = 0; // unstabilized, so the raw reading is what answers
+            assert_eq!(
+                core_sim::herd_herders_needed(&herd, &fauna, &ladder),
+                retired_herders_needed(herd.biomass, body_mass, aph),
+                "{} at {heads} head (animals_per_herder {aph}): the keeper count must not have \
+                 moved when it became a work rate",
+                species.display_name
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked >= 30,
+        "fixture: the sweep must actually cover the herdable roster, got {checked} readings"
+    );
+}
+
+/// **THE SHED IS CONTINUOUS IN THE SHORTFALL** (`docs/plan_standing_upkeep.md` §2.4) — half the
+/// keepers a herd wants sheds half as many animals, where the retired gate asked only *whether*
+/// `herded_fraction < FULLY_HERDED` and so said the same thing about one keeper short and all of
+/// them.
+///
+/// Measured as a **ratio across three staffings** on the same herd, so the per-rung escape fraction
+/// and its jitter cancel and what is left is the claim about the shortfall.
+#[test]
+fn the_shed_is_continuous_in_the_keeping_shortfall() {
+    let lost_at = |fraction: f32| -> f32 {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        {
+            let mut registry = app.world.resource_mut::<HerdRegistry>();
+            let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+            herd.tame_outright(FactionId(0));
+            herd.biomass = herd.carrying_capacity;
+        }
+        let before = herd_of(&app, &id).biomass;
+        let grace = neglect_grace(&app, &id);
+        run_understaffed_turns(&mut app, &id, fraction, grace + 1);
+        before - herd_of(&app, &id).biomass
     };
-    herd.herded_fraction = (herders / needed).min(1.0);
+
+    let unkept = lost_at(NOT_HERDED_FIXTURE);
+    let half_kept = lost_at(0.5);
+    let fully_kept = lost_at(FULLY_HERDED_FIXTURE);
+
+    assert!(unkept > 0.0, "fixture: an unkept herd must actually shed");
+    assert!(
+        (unkept - half_kept * 2.0).abs() < 0.06 * unkept,
+        "half the keepers must leave half the flock uncontained: {unkept} unkept vs {half_kept} \
+         half-kept"
+    );
+    assert_eq!(
+        fully_kept, 0.0,
+        "and a herd whose keeping is met loses nothing"
+    );
+}
+
+/// **A `Tame` IN FLIGHT IS OWED ITS BUILDERS, NOT KEEPERS** — the rule carried over from the plant
+/// web (`docs/plan_standing_upkeep.md` §2.4, `fauna::herd_upkeep_supply`). A meter still being raised
+/// cannot be *held*; you cannot be billed to keep a tameness you have not finished earning.
+///
+/// And **the verb names the meter**: a `Corral` starting on a herd with no pen progress answers for
+/// `animal:pen` from its very first turn, because the supply is stamped in Population and read by the
+/// *next* Logistics pass — it has to describe the meter that pass will judge.
+#[test]
+fn an_unfinished_rung_is_owed_its_builders_and_a_finished_one_its_keepers() {
+    const A_BUILD_CREWS_TURN: f32 = 4.0;
+    const A_KEEPERS_TURN: f32 = 1.0;
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+
+    // --- Mid-Tame: owned, partly gentled, owed the Tame crew. ---------------------------------
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.owner = Some(FactionId(0));
+        herd.domestication_cost = 50.0;
+        herd.domestication_progress = 25.0;
+    }
+    let herd = herd_of(&app, &id);
+    assert!(!core_sim::herd_at_risk_is_built(&herd));
+    assert_eq!(
+        core_sim::herd_upkeep_supply(
+            &herd,
+            Some(Improvement::Tame),
+            A_BUILD_CREWS_TURN,
+            A_KEEPERS_TURN
+        ),
+        A_BUILD_CREWS_TURN,
+        "the builders answer for the meter they are filling"
+    );
+    assert_eq!(
+        core_sim::herd_upkeep_supply(&herd, None, A_BUILD_CREWS_TURN, A_KEEPERS_TURN),
+        0.0,
+        "…and a crew that has stopped taming supplies it nothing, keepers or no keepers — which is \
+         what makes an ABANDONED half-tamed herd shed"
+    );
+    // **A `Corral` answers for the PEN from its first turn**, before that meter has any progress.
+    assert_eq!(
+        core_sim::herd_upkeep_supply(
+            &herd,
+            Some(Improvement::Corral),
+            A_BUILD_CREWS_TURN,
+            A_KEEPERS_TURN
+        ),
+        A_BUILD_CREWS_TURN,
+        "the verb names the meter, so a Corral crew is answering for the pen it is starting"
+    );
+
+    // --- Tamed: owed its keepers, whatever verb is still hanging off the assignment. -----------
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.tame_outright(FactionId(0));
+    }
+    let herd = herd_of(&app, &id);
+    assert!(core_sim::herd_at_risk_is_built(&herd));
+    assert_eq!(
+        core_sim::herd_upkeep_supply(
+            &herd,
+            Some(Improvement::Tame),
+            A_BUILD_CREWS_TURN,
+            A_KEEPERS_TURN
+        ),
+        A_KEEPERS_TURN,
+        "a herd you have tamed is held by keepers"
+    );
+    // And the maintain activity's published count follows the same split.
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    assert!(core_sim::herd_upkeep_demand(&herd, &fauna, &ladder) > 0.0);
+}
+
+/// **THE SUPPLY STAMP ACCUMULATES ACROSS THE BANDS WORKING ONE HERD.** The demand is per-**source**,
+/// so two bands each put a fraction of it on the ground; assigning would let whichever band the loop
+/// visited last speak for all of them, and the herd would shed as if the other crew were not there.
+///
+/// It has been a `+=` since slice 3, when no animal rung declared an upkeep and it was therefore
+/// inert. It stops being inert here, so it is measured rather than assumed.
+#[test]
+fn two_bands_keeping_one_herd_sum_their_hands() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    domesticate(&mut app, &id);
+    let demand = keeping_demand(&app, &id);
+    assert!(
+        demand > 1.0,
+        "fixture: the herd must want more than one hand"
+    );
+
+    // Two bands, each with a single keeper on the same herd, and nobody hunting.
+    for _ in 0..2 {
+        let band = spawn_crew_of(&mut app, &id, MSY_BIOMASS_FRACTION, None, HUNT_WORKERS);
+        set_maintain_workers(&mut app, band, 1);
+    }
+    // Clear whatever the fixture seeded, so the only supply is what the two bands stamp.
+    seat_keeping(&mut app, &id, NOT_HERDED_FIXTURE);
+    app.world.run_system_once(advance_labor_allocation);
+
+    assert_eq!(
+        herd_of(&app, &id).upkeep_supplied,
+        2.0 * core_sim::PER_WORKER_OUTPUT,
+        "both bands' keepers are on the herd, so both are counted"
+    );
+}
+
+/// Put `workers` on a band's one assignment's **keeping** — the fixture's stand-in for
+/// `maintain <faction> hunt <herd_id> <workers>`.
+fn set_maintain_workers(app: &mut App, band: bevy::prelude::Entity, workers: u32) {
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("band exists")
+        .assignments[0]
+        .maintain_workers = workers;
 }
 
 /// **The shed self-limits: an over-stocked managed herd converges to its labor capacity from above and
@@ -2320,15 +2637,14 @@ fn the_shed_is_bounded_by_the_true_overage_near_a_ceil_boundary() {
         herd.tame_outright(FactionId(0));
         herd.carrying_capacity = current_animals * body_mass * 4.0;
         herd.biomass = current_animals * body_mass;
-        // Seat the staffing the labor arm would write for `assigned` herders (needed = ceil = 3).
-        let needed = (current_animals / aph).ceil().max(1.0);
-        herd.herded_fraction = (assigned / needed).min(1.0);
     }
+    // Seat the work `assigned` keepers supply — the shed's capacity is `assigned × aph` directly.
+    seat_staffing(&mut app, &id, assigned, aph);
     // Spend the rung's neglect grace first — nothing sheds inside it — then measure the one pass
     // that actually bites, so this still reads the *first* shed's size.
-    let herded = herd_of(&app, &id).herded_fraction;
+    let staffed_fraction = assigned / keeping_demand(&app, &id);
     let grace = neglect_grace(&app, &id);
-    run_understaffed_turns(&mut app, &id, herded, grace);
+    run_understaffed_turns(&mut app, &id, staffed_fraction, grace);
     let start_biomass = herd_of(&app, &id).biomass;
     assert_eq!(
         start_biomass,
@@ -2336,7 +2652,7 @@ fn the_shed_is_bounded_by_the_true_overage_near_a_ceil_boundary() {
         "the grace turns cost the herd nothing"
     );
 
-    run_understaffed_turns(&mut app, &id, herded, 1);
+    run_understaffed_turns(&mut app, &id, staffed_fraction, 1);
 
     // **Rounded to whole animals, because that is what is being asserted.** The count is recovered by
     // dividing a ~1-animal delta by a ~400-animal total, and f32 carries ~7 digits — so the exact
@@ -2436,8 +2752,8 @@ fn neglect_never_un_tames_a_herd() {
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
         herd.owner = Some(FactionId(0));
         herd.domestication_progress = partial;
-        herd.herded_fraction = 0.0; // nobody herding — maximum shed pressure
     }
+    seat_keeping(&mut app, &id, NOT_HERDED_FIXTURE); // nobody herding — maximum shed pressure
 
     // Pure shed (no regrowth): the meter must not move a bit on any turn the herd still exists, and the
     // herd must eventually bleed out and despawn.
@@ -2475,17 +2791,18 @@ fn a_pen_sheds_slower_than_a_pastoral_herd() {
             let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
             herd.tame_outright(FactionId(0));
             herd.biomass = herd.carrying_capacity;
-            herd.herded_fraction = 0.0;
         }
         if corral {
             let tile = herd_of(&app, &id).position();
-            let mut registry = app.world.resource_mut::<HerdRegistry>();
-            let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-            assert!(herd.corral_at(tile));
-            herd.herded_fraction = 0.0;
-            // Skip the one-turn penning grace so both start shedding on turn 1.
-            herd.corralled_tended_this_turn = false;
+            {
+                let mut registry = app.world.resource_mut::<HerdRegistry>();
+                let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+                assert!(herd.corral_at(tile));
+                // Skip the one-turn penning grace so both start shedding on turn 1.
+                herd.corralled_tended_this_turn = false;
+            }
         }
+        seat_keeping(&mut app, &id, NOT_HERDED_FIXTURE);
         // Pure shed, no regrowth, several turns so the per-rung rate dominates the ±jitter.
         for _ in 0..6 {
             app.world.run_system_once(advance_husbandry);
@@ -2551,8 +2868,9 @@ fn shed_animals_appear_in_the_wild_web() {
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
         herd.tame_outright(FactionId(0));
         herd.biomass = herd.carrying_capacity;
-        herd.herded_fraction = NOT_HERDED_FIXTURE; // fully under-contained ⇒ a real shed, once the grace is spent
     }
+    // Fully under-contained ⇒ a real shed, once the grace is spent.
+    seat_keeping(&mut app, &id, NOT_HERDED_FIXTURE);
     let wild_before: f32 = wild_herds_of(&app, &species)
         .iter()
         .map(|h| h.biomass)
@@ -2623,13 +2941,7 @@ fn seat_over_stocked_managed(app: &mut App, id: &str, herders: f32, aph: f32, bo
 }
 
 fn set_herded_fraction(app: &mut App, id: &str, fraction: f32) {
-    let mut registry = app.world.resource_mut::<HerdRegistry>();
-    registry
-        .herds
-        .iter_mut()
-        .find(|h| h.id == id)
-        .unwrap()
-        .herded_fraction = fraction;
+    seat_keeping(app, id, fraction);
 }
 
 fn set_under_herded(app: &mut App, id: &str, value: bool) {

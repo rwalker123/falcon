@@ -545,16 +545,17 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // (`food_per_animal / sustainable_yield`), already converted the same way every other
                 // yield field is.
                 food_per_animal: forecast.body_mass_yield.provisions,
-                // Herd staffing — the herders a MANAGED herd owes this turn to hold its tameness (0 for
-                // a wild/unmanaged herd, per `herd_herders_needed`), and how well it is staffed
-                // (`Herd::herded_fraction`, the labor system's per-turn write; `FULLY_HERDED` for a herd
-                // that needs nobody or a vanished one). Split out so the client can distinguish an
-                // under-HERDING shortfall from the assignment's blended `workers_needed`.
+                // Herd staffing — the keepers a MANAGED herd owes this turn (0 for a wild/unmanaged
+                // one, per `herd_herders_needed`) and how well it is kept. Both resolve through the
+                // ladder's `upkeep` now (`docs/plan_standing_upkeep.md` §2.4): the count is the
+                // rung's `upkeep_crew_needed` at this herd's keeper load, and the ratio is derived
+                // from the one stored supply, so the published pair and the shed the sim applies can
+                // never describe different staffings.
                 herders_needed: herd
-                    .map(|herd| herd_herders_needed(herd, fauna))
+                    .map(|herd| herd_herders_needed(herd, fauna, ladder))
                     .unwrap_or(0),
                 herded_fraction: herd
-                    .map(|herd| herd.herded_fraction)
+                    .map(|herd| crate::fauna::herd_herded_fraction(herd, fauna, ladder))
                     .unwrap_or(FULLY_HERDED),
                 // The Tame rung's payoff — the pastoral twin of `corral_yield`: what a Sustain hunt
                 // pays once this herd is tamed (the pastoral MSY), so the client can quote Tame's
@@ -637,26 +638,38 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // A `wild`-ceiling species (mammoth/deer) never tames, so `would_be_herders_needed`
                 // returns 0; the same helper the labor arm reads while a build runs — one seam.
                 herders_needed_if_managed: herd
-                    .map(|herd| would_be_herders_needed(herd, fauna))
+                    .map(|herd| would_be_herders_needed(herd, fauna, ladder))
                     .unwrap_or(0),
                 // **THE STANDING UPKEEP** (`docs/plan_standing_upkeep.md` §2) — what holding this
                 // herd's rung demands, what its keepers supplied and what went unmet, all three
                 // published so the client subtracts nothing. The demand is the ladder's own price,
                 // always meaningful (the `penUpkeep` rule); the supplied/unmet pair is this turn's
                 // scratch, stamped by the labor arm that resolved the keeping crew.
+                // Every one of them resolves through the **keeping** rung
+                // (`fauna::herd_keeping_rung` — the newest meter with progress on it), the same seam
+                // `advance_husbandry` sheds through and the grace below counts down against, so a row
+                // cannot bill one rung's demand while the sim judges another's.
                 upkeep_demand: herd.map_or(NO_UPKEEP_DEMAND, |herd| {
-                    ladder
-                        .rung(crate::fauna::herd_rung_key(herd))
-                        .upkeep_demand(crate::fauna::herd_head_count(herd))
+                    crate::fauna::herd_upkeep_demand(herd, fauna, ladder)
                 }),
                 upkeep_supplied: herd.map_or(NO_UPKEEP_DEMAND, |herd| herd.upkeep_supplied),
-                upkeep_shortfall: herd.map_or(NO_UPKEEP_DEMAND, |herd| herd.upkeep_shortfall),
+                // **Derived, so the three always describe one turn and one rung** — a stored
+                // shortfall would be stamped only on herds some band is assigned to, and would read
+                // `0` on exactly the abandoned herds that are shedding.
+                upkeep_shortfall: herd.map_or(NO_UPKEEP_DEMAND, |herd| {
+                    crate::fauna::herd_upkeep_shortfall(herd, fauna, ladder)
+                }),
                 // **The MAINTAIN activity's own `workers_needed`** — hands to meet the demand, in
-                // its own unit. The take activity's answer rides `SourceYield::workers_needed`.
+                // its own unit, and `0` while the rung is still being **built** (its hands are the
+                // build's). It is the same number as `herders_needed` above for a held rung; the two
+                // fields differ only in that one is the animal web's own long-standing name for it.
+                // The take activity's answer rides `SourceYield::workers_needed`.
                 upkeep_workers_needed: herd.map_or(NO_CREW_ON_THIS_ACTIVITY, |herd| {
-                    ladder
-                        .rung(crate::fauna::herd_rung_key(herd))
-                        .upkeep_crew_needed(crate::fauna::herd_head_count(herd))
+                    if crate::fauna::herd_at_risk_is_built(herd) {
+                        herd_herders_needed(herd, fauna, ladder)
+                    } else {
+                        NO_CREW_ON_THIS_ACTIVITY
+                    }
                 }),
                 // **The neglect countdown**, resolved through the *same* `herd_keeping_rung` seam
                 // `advance_husbandry` gates the shed on, so the wire can never count down a grace

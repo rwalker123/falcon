@@ -760,9 +760,18 @@ pub enum UpkeepScale {
     /// **The rate as declared** — the demand does not vary with the source. What a rung whose cost is
     /// the *thing existing* rather than the thing's size says.
     Flat,
-    /// **× the source's head count** — `biomass / body_mass` for a herd. The pen's shape: twice the
-    /// animals, twice the keeping.
-    SourceHead,
+    /// **× the source's own LOAD reading, in whatever unit the rung quotes its rate in.** The
+    /// animal rungs quote **per keeper-load** — `head count / animals_per_herder` — which is what
+    /// lets one rate say *a shepherd minds 300 sheep and a cowherd 80 cattle*: the species owns the
+    /// ratio, the rung owns the rate. Linear in the source either way, which is the pen's shape:
+    /// twice the animals, twice the keeping.
+    ///
+    /// **It is deliberately NOT "head count".** A per-*head* rate would say "one keeper per 100 fowl
+    /// but one per 2 boar" and invent a 45-herder steppe megaherd that is a pure artifact of the
+    /// unit — the measurement error `animals_per_herder` exists to prevent, restated one level up.
+    /// The caller supplies the reading (`fauna::herd_keeper_loads`), so the species' own ratio is
+    /// folded in before the ladder ever sees it and there is still exactly one definition of it.
+    SourceLoad,
 }
 
 impl UpkeepScale {
@@ -770,17 +779,17 @@ impl UpkeepScale {
     pub fn as_str(self) -> &'static str {
         match self {
             UpkeepScale::Flat => "flat",
-            UpkeepScale::SourceHead => "source_head",
+            UpkeepScale::SourceLoad => "source_load",
         }
     }
 
     /// **The scale term this primitive reads**, given the source's own measure. `source_measure` is
-    /// the head count for [`Self::SourceHead`] and is ignored by [`Self::Flat`], which is why the
+    /// the load reading for [`Self::SourceLoad`] and is ignored by [`Self::Flat`], which is why the
     /// caller may pass anything — including [`UNSCALED_UPKEEP`] — for a rung it has not resolved.
     pub fn factor(self, source_measure: f32) -> f32 {
         match self {
             UpkeepScale::Flat => UNSCALED_UPKEEP,
-            UpkeepScale::SourceHead => source_measure.max(0.0),
+            UpkeepScale::SourceLoad => source_measure.max(0.0),
         }
     }
 }
@@ -1091,7 +1100,7 @@ impl RungDef {
     /// reaches its build and its take, exactly as it did before the term existed.
     ///
     /// `source_measure` is the source's own scale reading — a herd's head count for
-    /// [`UpkeepScale::SourceHead`], ignored by [`UpkeepScale::Flat`], so a caller with nothing to
+    /// [`UpkeepScale::SourceLoad`], ignored by [`UpkeepScale::Flat`], so a caller with nothing to
     /// measure passes [`UNSCALED_UPKEEP`]. It is the exact twin of [`Self::build_cost`]'s
     /// `cost_multiplier`: the rung owns the mechanic, the source is priced.
     pub fn upkeep_demand(&self, source_measure: f32) -> f32 {
@@ -2358,14 +2367,13 @@ mod tests {
     #[test]
     fn the_neglect_grace_is_per_rung_and_the_two_webs_disagree_about_its_direction() {
         let ladder = LadderConfig::builtin();
-        // **Each branch is asked on its OWN trigger**: a plant rung's neglect is an unmet upkeep,
-        // an animal rung's is an un-worked source (`docs/plan_standing_upkeep.md` §2.4), so the two
-        // graces live in different blocks and reading one seam for both would compare a live number
-        // with an absent one.
+        // **Every branch is asked on the one trigger there is** — consecutive turns of unmet
+        // upkeep (`docs/plan_standing_upkeep.md` §2.4). The penalties still differ in kind (a plant
+        // meter bleeds, an animal flock sheds); the grace that gates them does not.
         let tended = ladder.rung(RungKey::PlantTended).upkeep_grace_turns();
         let field = ladder.rung(RungKey::PlantField).upkeep_grace_turns();
-        let pastoral = ladder.rung(RungKey::AnimalPastoral).neglect_grace_turns();
-        let pen = ladder.rung(RungKey::AnimalPen).neglect_grace_turns();
+        let pastoral = ladder.rung(RungKey::AnimalPastoral).upkeep_grace_turns();
+        let pen = ladder.rung(RungKey::AnimalPen).upkeep_grace_turns();
 
         assert!(
             field < tended,
@@ -2386,46 +2394,82 @@ mod tests {
             assert_eq!(ladder.rung(key).neglect_grace_turns(), NO_NEGLECT_GRACE);
             assert_eq!(ladder.rung(key).upkeep_grace_turns(), NO_NEGLECT_GRACE);
         }
+        // **No shipped rung counts un-worked BUILD turns any more** — the trigger the plant branch
+        // retired in slice 3 and the animal branch in slice 4.
+        for key in RungKey::ALL {
+            assert_eq!(
+                ladder.rung(key).neglect_grace_turns(),
+                NO_NEGLECT_GRACE,
+                "{}:{} still declares a build grace",
+                key.branch().as_str(),
+                key.id()
+            );
+        }
     }
 
-    /// **ONLY THE PLANT RUNGS COST ANYTHING TO HOLD, and only they count shortfall turns.** The two
-    /// halves are one statement: an improvement that declares an upkeep is one whose meter bleeds
-    /// what nobody supplied, and both are the plant branch's alone today
-    /// (`docs/plan_standing_upkeep.md` §2.4 — the animal rungs are the next slice's).
+    /// **EVERY BUILT RUNG COSTS WORK TO HOLD, and every one counts SHORTFALL turns**
+    /// (`docs/plan_standing_upkeep.md` §2.4). The two halves are one statement: a rung with a
+    /// standing cost is one whose neglect is measured as unmet demand, so `build.grace_turns` — the
+    /// *un-worked-build* trigger — is `null` on all four and the live grace is the upkeep's.
     ///
-    /// Its predecessor asserted the same split about the retired `decay_fraction_per_turn`, which
-    /// the upkeep replaced outright: two dials described one mechanic and could disagree, giving a
-    /// rung that bled faster than it cost to hold.
+    /// The two webs pay the penalty in different currencies (a plant meter bleeds, an animal flock
+    /// sheds) and quote the rate in different units (`flat` per patch, `source_load` per keeper-load),
+    /// which is exactly what the scale term exists to express — but *what* is owed, and *when* it
+    /// starts costing, is now one mechanism for both.
+    ///
+    /// Its predecessor asserted a split about the retired `decay_fraction_per_turn`, which the upkeep
+    /// replaced outright: two dials described one mechanic and could disagree, giving a rung that
+    /// bled faster than it cost to hold.
     #[test]
-    fn only_the_plant_rungs_declare_a_standing_upkeep() {
+    fn every_built_rung_declares_a_standing_upkeep_and_none_counts_unworked_turns() {
         let ladder = LadderConfig::builtin();
-        for key in [RungKey::PlantTended, RungKey::PlantField] {
+        for key in [
+            RungKey::PlantTended,
+            RungKey::PlantField,
+            RungKey::AnimalPastoral,
+            RungKey::AnimalPen,
+        ] {
             let rung = ladder.rung(key);
             assert!(
-                rung.declares_upkeep() && rung.upkeep_demand(UNSCALED_UPKEEP) > NO_UPKEEP_DEMAND,
-                "a plant improvement costs work to hold, and that cost is what it bleeds"
+                rung.declares_upkeep()
+                    && rung.upkeep_demand(A_TWENTY_HEAD_FLOCK) > NO_UPKEEP_DEMAND,
+                "{}:{} costs work to hold",
+                key.branch().as_str(),
+                key.id()
+            );
+            assert!(
+                rung.upkeep_grace_turns() > NO_NEGLECT_GRACE,
+                "{}:{} forgives some shortfall before the penalty bites",
+                key.branch().as_str(),
+                key.id()
             );
             assert_eq!(
                 rung.build.as_ref().and_then(|build| build.grace_turns),
                 None,
-                "its neglect is counted in shortfall turns, so the build's own grace would be a \
-                 second number nothing reads"
+                "{}:{} counts shortfall turns, so the build's own grace would be a second number \
+                 nothing reads",
+                key.branch().as_str(),
+                key.id()
             );
         }
-        for key in [RungKey::AnimalPastoral, RungKey::AnimalPen] {
-            let rung = ladder.rung(key);
-            assert!(
-                !rung.declares_upkeep(),
-                "the animal branch still sheds animals rather than bleeding a meter"
-            );
-            assert!(
-                rung.build
-                    .as_ref()
-                    .and_then(|build| build.grace_turns)
-                    .is_some(),
-                "so it is the branch that still counts un-worked turns"
-            );
-        }
+        // **The scale term is where the two webs differ**, and that is the whole of the difference:
+        // a patch is one tile (`flat`), a herd is as many keeper-loads as it has animals.
+        assert_eq!(
+            ladder
+                .rung(RungKey::PlantTended)
+                .upkeep
+                .as_ref()
+                .map(|upkeep| upkeep.scaled_by),
+            Some(UpkeepScale::Flat)
+        );
+        assert_eq!(
+            ladder
+                .rung(RungKey::AnimalPen)
+                .upkeep
+                .as_ref()
+                .map(|upkeep| upkeep.scaled_by),
+            Some(UpkeepScale::SourceLoad)
+        );
     }
 
     // **RETIRED: `the_plant_rungs_declare_a_build_crew_and_the_animal_rungs_do_not`** — the two
@@ -2643,7 +2687,7 @@ mod tests {
             let idx = rung_index(json, "animal", "pen");
             json["rungs"][idx]["upkeep"] = serde_json::json!({
                 "work_per_turn": -1.0,
-                "scaled_by": "source_head",
+                "scaled_by": "source_load",
                 "grace_turns": 2,
             });
         });
@@ -2715,7 +2759,7 @@ mod tests {
     // ---- The three allocations, and the work each produces -----------------------------------
 
     /// **A herd big enough to want real keeping**, in head — the scale term
-    /// [`UpkeepScale::SourceHead`] reads. Chosen well above one so a scaled demand cannot be mistaken
+    /// [`UpkeepScale::SourceLoad`] reads. Chosen well above one so a scaled demand cannot be mistaken
     /// for a flat one.
     const A_TWENTY_HEAD_FLOCK: f32 = 20.0;
 
@@ -2878,7 +2922,7 @@ mod tests {
         assert_eq!(rung.upkeep_crew_needed(UNSCALED_UPKEEP), 1);
         let per_head = rung_with_upkeep(
             HALF_A_WORKER_TURN,
-            UpkeepScale::SourceHead,
+            UpkeepScale::SourceLoad,
             NO_NEGLECT_GRACE,
         );
         assert_eq!(per_head.upkeep_crew_needed(A_TWENTY_HEAD_FLOCK), 10);
@@ -2946,7 +2990,7 @@ mod tests {
         );
     }
 
-    /// **The scale term is the generic piece** (§2.6) — `flat` states the rate, `source_head`
+    /// **The scale term is the generic piece** (§2.6) — `flat` states the rate, `source_load`
     /// multiplies it by the source's own size.
     #[test]
     fn the_upkeep_scale_reads_the_sources_own_measure() {
@@ -2956,7 +3000,7 @@ mod tests {
             A_DEMAND_OF_ONE_WORKER_TURN,
             "a flat rate ignores whatever measure it is handed"
         );
-        let per_head = rung_with_upkeep(A_DEMAND_OF_ONE_WORKER_TURN, UpkeepScale::SourceHead, 0);
+        let per_head = rung_with_upkeep(A_DEMAND_OF_ONE_WORKER_TURN, UpkeepScale::SourceLoad, 0);
         assert_eq!(
             per_head.upkeep_demand(A_TWENTY_HEAD_FLOCK),
             A_DEMAND_OF_ONE_WORKER_TURN * A_TWENTY_HEAD_FLOCK,

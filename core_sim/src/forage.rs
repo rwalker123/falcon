@@ -1709,7 +1709,7 @@ pub fn patch_neglect_grace_remaining(patch: &ForagePatch, ladder: &LadderConfig)
 /// **WHAT IT COSTS TO HOLD THIS PATCH THIS TURN**, in work units — the at-risk rung's
 /// [`RungDef::upkeep_demand`], or [`NO_UPKEEP_DEMAND`] for a wild patch, which has nothing built on it
 /// to hold. [`UNSCALED_UPKEEP`] because a patch is **one tile**: the plant web has no head count for a
-/// rate to ride, which is the whole reason [`crate::intensification::UpkeepScale::SourceHead`] exists
+/// rate to ride, which is the whole reason [`crate::intensification::UpkeepScale::SourceLoad`] exists
 /// for the pen instead.
 ///
 /// **THE one definition**, reached by the decay pass, the labor arm's stamp and the snapshot alike —

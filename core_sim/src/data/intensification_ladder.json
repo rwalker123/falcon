@@ -149,10 +149,16 @@
       "_comment_ceiling_required": "Grazing 2d-delta: a species may only be tamed if its `husbandry_ceiling` reaches `pastoral` (Herd::can_domesticate).",
       "ceiling_required": "pastoral",
       "site_requirement": null,
+      "_comment_upkeep": "THE PACING-NEUTRAL INVERSION OF `herders_needed`, NOT A CHOSEN VALUE. A managed herd used to declare its keeper demand as a HEAD COUNT — ceil((biomass / body_mass) / animals_per_herder) — and that count is now a WORK RATE like every other standing cost: work_per_turn 1.0 x scaled_by source_load, where the load is the herd's own `head count / animals_per_herder` (fauna::herd_keeper_loads). Since one worker-turn is PER_WORKER_OUTPUT = 1.0, ceil(demand) IS the old ceil, so EVERY SPECIES ASKS FOR EXACTLY THE KEEPERS IT ASKED FOR BEFORE — a shepherd still minds 200 fowl and a cowherd still minds 12 aurochs. THE PER-SPECIES RATIO STAYS IN fauna_config.json's animals_per_herder, which is where it belongs: the species owns the ratio, the rung owns the rate, exactly as taming_cost_multiplier and work_cost divide the taming job. grace_turns 2 is this rung's own former build grace, moved onto the upkeep's trigger unchanged: a tamed herd with no fence stays near its people out of habit for a turn or two, then drifts.",
+      "upkeep": {
+        "work_per_turn": 1.0,
+        "scaled_by": "source_load",
+        "grace_turns": 2
+      },
       "_comment_build": "work_cost 50 = FIFTY WORKER-TURNS, times the species' `taming_cost_multiplier` (fauna_config.json — a Steppe Runner is FIVE TIMES THE WORK, 250 units, where the retired `taming_rate` said the crew was five times worse at the job). THE 50 IS A REFERENCE-CREW CHOICE, NOT A DERIVATION: this rung declares no crew, so there was no crew to multiply today's 25 turns by, and 2 is what rung 2 of the plant web wants for the same claim (you manage the wild source in place). A herd's real crew is `herders_needed`, so a Tame now takes 25 turns at 2 keepers, 5 at 10 and 50 at 1 — the rung was crew-BLIND before, and a crew-blind build is exactly what the work model removes. decay_fraction_per_turn is NULL and that is a DELETION, not a retune: the neglect-escape arc made `domestication_progress` monotone-up, so the 0.01 that sat here was read by NOTHING (RungDef::build_decay has two production call sites, both on the plant branch) and documented a tameness-bleed the sim does not have. grace_turns 2: a tamed herd with no fence stays near its people out of habit for a turn or two, then drifts — the same number as the plant rung 2, because both rungs make the same claim (you manage the wild source in place). PLAYTEST DIALS.",
       "build": {
         "work_cost": 50.0,
-        "grace_turns": 2
+        "grace_turns": null
       },
       "_comment_behavior": "Slice 3b, the thesis in action — THE BEHAVIOUR CHANGE IS THIS DIFF. `harvest` was `passive` (a tamed herd paid its owner with no workers at all); §3 retires that: EVERY rung is worker-driven, so a pastoral herd is now `worker_take` like a wild one — it yields only through a normal Hunt assignment. The payoff is not zero workers, it is YIELD PER WORKER: `herd_ecology` already gives a tamed herd the pastoral r (wild x `pastoral_gain` 1.5), so the same workers take ~1.5x the sustainable food. `movement` was `roam`; it is now `drift_to_owner` — the proximity spine's middle rung (wild roams its full range, tamed drifts to the camp, penned is fixed at the fence), which is also less chasing and so more effective yield.",
       "behavior": {
@@ -174,10 +180,16 @@
       "_comment_ceiling_required": "Grazing 2d-delta: only a `pen`-ceiling species may be fenced (Herd::can_pen).",
       "ceiling_required": "pen",
       "site_requirement": null,
+      "_comment_upkeep": "THE SAME RATE, A LONGER GRACE — and the difference is the fence. work_per_turn 1.0 x source_load is identical to the pastoral rung's, because a penned animal is not less work to mind than an unfenced one and moving that number would break the pacing-neutrality this slice is built on. WHAT THE FENCE BUYS IS TIME: grace_turns 6 against pastoral's 2, this rung's own former build grace moved across unchanged — the turns-side statement of the same claim fauna_config's pen_escape_fraction (0.10) < pastoral_escape_fraction (0.25) already makes about the RATE animals leave at. Do not flatten the two: a pen that forgave neglect no longer than open range would make the fence worth nothing but its capacity.",
+      "upkeep": {
+        "work_per_turn": 1.0,
+        "scaled_by": "source_load",
+        "grace_turns": 6
+      },
       "_comment_build": "work_cost 75 = SEVENTY-FIVE WORKER-TURNS per pen / per extension ring, a REFERENCE-CREW choice of 3 against today's 25 turns for the reason the `pastoral` rung's note gives (this rung declares no crew either). Penning is a flat cost for every species — a fence is a fence — so it takes no per-species multiplier; only TAMING varies. decay_fraction_per_turn is NULL rather than the old 0.0: pen construction does not bleed, and `null` says so where a `0` read like a live dial that happened to be parked. grace_turns 6: the fence does the holding, so an abandoned pen keeps its flock far longer than an unfenced pastoral herd keeps its — the turns-side statement of the same claim `pen_escape_fraction < pastoral_escape_fraction` already makes about the rate. PLAYTEST DIALS.",
       "build": {
         "work_cost": 75.0,
-        "grace_turns": 6
+        "grace_turns": null
       },
       "behavior": {
         "movement": "fixed",

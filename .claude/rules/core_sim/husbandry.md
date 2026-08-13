@@ -163,19 +163,66 @@ bands (`extinction_floor < collapse_fraction < stressed_fraction < 1`) in all th
 `hunt.provisions_per_biomass > 0`, and the follow/market bounds. (The **knowledge** bounds moved to
 `LadderConfig::validate` with the dials in slice 4, where they hold for both webs at once.)
 
+### THE KEEPER DEMAND IS AN UPKEEP RATE, and the shed is its shortfall penalty
+
+**`herders_needed` stopped being a declared head count and became work per turn**
+(`docs/plan_standing_upkeep.md` §2.4). Both managed rungs declare
+`upkeep: { work_per_turn: 1.0, scaled_by: source_load }`, and the source supplies the **keeper load**
+— `head count / animals_per_herder` (`fauna::herd_keeper_loads`). Since one worker-turn is
+`PER_WORKER_OUTPUT`, `upkeep_crew_needed = ceil(load)` **is** the
+`ceil((biomass/body_mass)/animals_per_herder)` the retired helper computed, so every species asks for
+exactly the keepers it always asked for (`every_species_asks_for_the_keepers_it_asked_for_before`).
+
+- **The species owns the ratio, the rung owns the rate** — the same division `taming_cost_multiplier`
+  and `work_cost` make of the taming job. `animals_per_herder` stays in `fauna_config.json` and is
+  folded into the *measure* before the ladder ever sees it, which is why the scale primitive is
+  `source_load` and emphatically **not** a per-head rate: per-head says *"one keeper per 100 fowl but
+  one per 2 boar"* and invents a 45-herder steppe megaherd that is a pure artifact of the unit.
+- **There is exactly one definition of it.** `fauna::raw_herders_needed` is the rung's own
+  `upkeep_crew_needed` at this herd's load; `herd_herders_needed` prefers the hysteresis-stabilized
+  `Herd::herders_needed` and falls back to it; `Herd::stabilize_herders_needed` is *handed* it rather
+  than recomputing a `ceil` of its own. The free `fauna::herders_needed` is retired with the second
+  copy it would otherwise have been.
+- **`Herd::herded_fraction` is retired too**, and `Herd::upkeep_supplied` carries what it did — the
+  one stored fact of the keeping. The published ratio (`fauna::herd_herded_fraction`), the shortfall
+  and the animals nobody can hold are all derived from it, so no two of them can describe different
+  staffings. *"Zero keepers last turn"* — the total-abandonment gate `regrow_biomass` and the bleed-out
+  read — is simply `upkeep_supplied <= 0`.
+
 ### The shed waits out a NEGLECT GRACE, and the notice does not
 
-`Herd::neglect_turns` counts **consecutive** turns the keepers failed to hold the flock
-(`herded_fraction < FULLY_HERDED`), reset outright by any turn they did — and by a herd not being
-managed at all, since a wild herd is nobody's to neglect. **Animals leave only while that counter
-exceeds the herd's rung's `grace_turns`** (`RungDef::neglect_grace_turns`), resolved through
-**`fauna::herd_keeping_rung`**: `animal:pen` for a penned herd, `animal:pastoral` for any other
-managed one.
+`Herd::neglect_turns` counts **consecutive** turns the keeping went unmet, reset outright by any turn
+it was met — and by a herd not being managed at all, since a wild herd is nobody's to neglect.
+**Animals leave only while that counter exceeds the herd's rung's `upkeep.grace_turns`**
+(`RungDef::upkeep_grace_turns`), resolved through **`fauna::herd_keeping_rung`**: `animal:pen` once
+there is any pen progress, `animal:pastoral` for any other managed herd.
 
+- **THE SHED IS CONTINUOUS IN THE SHORTFALL.** `uncontained_overage` is the unmet demand converted
+  back into animals (`shortfall_in_loads × animals_per_herder`), which is the same number the retired
+  `herded_fraction × herders_needed × animals_per_herder` capacity reconstruction produced — so half
+  the keepers a herd wants leaves half its animals uncontained. The retired
+  `herded_fraction < FULLY_HERDED` gate was a threshold that answered only *whether* a herd was
+  under-contained, the same step the plant web's binary `tended_this_turn` flag took.
+- **`MIN_ESCAPE_ANIMALS` is the animal branch's quantum, and it is why its counter can differ from the
+  plant web's.** A plant meter is continuous, so any shortfall bleeds; a herd loses **whole animals**,
+  so a shortfall of less than one animal is not under-containment at all — the same whole-animal
+  discipline `quantise_animal_take` imposes on the take.
+- **A METER IS OWED BUILDERS WHILE INCOMPLETE AND KEEPERS ONCE HELD** (`fauna::herd_upkeep_supply`,
+  the twin of `forage::patch_upkeep_supply`). A `Tame` in flight owes its build crew — you cannot be
+  billed to keep a tameness you have not finished earning — and a domesticated herd owes keepers.
+  **The verb names the meter**, so a `Corral` starting on a herd with no pen progress answers for
+  `animal:pen` from its first turn: the supply is stamped in Population and read by the *next*
+  Logistics pass, so it has to describe the meter that pass will judge.
+- **The supply accumulates across the bands working the herd** (`+=`, cleared once per turn by
+  `advance_husbandry` after everything downstream has read it). The demand is per-**source**, so two
+  bands each put a fraction of it on the ground; assigning would let whichever band the loop visited
+  last speak for all of them.
 - **It is `herd_keeping_rung`, not `herd_rung`.** The latter answers which rung the herd has
   *completed*, and a half-tamed herd is already owned and already sheds — reading `animal:wild` there
   (no build, so no grace) would hand the herd in the middle of a 25-turn investment the *least*
-  forgiveness on the ladder.
+  forgiveness on the ladder. It reads the **newest meter with progress**, so a half-raised pen already
+  owes the pen rung's longer grace; the escape *rate* still reads `is_corralled()`, because a fence
+  that is not up yet holds nothing.
 - **The under-herded notice is deliberately NOT gated on the grace.** It fires the turn the herd
   genuinely becomes under-contained, which is exactly the window in which the player can still send
   hands and lose nothing; warning only once the animals were leaving would spend the grace on silence.
@@ -191,8 +238,23 @@ managed one.
   and **nothing read**. It was deleted from the animal rungs first and retired outright when the plant
   branch moved onto the standing upkeep, where **shortfall is the decay**
   (`docs/plan_standing_upkeep.md` §2.4): a rung that loses exactly the work nobody supplied needs no
-  second dial saying how fast it forgets. **Neither animal rung declares an `upkeep` yet** — their
-  neglect is still the shed, gated on `build.grace_turns`.
+  second dial saying how fast it forgets. **`build.grace_turns` went the same way** — both animal
+  rungs declare `null` and their live grace is `upkeep.grace_turns`, because two numbers for one
+  trigger is what that arrangement exists to prevent.
+
+### THE PEN'S FEED IS ITS OWN MECHANISM, and it is not the upkeep
+
+The `upkeep` block is the **work** half of holding a rung — hands, in work units. What a pen *eats* is
+a separate account with a separate currency and its own levers, all in `fauna_config.json`'s
+`husbandry.pen`: `upkeep_per_biomass` is the gross feed rate, the fenced footprint's pasture and any
+hay **offset** it into the net larder bill the keeper actually pays (`penLarderBill` / `penHayFood`),
+`pen_fed_fraction` records how much of that bill was met, and `starve_shrink_rate` is what an underfed
+pen loses. A keeper who is present but **broke** starves the herd; a keeper who is **absent** lets it
+shed. The two penalties are orthogonal and a pen can take both in one turn.
+
+Folding the feed into the `upkeep` block would put food and labour in one number, and the
+`larder_delta == foodIncome − foodConsumption − penFeedUpkeep` identity — the one the client's larder
+line is reconciled against — reads the feed account by name.
 
 ## The `Tame` verb (Intensification rung 2) — the grammar fix
 
@@ -286,12 +348,15 @@ gated, **paid** verb, so both food webs read the same:
 - **Config** — the whole rung is `intensification_ladder.json`'s `animal:pastoral` record: verb `tame`,
   `unlock_knowledge: "herding"`, **`earns_knowledge: "penning"`** (slice 4 — a config edit, exactly as
   promised),
-  `ceiling_required: "pastoral"`, `build: { work_cost 50, grace_turns 2 }`, `upkeep: null`.
+  `ceiling_required: "pastoral"`, `build: { work_cost 50, grace_turns null }`,
+  `upkeep: { work_per_turn 1.0, scaled_by source_load, grace_turns 2 }`.
   The **50 is a reference-crew choice, not a derivation** — the rung declares no crew, so there was
   nothing to multiply today's 25 turns by, and 2 keepers is what rung 2 of the plant web wants for the
-  same claim; `grace_turns 2` is the **un-worked-turn** grace the shed reads, which is still the
-  animal branch's trigger, and `upkeep` is null because this branch sheds animals rather than bleeding
-  a meter;
+  same claim. The **upkeep is the pacing-neutral inversion of `herders_needed`**: at `1.0` work per
+  keeper-load, `ceil(demand)` is the count this rung has always asked for. `grace_turns 2` is this
+  rung's own former *build* grace moved onto the upkeep's trigger unchanged — a tamed herd with no
+  fence stays near its people for a turn or two, then drifts — and `build.grace_turns` is `null`
+  because there is only one trigger now;
   **`crew_needed` and `yield_fraction_while_building` are both retired** — the player states the
   build's crew on the verb, so neither a rung-level staffing floor nor a dip has anything left to say.
   **The Tame IS crew-scaled now**, at **the crew the player staffs** — it was crew-*blind* before,
@@ -408,10 +473,11 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
     seed corn and lose future yield, or go hungry).
   - *Sheds-if-under-contained, AFTER A GRACE (neglect-escape arc, `docs/plan_fauna_neglect_escape.md`)*
     — the binary escape is **retired**. In `advance_husbandry` (Logistics, before Population — on
-    `Herd::corralled_tended_this_turn`, the one-turn-lag flag the plant web has since replaced with a
-    supplied-work reading) an under-contained pen **sheds whole
+    `Herd::corralled_tended_this_turn`, which gates the pen's **feed** and survives both webs' move
+    onto the upkeep because feed is a separate account) an under-contained pen **sheds whole
     animals over its labor capacity** into the wild web at `pen_escape_fraction` (slower than pastoral
-    — the fence buys time),
+    — the fence buys time, and the pen rung's longer `upkeep.grace_turns` says the same thing on the
+    turns axis),
     and an untended one is BOTH un-herded (sheds) and un-fed (`pen_fed_fraction = NOT_FED`, so it does
     not regrow — a fast breeder's growth would otherwise cancel the shed). A **fully-abandoned pen bleeds
     its whole flock out and DESPAWNS**: it keeps shedding until it can no longer shed a whole animal
@@ -427,7 +493,7 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
     `status=escaped reason=untended action=corral herd=<id> x=<x> y=<y>` in the detail. `corral_at`
     grants a one-turn grace so a freshly-penned herd doesn't shed before its keeper takes up tending. A
     keeper who is present but *broke* **starves** the herd (above) — it produces no shed (a keeper holds
-    the flock, `herded_fraction > 0`), so it keeps its pen and recovers when fed; only animals *leaving*
+    the flock — its keeping is met), so it keeps its pen and recovers when fed; only animals *leaving*
     empty a herd.
 - **Persistence** — the checkpoint clones the whole `HerdRegistry` (`SimState::herds`), so **every**
   `Herd` field rewinds with a rollback, `corralled_at` / `corral_progress` / `pen_radius` /

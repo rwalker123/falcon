@@ -1392,17 +1392,26 @@ pub fn advance_labor_allocation(
                     }
                     // **THE STANDING UPKEEP, PAID BY ITS OWN CREW** — the animal twin; see the
                     // Forage arm for why it is stamped once, here, before the pen's tend branch
-                    // returns. A herd's demand scales with its head count where the rung says so
-                    // (`UpkeepScale::SourceHead`).
-                    let upkeep_demand = ladder
-                        .rung(fauna::herd_rung_key(herd))
-                        .upkeep_demand(fauna::herd_head_count(herd));
-                    // **Accumulated, not assigned** — the plant arm's rule and for its reason: the
-                    // demand is per-SOURCE, so the keepers of every band working this herd sum into
-                    // one supply, and the last band visited must not speak for all of them.
-                    // `advance_husbandry` zeroes it at the top of every turn.
-                    herd.upkeep_supplied += activity_work(maintain_workers);
-                    herd.upkeep_shortfall = upkeep_shortfall(upkeep_demand, herd.upkeep_supplied);
+                    // returns. A herd's demand is its **keeper load** (`head count /
+                    // animals_per_herder`) times the rung's rate (`UpkeepScale::SourceLoad`), so a
+                    // shepherd's 200 fowl and a cowherd's 12 aurochs are one rate.
+                    //
+                    // **Which crew answers for it depends on whether the rung is built**
+                    // (`fauna::herd_upkeep_supply`): a `Tame` or `Corral` in flight is owed its
+                    // **build** crew, a herd being held is owed its **keepers**. And the verb names
+                    // the meter, so a `Corral` starting on a herd with no pen progress answers for
+                    // `animal:pen` from its first turn — the supply is read by the *next* Logistics
+                    // pass, so it has to describe the meter that pass will judge.
+                    //
+                    // **Accumulated, not assigned** — the demand is per-SOURCE, so the keepers of
+                    // every band working this herd sum into one supply and the last band visited
+                    // must not speak for all of them. `advance_husbandry` zeroes it once per turn.
+                    herd.upkeep_supplied += fauna::herd_upkeep_supply(
+                        herd,
+                        improvement,
+                        activity_work(build_workers),
+                        activity_work(maintain_workers),
+                    );
                     // **The steady headline** — the forward-projected average food/turn over the next
                     // `realized_horizon` turns, computed from the herd's PRE-take state (before the pen
                     // feed/harvest or the wild take mutates it), so it equals the assign-time seed
@@ -1455,38 +1464,6 @@ pub fn advance_labor_allocation(
                     // player sees both halves of the trade rather than one netted number. Marks the
                     // herd tended so it doesn't escape in `advance_husbandry`. The animal mirror of
                     // the tended-patch arm in Forage.
-                    // **The standing herder cost — owed by EVERY managed rung, every turn** (slice
-                    // 8), resolved *before* the rung branches so a pastoral herd and a pen are charged
-                    // by the same rule. `herders_needed` scales with the herd (`ceil(animals /
-                    // animals_per_herder)`), retiring "a pen of 2 and a pen of 200 need one keeper".
-                    //
-                    // **It is owed on WAIT turns too.** A herd that cannot spare a whole animal this
-                    // turn still has to be watched, kept from running off, and its fences kept up — so
-                    // this is written from the assignment's head-count, never from whether a take
-                    // happened. `advance_husbandry` reads it next turn (the `pen_fed_fraction` lag) and
-                    // degrades an under-herded herd **proportionally** — never a binary escape.
-                    //
-                    // A **wild** herd writes nothing here: it isn't yours to maintain
-                    // (`fauna::herders_needed` — hunt = reach + carry, harvest = maintain + take).
-                    //
-                    // **An INVESTMENT policy (Tame/Corral) uses the ownership-INDEPENDENT would-be crew**
-                    // (taming-startup-lag fix): a Tame/Corral assignment *means* the herd is being
-                    // managed, but ownership is only recorded later this turn (Population, the Tame arm's
-                    // `accrue_domestication`), so the ownership-gated `herd_herders_needed` reads `0` on
-                    // the turn taming starts and the crew collapses to the take-side hauler count — "1 of
-                    // 3 working" on a full crew. `would_be_herders_needed` is the biomass-derived crew
-                    // regardless of recorded ownership (0 only for a `wild`-ceiling species, which cannot
-                    // be tamed). **Extractive policies stay ownership-gated** — a wild Sustain-hunted herd
-                    // must read `0` here, or its `herded_fraction` would drop below 1 and it would falsely
-                    // read under-herded and shed.
-                    let herders_needed = if improvement.is_some() {
-                        fauna::would_be_herders_needed(herd, &fauna)
-                    } else {
-                        fauna::herd_herders_needed(herd, &fauna)
-                    };
-                    if herders_needed > 0 {
-                        herd.herded_fraction = fauna::herded_fraction(workers, herders_needed);
-                    }
                     if herd.is_corralled() {
                         herd.corralled_tended_this_turn = true;
                         // **The larder offset (Grazing 2d §2.3).** A penned herd grazes its fenced
@@ -4175,8 +4152,10 @@ mod labor_yield_tests {
         // against the shared helpers rather than magic numbers, so it tracks a roster retune.
         let (herders, haulers) = {
             let world_fauna = world.resource::<FaunaConfigHandle>().get();
+            let world_ladder = world.resource::<LadderConfigHandle>().get();
             let registry = world.resource::<HerdRegistry>();
-            let herders = crate::fauna::herd_herders_needed(&registry.herds[0], &world_fauna);
+            let herders =
+                crate::fauna::herd_herders_needed(&registry.herds[0], &world_fauna, &world_ladder);
             let per_worker = crate::fauna::herd_hunt_yield(&registry.herds[0], &world_fauna)
                 .apply(equipped_haul_rate(), 1.0)
                 .provisions;
@@ -4813,8 +4792,9 @@ mod labor_yield_tests {
         // with the take that just drew it, so reading it afterwards would measure a different turn).
         let (herders, steady_haul, client_max_useful) = {
             let fauna = world.resource::<FaunaConfigHandle>().get();
+            let ladder = world.resource::<LadderConfigHandle>().get();
             let herd = world.resource::<HerdRegistry>().find(HERD_ID).unwrap();
-            let herders = crate::fauna::herd_herders_needed(herd, &fauna);
+            let herders = crate::fauna::herd_herders_needed(herd, &fauna, &ladder);
             let ceiling_biomass = crate::fauna::hunt_escapement_ceiling(
                 0.5,
                 herd.biomass,

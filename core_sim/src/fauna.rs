@@ -521,15 +521,6 @@ pub struct Herd {
     /// deliberate one-turn lag as `corralled_tended_this_turn`, and reset to `1.0` after reading.
     /// Exported as `penFedFraction`.
     pub pen_fed_fraction: f32,
-    /// Transient per-turn signal: how well this managed herd was **staffed** last turn — `min(1,
-    /// assigned / herders_needed)`, written by the Hunt arm of `advance_labor_allocation` (Population)
-    /// and read one turn later by `advance_husbandry` (Logistics), the same deliberate lag as
-    /// [`Herd::pen_fed_fraction`], whose shape this mirrors exactly.
-    ///
-    /// **Understaffing degrades proportionally — it never triggers an escape** (see
-    /// [`herded_fraction`]). `1.0` = fully herded (and the value for a herd nobody needs to herd).
-    /// Exported as `herdedFraction`.
-    pub herded_fraction: f32,
     /// Transient edge-gate for the starving-pen feed line: `true` while the herd is *already known* to
     /// be starving, so `advance_husbandry` announces the famine **once** on the turn it starts rather
     /// than every turn it continues. Cleared when the pen is fed again (so a *second* famine is
@@ -612,20 +603,23 @@ pub struct Herd {
     /// Rides the checkpoint with the rest of the registry, so a rollback rewinds a spent grace rather
     /// than handing the herd a fresh one.
     pub neglect_turns: u16,
-    /// **WHAT THE MAINTAIN CREW SUPPLIED TOWARD THIS HERD'S STANDING UPKEEP THIS TURN**, in work
-    /// units — `activity_work(maintain_workers)`, stamped by the labor arm that resolved it
-    /// (`docs/plan_standing_upkeep.md` §2).
+    /// **WHAT THE AT-RISK METER'S OWN CREW SUPPLIED THIS TURN**, in work units — the **keepers**
+    /// once that rung is built and the **builders** while it is not
+    /// ([`herd_upkeep_supply`], `docs/plan_standing_upkeep.md` §2.4), summed over every band working
+    /// the herd.
+    ///
+    /// **IT IS THE ONE STORED FACT OF THE KEEPING**, and it carries what the retired
+    /// `herded_fraction` did: the published ratio ([`herd_herded_fraction`]), the shortfall
+    /// ([`herd_upkeep_shortfall`]) and the animals nobody can hold ([`uncontained_overage`]) are all
+    /// derived from it, so no two of them can describe different staffings. *"Zero keepers last
+    /// turn"* — the total-abandonment gate `regrow_biomass` and the bleed-out read — is simply
+    /// `upkeep_supplied <= 0`.
     ///
     /// **Transient per-turn scratch on [`Self::build_turns_remaining`]'s cycle, and for its reason**:
-    /// it describes *this* turn's keepers, so a herd the player took the hands off must stop
-    /// publishing a figure a crew that is no longer there paid. The Logistics decay pass clears it;
-    /// the labor arm re-stamps it the same turn if anyone is still keeping the herd (Logistics runs
-    /// before Population).
+    /// it describes *this* turn's crew, so a herd the player took the hands off must stop publishing
+    /// a figure a crew that is no longer there paid. `advance_husbandry` clears it once per turn
+    /// after everything downstream has read it, and the labor arm re-stamps it in Population.
     pub upkeep_supplied: f32,
-    /// **WHAT WENT UNMET**, in work units — [`crate::intensification::upkeep_shortfall`], and
-    /// therefore exactly what [`crate::intensification::RungDef::upkeep_decay`] bleeds off the meter
-    /// past the rung's grace. Same transient cycle as [`Self::upkeep_supplied`].
-    pub upkeep_shortfall: f32,
 }
 
 impl Herd {
@@ -698,7 +692,6 @@ impl Herd {
             fodder_delivery_rate: 0.0,
             corralled_tended_this_turn: false,
             pen_fed_fraction: PEN_FULLY_FED,
-            herded_fraction: FULLY_HERDED,
             pen_starving: false,
             tamed_this_turn: false,
             // A fresh herd is wild (no owner, no pen), so it needs no keepers; `stabilize_herders_needed`
@@ -710,7 +703,6 @@ impl Herd {
             wounds: DamageLedger::default(),
             neglect_turns: NEGLECT_NONE,
             upkeep_supplied: NO_UPKEEP_DEMAND,
-            upkeep_shortfall: NO_UPKEEP_DEMAND,
         }
     }
 
@@ -940,9 +932,14 @@ impl Herd {
         false
     }
 
-    /// **Update the hysteresis-stabilized [`herders_needed`] for this herd** and return it — run once
+    /// **Update the hysteresis-stabilized keeper requirement for this herd** and return it — run once
     /// per turn for every herd in [`advance_husbandry`]. `band` is the deadband in **animals**
     /// (`animals_per_herder × husbandry.herders_hysteresis_fraction`).
+    ///
+    /// **`raw` is passed in rather than recomputed**, because the keeper count has exactly one
+    /// definition since it became an upkeep ([`raw_herders_needed`], the rung's own
+    /// `upkeep_crew_needed` at this herd's keeper load). A second `ceil` here would be a copy that
+    /// could drift from the ladder the moment a rung's rate moved.
     ///
     /// A **wild** herd isn't yours to maintain, so it stays `0` (the `herd_herders_needed` wild gate).
     /// A **managed** herd's requirement moves **asymmetrically**:
@@ -956,12 +953,16 @@ impl Herd {
     ///
     /// Never below `1` for a managed herd that still has animals (the raw `ceil` floor); an emptied
     /// managed herd reads `0`.
-    pub fn stabilize_herders_needed(&mut self, animals_per_herder: f32, band: f32) -> u32 {
+    pub fn stabilize_herders_needed(
+        &mut self,
+        raw: u32,
+        animals_per_herder: f32,
+        band: f32,
+    ) -> u32 {
         if !(self.is_corralled() || self.owner.is_some()) {
             self.herders_needed = 0;
             return 0;
         }
-        let raw = herders_needed(self.biomass, self.body_mass, animals_per_herder);
         let current = self.herders_needed;
         let animals = if self.body_mass > 0.0 {
             self.biomass / self.body_mass
@@ -1267,17 +1268,44 @@ pub(crate) fn managed_yield_biomass(biomass: f32, capacity: f32, _ecology: &Ecol
 /// beast is not proportionally more work. See that field for the unit error this replaced.
 ///
 /// A herd with no `body_mass` (impossible — `validate()` requires it positive) or no animals left
-/// needs nobody; the `max(1)` floor otherwise means *some* crew is always on the books, so a herd can
-/// never be fully staffed by zero people.
-pub fn herders_needed(biomass: f32, body_mass: f32, animals_per_herder: f32) -> u32 {
+/// presents no load at all.
+///
+/// # It is a MEASURE, not a demand — the ladder turns it into one
+///
+/// **The keeper count is an `upkeep` now** (`docs/plan_standing_upkeep.md` §2.4): the rung declares
+/// `work_per_turn: 1.0, scaled_by: source_load`, so `upkeep_demand = loads` work units and
+/// `upkeep_crew_needed = ceil(loads)` — which is the `ceil((biomass/body_mass)/animals_per_herder)`
+/// this used to compute directly, hand for hand on every species. The arithmetic did not move; the
+/// *authority* did, so a herd's standing cost is quoted in the same work units as everything else on
+/// the ladder and the `max(1)` floor is gone as redundant (any positive load ceils to at least one).
+pub fn herd_keeper_loads(biomass: f32, body_mass: f32, animals_per_herder: f32) -> f32 {
     // NaN-safe by construction: every guard is a positive test, so a NaN input falls through to `0`
-    // (nobody needed) rather than sneaking past a negated comparison.
+    // (no load) rather than sneaking past a negated comparison.
     let sane = biomass > 0.0 && body_mass > 0.0 && animals_per_herder > 0.0;
     if !sane {
-        return 0;
+        return NO_KEEPER_LOAD;
     }
-    let animals = biomass / body_mass;
-    ((animals / animals_per_herder).ceil() as u32).max(1)
+    (biomass / body_mass) / animals_per_herder
+}
+
+/// **A herd that presents nothing to mind** — an empty herd, or one whose species declares no
+/// `animals_per_herder`. Named because a bare `0.0` in a load position reads as a missing value
+/// rather than the deliberate *"there is nothing here to keep"* it is.
+pub const NO_KEEPER_LOAD: f32 = 0.0;
+
+/// **ONE keeper-load** — the measure at which a rung's `upkeep.work_per_turn` is quoted, so
+/// `rung.upkeep_demand(ONE_KEEPER_LOAD)` reads back *"the work one keeper-load costs"*. It is the
+/// animal branch's twin of [`crate::intensification::UNSCALED_UPKEEP`], and the divisor that turns a
+/// shortfall in **work** back into a shortfall in **loads**.
+pub const ONE_KEEPER_LOAD: f32 = 1.0;
+
+/// [`herd_keeper_loads`] for a herd, resolving its species' `animals_per_herder` live off the config.
+pub fn herd_keeper_load(herd: &Herd, fauna: &FaunaConfig) -> f32 {
+    herd_keeper_loads(
+        herd.biomass,
+        herd.body_mass,
+        fauna.animals_per_herder_for(&herd.species),
+    )
 }
 
 /// [`herders_needed`] for a herd, resolving its species' `animals_per_herder` live off the config (the
@@ -1300,7 +1328,7 @@ pub fn herders_needed(biomass: f32, body_mass: f32, animals_per_herder: f32) -> 
 /// `owner.is_some()` is exactly "somebody's herd" — a **wild** herd (no owner, no pen) reads `0` and is
 /// untouched. `corral_at` does **not** require domestication (it gates on `can_pen()` only), so the
 /// `is_corralled()` half keeps a penned-but-untamed fixture staffed.
-pub fn herd_herders_needed(herd: &Herd, fauna: &FaunaConfig) -> u32 {
+pub fn herd_herders_needed(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> u32 {
     if !(herd.is_corralled() || herd.owner.is_some()) {
         return 0;
     }
@@ -1312,12 +1340,21 @@ pub fn herd_herders_needed(herd: &Herd, fauna: &FaunaConfig) -> u32 {
         return herd.herders_needed;
     }
     // `0` = not yet stabilized: a herd the turn it becomes managed (before the next `advance_husbandry`
-    // seeds it) or a test-built managed herd. Fall back to the raw ceil so it is never wrong for a turn.
-    herders_needed(
-        herd.biomass,
-        herd.body_mass,
-        fauna.animals_per_herder_for(&herd.species),
-    )
+    // seeds it) or a test-built managed herd. Fall back to the raw count so it is never wrong for a
+    // turn — **through the ladder**, which owns the definition since the demand became an upkeep.
+    raw_herders_needed(herd, fauna, ladder)
+}
+
+/// **THE unstabilized keeper count** — the rung's own `upkeep_crew_needed` at this herd's keeper
+/// load, and the single definition of *how many hands a herd wants*
+/// (`docs/plan_standing_upkeep.md` §2.4). [`herd_herders_needed`] prefers the hysteresis-stabilized
+/// field and falls back to this; [`Herd::stabilize_herders_needed`] is *seeded* from it.
+///
+/// `0` for a herd standing on no keeping rung, and for one whose rung declares no upkeep.
+pub fn raw_herders_needed(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> u32 {
+    herd_keeping_rung(herd, ladder).map_or(0, |rung| {
+        rung.upkeep_crew_needed(herd_keeper_load(herd, fauna))
+    })
 }
 
 /// **The crew this herd WOULD owe if it were managed** — ownership-INDEPENDENT (fauna neglect-escape,
@@ -1340,47 +1377,32 @@ pub fn herd_herders_needed(herd: &Herd, fauna: &FaunaConfig) -> u32 {
 /// count and does not re-flicker ±1; only a not-yet-owned tameable herd (field `0`) falls back to the raw
 /// ceil. So for every managed herd this equals `herd_herders_needed` — they diverge only where the
 /// ownership gate does.
-pub fn would_be_herders_needed(herd: &Herd, fauna: &FaunaConfig) -> u32 {
+pub fn would_be_herders_needed(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> u32 {
     if !herd.can_domesticate() {
         return 0;
     }
     if herd.herders_needed > 0 {
         return herd.herders_needed;
     }
-    herders_needed(
-        herd.biomass,
-        herd.body_mass,
-        fauna.animals_per_herder_for(&herd.species),
-    )
+    // **The rung it WOULD stand on**, since it may not stand on one yet: an unowned tameable herd
+    // has no keeping rung, so asking `raw_herders_needed` would answer `0` — the very startup lag
+    // this function exists to close.
+    ladder
+        .rung(if herd.is_corralled() {
+            RungKey::AnimalPen
+        } else {
+            RungKey::AnimalPastoral
+        })
+        .upkeep_crew_needed(herd_keeper_load(herd, fauna))
 }
 
-/// **How well a managed herd is staffed this turn** — `min(1, assigned / needed)`, the herding twin of
-/// `Herd::pen_fed_fraction`.
-///
-/// **Understaffing degrades PROPORTIONALLY; it never triggers an escape.** A binary threshold would
-/// destroy a 25-turn investment on *rounding*, as a herd's biomass breathes across a herder boundary
-/// — that is an accident, not a decision. So this scales the damage exactly the way an underfed pen's
-/// `pen_fed_fraction` scales `pen.starve_shrink_rate`: half the herders you need, half the tending,
-/// and the rung's meter bleeds proportionally — floored, and recoverable the moment you staff it
-/// again. **Binary escape survives for total abandonment only** (zero herders — nobody is minding the
-/// gate), which is the one case where "it broke out" is the honest model.
-///
-/// A herd that needs nobody (wild, or empty) is trivially fully herded.
-pub fn herded_fraction(assigned: u32, needed: u32) -> f32 {
-    if needed == 0 {
-        return FULLY_HERDED;
-    }
-    (assigned as f32 / needed as f32).clamp(0.0, FULLY_HERDED)
-}
-
-/// A fully-staffed managed herd — the neutral value of [`herded_fraction`], and what a herd with no
-/// herder demand reads. Mirrors [`PEN_FULLY_FED`].
+/// A fully-kept managed herd — the neutral value of [`herd_herded_fraction`], and what a herd with no
+/// keeper demand reads. Mirrors [`PEN_FULLY_FED`].
 pub const FULLY_HERDED: f32 = 1.0;
 
-/// **A managed herd nobody worked** — what `advance_husbandry` resets a domesticated herd's
-/// `herded_fraction` to each turn, so a herd whose keeper never showed up reads "unherded" rather than
-/// inheriting last turn's staffing. The *wild* rungs reset to [`FULLY_HERDED`] instead: they demand no
-/// herders, so "unstaffed" would be a lie that decays them for free.
+/// **A managed herd nobody kept** — the floor of [`herd_herded_fraction`], and the reading a herd
+/// whose keepers never showed up gets. A *wild* herd reads [`FULLY_HERDED`] instead: it demands no
+/// keepers, so "unstaffed" would be a lie that sheds it for free.
 pub const NOT_HERDED: f32 = 0.0;
 
 /// The **gross managed harvest a PEN yields**, in biomass: [`managed_yield_biomass`] against the herd's
@@ -3102,21 +3124,14 @@ pub(crate) fn herd_rung<'a>(herd: &Herd, ladder: &'a LadderConfig) -> &'a RungDe
 /// walk the ladder from it ([`RungKey::above`]) rather than read a record's dials. The plant twin is
 /// `forage::patch_rung_key`, and it exists for the same reason: the "penned → pen, tamed → pastoral,
 /// else wild" test has exactly one home.
-/// **THE HERD'S HEAD COUNT** — `biomass / body_mass`, the scale term
-/// [`crate::intensification::UpkeepScale::SourceHead`] reads. Continuous rather than whole animals,
-/// because an upkeep is a *rate* and not a take: a pen half an animal over does not stop needing
-/// keeping for the half. `0` for a herd with no stated body, which is the same NaN-safe positive-test
-/// shape [`herders_needed`] uses.
-pub fn herd_head_count(herd: &Herd) -> f32 {
-    // Positive tests, so a NaN body or stock falls through to `0` (no heads) rather than sneaking
-    // past a negated comparison — the [`herders_needed`] convention.
-    let sane = herd.body_mass > 0.0 && herd.biomass > 0.0;
-    if !sane {
-        return 0.0;
-    }
-    herd.biomass / herd.body_mass
-}
-
+///
+/// **RETIRED beside it: `herd_head_count`** — `biomass / body_mass`, briefly the scale term the
+/// animal rungs' upkeep was quoted against. **A per-HEAD rate is the measurement error
+/// `animals_per_herder` exists to prevent**, one level up: it says *"one keeper per 100 fowl but one
+/// per 2 boar"* and invents a 45-herder steppe megaherd that is a pure artifact of the unit. The
+/// rungs quote per **keeper-load** instead ([`herd_keeper_loads`] — `head count /
+/// animals_per_herder`), which folds the species' own ratio in before the ladder sees it, so one rate
+/// covers a shepherd's 300 sheep and a cowherd's 80 cattle.
 pub(crate) fn herd_rung_key(herd: &Herd) -> RungKey {
     if herd.is_corralled() {
         RungKey::AnimalPen
@@ -3401,7 +3416,12 @@ pub fn advance_husbandry(
         // breathing ±1 animal across an `animals_per_herder` multiple doesn't flicker the requirement
         // (and with it the `herded_fraction` / tameness). See `Herd::stabilize_herders_needed`.
         let animals_per_herder = fauna.animals_per_herder_for(&herd.species);
+        // **The raw count is the LADDER's** (`raw_herders_needed` — the keeping rung's
+        // `upkeep_crew_needed` at this herd's keeper load), passed in so the hysteresis stabilizes
+        // one definition rather than keeping a second `ceil` of its own.
+        let raw = raw_herders_needed(herd, &fauna, &ladder);
         herd.stabilize_herders_needed(
+            raw,
             animals_per_herder,
             animals_per_herder * fauna.husbandry.herders_hysteresis_fraction,
         );
@@ -3414,19 +3434,24 @@ pub fn advance_husbandry(
         // crew is still on it (Logistics runs before Population).
         herd.build_turns_remaining = None;
         herd.build_work_from_gear = NO_BUILD_GEAR;
-        // **And this turn's upkeep accounting**, on the same cycle and for the same reason — see the
-        // plant twin in `forage::advance_cultivation`.
+        // **HOW WELL THE HERD WAS KEPT LAST TURN** — the same Population→Logistics lag
+        // `pen_fed_fraction` runs on. Everything downstream of the staffing is resolved into locals
+        // **here, before the field is cleared**, so the whole turn judges one reading: what went
+        // unmet, how many animals that leaves uncontained, and whether anybody was on it at all. A
+        // herd nobody worked reads the `0` its keeper never wrote, which is exactly right.
+        //
+        // It is derived from the one stored fact rather than kept in a second field beside it
+        // (`herd_herded_fraction` for the published ratio), so the number the wire showed and the
+        // shed the sim applies can never describe different staffings.
+        let supplied_last_turn = herd.upkeep_supplied;
+        let shortfall_last_turn = herd_upkeep_shortfall(herd, &fauna, &ladder);
+        let overage_last_turn = uncontained_overage(herd, &fauna, &ladder);
+        // **And the field is cleared now**, on the one-turn cycle the plant twin runs: it describes
+        // the keepers that held the herd, so a herd whose keepers have gone must stop reporting what
+        // they paid. Clearing it is what re-arms the shed — next turn's shortfall is the whole demand
+        // again unless somebody restates it. (`advance_herds`' `regrow_biomass` reads it earlier in
+        // the same Logistics stage, so its abandonment gate still sees last turn's value.)
         herd.upkeep_supplied = NO_UPKEEP_DEMAND;
-        herd.upkeep_shortfall = NO_UPKEEP_DEMAND;
-        // **How well the herd was STAFFED last turn** (slice 8) — the same Population→Logistics lag as
-        // `pen_fed_fraction`, read here and reset so it can never go stale. A herd nobody worked reads
-        // the `0.0` its keeper never wrote, which is exactly right: no crew, no herding.
-        let herded_last_turn = herd.herded_fraction;
-        herd.herded_fraction = if herd.is_corralled() || herd.owner.is_some() {
-            NOT_HERDED
-        } else {
-            FULLY_HERDED
-        };
         // **Only a MANAGED herd sheds / feeds.** A wild herd is nobody's to keep, so it neither pays
         // a larder bill nor loses animals to under-containment — it simply roams. (Same scope the
         // retired tameness decay used: `is_corralled() || owner.is_some()`, never `is_domesticated()`,
@@ -3468,7 +3493,7 @@ pub fn advance_husbandry(
         // different questions: *is this herd under-contained* (which drives the notice, and must be
         // true during the grace — that is when the player can still fix it) versus *do animals leave
         // this turn* (which the grace suppresses).
-        let under_contained = uncontained_overage(herd, herded_last_turn, &fauna).is_some();
+        let under_contained = overage_last_turn.is_some();
         // **The neglect counter** — the animal twin of `ForagePatch::neglect_turns`. A herd whose
         // keepers can hold it is forgiven outright, so the grace measures *consecutive* neglect.
         if under_contained {
@@ -3479,12 +3504,14 @@ pub fn advance_husbandry(
         // The rung whose keeping obligation this herd is under, through the one seam the wire's
         // countdown reads too ([`herd_keeping_rung`]).
         let grace = herd_keeping_rung(herd, &ladder)
-            .map_or(NO_NEGLECT_GRACE, |rung| rung.neglect_grace_turns());
+            .map_or(NO_NEGLECT_GRACE, |rung| rung.upkeep_grace_turns());
         if u32::from(herd.neglect_turns) > grace {
-            if let Some(event) =
-                shed_uncontained_animals(herd, source_index, herded_last_turn, &fauna, &mut rng)
-            {
-                shed_events.push(event);
+            if let Some(overage) = overage_last_turn {
+                if let Some(event) =
+                    shed_uncontained_animals(herd, source_index, overage, &fauna, &mut rng)
+                {
+                    shed_events.push(event);
+                }
             }
         }
 
@@ -3511,8 +3538,8 @@ pub fn advance_husbandry(
                             herd.species
                         ),
                         Some(format!(
-                            "status=under_herded herded={:.2} needed={} herd={} x={} y={}",
-                            herded_last_turn, herd.herders_needed, herd.id, pos.x, pos.y
+                            "status=under_herded short={:.2} needed={} herd={} x={} y={}",
+                            shortfall_last_turn, herd.herders_needed, herd.id, pos.x, pos.y
                         )),
                     ));
                 }
@@ -3521,8 +3548,8 @@ pub fn advance_husbandry(
             herd.under_herded = false;
         }
 
-        // **BLEED-OUT ON TOTAL ABANDONMENT (§2.4).** A herd with ZERO herders last turn
-        // (`herded_fraction == NOT_HERDED`) keeps shedding — regrowth already suppressed
+        // **BLEED-OUT ON TOTAL ABANDONMENT (§2.4).** A herd with ZERO keepers last turn keeps
+        // shedding — regrowth already suppressed
         // (`regrow_biomass`), and for a pen unfed above — until it can no longer shed a whole animal
         // (`biomass < body_mass`). At that point it has **bled out entirely** into the wild web, so the
         // managed entity is **despawned** (Phase 3, after placement), NOT left as an ownerless-but-tame
@@ -3534,8 +3561,10 @@ pub fn advance_husbandry(
         // starvation, which floors a *fed* pen and keeps it (`starve_underfed_pen`, §2.5): a starving
         // pen has a keeper (`herded_fraction > 0`), so it never reaches this branch — only animals
         // *leaving* empty a herd.
+        // **"Zero keepers last turn"** is `upkeep_supplied == 0` — the same reading the retired
+        // `herded_fraction == NOT_HERDED` was, off the one field that now carries it.
         let body_mass = herd.body_mass;
-        if herded_last_turn <= NOT_HERDED && body_mass > 0.0 && herd.biomass < body_mass {
+        if supplied_last_turn <= NO_UPKEEP_DEMAND && body_mass > 0.0 && herd.biomass < body_mass {
             if herd.is_corralled() {
                 // The pen dies with the entity — no fence reset needed (it despawns too). Announce it so
                 // pen destruction is never silent.
@@ -3595,37 +3624,32 @@ struct ShedEvent {
 /// costs the **visible** axis (herd size), never the invisible one (`domestication_progress`, which is
 /// monotone-up and never touched here).
 ///
-/// The overage is the herd's **actual** count over what its keepers can hold, reconstructed from the
-/// real staffing: `capacity_animals = herded_fraction × herders_needed × animals_per_herder` (the
-/// `herded_fraction × needed` product recovers `assigned` exactly, since `herded_fraction =
-/// min(1, assigned/needed)`), and `overage_animals = max(0, current − capacity)`. **NOT** the
-/// `(1 − herded_fraction) × current` shorthand (a review-caught spec bug): that over-estimates near a
-/// `ceil` boundary because it assumes `current ≈ needed × animals_per_herder`, which is false when
-/// `herders_needed = ceil(animals/aph)` rounds up hard — 101 animals @ aph 50 staffed at 2 has a true
-/// overage of **1** (`101 − 2×50`), but the shorthand reads `0.333 × 101 = 33.7` and sheds ~8/turn.
-/// A **fraction of the OVERAGE** leaves, not of the total, so as the herd shrinks toward its capacity
-/// fewer leave and it **stops exactly** at `overage < 1` — no overshoot below the real labor capacity,
-/// and none to zero unless capacity is `0` (total abandonment, the `herders_needed`-and-`herded == 0`
-/// limit). The count is in **whole animals**, with a **min-1 floor** when the overage is `≥ 1` so a
-/// small overage clears instead of asymptoting one or two over forever.
+/// **THE SHED IS THE SHORTFALL PENALTY, and it is continuous in it** (`docs/plan_standing_upkeep.md`
+/// §2.4): the animals nobody has hands for are the ones that drift off, so half the keepers a herd
+/// wants sheds at half rate. It no longer gates on `herded_fraction < FULLY_HERDED`, which was a
+/// threshold answering *whether* a herd was under-contained rather than *by how much* — the same
+/// step the plant web's binary `tended_this_turn` flag took.
 ///
-/// `herders_needed` is read through [`herd_herders_needed`] (the stabilized field, falling back to the
-/// raw `ceil` for a not-yet-stabilized managed herd) so a `0` can never collapse capacity to zero and
-/// shed a fully-staffed fresh herd. `stabilize_herders_needed` runs earlier in `advance_husbandry`, so
-/// for a managed herd the stabilized value is already `> 0` by the time the shed reads it.
+/// The overage is [`uncontained_overage`] — the upkeep shortfall converted back into animals. A
+/// **fraction of the OVERAGE** leaves, not of the total, so as the herd shrinks toward its capacity
+/// fewer leave and it **stops exactly** at `overage < 1` — no overshoot below the real labor capacity,
+/// and none to zero unless capacity is `0` (total abandonment). The count is in **whole animals**,
+/// with a **min-1 floor** when the overage is `≥ 1` so a small overage clears instead of asymptoting
+/// one or two over forever.
 ///
 /// The rate is **per-rung**: `pen_escape_fraction` for a corralled herd (slower — the fence),
-/// `pastoral_escape_fraction` otherwise, each `× (1 + jitter)` from the caller's seeded RNG. Reduces
-/// this herd's biomass and returns the placement event, or `None` when nothing leaves this turn.
+/// `pastoral_escape_fraction` otherwise, each `× (1 + jitter)` from the caller's seeded RNG. It reads
+/// `is_corralled()` rather than the keeping rung, deliberately: a half-raised pen has no fence yet,
+/// so it leaks at the open-range rate while it owes the pen rung's longer grace. Reduces this herd's
+/// biomass and returns the placement event, or `None` when nothing leaves this turn.
 fn shed_uncontained_animals(
     herd: &mut Herd,
     source_index: usize,
-    herded_last_turn: f32,
+    overage_animals: f32,
     fauna: &FaunaConfig,
     rng: &mut SmallRng,
 ) -> Option<ShedEvent> {
     let body_mass = herd.body_mass;
-    let overage_animals = uncontained_overage(herd, herded_last_turn, fauna)?;
     let husbandry = &fauna.husbandry;
     let rate = if herd.is_corralled() {
         husbandry.pen_escape_fraction
@@ -3673,12 +3697,126 @@ fn shed_uncontained_animals(
 /// the shed on this rung's grace and the snapshot publishes *that* rung's countdown.
 pub fn herd_keeping_rung<'a>(herd: &Herd, ladder: &'a LadderConfig) -> Option<&'a RungDef> {
     (herd.is_corralled() || herd.owner.is_some()).then(|| {
-        ladder.rung(if herd.is_corralled() {
-            RungKey::AnimalPen
-        } else {
-            RungKey::AnimalPastoral
-        })
+        // **The NEWEST meter with progress on it**, the twin of `forage::patch_unwinding_rung`: a
+        // pen half-raised is already the thing at risk, so it owes its own rung's grace rather than
+        // the pastoral rung's. (`is_corralled()` alone would hand a herd mid-`Corral` the shorter
+        // forgiveness of the rung underneath, which is backwards — the fence is what buys time.)
+        ladder.rung(
+            if herd.is_corralled() || herd.corral_progress > RUNG_UNSTARTED {
+                RungKey::AnimalPen
+            } else {
+                RungKey::AnimalPastoral
+            },
+        )
     })
+}
+
+/// **IS THE METER AT RISK ALREADY BUILT?** — which decides *whose* hands the rung is owed
+/// (`docs/plan_standing_upkeep.md` §0/§2.4), and nothing else. The animal twin of
+/// `forage::patch_at_risk_is_built`: a pen is built when it stands, a pastoral rung when the herd is
+/// tame. `false` for a wild herd, which has no meter at all.
+pub fn herd_at_risk_is_built(herd: &Herd) -> bool {
+    if herd.is_corralled() || herd.corral_progress > RUNG_UNSTARTED {
+        herd.is_corralled()
+    } else if herd.owner.is_some() {
+        herd.is_domesticated()
+    } else {
+        false
+    }
+}
+
+/// **THE WORK THE AT-RISK METER WAS OWED THIS TURN, AND WHO OWED IT** — the animal twin of
+/// `forage::patch_upkeep_supply`, and the same rule stated on the same seam:
+///
+/// | meter | the work it is owed | sheds when |
+/// |---|---|---|
+/// | **incomplete** — a `Tame` or `Corral` in flight, or one walked away from | the **build** crew | no builders |
+/// | **complete** — a rung being held | the **maintain** crew | no keepers |
+///
+/// **The verb names the meter**, exactly as it does on the plant web and for the same reason: the
+/// supply is stamped in Population and read by the *next* Logistics pass, so it has to describe the
+/// meter that pass will judge. A `Corral` starting on a herd with no pen progress answers for
+/// `animal:pen` from its very first turn.
+pub fn herd_upkeep_supply(
+    herd: &Herd,
+    improvement: Option<crate::components::Improvement>,
+    build_work: f32,
+    maintain_work: f32,
+) -> f32 {
+    let by_progress = if herd.is_corralled() || herd.corral_progress > RUNG_UNSTARTED {
+        Some(RungKey::AnimalPen)
+    } else if herd.owner.is_some() {
+        Some(RungKey::AnimalPastoral)
+    } else {
+        None
+    };
+    // **Stated exhaustively**: a new rung-transition verb has to say which meter it fills, or the
+    // verb-names-the-meter rule would silently lapse for it and reintroduce the turn-two bleed with
+    // no compile error.
+    let by_verb = improvement.and_then(|verb| {
+        use crate::components::Improvement;
+        match verb {
+            Improvement::Corral => Some(RungKey::AnimalPen),
+            Improvement::Tame => Some(RungKey::AnimalPastoral),
+            Improvement::Cultivate | Improvement::Sow => None,
+        }
+    });
+    let answering_for = match (by_progress, by_verb) {
+        (Some(RungKey::AnimalPen), _) | (_, Some(RungKey::AnimalPen)) => RungKey::AnimalPen,
+        (Some(key), _) => key,
+        (None, Some(key)) => key,
+        // Nothing owned here and nothing being built, so nothing is owed and nothing can be short.
+        (None, None) => return NO_UPKEEP_DEMAND,
+    };
+    let built = match answering_for {
+        RungKey::AnimalPen => herd.is_corralled(),
+        _ => herd.is_domesticated(),
+    };
+    if built {
+        maintain_work
+    } else if by_verb == Some(answering_for) {
+        build_work
+    } else {
+        NO_UPKEEP_DEMAND
+    }
+}
+
+/// **WHAT IT COSTS TO HOLD THIS HERD THIS TURN**, in work units — the keeping rung's
+/// `upkeep_demand` at this herd's own keeper load, or [`NO_UPKEEP_DEMAND`] for a wild herd, which is
+/// nobody's to keep.
+///
+/// **THE one definition**, reached by the shed, the labor arm's stamp and the snapshot alike.
+pub fn herd_upkeep_demand(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> f32 {
+    herd_keeping_rung(herd, ladder).map_or(NO_UPKEEP_DEMAND, |rung| {
+        rung.upkeep_demand(herd_keeper_load(herd, fauna))
+    })
+}
+
+/// **WHAT WENT UNMET THIS TURN**, in work units — [`herd_upkeep_demand`] less what the meter's own
+/// crew supplied, floored at zero.
+///
+/// **Derived, never stored**, for the reason the plant twin is: the labor arm only visits herds some
+/// band is assigned to, so a stored shortfall would read a tidy `0` on exactly the abandoned herds
+/// that are shedding.
+pub fn herd_upkeep_shortfall(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> f32 {
+    crate::intensification::upkeep_shortfall(
+        herd_upkeep_demand(herd, fauna, ladder),
+        herd.upkeep_supplied,
+    )
+}
+
+/// **HOW WELL THIS HERD IS KEPT** — `min(1, supplied / demand)`, the ratio the wire publishes and the
+/// regrowth's abandonment gate used to read off a stored field.
+///
+/// Derived from the one stored fact ([`Herd::upkeep_supplied`]) rather than written beside it, so the
+/// published ratio and the shed can never disagree about the same turn's staffing. A herd that owes
+/// nothing — wild, or empty — is trivially [`FULLY_HERDED`].
+pub fn herd_herded_fraction(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> f32 {
+    let demand = herd_upkeep_demand(herd, fauna, ladder);
+    if demand <= NO_UPKEEP_DEMAND {
+        return FULLY_HERDED;
+    }
+    (herd.upkeep_supplied / demand).clamp(NOT_HERDED, FULLY_HERDED)
 }
 
 /// **Turns of neglect this herd can still absorb before its keepers start losing animals** — the wire's
@@ -3699,23 +3837,37 @@ pub fn herd_neglect_grace_remaining(herd: &Herd, ladder: &LadderConfig) -> Optio
 /// notice fires on the first, the shed only on the second.
 ///
 /// `None` means the herd fits its labor capacity (or is within one animal of it) — the self-limiting
-/// attractor — or has no measurable stock at all. See [`shed_uncontained_animals`] for why the
-/// capacity is reconstructed from `herded_fraction × herders_needed × animals_per_herder` rather than
-/// the `(1 − herded_fraction) × current` shorthand.
-fn uncontained_overage(herd: &Herd, herded_last_turn: f32, fauna: &FaunaConfig) -> Option<f32> {
+/// attractor — or has no measurable stock at all.
+///
+/// # It IS the upkeep shortfall, converted into animals
+///
+/// **The overage is `shortfall_in_loads × animals_per_herder`** (`docs/plan_standing_upkeep.md`
+/// §2.4), which is the same number the retired `herded_fraction × herders_needed ×
+/// animals_per_herder` capacity reconstruction produced and is now read off the one seam the whole
+/// term goes through. It is continuous in the staffing by construction — half the keepers a herd
+/// wants leaves half its animals uncontained, where the retired `herded_fraction < FULLY_HERDED`
+/// gate was a threshold that said only *whether* a herd was under-contained.
+///
+/// **`MIN_ESCAPE_ANIMALS` is the animal branch's quantum, and it is why the counter can differ from
+/// the plant web's.** A plant meter is continuous, so any shortfall bleeds; a herd loses **whole
+/// animals**, so a shortfall of less than one animal is not under-containment at all — the herd is
+/// within a head of its keepers' capacity and nothing can leave. That is the same whole-animal
+/// discipline `quantise_animal_take` imposes on the take.
+fn uncontained_overage(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> Option<f32> {
     let body_mass = herd.body_mass;
     if body_mass <= 0.0 || herd.biomass <= 0.0 {
         return None;
     }
-    let current_animals = herd.biomass / body_mass;
-    // **Reconstruct the real labor capacity from actual staffing** (review fix — see the doc comment):
-    // `capacity = assigned × animals_per_herder`, with `assigned = herded_fraction × herders_needed`.
-    // A fully-staffed herd reads `herded == 1` ⇒ `capacity = needed × aph ≥ current` ⇒ no shed; a herd
-    // nobody worked reads `herded == 0` ⇒ `capacity = 0` ⇒ the whole flock is overage.
+    // **Work back into loads, then into animals.** `work_per_load` is the rung's own rate, read at
+    // one load, so a rung that ever quoted a different rate converts correctly rather than silently
+    // assuming `1.0`.
+    let work_per_load = herd_keeping_rung(herd, ladder)?.upkeep_demand(ONE_KEEPER_LOAD);
+    if work_per_load <= NO_UPKEEP_DEMAND {
+        return None;
+    }
+    let shortfall_loads = herd_upkeep_shortfall(herd, fauna, ladder) / work_per_load;
     let animals_per_herder = fauna.animals_per_herder_for(&herd.species);
-    let needed = herd_herders_needed(herd, fauna) as f32;
-    let capacity_animals = herded_last_turn.max(0.0) * needed * animals_per_herder;
-    let overage_animals = (current_animals - capacity_animals).max(0.0);
+    let overage_animals = (shortfall_loads * animals_per_herder).max(0.0);
     (overage_animals >= MIN_ESCAPE_ANIMALS).then_some(overage_animals)
 }
 
@@ -6932,7 +7084,7 @@ pub(crate) fn regrow_biomass(herd: &mut Herd, fauna: &FaunaConfig) {
     // A corralled herd is handled by `pen_fed_fraction` above (`!is_corralled()` here), and a wild herd
     // has no owner, so this is inert for both.
     let abandoned_pastoral =
-        herd.owner.is_some() && !herd.is_corralled() && herd.herded_fraction <= NOT_HERDED;
+        herd.owner.is_some() && !herd.is_corralled() && herd.upkeep_supplied <= NO_UPKEEP_DEMAND;
     let delta = if abandoned_pastoral { 0.0 } else { delta };
     herd.biomass = (herd.biomass + delta).clamp(0.0, cap);
     herd.refresh_ecology_phase(fauna);
@@ -7596,6 +7748,19 @@ mod tests {
         herd
     }
 
+    /// **The raw keeper count the ladder would answer** for this herd at `animals_per_herder` — the
+    /// one definition (`raw_herders_needed`), reached without an ECS world so the hysteresis tests
+    /// can exercise the real number rather than a second `ceil` of their own.
+    fn raw_for(herd: &Herd, animals_per_herder: f32) -> u32 {
+        LadderConfig::builtin()
+            .rung(RungKey::AnimalPastoral)
+            .upkeep_crew_needed(herd_keeper_loads(
+                herd.biomass,
+                herd.body_mass,
+                animals_per_herder,
+            ))
+    }
+
     /// The core anti-flicker property: a managed herd whose head count breathes ±1 across an
     /// `animals_per_herder` boundary reports a STABLE `herders_needed` once bumped up — it does not
     /// drop back on a one-animal dip. A Wild Aurochs (`animals_per_herder = 12`) near 12 head.
@@ -7605,13 +7770,16 @@ mod tests {
         const BAND: f32 = APH * 0.25; // the shipped default deadband, in animals
         let mut herd = managed_herd_with_heads(13.0);
         // First stabilized turn seeds the raw ceil: ceil(13 / 12) = 2.
-        assert_eq!(herd.stabilize_herders_needed(APH, BAND), 2);
+        assert_eq!(
+            herd.stabilize_herders_needed(raw_for(&herd, APH), APH, BAND),
+            2
+        );
         // Now oscillate 13 → 11 → 12 → 13 (the lumpy Sustain kill): it must HOLD at 2 the whole way,
         // never flickering back to 1.
         for heads in [11.0_f32, 12.0, 13.0, 11.0, 13.0] {
             herd.biomass = heads;
             assert_eq!(
-                herd.stabilize_herders_needed(APH, BAND),
+                herd.stabilize_herders_needed(raw_for(&herd, APH), APH, BAND),
                 2,
                 "held at 2 through the ±1 oscillation at {heads} head",
             );
@@ -7625,9 +7793,15 @@ mod tests {
         const APH: f32 = 12.0;
         const BAND: f32 = APH * 0.25;
         let mut herd = managed_herd_with_heads(12.0);
-        assert_eq!(herd.stabilize_herders_needed(APH, BAND), 1); // ceil(12/12) = 1
+        assert_eq!(
+            herd.stabilize_herders_needed(raw_for(&herd, APH), APH, BAND),
+            1
+        ); // ceil(12/12) = 1
         herd.biomass = 25.0; // clearly a third herder's worth (ceil(25/12) = 3)
-        assert_eq!(herd.stabilize_herders_needed(APH, BAND), 3);
+        assert_eq!(
+            herd.stabilize_herders_needed(raw_for(&herd, APH), APH, BAND),
+            3
+        );
     }
 
     /// The requirement drops only after a CLEAR fall — past the lower rung's ceiling by more than the
@@ -7637,13 +7811,22 @@ mod tests {
         const APH: f32 = 12.0;
         const BAND: f32 = APH * 0.25; // 3 animals
         let mut herd = managed_herd_with_heads(20.0);
-        assert_eq!(herd.stabilize_herders_needed(APH, BAND), 2); // ceil(20/12) = 2
-                                                                 // Just below the 1-herder ceiling (12) but within the deadband: 10 > 12 − 3 = 9 → HOLD at 2.
+        assert_eq!(
+            herd.stabilize_herders_needed(raw_for(&herd, APH), APH, BAND),
+            2
+        ); // ceil(20/12) = 2
+           // Just below the 1-herder ceiling (12) but within the deadband: 10 > 12 − 3 = 9 → HOLD at 2.
         herd.biomass = 10.0;
-        assert_eq!(herd.stabilize_herders_needed(APH, BAND), 2);
+        assert_eq!(
+            herd.stabilize_herders_needed(raw_for(&herd, APH), APH, BAND),
+            2
+        );
         // Below the deadband floor (≤ 9): a genuine drop → step down to ceil(8/12) = 1.
         herd.biomass = 8.0;
-        assert_eq!(herd.stabilize_herders_needed(APH, BAND), 1);
+        assert_eq!(
+            herd.stabilize_herders_needed(raw_for(&herd, APH), APH, BAND),
+            1
+        );
     }
 
     /// A wild herd isn't yours to maintain — it stays `0`, and `herd_herders_needed` reads `0`.
@@ -7652,7 +7835,10 @@ mod tests {
         const APH: f32 = 12.0;
         let mut herd = managed_herd_with_heads(50.0);
         herd.owner = None; // wild again
-        assert_eq!(herd.stabilize_herders_needed(APH, APH * 0.25), 0);
+        assert_eq!(
+            herd.stabilize_herders_needed(raw_for(&herd, APH), APH, APH * 0.25),
+            0
+        );
         assert_eq!(herd.herders_needed, 0);
     }
 
@@ -8435,9 +8621,15 @@ mod tests {
     fn a_zero_deadband_restores_the_raw_flicker() {
         const APH: f32 = 12.0;
         let mut herd = managed_herd_with_heads(13.0);
-        assert_eq!(herd.stabilize_herders_needed(APH, 0.0), 2);
+        assert_eq!(
+            herd.stabilize_herders_needed(raw_for(&herd, APH), APH, 0.0),
+            2
+        );
         herd.biomass = 12.0; // 12 ≤ (2−1)·12 − 0 = 12 → drops immediately with no band
-        assert_eq!(herd.stabilize_herders_needed(APH, 0.0), 1);
+        assert_eq!(
+            herd.stabilize_herders_needed(raw_for(&herd, APH), APH, 0.0),
+            1
+        );
     }
 
     // `the_build_dip_is_applied_inside_the_standing_stock_clamp` was deleted with its subject: the
