@@ -84,11 +84,14 @@ static func three_role_tile_fixture() -> Dictionary:
 ## impossible.
 static func stressed_tile_fixture() -> Dictionary:
 	var tile := BaseFx.food_tile_fixture()
-	tile["patch_cultivation_progress"] = 0.0
-	tile["patch_is_cultivated"] = false
 	tile["patch_ecology_phase"] = "stressed"
 	tile["patch_biomass"] = 22.0
-	return BaseFx.price_plant_build(tile)
+	# **THROUGH `BaseFx.unbuilt`, which drops the KEEPING as well as the meter.** It zeroed the
+	# meter by hand and kept the reference tile's `0.5` keeping demand, which is a state the sim
+	# cannot produce (`patch_unwinding_rung` answers `None` with both meters at zero) — harmless
+	# while nothing read the demand, and a halved turn estimate the moment the build's pace became
+	# `crew − rate` (`docs/plan_standing_upkeep.md` §2.4).
+	return BaseFx.unbuilt(tile)
 
 ## A fully-tended forage patch: the Tile card shows the "🌾 Tended Patch" badge (SIGNAL tint)
 ## plus an "Ecology" row, instead of the in-progress "Cultivation N%".

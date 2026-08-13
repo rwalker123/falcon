@@ -3115,11 +3115,17 @@ func _assert_upkeep_mode_control(expected_mode: String) -> void:
 
 ## THE WALKED-AWAY BUILD — a herd part-way through its Tame with nobody on the improvement.
 ##
-## **THE FIXTURE'S OWN CLAIM IS THAT `upkeep_workers_needed` IS ZERO WHILE THE SHORTFALL IS NOT**,
-## which is what the sim publishes here: the keeping is owed to the BUILD crew until the rung stands
-## (`herd_at_risk_is_built`), so there is no keeper requirement to compare a crew against, and the
-## shortfall is the whole demand because `advance_husbandry` zeroes `upkeep_supplied` every turn and
-## nobody restated it.
+## **THE FIXTURE'S CLAIM MOVED WITH THE WIRE, AND THAT IS WHY THIS STATE IS SHARP.** It used to be
+## that `upkeep_workers_needed` was ZERO while the shortfall was not, and the warning was told apart
+## from the under-kept one by exactly that zero. The count publishes on BOTH sides of completion now
+## (`docs/plan_standing_upkeep.md` §2.4) — mid-build it is the minimum viable BUILD crew — so this
+## herd states a POSITIVE one, and a client still keyed on the zero reads this source as under-KEPT:
+## the ⚠ would blame the band's Husbandry pool for a bill the builders owe, and the builders'
+## warning would never fire again on either web. What separates them now is the METER
+## (`SourceForecast.build_is_in_flight`), which this herd's part-built `domestication` states.
+##
+## The shortfall is the whole demand because `advance_husbandry` zeroes `upkeep_supplied` every turn
+## and nobody restated it.
 const UNBUILT_WORK_HERD_ID := "game_aurochs_ub"
 ## The `animal:pastoral` rung asks 1.0 work per keeper-load; this herd is two loads over and nothing
 ## was paid, so the shortfall IS the demand.
@@ -3156,11 +3162,15 @@ func _unbuilt_work_herd_fixtures() -> Array:
 		"upkeep_demand": UNBUILT_WORK_UPKEEP_DEMAND,
 		"upkeep_supplied": 0.0,
 		"upkeep_shortfall": UNBUILT_WORK_UPKEEP_DEMAND,
+		# **THE MINIMUM VIABLE BUILD CREW, published mid-build like the demand beside it** — the same
+		# `ceil(demand / PER_WORKER_OUTPUT)`, wearing a different noun. Left at the wire's old `0` this
+		# fixture would stage a source the shipped sim cannot produce, and would let a client that
+		# still infers "a build is in flight" from a zero pass this frame.
+		"upkeep_workers_needed": int(ceil(UNBUILT_WORK_UPKEEP_DEMAND)),
 		"has_neglect_grace": true,
 		"neglect_grace_remaining": UNBUILT_WORK_GRACE_REMAINING,
 	}
-	# Owned, so the sim would ask for keepers ONCE the rung stands — but `_set_keeper_demand` is
-	# deliberately NOT called: mid-build that demand is `0`, which is the whole shape under test.
+	# Owned, so the sim asks for keepers on the same arithmetic whichever crew is supplying them.
 	_set_managed_herders(taming, UNDER_HERDED_WORK_HERDERS_NEEDED)
 	return [taming]
 

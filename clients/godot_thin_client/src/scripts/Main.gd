@@ -1306,41 +1306,16 @@ static func format_bench_crew(payload: Dictionary) -> Dictionary:
         "message": "Put %d crafter%s on the bench." % [workers, "" if workers == 1 else "s"],
     }
 
-## **`abandon_improvement <faction> forage <x> <y>` / `abandon_improvement <faction> hunt <herd_id>`**
-## — the command that stops a build (issue #442). Alias `abandon`.
+## **RETIRED — `abandon_improvement` and its builder** (`docs/plan_standing_upkeep.md` §2.4). It
+## existed to clear an assignment's STORED improvement, back when that field was the commitment; the
+## build verb is DERIVED from the meter now, so there is no stored authority left to clear and a
+## command that cleared a derived value would either do nothing or fight the derivation.
 ##
-## **IT NAMES A SOURCE, NOT A VERB, AND THAT IS WHY IT IS ITS OWN BUILDER.** At most one improvement
-## is ever in flight on a source, so naming the source names the thing being abandoned — and the
-## targeting rule that follows is the WEB's (`forage` → tile, `hunt` → herd), not the verb's. The set
-## verbs above target by VERB (`tame` names a herd; `cultivate`/`sow`/`corral` name a tile), and
-## `corral` is the case that proves the two rules genuinely differ: it is a HERD's rung addressed by
-## the pen's PLACE, so a shared branch would send `abandon_improvement <f> <x> <y>` for a herd.
+## **Walking away is `cultivate <faction> <x> <y> 0`** — the same set verb that started the build,
+## with its crew at zero — so `format_improvement` above is the only builder either direction needs.
+## Its proto field is reserved and the server's text parser refuses the retired form outright, so a
+## stale client gets an error rather than a no-op it would read as success.
 ##
-## **Always allowed.** The server gates it on nothing — no knowledge, no ceiling, no site, no
-## `Thriving` — because abandoning a STALLED build is the case it exists for. The only rejections are
-## an unknown kind and a source building nothing, neither of which this can produce.
-static func format_abandon_improvement(payload: Dictionary) -> Dictionary:
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
-    var kind := String(payload.get("kind", "")).strip_edges().to_lower()
-    if kind == SourceForecast.LABOR_KIND_HUNT:
-        var herd_id := String(payload.get("herd_id", "")).strip_edges()
-        if herd_id == "":
-            return {}
-        return {
-            "line": "abandon_improvement %d %s %s" % [faction, kind, herd_id],
-            "message": "Stop improving %s." % herd_id,
-        }
-    if kind != SourceForecast.LABOR_KIND_FORAGE:
-        return {}
-    var x := int(payload.get("x", -1))
-    var y := int(payload.get("y", -1))
-    if x < 0 or y < 0:
-        return {}
-    return {
-        "line": "abandon_improvement %d %s %d %d" % [faction, kind, x, y],
-        "message": "Stop improving (%d, %d)." % [x, y],
-    }
-
 ## **`upkeep_mode <faction> <band_id> spread|priority`** — how one band splits a keeping POOL it
 ## cannot stretch (`docs/plan_standing_upkeep.md` §2.5).
 ##
@@ -1412,17 +1387,13 @@ func _on_hud_send_trade_expedition(payload: Dictionary) -> void:
 func _on_hud_extend_pen(payload: Dictionary) -> void:
     _send_formatted_command(format_extend_pen(payload))
 
-## Commit — or abandon — an improvement on a source the band already works (the second axis, issue
+## Commit an improvement, and its CREW, on a source the band already works (the second axis, issue
 ## #442). Sent immediately after the `assign_labor` that guarantees the crew is there.
 ##
-## An EMPTY `improvement` is the abandon: `""` is the wire's own spelling of "building nothing", so
-## the compose state, the payload and this branch all read one value rather than a parallel flag. The
-## two commands keep separate builders because they target their source by different rules — see
-## `format_abandon_improvement`.
+## **There is no abandon branch any more** (`docs/plan_standing_upkeep.md` §2.4). The verb carries a
+## worker count, so `<verb> … 0` is how a player walks away, and an EMPTY `improvement` now means only
+## *there is nothing here to state* — `format_improvement` answers `{}` for it and nothing is sent.
 func _on_hud_improvement(payload: Dictionary) -> void:
-    if String(payload.get("improvement", "")).strip_edges() == "":
-        _send_formatted_command(format_abandon_improvement(payload))
-        return
     _send_formatted_command(format_improvement(payload))
 
 ## Say how this band splits a keeping pool it cannot stretch. Sent on its own — the fund mode is a

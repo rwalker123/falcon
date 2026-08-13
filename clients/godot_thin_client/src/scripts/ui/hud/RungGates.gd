@@ -293,18 +293,24 @@ static func gate_reasons_for(gates: Dictionary, rung: String) -> Array[String]:
 ## looked exactly like a patch nobody has touched, while the untouched one beside it advertised `⌃`.
 ## The two answers are one axis in two states, and the badge shows whichever applies.
 ##
-## Keyed on the IMPROVEMENT, not on a non-zero meter: a half-built patch nobody works is not "in
-## progress", and its standing rung is what the rung glyph is for. `SourceForecast` names the meter
-## each verb fills — one definition, so this and the compose control quote the same percent.
+## **KEYED ON THE METER, with `improvement` demoted to a pending DECLARATION**
+## (`docs/plan_standing_upkeep.md` §2.4). It was keyed on the stored verb alone, on the reasoning that
+## a half-built patch nobody works is not "in progress" — which stopped being the sim's model when the
+## verb became derived: a completed rung that erodes back below its cost re-enters the building state
+## with nothing declared, and the mark has to follow it or the one surface a player would notice the
+## slide on goes quiet. `SourceForecast.build_verb` is the single derivation and it names the meter
+## each verb fills, so this, the compose control and the work board quote one rung at one percent.
 ##
 ## The `kind` guard keeps the two webs' verbs apart: a herd has no `cultivation_progress`, and an
-## improvement reaching the wrong web would answer a meter of 0 rather than nothing at all.
+## improvement reaching the wrong web would answer a meter of 0 rather than nothing at all. It is a
+## LABOR kind here (`LABOR_KIND_*`), and an unrecognised one answers `{}` rather than defaulting into
+## a web.
 static func rung_in_progress(kind: String, source: Dictionary, improvement: String) -> Dictionary:
-    var current := improvement.strip_edges().to_lower()
-    var web: Array = SourceForecast.FORAGE_IMPROVEMENTS if kind == SourceForecast.LABOR_KIND_FORAGE \
-        else SourceForecast.HUNT_IMPROVEMENTS if kind == SourceForecast.LABOR_KIND_HUNT \
-        else []
-    if not (current in web):
+    if kind != SourceForecast.LABOR_KIND_FORAGE and kind != SourceForecast.LABOR_KIND_HUNT:
+        return {}
+    var current := SourceForecast.build_verb(source, HudComposeVocab.BARE_FORECAST_PREFIX,
+        SourceForecast.source_kind_for_labor(kind), improvement)
+    if current == SourceForecast.IMPROVEMENT_NONE:
         return {}
     var answer := _ready(current)
     answer["progress"] = SourceForecast.improvement_progress(

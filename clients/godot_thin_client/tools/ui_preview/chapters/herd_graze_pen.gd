@@ -183,7 +183,11 @@ func _mid_tame_herd_fixture() -> Dictionary:
 	var fixture := HerdFx.taming_herd_fixture()
 	HerdFx.price_animal_build(fixture)
 	HerdFx.set_managed_herders(fixture, 4)
-	fixture["upkeep_workers_needed"] = 0
+	# **THE COUNT SHIPS ON BOTH SIDES OF COMPLETION NOW** (`docs/plan_standing_upkeep.md` §2.4). It
+	# was pinned to `0` here, which was the wire's own answer while an unfinished meter was held to
+	# owe no keeping; mid-build it is the MINIMUM VIABLE BUILD CREW, so a fixture still stating zero
+	# would stage a source the shipped sim cannot produce and prove the row against it.
+	fixture["upkeep_workers_needed"] = MID_TAME_UPKEEP_DEMAND
 	fixture["upkeep_demand"] = float(MID_TAME_UPKEEP_DEMAND)
 	fixture["upkeep_supplied"] = float(MID_TAME_UPKEEP_DEMAND)
 	fixture["upkeep_shortfall"] = 0.0
@@ -196,8 +200,10 @@ const POOL_COVERS_IT := 99
 ## …and the WORK the pool actually put on the under-kept deer, two short of its six.
 const POOL_SHARE_ON_THE_DEER := 4
 
-## What a herd mid-Tame is billed: its whole keeping, answered by its BUILD crew. The exact figure is
-## immaterial to the claim — what matters is that it is non-zero beside a `0` keeper demand.
+## What a herd mid-Tame is billed: its whole keeping, answered by its BUILD crew — and, at the
+## shipped one-work-unit-per-worker output, the same number in hands. It is what the row's
+## `worth N builders` clause quotes, so the fixture states one figure and the assertion composes
+## the sentence from it rather than from a literal.
 const MID_TAME_UPKEEP_DEMAND := 4
 
 ## **THE KEEPING SIDE OF A MANAGED HERD, STATED AS THE SIM STATES IT.** `upkeep_workers_needed` is what
@@ -608,15 +614,34 @@ func run(harness) -> void:
 	# its BUILD crew instead. So the `Keeping:` row must say it is being built, and must not quote the
 	# pool or ask for keepers; the `Keepers:` row above it stays calm, the herd owing keepers only
 	# once the rung stands.
+	#
+	# **THE FORK IS THE METER NOW, and that is what this state is really pinning.** It used to be
+	# `upkeep_workers_needed == 0`, and this fixture publishes a POSITIVE count — the minimum viable
+	# build crew — so a row still reading the count would print `the pool covers 4 of 4 work` here and
+	# send the player to raise a role that will never settle this bill.
 	h._show_herd(_mid_tame_herd_fixture())
 	await h._settle()
 	await h._save("herd_keeping_mid_build")
 	var mid_tame_lines := DetailFormat.herd_summary_lines(
 		_mid_tame_herd_fixture(), h._hud._band_labor.world_herds())
 	h._assert_hud("a herd mid-Tame says it is being BUILT rather than asking the pool for keepers",
-		_lines_any_contain(mid_tame_lines, DetailFormat.UPKEEP_MID_BUILD_VALUE)
+		_lines_any_contain(mid_tame_lines, DetailFormat.UPKEEP_MID_BUILD_FORMAT % [
+			DetailFormat.format_work_units(float(MID_TAME_UPKEEP_DEMAND)),
+			MID_TAME_UPKEEP_DEMAND, DetailFormat.UPKEEP_BUILDER_MANY])
 		and not _lines_any_contain(mid_tame_lines, "the pool covers")
 		and not _lines_any_contain(mid_tame_lines, "under-herded"))
+	# …and the WARNING half of the same fork, which the row above cannot make: the identical herd,
+	# identical demand and identical count, with the pool having paid NOTHING. Only the shortfall
+	# separates them, so a row that had gone back to reading the crew count renders one of these two
+	# sentences in both states and passes whichever is asserted alone.
+	var unpaid_tame := _mid_tame_herd_fixture()
+	unpaid_tame["upkeep_supplied"] = 0.0
+	unpaid_tame["upkeep_shortfall"] = float(MID_TAME_UPKEEP_DEMAND)
+	var unpaid_lines := DetailFormat.herd_summary_lines(
+		unpaid_tame, h._hud._band_labor.world_herds())
+	h._assert_hud("…while the same build going UNPAID says the rung is sliding back",
+		_lines_any_contain(unpaid_lines, DetailFormat.UPKEEP_UNBUILT_VALUE)
+		and not _lines_any_contain(unpaid_lines, "the pool covers"))
 
 	# State 2d-γ self-feeding pen — a radius-2 pen (19 fenced tiles) on lush land: the fenced footprint
 	# grazes the WHOLE feed, so the feed-split reads "Fed by pasture 100% · larder 0.0 food/turn" and the

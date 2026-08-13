@@ -124,11 +124,17 @@ func _building_herd_band_fixture() -> Dictionary:
 ## else about `BandFx.band_fixture` is kept; only the assignment list is replaced, by the single hunt
 ## assignment whose `fauna_id` matches `HerdFx.fully_tamed_herd_fixture`'s and whose policy is the rung the
 ## ceiling pass has since hidden.
+## The BUILD's own crew on that assignment — the animal twin of
+## `BandFx.CULTIVATING_BAND_BUILDERS`, and stated for the same reason: a running build is STAFFED,
+## so a fixture leaving `improvement_workers` at the wire's `0` stages a build nobody is paying for.
+const TAME_STANDING_BUILDERS := 3
+
 func _tame_standing_band_fixture() -> Dictionary:
 	var band := BandFx.band_fixture()
 	band["labor_assignments"] = [{
 		"kind": "hunt", "workers": HerdFx.TAMED_HERD_CREW, "fauna_id": HerdFx.taming_herd_fixture()["id"],
 		"floor": 0.5, "improvement": "tame", "target_x": 70, "target_y": 17,
+		"improvement_workers": TAME_STANDING_BUILDERS,
 		"actual_yield": 0.45, "sustainable_yield": 0.45,
 		"workers_needed": HerdFx.TAMED_HERD_CREW, "overdraws": false,
 	}]
@@ -148,8 +154,14 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("improvement_running_animal")
 	var tame_box = ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "tame")
-	h._assert_hud("a running Tame renders a CHECKED improvement box, as Cultivate does",
-		tame_box is CheckBox and (tame_box as CheckBox).button_pressed)
+	# **A RUNNING BUILD IS A STATE LABEL, as Cultivate is** (`docs/plan_standing_upkeep.md` §2.4). It
+	# was a checked, live `CheckBox` whose uncheck sent `abandon_improvement`; the verb is derived from
+	# the meter now, so there is no stored intent to clear and the control's TYPE says which of the
+	# four states it is in — a checkbox is the OFFER and nothing else.
+	h._assert_hud("a running Tame renders a STATE label, as Cultivate does",
+		tame_box is Label and not (tame_box is CheckBox)
+			and String(tame_box.get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
+				== HudWidgets.IMPROVEMENT_STATE_RUNNING)
 	# **THE SAME PAIR ITS PLANT TWIN CARRIES, on the web that shares the control.** The payoff is off
 	# both sheets' faces and in both readouts; asserting only the absence would pass on a sheet that
 	# had lost the payoff too, which is why the second half names where it went.
@@ -174,8 +186,11 @@ func run(harness) -> void:
 		not Readout.teaching_line(h._hud._drawercompose._compose_sheet).contains(Readout.TEACHING_LESSON_NEEDLE))
 	h._assert_hud("…and no BUILD half survives it here either, as on the plant sheet",
 		not Readout.teaching_line(h._hud._drawercompose._compose_sheet).contains(Readout.TEACHING_BUILD_NEEDLE))
-	h._assert_hud("a running Tame's box is LIVE too — the abandon path is ungated on both webs",
-		tame_box is CheckBox and not (tame_box as CheckBox).disabled)
+	# **THE BUILDERS STEPPER IS THE LEVER NOW, ON BOTH WEBS**, so what has to be present is the row —
+	# the running control states the meter and the stepper beneath it is the whole of what a player can
+	# change about the build.
+	h._assert_hud("a running Tame mounts its BUILDERS stepper — the lever the uncheck used to be",
+		ForageFx.build_crew_row(h._hud._drawercompose._compose_sheet) != null)
 	# **THE GEAR HALF OF THE ESTIMATE IS THE KIT'S, so its claims live with the kit** — the frames and
 	# the saturation assertions are `chapters/compose_rungs.gd`'s `_kit_swap_turn_estimate_states`,
 	# which is where a roster carrying the handling kit is staged. Nothing here states a gear term:
@@ -190,11 +205,12 @@ func run(harness) -> void:
 			== SourceForecast.YIELD_ROW_HEADER.to_upper())
 	h._assert_hud("…over readings that draw no arrow either",
 		not Readout.yields_show_a_transition(h._hud._drawercompose._compose_sheet))
-	# **THE HERD FORM, which is the one a shared branch gets wrong.** `abandon_improvement` targets by
-	# WEB (`hunt` → herd id) while the SET verbs target by VERB — and `corral` is a herd's rung
-	# addressed by a TILE, so a formatter that reused the set-verb rule would send coordinates here.
-	await h._assert_abandon_emits(SourceForecast.LABOR_KIND_HUNT, HudConst.LABOR_POLICY_TAME,
-		"abandon_improvement %d hunt %s" % [HudConst.PLAYER_FACTION_ID,
+	# **THE HERD FORM, which is the one a shared branch gets wrong.** `tame` targets by VERB — a herd
+	# id — while `corral` is a herd's rung addressed by a TILE, so a formatter that reused one rule for
+	# both would send coordinates here. That split survived `abandon_improvement`'s retirement: walking
+	# away is the same set verb at zero builders, so it is the same targeting question.
+	await h._assert_walk_away_emits(SourceForecast.LABOR_KIND_HUNT, HudConst.LABOR_POLICY_TAME,
+		"tame %d %s 0" % [HudConst.PLAYER_FACTION_ID,
 			String(HerdFx.taming_herd_fixture()["id"])])
 
 	# State 442-tame-done — the animal DONE state, and **THE ONE ASYMMETRY THAT SURVIVES** (spec §4):
@@ -264,11 +280,13 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("herd_build_crew")
 	var dip_sheet = h._hud._drawercompose._compose_sheet
-	# (1) A BUILD REALLY IS IN FLIGHT — a LIVE ticked box, not a stale verb, which is a different bug
-	# wearing the same numbers.
+	# (1) A BUILD REALLY IS IN FLIGHT — the control in its RUNNING state, not a stale verb, which is
+	# a different bug wearing the same numbers. Read off the state meta rather than the node type: a
+	# running control and a done one are both Labels now, and this claim is about which.
 	var dip_box = ForageFx.find_improvement_control(dip_sheet, SourceForecast.IMPROVEMENT_TAME)
-	h._assert_hud("the sheet is visibly BUILDING — a live, ticked Tame, not a stale verb",
-		dip_box is CheckBox and (dip_box as CheckBox).button_pressed)
+	h._assert_hud("the sheet is visibly BUILDING — a running Tame, not a stale verb",
+		dip_box != null and String(dip_box.get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
+			== HudWidgets.IMPROVEMENT_STATE_RUNNING)
 	h._assert_hud("…staffed by the composed TAKE crew (%d), which is the crew the take is priced for"
 		% HERD_DIP_CREW, Readout.stepper_value(dip_sheet) == HERD_DIP_CREW)
 	# (2) **THE TAKE IS THE UNDIPPED ONE.** Four hunters land the whole body they would land with no

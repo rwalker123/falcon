@@ -471,7 +471,8 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # (`docs/plan_standing_upkeep.md` §2). It sits under the two rung rows rather than beside them
     # because it is a property of the SOURCE at whatever rung it stands on, not of either meter — and
     # a patch with nothing built owes nothing and prints no row at all.
-    lines.append_array(DetailFormat.upkeep_lines(tile_info, prefix))
+    lines.append_array(DetailFormat.upkeep_lines(tile_info, prefix,
+        SourceForecast.SOURCE_KIND_FORAGE))
     return lines
 
 ## The FORAGING row (or nothing) — the human-edible web's stock over its ceiling. The exact twin of

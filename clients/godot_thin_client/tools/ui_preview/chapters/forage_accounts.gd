@@ -210,10 +210,9 @@ func _policy_rung_metric(root: Node, policy: String) -> String:
 ## **UNCHECK THE RUNNING BOX AND CHECK WHAT THE CLIENT WOULD TRANSMIT** — driven through the REAL
 ## control and the REAL formatter, not through the handler each would have called.
 ##
-## The chain is the player's: press the live `CheckBox` (which flips it and fires `toggled`), press
-## the sheet's own commit button, capture the payload off `HudLayer.improvement_requested`, and run it
-## through `Main.format_abandon_improvement` — the pure static `Main._on_hud_improvement` dispatches
-## to. Asserting the LINE rather than the payload is what makes this test the shipped representation:
+## The chain is the player's: move the BUILDERS stepper, press the sheet's own commit button, capture
+## the payload off `HudLayer.improvement_requested`, and run it through `Main.format_improvement` —
+## the pure static `Main._on_hud_improvement` dispatches to. Asserting the LINE rather than the payload is what makes this test the shipped representation:
 ## the payload could carry a perfectly good herd id and still be formatted into the tile-targeted
 ## grammar, which is exactly the mistake the two webs' differing targeting rules invite.
 ##
@@ -853,8 +852,8 @@ func run(harness) -> void:
 		stale_hold > 0 and stale_from_hold >= stale_from_card - STALE_VERB_THROUGHPUT_EPSILON)
 	# (3) …and the frame really is a FINISHED patch rather than a build in flight, which is what makes
 	# the two assertions above claims about a STALE verb rather than about a legitimate dip. A RUNNING
-	# Cultivate is a live CheckBox; this one is the DONE state's static Label, naming the rung the
-	# patch is standing on.
+	# Cultivate reads its own RUNNING label; this one is the DONE state's, naming the rung the patch is
+	# standing on — which the face's own words are what separate, both states being Labels now.
 	var stale_control = ForageFx.find_improvement_control(stale_sheet, "cultivate")
 	h._assert_hud("the finished rung reads as a DONE label, so no build in flight can explain a dip",
 		stale_control is Label and not (stale_control is CheckBox)
@@ -1287,7 +1286,12 @@ func run(harness) -> void:
 	# must fall to the line and then run FLAT along it: a plant curve never goes negative, so a patch
 	# held at a low floor is held, not lost. That is the frame the herd pair `floor_chart_herd_allee`
 	# (`chapters/hunt.gd`) is read against.
-	h._floor_chart_drawn_patch = ForageFx.floorify(_hay_meadow_tile_fixture(), HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	# **NOBODY IS BUILDING THIS PATCH, and that is now something a fixture has to SAY.** The walk is
+	# suppressed under a composed build (`_walks_to_the_floor`), and a patch carrying progress is
+	# building it whether or not anything is declared — so the reference tile's own 0.6 meter would
+	# suppress the very arrow this state exists to assert.
+	h._floor_chart_drawn_patch = BaseFx.unbuilt(
+		ForageFx.floorify(_hay_meadow_tile_fixture(), HudComposeVocab.FORAGE_FORECAST_PREFIX))
 	h._floor_chart_drawn_patch["x"] = 67
 	h._floor_chart_drawn_patch["patch_ecology_phase"] = "stressed"
 	h._floor_chart_drawn_patch["patch_biomass"] = FLOOR_CHART_DRAWN_STOCK_FRACTION \

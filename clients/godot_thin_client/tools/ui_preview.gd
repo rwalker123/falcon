@@ -96,7 +96,7 @@ const PREVIEW_EVENT_PREFS_PATH := "user://ui_preview_event_prefs.cfg"
 const MAP_VIEW_SCRIPT := preload("res://src/scripts/MapView.gd")
 ## Preloaded for its STATICS alone — Main is never instanced here. Each was extracted so an ORDER or a
 ## wording `Main` owns can be asserted without standing up the whole app scene: `escape_claimant` (the
-## ESC precedence chain), `format_abandon_improvement`, and `apply_event_dock_frame` (the event dock's
+## ESC precedence chain), `format_improvement`, and `apply_event_dock_frame` (the event dock's
 ## reset → current turn → retention → ingest sequence).
 const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 ## Injected for ONE state (`tile_panel_band`) and released again: a selected player band's detail
@@ -687,38 +687,50 @@ func _forage_open_button() -> Button:
 	return null
 
 
-func _assert_abandon_emits(kind: String, improvement: String, want_line: String) -> void:
+## **WALKING AWAY IS UNSTAFFING THE BUILDERS, and this drives that whole path** — the successor to
+## `_assert_abandon_emits`, which unchecked a running box and read the line through the retired
+## `Main.format_abandon_improvement`.
+##
+## `abandon_improvement` is gone (`docs/plan_standing_upkeep.md` §2.4): the build verb is derived from
+## the meter, so there is no stored intent for a command to clear and the running control is a state
+## Label with nothing to uncheck. What a player does instead is take the BUILD crew to zero, and the
+## set verb carries that count — `cultivate <faction> <x> <y> 0`.
+##
+## It asserts the shape FIRST, because a control that had stayed a checkbox would make the rest of the
+## probe meaningless: the running face must be a `Label` and must NOT be a `CheckBox`.
+func _assert_walk_away_emits(kind: String, improvement: String, want_line: String) -> void:
 	var sheet := _hud._drawercompose._compose_sheet
-	var box := ForageFx.find_improvement_control(sheet, improvement)
-	if not (box is CheckBox):
-		_assert_hud("abandon (%s): a running improvement box to uncheck" % kind, false)
-		return
+	var control := ForageFx.find_improvement_control(sheet, improvement)
+	_assert_hud("a running %s build is a STATE, not a checkbox to uncheck" % kind,
+		control is Label and not (control is CheckBox))
 	var captured: Array[Dictionary] = []
 	var sink := func(payload: Dictionary) -> void: captured.append(payload)
 	_hud.improvement_requested.connect(sink)
-	(box as CheckBox).button_pressed = false
-	# **SETTLE BEFORE LOOKING FOR THE COMMIT BUTTON.** Unchecking rebuilds the whole control block,
-	# and the builder clears its host with `queue_free()` — a DEFERRED removal, so until the frame
-	# ends the stale nodes are still children and a synchronous search finds the OLD button first.
-	# Pressing that one runs a closure built against the pre-uncheck composition, which emits nothing
-	# (`composed == standing`) and reads exactly like "the abandon path is not wired up".
+	# Take the builders off it, the way the stepper does, then re-render so the commit closure is built
+	# against the composition it is about to send.
+	if kind == SourceForecast.LABOR_KIND_FORAGE:
+		_hud._compose.set_forage_build_count(0)
+	else:
+		_hud._compose.set_hunt_build_count(0)
+	_hud._drawercompose.refresh_compose_sheet()
 	await _settle()
-	# By META, not by face: the forage commit's verb now follows the patch's rung (`Forage` on wild
-	# ground, `Tend` on a managed one), so a text match here would encode an assumption about the
-	# fixture's rung that has nothing to do with what this probe is testing.
+	# By META, not by face: the forage commit's verb follows the patch's rung (`Forage` on wild ground,
+	# `Tend` on a managed one), so a text match would encode an assumption about the fixture's rung that
+	# has nothing to do with what this probe is testing.
 	var commit := Q.compose_commit_button(sheet)
 	if commit == null:
 		_hud.improvement_requested.disconnect(sink)
-		_assert_hud("abandon (%s): the sheet's commit button" % kind, false)
+		_assert_hud("walk away (%s): the sheet's commit button" % kind, false)
 		return
 	commit.pressed.emit()
 	_hud.improvement_requested.disconnect(sink)
 	if captured.is_empty():
-		_assert_hud("abandon (%s): unchecking a running build emits a command" % kind, false)
+		_hud._band_labor._pending_labor.clear()
+		_assert_hud("walk away (%s): unstaffing a running build emits a command" % kind, false)
 		return
-	var line := String(MAIN_SCRIPT.format_abandon_improvement(captured[0]).get("line", ""))
-	print("ui_preview: abandon %s -> %s" % [kind, line])
-	_assert_hud("unchecking a running %s build transmits `%s`" % [kind, want_line],
+	var line := String(MAIN_SCRIPT.format_improvement(captured[0]).get("line", ""))
+	print("ui_preview: walk away %s -> %s" % [kind, line])
+	_assert_hud("unstaffing a running %s build transmits `%s`" % [kind, want_line],
 		line == want_line)
 	# Committing also fired `assign_labor`, whose OPTIMISTIC pending entry would tint every later
 	# frame's rows amber. Drop it — the probe is about the command, not about the overlay.

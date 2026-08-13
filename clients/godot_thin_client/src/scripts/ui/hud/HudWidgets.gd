@@ -799,12 +799,30 @@ const MISSION_LAUNCH_META := "mission_launch"
 ## ever confirm the string it already assumed. Identity is the only stable handle.
 const COMPOSE_COMMIT_META := "compose_commit"
 
-## The improvement CONTROL's checkbox, as `Control` meta — the stable handle on the second axis, for
-## the same reason `POLICY_RUNG_META` is the stable handle on a rung. Its value is the IMPROVEMENT key
-## (`"cultivate"` / `"sow"` / `"tame"` / `"corral"`), so a harness can assert both which rung is
-## offered and, from the node's own type, which of the three states it is in: a `CheckBox` is offered
-## or running (`button_pressed` tells them apart) and a `Label` is done.
+## The improvement CONTROL's node, as `Control` meta — the stable handle on the second axis, for the
+## same reason `POLICY_RUNG_META` is the stable handle on a rung. Its value is the IMPROVEMENT key
+## (`"cultivate"` / `"sow"` / `"tame"` / `"corral"`), so a harness can assert which rung the control
+## names; **the node's TYPE says whether it is a CHOICE or a FACT** — a `CheckBox` is the one OFFERED
+## state, and a `Label` is every state that has already been decided (running, done, gated), told
+## apart by `IMPROVEMENT_STATE_META`.
 const IMPROVEMENT_CONTROL_META := "improvement"
+
+## …and WHICH of the four states that control is in, as `Control` meta. It exists because the type no
+## longer separates them: RUNNING stopped being a checkbox when `abandon_improvement` retired, so
+## `Label` alone spans three states. Its value is one of the `IMPROVEMENT_STATE_*` consts.
+const IMPROVEMENT_STATE_META := "improvement_state"
+
+## **EVERY FONT-COLOUR SLOT A LIVE CHECKBOX DRAWS ITS FACE IN.** `HudStyle.apply_checkbox` writes all
+## of them, so a caller re-tinting a face has to write all of them too or the colour flickers back to
+## neutral under the pointer. The DISABLED slot is deliberately absent: a greyed box is stating that
+## the offer is closed, which outranks anything the tint would add.
+const CHECKBOX_LIVE_FONT_COLOR_SLOTS := ["font_color", "font_hover_color", "font_pressed_color",
+    "font_hover_pressed_color", "font_focus_color"]
+
+## The BUILD crew stepper's threshold note, as `Control` meta, carrying the crew count it states —
+## `SourceForecast.min_build_crew`. A harness reading the label's text would be asserting the wording;
+## this is the number.
+const BUILD_CREW_FLOOR_META := "build_crew_floor"
 
 ## The PLANT a crop-picker row stands for, as `Button` meta — its `FloraShareInfo.species` key, which
 ## is the sim's own id and the very string the row's art is composed from (`FloraSprites`). The
@@ -823,27 +841,36 @@ const FLORA_CROP_ROW_SPECIES_META := "flora_crop_row_species"
 ## rung, its payoff, its meter and — when gated — its reason); what lives here is the SHAPE the four
 ## states share, so the two webs cannot drift into two different-looking controls:
 ##
-##   OFFERED — an unchecked, enabled `CheckBox` naming the rung and its terms.
+##   OFFERED — an unchecked, enabled `CheckBox` naming the rung and its terms. **The only CHOICE of
+##             the four**, and therefore the only checkbox.
 ##   GATED   — a **`Label`, not a disabled checkbox**, whose text IS the reason the caller resolved;
 ##             the tooltip is the rung's hint, NOT the reasons. See the const's own note for why the
 ##             greyed-checkbox form was retired.
-##   RUNNING — a checked, **LIVE** `CheckBox`: unchecking abandons the build (`abandon_improvement`).
+##   RUNNING — a `Label` too, in SIGNAL ink: a build in flight is a FACT the meters state, not an
+##             intent the player holds.
 ##   DONE    — a plain `Label`. Nothing to uncheck, nothing to clear.
 ##
-## **UNCHECKING IS NEVER GATED, AND THAT IS LOAD-BEARING.** The abandon path asks for no knowledge, no
-## ceiling, no site and pointedly no `Thriving` check, because abandoning a STALLED build is exactly
-## when a player reaches for it — so `notes` on a RUNNING control (the WARN pause line) must NOT
-## disable it, which is why the `disabled` rule below tests the state and not just the notes. A
-## condition that greys a running box is a bug, not a safeguard.
+## **RUNNING STOPPED BEING A CHECKBOX WITH `abandon_improvement`** (`docs/plan_standing_upkeep.md`
+## §2.4). Unchecking it sent that command, which existed to clear a STORED verb; the verb is derived
+## from the meter now, so there is nothing left for an uncheck to clear and a command that cleared a
+## derived value would either do nothing or fight the derivation. **Walking away is unstaffing the
+## builders** — `cultivate <faction> <x> <y> 0`, the same control that started the build — so the
+## lever moved to the BUILDERS stepper beneath this block, and the shape rule the GATED state already
+## states now covers three of the four: the control's TYPE says whether this is a CHOICE or a FACT.
 ##
-## `on_toggle` is called with **the improvement's NEW value** — the rung's key when a box is checked,
-## `IMPROVEMENT_NONE` when one is unchecked — so a caller writes the value it is given rather than
-## re-deriving the direction from the control's state.
+## `on_toggle` is called with **the improvement's NEW value** — the rung's key when the OFFERED box is
+## checked, `IMPROVEMENT_NONE` when it is unchecked (which un-declares a build that has banked no work
+## yet, the one state a declaration is still the authority for).
 ##
-## `notes` render beneath in the hint style — the WARN-amber pause line when running (`warn_notes`
-## picks the tint), and on a GATED control the SECOND and later gate reasons, the first having become
-## the control's own text. An OFFERED control passes none: an offer with an unmet prerequisite is a
-## GATED one. Returns the whole block, so a caller adds one child.
+## `notes` render beneath in the hint style — the WARN-amber zero-payoff line when running
+## (`warn_notes` picks the tint), and on a GATED control the SECOND and later gate reasons, the first
+## having become the control's own text. An OFFERED control passes none: an offer with an unmet
+## prerequisite is a GATED one. Returns the whole block, so a caller adds one child.
+##
+## **`warn_face` INKS THE WHOLE FACE AMBER**, and it is for exactly one reading: a turn estimate of
+## `SourceForecast.BUILD_TURNS_NEVER`, the `∞` a crew at or below the maintenance rate earns. A face
+## is one `Label`/`CheckBox` and so takes one colour, so the warning cannot ride the clause alone —
+## which is the honest treatment anyway, since what is wrong is the whole proposition on that line.
 const IMPROVEMENT_STATE_OFFERED := "offered"
 const IMPROVEMENT_STATE_RUNNING := "running"
 const IMPROVEMENT_STATE_DONE := "done"
@@ -856,10 +883,25 @@ const IMPROVEMENT_STATE_GATED := "gated"
 
 static func build_improvement_control(improvement: String, state: String, face: String,
         tooltip: String, on_toggle: Callable, notes: Array = [],
-        warn_notes: bool = false) -> VBoxContainer:
+        warn_notes: bool = false, warn_face: bool = false) -> VBoxContainer:
     var block := VBoxContainer.new()
     block.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    if state == IMPROVEMENT_STATE_GATED:
+    if state == IMPROVEMENT_STATE_RUNNING:
+        # A STATE, not a choice — the DONE treatment in the live ink rather than the achieved green,
+        # since the meter is still going up. `set_label_tooltip` because a bare `tooltip_text` on a
+        # Label is a SILENT no-op.
+        var running := Label.new()
+        running.text = face
+        running.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+        running.add_theme_font_size_override("font_size",
+            HudWorkVocab.POLICY_PICKER_NAME_FONT_SIZE)
+        running.add_theme_color_override("font_color",
+            HudStyle.WARN if warn_face else HudStyle.SIGNAL)
+        running.set_meta(IMPROVEMENT_CONTROL_META, improvement)
+        running.set_meta(IMPROVEMENT_STATE_META, state)
+        set_label_tooltip(running, tooltip)
+        block.add_child(running)
+    elif state == IMPROVEMENT_STATE_GATED:
         # Same Label treatment as DONE — both are states rather than choices — but in the muted ink a
         # prerequisite deserves rather than DONE's HEALTHY, which would read as an achievement.
         var locked := Label.new()
@@ -869,6 +911,7 @@ static func build_improvement_control(improvement: String, state: String, face: 
         locked.add_theme_font_size_override("font_size",
             HudWorkVocab.POLICY_PICKER_NAME_FONT_SIZE)
         locked.set_meta(IMPROVEMENT_CONTROL_META, improvement)
+        locked.set_meta(IMPROVEMENT_STATE_META, state)
         set_label_tooltip(locked, tooltip)
         block.add_child(locked)
     elif state == IMPROVEMENT_STATE_DONE:
@@ -886,6 +929,7 @@ static func build_improvement_control(improvement: String, state: String, face: 
             HudWorkVocab.POLICY_PICKER_NAME_FONT_SIZE)
         done.add_theme_color_override("font_color", HudStyle.HEALTHY)
         done.set_meta(IMPROVEMENT_CONTROL_META, improvement)
+        done.set_meta(IMPROVEMENT_STATE_META, state)
         set_label_tooltip(done, tooltip)
         block.add_child(done)
     else:
@@ -897,12 +941,21 @@ static func build_improvement_control(improvement: String, state: String, face: 
         # so on this console the unchecked indicator reserves its width and paints nothing — an offer
         # with no control on it. `HudStyle.apply_checkbox` has the whole autopsy.
         HudStyle.apply_checkbox(box)
+        # **THE OFFER IS THE ONE STATE THAT CAN CARRY THE WARNING WITHOUT BEING GATED BY IT.** A crew
+        # below the maintenance rate makes the job unfinishable, not illegal — the player may staff it
+        # anyway and add hands next turn — so the face goes amber and the box stays live.
+        #
+        # **AFTER `apply_checkbox`, AND ON EVERY INTERACTION STATE.** That helper writes `font_color`
+        # itself (plus hover/pressed/focus), so an override set before it is silently overwritten and
+        # one set on `font_color` alone reverts to neutral ink the moment the pointer lands on it.
+        if warn_face:
+            for slot in CHECKBOX_LIVE_FONT_COLOR_SLOTS:
+                box.add_theme_color_override(slot, HudStyle.WARN)
         box.set_meta(IMPROVEMENT_CONTROL_META, improvement)
-        var running := state == IMPROVEMENT_STATE_RUNNING
-        box.button_pressed = running
-        # ONLY an OFFERED box is ever disabled, and only by an unmet prerequisite. A RUNNING one stays
-        # live however loudly its notes read — see the ungated-abandon rule above.
-        box.disabled = not running and not notes.is_empty()
+        box.set_meta(IMPROVEMENT_STATE_META, state)
+        # An OFFERED box is disabled only by an unmet prerequisite. (It is the only state that reaches
+        # this branch now: RUNNING became a Label when `abandon_improvement` retired.)
+        box.disabled = not notes.is_empty()
         if not box.disabled:
             # `toggled`, not `pressed`: the handler needs the NEW state, and reading `button_pressed`
             # back inside a `pressed` handler is the kind of ordering assumption that silently

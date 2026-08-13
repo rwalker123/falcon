@@ -182,44 +182,52 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
         kit_id)
 
 ## Send the improvement command when the composed second axis differs from what the source is already
-## building — the SET verb (`cultivate` / `sow` / `tame` / `corral`) when one is composed, and
-## `abandon_improvement` when the player has unchecked a running build. Either way it is its OWN
+## building — the SET verb (`cultivate` / `sow` / `tame` / `corral`) and its CREW. It is its OWN
 ## command, never a token on `assign_labor` — that is what lets a crew-size edit stop re-asserting the
 ## improvement, and with it the re-staffing gap where changing the crew of a PAUSED build re-ran the
 ## build's own gates and was refused (issue #442 §6).
 ##
-## **The two commands name their target DIFFERENTLY, and the payload carries both spellings for that
-## reason.** A set verb is targeted by the VERB (`tame` names a herd; `cultivate`/`sow`/`corral` name a
-## tile — `corral` is the case that proves it, a herd's rung addressed by the pen's place), while
-## `abandon_improvement` is targeted by the WEB (`forage` → tile, `hunt` → herd), because it names a
-## SOURCE rather than a verb. `Main` keeps the two grammars in separate builders; nothing here
-## flattens them into one.
+## **THERE IS ONE COMMAND NOW, AND ITS CREW IS BOTH LEVERS** (`docs/plan_standing_upkeep.md` §2.4).
+## `abandon_improvement` is retired: it cleared a STORED verb, and the verb is derived from the meter.
+## So unchecking an offer sends the same set verb **at zero builders** — `cultivate <f> <x> <y> 0` —
+## which is what walking away IS now, and the one thing that can still be said about a rung whose meter
+## has not started. There is no second grammar and no second builder; `Main.format_improvement` is the
+## whole of it, targeted by the VERB (`tame` names a herd; `cultivate`/`sow`/`corral` name a tile —
+## `corral` being the case that proves the rule, a herd's rung addressed by the pen's place).
 ##
-## **The abandon is UNGATED and is never suppressed.** It is legal on a stalled build, on unhealthy
-## ground and at any knowledge level — that is the case it exists for. The only thing that stops it is
-## the source not building anything, which `standing` already answers.
-## **IT CARRIES THE BUILD'S CREW** (`docs/plan_standing_upkeep.md` §2.2). The verb takes a worker
-## count now — it IS how the build allocation is stated — so an unchanged verb at a CHANGED crew is a
-## real order and must still be sent; the early return therefore tests both halves.
+## **BOTH ARGUMENTS ARE DERIVED VERBS, not the compose state and not the assignment's field.** A
+## running build the player never declared — an eroded rung, or one whose declaration the sim has
+## since spent — composes as `""` and must still be the verb a crew edit names, or stepping its
+## BUILDERS would send nothing at all.
 ##
-## **`standing_workers` IS THE BAND'S OWN `improvement_workers`**, read back off the assignment. It was
-## a hard `0` while the wire published only the take crew, which made every commit re-send the verb
-## even when nothing about the build had moved; with the real count the no-op test is exact, and a
+## **IT CARRIES THE BUILD'S CREW** (§2.2). The verb takes a worker count — it IS how the build
+## allocation is stated — so an unchanged verb at a CHANGED crew is a real order and must still be
+## sent; the early return therefore tests both halves.
+##
+## **`standing_workers` IS THE BAND'S OWN `improvement_workers`**, read back off the assignment, so a
 ## sheet opened and closed on a staffed build sends nothing.
 func _emit_improvement(band: Dictionary, kind: String, composed: String, standing: String,
         x: int, y: int, herd_id: String, workers: int, standing_workers: int) -> void:
-    if composed == standing and workers == standing_workers:
+    # Nothing is being built and nothing is declared: there is no verb to name, so no order exists.
+    if composed == SourceForecast.IMPROVEMENT_NONE and standing == SourceForecast.IMPROVEMENT_NONE:
+        return
+    var verb := composed
+    var crew := workers
+    if composed == SourceForecast.IMPROVEMENT_NONE:
+        # The player unchecked what the source was building. The verb still names the job; the crew is
+        # the statement, and zero of them is the walk-away.
+        verb = standing
+        crew = SourceForecast.BUILD_CREW_NONE
+    if verb == standing and crew == standing_workers:
         return
     emit_signal("improvement_requested", {
         "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
-        # "" here IS the abandon — the wire's own spelling of "building nothing", so the formatter
-        # branches on the same value the compose state holds rather than on a second flag.
-        "improvement": composed,
+        "improvement": verb,
         "kind": kind,
         "x": x,
         "y": y,
         "herd_id": herd_id,
-        "workers": workers,
+        "workers": crew,
     })
 
 ## The per-turn take `workers` from `band` get off `herd` under `policy` — the sim's LOCAL/band hunt
@@ -952,10 +960,26 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int) -> Dictionary:
 ## (Cultivate → Sow) and the animal one (Tame → Corral) get the same control, the same states and the
 ## same forecast, because they are the same decision about different stock.
 ##
+## **WHICH STATE IT IS IN IS DERIVED FROM THE METERS, NOT FROM THE COMPOSED VERB**
+## (`docs/plan_standing_upkeep.md` §2.4). `SourceForecast.build_verb` is the one derivation and the
+## composed value reaches it as a pending DECLARATION — honoured only where the meter it names is at
+## zero, which is exactly the case the sim cannot guess (a wild patch could climb to tended *or* be
+## sown). Everything else the meters answer for themselves, newest first.
+##
+## **THAT IS WHAT PUTS A REPAIR ON SCREEN.** A completed rung whose meter has eroded back below its
+## cost is BUILDING again with nothing declared — the state the player has to see, since the remedy is
+## hands — and the old test (`composed != NONE and not improvement_is_done`) rendered the DONE label
+## there and offered no way back. **The meter's fullness and the rung's achievement stay orthogonal**:
+## this reads fullness, `improvement_is_done` reads the stamped retention bar, so a patch at 90% shows
+## as *Cultivating* while the ground it stands on is still tended.
+##
 ## The states and their precedence (see `HudWidgets.build_improvement_control` for the shape):
 ##   RUNNING first — something is being built here, so nothing else is on offer. Its face carries
 ##       the meter and, where the crew's proposed floor leaves anything for them to work, the turn
-##       estimate. **It states no PAUSE**: the phase-keyed WARN line this state used to carry
+##       estimate. **It is a STATE, not a choice** — a `Label`, not a checkbox. There is nothing to
+##       uncheck now that `abandon_improvement` is retired: the commitment is the HANDS, so the lever
+##       beneath it is the BUILDERS stepper and `cultivate <f> <x> <y> 0` is how a player walks away.
+##       **It states no PAUSE**: the phase-keyed WARN line this state used to carry
 ##       (`_improvement_paused_note`, animal-only `_tame_stalled_hint` before that) described a sim
 ##       that stopped a build outside Thriving, and `docs/plan_harvest_floor.md` §3.2 replaced that
 ##       cliff with a rate — so it warned of a pause beside a meter its own face showed advancing. The
@@ -992,14 +1016,17 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         on_toggle: Callable, target: VBoxContainer,
         extra_rows: Callable = Callable(), build_crew: int = 0, build_idle: int = 0,
         on_build_crew: Callable = Callable()) -> void:
-    # RUNNING — a composed improvement that is not yet built. `composed` covers both the wire's
-    # standing value and a box the player just ticked, so a fresh commitment reads as running
-    # immediately rather than waiting a turn to stop looking like an offer.
-    if composed != SourceForecast.IMPROVEMENT_NONE \
-            and not SourceForecast.improvement_is_done(source, prefix, composed):
-        var glyph := FoodIcons.for_policy(composed)
+    # RUNNING — whatever the METERS say is going up, with `composed` reaching the derivation as a
+    # declaration for a meter at zero. That covers a box the player has just ticked (it reads as
+    # running immediately rather than waiting a turn to stop looking like an offer) AND the two cases
+    # no stored verb can: a rung eroded back below its cost, and a build the player never re-declared.
+    var source_kind := SourceForecast.source_kind_for_labor(kind)
+    var running_verb := SourceForecast.build_verb(source, prefix, source_kind, composed)
+    if running_verb != SourceForecast.IMPROVEMENT_NONE:
+        var glyph := FoodIcons.for_policy(running_verb)
         var participle := String(
-            HudComposeVocab.IMPROVEMENT_RUNNING_LABELS.get(composed, composed.capitalize()))
+            HudComposeVocab.IMPROVEMENT_RUNNING_LABELS.get(running_verb,
+                running_verb.capitalize()))
         # **THE METER IS THE WHOLE FACE, AND IT NOW STATES THE JOB'S SIZE.** The payoff that used to
         # close it (`· then 1.39 food`) is a readout row now — it stood one line above a PER TURN box
         # quoting a different number for the same source, with nothing on either to say which
@@ -1009,7 +1036,7 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         # `kind` here is the LABOR kind (`hunt`/`forage`); the forecast layer speaks SOURCE kinds
         # (`herd`/`forage`). They differ on the animal web, so this conversion is not optional.
         var deal := SourceForecast.improvement_forecast(
-            source, SourceForecast.source_kind_for_labor(kind), prefix, floor, composed)
+            source, source_kind, prefix, floor, running_verb)
         # **THE ONLY NOTE A RUNNING BUILD CAN CARRY IS THE PEN'S ZERO PAYOFF, and the phase-keyed
         # PAUSE line that used to lead it is gone** (`docs/plan_harvest_floor.md` §3.2). No rung on
         # either web stops on `EcologyPhase`: the sim replaced that cliff with a RATE, so a crew
@@ -1022,9 +1049,9 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         var notes: Array = []
         var running_face := HudComposeVocab.IMPROVEMENT_RUNNING_BARE_FORMAT % [
             glyph, DetailFormat.build_meter_value(participle,
-                SourceForecast.improvement_progress(source, prefix, composed),
-                SourceForecast.build_work_done(source, prefix, composed),
-                SourceForecast.build_work_cost(source, prefix, composed))]
+                SourceForecast.improvement_progress(source, prefix, running_verb),
+                SourceForecast.build_work_done(source, prefix, running_verb),
+                SourceForecast.build_work_cost(source, prefix, running_verb))]
         # **"ADD HANDS AND WATCH IT DROP" IS THE WHOLE POINT, so it goes on the face beside the crew
         # stepper that moves it — and it is priced at THIS stepper's crew and THIS slider's floor.**
         # It read the sim's `buildTurnsRemaining` for a release, which is the answer for the crew
@@ -1033,8 +1060,14 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         # one panel where the decision is being made. `build_turns_at` evaluates the closed form the
         # sim publishes the terms for; `BUILD_TURNS_NO_ESTIMATE` still renders as no clause at all
         # rather than as a `0` that would promise the build is about to land.
+        #
+        # **AND `BUILD_TURNS_NEVER` RENDERS AS `∞ turns`, IN THE WARNING INK** — a crew at or below
+        # this rung's maintenance rate banks nothing, so there is no finish date and the sheet must
+        # not imply one by staying silent beside a meter that is visibly full of work. It is the one
+        # reading on this control that should stop the player, which is why it takes the amber the
+        # shortfall rows wear rather than the neutral ink the larder's own ∞ gets.
         var running_turns := SourceForecast.build_turns_at(
-            source, prefix, composed, build_crew, floor, kit_gear)
+            source, prefix, running_verb, build_crew, floor, kit_gear)
         if running_turns != SourceForecast.BUILD_TURNS_NO_ESTIMATE:
             running_face = HudComposeVocab.IMPROVEMENT_RUNNING_TURNS_FORMAT % [
                 running_face, DetailFormat.build_turns_clause(running_turns)]
@@ -1049,12 +1082,14 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
             if bool(deal["feed_rung"]) and feed >= SourceForecast.FOOD_FLOW_MIN \
                     and float(deal["payoff"]) * output < SourceForecast.FOOD_FLOW_MIN:
                 notes.append(HudComposeVocab.IMPROVEMENT_DEAL_DEPLETED_NOTE)
-        target.add_child(HudWidgets.build_improvement_control(composed,
+        target.add_child(HudWidgets.build_improvement_control(running_verb,
             HudWidgets.IMPROVEMENT_STATE_RUNNING, running_face,
-            _improvement_running_tooltip(kind, composed), on_toggle, notes, true))
-        _mount_build_crew_row(target, build_crew, build_idle, on_build_crew)
+            _improvement_running_tooltip(running_verb), on_toggle, notes, true,
+            DetailFormat.build_turns_never(running_turns)))
+        _mount_build_crew_row(target, source, prefix, build_crew, build_idle, on_build_crew,
+            DetailFormat.build_turns_never(running_turns))
         if extra_rows.is_valid():
-            extra_rows.call(composed, target)
+            extra_rows.call(running_verb, target)
         return
     # DONE — the highest rung this source has actually built, as a state label. Highest first, for the
     # reason the work board's rung mark tests highest first: a Field is ALSO cultivated and a penned
@@ -1087,9 +1122,14 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
     var offer_face := HudComposeVocab.IMPROVEMENT_OFFER_BARE_FORMAT % [
         FoodIcons.for_policy(rung),
         String(HudComposeVocab.IMPROVEMENT_OFFER_LABELS.get(rung, rung.capitalize()))]
+    # **THE THRESHOLD IS VISIBLE BEFORE THE COMMITMENT, NOT AFTER IT.** A crew at or below this rung's
+    # maintenance rate never finishes, so the offer's own price quotes `∞ turns` in the warning ink as
+    # the stepper below is dragged past it — the answer arriving while the decision is being made
+    # rather than as a blank line once it has been taken.
+    var offer_turns := SourceForecast.build_turns_at(
+        source, prefix, rung, build_crew, floor, kit_gear)
     var offer_price := DetailFormat.build_price_clause(
-        SourceForecast.build_work_cost(source, prefix, rung),
-        SourceForecast.build_turns_at(source, prefix, rung, build_crew, floor, kit_gear))
+        SourceForecast.build_work_cost(source, prefix, rung), offer_turns)
     if offer_price != "":
         offer_face = HudComposeVocab.IMPROVEMENT_OFFER_PRICED_FORMAT % [offer_face, offer_price]
     var reasons := RungGates.gate_reasons_for({rung: offer.get("reasons", [])}, rung)
@@ -1148,8 +1188,10 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         return
     target.add_child(HudWidgets.build_improvement_control(rung,
         HudWidgets.IMPROVEMENT_STATE_OFFERED, offer_face,
-        String(HudComposeVocab.IMPROVEMENT_HINTS.get(rung, "")), on_toggle))
-    _mount_build_crew_row(target, build_crew, build_idle, on_build_crew)
+        String(HudComposeVocab.IMPROVEMENT_HINTS.get(rung, "")), on_toggle, [], false,
+        DetailFormat.build_turns_never(offer_turns)))
+    _mount_build_crew_row(target, source, prefix, build_crew, build_idle, on_build_crew,
+        DetailFormat.build_turns_never(offer_turns))
     # The crop picker rides an OFFER only: "which crop do I commit this patch to?" is part of
     # committing, so it has no meaning where committing is refused — the gated branch above returns
     # before reaching it.
@@ -1165,9 +1207,24 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
 ## band cannot staff (it does not trim — a quietly-smaller build crew is a commitment the player
 ## believes they made), so the `+` must not offer one.
 ##
+## **AND IT STATES THE MINIMUM VIABLE CREW BESIDE THE STEPPER** (`docs/plan_standing_upkeep.md` §2.4).
+## The maintenance rate is owed while the meter is going up too and the builders are what supply it,
+## so a crew at or below it holds the meter where it is or takes it backwards — a threshold, not a
+## slow build. `SourceForecast.min_build_crew` is the sim's own published count
+## (`upkeepWorkersNeeded`, which now ships on both sides of completion), never a figure derived by
+## dividing the shortfall. Stated HERE rather than only as the face's ∞ because this is the control
+## that answers it: *"this crew is below the threshold"* has to be readable while dragging, not
+## discovered as a missing turn estimate afterwards.
+##
+## A rung the wire prices no rate on (`NO_UPKEEP_CREW`) states no floor — there is no threshold to
+## clear, and a `0 hold it` reads as a defect.
+##
+## `never` is the face's own `BUILD_TURNS_NEVER` verdict, threaded in rather than re-derived, so the
+## amber here and the `∞` up there are one answer rendered twice.
+##
 ## Renders nothing without a live `on_build_crew` — the DONE and GATED states have no build to staff.
-func _mount_build_crew_row(target: VBoxContainer, crew: int, idle: int,
-        on_build_crew: Callable) -> void:
+func _mount_build_crew_row(target: VBoxContainer, source: Dictionary, prefix: String,
+        crew: int, idle: int, on_build_crew: Callable, never: bool) -> void:
     if not on_build_crew.is_valid():
         return
     var row := HBoxContainer.new()
@@ -1178,22 +1235,25 @@ func _mount_build_crew_row(target: VBoxContainer, crew: int, idle: int,
     stepper.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     HudWidgets.add_stepper_controls(stepper, crew, crew < idle, on_build_crew)
     row.add_child(stepper)
+    var floor_crew := SourceForecast.min_build_crew(source, prefix)
+    if floor_crew > SourceForecast.NO_UPKEEP_CREW:
+        var note := HudWidgets.alloc_hint_label(
+            HudComposeVocab.CREW_BUILD_FLOOR_FORMAT % floor_crew)
+        note.set_meta(HudWidgets.BUILD_CREW_FLOOR_META, floor_crew)
+        if never:
+            note.add_theme_color_override("font_color", HudStyle.WARN)
+        row.add_child(note)
     target.add_child(row)
 
-## The RUNNING control's tooltip: the rung's own hint ("what does this buy?") plus what UNCHECKING
-## does ("what happens if I stop?"). Two different questions, so two lines rather than one run-on.
+## The RUNNING control's tooltip: the rung's own hint — *what does this buy?* — and nothing else.
 ##
-## The abandon clause is PER WEB because the sim's answer is: a plant meter bleeds away once nobody is
-## improving the patch, an animal meter is kept. Neither promises progress BACK — the command does not
-## touch the meter at all, it hands the source to the rule that already governs an unimproved one.
-## Putting it in the tooltip rather than in a note or a confirm is the judgement call: unchecking is
-## always legal and, on the animal web, fully reversible, so a modal would be ceremony over a
-## decision the player can simply re-make.
-func _improvement_running_tooltip(kind: String, improvement: String) -> String:
-    return HudComposeVocab.IMPROVEMENT_TOOLTIP_SEPARATOR.join([
-        String(HudComposeVocab.IMPROVEMENT_HINTS.get(improvement, "")),
-        String(HudComposeVocab.IMPROVEMENT_ABANDON_HINTS.get(kind, "")),
-    ])
+## **The per-web abandon clause went with the command it described** (`docs/plan_standing_upkeep.md`
+## §2.4). It answered *what happens if I stop?* about an uncheck that no longer exists, and the state
+## it described — a build with nobody on it — is now stated live on the source itself, by the
+## `Keeping:` row and the `At risk:` countdown beside it, which say what it is COSTING rather than
+## what it would cost. The tooltip therefore takes no web, so it takes no `kind`.
+func _improvement_running_tooltip(improvement: String) -> String:
+    return String(HudComposeVocab.IMPROVEMENT_HINTS.get(improvement, ""))
 
 ## The done-state label's face. **The Corral rung carries the pen's per-turn upkeep and the Tame rung
 ## does not, and that asymmetry is deliberate and permanent** (spec §4): a penned herd cannot graze,
@@ -1623,10 +1683,15 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     if band.is_empty():
         band = resolved
         _compose.set_hunt_band(int(band.get("entity", ComposeState.NO_BAND_ENTITY)))
-    # THE SECOND AXIS's standing value (issue #442) — what the band is already BUILDING here. It seeds
-    # the improvement control so a herd mid-Tame opens with its box checked rather than looking
-    # untouched, and it is what the commit compares against to decide whether a verb needs sending.
-    var standing_improvement := _band_labor.improvement_for_hunt(band, herd_id)
+    # THE SECOND AXIS's standing value (issue #442) — what this herd is already BUILDING, DERIVED from
+    # its meters with the assignment's own `improvement` reaching the derivation as a pending
+    # declaration (`docs/plan_standing_upkeep.md` §2.4). It seeds the improvement control so a herd
+    # mid-Tame opens on its running face rather than looking untouched, and it is what the commit
+    # compares against to decide whether a verb needs sending. The plant sheet's twin carries why the
+    # stored field alone cannot answer.
+    var standing_improvement := SourceForecast.build_verb(herd,
+        HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.SOURCE_KIND_HERD,
+        _band_labor.improvement_for_hunt(band, herd_id))
     # **A COMPOSITION IS SEEDED FOR ONE BAND, so the ACTOR changing re-seeds it exactly as the SOURCE
     # changing does.** The picker's callback writes the band and rebuilds, so at this point the composed
     # band IS the picked one — and the crew, the floor and the build it carries are still the previous
@@ -1716,10 +1781,12 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # ceiling this crew will not be paid.
     # A verb this herd has already built is RETIRED rather than carried — the animal twin of the
     # forage sheet's rule, and for the same reason: `seed_hunt` runs only on a source change, so a
-    # composition outlives its build and would keep dipping the crew for a Tame that finished.
+    # composition outlives its build and would keep quoting a Tame that finished. `build_verb` is that
+    # retirement and its opposite in one derivation: it also ADOPTS a build the meters say is running
+    # where nothing was declared.
     var composed_improvement := SourceForecast.IMPROVEMENT_NONE if is_expedition \
-        else SourceForecast.live_improvement(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
-            _compose.hunt_improvement())
+        else SourceForecast.build_verb(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
+            SourceForecast.SOURCE_KIND_HERD, _compose.hunt_improvement())
     if not is_expedition and composed_improvement != _compose.hunt_improvement():
         _compose.set_hunt_improvement(composed_improvement)
     var forecast := _hunt_forecast(herd, band, _compose.hunt_floor())
@@ -2584,10 +2651,14 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     if band.is_empty():
         band = resolved
         _compose.set_forage_band(int(band.get("entity", ComposeState.NO_BAND_ENTITY)))
-    # THE SECOND AXIS's standing value (issue #442) — what the band is already BUILDING on this patch.
-    # Unlike the stance it needs no staffing test: `improvement_for_forage` reads the assignment's own
-    # field and answers "" when there is no assignment at all.
-    var standing_improvement := _band_labor.improvement_for_forage(band, x, y)
+    # THE SECOND AXIS's standing value (issue #442) — what this patch is already BUILDING, DERIVED
+    # from its meters with the assignment's own `improvement` reaching the derivation as a pending
+    # declaration (`docs/plan_standing_upkeep.md` §2.4). The stored field alone cannot answer: a rung
+    # that eroded back below its cost is building again with nothing declared, and a crew edit there
+    # has to name the verb the sim is actually running or the commit sends nothing.
+    var standing_improvement := SourceForecast.build_verb(tile_info,
+        HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.SOURCE_KIND_FORAGE,
+        _band_labor.improvement_for_forage(band, x, y))
     # **THE ACTOR BAND CHANGING RE-SEEDS THE COMPOSITION, exactly as the SOURCE changing does** — see
     # the hunt sheet's twin. Evaluated AFTER `band` resolves, so it compares against the band just
     # picked rather than the one being left.
@@ -2635,13 +2706,14 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # verb where one is in flight, else the rung on offer.
     # **AND A VERB THIS PATCH HAS ALREADY BUILT IS RETIRED HERE, NOT CARRIED.** `seed_forage` runs
     # only when the SOURCE changes, so a composition outlives the build it named: the turn a Cultivate
-    # completes the sim clears the assignment's `improvement`, the improvement control below drops to
-    # its DONE label — and the composed verb sat on unread, dipping every crew term to 25% and
-    # re-issuing itself on the next commit. `SourceForecast.live_improvement` is the same
-    # `improvement_is_done` test that control already makes, so the numbers and the label can no
-    # longer say different things about the same rung.
-    var composed_improvement := SourceForecast.live_improvement(tile_info,
-        HudComposeVocab.FORAGE_FORECAST_PREFIX, _compose.forage_improvement())
+    # completes, the improvement control below drops to its DONE label — and the composed verb sat on
+    # unread and re-issued itself on the next commit. `SourceForecast.build_verb` is the same
+    # derivation that control makes, so the numbers and the label can no longer say different things
+    # about the same rung — and it works in the other direction too, adopting a build the METERS say
+    # is in flight even where nothing was ever declared.
+    var composed_improvement := SourceForecast.build_verb(tile_info,
+        HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.SOURCE_KIND_FORAGE,
+        _compose.forage_improvement())
     if composed_improvement != _compose.forage_improvement():
         _compose.set_forage_improvement(composed_improvement)
     # THE CREW NOUN, resolved ONCE for the whole sheet — `Foragers` on wild ground, `Tenders` on a

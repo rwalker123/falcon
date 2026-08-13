@@ -436,8 +436,14 @@ func run(harness) -> void:
 			(HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT % HudComposeVocab.HUNT_CREW_LABEL.to_lower()).to_upper()))
 	# The independent half: the STEPPER names itself from the axis the sheet re-seeded, so reading that
 	# axis back proves the header agrees with the stepper rather than the two being wrong together.
-	h._assert_hud("…and the stepper it agrees with is built on THIS herd's own (empty) improvement axis",
-		h._hud._compose.hunt_improvement() == SourceForecast.IMPROVEMENT_NONE
+	#
+	# **THE AXIS IS THIS HERD'S OWN `Tame`, NOT AN EMPTY SLOT**, and the difference is the derivation
+	# (`docs/plan_standing_upkeep.md` §2.4): the wild fixture is 40% tamed, and a meter between zero
+	# and its cost IS a build in flight whoever declared it. What the claim has always been about is
+	# that the slot carries THIS herd's answer rather than the pen-ready herd's leftover `Corral`, so
+	# it is stated that way rather than as an emptiness the model no longer has.
+	h._assert_hud("…and the stepper it agrees with is built on THIS herd's own improvement axis",
+		h._hud._compose.hunt_improvement() == SourceForecast.IMPROVEMENT_TAME
 		and Readout.crew_row_label(h._hud._drawercompose._compose_sheet)
 			== HudComposeVocab.HUNT_CREW_LABEL.to_upper())
 	h._hud._drawercompose.close_compose_sheet()

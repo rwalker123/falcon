@@ -199,11 +199,18 @@ static func forage_range_bands() -> Array:
 ## more about the retired dip than about the patch. With each activity stating its own crew there is
 ## no blended count for a rung's floor to raise, and the build's hands answer through the improvement
 ## verb's own stepper.
+## **THE BUILD'S OWN CREW ON THAT ASSIGNMENT** (`docs/plan_standing_upkeep.md` §2.2). A running
+## build is STAFFED — the hands are the commitment now — so a fixture leaving
+## `improvement_workers` at the wire's `0` stages a build nobody is paying for, which is a
+## different frame and a warned one. It is what the sheet's BUILDERS stepper seeds from, and what a
+## walk-away is measured against: taking a crew of zero to zero is no order at all.
+const CULTIVATING_BAND_BUILDERS := 3
+
 static func cultivating_forage_band_fixture(x: int = 66, y: int = 10) -> Dictionary:
 	var band: Dictionary = forage_range_bands()[0]
 	band["labor_assignments"] = [{
 		"kind": "forage", "workers": 1, "target_x": x, "target_y": y, "floor": 0.5,
-		"improvement": "cultivate",
+		"improvement": "cultivate", "improvement_workers": CULTIVATING_BAND_BUILDERS,
 		"actual_yield": 0.08, "sustainable_yield": 0.96, "realized_yield": 0.08,
 		"workers_needed": ForageFx.CULTIVATE_SIM_WORKERS_NEEDED, "overdraws": false,
 	}]

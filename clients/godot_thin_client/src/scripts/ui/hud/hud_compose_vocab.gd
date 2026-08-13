@@ -142,6 +142,23 @@ const CREW_ROW_BUILD_LABEL := "BUILDERS"
 # The crew row's note separation, beside its label.
 const CREW_ROW_NOTE_SEPARATION := 5
 
+# **THE MINIMUM VIABLE CREW, STATED BESIDE THE STEPPER THAT HAS TO CLEAR IT**
+# (`docs/plan_standing_upkeep.md` §2.4). The maintenance rate is owed while the meter is being raised
+# too, and the build crew is what supplies it, so a crew at or below the rate holds the meter where it
+# is or takes it backwards — a real threshold rather than a slow build. It is published
+# (`SourceForecast.min_build_crew`), so the sheet states it BEFORE the player commits rather than
+# leaving them to discover it as an ∞ afterwards.
+#
+# **ONE STRING, AND THE INK IS WHAT FORKS** — amber exactly where the face reads `∞`, off the same
+# `DetailFormat.build_turns_never` test, so the threshold note and the estimate can never disagree
+# about which side of it a crew is on. A second wording would be a second opinion.
+#
+# **It says HOLD rather than "needs N", because N is where the meter STOPS SLIDING, not where it
+# starts advancing.** The count is `ceil(demand / PER_WORKER_OUTPUT)`, so a crew of exactly N nets
+# zero on a whole-numbered demand — it holds the rung and finishes nothing, which `needs N` would
+# promise it does not.
+const CREW_BUILD_FLOOR_FORMAT := "%d hold it — the surplus is progress"
+
 # A crew TARGET is a PILL, and the shape is the point: the stepper beside it is a boxed control you
 # operate, a target is a value you can jump to. Its face carries two registers — the COUNT (what you
 # compare against the stepper) over the label naming which of the two answers it is — so, like the
@@ -372,6 +389,14 @@ const BUILD_TURNS_COUNT_FORMAT := "≈%d turns"
 
 const BUILD_TURNS_COUNT_ONE := "≈1 turn"
 
+# **A CREW THAT NEVER FINISHES, in the same slot the count would have taken** — the ∞ face of
+# `SourceForecast.BUILD_TURNS_NEVER`. It wears no `≈`: every other reading here is an estimate that
+# could come in early or late, and this one is not an estimate at all — at or below the maintenance
+# rate the meter does not advance, so there is no distribution to hedge. The glyph itself is
+# `DetailFormat.BUILD_TURNS_NEVER_GLYPH`, shared with the larder runway and inked amber here because
+# on a build it is the opposite news.
+const BUILD_TURNS_NEVER_FORMAT := "%s turns"
+
 # `50 work, ≈25 turns` — the price with its estimate. Takes the clause ALREADY SPELLED, never a raw
 # count, so the singular can only be decided in one place (`DetailFormat.build_turns_clause`).
 const BUILD_PRICE_TURNS_FORMAT := "%s, %s"
@@ -426,32 +451,19 @@ const IMPROVEMENT_DONE_FORMAT := "%s %s"
 # the Corral done label carries it and the Tame one does not. Do not make these match.
 const IMPROVEMENT_DONE_UPKEEP_FORMAT := "%s %s · %s fodder/turn upkeep"
 
-# WHAT UNCHECKING A RUNNING IMPROVEMENT DOES, per web — the second half of the running control's
-# tooltip (`abandon_improvement <faction> forage <x> <y>` / `… hunt <herd_id>`).
+# **RETIRED — `IMPROVEMENT_ABANDON_HINTS`** (`docs/plan_standing_upkeep.md` §2.4). Two per-web
+# sentences described what UNCHECKING a running build did, and there is no uncheck: the running
+# control is a state Label now, because `abandon_improvement` cleared a STORED verb and the verb is
+# derived from the meter. Walking away is taking the BUILDERS to zero, which the stepper beneath the
+# control says in the only way that cannot go stale — a number the player sets.
 #
-# **UNCHECKING IS ALWAYS LEGAL.** There is no knowledge, ceiling, site or Thriving gate on the abandon
-# path, deliberately: abandoning a STALLED build is exactly when a player reaches for it, so gating it
-# on the conditions that STARTED the build would make the remedy unreachable in the one case it is
-# for. Nothing here may render a gate reason, and nothing may grey the box.
+# **What the two lines said is still TRUE and still differs by web**, which is why the retirement is
+# recorded rather than the strings quietly deleted: unstaffing a plant build lets its meter BLEED at
+# the rung's `decay_per_turn` (~100 turns to zero) while an animal meter is KEPT (`domestication` is
+# monotone-up and the pen rung declares no decay). Nothing is refunded on either web. That fact now
+# reaches the player through the source's own `Keeping:` / `At risk:` rows, which state the live
+# shortfall and the turns of grace left rather than a hypothetical about a control.
 #
-# **IT IS NOT A CANCEL-AND-REFUND, AND THE TWO WEBS GENUINELY DIFFER** — so one shared sentence would
-# have to lie to one of them. The command does not touch the meter at all; it hands the source back to
-# its own existing rule, which is the same state walking the band away reaches:
-#   • PLANT  — `cultivation_progress` / `field_progress` BLEED at the rung's `decay_per_turn` on every
-#     turn nobody is improving the patch. Slow (~100 turns to zero), but real, and the copy must not
-#     imply the work is banked.
-#   • ANIMAL — the meter is KEPT (`domestication` is monotone-up and the pen rung's decay is 0), so the
-#     copy may say so plainly.
-# Neither line promises progress BACK, because neither web gives any.
-const IMPROVEMENT_ABANDON_HINTS := {
-    "forage": "Unchecking stops the work and frees the build's crew — the gatherers are untouched, since they were never paying for it. Nothing is refunded, and an unkept patch's progress bleeds away.",
-    "hunt": "Unchecking stops the work and frees the build's crew — the hunters are untouched, since they were never paying for it. Nothing is refunded, but the progress already made is kept.",
-}
-
-# Joins the rung's own hint to the abandon consequence in the running control's tooltip. The two are
-# different questions ("what does this rung buy?" / "what happens if I stop?") and read as two lines.
-const IMPROVEMENT_TOOLTIP_SEPARATOR := "\n\n"
-
 # **THERE IS NO PHASE-KEYED PAUSE LINE, and `IMPROVEMENT_PAUSED_FORMAT` is not coming back.** It read
 # "⚠ Paused — the source is Stressed, and this only advances while Thriving. … ease off and it
 # resumes", which was true of a sim that gated every build on `EcologyPhase::Thriving`.

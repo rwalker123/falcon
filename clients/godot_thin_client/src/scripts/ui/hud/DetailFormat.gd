@@ -400,6 +400,15 @@ const BREAKDOWN_CARET_CLOSED := "▸"
 const FOOD_UNLIMITED_GLYPH := "∞"
 const FOOD_RUNWAY_UNIT := "turn"
 
+## **THE SAME GLYPH ON A BUILD ESTIMATE, AND ITS MEANING IS INVERTED.** On the Food line `∞` is good
+## news — the larder never empties; on a build it is the worst news the sheet can carry — this crew
+## never finishes, because it is at or below the maintenance rate the meter owes every turn
+## (`SourceForecast.BUILD_TURNS_NEVER`). So it takes the AMBER treatment the shortfall rows wear
+## rather than the neutral ink the runway gets: the one readout that should stop the player must not
+## read as reassurance. The glyph is shared deliberately — a player who has learned it on the food
+## line reads it here without being taught twice — and the ink is what says which way it points.
+const BUILD_TURNS_NEVER_GLYPH := FOOD_UNLIMITED_GLYPH
+
 # ---- Predators Phase 0 — the four RAW combat components (strength ≠ danger). Keys ≤ 16 chars so
 # `_split_kv` aligns them as table rows. Attack/Defense are open-ended (bar relative to the roster
 # max); Fights back / Aggressive are native 0..1 (bar + %).
@@ -996,12 +1005,24 @@ static func build_price_clause(work_cost: float, turns: int) -> String:
         return price
     return HudComposeVocab.BUILD_PRICE_TURNS_FORMAT % [price, build_turns_clause(turns)]
 
+## Is this estimate the one that has to STOP the player? The single test both compose faces gate their
+## warning ink on, so the ∞ and the amber can never appear without each other.
+static func build_turns_never(turns: int) -> bool:
+    return turns == SourceForecast.BUILD_TURNS_NEVER
+
 ## **THE COMPOSE SHEET'S TURN CLAUSE — `≈20 turns`, or `≈1 turn`** — the count and its noun, decided in
 ## ONE place for both compose faces (the offered face's price and the running face's tail). They quote
 ## one estimate about one job, so a build one turn out that read `≈1 turns` on the sheet beside the
 ## tile card's `≈1 turn at this crew` would be the same number worded two ways on one screen.
 ## `HudSelectionVocab.BUILD_TURNS_ROW_ONE` is that card's half of the same pair.
+##
+## **`BUILD_TURNS_NEVER` TAKES THE SAME SLOT AND READS `∞ turns`** — a crew at or below the source's
+## maintenance rate. It is spelled HERE, beside the counts, because it is an answer to the same
+## question and both faces reach it through this one function; what it does not carry is the ink,
+## which is the host's (see `build_turns_never`).
 static func build_turns_clause(turns: int) -> String:
+    if turns == SourceForecast.BUILD_TURNS_NEVER:
+        return HudComposeVocab.BUILD_TURNS_NEVER_FORMAT % BUILD_TURNS_NEVER_GLYPH
     if turns == BUILD_TURNS_SINGULAR:
         return HudComposeVocab.BUILD_TURNS_COUNT_ONE
     return HudComposeVocab.BUILD_TURNS_COUNT_FORMAT % turns
@@ -1038,24 +1059,29 @@ const UPKEEP_KEEPER_ONE := "keeper"
 
 const UPKEEP_KEEPER_MANY := "keepers"
 
-## **A RUNG STILL GOING UP IS OWED ITS BUILDERS, NOT KEEPERS**, and this row says so in words.
+## **A RUNG STILL GOING UP IS OWED ITS BUILDERS, NOT KEEPERS**, and this row says so in words — with
+## the count named as what it IS there: the smallest crew that makes any progress at all.
 ##
-## **ITS DEMAND IS NOT ZERO, WHICH IS EXACTLY WHY THE NUMBERS ARE SUPPRESSED HERE.** A meter still
-## being raised is billed what it would LOSE — the plant web's rot rate, the animal web's whole
-## keeping, since the animals are standing there whether or not the fence is up — so a patch mid-
-## Cultivate publishes a small non-zero `upkeepDemand`. **No pool covers it**: the sim leaves an
-## unbuilt rung out of the band's keeping pool entirely and credits its BUILD crew instead
-## (`patch_upkeep_supply` / `herd_upkeep_supply`), so printing the pooled `x of y work` here would
-## invite the player to raise a role that will never pay this bill.
-const UPKEEP_MID_BUILD_VALUE := "still being built — its own crew holds it, no keepers are owed yet"
+## **ITS DEMAND IS NOT ZERO, WHICH IS EXACTLY WHY THE POOLED NUMBERS ARE SUPPRESSED HERE.** A meter
+## still being raised is billed what it would LOSE — the plant web's rot rate, the animal web's whole
+## keeping, since the animals are standing there whether or not the fence is up. **No pool covers
+## it**: the sim leaves an unbuilt rung out of the band's keeping pool entirely and credits its BUILD
+## crew instead (`patch_upkeep_supply` / `herd_upkeep_supply`), so printing the pooled `x of y work`
+## here would invite the player to raise a role that will never pay this bill.
+const UPKEEP_MID_BUILD_FORMAT := "still being built — its own crew pays %s work a turn, worth %d %s"
 
-## **…AND THE SAME ROW WHEN NOBODY IS PAYING IT.** A rung still going up is owed its BUILD crew, so a
-## build that was walked away from goes unpaid and the meter slides back — while the row above said
-## the build's crew was holding it, which is the reassuring direction on a source that is bleeding.
-## The two are told apart by the SHORTFALL and not by a crew count: `upkeepWorkersNeeded` is `0` in
-## both cases (those hands are the build's either way) and the wire publishes no builder requirement,
-## so a headcount here would be a client inventing one.
-const UPKEEP_UNBUILT_VALUE := "nobody is building it — this rung is sliding back"
+## The builder noun the mid-build row counts in, singular and plural. Its own pair rather than the
+## keeper's, because the hands are a different crew doing a different job — the row's whole point.
+const UPKEEP_BUILDER_ONE := "builder"
+
+const UPKEEP_BUILDER_MANY := "builders"
+
+## **…AND THE SAME ROW WHEN THE RATE IS GOING UNPAID.** A rung still going up is owed its BUILD crew,
+## so a build nobody staffs — **or one staffed under the rate** — leaves the meter sliding back, while
+## the row above said the build's crew was covering it, which is the reassuring direction on a source
+## that is bleeding. The two are told apart by the SHORTFALL, which is the only field that can see the
+## difference: the demand and the crew count read identically in both.
+const UPKEEP_UNBUILT_VALUE := "its builders are not covering that — this rung is sliding back"
 
 ## The row that only appears when the keeping is UNDERPAID — its own key, so the tint registry can ink
 ## it as a warning without inking the bill above it.
@@ -1078,7 +1104,10 @@ const UPKEEP_LOST_NOW_FORMAT := "short %s work — this rung is being lost NOW"
 ## Nothing here is derived: the demand, the supply and the shortfall are three published fields, and
 ## the countdown is `neglectGraceRemaining` read through its own flag. Empty on a source that owes
 ## nothing AND has nothing at risk — a wild patch prints no row rather than a `0.00 work` one.
-static func upkeep_lines(src: Dictionary, prefix: String) -> Array[String]:
+##
+## `kind` is the source's own (`SourceForecast.SOURCE_KIND_*`), because **which of the two rows this
+## is depends on the METER and no longer on a crew count** — see the fork below.
+static func upkeep_lines(src: Dictionary, prefix: String, kind: String) -> Array[String]:
     var lines: Array[String] = []
     var state := SourceForecast.upkeep_state(src, prefix)
     if not SourceForecast.has_upkeep(state) and not bool(state.get("at_risk", false)):
@@ -1086,19 +1115,23 @@ static func upkeep_lines(src: Dictionary, prefix: String) -> Array[String]:
     var demand := float(state["demand"])
     var supplied := float(state["supplied"])
     var crew := int(state["crew"])
-    # **THE BILL AND WHAT WAS PAID AGAINST IT, in one row.** `crew` is the maintain activity's own
-    # `workers_needed`; it is `0` while the rung is still going up, because those hands are the
-    # BUILD's — which the row says in words rather than printing "0 keepers".
-    #
-    # **AND THE MID-BUILD WORDS FORK ON THE SHORTFALL.** *"The build's crew holds it"* is true of a
-    # build being worked and false of one that was walked away from — the same `0` crew, opposite
-    # news — so a shortfall against a zero keeper demand states that nobody is paying instead. The
-    # work board's ⚠ reads the identical test (`SourceForecast.is_unbuilt_and_unpaid`).
-    var unbuilt := crew <= SourceForecast.NO_UPKEEP_CREW and SourceForecast.upkeep_is_short(state)
+    # **THE FORK IS THE METER'S OWN STATE** (`docs/plan_standing_upkeep.md` §2.4): below its cost the
+    # BUILD crew supplies the rate, at it the band's keeping pool does. It was a `crew == 0` test —
+    # *"nobody is owed keepers, so this must be a build"* — which read the right answer only while
+    # `upkeepWorkersNeeded` was suppressed mid-build. It publishes on both sides now, so that
+    # inference would print `the pool covers 0 of 2 work` over a rung no pool pays, pointing the
+    # player at a role that will never settle the bill.
+    var building := SourceForecast.build_is_in_flight(src, prefix, kind)
+    # **AND THE MID-BUILD WORDS FORK AGAIN, ON THE SHORTFALL.** *"Its own crew pays that"* is true of a
+    # build being worked and false of one walked away from or staffed under the rate — the same demand
+    # and the same count, opposite news. The work board's ⚠ reads the identical pair of tests
+    # (`SourceForecast.is_unbuilt_and_unpaid`).
     var upkeep_value := UPKEEP_VALUE_FORMAT % [format_work_units(supplied),
         format_work_units(demand), crew, UPKEEP_KEEPER_ONE if crew == 1 else UPKEEP_KEEPER_MANY]
-    if crew <= SourceForecast.NO_UPKEEP_CREW:
-        upkeep_value = UPKEEP_UNBUILT_VALUE if unbuilt else UPKEEP_MID_BUILD_VALUE
+    if building:
+        upkeep_value = UPKEEP_UNBUILT_VALUE if SourceForecast.upkeep_is_short(state) \
+            else UPKEEP_MID_BUILD_FORMAT % [format_work_units(demand), crew,
+                UPKEEP_BUILDER_ONE if crew == 1 else UPKEEP_BUILDER_MANY]
     lines.append("%s: %s" % [UPKEEP_ROW, upkeep_value])
     if not SourceForecast.upkeep_is_short(state):
         return lines
@@ -1982,7 +2015,8 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array) -> Arr
         # board's ⚠ makes. See `herders_label` for why the two cannot be collapsed.
         var herders_needed := int(herd_data.get("herders_needed", 0))
         if herders_needed > 0:
-            var under_kept := SourceForecast.is_under_kept(herd_data, herd_prefix)
+            var under_kept := SourceForecast.is_under_kept(
+                herd_data, herd_prefix, SourceForecast.SOURCE_KIND_HERD)
             lines.append("%s: %s" % [KEEPERS_ROW, herders_label(herders_needed, under_kept)])
             # State the CONSEQUENCE when the keeping is short AND the herd is owned: a muted one-liner
             # naming the shed and the single lever that stops it. It quotes the KEEPING demand, so the
@@ -2047,7 +2081,8 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array) -> Arr
     # **WHAT IT COSTS TO HOLD THIS HERD AT ITS RUNG, and how long it has if nobody pays**
     # (`docs/plan_standing_upkeep.md` §2) — the animal web's half of the one keeping row both webs
     # share. A wild herd owes nothing and prints none.
-    lines.append_array(upkeep_lines(herd_data, HudComposeVocab.BARE_FORECAST_PREFIX))
+    lines.append_array(upkeep_lines(herd_data, HudComposeVocab.BARE_FORECAST_PREFIX,
+        SourceForecast.SOURCE_KIND_HERD))
     var next_x := int(herd_data.get("next_x", -1))
     var next_y := int(herd_data.get("next_y", -1))
     if next_x >= 0 and next_y >= 0:

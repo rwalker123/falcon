@@ -1917,7 +1917,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # WORKFORCE zone's Husbandry card; `WORK_ROW_UNDER_HERDED_NOTE` carries the instruction and
         # `WORK_ROW_UNDER_HERDED_TOOLTIP` the reason.
         var under_herded := SourceForecast.is_under_kept(
-            live_herd, HudComposeVocab.BARE_FORECAST_PREFIX)
+            live_herd, HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.SOURCE_KIND_HERD)
         if under_herded:
             if not marks.contains(HudComposeVocab.OVERHUNT_FLAG):
                 marks += " " + HudComposeVocab.OVERHUNT_FLAG
@@ -1928,16 +1928,17 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # equal in weight, so the slot is not first-come: the overstaff note says some hunters
             # bring nothing home, and this one says the animals are leaving.
             note = HudWorkVocab.WORK_ROW_UNDER_HERDED_NOTE
-        # …AND THE OTHER WAY A SOURCE BLEEDS: a part-built rung nobody is building
-        # (`SourceForecast.is_unbuilt_and_unpaid`). An at-risk meter is owed the crew that OWNS it, so
-        # a rung still going up is owed BUILDERS — and the sim's decay, and the animal web's shed,
-        # read the resulting shortfall without caring which crew failed to pay. Both webs reach it:
-        # a walked-away Tame sheds animals, a walked-away Cultivate slides back toward wild.
-        # **EXCLUSIVE WITH THE KEEPER CASE BY CONSTRUCTION** — that one needs a positive keeper
-        # demand and this one needs a zero — so the two share the `note` slot without either
-        # displacing the other, and the `elif` states an exclusivity rather than a precedence.
+        # …AND THE OTHER WAY A SOURCE BLEEDS: a part-built rung whose builders are not covering its
+        # rate (`SourceForecast.is_unbuilt_and_unpaid`). An at-risk meter is owed the crew that OWNS
+        # it, so a rung still going up is owed BUILDERS — and the sim's decay, and the animal web's
+        # shed, read the resulting shortfall without caring which crew failed to pay. Both webs reach
+        # it: a walked-away Tame sheds animals, a walked-away Cultivate slides back toward wild.
+        # **EXCLUSIVE WITH THE KEEPER CASE BY CONSTRUCTION** — that one needs the meter FULL and this
+        # one needs it still climbing — so the two share the `note` slot without either displacing the
+        # other, and the `elif` states an exclusivity rather than a precedence.
         var unbuilt := not under_herded and SourceForecast.is_unbuilt_and_unpaid(
-            rung_source, HudComposeVocab.BARE_FORECAST_PREFIX)
+            rung_source, HudComposeVocab.BARE_FORECAST_PREFIX,
+            SourceForecast.source_kind_for_labor(kind))
         if unbuilt:
             if not marks.contains(HudComposeVocab.OVERHUNT_FLAG):
                 marks += " " + HudComposeVocab.OVERHUNT_FLAG

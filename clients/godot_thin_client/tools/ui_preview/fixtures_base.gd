@@ -121,11 +121,19 @@ static func seed_forage_rows(tile: Dictionary) -> Dictionary:
 ## **WHAT IT COSTS TO HOLD A TENDED PATCH, PER TURN** — `intensification_ladder.json`'s
 ## `plant:tended` `upkeep.work_per_turn`, `scaled_by: flat`. Stated here so every plant fixture bills
 ## its keeping from one place, exactly as the two work costs above are.
-const PLANT_TENDED_UPKEEP_PER_TURN := 0.5
+## **THE SHIPPED DEMAND, AND IT IS A WHOLE NUMBER A PLAYER CAN STAFF EXACTLY** — `plant:tended`
+## declares `work_per_turn` **2.0**, `flat`. It was `0.5` here, which is the rung's `meter_decay`
+## and was its demand too back when SHORTFALL WAS THE DECAY; splitting those two dials is what let
+## the demand move to two hands while the rot rate stayed exactly where it was
+## (`docs/plan_standing_upkeep.md` §2.4). A stale copy here was harmless while nothing read the
+## demand, and became a HALVED build estimate on every plant frame the moment the build's pace
+## became `crew − rate`.
+const PLANT_TENDED_UPKEEP_PER_TURN := 2.0
 
-## The Field's own, one rung up (`plant:field`, `0.75`/`flat`) — dearer to keep, which is the ladder's
-## whole claim about a higher rung.
-const PLANT_FIELD_UPKEEP_PER_TURN := 0.75
+## The Field's own, one rung up (`plant:field`, **4.0**/`flat`) — a standing crop wants four hands
+## where tended ground wants two, which is the ladder's whole claim about a higher rung. It carried
+## the rung's `meter_decay` (0.75) for the reason the rate above carried its own.
+const PLANT_FIELD_UPKEEP_PER_TURN := 4.0
 
 const PLANT_CULTIVATE_WORK_COST := 50.0
 
@@ -164,6 +172,32 @@ static func price_plant_build(tile: Dictionary, turns: int = BUILD_TURNS_REMAINI
 	tile["patch_build_work_from_gear"] = PLANT_BUILD_WORK_FROM_GEAR
 	tile["patch_build_work_per_worker_turn"] = BUILD_WORK_PER_WORKER_TURN
 	return tile
+
+## **A PATCH NOBODY IS BUILDING — both plant meters at zero, re-priced.**
+##
+## It exists because the build verb is DERIVED from the meter now
+## (`docs/plan_standing_upkeep.md` §2.4): a patch carrying progress IS building that rung, declared
+## or not, so the reference tile's own `patch_cultivation_progress` 0.6 makes it a patch
+## mid-Cultivate wherever it is used. Every frame whose claim is about an OFFER — a rung on the
+## table, a floor walk with no build to stack a second "later" against — has to stage a source at
+## zero, and stating that once is what stops each of them zeroing a meter and forgetting to
+## re-price the absolutes beside it.
+static func unbuilt(tile: Dictionary) -> Dictionary:
+	tile["patch_cultivation_progress"] = 0.0
+	tile["patch_is_cultivated"] = false
+	tile["patch_field_progress"] = 0.0
+	tile["patch_is_field"] = false
+	# **AND THE KEEPING GOES WITH THE RUNG.** `patch_unwinding_rung` answers `None` with both meters
+	# at zero, so a wild patch is billed nothing — and since the maintenance rate is a TAX ON
+	# BUILDING now (`docs/plan_standing_upkeep.md` §2.4), a fixture that kept the reference tile's
+	# `0.5` here would halve every turn estimate quoted against a state the sim cannot produce.
+	tile["patch_upkeep_demand"] = 0.0
+	tile["patch_upkeep_supplied"] = 0.0
+	tile["patch_upkeep_shortfall"] = 0.0
+	tile["patch_upkeep_workers_needed"] = 0
+	tile["patch_has_neglect_grace"] = false
+	tile["patch_neglect_grace_remaining"] = 0
+	return price_plant_build(tile)
 
 static func food_tile_fixture() -> Dictionary:
 	var tile := {
@@ -214,8 +248,9 @@ static func food_tile_fixture() -> Dictionary:
 		"patch_upkeep_demand": PLANT_TENDED_UPKEEP_PER_TURN,
 		"patch_upkeep_supplied": PLANT_TENDED_UPKEEP_PER_TURN,
 		"patch_upkeep_shortfall": 0.0,
-		# `ceil(0.5 / 1.0)` — one keeper meets the whole bill.
-		"patch_upkeep_workers_needed": 1,
+		# `ceil(2.0 / 1.0)` — two hands meet the whole bill, and the same two are the minimum viable
+		# BUILD crew while this patch's meter is still going up (`SourceForecast.min_build_crew`).
+		"patch_upkeep_workers_needed": 2,
 		# THE NEGLECT GRACE — the countdown to this rung reverting, now counted in turns of upkeep
 		# SHORTFALL. The reference patch is kept, so it reads the plant:tended rung's full
 		# `grace + 1` = 3: "stop paying and you have this long". `has_neglect_grace` is what makes the

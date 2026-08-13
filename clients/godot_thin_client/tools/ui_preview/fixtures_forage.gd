@@ -52,7 +52,7 @@ const FIXTURE_PLANT_PER_WORKER_BIOMASS := 8.0
 const FIXTURE_ANIMAL_PER_WORKER_BIOMASS := 40.0
 
 # ---- THE STALE-VERB PATCH: the played tile, at the SHIPPED numbers ------------------------------
-# Reported from play, and the reason `SourceForecast.live_improvement` exists. Every constant here is
+# Reported from play, and the reason `SourceForecast.build_verb` retires a spent declaration. Every constant here is
 # a shipped config value rather than a fixture convenience, because the defect is only visible at the
 # proportions a live patch has: `crew_to_hold` divides a regrowth the LAND owns by a carry the CREW
 # owns, so the 4× a stale build dip puts on the crew shows up as a crew target 3× too large, and a
@@ -352,6 +352,20 @@ static func improvement_face(root: Node, improvement: String) -> String:
 		return (control as Label).text
 	return ""
 
+## **IS THE CONTROL'S FACE IN THE WARNING INK?** — the other half of the `∞` claim, and the half a
+## text assertion structurally cannot make: the larder's runway draws the same glyph in neutral ink
+## for the opposite news, so what says which way a build's `∞` points is the colour.
+##
+## Read as the RESOLVED font colour off whichever node the state uses (`Label` for running, done and
+## gated; `CheckBox` for the offer), because `get_theme_color` answers the stock default where no
+## override is set — an "an override exists" test would pass on the very bug this looks for, which
+## IS a missing override.
+static func improvement_face_is_warned(root: Node, improvement: String) -> bool:
+	var control := find_improvement_control(root, improvement)
+	if control == null:
+		return false
+	return control.get_theme_color("font_color") == HudStyle.WARN
+
 static func find_improvement_control(root: Node, improvement: String) -> Control:
 	if root == null:
 		return null
@@ -363,6 +377,47 @@ static func find_improvement_control(root: Node, improvement: String) -> Control
 		if found != null:
 			return found
 	return null
+
+## The BUILDERS row — the build crew's stepper and the threshold note beside it. `null` where the
+## control mounts none (the DONE and GATED states have no build to staff).
+static func build_crew_row(root: Node) -> Control:
+	if root == null:
+		return null
+	if root is Control and (root as Control).has_meta(HudWidgets.BUILD_CREW_ROW_META):
+		return root as Control
+	for child in root.get_children():
+		var found := build_crew_row(child)
+		if found != null:
+			return found
+	return null
+
+## **THE MINIMUM VIABLE BUILD CREW THE BUILDERS ROW STATES**, read off the note's own meta rather than
+## out of its text: the number is the claim and the wording is not (`SourceForecast.min_build_crew`).
+## `BUILD_CREW_FLOOR_ABSENT` where the row states no floor, which is a real answer — a rung whose rate
+## the wire prices at nothing has no threshold to clear.
+const BUILD_CREW_FLOOR_ABSENT := -1
+
+static func build_crew_floor(root: Node) -> int:
+	var row := build_crew_row(root)
+	if row == null:
+		return BUILD_CREW_FLOOR_ABSENT
+	for child in row.get_children():
+		if child is Control and (child as Control).has_meta(HudWidgets.BUILD_CREW_FLOOR_META):
+			return int((child as Control).get_meta(HudWidgets.BUILD_CREW_FLOOR_META))
+	return BUILD_CREW_FLOOR_ABSENT
+
+## Is that threshold note in the WARNING ink — i.e. is this crew on the never-finishes side of it? The
+## colour is the other half of the claim, and it is APPLIED rather than inherited, so it is read as the
+## RESOLVED font colour: `get_theme_color` answers the stock default where no override is set, so an
+## "an override exists" test would pass on the very bug this looks for.
+static func build_crew_floor_warns(root: Node) -> bool:
+	var row := build_crew_row(root)
+	if row == null:
+		return false
+	for child in row.get_children():
+		if child is Label and (child as Label).has_meta(HudWidgets.BUILD_CREW_FLOOR_META):
+			return (child as Label).get_theme_color("font_color") == HudStyle.WARN
+	return false
 
 ## The indented basket rows, in order. They are the only indented rows the LAND drawer emits.
 static func flora_basket_rows(lines: Array[String]) -> Array[String]:

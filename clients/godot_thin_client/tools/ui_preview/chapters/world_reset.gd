@@ -117,13 +117,30 @@ func run(harness) -> void:
 	h._assert_hud("building — a patch under Cultivate reports that verb and its meter",
 		RungGates.rung_in_progress("forage", rr_building_patch, "cultivate") == \
 			{"policy": "cultivate", "glyph": FoodIcons.for_policy("cultivate"), "progress": 0.42})
-	# Keyed on the IMPROVEMENT, not on a non-zero meter: a half-built patch nobody is working is a
-	# standing rung, which is what the rung glyph is for. The stance says nothing about it either way —
-	# passing a stance here answers `{}`, which is the whole point of the split (issue #442).
-	h._assert_hud("building — the same patch building NOTHING is not building (a meter is not work)",
-		RungGates.rung_in_progress("forage", rr_building_patch, RUNG_BUILDING_NOTHING).is_empty())
-	h._assert_hud("building — a STANCE in the improvement slot answers nothing, never a meter",
-		RungGates.rung_in_progress("forage", rr_building_patch, "sustain").is_empty())
+	# **KEYED ON THE METER, and the third argument is a pending DECLARATION**
+	# (`docs/plan_standing_upkeep.md` §2.4). It was keyed on the declaration alone, and this pair
+	# asserted the opposite of what it asserts now: *a meter is not work*. That was the sim's model
+	# until the build verb became derived — a rung that eroded back below its cost is building again
+	# with nothing declared, and the mark has to follow it or the slide is invisible on the one
+	# surface a player would catch it on.
+	h._assert_hud("building — a patch carrying progress is building it, declared or not",
+		RungGates.rung_in_progress("forage", rr_building_patch, RUNG_BUILDING_NOTHING) == \
+			RungGates.rung_in_progress("forage", rr_building_patch, "cultivate"))
+	# The STANCE still answers nothing — it is not a rung of either web, so it is not a declaration
+	# the derivation can honour. What answers here is the meter, which is why the claim is that a
+	# stance CHANGES nothing rather than that it silences the mark.
+	h._assert_hud("building — a STANCE in the improvement slot changes no answer, never a meter",
+		RungGates.rung_in_progress("forage", rr_building_patch, "sustain") == \
+			RungGates.rung_in_progress("forage", rr_building_patch, RUNG_BUILDING_NOTHING))
+	# …and the DECLARATION half, which no meter can carry: bare ground with a verb declared on it is
+	# building that verb, because a zero meter is the one state the player answers for.
+	h._assert_hud("building — a declaration answers for a meter at ZERO, and only there",
+		String(RungGates.rung_in_progress("forage", {}, "cultivate").get("policy", "")) == "cultivate"
+			and RungGates.rung_in_progress("forage", {}, RUNG_BUILDING_NOTHING).is_empty())
+	# …and a FULL meter is MAINTAINING, not building — the third state, and the edge the derivation
+	# turns on. A stale declaration on it is inert rather than re-running a finished job.
+	h._assert_hud("building — a meter at its cost is maintaining, whatever is declared on it",
+		RungGates.rung_in_progress("forage", {"cultivation_progress": 1.0}, "cultivate").is_empty())
 	# Each verb names its OWN meter — reading the wrong one would report a confident wrong number.
 	h._assert_hud("building — Sow reads field_progress, not the cultivation meter beside it",
 		float(RungGates.rung_in_progress("forage", {"field_progress": 0.7, "cultivation_progress": 0.2},
