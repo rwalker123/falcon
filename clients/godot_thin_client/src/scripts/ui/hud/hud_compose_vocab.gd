@@ -129,35 +129,17 @@ const CREW_TARGET_HOLD_TOOLTIP := "Enough hands to take exactly what grows back 
 const CREW_ROW_LABEL_SEPARATION := 4
 const CREW_ROW_SEPARATION := 6
 
-# **THE MAINTAIN CREW ROW** (`docs/plan_standing_upkeep.md` §2.2) — the third of a source's three
-# worker allocations, beside the take crew's stepper above it and the build crew's on the improvement
-# control below. It is a stepper and nothing else: *"stop maintaining this"* is a crew of ZERO, and a
-# toggle beside the number would be a second way to say what the number already says.
-const CREW_ROW_MAINTAIN_LABEL := "KEEPERS"
-# The BUILD crew's row label — the second allocation, stated on the improvement control that names
-# the verb these hands are filling.
-const CREW_ROW_BUILD_LABEL := "BUILDERS"
-# What the row STATES beside the stepper: what the rung wants against what this band HAS on it —
-# *"you have 1 of 2"*. Both numbers are the wire's now (`upkeepWorkersNeeded` and the assignment's
-# `maintain_workers`), so the row states a fact rather than an intention. It read *"sending N"* while
-# the standing crew was unreadable and the stepper could only open at nobody.
+# **THE KEEPERS ROW AND ITS WHOLE VOCABULARY ARE RETIRED** (`docs/plan_standing_upkeep.md` §2.5).
+# `CREW_ROW_MAINTAIN_LABEL`, `CREW_MAINTAIN_WANTS_FORMAT`, `CREW_MAINTAIN_MID_BUILD_NOTE`, the two
+# loss formats and `CREW_MAINTAIN_HELD_TEXT` described a stepper on the sheet that staffed one
+# source's keeping. Maintenance left the tile — the keeping is the band's `agriculture` /
+# `husbandry` role — so a sheet has no keeping crew to compose, and what a source's keeping costs is
+# stated by `DetailFormat.upkeep_lines` where the source itself is described.
 #
-# **THE SECOND NUMBER IS THE STEPPER'S LIVE VALUE, not the seeded one**, so it follows the player's
-# hand: the row is what they are about to have, which is the same as what they have until they touch
-# it.
-const CREW_MAINTAIN_WANTS_FORMAT := "— you have %d of %d"
-# The demand a rung makes of a source whose meter is still going UP is `0`, because those hands are
-# the BUILD's. That is the honest reading and it renders as a real row rather than as nothing.
-const CREW_MAINTAIN_MID_BUILD_NOTE := "— the build's crew holds this until it stands"
-# **THE CLIFF, IN WORDS.** A completed meter sits EXACTLY at its own cost, so the first bleeding turn
-# drops it below and the rung is LOST — three unkept turns costs a tended patch, two costs a Field.
-# The countdown is the wire's (`neglectGraceRemaining`), never one composed here.
-const CREW_MAINTAIN_LOSS_SOON_FORMAT := "⚠ short %d work — this rung is lost in %d turn%s"
-const CREW_MAINTAIN_LOSS_NOW_FORMAT := "⚠ short %d work — this rung is being lost NOW"
-# The reassuring half, and it is worth a line: a player who has just staffed the keeping needs to see
-# that it took.
-const CREW_MAINTAIN_HELD_TEXT := "✓ held — nothing is bleeding away"
-# The maintain row's own label separation, matching the take crew row's.
+# The BUILD crew's row label — the second of a source's two allocations, stated on the improvement
+# control that names the verb these hands are filling.
+const CREW_ROW_BUILD_LABEL := "BUILDERS"
+# The crew row's note separation, beside its label.
 const CREW_ROW_NOTE_SEPARATION := 5
 
 # A crew TARGET is a PILL, and the shape is the point: the stepper beside it is a boxed control you

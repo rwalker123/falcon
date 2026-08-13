@@ -19,19 +19,19 @@ const COMPOSE_SPINE_STEPPER := "stepper"
 
 const COMPOSE_SPINE_IMPROVEMENT := "improvement"
 
-## **THE OTHER TWO WORKER ALLOCATIONS** (`docs/plan_standing_upkeep.md` §2.2), tagged apart from the
-## take crew's plain `stepper` because they are not the same control answering the same question: one
-## staffs the verb, one staffs the keeping. Tagging them is also what stops a third stepper appearing
-## on one sheet from reading as a spine DIVERGENCE — see `COMPOSE_SPINE_SOURCE_CONDITIONAL`.
+## **THE SOURCE'S SECOND WORKER ALLOCATION** (`docs/plan_standing_upkeep.md` §2.2), tagged apart from
+## the take crew's plain `stepper` because it is not the same control answering the same question:
+## one hauls the offer, one staffs the verb.
+##
+## **THE `keeping` TAG IS RETIRED** (§2.5) — maintenance left the tile, so no sheet mounts a keeping
+## stepper and no spine can carry one.
 const COMPOSE_SPINE_BUILDERS := "builders"
 
-const COMPOSE_SPINE_KEEPING := "keeping"
-
-## **THE ROWS A SHEET RENDERS OR NOT ACCORDING TO ITS SOURCE, never according to its WEB.** The
-## keeping row appears iff the source has a rung that can be lost; a wild herd owes nothing and a
-## Tended Patch does, so two sheets can differ here while reading in exactly the same grammar. The
-## parity check drops them before comparing, which is what keeps that check a claim about ORDER.
-const COMPOSE_SPINE_SOURCE_CONDITIONAL: Array[String] = [COMPOSE_SPINE_KEEPING]
+## **THE ROWS A SHEET RENDERS OR NOT ACCORDING TO ITS SOURCE, never according to its WEB.** Empty
+## today: the keeping row was its only member and went with the per-source keeping crew. The parity
+## check still drops this set before comparing, so a future source-conditional row has a home and the
+## check stays a claim about ORDER.
+const COMPOSE_SPINE_SOURCE_CONDITIONAL: Array[String] = []
 
 ## What EVERY compose sheet must open with — both webs, and the hunt sheet's local and expedition
 ## branches alike. The expedition branch builds no improvement control (a detached party builds
@@ -73,9 +73,6 @@ static func collect_compose_spine(node: Node, spine: Array[String]) -> void:
 		return
 	if node is Control and (node as Control).has_meta(HudWidgets.BUILD_CREW_ROW_META):
 		spine.append(COMPOSE_SPINE_BUILDERS)
-		return
-	if node is Control and (node as Control).has_meta(HudWidgets.CREW_ROW_MAINTAIN_META):
-		spine.append(COMPOSE_SPINE_KEEPING)
 		return
 	if node is Button and (node as Button).text == COMPOSE_STEPPER_MINUS_FACE:
 		spine.append(COMPOSE_SPINE_STEPPER)

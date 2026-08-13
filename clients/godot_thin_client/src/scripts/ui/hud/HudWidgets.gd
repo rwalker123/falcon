@@ -725,17 +725,14 @@ const READOUT_LOCKED_ACCOUNT_META := "readout_locked_account"
 ## and passes without ever reaching the stepper.
 const CREW_ROW_LABEL_META := "crew_row_label"
 
-## The KEEPING row's label, as `Control` meta — its own, because the row must be assertable by
-## ABSENCE as well as by presence: a wild source with nothing built on it owes nothing and states no
-## keeping row at all.
-const CREW_ROW_MAINTAIN_META := "crew_row_maintain"
+## **THE KEEPING ROW'S TWO METAS ARE RETIRED** (`docs/plan_standing_upkeep.md` §2.5).
+## `CREW_ROW_MAINTAIN_META` and `MAINTAIN_VERDICT_META` tagged a stepper and a verdict on a row that
+## no longer exists: maintenance left the tile, so neither compose sheet composes a keeping crew and
+## there is nothing here for a harness to find. What a source's keeping costs is stated by
+## `DetailFormat.upkeep_lines` on the land card and the herd drawer.
 
-## The keeping row's VERDICT line — held, or bleeding and how long the rung has. Its own meta rather
-## than a scan of the row, because the wants/have note sits beside it and carries numbers too.
-const MAINTAIN_VERDICT_META := "maintain_verdict"
-
-## The BUILD crew's stepper row, as `Control` meta — the second of the three allocations, mounted on
-## the improvement control that states the verb it staffs.
+## The BUILD crew's stepper row, as `Control` meta — the second of a source's two allocations, mounted
+## on the improvement control that states the verb it staffs.
 const BUILD_CREW_ROW_META := "build_crew_row"
 
 ## The VERDICT line, as `Control` meta — value is the severity (`SourceForecast.VERDICT_*`), which is

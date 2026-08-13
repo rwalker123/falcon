@@ -142,67 +142,70 @@ func _tame_worker_cap_herd_fixture() -> Dictionary:
 	fixture["herders_needed_if_managed"] = TAME_CAP_WOULD_BE_HERDERS
 	return fixture
 
-## A TAMED herd, FULLY KEPT — the calm control for the staffing readout, AND the fix for the
-## stale-count bug (fauna neglect-escape arc). `_keeper_band_fixture` puts 4 KEEPERS (the `maintain`
-## crew of a Hunt assignment) on game_deer_07, and this herd wants 4, so the drawer reads a neutral
-## "Keepers: 4 / 4" — from the ACTUAL assigned count, not `herded_fraction`. `herded_fraction` is
-## deliberately left STALE at 0.4 (last turn's resolved value): the OLD code reconstructed
-## `round(0.4 · 4) = 2` and wrongly read a self-contradictory "2 / 4 — under-herded".
+## A TAMED herd the band's HUSBANDRY POOL covers — the calm control for the keeping readout. The row
+## states the herd's DEMAND (`Keepers: 4`) and says where the hands come from, because maintenance
+## left the tile (`docs/plan_standing_upkeep.md` §2.5): no crew is assigned to a herd any more, so
+## there is no staffed count to state and none to reconstruct. `herded_fraction` is deliberately left
+## STALE at 0.4 (last turn's resolved value) to keep the guard against reading it live.
 ##
-## **ITS TAMING IS COMPLETE, and that is load-bearing** (`docs/plan_standing_upkeep.md` §2.2). The
-## keeping is owed to KEEPERS only once the rung STANDS — while a Tame is going up those hands are the
-## build's, and the sim publishes `upkeepWorkersNeeded 0` — so a part-tamed herd carrying a positive
-## keeper demand is a shape no server can produce, and the frame would be asserting against it.
+## **ITS TAMING IS COMPLETE, and that is load-bearing.** The keeping is owed only once the rung
+## STANDS — while a Tame is going up those hands are the build's, and the sim publishes
+## `upkeepWorkersNeeded 0` — so a part-tamed herd carrying a positive keeper demand is a shape no
+## server can produce, and the frame would be asserting against it.
 func _fully_herded_herd_fixture() -> Dictionary:
 	var fixture := HerdFx.taming_herd_fixture()
 	fixture["domestication"] = SourceForecast.DOMESTICATION_COMPLETE
 	HerdFx.price_animal_build(fixture)
 	HerdFx.set_managed_herders(fixture, 4)
-	_set_keeper_upkeep(fixture, 4, KEEPERS_ON_THE_DEER)
+	_set_keeper_upkeep(fixture, 4, POOL_COVERS_IT)
 	fixture["herded_fraction"] = 0.4
 	return fixture
 
-## The SAME herd, UNDER-KEPT — animals are drifting off (fauna neglect-escape arc; neglect no longer
-## decays tameness, it sheds whole animals to the wild). The herd now wants 6 keepers but the band
-## staffs 4, so the drawer reads the amber "Keepers: 4 / 6 — under-herded" (the ACTUAL staffed count)
-## plus the muted "Under-herded — animals are drifting off. Staff 6 KEEPERS to hold the herd." line —
-## NEVER the retired "tameness slipping" copy. `herded_fraction` is left STALE at 1.0: the OLD code
-## reconstructed `round(1.0 · 6) = 6` and read a calm "6 / 6" with NO warning at all — the exact
-## stale-reading this fix removes.
+## The SAME herd, UNDER-KEPT — its share of the pool did not cover it, so animals are drifting off
+## (the shed is the animal web's shortfall penalty). The herd wants 6 keepers' worth and the pool paid
+## 4, so the drawer reads the amber `Keepers: 6 — under-herded, the Husbandry pool is short here`
+## plus the shed line naming the band's Husbandry role — NEVER the retired "tameness slipping" copy,
+## and never the retired per-source `KEEPERS` stepper, which no longer exists.
 func _under_herded_herd_fixture() -> Dictionary:
 	var fixture := _fully_herded_herd_fixture()
 	HerdFx.set_managed_herders(fixture, 6)
-	_set_keeper_upkeep(fixture, 6, KEEPERS_ON_THE_DEER)
+	_set_keeper_upkeep(fixture, 6, POOL_SHARE_ON_THE_DEER)
 	fixture["herded_fraction"] = 1.0
 	return fixture
 
-## The keepers `BandFx.band_fixture`'s Hunt assignment holds on game_deer_07 once this chapter stages
-## the `maintain` crew on it — the number both staffing frames are read against.
-const KEEPERS_ON_THE_DEER := 4
+## **THE SAME HERD MID-TAME, which is owed BUILDERS and not keepers** (§2.4). Its meter is still going
+## up, so the sim bills it the animal web's whole keeping (the animals are standing there whether or
+## not the rung is finished) while publishing `upkeepWorkersNeeded 0` — a positive demand no pool
+## covers. The readout must therefore say it is being BUILT rather than quoting the pool at it.
+## `set_managed_herders` still states a positive `herders_needed`: a herd is owned from the moment the
+## Tame starts, so the `Keepers:` row is shown and must stay CALM.
+func _mid_tame_herd_fixture() -> Dictionary:
+	var fixture := HerdFx.taming_herd_fixture()
+	HerdFx.price_animal_build(fixture)
+	HerdFx.set_managed_herders(fixture, 4)
+	fixture["upkeep_workers_needed"] = 0
+	fixture["upkeep_demand"] = float(MID_TAME_UPKEEP_DEMAND)
+	fixture["upkeep_supplied"] = float(MID_TAME_UPKEEP_DEMAND)
+	fixture["upkeep_shortfall"] = 0.0
+	return fixture
 
-## A hunt crew deliberately ABOVE the under-kept herd's keeper demand (6), for the probe that proves
-## hunters are not counted: at this staffing the retired take-crew trigger reads the herd as fully
-## held while nobody is keeping it at all.
-const HUNTERS_PAST_THE_KEEPERS := 8
+## `supplied_by` for a herd the pool covers in full — a sentinel above any demand this chapter
+## states, so `_set_keeper_upkeep` clamps it to the demand and the shortfall is zero by construction.
+const POOL_COVERS_IT := 99
 
-## The reference band with a stated KEEPING crew on game_deer_07 — `BandFx.band_fixture` publishes the
-## take crew alone, which is what the two staffing frames used to be read against. `hunters` defaults
-## to the fixture's own count so only the keeping moves between the states that share it.
-func _keeper_band_fixture(keepers: int, hunters: int = -1) -> Dictionary:
-	var band := BandFx.band_fixture().duplicate(true)
-	for entry in band["labor_assignments"]:
-		if entry is Dictionary and String((entry as Dictionary).get("kind", "")) == "hunt":
-			(entry as Dictionary)["maintain_workers"] = keepers
-			if hunters >= 0:
-				(entry as Dictionary)["workers"] = hunters
-	return band
+## …and the WORK the pool actually put on the under-kept deer, two short of its six.
+const POOL_SHARE_ON_THE_DEER := 4
 
-## **THE KEEPING SIDE OF A MANAGED HERD, STATED AS THE SIM STATES IT.** `upkeep_workers_needed` is the
-## MAINTAIN activity's own `workers_needed` and equals `herders_needed` on a rung that STANDS, so the
-## two are set together for the reason `set_managed_herders` sets its pair together: half-setting them
+## What a herd mid-Tame is billed: its whole keeping, answered by its BUILD crew. The exact figure is
+## immaterial to the claim — what matters is that it is non-zero beside a `0` keeper demand.
+const MID_TAME_UPKEEP_DEMAND := 4
+
+## **THE KEEPING SIDE OF A MANAGED HERD, STATED AS THE SIM STATES IT.** `upkeep_workers_needed` is what
+## this herd's keeping is worth in hands and equals `herders_needed` on a rung that STANDS, so the two
+## are set together for the reason `set_managed_herders` sets its pair together: half-setting them
 ## renders a herd that owes keepers to a row and owes nobody to the ⚠. The work figures are the same
-## fact in work units (the `animal:pastoral` rung asks 1.0 per keeper-load), so `supplied` follows the
-## crew actually on it and the shortfall falls out.
+## fact in work units (the `animal:pastoral` rung asks 1.0 per keeper-load), so `supplied_by` is this
+## herd's SHARE OF THE BAND'S POOL and the shortfall falls out.
 func _set_keeper_upkeep(fixture: Dictionary, wanted: int, supplied_by: int) -> void:
 	fixture["upkeep_workers_needed"] = wanted
 	fixture["upkeep_demand"] = float(wanted)
@@ -569,54 +572,51 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("herd_corral_starving")
 
-	# Staffing readout (fauna neglect-escape arc) — the fix for the stale "N of M working" count, now
-	# counting the crew that actually HOLDS the herd. The band staffs 4 KEEPERS on game_deer_07 (its
-	# Hunt assignment's `maintain_workers`), and the count comes from that ACTUAL allocation — never
-	# from last turn's resolved `herded_fraction`, and never from the hunters beside them.
-	# FULLY KEPT: the herd wants 4 and 4 are on it → a calm "Keepers: 4 / 4" (neutral ink), no
-	# consequence line. `herded_fraction` is a stale 0.4, so the OLD reconstruction would have read a
-	# self-contradictory "2 / 4 — under-herded" — proving the fix.
-	h._hud._band_labor._player_band = _keeper_band_fixture(KEEPERS_ON_THE_DEER)
-	h._hud._band_labor._player_bands = []
+	# Keeping readout (`docs/plan_standing_upkeep.md` §2.5) — a managed herd is held out of its band's
+	# HUSBANDRY POOL, so the row states this herd's DEMAND and which side of the pool's shortfall it
+	# landed on. There is no per-herd keeper crew to count and none to reconstruct from last turn's
+	# resolved `herded_fraction`, which is left stale on both fixtures to keep that guard live.
+	# COVERED: the pool paid this herd's whole 4 → a calm `Keepers: 4 — drawn from the band's
+	# Husbandry` (neutral ink), no consequence line.
 	h._show_herd(_fully_herded_herd_fixture())
 	await h._settle()
 	await h._save("herd_fully_herded")
-	# ASSERT the corrected count: the actual staffed 4 shows, not the stale reconstruction 2.
 	var fully_lines = DetailFormat.herd_summary_lines(
-		_fully_herded_herd_fixture(), h._hud._band_labor.world_herds(),
-		h._hud._band_labor.assigned_keepers_for(_fully_herded_herd_fixture()["id"]))
-	h._assert_hud("a fully-kept herd states its keepers calmly",
-		_lines_contain(fully_lines, "Keepers: 4 / 4")
+		_fully_herded_herd_fixture(), h._hud._band_labor.world_herds())
+	h._assert_hud("a covered herd states its keeping demand calmly and names the pool",
+		_lines_contain(fully_lines, "Keepers: 4 — drawn from the band's Husbandry")
 		and not _lines_any_contain(fully_lines, "under-herded"))
 
-	# UNDER-KEPT: the herd now wants 6 keepers but only 4 are on it → an amber "Keepers: 4 / 6 —
-	# under-herded" (the ACTUAL count) plus the shed line "Under-herded — animals are drifting off.
-	# Staff 6 KEEPERS to hold the herd." — NOT the retired "tameness slipping" copy, and NOT the
-	# retired "Staff all N herders", which named the crew that cannot stop the shed. `herded_fraction`
-	# is a stale 1.0, so the OLD reconstruction would have read a calm "6 / 6" with no warning.
+	# SHORT: the herd wants 6 keepers' worth and the pool paid 4 → an amber `Keepers: 6 —
+	# under-herded, the Husbandry pool is short here` plus the shed line naming the band's Husbandry
+	# role — NOT the retired "tameness slipping" copy, and NOT the retired per-source `KEEPERS`
+	# stepper, which no longer exists to be staffed.
 	h._show_herd(_under_herded_herd_fixture())
 	await h._settle()
 	await h._save("herd_under_herded")
 	var under_lines = DetailFormat.herd_summary_lines(
-		_under_herded_herd_fixture(), h._hud._band_labor.world_herds(),
-		h._hud._band_labor.assigned_keepers_for(_under_herded_herd_fixture()["id"]))
-	h._assert_hud("an under-kept herd flags the deficit and names the KEEPERS that stop it",
-		_lines_contain(under_lines, "Keepers: 4 / 6 — under-herded")
+		_under_herded_herd_fixture(), h._hud._band_labor.world_herds())
+	h._assert_hud("an under-kept herd flags the deficit and names the Husbandry role that stops it",
+		_lines_contain(under_lines, "Keepers: 6 — under-herded, the Husbandry pool is short here")
 		and _lines_any_contain(under_lines, "animals are drifting off")
-		and _lines_any_contain(under_lines, "KEEPERS")
+		and _lines_any_contain(under_lines, "Husbandry")
 		and not _lines_any_contain(under_lines, "slipping"))
-	# **THE PAIR THAT PINS WHICH CREW IS COUNTED.** The same herd read against a band whose HUNTERS are
-	# staffed past the keeper demand and whose keeping crew is EMPTY must still flag the shed — the
-	# defect this trigger fix removes, where staffing hunters cleared a warning about the keepers. It
-	# goes through `assigned_keepers_for` rather than a hand-summed count, that reader being the thing
-	# under test.
-	h._hud._band_labor._player_band = _keeper_band_fixture(0, HUNTERS_PAST_THE_KEEPERS)
-	var hunters_only := DetailFormat.herd_summary_lines(
-		_under_herded_herd_fixture(), h._hud._band_labor.world_herds(),
-		h._hud._band_labor.assigned_keepers_for(_under_herded_herd_fixture()["id"]))
-	h._assert_hud("hunters do not hold a herd — a keeperless herd is under-kept however many hunt it",
-		_lines_contain(hunters_only, "Keepers: 0 / 6 — under-herded"))
-	h._hud._band_labor._player_band = BandFx.band_fixture()
+
+	# **THE MID-BUILD READING, and it is the one a pooled readout gets wrong.** A herd mid-Tame is
+	# billed a non-zero upkeep — its animals are standing there whether or not the rung is finished —
+	# but NO POOL COVERS IT: the sim leaves an unbuilt rung out of the band's keeping pool and credits
+	# its BUILD crew instead. So the `Keeping:` row must say it is being built, and must not quote the
+	# pool or ask for keepers; the `Keepers:` row above it stays calm, the herd owing keepers only
+	# once the rung stands.
+	h._show_herd(_mid_tame_herd_fixture())
+	await h._settle()
+	await h._save("herd_keeping_mid_build")
+	var mid_tame_lines := DetailFormat.herd_summary_lines(
+		_mid_tame_herd_fixture(), h._hud._band_labor.world_herds())
+	h._assert_hud("a herd mid-Tame says it is being BUILT rather than asking the pool for keepers",
+		_lines_any_contain(mid_tame_lines, DetailFormat.UPKEEP_MID_BUILD_VALUE)
+		and not _lines_any_contain(mid_tame_lines, "the pool covers")
+		and not _lines_any_contain(mid_tame_lines, "under-herded"))
 
 	# State 2d-γ self-feeding pen — a radius-2 pen (19 fenced tiles) on lush land: the fenced footprint
 	# grazes the WHOLE feed, so the feed-split reads "Fed by pasture 100% · larder 0.0 food/turn" and the
@@ -989,9 +989,9 @@ func run(harness) -> void:
 	# **THE KEEPER CREW IS NOT A TERM IN THE TAKE CAP** (`docs/plan_standing_upkeep.md` §2.2), and this
 	# pair is what pins it. The cap used to be FLOORED on a managed herd's `herdersNeeded` (and, for an
 	# investment rung on a still-wild herd, on the ownership-independent `herdersNeededIfManaged`),
-	# because one crew both hunted the animals and held them. Those keepers are the MAINTAIN allocation
-	# now — their own stepper, their own ceiling, their own command — so a hunt stepper raised to their
-	# count would be staffing one crew against another crew's demand.
+	# because one crew both hunted the animals and held them. The keeping is a BAND-WIDE POOL now
+	# (§2.5) — its own role card, its own hands — so a hunt stepper raised to a keeper count would be
+	# staffing the take against a bill the band's Husbandry role owes.
 	#
 	# **The pair is the claim**: the same herd at the same floor, composed WITH a Tame and WITHOUT one,
 	# must cap identically — a verb moves no take-side number any more.
@@ -1017,7 +1017,7 @@ func run(harness) -> void:
 	var tame_cap_note := Q.label_containing(h._hud._drawercompose._compose_sheet, TAKE_CAP_NOTE_NEEDLE)
 	h._assert_hud("a composed Tame states a take cap at all (\"%s\")" % tame_cap_note,
 		tame_cap_note != "")
-	h._assert_hud("…and it is NOT the would-be herder crew (%d) — those keepers are the maintain crew's"
+	h._assert_hud("…and it is NOT the would-be herder crew (%d) — that keeping is the band POOL's"
 		% TAME_CAP_WOULD_BE_HERDERS,
 		not tame_cap_note.contains("max %d workers useful" % TAME_CAP_WOULD_BE_HERDERS))
 	# COMPANION — the SAME herd at the SAME floor with NO verb composed. Its cap must be the identical

@@ -156,6 +156,13 @@ const ZONE_HEADER_PEOPLE := "People"
 
 const ZONE_HEADER_WORKFORCE := "Workforce"
 
+## The KEEPING block's head (`docs/plan_standing_upkeep.md` §2.5) — the two standing roles that hold
+## what the band has built, and how their pools split when short. Its readout is the hands on the two
+## roles together, the WORKFORCE head's `n idle of m` shape one scope down.
+const ZONE_HEADER_KEEPING := "Keeping"
+
+const KEEPING_ZONE_READOUT_FORMAT := "%d on keeping"
+
 const ZONE_HEADER_WORK := "Work"
 
 const ZONE_HEADER_PARTIES := "Parties"
@@ -424,6 +431,53 @@ const WORKFORCE_KEY_IDLE := "Idle"
 const ROLE_NAME_SCOUT := "Scout"
 
 const ROLE_NAME_WARRIOR := "Warrior"
+
+## **THE TWO KEEPING ROLES** (`docs/plan_standing_upkeep.md` §2.5) — cards in the same family as the
+## two above, because they ARE the same family: a band-wide count of hands, set by `assign_labor`.
+## One per food web, which is the split the two intensification ladders already have.
+const ROLE_NAME_AGRICULTURE := "Agriculture"
+
+const ROLE_NAME_HUSBANDRY := "Husbandry"
+
+## **THE HINTS NAME THE POOL, NOT A TILE.** The hands are measured against the SUM of what the band
+## holds on that web and split across every source of it, so a player reading the card must not go
+## looking for a per-source stepper — there is none, and this sentence is where that is said.
+const AGRICULTURE_ROLE_HINT := "Keeps every tended patch and Field this band works. Short of the sum, they rot."
+
+const HUSBANDRY_ROLE_HINT := "Keeps every tamed herd and pen this band works. Short of the sum, animals drift off."
+
+## **THE FUND-MODE CONTROL** — how this band splits a keeping pool it cannot stretch, `spread` or
+## `priority` (`upkeep_mode <faction> <band> …`). It renders under the two keeping cards and ONLY
+## where the band holds something on either web: the choice is meaningless with nothing to fund, and
+## a control offered there would read as a setting the player had failed to make.
+const UPKEEP_MODE_TITLE := "Short of keepers"
+
+const UPKEEP_MODE_SPREAD_LABEL := "Spread"
+
+const UPKEEP_MODE_PRIORITY_LABEL := "Priority"
+
+## The two modes stated as what they DO to the band's own sources, since that is the choice. Ride
+## each button's tooltip, so the pair of one-word faces stays narrow enough for the dock's flanks.
+const UPKEEP_MODE_SPREAD_HINT := "Fund every source in proportion — everything degrades a little."
+
+const UPKEEP_MODE_PRIORITY_HINT := "Fund the biggest investments in full and let the marginal ones rot."
+
+## The line under the pair. It states the POOL's own arithmetic, so the mode reads as an answer to a
+## live shortfall rather than as an abstract preference; the covered form is the reassuring half and
+## renders in the same slot, which is what keeps the control from appearing only when it is too late.
+const UPKEEP_MODE_SHORT_FORMAT := "Short %s work of %s this turn."
+
+const UPKEEP_MODE_COVERED_TEXT := "Your keepers cover everything this band holds."
+
+## …and the messages the command feed shows for the press. Keyed by the token so the two can never
+## drift from what was actually sent; the fallback exists only for a mode the sim gains before this
+## table does, and says the token verbatim rather than describing the wrong behaviour.
+const UPKEEP_MODE_COMMAND_MESSAGES := {
+	HudConst.UPKEEP_FUND_MODE_SPREAD: "Short of keepers, everything this band holds degrades a little.",
+	HudConst.UPKEEP_FUND_MODE_PRIORITY: "Short of keepers, this band holds its biggest investments and lets the rest go.",
+}
+
+const UPKEEP_MODE_COMMAND_MESSAGE_FALLBACK := "Keeping split set to %s."
 
 ## Trimmed to what the SHORT tier affords: at 8/8 the band zone stood 5px past a 360px T/B dock
 ## (measured by `band_panel_preview`'s zone-bounds assertion, which is why it exists).
@@ -699,21 +753,20 @@ const WORK_ROW_RUNG_PENNED_TOOLTIP := "Penned herd — corralled, the top animal
 ## hunters and overstaffed with them at once); with the crews split they can, and an animal walking
 ## off outranks a hunter bringing nothing home.
 ##
-## **IT NAMES THE KEEPING CREW, BECAUSE THIS ROW'S `+` IS NOT THE REMEDY**
-## (`docs/plan_standing_upkeep.md` §2.2). Containment used to be read off the HUNTING crew, so the
-## board's own stepper answered the warning and *"Too few herders"* pointed at the control beside it.
-## A source carries three crews now — take, build and **maintain** — and holding a herd is the
-## MAINTAIN allocation, which has its own stepper (`HudComposeVocab.CREW_ROW_MAINTAIN_LABEL`,
-## `KEEPERS`) on the herd's compose sheet and is deliberately out of this stepper's reach
-## (`SourceForecast.source_worker_cap_state` dropped the `herd_crew_floor` that used to raise the take
-## cap to `herdersNeeded`). A warning whose obvious affordance cannot resolve it reads as a bug, so
-## the note names the control that CAN, spelled exactly as that row is labelled.
-const WORK_ROW_UNDER_HERDED_NOTE := "Animals drifting off — staff this herd's KEEPERS."
+## **IT NAMES THE BAND'S HUSBANDRY ROLE, BECAUSE THIS ROW'S `+` IS NOT THE REMEDY**
+## (`docs/plan_standing_upkeep.md` §2.5). Containment used to be read off the HUNTING crew, so the
+## board's own stepper answered the warning; then it was a per-source KEEPERS stepper on the herd's
+## compose sheet. **Maintenance has since left the tile**: a managed herd is held from the band's
+## `husbandry` POOL, and what this row is reporting is that the herd's SHARE of that pool did not
+## cover it. So the note names the one control that can move the number — the Husbandry role card in
+## this panel's WORKFORCE zone — and pointing at a per-source keeper stepper would now send the
+## player looking for a control that no longer exists.
+const WORK_ROW_UNDER_HERDED_NOTE := "Animals drifting off — raise this band's Husbandry role."
 
 ## …and the row tooltip carries the part the one-line note has no room for: WHY the `+` on this row
-## does not answer the ⚠, and how to reach the crew that does. It is a tooltip rather than a second
+## does not answer the ⚠, and where the hands that do come from. It is a tooltip rather than a second
 ## strip line because `_work_inspector_height` reserves ONE open height for every row.
-const WORK_ROW_UNDER_HERDED_TOOLTIP := "Under-herded — a managed herd is held by its KEEPERS crew, not by its hunters, so this row's + will not stop the drift. Open the herd (Jump to source) and raise its KEEPERS."
+const WORK_ROW_UNDER_HERDED_TOOLTIP := "Under-herded — a managed herd is held out of the band's HUSBANDRY pool, not by its hunters, so this row's + will not stop the drift. Raise Husbandry in the WORKFORCE zone, or set the band's keeping split so this herd is funded first."
 
 ## **THE OTHER WAY A SOURCE BLEEDS: a half-built rung nobody is building** (`SourceForecast.
 ## is_unbuilt_and_unpaid`). An at-risk meter is owed the crew that OWNS it, and a rung still going up

@@ -2786,69 +2786,87 @@ Each existed only to undo the overload:
 - **The per-kind option lists** and the husbandry-ceiling filtering / standing-rung re-admission pass
   that maintained them.
 
-## THREE CREWS PER SOURCE, AND THE PLAYER STATES EACH (`docs/plan_standing_upkeep.md` §2.2)
+## TWO CREWS PER SOURCE, AND THE PLAYER STATES EACH (`docs/plan_standing_upkeep.md` §2.2)
 
-A source carries **three independent worker allocations** from one band, and the compose sheet has a
+A source carries **two independent worker allocations** from one band, and the compose sheet has a
 stepper for each. There is no split rule to derive, because there is nothing to derive.
 
 | Activity | Control | Command |
 |---|---|---|
 | **take** | the crew row (`_mount_crew_row`) — the stepper that was always there | `assign_labor …` |
 | **build** | a stepper ON the improvement control (`_mount_build_crew_row`) | `cultivate\|sow <f> <x> <y> <n>`, `tame\|corral <f> <target> <n>` |
-| **maintain** | the KEEPERS row under the readout (`_mount_maintain_row`) | `maintain <f> forage <x> <y> <n>` / `maintain <f> hunt <herd> <n>` |
 
 **The build's stepper sits on the improvement control rather than beside the take crew**, because it
 IS the improvement's statement: the verb carries the count, so a rung with nobody on it is a rung
-nobody is building. The commit sends all three in one press, in one order — `assign_labor` first (the
-sim's improvement and maintain verbs both act on bands ALREADY working the source, so a verb sent to
-an unworked patch is rejected outright), then the verb, then `maintain`.
+nobody is building. The commit sends both in one press, in one order — `assign_labor` first (the
+sim's improvement verbs act on bands ALREADY working the source, so a verb sent to an unworked patch
+is rejected outright), then the verb.
 
-**`maintain … 0` is a real order and is never suppressed as an absent one** (§2.5): it is how the
-player says *stop maintaining this, take everything, let it go*. There is no toggle beside the number
-— a boolean and a count could disagree — and what IS suppressed is the command on a source with
-nothing to keep, which is the keeping row's own render test.
+### THE KEEPING WAS A THIRD CREW HERE, AND IT LEFT THE TILE (§2.5)
+
+**There was a `KEEPERS` stepper under the readout on both sheets, and there is nothing left for it to
+staff.** Maintenance is a band-level standing role now — `agriculture` for the plant web, `husbandry`
+for the animal one — so a source is not staffed with keepers at all; it is paid a SHARE of its band's
+pool. The whole control retired with the `maintain` command: `_mount_maintain_row`, its verdict
+label, `maintain_requested` on `DrawerComposeController` and `HudLayer`, `Main.format_maintain` /
+`_on_hud_maintain`, `ComposeState`'s two keeping counts and their accessors,
+`HudBandLaborState.maintain_workers_for_*` / `assignable_maintain_workers_*` /
+`assigned_keepers_for`, `HudWidgets.CREW_ROW_MAINTAIN_META` / `MAINTAIN_VERDICT_META`, and
+`HudComposeVocab`'s whole `CREW_MAINTAIN_*` block.
+
+**What replaced it is a card, not a stepper on a source**: the Band panel's KEEPING block, specified
+in `band-city-panel.md` → "THE KEEPING BLOCK". `upkeep_mode_requested` is the one signal the roles
+cannot express, and `Main.format_upkeep_mode` is its builder.
+
+**The per-source READOUT stayed and answers a better question.** `upkeepDemand` /
+`upkeepSupplied` / `upkeepShortfall` still ship per patch and per herd, so the land card and the herd
+drawer keep their `Keeping:` and `At risk:` rows — see "WHAT IT COSTS TO HOLD IT" below for the
+wording the pooled reading forced.
 
 ### EACH STEPPER CLAMPS TO `idle + ITS OWN CREW ON THIS SOURCE`
 
-`assign_labor` clamps and says so; the improvement verbs, `extend_pen` and `maintain` **refuse**,
+`assign_labor` clamps and says so; the improvement verbs and `extend_pen` **refuse**,
 naming the idle count (*"Cultivating needs 9 workers — the band has 4 idle."*). A silent trim on a
 build is how the gathering it was meant to improve gets disbanded — so the sheet must never offer a
 crew the band cannot staff.
 
 **The ceiling is per ACTIVITY, and that is what the sim judges against.**
 `LaborAllocation::idle_for` gives back only the crew on this source for the activity being restated,
-so a build's ceiling is `idle + this source's builders` and the keeping's is `idle + this source's
-keepers` (`HudBandLaborState.assignable_build_workers_*` / `assignable_maintain_workers_*`). Crossing
-them would offer a crew the sim refuses.
+so a build's ceiling is `idle + this source's builders`
+(`HudBandLaborState.assignable_build_workers_*`) and never the take crew's. Crossing them would offer
+a crew the sim refuses. **The keeping twins went with the keeping** — a role's stepper clamps on the
+band's plain idle count, exactly as scout's and warrior's do.
 
 **IT IS WHAT MAKES A FULLY-ALLOCATED BAND EDITABLE AT ALL.** Clamped at `idle` alone — which is all
-the client could do while the two crews were write-only — a band with every hand committed capped
-both steppers at **0**: the player could take a keeping crew to nothing and could never put it back,
-on the one source where the decision matters most. Frame: `forage_reopened_crews`.
+the client could do while the build crew was write-only — a band with every hand committed capped
+that stepper at **0**: the player could take a build crew to nothing and could never put it back, on
+the one source where the decision matters most. Frame: `forage_reopened_crews`.
 
 **Every clamp reads the wire's `idle_workers`, NOT `HudBandLaborState.effective_idle`.** That helper
 sums each assignment's published `workers`, which is the TAKE crew alone, so it would report a band
 mid-Cultivate as having hands it has already committed. `idleWorkers` is `BandWorkforce::idle()` —
-pool minus **every** staffed hand across all three activities, minus the bench — which is the number
-the refusal is judged against.
+pool minus **every** staffed hand across every activity and role, minus the bench — which is the
+number the refusal is judged against.
 
-### All three crews are READABLE, and the sheet opens on them
+### Both crews are READABLE, and the sheet opens on them
 
-**`LaborAssignment` publishes `workers` / `improvementWorkers` / `maintainWorkers`** — the take, the
-build and the keeping. The last two were write-only for one slice (the client could send them and
-never read them back), and closing that gap retired every compromise it forced:
+**`LaborAssignment` publishes `workers` / `improvementWorkers`** — the take and the build. The second
+was write-only for one slice (the client could send it and never read it back), and closing that gap
+retired every compromise it forced:
 
-- **All three steppers seed from the band's own row** (`seed_forage` / `seed_hunt` take the pair,
-  `HudBandLaborState.build_workers_for_*` / `maintain_workers_for_*` read them). A reopened sheet
-  opens on what the band HAS, which is what makes a restate possible: the commands SET rather than
-  add, so a stepper opening at `0` on a staffed source would offer only the choice to unstaff it.
-- **`0` IS THE WIRE'S ANSWER, NOT A MISSING ONE.** No verb in flight genuinely means no builders, and
-  a source nobody keeps has no keepers — both are the common case. A reader that treated either as
-  "unknown" and substituted a seed would put phantom hands on every unbuilt source in the game.
+- **Both steppers seed from the band's own row** (`seed_forage` / `seed_hunt` take the pair,
+  `HudBandLaborState.build_workers_for_*` reads it). A reopened sheet opens on what the band HAS,
+  which is what makes a restate possible: the commands SET rather than add, so a stepper opening at
+  `0` on a staffed source would offer only the choice to unstaff it.
+- **`0` IS THE WIRE'S ANSWER, NOT A MISSING ONE.** No verb in flight genuinely means no builders,
+  which is the common case. A reader that treated it as "unknown" and substituted a seed would put
+  phantom hands on every unbuilt source in the game.
 - **`_emit_improvement`'s no-op test reads the band's real `improvement_workers`**, so a sheet opened
   and closed on a staffed build sends nothing (it was a hard `0`, which re-sent the verb every time).
-- **The keeping row says what is TRUE** — *"you have 2 of 3"*, the band's own keepers against the
-  wire's `upkeepWorkersNeeded` — where it could only state an intention before.
+- **`maintainWorkers` IS DEPRECATED ON THE WIRE and the client reads it nowhere.** A per-source keeper
+  count is a question with no answer now, so the frame that proved all three crews readable
+  (`forage_reopened_crews`) proves two and asserts, in the same state, that the sheet mounts exactly
+  ONE untagged stepper — the take's.
 
 ### The crop seeds from the ASSIGNMENT, not from the ground
 
@@ -2933,19 +2951,27 @@ what it always meant: the top of the dial buys that source nothing further.
 authority over the number the whole readout exists to make legible.
 
 `DetailFormat.upkeep_lines` renders it identically on **both webs** — the land card's rung rows and
-the herd drawer both append it — as `Keeping: 1 of 2 work — wants 2 keepers`, plus an `At risk:` row
-whenever the keeping is underpaid.
+the herd drawer both append it — as `Keeping: the pool covers 1 of 2 work — worth 2 keepers`, plus an
+`At risk:` row whenever the keeping is underpaid.
 
-**`keepers_wanted` / `is_under_kept` sit beside it as the ONE crew-count test over the same reader**,
-and the animal web's two under-kept surfaces both call it: the herd drawer's `Keepers: A / N` row and
-the work board's under-herded ⚠. The crew it counts is
-`HudBandLaborState.assigned_keepers_for(herd)` — the `maintain` crews summed across the player's
-bands — and **not the herd's hunters**, which is what both surfaces measured until the split and is
-the direction the sim never agreed with (`herd_herded_fraction` gates the shed on `upkeep_supplied`).
-**It is a CREW comparison rather than `upkeep_is_short`**, deliberately: the shortfall is what the
-meter decayed by last turn, so a warning keyed on it speaks once animals are already leaving, where
-the crew count is short the turn the player understaffs it. See `band-city-panel.md` → "The
-under-herded ⚠ counts the KEEPING crew".
+**THE ROW'S QUESTION CHANGED WITH THE POOL, AND SO DID ITS WORDING** (`docs/plan_standing_upkeep.md`
+§2.5). `upkeepSupplied` used to be the keepers standing on this source and the row read as *"did you
+staff this one"*; it is this source's SHARE of the band's keeping pool now, so the row answers *"where
+is my shortfall landing"* — and it says `the pool covers` outright, because a row still worded as a
+staffing verdict sends the player looking for a stepper that no longer exists. The lever it points at
+is the band's Agriculture / Husbandry card. `upkeepWorkersNeeded` is likewise a SIZE and not an order:
+what this source's keeping is worth in hands.
+
+**`keepers_wanted` / `is_under_kept` sit beside it over the same reader**, and the animal web's two
+under-kept surfaces both call it: the herd drawer's `Keepers:` row and the work board's under-herded
+⚠. **`is_under_kept` IS A SHORTFALL TEST NOW, and it had to become one.** It compared a herd's
+`maintain` crew against `upkeepWorkersNeeded` — the right question while keepers were staffed per
+source, and unanswerable once maintenance left the tile: that count is `0` on every managed herd in
+the game, so the ⚠ would have been permanently up. What the sim decides per source is its share, and
+`upkeepShortfall` is exactly *"the share did not cover this one"* — the same number the decay and the
+shed read. **The old objection to a shortfall test is answered by the GRACE**: `neglectGraceRemaining`
+counts the forgiven turns, which the `At risk:` row beside the warning states, so the notice still
+arrives before the animals go. See `band-city-panel.md` → "The under-herded ⚠".
 
 **`is_unbuilt_and_unpaid` is the third of the family and the ONE that reads the shortfall**, because
 it is the one case with no headcount to read: a rung still going UP is owed its BUILDERS, and the
@@ -2960,10 +2986,16 @@ its own cost, so the FIRST bleeding turn drops it below and the rung is **lost**
 costs a tended patch, two costs a Field. A player who loses a 25-turn investment with no warning reads
 it as a bug, so the warning stands wherever the improvement does rather than only in an alert.
 
-**A demand of `0` mid-build is CORRECT and is stated in words.** Those hands are the build's, so
-`upkeepWorkersNeeded` is honestly `0` while the meter is going up; the row reads *the build's crew
-holds it until it stands* rather than *wants 0 keepers*, which would read as a defect on the very rung
-the player has just committed to.
+**A METER STILL BEING RAISED IS OWED BUILDERS, AND ITS DEMAND IS NOT ZERO.** The sim bills an unbuilt
+rung what it would LOSE — the plant web's rot rate, the animal web's whole keeping, the animals being
+there whether or not the fence is up — so a patch mid-Cultivate publishes a small non-zero
+`upkeepDemand` while `upkeepWorkersNeeded` is honestly `0`. **No pool covers it**: the sim leaves an
+unbuilt rung out of the band's keeping pool entirely and credits its BUILD crew instead
+(`patch_upkeep_supply` / `herd_upkeep_supply`). So the row suppresses the pooled figures and says
+`still being built — its own crew holds it, no keepers are owed yet`; printing `the pool covers x of
+y` there would send the player to raise a role that will never pay this bill, and `wants 0 keepers`
+would read as a defect on the very rung they just committed to. Frames: `herd_keeping_mid_build`, and
+`forage_reopened_crews`' land card for the built case beside it.
 
 ### Unchecking: `abandon_improvement`
 

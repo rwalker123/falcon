@@ -42,6 +42,29 @@ const LABOR_KIND_SCOUT := "scout"
 
 const LABOR_KIND_WARRIOR := "warrior"
 
+# **THE TWO KEEPING ROLES** (`docs/plan_standing_upkeep.md` §2.5) — the same family as scout and
+# warrior, and staffed by the same `assign_labor <faction> <band> <kind> <workers>`. `agriculture`
+# holds every tended patch and Field the band works; `husbandry` holds every tamed herd and pen. One
+# role per WEB, because the two intensification ladders are already split that way.
+#
+# **EACH IS A POOL, NOT A CREW ON A TILE.** The role's hands are measured against the SUM of what the
+# band holds on that web, so there is nothing left over to waste on a demand that does not divide
+# into whole workers — which is why the per-source `maintain` crew this replaced left the tile.
+const LABOR_KIND_AGRICULTURE := "agriculture"
+
+const LABOR_KIND_HUSBANDRY := "husbandry"
+
+# **HOW A BAND SPLITS A KEEPING POOL IT CANNOT STRETCH** — `PopulationCohortState.upkeepFundMode`,
+# and the token `upkeep_mode <faction> <band> spread|priority` takes. `spread` funds every source in
+# proportion to its demand (everything degrades a little); `priority` funds sources completely,
+# most-invested first, so the biggest investments stay whole and the marginal ones rot.
+#
+# **AN EMPTY STRING IS ONLY EVER A FRAME THE SIM DID NOT WRITE**, and it reads as `spread` — the
+# sim's own default, and what an unstated policy means.
+const UPKEEP_FUND_MODE_SPREAD := "spread"
+
+const UPKEEP_FUND_MODE_PRIORITY := "priority"
+
 # INVESTMENT rungs (the Intensification Ladder, docs/plan_intensification_ladder.md §2): an up-front
 # cost — the source pays only its dip ceiling (the patch's `ceiling_cultivate` / `ceiling_sow`
 # scalars; for a herd, the `tame` / `corral` rows of its `hunt_policy_ceilings` list) while the

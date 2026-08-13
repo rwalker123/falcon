@@ -45,6 +45,11 @@ extends RefCounted
 # --- The controller's OWN signals (HudLayer connects + relays each; see the class header) ---
 # Standing work was cleared for a whole scope — relayed to HudLayer.cancel_order_requested.
 signal cancel_order_requested(band: Dictionary, scope: String)
+# The band's KEEPING-POOL split was picked (`docs/plan_standing_upkeep.md` §2.5) — relayed to
+# HudLayer.upkeep_mode_requested. Its own signal for `cancel_order_requested`'s reason: this
+# controller is its only emitter. It is deliberately NOT routed through `_emit_assign_labor`, which
+# staffs a role; this states a policy and carries no worker count at all.
+signal upkeep_mode_requested(payload: Dictionary)
 # A hunting party was dispatched from the parties zone — relayed to HudLayer.send_hunt_expedition_requested.
 signal send_hunt_expedition_requested(payload: Dictionary)
 # A DENIAL raid was dispatched — relayed to HudLayer.send_denial_raid_requested. **Its own signal, not
@@ -615,6 +620,7 @@ func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContaine
     var outlook: Control = _build_food_outlook_block(band,
         _band_zone_tier != HudWorkVocab.BAND_ZONE_TIER_TALL)
     var workforce := _build_workforce_block(band)
+    var keeping := _build_keeping_block(band)
     # **ONE AUTHORED SPLIT: everything but WORKFORCE on the left.** It was TWO — PEOPLE crossed to the
     # WORKFORCE column whenever a chart was built, because the larder column then carried two blocks
     # already — and arc #527's retirement of the Trade row took ~26px out of the only block that
@@ -631,8 +637,9 @@ func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContaine
         blocks.append({"control": vitals, "column": BAND_COLUMN_LARDER})
     if people != null:
         blocks.append({"control": people, "column": BAND_COLUMN_LARDER})
+    blocks.append({"control": keeping, "column": BAND_COLUMN_LARDER})
     if outlook != null:
-        blocks.append({"control": outlook, "column": BAND_COLUMN_LARDER})
+        blocks.append({"control": outlook, "column": BAND_COLUMN_PEOPLE})
     blocks.append({"control": workforce, "column": BAND_COLUMN_PEOPLE})
     # BOTH layouts go inside the scroll — the flat stack and the two-column row alike. A widened flank
     # halves what each column carries but does not make either of them unable to overflow, and a rule
@@ -825,7 +832,14 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
             SourceForecast.LABOR_KIND_HUNT: hunt_workers += workers
     var scout_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_SCOUT)
     var warrior_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_WARRIOR)
-    var role_workers := int(scout_eff.get("workers", 0)) + int(warrior_eff.get("workers", 0))
+    # **THE KEEPING ROLES ARE ROLES, so they are in the Roles SEGMENT even though their CARDS are a
+    # block of their own.** The bar's segments partition `working_age`, and hands on `agriculture` /
+    # `husbandry` are staffed labor exactly as a scout's are; leaving them out would drop them off the
+    # bar entirely while `effective_idle` had already netted them out of Idle, so the key beneath
+    # would stop adding up to the head count.
+    var role_workers := int(scout_eff.get("workers", 0)) + int(warrior_eff.get("workers", 0)) \
+        + int(_band_labor.effective_role_workers(band, HudConst.LABOR_KIND_AGRICULTURE).get("workers", 0)) \
+        + int(_band_labor.effective_role_workers(band, HudConst.LABOR_KIND_HUSBANDRY).get("workers", 0))
     # Workers out with a party are NOT a segment — the sim already took them out of `working_age` on
     # launch, so a slice for them overran the denominator the segments partition. They read as the
     # header's "away" clause instead (`WORKFORCE_AWAY_FORMAT`).
@@ -854,21 +868,145 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
     if not segments.is_empty():
         block.add_child(HudWidgets.build_composition_bar(segments))
         block.add_child(HudWidgets.build_composition_key(segments))
-    # The two standing roles as CARDS, side by side — a bordered card reads as "a standing role", not
-    # as one more worked source in a list (the complaint the card treatment fixes).
-    var cards := HBoxContainer.new()
-    cards.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    cards.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
-    cards.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_SCOUT, HudWorkVocab.SCOUT_ROLE_HINT, HudConst.LABOR_KIND_SCOUT, scout_eff, idle))
+    # The FOUR standing roles as CARDS — a bordered card reads as "a standing role", not as one more
+    # worked source in a list (the complaint the card treatment fixes).
+    #
+    # **TWO ROWS OF TWO, NOT ONE ROW OF FOUR.** A card's own controls (a stepper, and on the scouting
+    # pair a kit picker) do not survive being quartered: at the narrow shell's 354px a four-abreast
+    # row gives each card ~82px, which clips the kit face and the role name alike. The pairing is
+    # the split the roles already have — the two EXPEDITIONARY roles above, the two KEEPING roles
+    # below — so the second row reads as its own family rather than as an overflow of the first.
+    var scout_row := _build_role_card_row()
+    scout_row.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_SCOUT, HudWorkVocab.SCOUT_ROLE_HINT, HudConst.LABOR_KIND_SCOUT, scout_eff, idle))
     # A visible predator within raid range turns the Warrior card's static hint into a live crimson
     # alert naming the on-guard count — the guarding role is only legible when the threat it answers is.
     var warrior_threat := _band_predator_threat_present(band)
     var warrior_hint := HudWorkVocab.WARRIOR_ROLE_HINT
     if warrior_threat:
         warrior_hint = HudWorkVocab.WARRIOR_THREAT_ALERT_FORMAT % int(warrior_eff.get("workers", 0))
-    cards.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_WARRIOR, warrior_hint, HudConst.LABOR_KIND_WARRIOR, warrior_eff, idle, warrior_threat))
-    block.add_child(cards)
+    scout_row.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_WARRIOR, warrior_hint, HudConst.LABOR_KIND_WARRIOR, warrior_eff, idle, warrior_threat))
+    block.add_child(scout_row)
     return block
+
+## **THE KEEPING BLOCK — the two keeping roles and how their pools split when short**
+## (`docs/plan_standing_upkeep.md` §2.5). `agriculture` holds the plant web, `husbandry` the animal
+## one; they are staffed by the same `assign_labor` the WORKFORCE zone's two roles use, so they are
+## the same CARD and not a parallel surface.
+##
+## **IT IS ITS OWN BLOCK RATHER THAN A SECOND ROW OF WORKFORCE, and that is a MEASURED conclusion.**
+## Folding the pair and the fund-mode row into WORKFORCE took that block from 256px to 392 and put
+## the band flank's two columns at 44% of each other, under the 65% floor — with no re-authoring of
+## the split able to recover it, every candidate leaving one column carrying a block nearly half the
+## flank. As a block of its own it can be paired with the vitals and PEOPLE while WORKFORCE keeps the
+## chart company, which is the arrangement that fits (see `build_band_zone`).
+##
+## It also reads as one thing: two pools and the one decision that governs both.
+func _build_keeping_block(band: Dictionary) -> VBoxContainer:
+    var idle := _band_labor.effective_idle(band)
+    var agriculture_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_AGRICULTURE)
+    var husbandry_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_HUSBANDRY)
+    var block := HudWidgets.make_zone_block()
+    block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_KEEPING,
+        HudWorkVocab.KEEPING_ZONE_READOUT_FORMAT % (int(agriculture_eff.get("workers", 0))
+            + int(husbandry_eff.get("workers", 0)))))
+    var cards := _build_role_card_row()
+    cards.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_AGRICULTURE,
+        HudWorkVocab.AGRICULTURE_ROLE_HINT, HudConst.LABOR_KIND_AGRICULTURE, agriculture_eff, idle))
+    cards.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_HUSBANDRY,
+        HudWorkVocab.HUSBANDRY_ROLE_HINT, HudConst.LABOR_KIND_HUSBANDRY, husbandry_eff, idle))
+    block.add_child(cards)
+    # The fund mode renders only where either web demands work this turn — see `_build_upkeep_mode_row`.
+    var fund_mode := _build_upkeep_mode_row(band,
+        _band_labor.upkeep_pool_state(band, SourceForecast.LABOR_KIND_FORAGE),
+        _band_labor.upkeep_pool_state(band, SourceForecast.LABOR_KIND_HUNT))
+    if fund_mode != null:
+        block.add_child(fund_mode)
+    return block
+
+## One ROW of the role-card grid — the shared chrome, so the two rows cannot drift apart in spacing
+## or in how they claim the zone's width.
+func _build_role_card_row() -> HBoxContainer:
+    var row := HBoxContainer.new()
+    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
+    return row
+
+## **HOW THIS BAND SPLITS A KEEPING POOL IT CANNOT STRETCH** (`docs/plan_standing_upkeep.md` §2.5) —
+## a two-way pick under the keeping cards, `spread` or `priority`, emitting `upkeep_mode`.
+##
+## **IT RENDERS ONLY WHERE THERE IS SOMETHING TO FUND**, i.e. where either web demands work this
+## turn. A band holding nothing on either ladder has no split to choose, and offering the control
+## there would read as a setting the player had forgotten to make.
+##
+## **BOTH MODES ARE ALWAYS PRESSABLE, INCLUDING THE ONE ALREADY ACTIVE.** The active mode is drawn
+## `primary` and the other `ghost`, the work-board filter chip's treatment — a disabled active mode
+## would leave the player unable to tell "this is selected" from "this is unavailable" on a control
+## whose whole content is two words.
+##
+## **THE LINE BENEATH STATES THE POOL'S OWN ARITHMETIC, in both directions.** When the pools cover
+## everything it says so; when they do not it names the shortfall against the demand, so the mode
+## reads as an answer to a live question. Both figures are summed from the wire's per-source fields
+## and neither is derived from the other (`upkeep_pool_state`).
+func _build_upkeep_mode_row(band: Dictionary, plant_pool: Dictionary,
+        animal_pool: Dictionary) -> VBoxContainer:
+    var demand := float(plant_pool.get("demand", SourceForecast.NO_UPKEEP_DEMAND)) \
+        + float(animal_pool.get("demand", SourceForecast.NO_UPKEEP_DEMAND))
+    if demand < SourceForecast.UPKEEP_WORK_MIN:
+        return null
+    var shortfall := float(plant_pool.get("shortfall", SourceForecast.NO_UPKEEP_DEMAND)) \
+        + float(animal_pool.get("shortfall", SourceForecast.NO_UPKEEP_DEMAND))
+    var is_short := shortfall >= SourceForecast.UPKEEP_WORK_MIN
+    var block := HudWidgets.make_zone_block()
+    block.set_meta(UPKEEP_MODE_BLOCK_META, true)
+    var mode := _band_labor.upkeep_fund_mode(band)
+    var title := HudWidgets.alloc_section_label(HudWorkVocab.UPKEEP_MODE_TITLE)
+    block.add_child(title)
+    var buttons := HBoxContainer.new()
+    buttons.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
+    buttons.add_child(_build_upkeep_mode_button(band, HudConst.UPKEEP_FUND_MODE_SPREAD,
+        HudWorkVocab.UPKEEP_MODE_SPREAD_LABEL, HudWorkVocab.UPKEEP_MODE_SPREAD_HINT, mode))
+    buttons.add_child(_build_upkeep_mode_button(band, HudConst.UPKEEP_FUND_MODE_PRIORITY,
+        HudWorkVocab.UPKEEP_MODE_PRIORITY_LABEL, HudWorkVocab.UPKEEP_MODE_PRIORITY_HINT, mode))
+    block.add_child(buttons)
+    var note := HudWidgets.alloc_hint_label(HudWorkVocab.UPKEEP_MODE_SHORT_FORMAT % [
+        DetailFormat.format_work_units(shortfall), DetailFormat.format_work_units(demand)] \
+        if is_short else HudWorkVocab.UPKEEP_MODE_COVERED_TEXT)
+    note.set_meta(UPKEEP_MODE_NOTE_META, true)
+    note.add_theme_color_override("font_color", HudStyle.WARN if is_short else HudStyle.HEALTHY)
+    block.add_child(note)
+    return block
+
+## One mode's button. The press emits unconditionally — including on the active mode — because the
+## command is idempotent and a press that silently did nothing is indistinguishable from a broken one.
+func _build_upkeep_mode_button(band: Dictionary, mode: String, label: String, hint: String,
+        active_mode: String) -> Button:
+    var button := Button.new()
+    button.text = label
+    button.focus_mode = Control.FOCUS_NONE
+    button.set_meta(UPKEEP_MODE_BUTTON_META, mode)
+    button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    HudStyle.apply_button(button, "primary" if mode == active_mode else "ghost")
+    HudWidgets.compact(button, HudWorkVocab.WORK_CHIP_FONT_SIZE, HudWorkVocab.WORK_CHIP_PADDING_V)
+    button.tooltip_text = hint
+    button.pressed.connect(func() -> void: _emit_upkeep_mode(band, mode))
+    return button
+
+## The fund-mode block, its two buttons (value = the mode each sends) and its arithmetic line, as
+## `Control` metas — the harnesses assert this control by ABSENCE as well as by presence, a band with
+## nothing to keep rendering no row at all.
+const UPKEEP_MODE_BLOCK_META := "upkeep_mode_block"
+const UPKEEP_MODE_BUTTON_META := "upkeep_mode_button"
+const UPKEEP_MODE_NOTE_META := "upkeep_mode_note"
+
+## Emit the band's fund-mode pick. Its own signal rather than a Callable into HudLayer, for
+## `cancel_order_requested`'s reason: this controller is its only emitter, and the band is named by
+## its DURABLE `band_id` — never its ECS entity bits, which a rollback renumbers.
+func _emit_upkeep_mode(band: Dictionary, mode: String) -> void:
+    emit_signal("upkeep_mode_requested", {
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+        "mode": mode,
+    })
 
 ## Predators Phase 3 — is a VISIBLE, camp-threatening predator within exact raid range of this band?
 ## A predator is any herd with `prey_sense_radius > 0`; it MENACES the camp when `attack × aggression`
@@ -953,7 +1091,13 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
     title.add_theme_font_size_override("font_size", HudWorkVocab.ROLE_CARD_NAME_FONT_SIZE)
     title.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK)
     col.add_child(title)
-    var kit_id := _role_kit_id(band, kind)
+    # **A ROLE WITH NO PICKER NAMES NO KIT, and that is not the same as naming the default.** The
+    # keeping roles mount no picker (below), and the wire names no default kit for their jobs — so a
+    # resolved id here would be measured against the HUNT job's default, `_kit_token` would find them
+    # unequal and every `assign_labor … agriculture <n>` would carry a `kit` tail the player never
+    # chose. `NO_KIT_ID` omits the token and leaves the sim to resolve its own default, which is the
+    # honest statement of what this card knows.
+    var kit_id := _role_kit_id(band, kind) if kind in KIT_PICKER_ROLES else KitRoster.NO_KIT_ID
     var stepper := HBoxContainer.new()
     stepper.alignment = BoxContainer.ALIGNMENT_CENTER
     stepper.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
@@ -966,13 +1110,21 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
             band, kind, n, -1, -1, "", SourceForecast.DEFAULT_HARVEST_FLOOR,
             "", SourceForecast.IMPROVEMENT_NONE, kit_id))
     col.add_child(stepper)
-    var kit_row := KitRoster.build_kit_row(_band_labor.kits(), kind, kit_id,
-        _band_labor.default_kit_id(kind), band,
-        func(picked: String) -> void: _on_role_kit_picked(band, kind, picked, workers),
-        {}, "", ROLE_CARD_KIT_KEY_TEXT, true)
-    if kit_row != null:
-        col.add_child(kit_row)
-        _lift_role_gear_line(kit_row)
+    # **THE KEEPING ROLES MOUNT NO KIT PICKER** (`docs/plan_standing_upkeep.md` §2.5, open item 3).
+    # Two facts, either of which is enough on its own: the wire names no default kit for the
+    # `agriculture` / `husbandry` jobs (there is no `defaultAgricultureKitId` twin of
+    # `defaultScoutKitId`), so the `(default)` mark would be a guess and `default_kit_id` would fall
+    # through to the HUNT default; and no shipped kit declares a maintenance contribution, so every
+    # entry the picker could offer moves no number the player can see. A picker whose selection
+    # changes nothing and whose default mark is wrong is worse than none.
+    if kind in KIT_PICKER_ROLES:
+        var kit_row := KitRoster.build_kit_row(_band_labor.kits(), kind, kit_id,
+            _band_labor.default_kit_id(kind), band,
+            func(picked: String) -> void: _on_role_kit_picked(band, kind, picked, workers),
+            {}, "", ROLE_CARD_KIT_KEY_TEXT, true)
+        if kit_row != null:
+            col.add_child(kit_row)
+            _lift_role_gear_line(kit_row)
     var hint_label := HudWidgets.alloc_hint_label(hint)
     if alert:
         hint_label.add_theme_color_override("font_color", HudStyle.THREAT_ACCENT)
@@ -1004,6 +1156,10 @@ func _lift_role_gear_line(kit_row: Control) -> void:
 
 ## The role card mounts the shared kit row with NO field key — see `_build_role_card`.
 const ROLE_CARD_KIT_KEY_TEXT := ""
+
+## The standing roles whose card offers a KIT PICKER — the two the wire names a default kit for.
+## The keeping pair is deliberately absent; see `_build_role_card`.
+const KIT_PICKER_ROLES := [HudConst.LABOR_KIND_SCOUT, HudConst.LABOR_KIND_WARRIOR]
 
 ## The `_role_kit_ids` key for one band's one role. Two terms because the cycler walks bands: a
 ## per-role key alone would carry the pick made on one band onto every other band's card.
@@ -1750,18 +1906,18 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # UNDER-CONTAINED managed herd (fauna neglect-escape arc): fewer KEEPERS staffed than the herd
         # needs → it sheds whole animals into the wild. Flag it wherever the herd is LISTED, not only in
         # its drawer, with the established overhunt ⚠.
-        # **IT MEASURES THE KEEPING CREW AGAINST THE KEEPING DEMAND** (`docs/plan_standing_upkeep.md`
-        # §2.2) — `SourceForecast.is_under_kept` is the one test, and the herd drawer's `Keepers` row
-        # calls the same one, so the two surfaces cannot disagree. It compared this herd's HUNTERS
-        # against `herdersNeeded` until the three-crew split landed, which made the warning actively
-        # misleading: staffing keepers (the real remedy) left it up, and staffing hunters cleared it
-        # without stopping the shed.
-        # **THE NOTE NAMES THE KEEPING CREW, NOT THIS ROW'S `+`** — the stepper beside it moves the
-        # TAKE crew and no longer reaches the keeper count (see the cap comment above), so the remedy
-        # is the compose sheet's KEEPERS row; `WORK_ROW_UNDER_HERDED_NOTE` carries the instruction
-        # and `WORK_ROW_UNDER_HERDED_TOOLTIP` the reason.
-        var under_herded := SourceForecast.is_under_kept(live_herd,
-            HudComposeVocab.BARE_FORECAST_PREFIX, _band_labor.assigned_keepers_for(herd_id))
+        # **IT MEASURES THIS HERD'S SHARE OF THE POOL AGAINST ITS KEEPING DEMAND**
+        # (`docs/plan_standing_upkeep.md` §2.5) — `SourceForecast.is_under_kept` is the one test, and
+        # the herd drawer's `Keepers` row calls the same one, so the two surfaces cannot disagree.
+        # It counted the per-source `maintain` crew until maintenance left the tile; that crew no
+        # longer exists, so the count went to `0` on every managed herd and the ⚠ would have been
+        # permanently up — a warning measuring the wrong thing, which is worse than none.
+        # **THE NOTE NAMES THE BAND'S HUSBANDRY ROLE, NOT THIS ROW'S `+`** — the stepper beside it
+        # moves the TAKE crew and no keeper crew exists on this source, so the remedy is the
+        # WORKFORCE zone's Husbandry card; `WORK_ROW_UNDER_HERDED_NOTE` carries the instruction and
+        # `WORK_ROW_UNDER_HERDED_TOOLTIP` the reason.
+        var under_herded := SourceForecast.is_under_kept(
+            live_herd, HudComposeVocab.BARE_FORECAST_PREFIX)
         if under_herded:
             if not marks.contains(HudComposeVocab.OVERHUNT_FLAG):
                 marks += " " + HudComposeVocab.OVERHUNT_FLAG

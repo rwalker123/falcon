@@ -193,24 +193,11 @@ static func crew_row_label(root: Node) -> String:
 	var node := Q.find_meta_node(root, HudWidgets.CREW_ROW_LABEL_META)
 	return (node as Label).text if node is Label else ""
 
-## **DID THE KEEPING ROW RENDER AT ALL?** — half of what the row is asserted on, a row that appears
-## on every sheet claiming nothing. By its own meta, which rides the whole BLOCK (label + stepper +
-## verdict), so this is a presence test rather than a text read.
-static func has_crew_row_maintain(root: Node) -> bool:
-	return Q.find_meta_node(root, HudWidgets.CREW_ROW_MAINTAIN_META) != null
-
-## The keeping row's WANTS/HAVE note — the line beside the row label stating what the rung wants
-## against what this band has. Read off the row BLOCK (which carries the meta) and joined, because the
-## label and the note are two Labels of one line; `""` when the row did not render.
-static func crew_row_maintain_note(root: Node) -> String:
-	var node := Q.find_meta_node(root, HudWidgets.CREW_ROW_MAINTAIN_META)
-	return " ".join(face_lines(node)) if node != null else ""
-
-## The keeping row's VERDICT sentence — held, or bleeding and how long the rung has. Its own meta, so
-## the wants/have note beside it (which carries numbers too) can never be matched by mistake.
-static func maintain_verdict_text(root: Node) -> String:
-	var node := Q.find_meta_node(root, HudWidgets.MAINTAIN_VERDICT_META)
-	return (node as Label).text if node is Label else ""
+## **THE KEEPING-ROW READERS ARE RETIRED** (`docs/plan_standing_upkeep.md` §2.5).
+## `has_crew_row_maintain` / `crew_row_maintain_note` / `maintain_verdict_text` read a stepper and a
+## verdict on a compose-sheet row that no longer exists: maintenance left the tile, so the keeping is
+## a band-wide standing role and a sheet composes no keeping crew. What a source's keeping costs is
+## stated by `DetailFormat.upkeep_lines`, which lands in the land card and the herd drawer.
 
 ## The verdict's SENTENCE — the row's Labels joined (the severity dot is a Label of the row too, so it
 ## leads). Found by the same meta as the severity below, because the row's two halves are one claim and

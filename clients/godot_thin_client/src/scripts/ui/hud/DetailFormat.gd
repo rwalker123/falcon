@@ -427,19 +427,22 @@ const DANGER_COMPONENT_INDENT := "   "
 
 # ---- Keeper staffing. The row KEY is read by the herd-lines producer below AND by this file's tint
 # registry; `FULLY_HERDED` is the `herded_fraction` wire default (1.0 = fully staffed, also
-# unmanaged/vanished herds) — treated as "no problem". Staffed reads "N / N" (calm), under-herded
-# "A / N — under-herded" (amber).
+# unmanaged/vanished herds) — treated as "no problem".
 #
-# **THE ROW IS `Keepers`, BECAUSE IT COUNTS THE MAINTAIN CREW** (`docs/plan_standing_upkeep.md` §2.2).
-# It read `Herders` while a herd's containment came off its HUNTING crew and this row counted hunters;
-# a source carries three allocations now, holding a herd is the maintain one, and the crew this row
-# is about is the compose sheet's `KEEPERS` stepper — `HudComposeVocab.CREW_ROW_MAINTAIN_LABEL`,
-# spelled the same so the reading and the control name one thing. The `under-herded` word stays: it
-# names the HERD's state (the sim's own), not the crew.
+# **THE ROW IS `Keepers`, AND IT NAMES A DEMAND ON THE BAND'S HUSBANDRY ROLE**
+# (`docs/plan_standing_upkeep.md` §2.5). It read `Herders` while a herd's containment came off its
+# HUNTING crew and counted hunters, then counted the per-source `maintain` crew; maintenance has
+# since left the tile, so what it states is how much of the band-wide pool this herd claims. The
+# `under-herded` word stays: it names the HERD's state (the sim's own), not a crew.
 const KEEPERS_ROW := "Keepers"
 const FULLY_HERDED := 1.0
-const HERDERS_STAFFED_FORMAT := "%d / %d"
-const HERDERS_UNDER_FORMAT := "%d / %d — under-herded"
+## **THE ROW STATES A DEMAND, NOT A STAFFING PAIR** (`docs/plan_standing_upkeep.md` §2.5). It read
+## `A / N` while keepers were assigned per herd; maintenance left the tile, so there is no `A` to
+## state — this herd draws from the band's `husbandry` pool — and an `A` invented from the pool share
+## would be a head count the sim never stated. What survives is `herdersNeeded`, the herd's own
+## demand in hands, plus which side of the pool's shortfall this herd landed on.
+const HERDERS_STAFFED_FORMAT := "%d — drawn from the band's Husbandry"
+const HERDERS_UNDER_FORMAT := "%d — under-herded, the Husbandry pool is short here"
 
 # ---- Build-verb labels. "Building" / "Sowing" share the pen's "Fencing N%" convention: a rung under
 # construction names the WORK, a finished one wears its own badge word. Each rung's "the meter is
@@ -493,15 +496,15 @@ const HUSBANDRY_PASTORAL_HINT := "Herdable, not pennable"
 # nearby wild herd (the animals drift off, tameness leaves with them). So the drawer states the shed,
 # its live cost, and the one lever that stops it — never the retired "tameness slipping" story.
 #
-# **THE LEVER IS THE KEEPING CREW, AND IT IS NAMED AS SUCH** (`docs/plan_standing_upkeep.md` §2.2).
-# It read *"Staff all N herders"* while one crew both hunted a herd and held it; a source carries
-# three crews now, and this drawer's own local hunt sheet labels its TAKE row `Herders` — so the old
-# wording pointed at the stepper that CANNOT stop the shed, on the very surface the sheet opens from.
-# `KEEPERS` is `HudComposeVocab.CREW_ROW_MAINTAIN_LABEL` verbatim, so the sentence names a control
-# the player can find. The count is the herd's keeper requirement (`upkeepWorkersNeeded` equals
-# `herdersNeeded` on a held rung — the two differ only while the rung is still being BUILT, where
-# the KEEPERS row states in words that the build's crew holds it).
-const HERDERS_SHED_FORMAT := "Under-herded — animals are drifting off. Staff %d KEEPERS to hold the herd."
+# **THE LEVER IS THE BAND'S HUSBANDRY ROLE, AND IT IS NAMED AS SUCH** (`docs/plan_standing_upkeep.md`
+# §2.5). It read *"Staff all N herders"* while one crew both hunted a herd and held it, then *"Staff
+# N KEEPERS"* while the keeping was a stepper on this herd's compose sheet. **Maintenance has since
+# left the tile**: a managed herd is held out of the band's `husbandry` pool, so the sentence names
+# the role card that moves it and quotes what THIS herd is worth in hands (`upkeepWorkersNeeded`,
+# which equals `herdersNeeded` on a held rung — the two differ only while the rung is still being
+# BUILT, where the row above states in words that the build's crew holds it). A remedy that named a
+# control the player cannot find is the failure this wording exists to avoid.
+const HERDERS_SHED_FORMAT := "Under-herded — animals are drifting off. This herd wants %d of the band's Husbandry hands."
 
 # ---- THE STANDING-STOCK ROW, AND ITS KEY NAMES ITS UNIT. `Herd: 6 / 11` counts ANIMALS — the unit
 # the hunt sheet already delivers in — so the card and the sheet finally read in one currency. It
@@ -1021,7 +1024,13 @@ static func build_turns_clause(turns: int) -> String:
 ## word for a bill paid in food.
 const UPKEEP_ROW := "Keeping"
 
-const UPKEEP_VALUE_FORMAT := "%s of %s work — wants %d %s"
+## **IT LEADS WITH THE POOL, BECAUSE THE ROW'S QUESTION CHANGED** (`docs/plan_standing_upkeep.md`
+## §2.5). `upkeepSupplied` used to be the keepers standing here and read as *"did you staff this
+## one"*; maintenance is a band-level role now and the number is this source's SHARE of the band's
+## pool, so the row answers *"where is my shortfall landing"*. Wording it as a per-source staffing
+## verdict would send the player looking for a stepper that no longer exists — the lever is the
+## band's Agriculture / Husbandry card.
+const UPKEEP_VALUE_FORMAT := "the pool covers %s of %s work — worth %d %s"
 
 ## The keeper noun, singular and plural. Its own pair rather than a `(s)` suffix, which reads as a
 ## form field rather than as a sentence.
@@ -1029,9 +1038,16 @@ const UPKEEP_KEEPER_ONE := "keeper"
 
 const UPKEEP_KEEPER_MANY := "keepers"
 
-## **A RUNG STILL GOING UP OWES NOTHING YET**, its hands being the build's. Stated in words, because
-## `0.00 of 0.00 work — wants 0` reads as a defect on the very rung a player has just committed to.
-const UPKEEP_MID_BUILD_VALUE := "the build's crew holds it until it stands"
+## **A RUNG STILL GOING UP IS OWED ITS BUILDERS, NOT KEEPERS**, and this row says so in words.
+##
+## **ITS DEMAND IS NOT ZERO, WHICH IS EXACTLY WHY THE NUMBERS ARE SUPPRESSED HERE.** A meter still
+## being raised is billed what it would LOSE — the plant web's rot rate, the animal web's whole
+## keeping, since the animals are standing there whether or not the fence is up — so a patch mid-
+## Cultivate publishes a small non-zero `upkeepDemand`. **No pool covers it**: the sim leaves an
+## unbuilt rung out of the band's keeping pool entirely and credits its BUILD crew instead
+## (`patch_upkeep_supply` / `herd_upkeep_supply`), so printing the pooled `x of y work` here would
+## invite the player to raise a role that will never pay this bill.
+const UPKEEP_MID_BUILD_VALUE := "still being built — its own crew holds it, no keepers are owed yet"
 
 ## **…AND THE SAME ROW WHEN NOBODY IS PAYING IT.** A rung still going up is owed its BUILD crew, so a
 ## build that was walked away from goes unpaid and the meter slides back — while the row above said
@@ -1139,23 +1155,25 @@ static func husbandry_value_hex(value: String) -> String:
         return HudStyle.SIGNAL_HEX
     return HudStyle.INK_HEX
 
-## The "Keepers" row value: a calm "N / N" when the herd is fully kept, an amber "A / N —
-## under-herded" when the keeping is short (and animals are shedding). `assigned` is the ACTUAL count
-## of KEEPERS staffed on the herd (`HudBandLaborState.assigned_keepers_for`) — never a reconstruction
-## from last turn's resolved `herded_fraction` — so the row updates the turn the crew lands. Tinted
-## via `herders_value_hex`.
+## The "Keepers" row value: a calm *"N — drawn from the band's Husbandry"* when the pool covers this
+## herd, an amber *"N — under-herded, the Husbandry pool is short here"* when it does not (and animals
+## are shedding). Tinted via `herders_value_hex`.
 ##
-## **`under_kept` IS PASSED IN RATHER THAN DERIVED FROM `assigned < needed`, and the two genuinely
-## differ** (`docs/plan_standing_upkeep.md` §2.2). `needed` is the herd's ownership-gated keeper
-## requirement — what it will owe, positive from the moment it is yours — while the ALARM belongs to
-## the keeping demand `upkeepWorkersNeeded`, which is `0` while the rung is still being BUILT because
-## those hands are the build crew's. So a herd mid-Tame reads a calm `Keepers: 0 / 4` (the `Keeping:`
-## row below it says the build's crew holds it) instead of a warning about a shed that is not
-## happening. `SourceForecast.is_under_kept` is the one answer; the work board reads the same one.
-static func herders_label(assigned: int, needed: int, under_kept: bool) -> String:
+## **IT STATES ONE NUMBER, and it is a DEMAND** (`docs/plan_standing_upkeep.md` §2.5) — `needed`, the
+## herd's ownership-gated keeper requirement, positive from the moment it is yours. The `A / N` pair
+## it replaced counted keepers ASSIGNED to this herd; maintenance left the tile, so no such count
+## exists and one derived from the pool share would be a head count the sim never published.
+##
+## **`under_kept` IS PASSED IN RATHER THAN DERIVED FROM THIS NUMBER, and the two genuinely differ.**
+## `needed` says what the herd will owe; the ALARM belongs to the keeping demand
+## `upkeepWorkersNeeded`, which is `0` while the rung is still being BUILT because those hands are
+## the build crew's. So a herd mid-Tame reads a calm `Keepers: 4` (the `Keeping:` row below it says
+## the build's crew holds it) instead of a warning about a shed that is not happening.
+## `SourceForecast.is_under_kept` is the one answer; the work board reads the same one.
+static func herders_label(needed: int, under_kept: bool) -> String:
     if not under_kept:
-        return HERDERS_STAFFED_FORMAT % [assigned, needed]
-    return HERDERS_UNDER_FORMAT % [assigned, needed]
+        return HERDERS_STAFFED_FORMAT % needed
+    return HERDERS_UNDER_FORMAT % needed
 
 ## BBCode hex for a "Herders" value: WARN (amber) while the herd is under-herded (shedding animals),
 ## normal ink when fully staffed. Matched on the label from `herders_label`, mirroring
@@ -1858,13 +1876,13 @@ static func food_breakdown_row(value: float, label: String) -> String:
 ## `world_herds` is THREADED IN (it is only ever forwarded to `append_danger_component_lines`, whose
 ## Attack/Defense bars normalize against the roster) — the same treatment the tint `Context` gets, and
 ## what makes this producer pure. Callers pass `HudBandLaborState.world_herds()`.
-## `assigned_keepers` is the ACTUAL count of KEEPERS on this herd — the `maintain` crews summed across
-## the player's bands, `HudBandLaborState.assigned_keepers_for` — threaded in as a parameter the way
-## `world_herds` is so this layer stays stateless. `-1` = "not supplied" (the danger-only ui_preview
-## callers on wild herds, where `herders_needed` is 0 and the staffing block is skipped anyway); it is
-## clamped to 0. It is deliberately NOT reconstructed from `herded_fraction`, which lags a turn, and
-## deliberately NOT the herd's hunting crew, which is a different allocation doing a different job.
-static func herd_summary_lines(herd_data: Dictionary, world_herds: Array, assigned_keepers: int = -1) -> Array[String]:
+##
+## **THE `assigned_keepers` PARAMETER IS GONE** (`docs/plan_standing_upkeep.md` §2.5). It carried the
+## `maintain` crews summed across the player's bands, and maintenance left the tile: a managed herd
+## is held out of its band's `husbandry` pool, so the drawer's own `Keeping:` row states this herd's
+## share of it and the `Keepers:` row states the demand alone. Nothing in this producer needs a
+## caller-supplied head count any more.
+static func herd_summary_lines(herd_data: Dictionary, world_herds: Array) -> Array[String]:
     var lines: Array[String] = []
     # A predator is a hunter, not quarry — the SAME `prey_sense_radius > 0` signal the map's prey-sense
     # ring keys on (carnivore == 4, herbivore == 0). A herbivore's drawer is byte-for-byte unchanged.
@@ -1950,28 +1968,25 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array, assign
             # once taming is done. A herd nobody works reports no estimate and renders no line.
             if domestication < HUSBANDRY_PROGRESS_COMPLETE:
                 lines.append_array(build_estimate_lines(herd_data, herd_prefix))
-        # Staffing deficit (fauna neglect-escape arc). A managed herd needs keepers every turn to HOLD
-        # its animals — understaffed, it SHEDS whole animals over its labor capacity into a nearby wild
-        # herd (they drift off; tameness leaves with them, it is never decayed). The count is the ACTUAL
-        # KEEPERS staffed on the herd (`assigned_keepers`, the maintain crews summed across bands) — NOT
-        # `round(herded_fraction · needed)`, which reconstructed last turn's RESOLVED fraction and so
-        # read a stale, self-contradictory "only 2 of 5 working" the instant the player staffed one.
+        # Staffing deficit (fauna neglect-escape arc). A managed herd needs keeping every turn to HOLD
+        # its animals — underfunded, it SHEDS whole animals over its labor capacity into a nearby wild
+        # herd (they drift off; tameness leaves with them, it is never decayed). The number is the
+        # herd's own DEMAND in hands (`docs/plan_standing_upkeep.md` §2.5) — the keeping is a band-wide
+        # pool now, so there is no per-herd crew to count, and `round(herded_fraction · needed)` would
+        # reconstruct last turn's RESOLVED fraction and read a stale count the moment the pool moves.
         #
         # **THE ROW'S PRESENCE AND ITS ALARM ARE TWO DIFFERENT QUESTIONS.** It is SHOWN for any herd
         # that owes keepers at all (`herders_needed > 0`, the ownership gate — a wild herd reports 0 and
-        # never trips it), and it goes AMBER only when the keeping demand is genuinely short of hands,
-        # which is `SourceForecast.is_under_kept` and the same test the work board's ⚠ makes. See
-        # `herders_label` for why the two cannot be collapsed.
+        # never trips it), and it goes AMBER only when this herd's SHARE of the band's keeping pool
+        # failed to cover it, which is `SourceForecast.is_under_kept` and the same test the work
+        # board's ⚠ makes. See `herders_label` for why the two cannot be collapsed.
         var herders_needed := int(herd_data.get("herders_needed", 0))
         if herders_needed > 0:
-            var keepers_assigned := maxi(assigned_keepers, 0)
-            var under_kept := SourceForecast.is_under_kept(
-                herd_data, herd_prefix, keepers_assigned)
-            lines.append("%s: %s" % [KEEPERS_ROW,
-                herders_label(keepers_assigned, herders_needed, under_kept)])
+            var under_kept := SourceForecast.is_under_kept(herd_data, herd_prefix)
+            lines.append("%s: %s" % [KEEPERS_ROW, herders_label(herders_needed, under_kept)])
             # State the CONSEQUENCE when the keeping is short AND the herd is owned: a muted one-liner
             # naming the shed and the single lever that stops it. It quotes the KEEPING demand, so the
-            # number it tells the player to staff is the number the compose sheet's KEEPERS row wants.
+            # number is what this herd claims of the band's Husbandry role.
             if under_kept and domestication > 0.0:
                 lines.append(HERDERS_SHED_FORMAT % SourceForecast.keepers_wanted(
                     herd_data, herd_prefix))

@@ -75,14 +75,16 @@ signal extend_pen_requested(payload: Dictionary)
 ## source's three worker allocations, independent of the take crew `assign_labor` set.
 signal improvement_requested(payload: Dictionary)
 
-## Emitted when the player staffs (or unstaffs) a source's STANDING UPKEEP — the third allocation.
-## Payload keys: { faction, kind, x, y, herd_id, workers }. Main formats
-## `maintain <faction> forage <x> <y> <workers>` / `maintain <faction> hunt <herd_id> <workers>`.
+## Emitted when the player picks how a band splits a keeping POOL it cannot stretch
+## (`docs/plan_standing_upkeep.md` §2.5). Payload keys: { faction, band_id, mode }, `mode` being
+## `spread` or `priority`. Main formats `upkeep_mode <faction> <band_id> <mode>`.
 ##
-## **`workers: 0` IS A REAL ORDER**, not an absent one: it is how the player says *stop maintaining
-## this, take everything, let it go*. There is no toggle beside the number, because a boolean and a
-## count could disagree. RELAYED from `DrawerComposeController`, its only emitter.
-signal maintain_requested(payload: Dictionary)
+## **IT IS A BAND POLICY, NOT A SOURCE ORDER** — which is what is left of the retired `maintain`
+## once maintenance left the tile. The keeping CREW is set with `assign_labor … agriculture` /
+## `husbandry`, i.e. through `assign_labor_requested` like every other standing role, so this signal
+## carries the one decision the roles cannot express. RELAYED from `BandPanelController`, its only
+## emitter.
+signal upkeep_mode_requested(payload: Dictionary)
 ## Emitted when the player presses **Make** in Materials & Crafting — the recipe is STAGED on the
 ## band's bench and nobody is recruited onto it. **The player staffs the bench and the sim never
 ## does**, so there is no crew argument here: the `− n +` stepper is the one thing that picks the
@@ -449,8 +451,6 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: extend_pen_requested.emit(payload))
     _drawercompose.improvement_requested.connect(
         func(payload: Dictionary) -> void: improvement_requested.emit(payload))
-    _drawercompose.maintain_requested.connect(
-        func(payload: Dictionary) -> void: maintain_requested.emit(payload))
     # The command-targeting cluster. Constructed AFTER `_drawercompose` (its three close-sheet nudges)
     # and BEFORE `_bandpanel` (which injects `_targeting` — so `_targeting` must exist first). The pick
     # flow's `_bandpanel.rerender()` is therefore a lazily-bound lambda: `_bandpanel` is null now but
@@ -487,6 +487,8 @@ func _ready() -> void:
         _emit_assign_labor, _herd_label_for_id, _targeting, _topbar)
     _bandpanel.cancel_order_requested.connect(
         func(band: Dictionary, scope: String) -> void: cancel_order_requested.emit(band, scope))
+    _bandpanel.upkeep_mode_requested.connect(
+        func(payload: Dictionary) -> void: upkeep_mode_requested.emit(payload))
     _bandpanel.send_hunt_expedition_requested.connect(
         func(payload: Dictionary) -> void: send_hunt_expedition_requested.emit(payload))
     _bandpanel.send_denial_raid_requested.connect(

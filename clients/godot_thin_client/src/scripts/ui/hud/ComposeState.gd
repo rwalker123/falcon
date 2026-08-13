@@ -57,22 +57,24 @@ var _forage_band: int = NO_BAND_ENTITY
 # band's standing assignment, so switching the actor invalidates them exactly as switching the source
 # does — see `seed_forage`.
 var _forage_seeded_band: int = NO_BAND_ENTITY
-# **THE OTHER TWO ALLOCATIONS** (`docs/plan_standing_upkeep.md` §2.2). A source carries three
+# **THE SOURCE'S SECOND ALLOCATION** (`docs/plan_standing_upkeep.md` §2.2). A source carries TWO
 # independent crews from a band and the player states each: `_forage_count` above is the TAKE crew
-# (`assign_labor`), this is the BUILD crew (the improvement verb carries it) and the keeping crew
-# (`maintain`). They are separate fields rather than one dict because they are edited by three
-# different controls and committed by three different commands.
+# (`assign_labor`) and this is the BUILD crew (the improvement verb carries it). They are separate
+# fields rather than one dict because they are edited by two different controls and committed by two
+# different commands.
 #
-# **THEY SEED TO THE STANDING CREW, exactly as the take count does.** `LaborAssignment` publishes all
-# three crews now (`improvement_workers` / `maintain_workers`), so a reopened sheet opens on what the
-# band actually has rather than on nobody — which is what makes a restate possible at all: the
-# commands SET rather than add, so a stepper that opened at `0` on a staffed source would offer the
-# player only the choice to unstaff it.
+# **THERE IS NO KEEPING COUNT HERE ANY MORE** (§2.5). Maintenance left the tile: the keeping is a
+# band-level standing role (`agriculture` / `husbandry`) staffed from the Band panel's WORKFORCE
+# zone, so a compose sheet has no keeping crew to compose.
 #
-# **A SEEDED `0` IS THE WIRE'S ANSWER, NOT A MISSING ONE.** No verb in flight means no builders, and a
-# source nobody keeps has no keepers; both are the common case and neither may be papered over.
+# **IT SEEDS TO THE STANDING CREW, exactly as the take count does.** `LaborAssignment` publishes
+# `improvement_workers`, so a reopened sheet opens on what the band actually has rather than on
+# nobody — which is what makes a restate possible at all: the commands SET rather than add, so a
+# stepper that opened at `0` on a staffed source would offer the player only the choice to unstaff it.
+#
+# **A SEEDED `0` IS THE WIRE'S ANSWER, NOT A MISSING ONE.** No verb in flight means no builders,
+# which is the common case and may not be papered over.
 var _forage_build_count: int = 0
-var _forage_maintain_count: int = 0
 
 # ---- Hunt compose (the herd drawer's "assign hunters/herders" block) -----------------------------
 var _hunt_key: String = ""
@@ -85,9 +87,8 @@ var _hunt_autofill := false
 var _hunt_band: int = NO_BAND_ENTITY
 # The hunt twin of `_forage_seeded_band` — same contract.
 var _hunt_seeded_band: int = NO_BAND_ENTITY
-# The hunt twins of `_forage_build_count` / `_forage_maintain_count` — same contract.
+# The hunt twin of `_forage_build_count` — same contract.
 var _hunt_build_count: int = 0
-var _hunt_maintain_count: int = 0
 
 # ---- Party compose (the Band panel's PARTIES zone — NOT drawer state) ----------------------------
 # The quarry the party compose sheet is aimed at (a world herd id), "" until one is picked. It is the
@@ -170,12 +171,11 @@ func begin_forage_source(key: String, band_entity: int) -> void:
 ## showing the previous band's crew — most damagingly a 0, which turns the commit into an Unassign
 ## against the crew the newly-picked band really has on the tile.
 func seed_forage(count: int, floor: float, improvement: String, build_count: int = 0,
-		maintain_count: int = 0, species: String = "") -> void:
+		species: String = "") -> void:
 	_forage_count = count
-	# **THE OTHER TWO ALLOCATIONS SEED FROM THE BAND'S OWN ROW**, like the count and the floor above
-	# them: they belong to the source AND the band, so they re-seed on either changing.
+	# **THE BUILD CREW SEEDS FROM THE BAND'S OWN ROW**, like the count and the floor above it: it
+	# belongs to the source AND the band, so it re-seeds on either changing.
 	_forage_build_count = maxi(build_count, 0)
-	_forage_maintain_count = maxi(maintain_count, 0)
 	_forage_floor = SourceForecast.clamp_floor(floor)
 	_forage_improvement = improvement
 	# **THE CROP SEEDS FROM THE ASSIGNMENT'S OWN `species`, which is the SELECTION.** It used to clear
@@ -213,14 +213,6 @@ func forage_build_count() -> int:
 
 func set_forage_build_count(count: int) -> void:
 	_forage_build_count = maxi(count, 0)
-
-## The KEEPING crew's own count. `0` is how the player says *"stop maintaining this, let it go"* —
-## there is no toggle beside it, because a boolean and a count could disagree.
-func forage_maintain_count() -> int:
-	return _forage_maintain_count
-
-func set_forage_maintain_count(count: int) -> void:
-	_forage_maintain_count = maxi(count, 0)
 
 func set_forage_species(species: String) -> void:
 	_forage_species = species
@@ -299,11 +291,9 @@ func reset_hunt_kit() -> void:
 
 ## Re-seed the composed count + floor + improvement from the newly-resolved band's staffing on the
 ## herd — the hunt twin of `seed_forage`, including the seeded-band record.
-func seed_hunt(count: int, floor: float, improvement: String, build_count: int = 0,
-		maintain_count: int = 0) -> void:
+func seed_hunt(count: int, floor: float, improvement: String, build_count: int = 0) -> void:
 	_hunt_count = count
 	_hunt_build_count = maxi(build_count, 0)
-	_hunt_maintain_count = maxi(maintain_count, 0)
 	_hunt_floor = SourceForecast.clamp_floor(floor)
 	_hunt_improvement = improvement
 	_hunt_seeded_band = _hunt_band
@@ -325,18 +315,12 @@ func set_hunt_improvement(improvement: String) -> void:
 func set_hunt_count(count: int) -> void:
 	_hunt_count = count
 
-## The hunt twins of the forage build/keeping counts — same contract.
+## The hunt twin of the forage build count — same contract.
 func hunt_build_count() -> int:
 	return _hunt_build_count
 
 func set_hunt_build_count(count: int) -> void:
 	_hunt_build_count = maxi(count, 0)
-
-func hunt_maintain_count() -> int:
-	return _hunt_maintain_count
-
-func set_hunt_maintain_count(count: int) -> void:
-	_hunt_maintain_count = maxi(count, 0)
 
 func arm_hunt_autofill() -> void:
 	_hunt_autofill = true

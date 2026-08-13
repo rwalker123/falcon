@@ -565,7 +565,7 @@ built from the code under test can only agree with itself. **They are the SIM's 
 from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
 payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-**A clean run is 320 frames / 997 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
+**A clean run is 322 frames / 996 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
 three times in one arc and once across a merge, and a running total kept by addition would be wrong
 by now. (The measurement above came back FIVE higher than the 895 recorded before it while the arc
 #527 review added exactly ONE claim — the `Carrying:` mass one. Four `PASS`es had accumulated
@@ -574,6 +574,18 @@ immediately before the keeping-crew fix, which added three and no frame: the thi
 plus two bare `assert`s in `chapters/herd_graze_pen.gd` converted to `_assert_hud` — a bare `assert`
 prints no `PASS` and HALTS the run rather than reporting, which is why the conversion counts as two
 found rather than two added.)
+
+**THE KEEPING POOL (`docs/plan_standing_upkeep.md` §2.5) ADDED ONE FRAME AND MOVED CLAIMS RATHER THAN
+GAINING THEM** — the measurement above came back two frames and one `PASS` off the recorded 320 / 997
+while this arc added one frame and net-zero claims, which is this line's own instruction being earned
+again. `herd_keeping_mid_build` is the new one (a herd mid-Tame, whose
+`Keeping:` row must say it is being BUILT rather than quoting a pool that does not fund it) and
+`forage_no_food_basket`'s neighbour `forage_reopened_crews` kept its name while its subject shrank
+from three crews to two — its keeping-stepper claims went with the stepper, replaced by ONE
+structural claim that the sheet mounts exactly one untagged stepper. The under-kept pair's third
+claim likewise moved from *"hunters do not hold a herd"* to *"a herd mid-build is not asking the pool
+for keepers"*, since the first is now true by construction: no crew on a source can reach the
+keeping.
 
 **The compose sheet's own turn estimate is worth FIVE frames and TWELVE `PASS`.** Three are one
 A/B plus a drag: `improvement_turns_lone_crew` / `improvement_turns_full_crew` (one patch, one floor,

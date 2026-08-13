@@ -371,16 +371,16 @@ func run(harness) -> void:
 	# — which the fresh meter beside it ("Tame — 4%") already contains, so it passed off the very
 	# witness it was meant to be independent of, and would have passed off a coordinate or a yield just
 	# as happily. The Keepers row's whole rendered value is the only text that can testify: it names the
-	# demand, and it names it in the row the claim is about. Assigned is READ rather than assumed — this
-	# band keeps no herd, so a hardcoded count would pin the fixture's staffing instead of the demand.
+	# demand, and it names it in the row the claim is about.
 	#
 	# **AND IT IS THE CALM FORM, on a herd part-way through its Tame** (`docs/plan_standing_upkeep.md`
-	# §2.2): the row is SHOWN because the herd is owned and will owe keepers, and it does not warn
+	# §2.5): the row is SHOWN because the herd is owned and will owe keepers, and it does not warn
 	# because the keeping is still the BUILD crew's — `upkeepWorkersNeeded` is `0` until the rung
-	# stands. The demand it names is the herd's own, which is what this claim is about.
+	# stands, so no share of the band's Husbandry pool is owed here yet. The demand it names is the
+	# herd's own, which is what this claim is about.
 	h._assert_hud("…and the drawer's keeper demand is the live one (4), not the pre-tame 0",
-		Q.has_label_containing(h._hud.occupant_detail, DetailFormat.herders_label(
-			h._hud._band_labor.assigned_keepers_for(REOPEN_HERD_ID), REOPEN_TAMING_HERDERS, false)))
+		Q.has_label_containing(h._hud.occupant_detail,
+			DetailFormat.herders_label(REOPEN_TAMING_HERDERS, false)))
 	h._hud._drawercompose.close_compose_sheet()
 	h._hud._compose.reset_hunt_source()
 	h._hud._compose.set_hunt_floor(SourceForecast.DEFAULT_HARVEST_FLOOR)

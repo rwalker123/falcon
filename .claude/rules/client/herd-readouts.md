@@ -166,46 +166,50 @@ paths:
   is never decayed (it leaves with them), and a fully-abandoned herd bleeds out and despawns (fauna
   neglect-escape arc, `docs/plan_fauna_neglect_escape.md`; supersedes the retired tameness-decay
   model). Immediately after the Husbandry row, ONLY when `herders_needed > 0` (0 = wild/unmanaged, so
-  `find_world_herd` reports 0 and it never trips), a **Keepers** row shows a calm `A / N` (neutral ink)
-  or an amber `A / N — under-herded` (WARN, `herders_value_hex`, the shared overgrazing/pen-debit path).
-  - **`A` IS THE MAINTAIN CREW**, `HudBandLaborState.assigned_keepers_for(herd_id)` — the `maintain`
-    crews on the herd summed across the player's bands, threaded into `herd_summary_lines` as a
-    parameter (the `world_herds` treatment). It counted the herd's HUNTERS until the three-crew split
-    (`docs/plan_standing_upkeep.md` §2.2), which measured the hands that TAKE from the herd against the
-    bill for HOLDING it. It is likewise NEVER reconstructed as `round(herded_fraction · needed)`: that
-    read last turn's RESOLVED fraction and showed a stale, self-contradictory "only 2 of 5 working" the
-    instant the player staffed one. **It is deliberately not pending-aware** — `maintain` REFUSES where
-    `assign_labor` clamps, so an optimistic read would clear the warning for an order the sim rejected.
+  `find_world_herd` reports 0 and it never trips), a **Keepers** row shows a calm
+  `N — drawn from the band's Husbandry` (neutral ink) or an amber
+  `N — under-herded, the Husbandry pool is short here` (WARN, `herders_value_hex`, the shared
+  overgrazing/pen-debit path).
+  - **IT STATES ONE NUMBER, AND IT IS A DEMAND** (`docs/plan_standing_upkeep.md` §2.5). It was a pair
+    `A / N` whose `A` counted the keepers assigned to this herd — the HUNTERS before the crews split,
+    then the per-source `maintain` crew — and **maintenance has since left the tile**: a managed herd
+    is held out of its band's `husbandry` POOL, so no per-herd crew exists to count and one derived
+    from the pool share would be a head count the sim never published. `assigned_keepers_for` and the
+    parameter that threaded it in are both gone. `round(herded_fraction · needed)` remains forbidden
+    for its own older reason: it reads last turn's RESOLVED fraction.
   - **THE ROW'S PRESENCE AND ITS ALARM ASK DIFFERENT QUESTIONS.** It is SHOWN on `herders_needed > 0`,
     the ownership gate — what this herd will owe — and goes amber only on
-    `SourceForecast.is_under_kept`, which counts against `upkeepWorkersNeeded`, the KEEPING demand.
-    Those differ mid-build: while a Tame or a Corral is going up the keeping is the build crew's and
-    the sim publishes `0`, so a herd mid-Tame reads a calm `Keepers: 0 / 4` beside the `Keeping:` row
-    saying the build's crew holds it, rather than a warning about a shed that is not happening.
+    `SourceForecast.is_under_kept`, which tests the published `upkeepShortfall` behind a positive
+    `upkeepWorkersNeeded`. Those differ mid-build: while a Tame or a Corral is going up the keeping is
+    the build crew's and the sim publishes `0` keepers wanted, so a herd mid-Tame reads a calm
+    `Keepers: 4` beside a `Keeping:` row saying the rung is still being built, rather than a warning
+    about a shed that is not happening.
   - When under-kept AND `domestication > 0`, a muted consequence line — **`Under-herded — animals are
-    drifting off. Staff N KEEPERS to hold the herd.`** (`HERDERS_SHED_FORMAT`; the "tameness slipping"
-    copy is retired, and so is the "Staff all N herders" one, which named the crew that cannot stop
-    it) — states the shed and the one lever that does. It quotes the KEEPING demand, so the number is
-    the one the compose sheet's KEEPERS row wants.
-  ui_preview `herd_fully_herded` (calm `4 / 4` — 4 keepers, `herded_fraction` a stale 0.4, so the OLD
-  reconstruction would have read `2 / 4`) / `herd_under_herded` (amber `4 / 6 — under-herded` + the
-  drifting-off line, `herded_fraction` a stale 1.0), with a PNG-less third claim beside them that a
-  herd hunted by a crew past its keeper demand and kept by nobody is still under-kept. **Both fixtures
-  are fully TAMED on purpose**: a part-tamed herd owes its keeping to the BUILD crew, so a positive
-  keeper demand on one is a shape no server can produce.
+    drifting off. This herd wants N of the band's Husbandry hands.`** (`HERDERS_SHED_FORMAT`; the
+    "tameness slipping" copy is retired, and so are both later ones — "Staff all N herders" named the
+    crew that cannot stop it, "Staff N KEEPERS" named a control that no longer exists) — states the
+    shed and the one lever that does.
+  ui_preview `herd_fully_herded` (calm `4 — drawn from the band's Husbandry`, `herded_fraction` a
+  stale 0.4) / `herd_under_herded` (amber, + the drifting-off line, `herded_fraction` a stale 1.0) /
+  **`herd_keeping_mid_build`** (the third claim, and the one a pooled readout gets wrong: a herd
+  mid-Tame is billed a non-zero upkeep no pool covers, so the `Keeping:` row must say it is being
+  BUILT and must not quote the pool). **The first two fixtures are fully TAMED on purpose**: a
+  part-tamed herd owes its keeping to the BUILD crew, so a positive keeper demand on one is a shape
+  no server can produce.
   The **worker/assignment panel flags it too** (`BandPanelController._work_source_models` hunt branch),
   through the same `is_under_kept` call: the established overhunt ⚠ (amber marks + severity stripe +
-  the `⚠` attention filter chip) and the `WORK_ROW_UNDER_HERDED_NOTE` ("Animals drifting off — staff
-  this herd's KEEPERS.") in its inspector strip, so the shed reads WHEREVER the herd is listed, not
-  only in its drawer — see `band-city-panel.md` → "The under-herded ⚠ counts the KEEPING crew".
+  the `⚠` attention filter chip) and the `WORK_ROW_UNDER_HERDED_NOTE` ("Animals drifting off — raise
+  this band's Husbandry role.") in its inspector strip, so the shed reads WHEREVER the herd is listed,
+  not only in its drawer — see `band-city-panel.md` → "The under-herded ⚠ reads the POOL's share".
   band_panel_preview `band_panel_under_herded` / `band_panel_keepers_short` /
   `band_panel_keepers_staffed`.
 - **…and the OTHER shed a managed herd can suffer: a part-built rung nobody is building.** A Tame the
   player walked away from is owed its BUILD crew, so `upkeepWorkersNeeded` is `0`, the `Keepers` row
-  reads a calm `0 / N`, and the herd sheds anyway — the sim's shed reads `upkeepShortfall` and does
+  reads a calm demand, and the herd sheds anyway — the sim's shed reads `upkeepShortfall` and does
   not care which crew failed to pay it. The drawer's `Keeping:` row is what states it
   (`DetailFormat.UPKEEP_UNBUILT_VALUE` — *"nobody is building it — this rung is sliding back"*, in
-  place of the *"the build's crew holds it"* that is true only of a build being worked), with the
+  place of the *"still being built — its own crew holds it"* that is true only of a build being
+  worked), with the
   `At risk:` row's cost and countdown beside it, and the work board carries the matching ⚠. The rule
   and the field-by-field read of what the wire publishes here are in `band-city-panel.md` → "…AND A
   PART-BUILT RUNG NOBODY IS BUILDING GETS THE SAME ⚠".

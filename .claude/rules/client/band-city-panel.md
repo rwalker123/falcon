@@ -437,7 +437,7 @@ Measured on a TOP dock at 1.35: `_bound_leading` 360, `_bound_trailing` 344, `_a
 edge on a horizontal dock is the HUD's authored lateral column (`Hud.lateral_column_widths()`, a
 `max(authored, live)`), which the card is holding clear on purpose. It is not the card failing to
 stretch, and widening it into that gap would put it over a live HUD column.
-- **Zone `band` — vitals · PEOPLE · food outlook · WORKFORCE + role cards** (`BandPanelController.build_band_zone`).
+- **Zone `band` — vitals · PEOPLE · KEEPING · food outlook · WORKFORCE + role cards** (`BandPanelController.build_band_zone`; the KEEPING block is `docs/plan_standing_upkeep.md` §2.5's and is specified in "THE KEEPING BLOCK" below).
   The Food/Morale/Growth/Kit rows are the disclosures — and their breakdowns open in a
   POPOVER, never inline (see Band food status: inline growth is what clipped this very zone).
   **There is no `Output:` row and no `Position:` row here.** Productivity reads on the WORK zone's
@@ -506,7 +506,8 @@ stretch, and widening it into that gap would put it over a live HUD column.
   all; a Parties SEGMENT therefore made the segments sum PAST their own denominator — a bar totalling
   22 above a head reading "4 idle of 16". The fact still has to be reachable, so it moved to the head
   rather than being deleted. `FactionRollup`'s bar takes the same clause off the same
-  `HudBandLaborState.band_party_workers` sum. Scout + Warrior are **CARDS** now (bordered, name · the `−/+` stepper and its
+  `HudBandLaborState.band_party_workers` sum. **FOUR standing roles are CARDS** — Scout + Warrior
+  here, Agriculture + Husbandry in the KEEPING block below, in two rows of two — (bordered, name · the `−/+` stepper and its
   `assign_labor` emit · **the kit picker and its gear line** · the role's description LAST), not rows
   in a list — the fix for a standing role being indistinguishable from a worked source. See "The role
   cards carry the band's OTHER two kits" below for the picker half and for why the prose trails.
@@ -1829,6 +1830,24 @@ candidates were re-measured, and the result is that **the two layouts collapsed 
 one split serves both and `people_column` is deleted. PEOPLE now sits in the LARDER column
 unconditionally.
 
+### …AND THE KEEPING BLOCK MADE IT FIVE BLOCKS, WHICH IS WHY IT IS A BLOCK AT ALL
+
+`docs/plan_standing_upkeep.md` §2.5 added two keeping role cards and a fund-mode row. Folded into
+WORKFORCE they took that block from **256 to 392**, and the flank fell to **44%** against the 65%
+floor — with **no re-authoring able to recover it**: with four blocks the best remaining split still
+leaves one column carrying a block nearly half the flank. So the keeping pair is its own block
+(`_build_keeping_block`), which is what makes a fifth arrangement available. Re-measured:
+
+| | LARDER | the other column | level |
+|---|---|---|---|
+| **charted** — vitals + PEOPLE + keeping \| outlook + WORKFORCE | **342** | 372 | **92%** |
+| **chartless** — the same split, no chart | **342** | 256 | **75%** |
+
+One split still serves both, and it reads as *the band and what it holds | the chart and what it
+does*. The LARDER column now OVERFLOWS the 275px box in both cases, which is what the zone's own
+scroll is for — see "`PANEL_HEIGHT_WIDE` is the BODY's budget" for why deleting a block to avoid a
+scrollbar is the worse trade.
+
 **THE FLOOR MOVED, AND ONLY BECAUSE NO SPLIT CLEARS IT.** `band_panel_preview`'s
 `BAND_FLANK_BALANCE_FLOOR` went **0.75 → 0.65**. That is the re-calibration this file warns against,
 taken only after the re-authoring it mandates: with three chartless blocks there are three orderings
@@ -1863,6 +1882,47 @@ stays vitals · PEOPLE · outlook · WORKFORCE.
 Measuring only the deepest column passed the 130/263 flank at 88% — the short column was invisible to
 it. Two independent failure modes (uniformly empty = a tier that did not rise; lopsided = the wrong
 split) need two claims.
+
+## THE KEEPING BLOCK — two more role cards, and the one decision that governs both pools
+
+`docs/plan_standing_upkeep.md` §2.5. Maintenance is a band-level standing role now, so the band zone
+carries a `KEEPING` block under WORKFORCE's own: two cards in the SAME family as Scout and Warrior —
+**Agriculture** (the plant web) and **Husbandry** (the animal one) — plus a two-way fund-mode pick.
+They are staffed by the same `assign_labor <faction> <band> <kind> <workers>` those two use, through
+the same `_build_role_card`; nothing about the keeping is a parallel surface.
+
+- **FOUR CARDS ARE TWO ROWS OF TWO, never one row of four.** At the narrow shell's 354px a
+  four-abreast row gives each card ~82px, which clips the role name and the kit face alike. The
+  pairing is the split the roles already have — the two EXPEDITIONARY roles above, the two KEEPING
+  ones below — so the second row reads as its own family rather than as an overflow of the first.
+- **The keeping roles are in the WORKFORCE bar's `Roles` SEGMENT even though their cards are not in
+  that block.** The segments partition `working_age`, `effective_idle` already nets these hands out
+  of Idle, and a segment that omitted them would stop the key adding up to the head the zone states.
+- **THEY MOUNT NO KIT PICKER, and two independent facts say so.** The wire names no default kit for
+  either job — there is no `defaultAgricultureKitId` twin of `defaultScoutKitId`, so `(default)`
+  would be a guess and `HudBandLaborState.default_kit_id` falls through to the HUNT default — and no
+  shipped kit declares a maintenance contribution, so every entry the picker could offer moves no
+  number the player can see. `KIT_PICKER_ROLES` is the gate. A picker whose selection changes nothing
+  and whose default mark is wrong is worse than none.
+- **THE FUND-MODE ROW IS THE ONE DECISION THE ROLES CANNOT EXPRESS** — `Spread` (fund every source in
+  proportion, so everything degrades a little) against `Priority` (fund the biggest investments in
+  full and let the marginal ones rot), emitting `upkeep_mode <faction> <band> <mode>` through
+  `BandPanelController.upkeep_mode_requested`. **It renders only where either web demands work this
+  turn**: a band holding nothing has no split to choose, and a control offered there reads as a
+  setting the player forgot to make. The active mode is `primary` and the other `ghost`, the work
+  board's filter-chip treatment, and **both stay pressable** — a disabled active mode is
+  indistinguishable at a glance from an unavailable one on a control whose whole content is two words.
+- **The line beneath states the POOL's own arithmetic, in both directions** (`Short 5 work of 7 this
+  turn.` in WARN, or the covered form in HEALTHY). Both figures are summed by
+  `HudBandLaborState.upkeep_pool_state` from the wire's per-source fields — one sum per web, skipping
+  a row with nobody on the take exactly as `systems::labor::maintenance_shares` skips it — and
+  nothing is derived from anything else.
+
+**Frames:** `band_panel_upkeep_mode_spread` / `band_panel_upkeep_mode_priority`, a band short on BOTH
+webs rendered under each mode. **The pair is the claim** — the two differ in one lit button and one
+word, so either alone says nothing about whether the control reflects the band's own
+`upkeepFundMode` — with the NEGATIVE on the reference band beside them (nothing to keep, no control).
+`_assert_upkeep_mode_control` adds the press, read off the emitted payload, which no frame can carry.
 
 ## The role cards carry the band's OTHER two kits
 
@@ -2130,61 +2190,59 @@ the two `key` tiebreaks removed exactly the two total-order assertions fail whil
 green.
 
 
-## The under-herded ⚠ counts the KEEPING crew, and its note names it
+## The under-herded ⚠ reads the POOL's share, and its note names the band's Husbandry role
 
 A Hunt row whose managed herd is under-kept wears the established `⚠` and a WARN note in its
-inspector strip. **It measures the keepers on the herd against the herd's keeper demand** —
-`SourceForecast.is_under_kept(live_herd, prefix, HudBandLaborState.assigned_keepers_for(herd))`, the
-one test the herd drawer's `Keepers` row also calls — and **the instruction attached to it names the
-compose sheet's `KEEPERS` row** (`HudWorkVocab.WORK_ROW_UNDER_HERDED_NOTE`, *"Animals drifting off —
-staff this herd's KEEPERS."*), with the row TOOLTIP (`WORK_ROW_UNDER_HERDED_TOOLTIP`) stating why the
-stepper on the row does not answer it.
+inspector strip. **It measures this herd's SHARE of the band's husbandry pool against the herd's
+keeping demand** — `SourceForecast.is_under_kept(live_herd, prefix)`, the one test the herd drawer's
+`Keepers` row also calls — and **the instruction attached to it names the WORKFORCE zone's Husbandry
+card** (`HudWorkVocab.WORK_ROW_UNDER_HERDED_NOTE`, *"Animals drifting off — raise this band's
+Husbandry role."*), with the row TOOLTIP (`WORK_ROW_UNDER_HERDED_TOOLTIP`) stating why the stepper on
+the row does not answer it.
 
-**It used to be true that the row's own `+` was the fix, and the warning used to COUNT that crew.**
-Containment was read off the HUNTING crew, so the board's stepper and the warning moved the same
-number, and `SourceForecast.source_worker_cap_state` raised the take cap to `herdersNeeded` through
-`herd_crew_floor` precisely so the `+` could reach it. A source carries three crews now — take, build
-and **maintain** — holding a herd is the maintain allocation, and that floor is retired
-(`labor-ui.md` → "THE DIP IS RETIRED, and so is `crew_needed`"). So the `+` deliberately stops short
-of the keeper count, and *"Too few herders"* beside it pointed at the one control that cannot resolve
-the warning. **A warning whose obvious affordance does not resolve it reads as a bug**, which is what
-it was reported as.
+**IT HAS BEEN RE-AIMED TWICE, AND BOTH MOVES WERE FORCED.** Containment was originally read off the
+HUNTING crew, so the board's stepper and the warning moved the same number and
+`SourceForecast.source_worker_cap_state` raised the take cap to `herdersNeeded` so the `+` could
+reach it. The three-crew split made the keeping a per-source `maintain` allocation, that floor
+retired (`labor-ui.md` → "THE DIP IS RETIRED"), and the warning began counting the keeper crew.
+**Maintenance has since left the tile** (`docs/plan_standing_upkeep.md` §2.5): there is no per-source
+keeper crew to count, so that reading went to `0 < wanted` on every managed herd in the game and the
+⚠ would have been permanently up — a warning measuring the wrong thing, which is worse than none.
 
-**The wording was only half of it, and the half left behind was the worse one.** Re-aimed at the
-`KEEPERS` row while still COUNTING hunters, the warning became actively misleading in both
-directions: staffing keepers — the thing the note now told the player to do — left it up, and
-staffing hunters cleared it without stopping the shed. The sim gates the shed on `upkeep_supplied`,
-i.e. the maintain crew alone, so the trigger reads that crew now and the two agree.
+**So the trigger is the published SHORTFALL**, which is what the sim's own shed reads
+(`herd_herded_fraction` gates it on `upkeep_supplied`). The old objection to a shortfall test — that
+it speaks once animals are already leaving — is answered by the rung's GRACE: `neglectGraceRemaining`
+counts the forgiven turns and the card's `At risk:` row states the countdown, so the ⚠ still arrives
+before the shed does.
 
-- **The note spells `KEEPERS` exactly as the control is labelled**
-  (`HudComposeVocab.CREW_ROW_MAINTAIN_LABEL`), so it is a thing to look for rather than a paraphrase.
+- **The note names the ROLE CARD, because that is the only control that moves the number.** It named
+  the compose sheet's `KEEPERS` row for one release, which is now a control the player cannot find.
 - **The reason goes in the TOOLTIP, not a second strip line.** `_work_inspector_height` reserves ONE
   open height for every row, so a line added here is paid for by every open inspector; a tooltip
   costs no layout at all. `build_status_part` is a bare `Label` with no autowrap, so the note's
   LENGTH is a width budget in the 354px narrow-shell zone — keep a reworded note short, or the strip
   overruns its clipping host and `band_panel_preview`'s recursive bounds assertion says so.
 - **The herd DRAWER's own line took the same correction** (`DetailFormat.HERDERS_SHED_FORMAT`, now
-  *"…Staff N KEEPERS to hold the herd."*). It is the same stale instruction one surface over, and
-  worse there: that drawer's local hunt sheet labels its TAKE row `Herders`, the exact noun the old
-  sentence used. See `herd-readouts.md` → the Herd staffing bullet.
-- **THE NOTE NOW WINS THE `note` SLOT rather than yielding to whatever was in it.** It shares that
-  slot with the overstaff note, and the two could not co-occur while containment came off the hunting
-  crew — a herd cannot be short of hunters and overstaffed with them at once. With the crews split
+  *"…This herd wants N of the band's Husbandry hands."*). It is the same instruction one surface
+  over, and it has been stale twice for the same reason. See `herd-readouts.md` → the Herd staffing
+  bullet.
+- **THE NOTE WINS THE `note` SLOT rather than yielding to whatever was in it.** It shares that slot
+  with the overstaff note, and the two could not co-occur while containment came off the hunting crew
+  — a herd cannot be short of hunters and overstaffed with them at once. With the take crew separated
   they can, routinely; they are not equal in weight, so the slot is not first-come.
 - **The demand is `upkeepWorkersNeeded`, NOT `herdersNeeded`, and they differ mid-build.** The
-  keeping is owed to keepers only once the rung STANDS — while a Tame or a Corral is going up those
-  hands are the build crew's and the sim publishes `0` — so a herd mid-Corral raises no keeper
-  warning, which agrees with the compose sheet's own KEEPERS row saying the build's crew holds it.
+  keeping is owed only once the rung STANDS — while a Tame or a Corral is going up those hands are
+  the build crew's and the sim publishes `0` — so a herd mid-Corral raises no keeper warning, which
+  agrees with the drawer's own `Keeping:` row saying it is still being built.
   **The rung that is going up gets its OWN warning instead** — see the section below.
-- **The count is the CONFIRMED maintain crew and is deliberately not pending-aware**, unlike the take
-  crew it replaced — see `HudBandLaborState.assigned_keepers_for`: `maintain` REFUSES where
-  `assign_labor` clamps, so an optimistic read would clear a shed warning for an order the sim
-  rejected.
+- **THE SHORTFALL IS THE CONFIRMED ONE and there is no optimistic overlay for it.** It is resolved
+  sim-side from a pool the client never composes, so a pending edit cannot move it: raising the
+  Husbandry role clears the ⚠ on the first snapshot that carries the new share, and never before.
 
 Frames: `band_panel_under_herded`, and the A/B pair `band_panel_keepers_short` /
-`band_panel_keepers_staffed` — one herd, one hunt crew, only the keepers moving. The third claim
-rides with them and is PNG-less, because no picture can carry it: a board with twice the hunters on
-it looks exactly like the short frame.
+`band_panel_keepers_staffed` — one herd, one hunt crew, only the herd's POOL SHARE moving. The third
+claim rides with them and is PNG-less, because no picture can carry it: a board with twice the
+hunters on it looks exactly like the short frame.
 
 ## …AND A PART-BUILT RUNG NOBODY IS BUILDING GETS THE SAME ⚠, NAMING BUILDERS
 

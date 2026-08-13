@@ -758,12 +758,18 @@ const FORECAST_BUILD_GEAR_WORK_KEY := "build_work_from_gear"
 # from `demand − supplied`: it is EXACTLY what the improvement decays by once the shortfall outlasts
 # the rung's grace, and a client re-deriving it would be a second authority over the number the whole
 # readout exists to make legible (the `pen_feed_upkeep` discipline).
+#
+# **`upkeep_supplied` IS THIS SOURCE'S SHARE OF ITS BAND'S POOL** (`docs/plan_standing_upkeep.md`
+# §2.5), not the hands standing on it: maintenance is a band-level role, so the three fields stopped
+# answering *"did you staff this one"* and answer *"where is my pooled shortfall landing"*. Every
+# readout of them must be worded that way — a row that reads as a per-source staffing verdict points
+# the player at a stepper that no longer exists.
 const FORECAST_UPKEEP_DEMAND_KEY := "upkeep_demand"
 const FORECAST_UPKEEP_SUPPLIED_KEY := "upkeep_supplied"
 const FORECAST_UPKEEP_SHORTFALL_KEY := "upkeep_shortfall"
-# **THE MAINTAIN ACTIVITY'S OWN `workers_needed`** — hands to MEET the demand, beside the take
-# activity's (`SourceYield.workersNeeded`, hands to haul the offer). A blended count across two units
-# is what a single worker allocation forced; each activity answers for itself now.
+# **WHAT THIS SOURCE'S KEEPING IS WORTH IN HANDS** — `ceil(demand / PER_WORKER_OUTPUT)`, beside the
+# take activity's `SourceYield.workersNeeded` (hands to haul the offer). It is a SIZE, not a staffing
+# order: nobody is assigned here any more, so it reads as *this much of the band's keeping pool*.
 #
 # **`0` ON A SOURCE WHOSE METER IS STILL BEING BUILT IS CORRECT, NOT A GAP** — its hands are the
 # build's, so *"wants 0 keepers"* mid-build is the honest reading and must not be papered over.
@@ -3183,13 +3189,14 @@ static func build_work_from_gear(src: Dictionary, prefix: String) -> float:
         BUILD_WORK_NONE)
 
 ## **WHAT THIS SOURCE COSTS TO HOLD, READ IN ONE PLACE** — the four published upkeep numbers plus the
-## neglect countdown beside them, as one dict, so the compose sheet's maintain row, the tile card, the
-## herd drawer and the turn orb cannot read a different subset and reach different conclusions.
+## neglect countdown beside them, as one dict, so the tile card, the herd drawer, the work board and
+## the turn orb cannot read a different subset and reach different conclusions.
 ##
 ## **NOTHING HERE IS DERIVED.** `shortfall` is the wire's own field, never `demand − supplied`: it IS
 ## the decay, and a client that subtracted would be a second authority over the number the readout
-## exists to make legible. `crew` is the maintain activity's `workers_needed`, which is `0` while the
-## rung is still going up because those hands are the BUILD's.
+## exists to make legible. `supplied` is this source's SHARE of its band's keeping pool (§2.5), not a
+## crew on the tile. `crew` is what the keeping is worth in hands, which is `0` while the rung is
+## still going up because those hands are the BUILD's.
 ##
 ## `at_risk` is the pair's gate — `has_neglect_grace` — and it means *there is something here that can
 ## be lost*. It has to be read before `grace`, exactly as `has_owner` is before `owner`: `0` grace on
@@ -3231,25 +3238,28 @@ static func upkeep_is_short(state: Dictionary) -> bool:
 static func keepers_wanted(src: Dictionary, prefix: String) -> int:
     return int(upkeep_state(src, prefix).get("crew", NO_UPKEEP_CREW))
 
-## **THE ONE UNDER-KEPT TEST** — the source wants keepers and fewer than that are on it.
+## **THE ONE UNDER-KEPT TEST** — this source stands on a rung that wants keeping, and the pool did not
+## cover it.
 ##
-## **IT COUNTS THE KEEPING CREW AGAINST THE KEEPING DEMAND, and both halves are the point.** The
-## client used to answer this by comparing a herd's HUNTERS against `herdersNeeded`, from the release
-## when containment was read off the take crew; a source carries three allocations now
-## (`docs/plan_standing_upkeep.md` §2.2) and the sim gates the shed on `upkeep_supplied`, i.e. on the
-## MAINTAIN crew alone. Measured against the take crew the warning was actively misleading in both
-## directions: staffing keepers did not clear it, and staffing hunters did — without stopping the shed.
+## **IT IS A SHORTFALL TEST NOW, AND IT HAD TO BECOME ONE** (`docs/plan_standing_upkeep.md` §2.5).
+## It compared a CREW COUNT — the `maintain` hands on this source — against `upkeepWorkersNeeded`,
+## which was the right question while the keeping was staffed per source. Maintenance left the tile:
+## there are no per-source keepers to count, so that reading went to `0 < wanted` on every managed
+## source in the game and the ⚠ would have been permanently up, which is worse than absent. What the
+## sim now decides per source is its SHARE of the band's pool, and `upkeepShortfall` is precisely
+## *"the share did not cover this one"* — the same number the decay and the animal web's shed read.
 ##
-## **IT IS A CREW COMPARISON, NEVER `upkeep_is_short`**, deliberately. The shortfall is what the meter
-## DECAYED by last turn, so a warning keyed on it speaks only once animals are already leaving; the
-## crew count is short the turn the player understaffs it, which is the turn the notice has to fire
-## (`.claude/rules/core_sim/husbandry.md` — warning only once they go spends the grace on silence).
+## **IT STILL FIRES BEFORE THE ANIMALS GO.** The old objection to a shortfall test was that the
+## shortfall described last turn's decay, so the notice arrived after the loss; the rung's GRACE is
+## what answers it — `neglectGraceRemaining` counts the shortfall turns forgiven before the penalty
+## begins, and the `At risk:` row beside this warning states it.
 ##
-## `assigned_keepers` is the caller's own count of the hands on this source's keeping — pass
-## `HudBandLaborState.assigned_keepers_for` on the animal web.
-static func is_under_kept(src: Dictionary, prefix: String, assigned_keepers: int) -> bool:
-    var wanted := keepers_wanted(src, prefix)
-    return wanted > NO_UPKEEP_CREW and maxi(assigned_keepers, 0) < wanted
+## **THE KEEPER DEMAND IS STILL THE GATE**, which is what keeps this exclusive with
+## `is_unbuilt_and_unpaid`: a rung still going up reports `0` keepers wanted (those hands are the
+## build's) and belongs to that test, not this one.
+static func is_under_kept(src: Dictionary, prefix: String) -> bool:
+    var state := upkeep_state(src, prefix)
+    return int(state.get("crew", NO_UPKEEP_CREW)) > NO_UPKEEP_CREW and upkeep_is_short(state)
 
 ## **A RUNG STILL GOING UP THAT NOBODY IS BUILDING** — the OTHER way a source bleeds, and the one no
 ## crew count can find.

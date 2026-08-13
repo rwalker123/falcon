@@ -118,8 +118,14 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 236 `assert OK` lines, 332 `: PASS` ones and ZERO `FAIL` ones, over
-92 frames.** (It was 226 / 332 / 89 before the under-herded ⚠ was re-aimed at the KEEPING crew: the
+**A clean run exits 0 and prints 240 `assert OK` lines, 341 `: PASS` ones and ZERO `FAIL` ones, over
+94 frames.** (It was 236 / 332 / 92 before the KEEPING POOL landed — `docs/plan_standing_upkeep.md`
+§2.5, the arc that took maintenance off the tile. Its two frames are
+`band_panel_upkeep_mode_spread` / `_priority`, worth their two bounds/content-fits `assert OK` pairs
+and `_assert_upkeep_mode_control`'s four `PASS` each, with the fund-mode NEGATIVE on the reference
+band as the ninth. **The under-herded A/B moved and did not grow**: its fixtures now vary the HERD's
+pool share where they used to vary a per-source `maintain` crew, which is the same three claims about
+a different measurement.) (It was 226 / 332 / 89 before the under-herded ⚠ was re-aimed at the KEEPING crew: the
 `band_panel_keepers_short` / `_staffed` pair is two of the three frames and four of the ten
 `assert OK`s — each state's bounds/content-fits pair — with `_assert_keeper_warning`'s three answers
 and `band_panel_unbuilt_rung`'s three (its own pair plus `_assert_unbuilt_warning`) being the rest.
