@@ -279,6 +279,50 @@ pub fn build_turns_remaining(cost: f32, done: f32, work_this_turn: f32) -> Optio
     Some((remaining / work_this_turn).ceil() as u32)
 }
 
+/// **WHAT A SOURCE'S BUILD COUNTDOWN SAYS — THREE ANSWERS, NOT TWO.**
+///
+/// [`build_turns_remaining`] is the arithmetic and answers `Option<u32>`; this is what the *source*
+/// stores and the wire publishes, because *"there is no answer"* and *"the answer is never"* are
+/// different facts and were being collapsed into one sentinel.
+///
+/// | this enum | wire | what it means |
+/// |---|---|---|
+/// | `Some(Turns(n))` | `n` | a real finish date |
+/// | `Some(Never)` | [`sim_schema::BUILD_NEVER_FINISHES`] | **this staffing never finishes** |
+/// | `None` | [`sim_schema::NO_BUILD_TURNS_ESTIMATE`] | there is genuinely no answer |
+///
+/// # WHY `Never` HAD TO BE ITS OWN ANSWER
+///
+/// The maintenance rate is a tax on building (`docs/plan_standing_upkeep.md` §2.4), so a crew at or
+/// below it holds the meter where it is forever. That is **actionable and permanent** — a standing
+/// fact about a staffing the player has already committed — where the other no-answer states are a
+/// transient absence of information. Folded into one sentinel it rendered as *no line at all* on the
+/// tile card and the herd drawer, visible only to a compose sheet that happened to redo the
+/// comparison itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildTurns {
+    /// `ceil((cost − done) / net)` at the crew that is on it.
+    Turns(u32),
+    /// **A real, staffed, priced build whose net supply is zero or negative.** All three conditions
+    /// are load-bearing: an *unstaffed* source has promised nothing and reads `None`, or every idle
+    /// improvement on the map would claim it will never finish.
+    Never,
+}
+
+/// **THE COUNTDOWN A SOURCE PUBLISHES** — [`build_turns_remaining`]'s arithmetic, with the one state
+/// it cannot see folded in: whether anybody is actually on the job.
+///
+/// `staffed` is *"is this a real build crew"* — hands on the verb, or the hands a projection is being
+/// quoted at. A non-positive net with a crew is [`BuildTurns::Never`]; a non-positive net with **no**
+/// crew is `None`, because nobody has promised anything there.
+pub fn build_turns_estimate(cost: f32, done: f32, net: f32, staffed: bool) -> Option<BuildTurns> {
+    match build_turns_remaining(cost, done, net) {
+        Some(turns) => Some(BuildTurns::Turns(turns)),
+        None if staffed => Some(BuildTurns::Never),
+        None => None,
+    }
+}
+
 /// **THE ANSWER FOR A BAR A WORKING CREW IS ALREADY AT OR PAST** — one turn, because a build with no
 /// work left to do completes on the first turn anybody works it.
 ///
@@ -1658,7 +1702,7 @@ impl LadderConfig {
         gear_per_worker: f32,
         eligible: bool,
         source_measure: f32,
-    ) -> Option<u32> {
+    ) -> Option<BuildTurns> {
         let cost = rung.build_cost(cost_multiplier)?;
         let bar = self.effective_build_cost(cost, build_work_from_gear(gear_per_worker, workers));
         // **Quoted at the NET**, exactly as the live stamp is: the maintenance rate is a tax on
@@ -1666,7 +1710,15 @@ impl LadderConfig {
         // reach — and at or below the rate `build_turns_remaining` refuses to answer at all.
         let accrual =
             rung.build_accrual(rung.verb_improvement(), eligible, workers, source_measure);
-        build_turns_remaining(bar, banked, accrual)
+        // **A quoted crew that cannot clear the rate never gets there** — the same standing fact a
+        // running build states, so a projection says so rather than withholding the line. `workers`
+        // is what the quote is priced at, so it is also what "staffed" means here.
+        build_turns_estimate(
+            bar,
+            banked,
+            accrual,
+            workers > NO_CREW_ON_THIS_ACTIVITY && eligible,
+        )
     }
 
     /// **The reference job every build-quantum readout is quoted against**, in work units — the
@@ -2646,8 +2698,15 @@ mod tests {
         );
         assert_eq!(
             quote(over_geared),
-            Some(BUILD_FINISHES_IN_ONE_TURN),
+            Some(BuildTurns::Turns(BUILD_FINISHES_IN_ONE_TURN)),
             "gear that pays the job off outright finishes it on the first worked turn"
+        );
+        // **And a crew at the maintenance rate is quoted NEVER, not silence** — a projection states
+        // the same standing fact a running build does.
+        assert_eq!(
+            quote(pastoral.upkeep_crew_needed(UNSCALED_UPKEEP)),
+            Some(BuildTurns::Never),
+            "a quoted crew that cannot clear the rate never gets there — and says so"
         );
 
         // And the quote is monotone into that floor rather than falling off it: each added hand
@@ -2655,11 +2714,15 @@ mod tests {
         // clears the maintenance rate** — below it there is no quote at all, by design.
         let threshold = pastoral.upkeep_crew_needed(UNSCALED_UPKEEP);
         let first = threshold + 1;
-        let mut previous = quote(first).expect("the first crew above the rate is quotable");
+        let finite = |keepers: u32| -> u32 {
+            match quote(keepers) {
+                Some(BuildTurns::Turns(turns)) => turns,
+                other => panic!("a crew of {keepers} above the rate must quote a count: {other:?}"),
+            }
+        };
+        let mut previous = finite(first);
         for keepers in (first + 1)..=over_geared {
-            let turns = quote(keepers).unwrap_or_else(|| {
-                panic!("a crew of {keepers} must be quotable — it is working the herd")
-            });
+            let turns = finite(keepers);
             assert!(
                 turns <= previous,
                 "adding a hand must never lengthen the quote: {turns} at {keepers} vs {previous}"

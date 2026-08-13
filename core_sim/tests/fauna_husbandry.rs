@@ -942,6 +942,14 @@ fn an_untamed_herd_quotes_the_tame_it_would_take_on_and_the_quote_halves_with_th
     const SMALL_CREW: u32 = 10;
 
     let projection = |keepers: u32, herding: bool| -> Option<u32> {
+        // A finite count only — the never/no-estimate pair is asserted on the wire in
+        // `build_turns_on_the_wire.rs`; this closure is about the halving.
+        fn count(turns: Option<core_sim::BuildTurns>) -> Option<u32> {
+            match turns {
+                Some(core_sim::BuildTurns::Turns(n)) => Some(n),
+                _ => None,
+            }
+        }
         let mut app = spawn_world();
         let id = prime_thriving_herd(&mut app);
         if herding {
@@ -950,7 +958,7 @@ fn an_untamed_herd_quotes_the_tame_it_would_take_on_and_the_quote_halves_with_th
         // No improvement in flight: this crew is hunting the herd, and deciding.
         spawn_crew_of(&mut app, &id, MSY_BIOMASS_FRACTION, None, keepers);
         run_turns_with_hunt(&mut app, 1);
-        herd_of(&app, &id).build_turns_remaining
+        count(herd_of(&app, &id).build_turns_remaining)
     };
 
     // **Twice the NET, half the turns.** The maintenance rate comes off a build crew before any of

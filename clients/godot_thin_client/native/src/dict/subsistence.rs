@@ -202,6 +202,9 @@ pub(crate) fn herds_to_array(
         // finite answer, and a `0` in its place is a promise. The client CANNOT compute it (it holds
         // neither the crew's output, nor the floor multiplier, nor the kit's contribution), so the
         // sim answers, exactly as it does for `pen_upkeep` and the yield forecast.
+        // **TWO NEGATIVES, TWO FACTS** — `-1` is *no estimate* and `-2` is *never, at this
+        // staffing* (`sim_schema::{NO_BUILD_TURNS_ESTIMATE, BUILD_NEVER_FINISHES}`). Passed through
+        // verbatim so GDScript reads the sim's own answer rather than deriving a second opinion.
         let _ = dict.insert("build_turns_remaining", herd.buildTurnsRemaining() as i64);
         // WHAT THE CREW'S TOOLS TOOK OFF THIS BUILD, in work units — the `t` in
         // `effective_cost = work_cost − t`. `0` = no build in
@@ -600,6 +603,7 @@ pub(crate) fn forage_patches_to_array(
         let _ = dict.insert("cultivation_work_cost", patch.cultivationWorkCost());
         let _ = dict.insert("field_work_done", patch.fieldWorkDone());
         let _ = dict.insert("field_work_cost", patch.fieldWorkCost());
+        // The plant twin of the herd row's — `-1` no estimate, `-2` never at this staffing.
         let _ = dict.insert("build_turns_remaining", patch.buildTurnsRemaining() as i64);
         let _ = dict.insert("build_work_from_gear", patch.buildWorkFromGear());
         // The plant twin of the herd block's estimate TERM — see there for why it rides beside

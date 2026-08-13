@@ -115,10 +115,12 @@ take             = min(take_workers × per_worker_capacity, source_offer)
 >
 > **A crew at or below the rate never finishes.** It holds the meter exactly where it is, or takes it
 > backwards. That is a real minimum-viable-crew threshold rather than a slow build, and it is sharper
-> than anything else in the game — so `build_turns_remaining` answers **no estimate** at a non-positive
-> net rather than a large number, and `upkeepDemand` / `upkeepWorkersNeeded` publish the threshold on
-> **both** sides of completion so a compose sheet can say *"this crew is below it"* before the player
-> commits.
+> than anything else in the game, so it gets **its own published answer**: `buildTurnsRemaining` reads
+> `-2` (**never, at this staffing**) rather than the `-1` that means *there is no answer*. A staffed
+> crew that cannot clear the rate is a standing fact the player can act on — add hands — where the
+> other negative is a transient absence of information; an **unstaffed** source has promised nothing
+> and still reads `-1`. `upkeepDemand` / `upkeepWorkersNeeded` publish the threshold itself on **both**
+> sides of completion, so a compose sheet can say *"this crew is below it"* before the player commits.
 
 #### This is what dissolved the dip
 

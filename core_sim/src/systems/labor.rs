@@ -1214,10 +1214,15 @@ pub fn advance_labor_allocation(
                             *tile,
                             &mut patch.build_turns_remaining,
                             &mut patch.build_work_from_gear,
-                            build_turns_remaining(
+                            build_turns_estimate(
                                 cultivate_bar,
                                 patch.cultivation_progress,
                                 accrual,
+                                // **"NEVER" NEEDS A BUILD THAT IS ACTUALLY RUNNING.** Hands on the
+                                // verb *and* the rung's own gate holding — a gate that refuses is
+                                // "no estimate", not "this staffing never gets there", because
+                                // nothing has been promised at all.
+                                build_workers > NO_CREW_ON_THIS_ACTIVITY && eligible,
                             ),
                             cultivate_gear,
                         );
@@ -2090,7 +2095,12 @@ pub fn advance_labor_allocation(
                             herd.id.clone(),
                             &mut herd.build_turns_remaining,
                             &mut herd.build_work_from_gear,
-                            build_turns_remaining(tame_bar, herd.domestication_progress, accrual),
+                            build_turns_estimate(
+                                tame_bar,
+                                herd.domestication_progress,
+                                accrual,
+                                build_workers > NO_CREW_ON_THIS_ACTIVITY && eligible,
+                            ),
                             tame_gear,
                         );
                         charge_build_wear(
@@ -2165,7 +2175,12 @@ pub fn advance_labor_allocation(
                             herd.id.clone(),
                             &mut herd.build_turns_remaining,
                             &mut herd.build_work_from_gear,
-                            build_turns_remaining(pen_bar, herd.corral_progress, accrual),
+                            build_turns_estimate(
+                                pen_bar,
+                                herd.corral_progress,
+                                accrual,
+                                build_workers > NO_CREW_ON_THIS_ACTIVITY && eligible,
+                            ),
                             pen_gear,
                         );
                         charge_build_wear(
@@ -2776,9 +2791,9 @@ impl<K: Eq + std::hash::Hash> BuildEstimateClaims<K> {
     fn publish_running(
         &mut self,
         key: K,
-        turns_slot: &mut Option<u32>,
+        turns_slot: &mut Option<BuildTurns>,
         gear_slot: &mut f32,
-        turns: Option<u32>,
+        turns: Option<BuildTurns>,
         gear: f32,
     ) {
         let first_claim = self.claimed.insert(key);
@@ -2790,19 +2805,30 @@ impl<K: Eq + std::hash::Hash> BuildEstimateClaims<K> {
 
     /// Publish a **projection** — the quote for the rung this source would climb next — unless a
     /// running build on it has already answered.
-    fn publish_projected(&self, key: &K, turns_slot: &mut Option<u32>, turns: Option<u32>) {
+    fn publish_projected(
+        &self,
+        key: &K,
+        turns_slot: &mut Option<BuildTurns>,
+        turns: Option<BuildTurns>,
+    ) {
         if !self.claimed.contains(key) {
             *turns_slot = turns;
         }
     }
 }
 
-/// **Does `proposed` finish sooner than what is already published?** `Some` beats `None` (a stalled
-/// crew's silence never displaces a crew that is moving the meter), then the smaller count wins.
-fn is_a_sooner_estimate(proposed: Option<u32>, published: Option<u32>) -> bool {
+/// **Does `proposed` finish sooner than what is already published?** A real count beats everything
+/// else (a crew that is moving the meter is never displaced by one that is not), then the smaller
+/// count wins; and a crew that **never** finishes beats only silence, because *"never"* is still an
+/// answer where `None` is the absence of one ([`BuildTurns`]).
+fn is_a_sooner_estimate(proposed: Option<BuildTurns>, published: Option<BuildTurns>) -> bool {
     match (proposed, published) {
-        (Some(proposed), Some(published)) => proposed < published,
-        (Some(_), None) => true,
+        (Some(BuildTurns::Turns(proposed)), Some(BuildTurns::Turns(published))) => {
+            proposed < published
+        }
+        (Some(BuildTurns::Turns(_)), _) => true,
+        (Some(BuildTurns::Never), Some(BuildTurns::Turns(_)) | Some(BuildTurns::Never)) => false,
+        (Some(BuildTurns::Never), None) => true,
         (None, _) => false,
     }
 }
@@ -2879,7 +2905,12 @@ fn accrue_field(
             tile,
             &mut patch.build_turns_remaining,
             &mut patch.build_work_from_gear,
-            build_turns_remaining(sow_bar, patch.field_progress, accrual),
+            build_turns_estimate(
+                sow_bar,
+                patch.field_progress,
+                accrual,
+                workers > NO_CREW_ON_THIS_ACTIVITY && eligible,
+            ),
             sow_gear,
         );
         return false;
@@ -2906,7 +2937,12 @@ fn accrue_field(
         tile,
         &mut patch.build_turns_remaining,
         &mut patch.build_work_from_gear,
-        build_turns_remaining(sow_bar, patch.field_progress, accrual),
+        build_turns_estimate(
+            sow_bar,
+            patch.field_progress,
+            accrual,
+            workers > NO_CREW_ON_THIS_ACTIVITY && eligible,
+        ),
         sow_gear,
     );
     charge_build_wear(

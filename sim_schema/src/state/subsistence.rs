@@ -15,6 +15,23 @@ use serde::{Deserialize, Serialize};
 /// than about the sim's arithmetic (`core_sim`'s `build_turns_remaining` answers an `Option<u32>`).
 pub const NO_BUILD_TURNS_ESTIMATE: i32 = -1;
 
+/// **"Never, at this staffing"** — the wire value of `buildTurnsRemaining` for a **real, staffed,
+/// priced** build whose net supply is zero or negative.
+///
+/// The maintenance rate is a tax on building (`docs/plan_standing_upkeep.md` §2.4), so a crew at or
+/// below it holds the meter exactly where it is, forever. **That is an answer, not the absence of
+/// one**, and it is the one the player can act on: add hands. It shipped folded into
+/// [`NO_BUILD_TURNS_ESTIMATE`] for one slice, which rendered as *no line at all* on the two surfaces
+/// a player reads every turn — visible only to a compose sheet that redid the comparison itself.
+///
+/// **All three conditions are load-bearing.** An **unstaffed** source reads
+/// [`NO_BUILD_TURNS_ESTIMATE`], not this: nobody has promised anything there, and claiming a source
+/// with no crew will never finish would fire on every idle improvement on the map.
+///
+/// Sits outside the `>= 0` range a real estimate lives in, beside its pair, so no reader has to
+/// guess which negative it is looking at.
+pub const BUILD_NEVER_FINISHES: i32 = -2;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct SedentarizationState {
     pub faction: u32,
@@ -456,11 +473,13 @@ pub struct HerdTelemetryState {
     /// **next rung up** when that is empty (`is_cultivated` / `is_field`, `domestication` /
     /// `corralled`): the pair is read as *"50 work, ≈13 turns"*, so they must name one rung.
     ///
-    /// [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**, and it means there is genuinely
-    /// no answer: the source is at the top of its ladder, the next rung's own gates refuse it for
-    /// this faction (a projection must never quote a job the command would reject), or the crew's
-    /// output is zero and a running build is **stalled** — a stall has no finite answer, and a huge
-    /// number would read as a promise.
+    /// **TWO NEGATIVES, TWO FACTS.** [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**,
+    /// where there is genuinely no answer: the source is at the top of its ladder, the next rung's
+    /// own gates refuse it for this faction (a projection must never quote a job the command would
+    /// reject), or **no crew is working the source**. [`crate::BUILD_NEVER_FINISHES`] (`-2`) =
+    /// **never, at this staffing** — a real, **staffed**, priced build whose net supply is zero or
+    /// negative, because the maintenance rate is a tax on building. Render the second as **infinity**:
+    /// it is an answer, and the one the player can act on.
     ///
     /// **The client cannot compute this** — it holds neither the crew's output, nor the floor
     /// multiplier, nor the kit's build rate — so the sim answers, the `pen_feed_upkeep` discipline.
@@ -834,11 +853,13 @@ pub struct ForagePatchState {
     /// **next rung up** when that is empty (`is_cultivated` / `is_field`, `domestication` /
     /// `corralled`): the pair is read as *"50 work, ≈13 turns"*, so they must name one rung.
     ///
-    /// [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**, and it means there is genuinely
-    /// no answer: the source is at the top of its ladder, the next rung's own gates refuse it for
-    /// this faction (a projection must never quote a job the command would reject), or the crew's
-    /// output is zero and a running build is **stalled** — a stall has no finite answer, and a huge
-    /// number would read as a promise.
+    /// **TWO NEGATIVES, TWO FACTS.** [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**,
+    /// where there is genuinely no answer: the source is at the top of its ladder, the next rung's
+    /// own gates refuse it for this faction (a projection must never quote a job the command would
+    /// reject), or **no crew is working the source**. [`crate::BUILD_NEVER_FINISHES`] (`-2`) =
+    /// **never, at this staffing** — a real, **staffed**, priced build whose net supply is zero or
+    /// negative, because the maintenance rate is a tax on building. Render the second as **infinity**:
+    /// it is an answer, and the one the player can act on.
     ///
     /// **The client cannot compute this** — it holds neither the crew's output, nor the floor
     /// multiplier, nor the kit's build rate — so the sim answers, the `pen_feed_upkeep` discipline.

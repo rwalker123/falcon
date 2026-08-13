@@ -548,11 +548,36 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
 > disagree. Only the shortfall **fraction** is shared — `intensification::upkeep_shortfall_fraction`,
 > stated once, applied at each web's own rate.
 
+> #### THE COUNTDOWN HAS THREE ANSWERS, AND TWO OF THEM ARE NEGATIVE
+>
+> `intensification::BuildTurns` is what a source stores and
+> `build_turns_estimate(cost, done, net, staffed)` is what fills it:
+>
+> | stored | wire | meaning |
+> |---|---|---|
+> | `Some(Turns(n))` | `n` | a real finish date at the crew that is on it |
+> | `Some(Never)` | `BUILD_NEVER_FINISHES` (**`-2`**) | **this staffing never finishes** |
+> | `None` | `NO_BUILD_TURNS_ESTIMATE` (**`-1`**) | there is genuinely no answer |
+>
+> **`Never` is an ANSWER, not the absence of one**, and it is the only one the player can act on:
+> add hands. Folded into `-1` it rendered as **no line at all** on the tile card and the herd drawer,
+> visible only to a compose sheet that happened to redo the comparison itself.
+>
+> **The boundary is three conditions, all load-bearing**: a **real** (a verb in flight), **staffed**
+> (`build_workers > 0`), **priced** build whose net supply is `<= 0`. An **unstaffed** source reads
+> `None` — nobody has promised anything, and "never" there would fire on every idle improvement on
+> the map. **A refused GATE also reads `None`**, because a build that is not running has not promised
+> anything either. The **projection** answers on the same rule at the crew it is quoted for.
+>
+> Pinned on the encoded snapshot, three states pairwise distinct, by
+> `core_sim/tests/build_turns_on_the_wire.rs`.
+
 - **THE MAINTENANCE RATE IS A TAX ON BUILDING, so `work_cost / crew` is NOT the pace.** It is
   `work_cost / (crew − rate)` (`RungDef::build_accrual` → `net_build_supply`), and **a crew at or
   below the rate never finishes** — it holds the meter or takes it backwards. That is a
   minimum-viable-crew threshold rather than a slow build, so `build_turns_remaining` answers **no
-  estimate** at a non-positive net rather than a large number, and the **projection**
+  estimate** — or, once a crew is actually on it, **`Never`** (above) — at a non-positive net rather
+  than a large number, and the **projection**
   (`LadderConfig::projected_build_turns`) quotes the net too: a finish date that will never arrive is
   a promise, not an estimate. `upkeepDemand` and `upkeepWorkersNeeded` publish the threshold on
   **both** sides of completion so a compose sheet can say *"this crew is below it"*.

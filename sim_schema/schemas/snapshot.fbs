@@ -2126,10 +2126,21 @@ table ForagePatchState {
   // (`isCultivated`/`isField`) when that is empty — the pair reads "50 work, ~25 turns", so they
   // must name one rung.
   //
-  // `-1` = NO ESTIMATE, and only where there genuinely is none: this is already a Field, the next
-  // rung's own site/knowledge/species gates refuse it for this faction, no crew is working the
-  // patch, or the crew's output is zero and a running build is STALLED (a stall has no finite
-  // answer, and a huge number would read as a promise).
+  // TWO NEGATIVES, TWO FACTS, and they must not be collapsed:
+  //
+  //   -1  NO ESTIMATE — there genuinely is no answer: this is already a Field, the next rung's own
+  //       site/knowledge/species gates refuse it for this faction, or NO CREW is working the source.
+  //   -2  NEVER, AT THIS STAFFING — a REAL, STAFFED, PRICED build whose net supply is zero or
+  //       negative. The maintenance rate is a tax on building (docs/plan_standing_upkeep.md 2.4), so
+  //       a crew at or below it holds the meter exactly where it is, forever. Render it as INFINITY.
+  //
+  // THE SECOND IS AN ANSWER, NOT THE ABSENCE OF ONE, and it is the one the player can act on: add
+  // hands. It shipped folded into `-1` for one slice, which rendered as NO LINE AT ALL on the tile
+  // card and the herd drawer — visible only to a compose sheet that redid the comparison itself.
+  //
+  // ALL THREE CONDITIONS ON `-2` ARE LOAD-BEARING. An UNSTAFFED source reads `-1`, not `-2`: nobody
+  // has promised anything there, and claiming a source with no crew will never finish would fire on
+  // every idle improvement on the map.
   //
   // THE CLIENT CANNOT COMPUTE THIS. It holds neither the crew's output, nor the floor multiplier,
   // nor the kit's build rate — so the sim answers, exactly as it does for `penFeedUpkeep` and the
@@ -3154,9 +3165,14 @@ table HerdTelemetryState {
   // that worked it this turn — and A PROJECTION WHEN NOTHING IS BEING BUILT, so the compose sheet
   // can quote the job before the player commits. Read it beside the `*WorkCost` for the
   // assignment's own `improvement`, or for the next rung up (`domestication`/`corralled`) when that
-  // is empty. `-1` = NO ESTIMATE, and only where there genuinely is none: already penned, the next
-  // rung's ceiling/knowledge/ownership gates refuse it, no crew is working the herd, or a stalled
-  // build. The client cannot compute it; see the plant twin on `ForagePatchState`.
+  // is empty.
+  //
+  // TWO NEGATIVES, TWO FACTS — the same pair the plant twin on `ForagePatchState` documents in full:
+  //   -1  NO ESTIMATE — already penned, the next rung's ceiling/knowledge/ownership gates refuse it,
+  //       or NO CREW is working the herd.
+  //   -2  NEVER, AT THIS STAFFING — a real, STAFFED, priced build whose net supply is zero or
+  //       negative, because the maintenance rate is a tax on building. Render it as INFINITY.
+  // An unstaffed herd reads `-1`, never `-2`. The client cannot compute either.
   buildTurnsRemaining:int = -1;
   // WHAT THE CREW'S TOOLS TOOK OFF THIS BUILD, in work units (appended,
   // docs/plan_unit_costed_work.md section 6) - the `t` in

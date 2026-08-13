@@ -57,8 +57,8 @@ use crate::{
     hydrology::HydrologyState,
     influencers::{InfluencerCultureResonance, InfluencerImpacts},
     intensification::{
-        activity_work, build_turns_remaining, build_work_from_gear, distribute_upkeep_pool, knows,
-        LadderConfig, LadderConfigHandle, LadderKnowledge, RungDef, RungKey,
+        activity_work, build_turns_estimate, build_work_from_gear, distribute_upkeep_pool, knows,
+        BuildTurns, LadderConfig, LadderConfigHandle, LadderKnowledge, RungDef, RungKey,
         NO_CREW_ON_THIS_ACTIVITY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, UNSCALED_UPKEEP,
     },
     labor_config::{LaborConfig, LaborConfigHandle},

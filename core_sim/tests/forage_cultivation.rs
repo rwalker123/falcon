@@ -491,6 +491,16 @@ fn build_crew(app: &App) -> u32 {
         .saturating_add(NET_WORKER_TURNS)
 }
 
+/// **A FINITE COUNT, OR NOTHING** — the count half of a source's published countdown
+/// (`intensification::BuildTurns`). The *never* / *no-estimate* pair is a wire fact and is asserted
+/// on the encoded snapshot in `build_turns_on_the_wire.rs`; the paces in this file read counts.
+fn published_count(turns: Option<core_sim::BuildTurns>) -> Option<u32> {
+    match turns {
+        Some(core_sim::BuildTurns::Turns(count)) => Some(count),
+        _ => None,
+    }
+}
+
 /// **THE CREW THAT EXACTLY MEETS `plant:tended`'S MAINTENANCE RATE** — the minimum-viable-build
 /// threshold. At or below it a build banks nothing at all and has no finish date; every net figure
 /// in this file is measured above it (`docs/plan_standing_upkeep.md` §2.4).
@@ -1808,11 +1818,13 @@ fn the_build_estimate_is_the_sims_own_and_falls_as_hands_are_added() {
         grant_cultivation_knowledge(&mut app, FactionId(0));
         spawn_forager_of(&mut app, tile, coord, Some(Improvement::Cultivate), workers);
         run_turns_with_forage(&mut app, 1);
-        app.world
-            .resource::<ForageRegistry>()
-            .patch(coord)
-            .expect("patch")
-            .build_turns_remaining
+        published_count(
+            app.world
+                .resource::<ForageRegistry>()
+                .patch(coord)
+                .expect("patch")
+                .build_turns_remaining,
+        )
     };
 
     let crew = build_crew(&spawn_world());
@@ -1872,11 +1884,13 @@ fn an_unstarted_patch_quotes_the_next_rungs_job_and_the_quote_halves_with_the_cr
         // No improvement in flight: this crew is gathering, and deciding.
         spawn_forager_of(&mut app, tile, coord, None, workers);
         run_turns_with_forage(&mut app, 1);
-        app.world
-            .resource::<ForageRegistry>()
-            .patch(coord)
-            .expect("patch")
-            .build_turns_remaining
+        published_count(
+            app.world
+                .resource::<ForageRegistry>()
+                .patch(coord)
+                .expect("patch")
+                .build_turns_remaining,
+        )
     };
 
     let crew = build_crew(&spawn_world());
@@ -2071,7 +2085,8 @@ fn a_running_build_outranks_a_bystanders_projection_on_the_same_patch() {
          ({bystanders_answer} vs {builders_answer})"
     );
     assert_eq!(
-        published, builders_answer,
+        published_count(Some(published)),
+        Some(builders_answer),
         "the patch must publish the BUILDING crew's countdown, not the bystander's projection of \
          the same rung ({bystanders_answer})"
     );
@@ -2099,12 +2114,14 @@ fn the_soonest_of_two_building_crews_is_the_one_published() {
             spawn_forager_of(&mut app, tile, coord, Some(Improvement::Cultivate), workers);
         }
         run_turns_with_forage(&mut app, 1);
-        app.world
-            .resource::<ForageRegistry>()
-            .patch(coord)
-            .expect("patch")
-            .build_turns_remaining
-            .expect("a patch with two running builds quotes a finish date")
+        published_count(
+            app.world
+                .resource::<ForageRegistry>()
+                .patch(coord)
+                .expect("patch")
+                .build_turns_remaining,
+        )
+        .expect("a patch with two running builds quotes a finish date")
     };
 
     let big_first = published_for(true);

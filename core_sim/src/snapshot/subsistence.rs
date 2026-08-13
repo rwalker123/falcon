@@ -13,7 +13,19 @@ use crate::intensification::{
     build_fraction, build_work_per_worker_turn, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY,
     NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED,
 };
-use sim_schema::NO_BUILD_TURNS_ESTIMATE;
+use sim_schema::{BUILD_NEVER_FINISHES, NO_BUILD_TURNS_ESTIMATE};
+
+/// **THE COUNTDOWN, ON THE WIRE** — the one place `BuildTurns` becomes an `i32`, so the plant and the
+/// animal web cannot come to publish the same state as two different numbers.
+///
+/// The `None` case is the caller's (`map_or`'s default), because it is the *absence* of an estimate
+/// rather than a variant of one.
+fn published_build_turns(turns: crate::intensification::BuildTurns) -> i32 {
+    match turns {
+        crate::intensification::BuildTurns::Turns(count) => count as i32,
+        crate::intensification::BuildTurns::Never => BUILD_NEVER_FINISHES,
+    }
+}
 
 /// **No animal pays fodder** — the herd half of the per-biomass yield triple is structurally zero,
 /// and stated rather than defaulted so a reader sees it is a fact about animals and not an
@@ -701,9 +713,14 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // `*WorkCost` it belongs beside is the assignment's own `improvement`, or the next
                 // rung up when that is empty. `-1` only where there is genuinely no answer (penned,
                 // a gate refuses, or a stalled build). The client can derive none of it.
+                // **TWO NEGATIVES, TWO FACTS** (`intensification::BuildTurns`): `-1` where there
+                // is genuinely no answer (nobody on the source, a gate refuses, the top of the
+                // ladder), and `-2` where a **staffed** crew's net supply is zero or negative and
+                // this build will never finish at that staffing. The second is the one the player
+                // can act on, and folding it into the first rendered as no line at all.
                 build_turns_remaining: herd
                     .and_then(|herd| herd.build_turns_remaining)
-                    .map_or(NO_BUILD_TURNS_ESTIMATE, |turns| turns as i32),
+                    .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),
                 // **What the keepers' tools took off the running build** — quoted beside the RAW
                 // `*WorkCost` above, never folded into it, so a readout can say "your hurdles: −17
                 // work" against a price that does not move under the crew's kit.
@@ -908,9 +925,14 @@ pub(crate) fn snapshot_forage_patches(
                 // beside the `*WorkCost` for the assignment's own `improvement`, or for the next rung
                 // up when that is empty. `-1` only where there is genuinely no answer (a Field, a
                 // gate that refuses, or a stalled build).
+                // **TWO NEGATIVES, TWO FACTS** (`intensification::BuildTurns`): `-1` where there
+                // is genuinely no answer (nobody on the source, a gate refuses, the top of the
+                // ladder), and `-2` where a **staffed** crew's net supply is zero or negative and
+                // this build will never finish at that staffing. The second is the one the player
+                // can act on, and folding it into the first rendered as no line at all.
                 build_turns_remaining: patch
                     .build_turns_remaining
-                    .map_or(NO_BUILD_TURNS_ESTIMATE, |turns| turns as i32),
+                    .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),
                 // The plant twin — `NO_BUILD_GEAR` on every plant build today, since no plant item
                 // declares `EquipmentStat::BuildWork` yet (issue #539).
                 build_work_from_gear: patch.build_work_from_gear,
