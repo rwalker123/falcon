@@ -362,11 +362,35 @@ call them instead of reaching for their own bespoke accrue/cost/decay levers, so
 **A source carries up to three independent worker allocations from a band**
 (`docs/plan_standing_upkeep.md` §2.2), and the player states each:
 
-| Activity | Field | Set by |
-|---|---|---|
-| **take** | `LaborAssignment::workers` | `assign_labor` |
-| **build** | `LaborAssignment::improvement_workers` | `cultivate\|sow\|tame\|corral <faction> <target…> <workers>` |
-| **maintain** | `LaborAssignment::maintain_workers` | `maintain <faction> <source…> <workers>` |
+| Activity | Field | Set by | On the wire |
+|---|---|---|---|
+| **take** | `LaborAssignment::workers` | `assign_labor` | `workers` |
+| **build** | `LaborAssignment::improvement_workers` | `cultivate\|sow\|tame\|corral <faction> <target…> <workers>` | `improvementWorkers` |
+| **maintain** | `LaborAssignment::maintain_workers` | `maintain <faction> <source…> <workers>` | `maintainWorkers` |
+
+> #### ALL THREE ARE PUBLISHED, and the two that were not made a trap
+>
+> `LaborAssignment` carried only the **take** crew for three slices, which left the other two
+> **write-only from the client's side**: it could send `cultivate … <workers>` and
+> `maintain … <workers>` and never read back the crew a band already had. Two things broke on that.
+>
+> **A trap with no way out.** A compose sheet clamps its steppers to the band's **idle** workers,
+> because the sim refuses an over-staffed command (`server::crew_is_affordable`). A fully-allocated
+> band therefore has `0` idle and was offered a keeper maximum of `0` — the player could **re-state
+> nothing**, only take a crew to zero. The honest clamp is `idle + this source's own crew for this
+> activity`, which is exactly what the two fields make computable.
+>
+> **And a readout that said the opposite of the truth**: a sheet reopened on a herd with two keepers
+> read `0`, i.e. *"nothing is holding this"*, on the very row built to warn about decay.
+>
+> **`species` shipped with them**, and it is the same class rather than a fourth crew: the player can
+> state a crop on `assign_labor` and could not read it back. It is **not** the patch's
+> `ForagePatchState.committedSpecies` — that is what the *ground* is committed to and is set only
+> once a crew has worked it, while this is the selection the player made, which exists from the
+> moment they make it and rides the rollback record. A sheet reopened on unworked ground has no other
+> source for it. Pinned on the **encoded envelope** (not the capture) by
+> `core_sim/tests/three_crews_on_the_wire.rs`, at four values that all differ — three slots wired to
+> one source would pass a fixture that staffed the same count everywhere.
 
 Each crew's work is `intensification::activity_work(workers)` = `workers × PER_WORKER_OUTPUT`. There
 is no pool, no priority order and no derived share:

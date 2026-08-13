@@ -19,6 +19,12 @@ pub(crate) fn labor_assignment_to_state(
     let mut state = LaborAssignmentState {
         kind: assignment.target.kind().to_string(),
         workers: assignment.workers,
+        // **The other two of this source's three crews** (`docs/plan_standing_upkeep.md` §2.2),
+        // published verbatim beside the take's. They are the player's own numbers rather than
+        // anything derived, and the client cannot reconstruct either — so without them it can send
+        // a build or a keeping crew and never read back the one a band already has.
+        improvement_workers: assignment.improvement_workers,
+        maintain_workers: assignment.maintain_workers,
         actual_yield: yields.actual,
         sustainable_yield: yields.sustainable,
         workers_needed: yields.workers_needed,

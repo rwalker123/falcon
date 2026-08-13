@@ -477,7 +477,23 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             if let Some(kind) = assignment.kind() {
                 let _ = entry.insert("kind", kind);
             }
+            // **THE THREE CREWS THIS SOURCE CARRIES**, read as one set
+            // (`docs/plan_standing_upkeep.md` §2.2): the hands on the take, on the build and on the
+            // keeping. The last two were write-only from the client's side until they shipped — it
+            // could send `cultivate … <workers>` / `maintain … <workers>` and never read back what a
+            // band already had, so a compose sheet clamped to IDLE workers offered a
+            // fully-allocated band a maximum of `0` and the player could not re-state a crew they
+            // had. With them the clamp is the honest `idle + this source's own crew for this
+            // activity`, and a keeping row can say *"you have 1 of 2"*.
+            //
+            // `0` is a real reading on both and is the common one — no verb in flight means no
+            // builders, and a source nobody keeps has no keepers.
             let _ = entry.insert("workers", assignment.workers() as i64);
+            let _ = entry.insert(
+                "improvement_workers",
+                assignment.improvementWorkers() as i64,
+            );
+            let _ = entry.insert("maintain_workers", assignment.maintainWorkers() as i64);
             let _ = entry.insert("target_x", assignment.targetX() as i64);
             let _ = entry.insert("target_y", assignment.targetY() as i64);
             // Per-source food yield (food/turn): `actual_yield` is this turn's realized take, headlined
@@ -576,6 +592,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // inserted (as "" when the string is absent) so the entry shape is stable and no consumer
             // has to distinguish "not building" from "older snapshot" — the two mean the same thing.
             let _ = entry.insert("improvement", assignment.improvement().unwrap_or_default());
+            // **The crop this crew asked for**, and it is NOT the patch's `committed_species`: this
+            // is the player's stated intent, which exists before any crew has worked the ground and
+            // survives a rollback, while the patch's is what the ground is actually committed to and
+            // is only set once work begins. `""` = *"pick the tile's dominant legal plant for me"*.
+            let _ = entry.insert("species", assignment.species().unwrap_or_default());
             // **THE KIT THIS CREW IS WORKING UNDER** (`docs/plan_denial_raid.md`) — the roster id the
             // row's yields are priced at: what the player named on `assign_labor`, or the job's
             // default when they named none, already RESOLVED (the sim never publishes

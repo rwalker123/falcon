@@ -210,6 +210,14 @@ fn create_populations<'a>(
                             builder,
                             &assignment.material_yield,
                         );
+                        // The crop this crew asked for — `None` rather than an empty string, the
+                        // `fauna_id`/`improvement` convention: an absent string is "no selection",
+                        // which is what `""` means here.
+                        let species = if assignment.species.is_empty() {
+                            None
+                        } else {
+                            Some(builder.create_string(&assignment.species))
+                        };
                         let kit_id = if assignment.kit_id.is_empty() {
                             None
                         } else {
@@ -249,6 +257,20 @@ fn create_populations<'a>(
                                 // cash Field or an inedible quarry pays into. Appended last. An
                                 // EMPTY vector is "no row", never "zero".
                                 materialYield: Some(material_yield),
+                                // THE OTHER TWO CREWS (`docs/plan_standing_upkeep.md` §2.2) —
+                                // `workers` above is the TAKE crew; these are the hands on the
+                                // build and on the keeping. Written beside it rather than appended
+                                // as an afterthought because the three are one set: without them
+                                // the client can SEND two of the three allocations and never read
+                                // them back, which clamps its steppers to a band's idle workers and
+                                // leaves a fully-allocated band unable to re-state a crew it has.
+                                // Appended last.
+                                improvementWorkers: assignment.improvement_workers,
+                                maintainWorkers: assignment.maintain_workers,
+                                // THE CROP THIS CREW ASKED FOR — the player's stated intent, which
+                                // the patch's own `committedSpecies` cannot stand in for: that one
+                                // is set only once a crew has worked the ground. Appended last.
+                                species,
                             },
                         )
                     })

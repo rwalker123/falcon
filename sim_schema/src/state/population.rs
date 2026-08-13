@@ -189,6 +189,22 @@ pub struct LaborAssignmentState {
     /// comment. Appended (append-only).
     #[serde(default)]
     pub material_yield: Vec<MaterialPayoff>,
+    /// **THE HANDS ON THE BUILD** — the improvement verb's own crew
+    /// (`docs/plan_standing_upkeep.md` §2.2), the second of this source's three allocations.
+    /// `0` whenever no verb is in flight, which is the common case. Appended (append-only).
+    #[serde(default)]
+    pub improvement_workers: u32,
+    /// **THE HANDS ON THE KEEPING** — the standing upkeep's own crew, the third allocation.
+    /// `0` on a source nobody is keeping.
+    ///
+    /// **These two exist because the client cannot derive either**, and without them two of the
+    /// three allocations are *write-only* from its side: it can send the commands and never read
+    /// back what a band already has. A compose sheet clamps its steppers to the band's **idle**
+    /// workers, so a fully-allocated band offered a maximum of `0` and the player could not
+    /// re-state a crew they already had — only take it to zero. Read all three
+    /// ([`Self::workers`], these) as one set. Appended (append-only).
+    #[serde(default)]
+    pub maintain_workers: u32,
 }
 
 /// **One item's remaining condition in a band's TOE** — a row of
