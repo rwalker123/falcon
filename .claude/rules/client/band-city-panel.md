@@ -2175,8 +2175,7 @@ i.e. the maintain crew alone, so the trigger reads that crew now and the two agr
   keeping is owed to keepers only once the rung STANDS — while a Tame or a Corral is going up those
   hands are the build crew's and the sim publishes `0` — so a herd mid-Corral raises no keeper
   warning, which agrees with the compose sheet's own KEEPERS row saying the build's crew holds it.
-  **KNOWN GAP:** a part-built rung with no BUILD crew on it also sheds, and nothing on the board says
-  so — that is a warning about a different crew and no wire field states its shortfall.
+  **The rung that is going up gets its OWN warning instead** — see the section below.
 - **The count is the CONFIRMED maintain crew and is deliberately not pending-aware**, unlike the take
   crew it replaced — see `HudBandLaborState.assigned_keepers_for`: `maintain` REFUSES where
   `assign_labor` clamps, so an optimistic read would clear a shed warning for an order the sim
@@ -2186,6 +2185,42 @@ Frames: `band_panel_under_herded`, and the A/B pair `band_panel_keepers_short` /
 `band_panel_keepers_staffed` — one herd, one hunt crew, only the keepers moving. The third claim
 rides with them and is PNG-less, because no picture can carry it: a board with twice the hunters on
 it looks exactly like the short frame.
+
+## …AND A PART-BUILT RUNG NOBODY IS BUILDING GETS THE SAME ⚠, NAMING BUILDERS
+
+`docs/plan_standing_upkeep.md` §2.4 gives an at-risk meter to **whichever crew owns it**: a rung that
+STANDS is owed its keepers, a rung still going up is owed its **BUILDERS**. Both pay into the same
+`upkeepSupplied`, and the sim's decay — and, on the animal web, the shed — reads the resulting
+shortfall without caring which crew failed to pay it. So a player who starts a Tame and re-tasks the
+crew loses animals AND a 25-turn meter, and every keeper-shaped reading on the source says `0` of `0`
+and nothing wrong. **It is the same silent-loss class as the shed and it wears the same ⚠**
+(`SourceForecast.is_unbuilt_and_unpaid`, `HudWorkVocab.WORK_ROW_UNBUILT_NOTE` — *"Nobody is building
+this — staff its BUILDERS."*).
+
+- **THE WIRE ALREADY CARRIED IT; ONLY THE HEADCOUNT IS ABSENT.** Read off the sim rather than assumed:
+  `herd_keeping_rung` answers for any owned herd, so `upkeepDemand` is the pastoral rung's
+  `work_per_turn: 1.0 × keeper_load`; `herd_upkeep_supply` returns `NO_UPKEEP_DEMAND` when no verb is
+  in flight (and `activity_work(0)` when one is with no builders); `advance_husbandry` **zeroes
+  `upkeep_supplied` every turn**, so the shortfall is the whole demand. `upkeepShortfall` is published
+  and derived, and `hasNeglectGrace` / `neglectGraceRemaining` come with it. **`upkeepWorkersNeeded`
+  is the one field that is deliberately `0`** here.
+- **SO THE TEST IS THE SHORTFALL, NOT A CREW COMPARISON** — the one place on either surface where that
+  is true, and only because the wire publishes no builder requirement to compare against. **A count
+  derived by dividing the shortfall would be a client inventing a number the sim never stated**; if a
+  builder count is ever wanted on this row, that is a published field or it is nothing.
+- **IT IS EXCLUSIVE WITH THE KEEPER WARNING BY CONSTRUCTION, not by ordering.** That one requires
+  `keepers_wanted > 0` and this one requires it zero, so the two share the `note` slot without either
+  displacing the other — unlike the overstaff note, which is keyed on something else entirely and had
+  to be given way to.
+- **BOTH WEBS REACH IT.** The test reads `upkeep_state` off whichever source the row is about, so a
+  walked-away Cultivate warns exactly as a walked-away Tame does.
+- **The herd drawer's `Keeping:` row forked with it.** It said *"the build's crew holds it until it
+  stands"* on a `0` keeper demand — true of a build being worked, false of one walked away from, the
+  same `0` and opposite news — and now reads `UPKEEP_UNBUILT_VALUE` when the shortfall says nobody is
+  paying. The `At risk:` row beside it already carried the cost and the countdown.
+
+Frame: `band_panel_unbuilt_rung` (a part-tamed Aurochs, hunters on it, nobody on the improvement — ⚠
+up, the rung-in-progress `◎60%` mark beside it, and the BUILDERS note in the strip).
 
 
 ## The WORK board's rung-ready mark

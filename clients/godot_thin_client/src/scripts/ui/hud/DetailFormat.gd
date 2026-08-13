@@ -1033,6 +1033,14 @@ const UPKEEP_KEEPER_MANY := "keepers"
 ## `0.00 of 0.00 work — wants 0` reads as a defect on the very rung a player has just committed to.
 const UPKEEP_MID_BUILD_VALUE := "the build's crew holds it until it stands"
 
+## **…AND THE SAME ROW WHEN NOBODY IS PAYING IT.** A rung still going up is owed its BUILD crew, so a
+## build that was walked away from goes unpaid and the meter slides back — while the row above said
+## the build's crew was holding it, which is the reassuring direction on a source that is bleeding.
+## The two are told apart by the SHORTFALL and not by a crew count: `upkeepWorkersNeeded` is `0` in
+## both cases (those hands are the build's either way) and the wire publishes no builder requirement,
+## so a headcount here would be a client inventing one.
+const UPKEEP_UNBUILT_VALUE := "nobody is building it — this rung is sliding back"
+
 ## The row that only appears when the keeping is UNDERPAID — its own key, so the tint registry can ink
 ## it as a warning without inking the bill above it.
 const UPKEEP_RISK_ROW := "At risk"
@@ -1065,9 +1073,17 @@ static func upkeep_lines(src: Dictionary, prefix: String) -> Array[String]:
     # **THE BILL AND WHAT WAS PAID AGAINST IT, in one row.** `crew` is the maintain activity's own
     # `workers_needed`; it is `0` while the rung is still going up, because those hands are the
     # BUILD's — which the row says in words rather than printing "0 keepers".
-    lines.append("%s: %s" % [UPKEEP_ROW, UPKEEP_MID_BUILD_VALUE if crew <= SourceForecast.NO_UPKEEP_CREW
-        else UPKEEP_VALUE_FORMAT % [format_work_units(supplied), format_work_units(demand), crew,
-            UPKEEP_KEEPER_ONE if crew == 1 else UPKEEP_KEEPER_MANY]])
+    #
+    # **AND THE MID-BUILD WORDS FORK ON THE SHORTFALL.** *"The build's crew holds it"* is true of a
+    # build being worked and false of one that was walked away from — the same `0` crew, opposite
+    # news — so a shortfall against a zero keeper demand states that nobody is paying instead. The
+    # work board's ⚠ reads the identical test (`SourceForecast.is_unbuilt_and_unpaid`).
+    var unbuilt := crew <= SourceForecast.NO_UPKEEP_CREW and SourceForecast.upkeep_is_short(state)
+    var upkeep_value := UPKEEP_VALUE_FORMAT % [format_work_units(supplied),
+        format_work_units(demand), crew, UPKEEP_KEEPER_ONE if crew == 1 else UPKEEP_KEEPER_MANY]
+    if crew <= SourceForecast.NO_UPKEEP_CREW:
+        upkeep_value = UPKEEP_UNBUILT_VALUE if unbuilt else UPKEEP_MID_BUILD_VALUE
+    lines.append("%s: %s" % [UPKEEP_ROW, upkeep_value])
     if not SourceForecast.upkeep_is_short(state):
         return lines
     # **THE SHORTFALL IS THE DECAY, CONTINUOUSLY** (§2.4): half the hands means it slides at half rate.

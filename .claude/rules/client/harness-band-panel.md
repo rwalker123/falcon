@@ -118,10 +118,11 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 233 `assert OK` lines, 332 `: PASS` ones and ZERO `FAIL` ones, over
-91 frames.** (It was 226 / 332 / 89 before the under-herded ⚠ was re-aimed at the KEEPING crew: the
-`band_panel_keepers_short` / `_staffed` pair is the two frames and four of the seven `assert OK`s —
-each state's bounds/content-fits pair — with `_assert_keeper_warning`'s three answers being the rest.
+**A clean run exits 0 and prints 236 `assert OK` lines, 332 `: PASS` ones and ZERO `FAIL` ones, over
+92 frames.** (It was 226 / 332 / 89 before the under-herded ⚠ was re-aimed at the KEEPING crew: the
+`band_panel_keepers_short` / `_staffed` pair is two of the three frames and four of the ten
+`assert OK`s — each state's bounds/content-fits pair — with `_assert_keeper_warning`'s three answers
+and `band_panel_unbuilt_rung`'s three (its own pair plus `_assert_unbuilt_warning`) being the rest.
 **Those three report through `print`, not `_assert_band_panel`, so they land in the `assert OK` tally
 and the `: PASS` one is unmoved** — which is exactly the shape that makes a `PASS`-only count read
 this arc as having added nothing.) (Five of those `PASS`es are `_assert_work_material_readouts`, the board half of closing

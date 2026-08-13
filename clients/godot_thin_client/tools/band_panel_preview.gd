@@ -2955,8 +2955,108 @@ func _render_keeper_warning_states() -> void:
 	await _settle()
 	_assert_keeper_warning("keepers_short_with_hunters_piled_on", true)
 	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
+
+	# ---- THE OTHER WAY A SOURCE BLEEDS: a part-built rung nobody is building -------------------
+	# A Tame the player started and then re-tasked the crew off. The rung is owed its BUILDERS, so the
+	# keeper demand is honestly `0` and every keeper-shaped reading says nothing is wanted — while the
+	# published shortfall says the meter is sliding back and, on the animal web, the herd is shedding.
+	# The ⚠ must be up and its note must name BUILDERS, not keepers.
+	_set_world_herds(_unbuilt_work_herd_fixtures())
+	_push_bands([_unbuilt_work_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	_open_work_inspector_for_herd(UNBUILT_WORK_HERD_ID)
+	await _settle()
+	await _save("band_panel_unbuilt_rung")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_unbuilt_warning("band_panel_unbuilt_rung")
+	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
 	_push_bands([_band_fixture()])
 	await _settle()
+
+## THE WALKED-AWAY BUILD — a herd part-way through its Tame with nobody on the improvement.
+##
+## **THE FIXTURE'S OWN CLAIM IS THAT `upkeep_workers_needed` IS ZERO WHILE THE SHORTFALL IS NOT**,
+## which is what the sim publishes here: the keeping is owed to the BUILD crew until the rung stands
+## (`herd_at_risk_is_built`), so there is no keeper requirement to compare a crew against, and the
+## shortfall is the whole demand because `advance_husbandry` zeroes `upkeep_supplied` every turn and
+## nobody restated it.
+const UNBUILT_WORK_HERD_ID := "game_aurochs_ub"
+## The `animal:pastoral` rung asks 1.0 work per keeper-load; this herd is two loads over and nothing
+## was paid, so the shortfall IS the demand.
+const UNBUILT_WORK_UPKEEP_DEMAND := 2.0
+## Its rung's own `upkeep.grace_turns` (2 for pastoral), part spent — so the drawer's `At risk:` row
+## reads a countdown rather than "being lost NOW", which is the state a player can still act on.
+const UNBUILT_WORK_GRACE_REMAINING := 1
+
+func _unbuilt_work_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = 917
+	band["id"] = "Band 17"
+	band["labor_assignments"] = [
+		# Hunters on it and NOBODY on the improvement — `improvement_workers` absent is the wire's
+		# own answer for a build nobody is staffing, not a missing field.
+		{"kind": "hunt", "workers": 2, "workers_needed": 2, "floor": 0.5,
+			"improvement": "tame",
+			"fauna_id": UNBUILT_WORK_HERD_ID, "target_x": 70, "target_y": 17,
+			"actual_yield": 1.20, "sustainable_yield": 1.20, "overdraws": false},
+	]
+	return band
+
+func _unbuilt_work_herd_fixtures() -> Array:
+	var taming := {
+		"id": UNBUILT_WORK_HERD_ID, "species": "Aurochs", "x": 70, "y": 17,
+		"population": 210, "ecology_phase": "thriving", "huntable": true,
+		# PART-tamed: the pastoral rung is the one at risk and it does NOT stand yet.
+		"domestication": 0.6, "corralled": false,
+		"per_worker_yield": 1.20,
+		"hunt_policy_ceilings": {
+			"sustain": 1.20, "surplus": 2.0, "deplete": 3.0, "eradicate": 4.0,
+			"tame": 1.20, "corral": 1.20,
+		},
+		"upkeep_demand": UNBUILT_WORK_UPKEEP_DEMAND,
+		"upkeep_supplied": 0.0,
+		"upkeep_shortfall": UNBUILT_WORK_UPKEEP_DEMAND,
+		"has_neglect_grace": true,
+		"neglect_grace_remaining": UNBUILT_WORK_GRACE_REMAINING,
+	}
+	# Owned, so the sim would ask for keepers ONCE the rung stands — but `_set_keeper_demand` is
+	# deliberately NOT called: mid-build that demand is `0`, which is the whole shape under test.
+	_set_managed_herders(taming, UNDER_HERDED_WORK_HERDERS_NEEDED)
+	return [taming]
+
+## GUARD: the unbuilt-rung ⚠ and the note that names BUILDERS — plus the claim that it is NOT wearing
+## the keeper note, which is the failure mode the pair exists to prevent (telling a player to staff
+## KEEPERS on a rung that wants builders).
+func _assert_unbuilt_warning(state_name: String) -> void:
+	var band: Dictionary = _hud._band_labor._panel_band
+	var found := false
+	var failures: Array[String] = []
+	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+		var model: Dictionary = model_variant
+		if String(model.get("herd_id", "")) != UNBUILT_WORK_HERD_ID:
+			continue
+		found = true
+		if not bool(model.get("unbuilt", false)):
+			failures.append("unbuilt is false on a part-built rung nobody is building")
+		if bool(model.get("under_herded", false)):
+			failures.append("under_herded is true on a rung that owes no keepers")
+		if not String(model.get("marks", "")).contains(HudComposeVocab.OVERHUNT_FLAG):
+			failures.append("expected the ⚠ mark, got marks %s" % [model.get("marks", "")])
+		var note := String(model.get("note", ""))
+		if note != HudWorkVocab.WORK_ROW_UNBUILT_NOTE:
+			failures.append("expected the BUILDERS note, got %s" % [note])
+	if not found:
+		_fail("%s — no Hunt work row for %s" % [state_name, UNBUILT_WORK_HERD_ID])
+		return
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — %s the unbuilt rung warns and names its BUILDERS"
+			% state_name)
+		return
+	for failure in failures:
+		_fail("%s — %s" % [state_name, failure])
 
 ## The under-herded work band with its two crews stated separately. `_under_herded_work_band_fixture`
 ## publishes the TAKE crew alone, which is what the ⚠ used to be measured against.

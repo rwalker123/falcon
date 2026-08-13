@@ -1461,10 +1461,12 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var marks := Label.new()
     marks.text = String(model.get("marks", ""))
     marks.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_MARKS_WIDTH, 0.0)
-    # Amber for an overdraw (⚠) OR an under-contained managed herd (its shed ⚠) — both are trouble the
-    # eye must find; INK_DIM otherwise (a plain policy glyph).
+    # Amber for an overdraw (⚠), an under-KEPT managed herd (its shed ⚠) or a part-built rung nobody
+    # is building (its decay ⚠) — all three are trouble the eye must find; INK_DIM otherwise (a plain
+    # policy glyph).
     marks.add_theme_color_override("font_color",
-        HudStyle.WARN if bool(model.get("warn", false)) or bool(model.get("under_herded", false)) else HudStyle.INK_DIM)
+        HudStyle.WARN if bool(model.get("warn", false)) or bool(model.get("under_herded", false)) \
+            or bool(model.get("unbuilt", false)) else HudStyle.INK_DIM)
     marks.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     marks.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(marks)
@@ -1770,6 +1772,20 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # equal in weight, so the slot is not first-come: the overstaff note says some hunters
             # bring nothing home, and this one says the animals are leaving.
             note = HudWorkVocab.WORK_ROW_UNDER_HERDED_NOTE
+        # …AND THE OTHER WAY A SOURCE BLEEDS: a part-built rung nobody is building
+        # (`SourceForecast.is_unbuilt_and_unpaid`). An at-risk meter is owed the crew that OWNS it, so
+        # a rung still going up is owed BUILDERS — and the sim's decay, and the animal web's shed,
+        # read the resulting shortfall without caring which crew failed to pay. Both webs reach it:
+        # a walked-away Tame sheds animals, a walked-away Cultivate slides back toward wild.
+        # **EXCLUSIVE WITH THE KEEPER CASE BY CONSTRUCTION** — that one needs a positive keeper
+        # demand and this one needs a zero — so the two share the `note` slot without either
+        # displacing the other, and the `elif` states an exclusivity rather than a precedence.
+        var unbuilt := not under_herded and SourceForecast.is_unbuilt_and_unpaid(
+            rung_source, HudComposeVocab.BARE_FORECAST_PREFIX)
+        if unbuilt:
+            if not marks.contains(HudComposeVocab.OVERHUNT_FLAG):
+                marks += " " + HudComposeVocab.OVERHUNT_FLAG
+            note = HudWorkVocab.WORK_ROW_UNBUILT_NOTE
         models.append({
             "key": String(key), "kind": kind, "icon": icon, "icon_texture": icon_texture,
             "label": label,
@@ -1786,6 +1802,10 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "has_yield": bool(m.get("has_yield", false)),
             "workers": workers, "pending": pending, "warn": bool(yld.get("warn", false)),
             "under_herded": under_herded,
+            # The build-crew twin of the flag above — a part-built rung nobody is paying for. Its own
+            # key rather than a merged "something is bleeding" bool, because the row TINT wants either
+            # and the assertions want to tell them apart.
+            "unbuilt": unbuilt,
             "note": note, "muted_note": String(yld.get("muted_note", "")), "marks": marks,
             # The source's STANDING RUNG — orthogonal to `marks`, which carries the verb in flight.
             "rung_glyph": String(rung.get("glyph", "")), "rung_tooltip": String(rung.get("tooltip", "")),

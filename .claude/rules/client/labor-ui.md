@@ -2947,6 +2947,14 @@ meter decayed by last turn, so a warning keyed on it speaks once animals are alr
 the crew count is short the turn the player understaffs it. See `band-city-panel.md` → "The
 under-herded ⚠ counts the KEEPING crew".
 
+**`is_unbuilt_and_unpaid` is the third of the family and the ONE that reads the shortfall**, because
+it is the one case with no headcount to read: a rung still going UP is owed its BUILDERS, and the
+wire publishes no builder requirement — `upkeepWorkersNeeded` is deliberately `0` there, those hands
+being the build's. So `crew == 0 and upkeep_is_short(state)` is a build that was walked away from,
+and it is **exclusive with `is_under_kept` by construction** (that one needs a positive keeper
+demand), which is what lets the two share one note slot. Both webs reach it. **A builder count
+derived by dividing that shortfall would be the client inventing a number the sim never stated.**
+
 **THE EDGE IS A CLIFF, WHICH IS WHY THE COUNTDOWN IS ON THE CARD.** A completed meter sits exactly at
 its own cost, so the FIRST bleeding turn drops it below and the rung is **lost** — three unkept turns
 costs a tended patch, two costs a Field. A player who loses a 25-turn investment with no warning reads

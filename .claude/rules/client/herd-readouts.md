@@ -200,6 +200,15 @@ paths:
   only in its drawer — see `band-city-panel.md` → "The under-herded ⚠ counts the KEEPING crew".
   band_panel_preview `band_panel_under_herded` / `band_panel_keepers_short` /
   `band_panel_keepers_staffed`.
+- **…and the OTHER shed a managed herd can suffer: a part-built rung nobody is building.** A Tame the
+  player walked away from is owed its BUILD crew, so `upkeepWorkersNeeded` is `0`, the `Keepers` row
+  reads a calm `0 / N`, and the herd sheds anyway — the sim's shed reads `upkeepShortfall` and does
+  not care which crew failed to pay it. The drawer's `Keeping:` row is what states it
+  (`DetailFormat.UPKEEP_UNBUILT_VALUE` — *"nobody is building it — this rung is sliding back"*, in
+  place of the *"the build's crew holds it"* that is true only of a build being worked), with the
+  `At risk:` row's cost and countdown beside it, and the work board carries the matching ⚠. The rule
+  and the field-by-field read of what the wire publishes here are in `band-city-panel.md` → "…AND A
+  PART-BUILT RUNG NOBODY IS BUILDING GETS THE SAME ⚠".
 - **Per-species husbandry ceiling — gate the ladder by species** (Grazing 2d-δ,
   `docs/plan_grazing_2d.md` §4a; snapshot `HerdTelemetryState.husbandryCeiling` → `husbandry_ceiling`,
   decoded in `native/src/lib.rs herds_to_array` beside `ecology_phase`). Not every animal climbs the

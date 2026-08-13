@@ -3251,6 +3251,34 @@ static func is_under_kept(src: Dictionary, prefix: String, assigned_keepers: int
     var wanted := keepers_wanted(src, prefix)
     return wanted > NO_UPKEEP_CREW and maxi(assigned_keepers, 0) < wanted
 
+## **A RUNG STILL GOING UP THAT NOBODY IS BUILDING** — the OTHER way a source bleeds, and the one no
+## crew count can find.
+##
+## `docs/plan_standing_upkeep.md` §2.4 gives an at-risk meter to **whichever crew owns it**: a rung
+## that STANDS is owed its keepers, a rung still going up is owed its **builders**
+## (`herd_upkeep_supply` / `patch_upkeep_supply` pick by `*_at_risk_is_built`). Both pay into the same
+## `upkeepSupplied`, and the sim's decay — and, on the animal web, the shed — reads the resulting
+## shortfall without caring which crew failed to pay it. So a player who starts a Tame and re-tasks
+## the crew loses animals AND the meter, with every keeper-shaped reading on the source saying `0` of
+## `0` and nothing wrong.
+##
+## **THIS IS THE ONE CASE THE SHORTFALL HAS TO ANSWER RATHER THAN A HEADCOUNT.** `upkeepWorkersNeeded`
+## is deliberately `0` here (those hands are the build's) and the wire publishes **no builder
+## requirement** to compare a crew against — so the test is the published `upkeepShortfall`, which is
+## exactly what the meter decays by. A count derived by dividing that shortfall would be a client
+## inventing a number the sim never stated.
+##
+## **IT IS EXCLUSIVE WITH `is_under_kept` BY CONSTRUCTION**, not by ordering: this one requires
+## `keepers_wanted == 0` and that one requires it positive. They can therefore share one note slot
+## without either displacing the other — which the overstaff note, keyed on something else entirely,
+## cannot.
+##
+## Reads the same shortfall the `At risk:` row does, so a source warning here always has that row
+## beside it explaining what it costs and how long is left.
+static func is_unbuilt_and_unpaid(src: Dictionary, prefix: String) -> bool:
+    var state := upkeep_state(src, prefix)
+    return int(state.get("crew", NO_UPKEEP_CREW)) <= NO_UPKEEP_CREW and upkeep_is_short(state)
+
 ## **HOW MANY TURNS THIS RUNG WOULD TAKE AT A CREW AND A FLOOR THE PLAYER IS PROPOSING** — the ONE
 ## home of the client's turn estimate, and the reason the compose sheet's number moves when the
 ## stepper does.

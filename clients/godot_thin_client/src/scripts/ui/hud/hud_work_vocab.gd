@@ -715,6 +715,20 @@ const WORK_ROW_UNDER_HERDED_NOTE := "Animals drifting off — staff this herd's 
 ## strip line because `_work_inspector_height` reserves ONE open height for every row.
 const WORK_ROW_UNDER_HERDED_TOOLTIP := "Under-herded — a managed herd is held by its KEEPERS crew, not by its hunters, so this row's + will not stop the drift. Open the herd (Jump to source) and raise its KEEPERS."
 
+## **THE OTHER WAY A SOURCE BLEEDS: a half-built rung nobody is building** (`SourceForecast.
+## is_unbuilt_and_unpaid`). An at-risk meter is owed the crew that OWNS it, and a rung still going up
+## owes its BUILDERS — so a Tame whose crew was re-tasked slides back and, on the animal web, sheds
+## animals, while every keeper-shaped reading on the row says nothing is wanted. It is the same
+## silent-loss class as the shed and it wears the same ⚠.
+##
+## It shares the `note` slot with the under-herded note and CANNOT collide with it: that one needs a
+## positive keeper demand and this one needs a zero. The two nouns are the whole point of having both
+## — telling a player to staff KEEPERS on a rung that wants BUILDERS is the mistake this pair exists
+## to stop making.
+const WORK_ROW_UNBUILT_NOTE := "Nobody is building this — staff its BUILDERS."
+
+const WORK_ROW_UNBUILT_TOOLTIP := "This rung is part-built and nobody is paying for it, so it slides back toward wild — and a half-tamed herd sheds animals while it does. A rung still going up is owed its BUILD crew, not keepers: open the source (Jump to source) and put BUILDERS on the improvement. The source's own card states what the neglect costs and how many turns are left."
+
 const WORK_EMPTY_HINT := ALLOC_NO_SOURCES_HINT
 
 ## The inspector strip (the row's second/third lines, relocated to one place).
