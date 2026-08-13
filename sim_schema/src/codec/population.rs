@@ -257,16 +257,16 @@ fn create_populations<'a>(
                                 // cash Field or an inedible quarry pays into. Appended last. An
                                 // EMPTY vector is "no row", never "zero".
                                 materialYield: Some(material_yield),
-                                // THE OTHER TWO CREWS (`docs/plan_standing_upkeep.md` §2.2) —
-                                // `workers` above is the TAKE crew; these are the hands on the
-                                // build and on the keeping. Written beside it rather than appended
-                                // as an afterthought because the three are one set: without them
-                                // the client can SEND two of the three allocations and never read
-                                // them back, which clamps its steppers to a band's idle workers and
-                                // leaves a fully-allocated band unable to re-state a crew it has.
-                                // Appended last.
+                                // THE BUILD'S OWN CREW (`docs/plan_standing_upkeep.md` §2.2) —
+                                // `workers` above is the TAKE crew. Without it the client can SEND
+                                // the build allocation and never read it back, which clamps its
+                                // steppers to a band's idle workers and leaves a fully-allocated
+                                // band unable to re-state a crew it has. Appended last.
+                                //
+                                // `maintainWorkers` beside it is a `(deprecated)` slot: the keeping
+                                // is a band-level standing role now (§2.5) and arrives as an
+                                // ordinary row of this list.
                                 improvementWorkers: assignment.improvement_workers,
-                                maintainWorkers: assignment.maintain_workers,
                                 // THE CROP THIS CREW ASKED FOR — the player's stated intent, which
                                 // the patch's own `committedSpecies` cannot stand in for: that one
                                 // is set only once a crew has worked the ground. Appended last.
@@ -281,6 +281,8 @@ fn create_populations<'a>(
             // consumer comparing a selection against an absent string would read every band as a
             // mismatch.
             let kit_id = builder.create_string(&cohort.kit_id);
+            // The band's maintenance fund mode — a string, so a third mode needs no schema change.
+            let upkeep_fund_mode = Some(builder.create_string(&cohort.upkeep_fund_mode));
             // **The TOE, one row per item.** Built before the cohort table like every other nested
             // vector: FlatBuffers forbids writing a child table while a parent is open.
             let kit_item_conditions = {
@@ -744,6 +746,10 @@ fn create_populations<'a>(
                     // after-every-command recapture; on a turn frame the two read the same number.
                     transferReceivedTurn: cohort.transfer_received_turn,
                     transferSentTurn: cohort.transfer_sent_turn,
+                    // How this band splits a maintenance pool it cannot stretch — appended last,
+                    // always written, because "the sim did not state a mode" and "spread" must not
+                    // be the same frame.
+                    upkeepFundMode: upkeep_fund_mode,
                 },
             )
         })

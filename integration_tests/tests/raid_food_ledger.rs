@@ -72,7 +72,6 @@ fn the_food_ledger_reconciles_with_a_predator_raid() {
             improvement: None,
             kit: None,
             improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-            maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
         }],
         ..Default::default()
     });

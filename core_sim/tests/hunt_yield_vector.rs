@@ -244,7 +244,6 @@ fn spawn_hunters(
                     improvement: NO_IMPROVEMENT_UNDERWAY,
                     kit: None,
                     improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },
@@ -699,7 +698,6 @@ fn spawn_resident_crew(
                     improvement,
                     kit: None,
                     improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },

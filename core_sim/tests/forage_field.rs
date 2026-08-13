@@ -37,7 +37,8 @@ use core_sim::{
     MapPresetsHandle, MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick,
     SiteRefusal, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
     StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry,
-    WellbeingConfigHandle, FOOD, RUNG_COST_UNSCALED, SEED_SELECTION_DISCOVERY_ID, UNSCALED_UPKEEP,
+    WellbeingConfigHandle, FOOD, RUNG_COST_UNSCALED, SEED_SELECTION_DISCOVERY_ID,
+    WHOLLY_UNSUPPLIED,
 };
 
 /// Grant faction-level **Seed Selection** directly via the ledger — the gate the `Sow` policy checks.
@@ -351,23 +352,28 @@ fn spawn_builder(
 /// number of work units per turn (a fraction of that rung's cost), so a fixture seated at a nominal
 /// one-unit job would lapse to nothing in a single bleeding turn.
 fn seat_completed_rung(app: &mut App, coord: UVec2, rung: RungKey) {
-    let cost = app
-        .world
-        .resource::<LadderConfigHandle>()
-        .get()
-        .rung(rung)
-        .build_cost(RUNG_COST_UNSCALED)
-        .expect("the rung builds");
+    let (cost, retain_bar) = {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let def = ladder.rung(rung);
+        let cost = def.build_cost(RUNG_COST_UNSCALED).expect("the rung builds");
+        // **AND THE RETENTION BAR the completion would have stamped** — the rung is *earned* at its
+        // cost and *held* down to this bar, so a fixture that fills the meter by hand and leaves the
+        // bar at `RUNG_UNSTARTED` seats a rung that was never achieved
+        // (`docs/plan_standing_upkeep.md` §2.4).
+        (cost, def.retention_bar(cost))
+    };
     let mut registry = app.world.resource_mut::<ForageRegistry>();
     let patch = registry.patch_mut(coord).expect("patch exists");
     match rung {
         RungKey::PlantField => {
             patch.field_progress = cost;
             patch.field_cost = cost;
+            patch.field_retain_bar = retain_bar;
         }
         _ => {
             patch.cultivation_progress = cost;
             patch.cultivation_cost = cost;
+            patch.cultivation_retain_bar = retain_bar;
         }
     }
 }
@@ -436,7 +442,6 @@ fn spawn_forager_of(
                     // BUILDERS (`docs/plan_standing_upkeep.md` §2.4), so a Sow runs at its stated
                     // pace with nobody on the keeping; the completion hand-off then moves the build's
                     // crew onto it.
-                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },
@@ -504,11 +509,32 @@ fn field_build(app: &App) -> (f32, f32) {
     let field = ladder.rung(RungKey::PlantField);
     (
         field.build_accrual(Some(Improvement::Sow), true, sow_crew(app)),
-        // **The feral bleed is the rung's own upkeep**: a field nobody keeps goes short by the whole
-        // demand and loses exactly that (`docs/plan_standing_upkeep.md` §2.4). Numerically the same
-        // as the retired `decay_fraction_per_turn × work_cost`, which is why the paces below hold.
-        field.upkeep_demand(UNSCALED_UPKEEP),
+        // **The feral bleed is the rung's own ROT RATE**, not the demand it goes short by: the two
+        // are separate dials (`docs/plan_standing_upkeep.md` §2.4). Numerically the same as the
+        // retired `decay_fraction_per_turn × work_cost`, which is why the paces below hold.
+        field.upkeep_decay(WHOLLY_UNSUPPLIED, WELL_PAST_ANY_GRACE),
     )
+}
+
+/// The turn count a wholly unmaintained rung is on once every shipped grace is spent — larger than
+/// any of them, so a bleed read at it is certainly biting.
+const WELL_PAST_ANY_GRACE: u16 = 32;
+
+/// **HOW MANY WHOLLY UNMAINTAINED TURNS A COMPLETED FIELD SURVIVES** — the grace, plus the turns its
+/// own rot rate takes to erode the meter from its cost to below its retention bar.
+///
+/// **This is the number the reported bug is about**: a completed meter sits exactly at its cost, so
+/// a `progress >= cost` predicate answered `grace + 1` and the rung was lost on the first bleed of
+/// any size. Derived from the rung's own dials, so a retune of any of the three moves it.
+fn unmaintained_field_turns_before_loss(app: &App) -> u32 {
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let field = ladder.rung(RungKey::PlantField);
+    let cost = field_cost(app);
+    let erodable = cost - field.retention_bar(cost);
+    let (_, bleed) = field_build(app);
+    // Lost the turn the meter falls **below** the bar, so eroding exactly the erodable amount still
+    // holds it — hence `floor + 1` rather than `ceil`.
+    field.upkeep_grace_turns() + (erodable / bleed).floor() as u32 + 1
 }
 
 /// **The crew a BUILD fixture staffs, and it is deliberately NOT [`FORAGE_WORKERS`].** 5000 is
@@ -968,12 +994,20 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
         "fixture: this is the completing turn"
     );
     let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+    // **The worked source is still one row — and the band holds one more.** A finished rung that
+    // costs something to hold hands its builders to the band's own `agriculture` keeping role
+    // (`docs/plan_standing_upkeep.md` §2.5), which is a band-wide row rather than a source.
+    let sources: Vec<&core_sim::LaborAssignment> = allocation
+        .assignments
+        .iter()
+        .filter(|a| matches!(a.target, LaborTarget::Forage { .. }))
+        .collect();
     assert_eq!(
-        allocation.assignments.len(),
+        sources.len(),
         1,
-        "completion edits a row, it never adds or drops one"
+        "completion edits the source's row, it never adds or drops one"
     );
-    let assignment = &allocation.assignments[0];
+    let assignment = sources[0];
     assert_eq!(
         assignment.workers,
         sow_crew(&app),
@@ -1043,13 +1077,31 @@ fn an_abandoned_field_goes_feral_and_fully_lapses() {
             .is_field(),
         "the grace turns cost the Field nothing"
     );
+    // **AND NEITHER DOES THE FIRST BLEEDING TURN** — the rung is *earned* at its cost and *held*
+    // down to a stated fraction of it (`docs/plan_standing_upkeep.md` §2.4). Before that, a
+    // completed meter sitting exactly at its cost lost the rung to the first bleed of any size,
+    // which is the defect this arc was filed against.
+    let survives = unmaintained_field_turns_before_loss(&app);
+    assert!(
+        survives > SPARED_LAG_TURNS + grace + 1,
+        "fixture: the Field must outlast its own first bleeding turn"
+    );
+    run_turns_untended(&mut app, survives - grace - SPARED_LAG_TURNS - 1);
+    assert!(
+        app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .unwrap()
+            .is_field(),
+        "a Field stays a Field while its meter erodes toward the retention bar"
+    );
     run_turns_untended(&mut app, 1);
     {
         let registry = app.world.resource::<ForageRegistry>();
         let patch = registry.patch(coord).unwrap();
         assert!(
             !patch.is_field(),
-            "the first turn past the grace takes a field feral: progress {}",
+            "crossing the retention bar takes a field feral: progress {}",
             patch.field_progress
         );
         assert!(
@@ -1309,8 +1361,11 @@ fn losing_a_field_pushes_one_feed_line_on_the_sow_channel() {
         "nothing is lost, so nothing is announced, while the grace holds"
     );
 
-    let (_, decay) = field_build(&app);
-    run_turns_untended(&mut app, (1.0 / decay).ceil() as u32 + 2);
+    // **The loss lands at the RETENTION BAR, not at the first bleed** — the arc's own fix
+    // (`docs/plan_standing_upkeep.md` §2.4). Run past it and then well past it: the announcement is
+    // still exactly one, because the long bleed to zero that follows is not news.
+    let survives = unmaintained_field_turns_before_loss(&app);
+    run_turns_untended(&mut app, survives - grace);
     assert_eq!(
         feral_lines(&app),
         1,

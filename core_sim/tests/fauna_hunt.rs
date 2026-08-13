@@ -139,7 +139,6 @@ fn hunt_assignment_takes_biomass_and_yields() {
                     improvement: None,
                     kit: None,
                     improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },

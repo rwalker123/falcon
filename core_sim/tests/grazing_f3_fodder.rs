@@ -224,7 +224,6 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2, policy: f32) -> Entit
                     improvement: None,
                     kit: None,
                     improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },

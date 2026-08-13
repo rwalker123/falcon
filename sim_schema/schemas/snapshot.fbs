@@ -1174,6 +1174,21 @@ table PopulationCohortState {
   // transferSent between two TURN frames, and renders these.
   transferReceivedTurn:float = 0;
   transferSentTurn:float = 0;
+  // --- HOW THIS BAND SPLITS A MAINTENANCE POOL IT CANNOT STRETCH (appended last) ----------------
+  // docs/plan_standing_upkeep.md 2.5. Maintenance is a band-level standing role now - `agriculture`
+  // for the plant web, `husbandry` for the animal one - and each role's hands are a POOL measured
+  // against the SUM of what the band holds on that web. When the pool cannot cover the sum, this
+  // says which of the two defensible answers the player chose:
+  //
+  //   "spread"    - proportional to demand, so EVERYTHING degrades a little. The default: it is what
+  //                 an unstated policy means, since nobody is singled out.
+  //   "priority"  - fund sources COMPLETELY until the pool runs out, MOST-INVESTED FIRST, so the
+  //                 biggest investments stay whole and the marginal ones rot.
+  //
+  // A STRING rather than an enum for the reason the take policy is one: a third mode needs no schema
+  // change. Set with `upkeep_mode <faction> <band> spread|priority`. Empty is only ever a frame the
+  // sim did not write; read it as "spread".
+  upkeepFundMode:string;
 }
 
 // What ONE kit would grant ONE band at its current wear - a row of
@@ -1471,27 +1486,36 @@ table LaborAssignment {
   // species. The number a player decides on is the herd row's materialPerBiomass /
   // perWorkerMaterial, which are rates and need no take.
   materialYield:[MaterialPayoff];
-  // --- THE OTHER TWO CREWS (appended last, docs/plan_standing_upkeep.md 2.2) --------------------
-  // `workers` above is the TAKE crew. These are the other two allocations this source carries: the
-  // hands on the BUILD (the improvement verb's own crew) and the hands on the KEEPING (the standing
-  // upkeep's). Three independent numbers on one source, drawing on one finite band, which is what
-  // makes competing for hands the opportunity cost and makes it visible in what the player typed.
+  // --- THE BUILD'S OWN CREW (appended last, docs/plan_standing_upkeep.md 2.2) -------------------
+  // `workers` above is the TAKE crew. This is the other allocation a source carries: the hands on
+  // the BUILD (the improvement verb's own crew). Two independent numbers on one source, drawing on
+  // one finite band, which is what makes competing for hands the opportunity cost and makes it
+  // visible in what the player typed.
   //
-  // THE CLIENT CANNOT DERIVE EITHER, and without them two of the three allocations are WRITE-ONLY
-  // from its side: it can send `cultivate ... <workers>` and `maintain ... <workers>` and never read
-  // back what a band already has. Two things broke on that. A compose sheet clamps its steppers to
-  // the band's IDLE workers (the sim refuses an over-staffed command), so a fully-allocated band
-  // showed a keeper maximum of 0 and the player could not RE-STATE a crew they already had - only
-  // take it to zero, a trap with no way out. And a sheet reopened on a herd with 2 keepers read `0`,
-  // which says "nothing is holding this" on the very readout built to warn about decay.
+  // THE CLIENT CANNOT DERIVE IT, and without it the build allocation is WRITE-ONLY from its side: it
+  // can send `cultivate ... <workers>` and never read back what a band already has. Two things broke
+  // on that. A compose sheet clamps its steppers to the band's IDLE workers (the sim refuses an
+  // over-staffed command), so a fully-allocated band showed a maximum of 0 and the player could not
+  // RE-STATE a crew they already had - only take it to zero, a trap with no way out. And a sheet
+  // reopened on a source with 2 builders read `0`.
   //
-  // With them the clamp becomes the honest `idle + this source's own crew for this activity`, the
-  // steppers seed at what the band actually has, and the keeping row can say "you have 1 of 2".
+  // With it the clamp becomes the honest `idle + this source's own build crew`, and the steppers
+  // seed at what the band actually has.
   //
-  // 0 IS A REAL VALUE ON BOTH, and it is the common one: no verb in flight means no builders, and a
-  // source nobody is keeping has no keepers. Read them beside `workers` as one set of three.
+  // 0 IS A REAL VALUE and it is the common one: no verb in flight means no builders.
   improvementWorkers:uint = 0;
-  maintainWorkers:uint = 0;
+  // RETIRED: `maintainWorkers`, the per-source KEEPER crew. MAINTENANCE LEFT THE TILE
+  // (docs/plan_standing_upkeep.md 2.5). An indivisible supplier meeting a per-source demand wastes
+  // whatever it does not spend, and the waste grows as gear makes a hand worth more; a band-level
+  // POOL against the summed demand has no leftover by construction. The keeping is now two BAND-WIDE
+  // STANDING ROLES - `agriculture` (the plant web) and `husbandry` (the animal one) - which arrive as
+  // ordinary rows in this very list, kind="agriculture"/"husbandry", hands in `workers`, exactly like
+  // scout and warrior. The slot stays because FlatBuffers field ids are positional.
+  //
+  // What survives PER SOURCE is the readout: upkeepDemand / upkeepSupplied / upkeepShortfall, where
+  // `supplied` is now that source's SHARE OF THE POOL. Those three stopped answering "did you staff
+  // this one" and started answering "where is my pooled shortfall landing".
+  maintainWorkers:uint = 0 (deprecated);
   // --- THE CROP THIS CREW ASKED FOR (appended last, docs/plan_flora_roster.md 4.2) --------------
   // Which named plant a Forage assignment wants its Cultivate/Sow to commit the patch to — a
   // flora_config.json species key, or "" for "pick the tile's dominant legal plant for me". "" on

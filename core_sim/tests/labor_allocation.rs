@@ -170,7 +170,6 @@ fn forage_alloc_policy(tile: UVec2, workers: u32, policy: f32) -> LaborAllocatio
             improvement: None,
             kit: None,
             improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-            maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
         }],
         ..Default::default()
     }
@@ -320,7 +319,6 @@ fn sustain_hunt_below_regrowth_lets_herd_grow() {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             ..Default::default()
         },
@@ -410,7 +408,6 @@ fn a_hunt_actual_pulses_while_realized_holds_the_steady_average() {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             ..Default::default()
         },
@@ -552,7 +549,6 @@ fn a_drawn_down_hunt_realized_drifts_smoothly_never_sawtooths() {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             ..Default::default()
         },
@@ -628,7 +624,6 @@ fn hunt_lapses_beyond_leash() {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             ..Default::default()
         },
@@ -981,7 +976,6 @@ fn stage_hunt(
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             ..Default::default()
         },
@@ -1201,7 +1195,6 @@ fn a_trimmed_assignment_is_announced_and_names_the_lost_build() {
         improvement: Some(core_sim::Improvement::Tame),
         kit: None,
         improvement_workers: 3,
-        maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
     });
     let band = spawn_band(&mut app, patch_tile, 3, allocation);
 

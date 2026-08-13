@@ -167,7 +167,8 @@ bands (`extinction_floor < collapse_fraction < stressed_fraction < 1`) in all th
 
 **`herders_needed` stopped being a declared head count and became work per turn**
 (`docs/plan_standing_upkeep.md` §2.4). Both managed rungs declare
-`upkeep: { work_per_turn: 1.0, scaled_by: source_load }`, and the source supplies the **keeper load**
+`upkeep: { work_per_turn: 1.0, scaled_by: source_load, meter_decay: null }`, and the source supplies
+the **keeper load**
 — `head count / animals_per_herder` (`fauna::herd_keeper_loads`). Since one worker-turn is
 `PER_WORKER_OUTPUT`, `upkeep_crew_needed = ceil(load)` **is** the
 `ceil((biomass/body_mass)/animals_per_herder)` the retired helper computed, so every species asks for

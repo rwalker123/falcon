@@ -1549,7 +1549,6 @@ mod food_flow_tests {
             workers: 4,
             improvement: None,
             improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-            maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             kit: None,
         }
     }
@@ -1571,6 +1570,7 @@ mod food_flow_tests {
             last_raid_forfeit: 0.0,
             last_transfer_received: 0.0,
             last_transfer_sent: 0.0,
+            upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
         };
         assert!(
             band_food_flow(Some(&labor)).is_none(),
@@ -1609,6 +1609,7 @@ mod food_flow_tests {
             last_raid_forfeit: 0.0,
             last_transfer_received: 0.0,
             last_transfer_sent: 0.0,
+            upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
         };
         let flow = band_food_flow(Some(&labor)).expect("projected telemetry is real data");
         assert!(

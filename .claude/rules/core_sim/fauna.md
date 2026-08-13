@@ -863,7 +863,9 @@ and their systems `advance_harvest_assignments`/`advance_scout_assignments`/`adv
 plus the `scout`/`forage`/`hunt_fauna`/`follow_herd` command handlers) is **removed**. A band is now a
 **labor pool**: a `LaborAllocation` component (`components.rs`) partitions its whole working-age workers
 (`available_workers(working)` = `floor`) across `LaborTarget`s — `Forage { tile, policy, species }`,
-`Hunt { fauna_id, policy }`, `Scout`, `Warrior` — with the invariant `Σ workers ≤ available`. Each
+`Hunt { fauna_id, policy }`, `Scout`, `Warrior`, and the two **keeping roles** `Agriculture` /
+`Husbandry` (`docs/plan_standing_upkeep.md` §2.5 — a band-level maintenance pool per food web, one
+row each, staffed exactly like Scout and Warrior) — with the invariant `Σ workers ≤ available`. Each
 staffed row is a `LaborAssignment { target, workers, improvement }`: **`policy` is the harvest STANCE
 and `improvement` is what the crew is BUILDING**, two independent axes since issue #442 — see "An
 assignment has TWO axes" in `intensification.md`. `advance_labor_allocation`

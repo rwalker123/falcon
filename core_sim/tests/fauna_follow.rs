@@ -154,7 +154,6 @@ fn spawn_hunter(app: &mut App, herd_id: &str, policy: f32) -> bevy::prelude::Ent
                     improvement: None,
                     kit: None,
                     improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },

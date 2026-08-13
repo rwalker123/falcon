@@ -340,6 +340,15 @@ pub const NO_UPKEEP_DEMAND: f32 = 0.0;
 /// question asked was *"how much did neglect cost it"*.
 pub const NO_UPKEEP_DECAY: f32 = 0.0;
 
+/// **A SOURCE THAT IS FULLY STAFFED** — the shortfall fraction of a demand that is entirely met, and
+/// of a rung that demands nothing at all. Named because [`upkeep_shortfall_fraction`]'s `0` is a
+/// *statement* ("these hands are all there") rather than the absence of an answer.
+pub const FULLY_SUPPLIED: f32 = 0.0;
+
+/// **A SOURCE NOBODY IS HOLDING** — the shortfall fraction of a demand nothing was supplied against,
+/// and therefore the multiplier at which a rung bleeds its whole [`RungMeterDecay::per_turn`].
+pub const WHOLLY_UNSUPPLIED: f32 = 1.0;
+
 /// **NOBODY IS ON THIS ACTIVITY** — the crew of an assignment that is building nothing, or keeping
 /// nothing. It is the shipped default of both `LaborAssignment::improvement_workers` and
 /// `LaborAssignment::maintain_workers`, and it is how a player says *"stop maintaining this"*: there
@@ -389,6 +398,122 @@ pub fn activity_work(workers: u32) -> f32 {
 /// [`RungDef::build_decay`] already follow.
 pub fn upkeep_shortfall(demand: f32, supplied: f32) -> f32 {
     (demand - supplied).max(NO_UPKEEP_DEMAND)
+}
+
+/// **HOW SHORT YOU ARE, AS A FRACTION OF WHAT WAS ASKED** — `shortfall / demand`, clamped to
+/// `0..=1`. [`FULLY_SUPPLIED`] with every hand on it, [`WHOLLY_UNSUPPLIED`] with none.
+///
+/// # THE DECAY RIDES THIS, NOT THE SHORTFALL ITSELF
+///
+/// *Shortfall was the decay* welded two questions together — **how much work does holding this
+/// want** and **how fast does it rot when you stop** — so raising a demand made the thing rot faster
+/// in exact proportion and neither number could be retuned without moving the other. A rung states
+/// them separately now: the demand is [`RungUpkeep::work_per_turn`], the rate is
+/// [`RungMeterDecay::per_turn`], and *this* is what couples them —
+///
+/// ```text
+/// decay_this_turn = shortfall_fraction × decay_per_turn      // past the grace
+/// ```
+///
+/// **It is the shape the animal web already had.** A herd's shed is `shortfall_in_loads ×
+/// animals_per_herder`, which is exactly this fraction times the head count, taken at the species'
+/// own escape fraction — so the fraction is stated once here and each web supplies its own rate.
+///
+/// A demand of nothing is [`FULLY_SUPPLIED`]: a rung with no upkeep is not "wholly unheld", it is
+/// unbilled.
+pub fn upkeep_shortfall_fraction(demand: f32, supplied: f32) -> f32 {
+    if demand <= NO_UPKEEP_DEMAND {
+        return FULLY_SUPPLIED;
+    }
+    (upkeep_shortfall(demand, supplied) / demand).clamp(FULLY_SUPPLIED, WHOLLY_UNSUPPLIED)
+}
+
+/// **HOW A BAND SPLITS ITS MAINTENANCE POOL WHEN IT CANNOT COVER EVERYTHING** — a per-band player
+/// option (`docs/plan_standing_upkeep.md` §2.5), because the two answers are both defensible and the
+/// choice between them is a real one.
+///
+/// It rides [`crate::components::LaborAllocation`], so it is `SimState` and a checkpoint restores
+/// the allocation it produced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UpkeepFundMode {
+    /// **Everything degrades a little** — each source is funded in proportion to its demand, so a
+    /// band at 60% of its total holds every source at 60%. The default, because it is what an
+    /// unstated policy means: nobody is singled out.
+    #[default]
+    Spread,
+    /// **Fund sources completely until the pool runs out, most-invested first** — the biggest
+    /// investments stay whole and the marginal ones rot. Ordering is the caller's
+    /// ([`distribute_upkeep_pool`] funds in slice order) and is total and deterministic, so a
+    /// checkpoint restores the same allocation.
+    Priority,
+}
+
+impl UpkeepFundMode {
+    /// Stable config/command/wire token — the [`RungBranch::as_str`] convention.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            UpkeepFundMode::Spread => "spread",
+            UpkeepFundMode::Priority => "priority",
+        }
+    }
+
+    /// Parse a command/wire token. `None` for anything else, which the caller reports rather than
+    /// guessing at — the `maintain`-grammar discipline that an unknown token fails loudly.
+    pub fn from_token(token: &str) -> Option<Self> {
+        match token {
+            "spread" => Some(UpkeepFundMode::Spread),
+            "priority" => Some(UpkeepFundMode::Priority),
+            _ => None,
+        }
+    }
+}
+
+/// **WHAT EACH SOURCE GETS OUT OF THE BAND'S POOL** — one share per demand, in the order given, and
+/// **never more than the pool** (`docs/plan_standing_upkeep.md` §2.5).
+///
+/// # A POOL HAS NO LEFTOVER BY CONSTRUCTION
+///
+/// The predecessor was a per-source keeper crew, and an indivisible supplier meeting a per-source
+/// demand **wastes whatever it does not spend**: a demand of `1.5` staffed by two hands throws half
+/// a worker away, and the waste grows as gear makes a hand worth more. One pool against the summed
+/// demand cannot waste anything — every unit either meets a demand or is still in the pool.
+///
+/// **The two modes are the player's** ([`UpkeepFundMode`]):
+/// - [`UpkeepFundMode::Spread`] scales every demand by the same `pool / total` coverage.
+/// - [`UpkeepFundMode::Priority`] walks the slice in order, paying each demand **in full** until the
+///   pool runs out. The **caller owns the order** — most-invested first, tie-broken on a stable
+///   per-web key — because "most invested" is a per-web reading (a patch's stamped meter cost, a
+///   herd's) and the ladder has no business knowing either. What the ladder owns is that the order it
+///   is handed is the order it funds.
+pub fn distribute_upkeep_pool(pool: f32, demands: &[f32], mode: UpkeepFundMode) -> Vec<f32> {
+    let pool = pool.max(NO_UPKEEP_DEMAND);
+    match mode {
+        UpkeepFundMode::Spread => {
+            let total: f32 = demands
+                .iter()
+                .map(|demand| demand.max(NO_UPKEEP_DEMAND))
+                .sum();
+            if total <= NO_UPKEEP_DEMAND {
+                return vec![NO_UPKEEP_DEMAND; demands.len()];
+            }
+            let coverage = (pool / total).min(WHOLLY_UNSUPPLIED);
+            demands
+                .iter()
+                .map(|demand| demand.max(NO_UPKEEP_DEMAND) * coverage)
+                .collect()
+        }
+        UpkeepFundMode::Priority => {
+            let mut left = pool;
+            demands
+                .iter()
+                .map(|demand| {
+                    let share = demand.max(NO_UPKEEP_DEMAND).min(left);
+                    left -= share;
+                    share
+                })
+                .collect()
+        }
+    }
 }
 
 /// Which food web a rung belongs to. The two webs are separate ladders that never share a rung — a
@@ -479,6 +604,19 @@ impl RungKey {
             Improvement::Sow => RungKey::PlantField,
             Improvement::Tame => RungKey::AnimalPastoral,
             Improvement::Corral => RungKey::AnimalPen,
+        }
+    }
+
+    /// **WHICH STANDING ROLE KEEPS THIS RUNG** — the band-level pool its upkeep draws from
+    /// (`docs/plan_standing_upkeep.md` §2.5): the **agriculture** role for the plant web, the
+    /// **husbandry** role for the animal one.
+    ///
+    /// It is a reading of [`Self::branch`] rather than a second table, because the split *is* the two
+    /// webs' existing split — the roles were not a new axis, they are the ladders'.
+    pub fn upkeep_role(self) -> crate::components::LaborTarget {
+        match self.branch() {
+            RungBranch::Plant => crate::components::LaborTarget::Agriculture,
+            RungBranch::Animal => crate::components::LaborTarget::Husbandry,
         }
     }
 
@@ -821,6 +959,16 @@ pub struct RungUpkeep {
     /// **What multiplies the rate** ([`UpkeepScale`]) — the generic piece, so a rung that recombines
     /// existing primitives is pure config.
     pub scaled_by: UpkeepScale,
+    /// **WHAT AN UNMET DEMAND DOES TO THIS RUNG'S METER** ([`RungMeterDecay`]) — the rate it rots at
+    /// and the point below which the rung is revoked.
+    ///
+    /// **`null` means this rung's penalty is not a meter bleed**, which is both animal rungs: an
+    /// under-kept flock **sheds animals** at the husbandry config's own
+    /// `pen_escape_fraction` / `pastoral_escape_fraction`, and a second rate here would be a
+    /// duplicate of those — two numbers for one mechanic, free to disagree. The shortfall *fraction*
+    /// is shared ([`upkeep_shortfall_fraction`]); only the rate each web applies it at differs.
+    #[serde(default)]
+    pub meter_decay: Option<RungMeterDecay>,
     /// **The upkeep GRACE** — consecutive turns of shortfall forgiven before decay begins. Exactly
     /// [`RungBuild::grace_turns`]'s meaning, on the upkeep's own trigger: the penalty applies while
     /// the source's shortfall counter is **strictly greater** than this.
@@ -829,6 +977,47 @@ pub struct RungUpkeep {
     /// different questions — *how long may a build sit un-worked* and *how long may a standing cost go
     /// unpaid* — and a rung is free to be forgiving about one and strict about the other.
     pub grace_turns: u32,
+}
+
+/// **WHAT AN UNMET DEMAND COSTS A RUNG WHOSE PENALTY IS A METER BLEED** — the third and fourth
+/// dials of the standing upkeep, beside the demand and the grace
+/// (`docs/plan_standing_upkeep.md` §2.4).
+///
+/// # THE RATE IS NOT THE DEMAND
+///
+/// *Shortfall was the decay*: a patch short by `0.75` work lost `0.75` off its meter. That welded
+/// **how much work holding this wants** to **how fast it rots when you stop**, so the demand could
+/// never be retuned — raising it made the improvement rot faster in exact proportion, and lowering
+/// it made neglect cheaper. Splitting them is what lets `plant:field` ask for four hands a turn and
+/// still rot at the three-quarters of a work unit it always rotted at.
+///
+/// # AND THE RUNG IS NOT LOST THE INSTANT ITS METER DIPS
+///
+/// A completed meter sits **exactly at its own cost**, so under a `progress >= cost` predicate the
+/// first bleed of any size revoked the rung: finish a Cultivate and the patch could be out of
+/// *tended* before its keepers were assigned, which no grace and no rate could fix because the loss
+/// was a **threshold test**. [`Self::retain_fraction`] is that threshold, moved down to a stated
+/// point and made scale-free.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct RungMeterDecay {
+    /// **WHAT A WHOLLY UNMAINTAINED RUNG LOSES EVERY TURN**, in work units — the rate the shortfall
+    /// fraction scales. A rung staffed at half its demand loses half this.
+    ///
+    /// Validated finite and `> 0`: a rate of zero says *"this rung never rots"*, which the config
+    /// already says by declaring no `meter_decay` at all.
+    pub per_turn: f32,
+    /// **HOW FAR THE METER MAY ERODE BEFORE THE RUNG IS REVOKED**, as a fraction of that rung's own
+    /// stamped cost. `0.75` = *"a tended patch stays tended while its meter is at least
+    /// three-quarters full"*.
+    ///
+    /// **A fraction rather than an amount, so it survives a cost retune** — the bar is stamped onto
+    /// the source when the rung completes ([`RungDef::retention_bar`]), exactly as the job's cost is,
+    /// so a later retune moves the price without revoking a rung the player has already paid for.
+    ///
+    /// **The rung is still EARNED at `progress >= cost`.** Only losing it moves. Validated finite and
+    /// in `0.0..=1.0`: above `1.0` would revoke a rung the turn it completed, and `1.0` itself is the
+    /// pre-arc behaviour, stated rather than stumbled into.
+    pub retain_fraction: f32,
 }
 
 /// **One rung of one ladder** — the record §5 promises: the links and the dials, no logic.
@@ -1130,28 +1319,88 @@ impl RungDef {
             .map_or(NO_NEGLECT_GRACE, |upkeep| upkeep.grace_turns)
     }
 
-    /// **THE UPKEEP SEAM — SHORTFALL *IS* THE DECAY** (`docs/plan_standing_upkeep.md` §2.4): the
-    /// improvement loses **exactly the work that was not supplied**, once the shortfall has outlasted
-    /// this rung's own [`RungUpkeep::grace_turns`].
+    /// **THE UPKEEP SEAM — THE DECAY IS PROPORTIONAL TO HOW SHORT YOU ARE, AT THIS RUNG'S OWN
+    /// RATE** (`docs/plan_standing_upkeep.md` §2.4):
+    ///
+    /// ```text
+    /// decay_this_turn = shortfall_fraction × meter_decay.per_turn
+    /// ```
+    ///
+    /// once the shortfall has outlasted this rung's own [`RungUpkeep::grace_turns`].
     ///
     /// **It is continuous, and that is the whole point.** Half the hands a source needs means it
     /// slides at half rate — not at the full neglect rate and not at nothing. The binary *"is this
-    /// source worked"* flag cannot express that, which is why a crew half the size a source needed
-    /// used to count as fully worked and under-crewing had no cost at all until it reached zero.
+    /// source worked"* flag could not express that, which is why a crew half the size a source needed
+    /// used to count as fully worked.
+    ///
+    /// **The RATE is the rung's, not the demand's.** *Shortfall was the decay* until this arc, which
+    /// meant the demand and the rot rate were one number wearing two hats: retuning the demand
+    /// silently retuned the rot. They are separate dials now, and the plant demands moved from
+    /// `0.5`/`0.75` to `2`/`4` with the rot rate held exactly where it was
+    /// ([`upkeep_shortfall_fraction`]).
     ///
     /// `shortfall_turns` is the source's **consecutive** unmet-demand counter, read on the same
     /// convention as [`neglect_grace_remaining`]: the decay applies while it is **strictly greater**
     /// than the grace, so `grace_turns: 0` bleeds on the first unmet turn.
     ///
-    /// [`NO_UPKEEP_DECAY`] for a rung with no upkeep and for one still inside its grace.
-    pub fn upkeep_decay(&self, shortfall: f32, shortfall_turns: u16) -> f32 {
+    /// [`NO_UPKEEP_DECAY`] for a rung with no upkeep, for one whose penalty is not a meter bleed
+    /// (both animal rungs — their flock sheds instead), and for one still inside its grace.
+    pub fn upkeep_decay(&self, shortfall_fraction: f32, shortfall_turns: u16) -> f32 {
         let Some(upkeep) = self.upkeep.as_ref() else {
+            return NO_UPKEEP_DECAY;
+        };
+        let Some(decay) = upkeep.meter_decay.as_ref() else {
             return NO_UPKEEP_DECAY;
         };
         if u32::from(shortfall_turns) <= upkeep.grace_turns {
             return NO_UPKEEP_DECAY;
         }
-        shortfall.max(NO_UPKEEP_DECAY)
+        (shortfall_fraction.clamp(FULLY_SUPPLIED, WHOLLY_UNSUPPLIED) * decay.per_turn)
+            .max(NO_UPKEEP_DECAY)
+    }
+
+    /// **WHAT A METER STILL BEING RAISED IS OWED, PER TURN** — which is **not** what holding the
+    /// finished rung costs (`docs/plan_standing_upkeep.md` §0: *you cannot be billed to hold
+    /// something you have not finished building*).
+    ///
+    /// The two webs answer differently, and the difference is a real fact about them rather than a
+    /// special case:
+    ///
+    /// - **A rung whose penalty is a METER BLEED** (both plant rungs) is owed exactly what it would
+    ///   lose — [`RungMeterDecay::per_turn`]. Half-cleared ground has no stock to hold; it only grows
+    ///   back, so a crew clearing at least as fast as it reverts is holding it, and one that walks
+    ///   away loses it at the rung's own rate. This is what keeps a build's **stated pace** true:
+    ///   billing a 2-hand Sow against a Field's 4-work holding demand would make it erode while being
+    ///   built, and the turns a rung takes would stop being `work_cost / crew`.
+    /// - **A rung whose penalty is a SHED** (both animal rungs) is owed its whole
+    ///   [`Self::upkeep_demand`], because the animals are standing there whether or not the fence is
+    ///   up. A half-tamed flock still needs holding.
+    pub fn meter_raising_demand(&self, source_measure: f32) -> f32 {
+        self.upkeep
+            .as_ref()
+            .and_then(|upkeep| upkeep.meter_decay.as_ref())
+            .map_or_else(
+                || self.upkeep_demand(source_measure),
+                |decay| decay.per_turn,
+            )
+    }
+
+    /// **THE BAR THIS RUNG IS HELD AT ONCE IT IS EARNED** — `retain_fraction × cost`, the point the
+    /// meter may erode to before the rung is revoked (`docs/plan_standing_upkeep.md` §2.4).
+    ///
+    /// **The caller stamps it onto the source at completion**, beside the job's own cost, so the
+    /// predicates that ask *"is this patch tended"* need no config in scope — the reason
+    /// `is_cultivated()` can stay a method on the patch across its hundred call sites. It also makes
+    /// the bar survive a retune of the rung's price, exactly as the stamped cost does.
+    ///
+    /// A rung with no `meter_decay` (or no upkeep at all) is held at its **whole** cost, which is the
+    /// pre-arc predicate stated rather than special-cased: nothing bleeds it, so the bar is never
+    /// tested.
+    pub fn retention_bar(&self, cost: f32) -> f32 {
+        self.upkeep
+            .as_ref()
+            .and_then(|upkeep| upkeep.meter_decay.as_ref())
+            .map_or(cost, |decay| cost * decay.retain_fraction)
     }
 }
 
@@ -1759,6 +2008,33 @@ fn validate_upkeep(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError
                 .to_string(),
             value: format!("upkeep.work_per_turn = {}", upkeep.work_per_turn),
         });
+    }
+    if let Some(decay) = upkeep.meter_decay.as_ref() {
+        if !decay.per_turn.is_finite() || decay.per_turn <= 0.0 {
+            return Err(LadderConfigError::Invalid {
+                field: where_.to_string(),
+                constraint: "rot at a positive, finite rate — a rung that never rots says so by \
+                             declaring no `meter_decay` at all, rather than with a `0` that reads \
+                             like a live dial"
+                    .to_string(),
+                value: format!("upkeep.meter_decay.per_turn = {}", decay.per_turn),
+            });
+        }
+        if !decay.retain_fraction.is_finite()
+            || !(FULLY_SUPPLIED..=WHOLLY_UNSUPPLIED).contains(&decay.retain_fraction)
+        {
+            return Err(LadderConfigError::Invalid {
+                field: where_.to_string(),
+                constraint: "hold the rung at a fraction of its own cost within 0..=1 — above 1 \
+                             revokes the rung on the turn it completes, which is the very defect \
+                             the retention bar exists to fix"
+                    .to_string(),
+                value: format!(
+                    "upkeep.meter_decay.retain_fraction = {}",
+                    decay.retain_fraction
+                ),
+            });
+        }
     }
     // **The upkeep's grace may not outlast the rung's own build either**, and for the identical
     // reason the build's bound exists: forgive shortfall for longer than it took to raise the rung
@@ -2765,10 +3041,6 @@ mod tests {
     /// for a flat one.
     const A_TWENTY_HEAD_FLOCK: f32 = 20.0;
 
-    /// **What one hand covers** — the crew every shipped upkeep asks for, since both plant demands
-    /// are below a single worker-turn and the ceiling rounds up.
-    const A_SINGLE_KEEPER: u32 = 1;
-
     /// **A standing demand of one worker-turn**, so a crew of two covers it with a hand to spare and
     /// a crew of one covers it exactly — the two readings a shortfall test needs either side of.
     const A_DEMAND_OF_ONE_WORKER_TURN: f32 = 1.0;
@@ -2896,24 +3168,26 @@ mod tests {
     /// **HANDS TO MEET THE DEMAND** — the maintain activity's own `workers_needed`, and `0` for a
     /// rung that costs nothing to hold.
     ///
-    /// **BOTH SHIPPED PLANT RUNGS ANSWER `1`, and that is the burden this arc puts on the player**:
-    /// their demands (`0.5` and `0.75`) are sub-worker, and you cannot send half a keeper, so every
-    /// improvement on the map wants one hand standing on it forever.
+    /// **THE SHIPPED PLANT DEMANDS ARE WHOLE NUMBERS** (`2` and `4`), which is what the retune bought:
+    /// a player can staff a tended patch *exactly*, where the retired sub-worker demands (`0.5` /
+    /// `0.75`) rounded up to one hand and threw the rest of that hand away — the waste the band-level
+    /// pool now has no way to create.
     #[test]
     fn the_upkeep_crew_needed_is_the_demand_in_whole_workers() {
         let ladder = LadderConfig::builtin();
         for key in RungKey::ALL {
             let rung = ladder.rung(key);
+            let demand = rung.upkeep_demand(UNSCALED_UPKEEP);
             let expected = if rung.declares_upkeep() {
-                A_SINGLE_KEEPER
+                demand.ceil() as u32
             } else {
                 NO_CREW_ON_THIS_ACTIVITY
             };
             assert_eq!(
                 rung.upkeep_crew_needed(UNSCALED_UPKEEP),
                 expected,
-                "{}:{} — nobody is needed to hold something that costs nothing to hold, and one \
-                 hand covers every sub-worker demand the ladder ships",
+                "{}:{} — nobody is needed to hold something that costs nothing to hold, and a rung \
+                 that does asks for its demand in whole hands",
                 key.branch().as_str(),
                 key.id()
             );
@@ -2964,31 +3238,197 @@ mod tests {
         }
     }
 
-    /// **SHORTFALL IS THE DECAY, past the upkeep's own grace** (§2.4) — the meter loses exactly the
-    /// work that was not supplied, and not a fraction of some other number.
+    /// **THE DECAY IS THE SHORTFALL FRACTION AT THE RUNG'S OWN RATE, past the upkeep's own grace**
+    /// (§2.4) — three dials answering three questions, where *shortfall was the decay* welded the
+    /// demand to the rot rate and made either one unretunable.
     #[test]
-    fn the_upkeep_decay_is_the_shortfall_itself_once_the_grace_is_spent() {
+    fn the_upkeep_decay_is_the_shortfall_fraction_at_the_rungs_own_rate() {
         const GRACE: u32 = 2;
-        const SHORTFALL: f32 = 3.5;
-        let rung = rung_with_upkeep(A_DEMAND_OF_ONE_WORKER_TURN, UpkeepScale::Flat, GRACE);
+        /// A rot rate deliberately unequal to the demand beside it — the whole point of the split is
+        /// that the two are different numbers, and a fixture that made them equal would pass against
+        /// the retired *shortfall is the decay* arithmetic too.
+        const ROT_PER_TURN: f32 = 0.25;
+        let rung = rung_with_meter_decay(
+            A_DEMAND_OF_ONE_WORKER_TURN,
+            UpkeepScale::Flat,
+            GRACE,
+            ROT_PER_TURN,
+            A_HALF_FULL_RETENTION_BAR,
+        );
         for turns in 0..=GRACE as u16 {
             assert_eq!(
-                rung.upkeep_decay(SHORTFALL, turns),
+                rung.upkeep_decay(WHOLLY_UNSUPPLIED, turns),
                 NO_UPKEEP_DECAY,
                 "a grace of {GRACE} forgives turn {turns}"
             );
         }
         assert_eq!(
-            rung.upkeep_decay(SHORTFALL, GRACE as u16 + 1),
-            SHORTFALL,
-            "…and the turn after it, the meter loses exactly what went unsupplied"
+            rung.upkeep_decay(WHOLLY_UNSUPPLIED, GRACE as u16 + 1),
+            ROT_PER_TURN,
+            "…and the turn after it, a wholly unmaintained rung loses its own stated rate — never \
+             the demand it went short by"
+        );
+        // **Proportional, which is the other half of the split**: half the hands, half the rot.
+        assert_eq!(
+            rung.upkeep_decay(WHOLLY_UNSUPPLIED / 2.0, GRACE as u16 + 1),
+            ROT_PER_TURN / 2.0,
+            "half short is half the rot"
+        );
+        assert_eq!(
+            rung.upkeep_decay(FULLY_SUPPLIED, u16::MAX),
+            NO_UPKEEP_DECAY,
+            "and a fully staffed rung loses nothing however long it has been staffed"
         );
         // A rung with no upkeep has nothing to bleed, whatever it is handed.
         assert_eq!(
             LadderConfig::builtin()
                 .rung(RungKey::PlantWild)
-                .upkeep_decay(SHORTFALL, u16::MAX),
+                .upkeep_decay(WHOLLY_UNSUPPLIED, u16::MAX),
             NO_UPKEEP_DECAY
+        );
+        // **And neither does a rung whose penalty is not a meter bleed** — both animal rungs, whose
+        // flock sheds at the husbandry config's own escape fractions instead. A second rate here
+        // would be two numbers for one mechanic.
+        for key in [RungKey::AnimalPastoral, RungKey::AnimalPen] {
+            assert_eq!(
+                LadderConfig::builtin()
+                    .rung(key)
+                    .upkeep_decay(WHOLLY_UNSUPPLIED, u16::MAX),
+                NO_UPKEEP_DECAY,
+                "{}:{} sheds animals rather than bleeding a meter",
+                key.branch().as_str(),
+                key.id()
+            );
+        }
+    }
+
+    /// **THE RETENTION BAR IS A FRACTION OF THE RUNG'S OWN COST, and a rung that never rots is held
+    /// at the whole of it** — the pre-arc predicate, stated rather than special-cased.
+    #[test]
+    fn the_retention_bar_is_the_rungs_own_fraction_of_the_job() {
+        const A_JOB: f32 = 40.0;
+        let rots = rung_with_meter_decay(
+            A_DEMAND_OF_ONE_WORKER_TURN,
+            UpkeepScale::Flat,
+            NO_NEGLECT_GRACE,
+            A_DEMAND_OF_ONE_WORKER_TURN,
+            A_HALF_FULL_RETENTION_BAR,
+        );
+        assert_eq!(rots.retention_bar(A_JOB), A_JOB * A_HALF_FULL_RETENTION_BAR);
+        assert_eq!(
+            rung_with_upkeep(A_DEMAND_OF_ONE_WORKER_TURN, UpkeepScale::Flat, 0)
+                .retention_bar(A_JOB),
+            A_JOB,
+            "a rung whose meter never bleeds is held at its whole cost — nothing tests the bar"
+        );
+        // And so is a rung with no upkeep at all.
+        assert_eq!(
+            LadderConfig::builtin()
+                .rung(RungKey::PlantWild)
+                .retention_bar(A_JOB),
+            A_JOB
+        );
+    }
+
+    /// **A POOL HAS NO LEFTOVER, UNDER EITHER MODE** (§2.5) — and that is the whole reason
+    /// maintenance left the tile. An indivisible per-source supplier wastes whatever it does not
+    /// spend, once per source, and the waste grows as gear makes a hand worth more.
+    #[test]
+    fn a_short_pool_is_spent_whole_under_both_modes() {
+        /// Three demands that do not divide evenly into the pool, so a mode that rounded anywhere
+        /// would leave a remainder this test can see.
+        const DEMANDS: [f32; 3] = [2.0, 4.0, 1.0];
+        /// Well under the `7.0` those demands total.
+        const SHORT_POOL: f32 = 3.0;
+
+        for mode in [UpkeepFundMode::Spread, UpkeepFundMode::Priority] {
+            let shares = distribute_upkeep_pool(SHORT_POOL, &DEMANDS, mode);
+            let spent: f32 = shares.iter().sum();
+            assert!(
+                (spent - SHORT_POOL).abs() < 1e-6,
+                "{mode:?}: the whole pool is spent — {shares:?} sums to {spent}"
+            );
+            for (share, demand) in shares.iter().zip(DEMANDS) {
+                assert!(
+                    *share <= demand + 1e-6,
+                    "{mode:?}: no source is funded past what it asked for — {share} against {demand}"
+                );
+            }
+        }
+    }
+
+    /// **THE TWO MODES ANSWER DIFFERENTLY, and each answers what it is named for** (§2.5).
+    #[test]
+    fn spread_degrades_everything_and_priority_funds_in_order() {
+        const DEMANDS: [f32; 3] = [2.0, 4.0, 1.0];
+        /// Exactly half of the `7.0` total, so `spread`'s coverage is a clean one-half.
+        const HALF_THE_TOTAL: f32 = 3.5;
+
+        let spread = distribute_upkeep_pool(HALF_THE_TOTAL, &DEMANDS, UpkeepFundMode::Spread);
+        for (share, demand) in spread.iter().zip(DEMANDS) {
+            assert!(
+                (share - demand / 2.0).abs() < 1e-6,
+                "spread holds every source at the same coverage — {share} against {demand}"
+            );
+        }
+
+        // **Priority funds in SLICE ORDER**, which is the caller's *most-invested first* ordering:
+        // the ladder owns the arithmetic and the web owns the ranking, because "most invested" is a
+        // per-web reading of a stamped meter cost.
+        let priority = distribute_upkeep_pool(HALF_THE_TOTAL, &DEMANDS, UpkeepFundMode::Priority);
+        assert_eq!(priority[0], DEMANDS[0], "the first claim is met in full");
+        assert!(
+            (priority[1] - (HALF_THE_TOTAL - DEMANDS[0])).abs() < 1e-6,
+            "the second takes what is left — {}",
+            priority[1]
+        );
+        assert_eq!(
+            priority[2], 0.0,
+            "and the marginal one rots, which is what the mode is for"
+        );
+    }
+
+    /// **A pool that covers the total funds everything, and an EMPTY pool funds nothing** — the two
+    /// ends, so neither mode can be right only in the middle.
+    #[test]
+    fn a_sufficient_pool_funds_every_source_and_an_empty_one_funds_none() {
+        const DEMANDS: [f32; 3] = [2.0, 4.0, 1.0];
+        const TOTAL: f32 = 7.0;
+
+        for mode in [UpkeepFundMode::Spread, UpkeepFundMode::Priority] {
+            let full = distribute_upkeep_pool(TOTAL, &DEMANDS, mode);
+            for (share, demand) in full.iter().zip(DEMANDS) {
+                assert!(
+                    (share - demand).abs() < 1e-6,
+                    "{mode:?}: a pool that covers the sum meets every demand"
+                );
+            }
+            // And a pool bigger than the sum still funds no more than the sum — the leftover stays
+            // in the pool rather than being poured into a source that did not ask for it.
+            let ample = distribute_upkeep_pool(TOTAL * 2.0, &DEMANDS, mode);
+            assert!(ample.iter().sum::<f32>() <= TOTAL + 1e-6);
+
+            let empty = distribute_upkeep_pool(NO_UPKEEP_DEMAND, &DEMANDS, mode);
+            assert!(
+                empty.iter().all(|share| *share == NO_UPKEEP_DEMAND),
+                "{mode:?}: nobody on the role means nobody is held"
+            );
+        }
+    }
+
+    /// **The mode round-trips its command/wire token, and an unknown one is refused rather than
+    /// guessed at** — silently reading a typo as the default would leave a player believing they had
+    /// protected their Field.
+    #[test]
+    fn the_fund_mode_round_trips_its_token_and_refuses_an_unknown_one() {
+        for mode in [UpkeepFundMode::Spread, UpkeepFundMode::Priority] {
+            assert_eq!(UpkeepFundMode::from_token(mode.as_str()), Some(mode));
+        }
+        assert_eq!(UpkeepFundMode::from_token("sideways"), None);
+        assert_eq!(
+            UpkeepFundMode::default(),
+            UpkeepFundMode::Spread,
+            "an unstated policy singles nobody out"
         );
     }
 
@@ -3014,6 +3454,39 @@ mod tests {
     /// seam's tests judge, so they exercise a **parsed** record rather than a hand-built struct that
     /// could drift from the config's own shape.
     fn rung_with_upkeep(work_per_turn: f32, scaled_by: UpkeepScale, grace_turns: u32) -> RungDef {
+        rung_with_optional_meter_decay(work_per_turn, scaled_by, grace_turns, None)
+    }
+
+    /// **Half a meter's worth** — the retention bar these fixtures hold a rung at, chosen well clear
+    /// of both `0` and `1` so a bar read as either endpoint fails rather than coincides.
+    const A_HALF_FULL_RETENTION_BAR: f32 = 0.5;
+
+    /// The same fixture with a `meter_decay` block — a rung whose penalty *is* a meter bleed, which
+    /// no animal rung is and which is therefore the shape the plant web ships.
+    fn rung_with_meter_decay(
+        work_per_turn: f32,
+        scaled_by: UpkeepScale,
+        grace_turns: u32,
+        per_turn: f32,
+        retain_fraction: f32,
+    ) -> RungDef {
+        rung_with_optional_meter_decay(
+            work_per_turn,
+            scaled_by,
+            grace_turns,
+            Some(serde_json::json!({
+                "per_turn": per_turn,
+                "retain_fraction": retain_fraction,
+            })),
+        )
+    }
+
+    fn rung_with_optional_meter_decay(
+        work_per_turn: f32,
+        scaled_by: UpkeepScale,
+        grace_turns: u32,
+        meter_decay: Option<serde_json::Value>,
+    ) -> RungDef {
         let mut json: serde_json::Value =
             serde_json::from_str(BUILTIN_INTENSIFICATION_LADDER).expect("the builtin parses");
         let idx = rung_index(&json, "animal", "pen");
@@ -3021,6 +3494,7 @@ mod tests {
             "work_per_turn": work_per_turn,
             "scaled_by": scaled_by.as_str(),
             "grace_turns": grace_turns,
+            "meter_decay": meter_decay,
         });
         let ladder = LadderConfig::from_json_str(&json.to_string()).expect("the fixture is valid");
         ladder.rung(RungKey::AnimalPen).clone()

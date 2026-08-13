@@ -141,7 +141,6 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                         improvement: None,
                         kit: None,
                         improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                        maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                     },
                     LaborAssignment {
                         target: LaborTarget::Hunt {
@@ -152,7 +151,6 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                         improvement: None,
                         kit: None,
                         improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                        maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                     },
                 ],
                 ..Default::default()

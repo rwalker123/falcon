@@ -3725,6 +3725,19 @@ pub fn herd_at_risk_is_built(herd: &Herd) -> bool {
     }
 }
 
+/// **WHAT HAS BEEN SUNK INTO THE METER AT RISK** — the animal twin of `forage::patch_at_risk_cost`,
+/// and the ordering key of [`crate::intensification::UpkeepFundMode::Priority`]: a band short of
+/// keepers holds its pen before its unfenced flock.
+pub fn herd_at_risk_cost(herd: &Herd) -> f32 {
+    if herd.is_corralled() || herd.corral_progress > RUNG_UNSTARTED {
+        herd.corral_cost
+    } else if herd.owner.is_some() {
+        herd.domestication_cost
+    } else {
+        RUNG_UNSTARTED
+    }
+}
+
 /// **THE WORK THE AT-RISK METER WAS OWED THIS TURN, AND WHO OWED IT** — the animal twin of
 /// `forage::patch_upkeep_supply`, and the same rule stated on the same seam:
 ///
@@ -3788,7 +3801,16 @@ pub fn herd_upkeep_supply(
 /// **THE one definition**, reached by the shed, the labor arm's stamp and the snapshot alike.
 pub fn herd_upkeep_demand(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> f32 {
     herd_keeping_rung(herd, ladder).map_or(NO_UPKEEP_DEMAND, |rung| {
-        rung.upkeep_demand(herd_keeper_load(herd, fauna))
+        // **The animal web answers the same on both sides of completion, and that is the point of
+        // the seam** (`RungDef::meter_raising_demand`): a rung whose penalty is a *shed* is owed its
+        // whole keeping while it is being raised, because the animals are standing there whether or
+        // not the fence is up. Only a rung whose penalty is a meter bleed answers differently.
+        let measure = herd_keeper_load(herd, fauna);
+        if herd_at_risk_is_built(herd) {
+            rung.upkeep_demand(measure)
+        } else {
+            rung.meter_raising_demand(measure)
+        }
     })
 }
 

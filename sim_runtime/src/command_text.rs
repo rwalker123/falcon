@@ -148,10 +148,10 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "abandon_improvement <faction_id> forage <x> <y> | abandon_improvement <faction_id> hunt <herd_id>",
     },
     CommandVerbHelp {
-        verb: "maintain",
+        verb: "upkeep_mode",
         aliases: &[],
-        summary: "Put hands on a source's STANDING upkeep - the third of a source's three worker allocations, beside the take crew (assign_labor) and the build crew (the improvement verbs). All three come out of one band, so what competes for hands is visible in the numbers you type. There is no cap. WORKERS 0 IS 'stop maintaining this': the demand still stands, so all of it goes unmet and the improvement slides back down the ladder - hold it and spend the hands, or write it off and put them somewhere else. No shipped rung declares an upkeep yet, so this costs nothing today.",
-        usage: "maintain <faction_id> forage <x> <y> <workers> | maintain <faction_id> hunt <herd_id> <workers>",
+        summary: "Say how one band splits its MAINTENANCE POOL when it cannot cover everything it holds. Maintenance is a band-level standing role, not a per-source crew: staff it with `assign_labor <faction> <band> agriculture <n>` for the plant web and `husbandry <n>` for the animal one, and the band's demand is the SUM over every tended patch, Field, tamed herd and pen it works. When the pool falls short, 'spread' funds every source in proportion to its demand so EVERYTHING degrades a little, and 'priority' funds sources COMPLETELY until the pool runs out, MOST-INVESTED FIRST, so the biggest investments stay whole and the marginal ones rot. Defaults to spread. An unknown mode is refused by name.",
+        usage: "upkeep_mode <faction_id> <band_id> spread|priority",
     },
     CommandVerbHelp {
         verb: "set_bench",
@@ -198,8 +198,8 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "assign_labor",
         aliases: &[],
-        summary: "Set the worker count for one labor target on a band (0 unassigns; clamps to idle).",
-        usage: "assign_labor <faction_id> <band> forage <x> <y> [floor] [species] <workers> [kit <id>] | hunt <herd_id> [floor] <workers> [kit <id>] | scout <workers> | warrior <workers>",
+        summary: "Set the worker count for one labor target on a band (0 unassigns; clamps to idle). Besides the worked sources and scout/warrior there are two MAINTENANCE roles: 'agriculture' keeps every tended patch and Field this band works, 'husbandry' every tamed herd and pen. Each is a POOL measured against the SUM of what the band holds on that web, so nothing is wasted on a demand that does not divide into whole workers; short of the sum, the split follows the band's upkeep_mode. Zero is how you stop maintaining a whole web.",
+        usage: "assign_labor <faction_id> <band> forage <x> <y> [floor] [species] <workers> [kit <id>] | hunt <herd_id> [floor] <workers> [kit <id>] | scout <workers> | warrior <workers> | agriculture <workers> | husbandry <workers>",
     },
     CommandVerbHelp {
         verb: "move_band",
@@ -849,56 +849,30 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 _ => Err(CommandParseError::UnexpectedToken(kind)),
             }
         }
-        "maintain" => {
+        // **`upkeep_mode <faction> <band> spread|priority`** — the retired `maintain`'s successor
+        // (`docs/plan_standing_upkeep.md` §2.5). Maintenance is a band-level standing role now, so
+        // the crew is set with `assign_labor … agriculture|husbandry <workers>` and what is left to
+        // state is the fund mode. **The mode token is not validated here**: the sim owns the set of
+        // modes and refuses an unknown one by name, exactly as it refuses an unknown kit.
+        "upkeep_mode" => {
             let faction_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("faction_id"))?;
-            let faction_id = parse_u32(faction_str, "maintain faction")?;
-            let kind = parts
+            let band_str = parts
                 .next()
-                .ok_or(CommandParseError::MissingArgument("kind"))?
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let mode = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("mode"))?
                 .to_ascii_lowercase();
-            // **`abandon_improvement`'s grammar, verbatim** — including its rule that an unknown
-            // source kind fails **here**, at parse time, rather than being read with the forage
-            // arity and rejected asynchronously for an argument unrelated to the mistake.
-            match kind.as_str() {
-                "hunt" => {
-                    let fauna_id = parts
-                        .next()
-                        .ok_or(CommandParseError::MissingArgument("fauna_id"))?;
-                    let crew_str = parts
-                        .next()
-                        .ok_or(CommandParseError::MissingArgument("workers"))?;
-                    Ok(CommandPayload::Maintain {
-                        faction_id,
-                        kind,
-                        target_x: 0,
-                        target_y: 0,
-                        fauna_id: fauna_id.to_string(),
-                        workers: parse_u32(crew_str, "maintain workers")?,
-                    })
-                }
-                "forage" => {
-                    let x_str = parts
-                        .next()
-                        .ok_or(CommandParseError::MissingArgument("target_x"))?;
-                    let y_str = parts
-                        .next()
-                        .ok_or(CommandParseError::MissingArgument("target_y"))?;
-                    let crew_str = parts
-                        .next()
-                        .ok_or(CommandParseError::MissingArgument("workers"))?;
-                    Ok(CommandPayload::Maintain {
-                        faction_id,
-                        kind,
-                        target_x: parse_u32(x_str, "maintain target_x")?,
-                        target_y: parse_u32(y_str, "maintain target_y")?,
-                        fauna_id: String::new(),
-                        workers: parse_u32(crew_str, "maintain workers")?,
-                    })
-                }
-                _ => Err(CommandParseError::UnexpectedToken(kind)),
+            if let Some(extra) = parts.next() {
+                return Err(CommandParseError::UnexpectedToken(extra.to_string()));
             }
+            Ok(CommandPayload::UpkeepMode {
+                faction_id: parse_u32(faction_str, "upkeep_mode faction")?,
+                band_id: parse_u64(band_str, "upkeep_mode band_id")?,
+                mode,
+            })
         }
         "set_bench" => {
             let faction_str = parts
@@ -1133,7 +1107,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                         None,
                     )
                 }
-                "scout" | "warrior" => {
+                "scout" | "warrior" | "agriculture" | "husbandry" => {
                     let w = parts
                         .next()
                         .ok_or(CommandParseError::MissingArgument("workers"))?;
@@ -2630,66 +2604,48 @@ mod tests {
         ));
     }
 
-    /// **`maintain` reads `abandon_improvement`'s grammar, plus a crew tail.** The two are siblings
-    /// — one drops the build, the other staffs (or unstaffs) the standing cost — so a player who
-    /// knows one can type the other.
+    /// **`upkeep_mode` names a BAND and a MODE, and nothing else** — maintenance is a band-level
+    /// standing role (`docs/plan_standing_upkeep.md` §2.5), so there is no source in this grammar at
+    /// all. It is the successor to the retired `maintain`, whose per-source crew is now staffed
+    /// through `assign_labor … agriculture|husbandry <workers>`.
     #[test]
-    fn parse_maintain_reads_each_webs_arity_and_the_crew() {
+    fn parse_upkeep_mode_reads_the_band_and_the_mode() {
         assert_eq!(
-            parse_command_line("maintain 1 forage 4 7 0").unwrap(),
-            CommandPayload::Maintain {
+            parse_command_line("upkeep_mode 1 7 priority").unwrap(),
+            CommandPayload::UpkeepMode {
                 faction_id: 1,
-                kind: "forage".to_string(),
-                target_x: 4,
-                target_y: 7,
-                fauna_id: String::new(),
-                // **Zero is a real instruction, not an absent one** — *stop maintaining this*.
-                workers: 0,
+                band_id: 7,
+                mode: "priority".to_string(),
             }
         );
+        // Case-folded, like every other token language in this parser.
         assert_eq!(
-            parse_command_line("maintain 1 hunt game_test 3").unwrap(),
-            CommandPayload::Maintain {
+            parse_command_line("upkeep_mode 1 7 SPREAD").unwrap(),
+            CommandPayload::UpkeepMode {
                 faction_id: 1,
-                kind: "hunt".to_string(),
-                target_x: 0,
-                target_y: 0,
-                fauna_id: "game_test".to_string(),
-                workers: 3,
+                band_id: 7,
+                mode: "spread".to_string(),
             }
         );
     }
 
-    /// **Fail closed on an unknown source kind, AT PARSE TIME** — `abandon_improvement`'s rule,
-    /// verbatim and for its reason: the kind decides the *arity*, so a catch-all forage arm turns a
-    /// typo into a complaint about an argument unrelated to the mistake.
+    /// **The MODE is not validated here, and the arity is.** Which modes exist is the sim's to say —
+    /// it refuses an unknown one by name, exactly as it refuses an unknown kit — but a missing or
+    /// extra token is a typo, and a parser that guessed at one would apply a mode the player never
+    /// typed.
     #[test]
-    fn parse_maintain_rejects_an_unknown_source_kind() {
+    fn parse_upkeep_mode_takes_any_token_but_exactly_three() {
         assert!(matches!(
-            parse_command_line("maintain 1 foo 0"),
-            Err(CommandParseError::UnexpectedToken(token)) if token == "foo"
+            parse_command_line("upkeep_mode 1 7 sideways"),
+            Ok(CommandPayload::UpkeepMode { .. })
         ));
         assert!(matches!(
-            parse_command_line("maintain 1 foo 4 7 0"),
-            Err(CommandParseError::UnexpectedToken(token)) if token == "foo"
-        ));
-    }
-
-    /// The crew is **required**, not defaulted: `maintain …` with no number names no decision, and
-    /// guessing one would staff (or unstaff) a source the player asked nothing about.
-    #[test]
-    fn parse_maintain_requires_the_crew() {
-        assert!(matches!(
-            parse_command_line("maintain 1 forage 4 7"),
-            Err(CommandParseError::MissingArgument("workers"))
+            parse_command_line("upkeep_mode 1 7"),
+            Err(CommandParseError::MissingArgument("mode"))
         ));
         assert!(matches!(
-            parse_command_line("maintain 1 hunt game_test"),
-            Err(CommandParseError::MissingArgument("workers"))
-        ));
-        assert!(matches!(
-            parse_command_line("maintain 1 hunt game_test some"),
-            Err(CommandParseError::InvalidInteger { .. })
+            parse_command_line("upkeep_mode 1 7 spread extra"),
+            Err(CommandParseError::UnexpectedToken(_))
         ));
     }
 

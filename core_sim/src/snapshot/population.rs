@@ -19,12 +19,12 @@ pub(crate) fn labor_assignment_to_state(
     let mut state = LaborAssignmentState {
         kind: assignment.target.kind().to_string(),
         workers: assignment.workers,
-        // **The other two of this source's three crews** (`docs/plan_standing_upkeep.md` §2.2),
-        // published verbatim beside the take's. They are the player's own numbers rather than
-        // anything derived, and the client cannot reconstruct either — so without them it can send
-        // a build or a keeping crew and never read back the one a band already has.
+        // **The build's own crew** (`docs/plan_standing_upkeep.md` §2.2), published verbatim beside
+        // the take's. It is the player's own number rather than anything derived, and the client
+        // cannot reconstruct it — so without it the client can send a build crew and never read back
+        // the one a band already has. The **keeping** crew is not here any more: it is a band-level
+        // standing role (§2.5) and arrives as its own row of this list.
         improvement_workers: assignment.improvement_workers,
-        maintain_workers: assignment.maintain_workers,
         actual_yield: yields.actual,
         sustainable_yield: yields.sustainable,
         workers_needed: yields.workers_needed,
@@ -82,7 +82,12 @@ pub(crate) fn labor_assignment_to_state(
             state.fauna_id = fauna_id.clone();
             state.floor = *floor;
         }
-        LaborTarget::Scout | LaborTarget::Warrior => {}
+        // The four band-wide roles carry no source and no floor: their whole content is the head
+        // count already on the row.
+        LaborTarget::Scout
+        | LaborTarget::Warrior
+        | LaborTarget::Agriculture
+        | LaborTarget::Husbandry => {}
     }
     state
 }
@@ -931,6 +936,15 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // the two pairs read the same number.
         transfer_received_turn: cohort.last_turn_transfer_received,
         transfer_sent_turn: cohort.last_turn_transfer_sent,
+        // **How this band splits a maintenance pool it cannot stretch** — the player's own choice
+        // (`docs/plan_standing_upkeep.md` §2.5), published as the token the command takes so the two
+        // are one language. A band with no allocation states the default rather than an empty
+        // string: *"the sim did not say"* is a frame nobody should have to interpret.
+        upkeep_fund_mode: allocation
+            .map(|a| a.upkeep_fund_mode)
+            .unwrap_or_default()
+            .as_str()
+            .to_string(),
     }
 }
 
@@ -1212,7 +1226,6 @@ mod tests {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             last_yields: vec![SourceYield {
                 arrivals,
@@ -1344,7 +1357,6 @@ mod tests {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             last_yields: vec![SourceYield::ZERO],
             ..Default::default()

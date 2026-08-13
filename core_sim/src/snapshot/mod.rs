@@ -1396,7 +1396,6 @@ mod tests {
                     improvement: None,
                     kit: None,
                     improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 },
                 LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -1407,7 +1406,6 @@ mod tests {
                     improvement: None,
                     kit: None,
                     improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 },
             ],
             last_yields: vec![
@@ -1447,6 +1445,7 @@ mod tests {
             last_raid_forfeit: 0.0,
             last_transfer_received: 0.0,
             last_transfer_sent: 0.0,
+            upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
         };
         let (mut cohort, allocation) = food_test_cohort(
             Scalar::from_f32(0.0),
@@ -1520,7 +1519,6 @@ mod tests {
                     improvement: None,
                     kit: None,
                     improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 },
                 LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -1531,7 +1529,6 @@ mod tests {
                     improvement: None,
                     kit: None,
                     improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 },
             ],
             last_yields: vec![
@@ -1548,6 +1545,7 @@ mod tests {
             last_raid_forfeit: 0.0,
             last_transfer_received: 0.0,
             last_transfer_sent: 0.0,
+            upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
         };
         let (cohort, allocation) = food_test_cohort(
             Scalar::from_f32(0.0),
@@ -1593,13 +1591,13 @@ mod tests {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             last_yields: Vec::new(),
             last_pen_feed_upkeep: 0.0,
             last_raid_forfeit: 0.0,
             last_transfer_received: 0.0,
             last_transfer_sent: 0.0,
+            upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
         };
         let (cohort, allocation) = food_test_cohort(
             Scalar::from_f32(0.0),
@@ -1636,7 +1634,6 @@ mod tests {
             improvement: None,
             kit: None,
             improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-            maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
         };
         let state = labor_assignment_to_state(
             &assignment,
@@ -1667,7 +1664,6 @@ mod tests {
             improvement: Some(Improvement::Cultivate),
             kit: None,
             improvement_workers: 6,
-            maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
         };
         let state = labor_assignment_to_state(
             &assignment,

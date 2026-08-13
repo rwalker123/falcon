@@ -831,12 +831,27 @@ pub enum KitJob {
     Forage,
     Scout,
     Warrior,
+    /// **The plant web's standing keepers** — the `agriculture` role's job
+    /// (`docs/plan_standing_upkeep.md` §2.5). It has its own job rather than borrowing the
+    /// gatherers' because gear **covers people**: folding keepers into `Forage` would divide the
+    /// band's baskets among hands that are not carrying anything home.
+    Agriculture,
+    /// **The animal web's standing keepers** — the `husbandry` role's job, the twin of
+    /// [`KitJob::Agriculture`] and separate from `Hunt` for its reason.
+    Husbandry,
 }
 
 impl KitJob {
     /// Every job, for the validations and the wire — one list, so a new job cannot be validated in
     /// three places and forgotten in a fourth.
-    pub const ALL: [KitJob; 4] = [KitJob::Hunt, KitJob::Forage, KitJob::Scout, KitJob::Warrior];
+    pub const ALL: [KitJob; 6] = [
+        KitJob::Hunt,
+        KitJob::Forage,
+        KitJob::Scout,
+        KitJob::Warrior,
+        KitJob::Agriculture,
+        KitJob::Husbandry,
+    ];
 
     /// The wire/command token for this job — the same string `assign_labor`'s role token uses (and
     /// the same string [`crate::components::LaborTarget::kind`] answers), so a kit's `jobs` list and
@@ -847,6 +862,8 @@ impl KitJob {
             KitJob::Forage => "forage",
             KitJob::Scout => "scout",
             KitJob::Warrior => "warrior",
+            KitJob::Agriculture => "agriculture",
+            KitJob::Husbandry => "husbandry",
         }
     }
 }
@@ -878,6 +895,12 @@ pub struct DefaultKitsConfig {
     pub forage: String,
     pub scout: String,
     pub warrior: String,
+    /// **What a plant keeper works with today: nothing.** The shipped roster declares no maintenance
+    /// gear, so the `agriculture` role's default is the ordinary empty `none` kit rather than a
+    /// sentinel — the day a hoe declares a stat, this row is where it lands.
+    pub agriculture: String,
+    /// The animal keeper's default — see [`Self::agriculture`].
+    pub husbandry: String,
 }
 
 /// **What the kit is being resolved AGAINST** — the argument a mass-bounded effect is tested on.
@@ -1526,6 +1549,8 @@ impl EquipmentConfig {
             KitJob::Forage => &self.default_kits.forage,
             KitJob::Scout => &self.default_kits.scout,
             KitJob::Warrior => &self.default_kits.warrior,
+            KitJob::Agriculture => &self.default_kits.agriculture,
+            KitJob::Husbandry => &self.default_kits.husbandry,
         }
     }
 
@@ -3574,7 +3599,7 @@ mod tests {
                     { "id": "big_game", "display_name": "A", "jobs": ["hunt"], "uses": [] },
                     { "id": "big_game", "display_name": "B", "jobs": ["hunt"], "uses": [] }
                 ],
-                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game" },
+                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -3584,7 +3609,7 @@ mod tests {
                 r#""kits": [
                     { "id": "big_game", "display_name": "A", "jobs": [], "uses": [] }
                 ],
-                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game" },
+                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -3594,7 +3619,7 @@ mod tests {
                 r#""kits": [
                     { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": [] }
                 ],
-                "default_kits": { "hunt": "ghost", "forage": "big_game", "scout": "big_game", "warrior": "big_game" },
+                "default_kits": { "hunt": "ghost", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -3605,7 +3630,7 @@ mod tests {
                     { "id": "big_game", "display_name": "A", "jobs": ["hunt"], "uses": [] },
                     { "id": "gathering", "display_name": "B", "jobs": ["forage"], "uses": [] }
                 ],
-                "default_kits": { "hunt": "gathering", "forage": "gathering", "scout": "gathering", "warrior": "gathering" },
+                "default_kits": { "hunt": "gathering", "forage": "gathering", "scout": "gathering", "warrior": "gathering", "agriculture": "gathering", "husbandry": "gathering" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -3635,7 +3660,7 @@ mod tests {
             r#""kits": [
                 { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": ["net_kit"] }
             ],
-            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game" },
+            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -3685,9 +3710,9 @@ mod tests {
             },
             "kits": [
                 { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": ["spears"] },
-                { "id": "warrior", "display_name": "W", "jobs": ["warrior", "scout"], "uses": ["snares"] }
+                { "id": "warrior", "display_name": "W", "jobs": ["warrior", "scout", "agriculture", "husbandry"], "uses": ["snares"] }
             ],
-            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "warrior", "warrior": "warrior" },
+            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "warrior", "warrior": "warrior", "agriculture": "warrior", "husbandry": "warrior" },
             "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }
@@ -3707,9 +3732,9 @@ mod tests {
     const ROSTER_JSON: &str = r#""kits": [
                 { "id": "big_game", "display_name": "Stalking kit", "jobs": ["hunt"], "uses": ["spears", "sled"] },
                 { "id": "gathering", "display_name": "Gathering kit", "jobs": ["forage"], "uses": ["baskets"] },
-                { "id": "none", "display_name": "No kit", "jobs": ["hunt", "forage", "scout", "warrior"], "uses": [] }
+                { "id": "none", "display_name": "No kit", "jobs": ["hunt", "forage", "scout", "warrior", "agriculture", "husbandry"], "uses": [] }
             ],
-            "default_kits": { "hunt": "big_game", "forage": "gathering", "scout": "none", "warrior": "none" },
+            "default_kits": { "hunt": "big_game", "forage": "gathering", "scout": "none", "warrior": "none", "agriculture": "none", "husbandry": "none" },
             "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#;

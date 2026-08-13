@@ -118,7 +118,7 @@ pub enum CommandPayload {
         faction_id: u32,
         herd_id: String,
         /// **The BUILD's own crew** — hands on this verb, independent of the take crew `assign_labor`
-        /// set and of the maintain crew (`docs/plan_standing_upkeep.md` §2.2). No cap; `0` stops the
+        /// set (`docs/plan_standing_upkeep.md` §2.2). No cap; `0` stops the
         /// build without clearing its meter.
         workers: u32,
     },
@@ -127,7 +127,7 @@ pub enum CommandPayload {
         target_x: u32,
         target_y: u32,
         /// **The BUILD's own crew** — hands on this verb, independent of the take crew `assign_labor`
-        /// set and of the maintain crew (`docs/plan_standing_upkeep.md` §2.2). No cap; `0` stops the
+        /// set (`docs/plan_standing_upkeep.md` §2.2). No cap; `0` stops the
         /// build without clearing its meter.
         workers: u32,
     },
@@ -136,7 +136,7 @@ pub enum CommandPayload {
         target_x: u32,
         target_y: u32,
         /// **The BUILD's own crew** — hands on this verb, independent of the take crew `assign_labor`
-        /// set and of the maintain crew (`docs/plan_standing_upkeep.md` §2.2). No cap; `0` stops the
+        /// set (`docs/plan_standing_upkeep.md` §2.2). No cap; `0` stops the
         /// build without clearing its meter.
         workers: u32,
     },
@@ -145,7 +145,7 @@ pub enum CommandPayload {
         target_x: u32,
         target_y: u32,
         /// **The BUILD's own crew** — hands on this verb, independent of the take crew `assign_labor`
-        /// set and of the maintain crew (`docs/plan_standing_upkeep.md` §2.2). No cap; `0` stops the
+        /// set (`docs/plan_standing_upkeep.md` §2.2). No cap; `0` stops the
         /// build without clearing its meter.
         workers: u32,
     },
@@ -166,19 +166,19 @@ pub enum CommandPayload {
         target_y: u32,
         fauna_id: String,
     },
-    /// **Put hands on one source's standing upkeep** — the third of a source's three worker
-    /// allocations (`docs/plan_standing_upkeep.md` §2.2), sharing `abandon_improvement`'s source
-    /// grammar.
+    /// **Say how a band splits a maintenance pool it cannot stretch**
+    /// (`docs/plan_standing_upkeep.md` §2.5) — `"spread"` (everything degrades a little) or
+    /// `"priority"` (fund sources completely, most-invested first).
     ///
-    /// **`workers: 0` is "stop maintaining this"** — there is no toggle beside the number. The
-    /// demand still stands, so all of it goes unmet and the improvement slides.
-    Maintain {
+    /// It replaces the retired `Maintain`, which put hands on **one source's** keeping. Maintenance
+    /// is a band-level standing role now (`assign_labor <faction> <band> agriculture|husbandry
+    /// <workers>`), so what is left to decide is not *where the hands go* but *what happens when
+    /// there are not enough of them* — and that is one decision per band, not one per source.
+    UpkeepMode {
         faction_id: u32,
-        kind: String,
-        target_x: u32,
-        target_y: u32,
-        fauna_id: String,
-        workers: u32,
+        band_id: u64,
+        /// The mode token; anything the sim does not know is refused by name rather than guessed at.
+        mode: String,
     },
     ExtendPen {
         faction_id: u32,
@@ -982,20 +982,14 @@ impl CommandEnvelope {
                 target_y: *target_y,
                 fauna_id: fauna_id.clone(),
             }),
-            CommandPayload::Maintain {
+            CommandPayload::UpkeepMode {
                 faction_id,
-                kind,
-                target_x,
-                target_y,
-                fauna_id,
-                workers,
-            } => pb::command_envelope::Command::Maintain(pb::MaintainCommand {
+                band_id,
+                mode,
+            } => pb::command_envelope::Command::UpkeepMode(pb::UpkeepModeCommand {
                 faction_id: *faction_id,
-                kind: kind.clone(),
-                target_x: *target_x,
-                target_y: *target_y,
-                fauna_id: fauna_id.clone(),
-                workers: *workers,
+                band_id: *band_id,
+                mode: mode.clone(),
             }),
             CommandPayload::SetBench {
                 faction_id,
@@ -1435,13 +1429,10 @@ impl CommandEnvelope {
                     fauna_id: cmd.fauna_id,
                 }
             }
-            pb::command_envelope::Command::Maintain(cmd) => CommandPayload::Maintain {
+            pb::command_envelope::Command::UpkeepMode(cmd) => CommandPayload::UpkeepMode {
                 faction_id: cmd.faction_id,
-                kind: cmd.kind,
-                target_x: cmd.target_x,
-                target_y: cmd.target_y,
-                fauna_id: cmd.fauna_id,
-                workers: cmd.workers,
+                band_id: cmd.band_id,
+                mode: cmd.mode,
             },
             pb::command_envelope::Command::SetBench(cmd) => CommandPayload::SetBench {
                 faction_id: cmd.faction_id,

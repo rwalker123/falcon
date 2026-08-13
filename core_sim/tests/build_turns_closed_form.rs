@@ -252,7 +252,6 @@ fn spawn_keepers_of(
                     // published turns estimate and the gear stamp are both quoted at the BUILD's
                     // crew, so the two have to agree for a closed-form check to mean anything.
                     improvement_workers: improvement.map_or(NO_CREW_ON_THIS_ACTIVITY, |_| builders),
-                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },

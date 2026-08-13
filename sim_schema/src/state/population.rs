@@ -194,17 +194,16 @@ pub struct LaborAssignmentState {
     /// `0` whenever no verb is in flight, which is the common case. Appended (append-only).
     #[serde(default)]
     pub improvement_workers: u32,
-    /// **THE HANDS ON THE KEEPING** — the standing upkeep's own crew, the third allocation.
-    /// `0` on a source nobody is keeping.
-    ///
-    /// **These two exist because the client cannot derive either**, and without them two of the
-    /// three allocations are *write-only* from its side: it can send the commands and never read
-    /// back what a band already has. A compose sheet clamps its steppers to the band's **idle**
-    /// workers, so a fully-allocated band offered a maximum of `0` and the player could not
-    /// re-state a crew they already had — only take it to zero. Read all three
-    /// ([`Self::workers`], these) as one set. Appended (append-only).
-    #[serde(default)]
-    pub maintain_workers: u32,
+    // **RETIRED: `maintain_workers`** — the per-source keeper crew. **Maintenance left the tile**
+    // (`docs/plan_standing_upkeep.md` §2.5): it is a band-level standing role now
+    // (`agriculture` / `husbandry`), which arrives as an ordinary **row in this very list** with its
+    // hands in [`Self::workers`], so a client reads it exactly as it reads Scout and Warrior. The
+    // wire slot `maintainWorkers` is `(deprecated)` in place — FlatBuffers field ids are positional.
+    //
+    // What survives per source is the *readout* — `upkeepDemand` / `upkeepSupplied` /
+    // `upkeepShortfall` — whose `supplied` is now this source's **share of the pool**. It stopped
+    // answering *"did you staff this one"* and started answering *"where is my pooled shortfall
+    // landing"*.
 }
 
 /// **One item's remaining condition in a band's TOE** — a row of
@@ -1055,6 +1054,15 @@ pub struct PopulationCohortState {
     /// [`Self::transfer_received_turn`], on the same copy and for the same reason.
     #[serde(default)]
     pub transfer_sent_turn: f32,
+    /// **HOW THIS BAND SPLITS A MAINTENANCE POOL IT CANNOT STRETCH** — `"spread"` or `"priority"`
+    /// (`docs/plan_standing_upkeep.md` §2.5), the player's own choice between *everything degrades a
+    /// little* and *the biggest investments stay whole*.
+    ///
+    /// A **string** for the reason the take policy is one: a third mode needs no schema change.
+    /// Empty is only ever a frame the sim did not write; read it as `"spread"`. Appended
+    /// (append-only).
+    #[serde(default)]
+    pub upkeep_fund_mode: String,
 }
 
 /// **One run of a band's hunt workers holding the same gear** — a row of

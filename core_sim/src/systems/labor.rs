@@ -111,6 +111,113 @@ pub struct LaborConfigs<'w> {
     pub materials: Res<'w, crate::materials_config::MaterialsConfigHandle>,
 }
 
+/// **WHAT EACH OF A BAND'S SOURCES GETS OUT OF ITS MAINTENANCE POOLS** — one work amount per
+/// assignment index, in the allocation's own order (`docs/plan_standing_upkeep.md` §2.5).
+///
+/// # ONE POOL PER WEB, AGAINST THE SUM OF WHAT THE BAND HOLDS
+///
+/// The band staffs two standing roles — [`LaborTarget::Agriculture`] and
+/// [`LaborTarget::Husbandry`] — and each role's hands are a **pool** measured against the summed
+/// [`crate::forage::patch_upkeep_demand`] / [`crate::fauna::herd_upkeep_demand`] of every source on
+/// that web. Nothing is wasted: the per-source keeper crew this replaced had to round a fractional
+/// demand up to whole workers and threw the remainder away, once per source.
+///
+/// # ONLY A BUILT RUNG DRAWS FROM IT
+///
+/// A meter still being raised is owed its **builders** (`patch_upkeep_supply` /
+/// `herd_upkeep_supply`), so a source mid-Cultivate contributes no demand and takes no share —
+/// otherwise the pool would fund a rung nobody has finished and the keepers' hands would vanish into
+/// a job that is not theirs.
+///
+/// # THE PRIORITY ORDER IS TOTAL, BECAUSE A CHECKPOINT HAS TO REPRODUCE IT
+///
+/// [`crate::intensification::UpkeepFundMode::Priority`] funds in slice order, and the slice is
+/// sorted **most-invested first** on the at-risk meter's stored cost, tie-broken on a stable
+/// per-source key (a tile's coordinates, a herd's id). Two sources of equal investment therefore
+/// fund in the same order on a restored world as on the original, which is the whole reason the
+/// tie-break exists.
+fn maintenance_shares(
+    allocation: &LaborAllocation,
+    forage_registry: &ForageRegistry,
+    herds: &HerdRegistry,
+    fauna: &FaunaConfig,
+    ladder: &LadderConfig,
+) -> Vec<f32> {
+    /// One source's claim on its web's pool: where to write the share back, what it asks for, and
+    /// the two keys that make *most-invested first* a total order.
+    struct Claim {
+        index: usize,
+        demand: f32,
+        invested: f32,
+        tiebreak: String,
+    }
+
+    let mut shares = vec![NO_UPKEEP_DEMAND; allocation.assignments.len()];
+    let mut plant: Vec<Claim> = Vec::new();
+    let mut animal: Vec<Claim> = Vec::new();
+    for (index, assignment) in allocation.assignments.iter().enumerate() {
+        // **A row with nobody on the take is skipped**, exactly as the labor loop skips it: its
+        // supply is never stamped, so funding it would spend the pool on a source no pass reads.
+        if assignment.workers == 0 {
+            continue;
+        }
+        match &assignment.target {
+            LaborTarget::Forage { tile, .. } => {
+                let Some(patch) = forage_registry.patch(*tile) else {
+                    continue;
+                };
+                if !crate::forage::patch_at_risk_is_built(patch) {
+                    continue;
+                }
+                plant.push(Claim {
+                    index,
+                    demand: crate::forage::patch_upkeep_demand(patch, ladder),
+                    invested: crate::forage::patch_at_risk_cost(patch),
+                    tiebreak: format!("{:010}:{:010}", tile.x, tile.y),
+                });
+            }
+            LaborTarget::Hunt { fauna_id, .. } => {
+                let Some(herd) = herds.find(fauna_id) else {
+                    continue;
+                };
+                if !fauna::herd_at_risk_is_built(herd) {
+                    continue;
+                }
+                animal.push(Claim {
+                    index,
+                    demand: fauna::herd_upkeep_demand(herd, fauna, ladder),
+                    invested: fauna::herd_at_risk_cost(herd),
+                    tiebreak: herd.id.clone(),
+                });
+            }
+            LaborTarget::Scout
+            | LaborTarget::Warrior
+            | LaborTarget::Agriculture
+            | LaborTarget::Husbandry => {}
+        }
+    }
+    let mode = allocation.upkeep_fund_mode;
+    for (role, claims) in [
+        (LaborTarget::Agriculture, &mut plant),
+        (LaborTarget::Husbandry, &mut animal),
+    ] {
+        claims.sort_by(|a, b| {
+            b.invested
+                .total_cmp(&a.invested)
+                .then_with(|| a.tiebreak.cmp(&b.tiebreak))
+        });
+        let pool = activity_work(allocation.workers_on(&role));
+        let demands: Vec<f32> = claims.iter().map(|claim| claim.demand).collect();
+        for (claim, share) in claims
+            .iter()
+            .zip(distribute_upkeep_pool(pool, &demands, mode))
+        {
+            shares[claim.index] = share;
+        }
+    }
+    shares
+}
+
 /// Resolve each band's per-worker labor yields (Early-Game Labor, slice 3a). Replaces the retired
 /// single-task systems (`advance_harvest_assignments` / `advance_scout_assignments` /
 /// `advance_fauna_pursuits`): a band now draws subsistence from *many* in-range sources at once,
@@ -296,6 +403,12 @@ pub fn advance_labor_allocation(
         // *overwrites* any assign-time forecast seed (`LaborAllocation::set_source_yield`) with the
         // resolved take — the seed is only the pre-resolution stand-in.
         let mut yields: Vec<SourceYield> = vec![SourceYield::ZERO; allocation.assignments.len()];
+        // **THE BAND'S MAINTENANCE POOLS, SPLIT ACROSS ITS SOURCES** — one work amount per
+        // assignment index (`maintenance_shares`). Resolved **before** the loop because the split is
+        // a property of the band's *whole* holding on a web: what one patch gets depends on what
+        // every other one asked for, which nothing inside a per-assignment pass can see.
+        let upkeep_shares =
+            maintenance_shares(&allocation, &forage_registry, &registry, &fauna, &ladder);
         // The pen feed this band ACTUALLY pays this turn, summed across every pen it keeps (a band may
         // keep more than one). Rebuilt from scratch each turn, exactly like `yields` — it is the real
         // debit off `cohort.stores`, and it appears in neither `food_income` nor `food_consumption`, so
@@ -328,7 +441,11 @@ pub fn advance_labor_allocation(
             // and on the keeping. They are independent numbers drawing on one band, so what competes
             // is visible in what the player typed rather than derived from a fraction.
             let build_workers = assignment.improvement_workers;
-            let maintain_workers = assignment.maintain_workers;
+            // **THIS SOURCE'S SHARE OF THE BAND'S MAINTENANCE POOL**, in work units — no longer a
+            // crew standing on the tile (`docs/plan_standing_upkeep.md` §2.5). It is already work
+            // rather than workers, because a share of a pool does not divide into whole people and
+            // that indivisibility is exactly the waste the pool retired.
+            let maintain_work = upkeep_shares.get(idx).copied().unwrap_or(NO_UPKEEP_DEMAND);
             // **THE CREW A PRE-COMMIT QUOTE IS PRICED AT** — the build's own where one is staffed,
             // and otherwise the hands the band already has on the source. The projection answers
             // *"what would my people take to finish this"* for a rung **nobody has started**
@@ -696,7 +813,7 @@ pub fn advance_labor_allocation(
                         patch,
                         improvement,
                         activity_work(build_workers),
-                        activity_work(maintain_workers),
+                        maintain_work,
                     );
                     // **THE earn path (§4): practising rung N teaches the knowledge that unlocks rung
                     // N+1.** Driven entirely by the rung the patch *currently stands on* — a wild
@@ -1074,6 +1191,7 @@ pub fn advance_labor_allocation(
                                 accrual,
                                 cultivate_cost,
                                 cultivate_bar,
+                                tended_rung.retention_bar(cultivate_cost),
                             );
                         // **The turns estimate the wire publishes**, at exactly the crew, floor and
                         // kit that just worked the patch — stamped here because this is the only
@@ -1410,7 +1528,7 @@ pub fn advance_labor_allocation(
                         herd,
                         improvement,
                         activity_work(build_workers),
-                        activity_work(maintain_workers),
+                        maintain_work,
                     );
                     // **The steady headline** — the forward-projected average food/turn over the next
                     // `realized_horizon` turns, computed from the herd's PRE-take state (before the pen
@@ -2292,6 +2410,13 @@ pub fn advance_labor_allocation(
                     // post vantage points out from the band (`labor.scout.vantage_distance(scouts)`)
                     // and reveal from each, re-marked Active every turn — no work is done here.
                 }
+                LaborTarget::Agriculture | LaborTarget::Husbandry => {
+                    // **The two keeping roles do no per-worker yield here either.** Their hands are
+                    // a *pool*, spent by `maintenance_shares` before this loop began and stamped
+                    // onto each source's `upkeep_supplied` in the two arms above — so by the time
+                    // the loop reaches the role's own row there is nothing left for it to do
+                    // (`docs/plan_standing_upkeep.md` §2.5).
+                }
                 LaborTarget::Warrior => {
                     // Still a no-op **in the labor pass** — warriors do no per-worker yield here, and
                     // they are a band-wide standing guard (border/camp patrol), not a hunting escort, so
@@ -2356,6 +2481,9 @@ pub fn advance_labor_allocation(
         // pre-commit forecast.
         //
         // **Before the `lapsed` removal below**, which shifts rows and invalidates these indices.
+        // The hands a completion hands to the keeping, applied after the loop — the role's own row
+        // lives in the same `assignments` vec this loop holds a mutable borrow into.
+        let mut carried_to_upkeep: Vec<(LaborTarget, u32)> = Vec::new();
         for (idx, finished) in &completed {
             let Some(assignment) = allocation.assignments.get_mut(*idx) else {
                 continue;
@@ -2365,11 +2493,18 @@ pub fn advance_labor_allocation(
             assignment.improvement = None;
             assignment.improvement_workers = NO_CREW_ON_THIS_ACTIVITY;
             let holds = ladder.rung(*finished).declares_upkeep();
-            if holds {
-                // **Added, not assigned**: a player who had already put keepers on this source keeps
-                // them, and the builders join them. Overwriting would silently unstaff the keeping
-                // the moment a build finished beside it.
-                assignment.maintain_workers = assignment.maintain_workers.saturating_add(crew);
+            let source = describe_worked_source(&assignment.target);
+            if holds && crew > NO_CREW_ON_THIS_ACTIVITY {
+                // **Onto the BAND'S standing role, not this source's own keeping**
+                // (`docs/plan_standing_upkeep.md` §2.5): maintenance is a pool per web now, so the
+                // hands that raised this rung join the pool that will hold it. **Added, not
+                // assigned** — a band that already keeps other sources on this web keeps them, and
+                // these builders join them.
+                //
+                // The head count does not move: the crew came off `improvement_workers` on this row
+                // and lands on the role's row, so `assigned_total` is unchanged and no refusal is
+                // owed.
+                carried_to_upkeep.push((RungKey::upkeep_role(*finished), crew));
             }
             // A completion with nobody on the verb (another band finished it) has no crew to move,
             // so there is nothing to announce.
@@ -2379,7 +2514,6 @@ pub fn advance_labor_allocation(
             let Some(verb) = verb else {
                 continue;
             };
-            let source = describe_worked_source(&assignment.target);
             let (label, status) = if holds {
                 (
                     format!(
@@ -2417,6 +2551,12 @@ pub fn advance_labor_allocation(
             yields.remove(idx);
         }
         allocation.last_yields = yields;
+        // **The hand-off lands on the role's row**, after the telemetry is restored — the role may
+        // not be staffed at all yet (the first rung a band finishes on a web is what puts anybody on
+        // that web's keeping), and a row appended here needs its own zero telemetry row beside it.
+        for (role, crew) in carried_to_upkeep {
+            allocation.add_role_workers(role, crew);
+        }
         allocation.last_pen_feed_upkeep = pen_feed_paid;
     }
 }
@@ -2432,6 +2572,8 @@ fn describe_worked_source(target: &LaborTarget) -> String {
         LaborTarget::Hunt { fauna_id, .. } => fauna_id.clone(),
         LaborTarget::Scout => "scouting".to_string(),
         LaborTarget::Warrior => "the watch".to_string(),
+        LaborTarget::Agriculture => "the fields".to_string(),
+        LaborTarget::Husbandry => "the herds".to_string(),
     }
 }
 
@@ -2486,6 +2628,16 @@ fn announce_dropped_assignment(
             CommandEventKind::CancelOrder,
             "warriors".to_string(),
             "kind=warrior".to_string(),
+        ),
+        LaborTarget::Agriculture => (
+            CommandEventKind::Cultivate,
+            "field keepers".to_string(),
+            "kind=agriculture".to_string(),
+        ),
+        LaborTarget::Husbandry => (
+            CommandEventKind::Corral,
+            "herd keepers".to_string(),
+            "kind=husbandry".to_string(),
         ),
     };
     // The build verb, if one was in flight — appended to both halves rather than folded in, so a
@@ -2744,7 +2896,13 @@ fn accrue_field(
     // The three equipment arguments ride here rather than the caller charging afterwards because
     // the meter this bills against is the one this function advances.
     let progress_before = patch.field_progress;
-    let sown = patch.accrue_field(faction, accrual, sow_cost, sow_bar);
+    let sown = patch.accrue_field(
+        faction,
+        accrual,
+        sow_cost,
+        sow_bar,
+        ladder.rung(RungKey::PlantField).retention_bar(sow_cost),
+    );
     // Re-published against the meter the accrual just moved — the estimate above was struck before
     // it, and the running crew's own countdown must be the post-accrual one.
     claims.publish_running(
@@ -3640,7 +3798,6 @@ mod labor_yield_tests {
                     improvement: None,
                     kit: None,
                     improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 },
                 LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -3651,7 +3808,6 @@ mod labor_yield_tests {
                     improvement: None,
                     kit: None,
                     improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 },
             ],
         );
@@ -3725,7 +3881,6 @@ mod labor_yield_tests {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
         let fauna = world.resource::<FaunaConfigHandle>().get();
@@ -3768,7 +3923,6 @@ mod labor_yield_tests {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
         let fauna = world.resource::<FaunaConfigHandle>().get();
@@ -3906,7 +4060,6 @@ mod labor_yield_tests {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -3939,7 +4092,6 @@ mod labor_yield_tests {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
 
@@ -4006,7 +4158,6 @@ mod labor_yield_tests {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
 
@@ -4083,7 +4234,6 @@ mod labor_yield_tests {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
         let keeper = spawn_band(
@@ -4105,7 +4255,6 @@ mod labor_yield_tests {
                         .expect("the shipped roster carries the husbandry kit"),
                 ),
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
 
@@ -4253,7 +4402,6 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     improvement: Some(Improvement::Cultivate),
                     improvement_workers: BUILDERS,
-                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                     kit: None,
                 }],
             );
@@ -4278,12 +4426,26 @@ mod labor_yield_tests {
                     .is_cultivated(),
                 "fixture: the Cultivate must complete, or the hand-off never runs"
             );
-            let row = only_assignment(&world, band);
+            let allocation = world
+                .get::<LaborAllocation>(band)
+                .expect("the band keeps its allocation")
+                .clone();
+            let row = allocation
+                .assignments
+                .iter()
+                .find(|a| matches!(a.target, LaborTarget::Forage { .. }))
+                .expect("the forage row survives")
+                .clone();
             assert_eq!(
                 row.improvement_workers, NO_CREW_ON_THIS_ACTIVITY,
                 "the finished build lets go of its crew either way: {row:?}"
             );
-            (row.improvement_workers, row.maintain_workers)
+            // **Where they went is the BAND'S agriculture role**, not a crew on the tile
+            // (`docs/plan_standing_upkeep.md` §2.5).
+            (
+                row.improvement_workers,
+                allocation.workers_on(&LaborTarget::Agriculture),
+            )
         };
 
         let (_, kept) = run(std::sync::Arc::new(with_upkeep));
@@ -4361,7 +4523,6 @@ mod labor_yield_tests {
                 workers: GATHERERS,
                 improvement: Some(Improvement::Cultivate),
                 improvement_workers: BUILDERS,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 kit: None,
             }],
         );
@@ -4421,7 +4582,6 @@ mod labor_yield_tests {
                     improvement,
                     // A real gentling crew beside the hunters, so this is not a no-op sweep.
                     improvement_workers: improvement.map_or(NO_CREW_ON_THIS_ACTIVITY, |_| WORKERS),
-                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                     kit: None,
                 }],
             );
@@ -4531,7 +4691,6 @@ mod labor_yield_tests {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -4555,7 +4714,6 @@ mod labor_yield_tests {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -4784,7 +4942,6 @@ mod labor_yield_tests {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
         // The sim's expectation: one crew, `max(herders, steady_haul)` — taken on the **pre-take**
@@ -4967,7 +5124,6 @@ mod labor_yield_tests {
                             improvement,
                             kit: None,
                             improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                            maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                         }],
                     );
                     world.run_system_once(advance_labor_allocation);
@@ -5052,7 +5208,6 @@ mod labor_yield_tests {
                                 improvement,
                                 kit: None,
                                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                             }],
                         );
                         world.run_system_once(advance_labor_allocation);
@@ -5218,7 +5373,6 @@ mod labor_yield_tests {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
         let short_handed = spawn_band(
@@ -5245,7 +5399,6 @@ mod labor_yield_tests {
                         .expect("the shipped roster carries the husbandry kit"),
                 ),
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -5352,7 +5505,6 @@ mod labor_yield_tests {
                         .expect("the shipped roster carries the husbandry kit"),
                 ),
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
         // A start-stocked ledger — `spawn_band` builds no equipment, and wear is only charged on an
@@ -5475,7 +5627,6 @@ mod labor_yield_tests {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
 
@@ -5566,7 +5717,6 @@ mod labor_yield_tests {
                     improvement: None,
                     kit: None,
                     improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
             );
             world.run_system_once(advance_labor_allocation);
@@ -5649,7 +5799,6 @@ mod labor_yield_tests {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
         // Band B (same faction) forages the neighbor tile (1,0), which has no food module/patch →
@@ -5668,7 +5817,6 @@ mod labor_yield_tests {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
 
@@ -5716,7 +5864,6 @@ mod labor_yield_tests {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
 
@@ -5814,7 +5961,6 @@ mod labor_yield_tests {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -5845,7 +5991,6 @@ mod labor_yield_tests {
                 improvement: Some(Improvement::Cultivate),
                 kit: None,
                 improvement_workers: WORKERS,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -5941,7 +6086,6 @@ mod labor_yield_tests {
                     // crew did every job (`docs/plan_standing_upkeep.md` §2.2).
                     improvement_workers: improvement
                         .map_or(NO_CREW_ON_THIS_ACTIVITY, |_| SOLE_FORAGER),
-                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
             );
             world.run_system_once(advance_labor_allocation);
@@ -6029,7 +6173,6 @@ mod labor_yield_tests {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -6064,7 +6207,6 @@ mod labor_yield_tests {
                 improvement: Some(Improvement::Corral),
                 kit: None,
                 improvement_workers: WORKERS,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -6133,7 +6275,6 @@ mod labor_yield_tests {
                     // crew did every job (`docs/plan_standing_upkeep.md` §2.2).
                     improvement_workers: improvement
                         .map_or(NO_CREW_ON_THIS_ACTIVITY, |_| SOLE_HUNTER),
-                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
             );
             world.run_system_once(advance_labor_allocation);
@@ -6242,16 +6383,31 @@ mod labor_yield_tests {
             .expect("the source tile grows something the tended rung can commit to")
     }
 
-    /// The band's single assignment — completion clears one field *in place*, so every other field of
-    /// the row is evidence that nothing else moved.
+    /// The band's single **worked-source** assignment — completion clears one field *in place*, so
+    /// every other field of the row is evidence that nothing else moved.
+    ///
+    /// **A completion may ADD one row, and only one kind of row**: a finished rung that costs
+    /// something to hold hands its builders to the band's own keeping role
+    /// (`docs/plan_standing_upkeep.md` §2.5), which is a band-wide row and not a source. So the
+    /// assertion is that the band still works exactly one source, not that it holds exactly one row.
     fn only_assignment(world: &World, band: Entity) -> LaborAssignment {
         let allocation = world.get::<LaborAllocation>(band).expect("the band works");
+        let sources: Vec<&LaborAssignment> = allocation
+            .assignments
+            .iter()
+            .filter(|assignment| {
+                matches!(
+                    assignment.target,
+                    LaborTarget::Forage { .. } | LaborTarget::Hunt { .. }
+                )
+            })
+            .collect();
         assert_eq!(
-            allocation.assignments.len(),
+            sources.len(),
             1,
-            "completion edits a row, it never adds or drops one"
+            "completion edits a worked source's row, it never adds or drops one"
         );
-        allocation.assignments[0].clone()
+        sources[0].clone()
     }
 
     /// **THE issue-#420 + #442 fix, plant rung 2.** A band whose patch finishes cultivating this
@@ -6294,7 +6450,6 @@ mod labor_yield_tests {
                 improvement: Some(Improvement::Cultivate),
                 kit: None,
                 improvement_workers: WORKERS,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
 
@@ -6438,7 +6593,6 @@ mod labor_yield_tests {
                 improvement: Some(Improvement::Tame),
                 kit: None,
                 improvement_workers: WORKERS,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
 
@@ -6531,7 +6685,6 @@ mod labor_yield_tests {
                         panic!("the shipped roster carries the '{kit_id}' kit")
                     })),
                     improvement_workers: builders,
-                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
             );
         world
@@ -6588,7 +6741,6 @@ mod labor_yield_tests {
                         panic!("the shipped roster carries the '{kit_id}' kit")
                     })),
                     improvement_workers: WORKERS,
-                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
             );
         // `spawn_band` builds no ledger, and wear is only charged on an item the band owns — an
@@ -6764,7 +6916,6 @@ mod labor_yield_tests {
                         .expect("the shipped roster carries the husbandry kit"),
                 ),
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
         world
@@ -6876,7 +7027,6 @@ mod labor_yield_tests {
                 improvement: Some(Improvement::Corral),
                 kit: None,
                 improvement_workers: WORKERS,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
 
@@ -6941,7 +7091,6 @@ mod labor_yield_tests {
                 improvement: Some(Improvement::Cultivate),
                 kit: None,
                 improvement_workers: WORKERS,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -6968,7 +7117,6 @@ mod labor_yield_tests {
                 improvement: Some(Improvement::Corral),
                 kit: None,
                 improvement_workers: WORKERS,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -6998,7 +7146,6 @@ mod labor_yield_tests {
                 improvement: Some(Improvement::Corral),
                 kit: None,
                 improvement_workers: WORKERS,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -7042,7 +7189,6 @@ mod labor_yield_tests {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -7063,7 +7209,6 @@ mod labor_yield_tests {
                 improvement: None,
                 kit: None,
                 improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
         );
         world.run_system_once(advance_labor_allocation);

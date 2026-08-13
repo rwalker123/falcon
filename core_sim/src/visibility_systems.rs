@@ -358,7 +358,10 @@ pub fn calculate_visibility(
                         LaborTarget::Hunt { fauna_id, .. } => {
                             herds.find(fauna_id).map(|herd| herd.position())
                         }
-                        LaborTarget::Scout | LaborTarget::Warrior => None,
+                        LaborTarget::Scout
+                        | LaborTarget::Warrior
+                        | LaborTarget::Agriculture
+                        | LaborTarget::Husbandry => None,
                     };
                     // A Forage assignment carries raw command-supplied coords (see
                     // `handle_assign_labor`), so guard the bounds before pushing — an OOB tile

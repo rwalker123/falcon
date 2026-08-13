@@ -151,7 +151,6 @@ fn resident_band(app: &mut App, tile: Entity, working: u32, warriors: u32) -> En
             improvement: None,
             kit: None,
             improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-            maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
         }]
     } else {
         Vec::new()

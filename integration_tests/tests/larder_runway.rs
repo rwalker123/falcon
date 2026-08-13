@@ -102,7 +102,6 @@ fn the_published_runway_is_the_turn_the_larder_really_empties() {
             improvement: None,
             kit: None,
             improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-            maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
         }],
         ..Default::default()
     });

@@ -288,22 +288,26 @@ fn spawn_crew_of(
                 tags: Vec::new(),
             },
             LaborAllocation {
-                assignments: vec![LaborAssignment {
-                    target: LaborTarget::Hunt {
-                        fauna_id: herd_id.to_string(),
-                        floor: policy,
-                    },
-                    workers: hunters,
-                    improvement,
-                    kit: None,
-                    improvement_workers: builders,
-                    // **AND THE KEEPERS.** A managed herd is owed its keeping every turn since
-                    // `docs/plan_standing_upkeep.md` §2.4, and hunting it is not keeping it — a band
-                    // that staffed none would watch its own flock drift off while it worked. Sized
-                    // at the herd's own demand (`keeper_crew`), which is what a player reading
-                    // `upkeepWorkersNeeded` would staff.
-                    maintain_workers: keepers,
-                }],
+                // **THE HUNT ROW, AND THE BAND'S KEEPING ROLE BESIDE IT.** A managed herd is owed
+                // its keeping every turn (`docs/plan_standing_upkeep.md` §2.4), and hunting it is
+                // not keeping it — a band that staffed none would watch its own flock drift off
+                // while it worked. Since §2.5 the keeping is a **band-level pool** rather than a
+                // crew on the herd, so the fixture staffs the `husbandry` role at the herd's own
+                // demand (`keeper_crew`), which is what a player reading `upkeepWorkersNeeded`
+                // would staff.
+                assignments: with_keeping_role(
+                    vec![LaborAssignment {
+                        target: LaborTarget::Hunt {
+                            fauna_id: herd_id.to_string(),
+                            floor: policy,
+                        },
+                        workers: hunters,
+                        improvement,
+                        kit: None,
+                        improvement_workers: builders,
+                    }],
+                    keepers,
+                ),
                 ..Default::default()
             },
             // A taming/keeping crew is a **resident** band (only resident bands allocate labor;
@@ -2551,14 +2555,36 @@ fn two_bands_keeping_one_herd_sum_their_hands() {
     );
 }
 
-/// Put `workers` on a band's one assignment's **keeping** — the fixture's stand-in for
-/// `maintain <faction> hunt <herd_id> <workers>`.
+/// Put `workers` on a band's **husbandry role** — the fixture's stand-in for
+/// `assign_labor <faction> <band> husbandry <workers>`.
 fn set_maintain_workers(app: &mut App, band: bevy::prelude::Entity, workers: u32) {
-    app.world
+    let mut allocation = app
+        .world
         .get_mut::<LaborAllocation>(band)
-        .expect("band exists")
-        .assignments[0]
-        .maintain_workers = workers;
+        .expect("band exists");
+    // **SET, not add** — the command it stands in for states a number, and the fixture band already
+    // carries a keeping role from `spawn_crew_of`.
+    allocation
+        .assignments
+        .retain(|assignment| !matches!(assignment.target, LaborTarget::Husbandry));
+    allocation.add_role_workers(LaborTarget::Husbandry, workers);
+}
+
+/// **Append the band-wide `husbandry` role to a fixture's rows** — the keeping pool every
+/// managed-herd fixture needs since the keeping stopped being a per-source crew
+/// (`docs/plan_standing_upkeep.md` §2.5). A crew of zero adds no row, which is the honest reading
+/// of *"this band keeps nothing"*.
+fn with_keeping_role(mut rows: Vec<LaborAssignment>, keepers: u32) -> Vec<LaborAssignment> {
+    if keepers > 0 {
+        rows.push(LaborAssignment {
+            target: LaborTarget::Husbandry,
+            workers: keepers,
+            improvement: None,
+            improvement_workers: core_sim::NO_CREW_ON_THIS_ACTIVITY,
+            kit: None,
+        });
+    }
+    rows
 }
 
 /// **The shed self-limits: an over-stocked managed herd converges to its labor capacity from above and

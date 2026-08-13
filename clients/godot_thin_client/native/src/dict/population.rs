@@ -204,6 +204,13 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         cohort.transferReceivedTurn() as f64,
     );
     let _ = dict.insert("transfer_sent_turn", cohort.transferSentTurn() as f64);
+    // **HOW THIS BAND SPLITS A MAINTENANCE POOL IT CANNOT STRETCH** — `"spread"` or `"priority"`
+    // (`docs/plan_standing_upkeep.md` §2.5), the token `upkeep_mode` takes, decoded so a panel can
+    // show the mode the band is on rather than guessing at the default.
+    let _ = dict.insert(
+        "upkeep_fund_mode",
+        cohort.upkeepFundMode().unwrap_or_default(),
+    );
     // --- THE MINIMAL TOE (`docs/plan_hunt_through_combat.md` 4.8) ---------------------------------
     // The band's THREE consumable kits and the tiers they resolve to. **All six shipped on the wire
     // with NO consumer here**, which is this crate's most-repeated bug and the third time this arc
@@ -477,23 +484,24 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             if let Some(kind) = assignment.kind() {
                 let _ = entry.insert("kind", kind);
             }
-            // **THE THREE CREWS THIS SOURCE CARRIES**, read as one set
-            // (`docs/plan_standing_upkeep.md` §2.2): the hands on the take, on the build and on the
-            // keeping. The last two were write-only from the client's side until they shipped — it
-            // could send `cultivate … <workers>` / `maintain … <workers>` and never read back what a
-            // band already had, so a compose sheet clamped to IDLE workers offered a
-            // fully-allocated band a maximum of `0` and the player could not re-state a crew they
-            // had. With them the clamp is the honest `idle + this source's own crew for this
-            // activity`, and a keeping row can say *"you have 1 of 2"*.
+            // **THE TWO CREWS THIS SOURCE CARRIES**, read as one set
+            // (`docs/plan_standing_upkeep.md` §2.2): the hands on the take and on the build. The
+            // build crew was write-only from the client's side until it shipped — the client could
+            // send `cultivate … <workers>` and never read back what a band already had, so a compose
+            // sheet clamped to IDLE workers offered a fully-allocated band a maximum of `0` and the
+            // player could not re-state a crew they had. With it the clamp is the honest
+            // `idle + this source's own build crew`.
             //
-            // `0` is a real reading on both and is the common one — no verb in flight means no
-            // builders, and a source nobody keeps has no keepers.
+            // `0` is a real reading and the common one — no verb in flight means no builders.
+            //
+            // **`maintain_workers` IS GONE**: maintenance left the tile (§2.5). The keeping is a
+            // band-level standing role now and arrives as its own row of this very list, with
+            // `kind == "agriculture"` / `"husbandry"` and its hands in `workers`.
             let _ = entry.insert("workers", assignment.workers() as i64);
             let _ = entry.insert(
                 "improvement_workers",
                 assignment.improvementWorkers() as i64,
             );
-            let _ = entry.insert("maintain_workers", assignment.maintainWorkers() as i64);
             let _ = entry.insert("target_x", assignment.targetX() as i64);
             let _ = entry.insert("target_y", assignment.targetY() as i64);
             // Per-source food yield (food/turn): `actual_yield` is this turn's realized take, headlined

@@ -299,7 +299,6 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
                     kit: None,
                     improvement_workers: NO_IMPROVEMENT_UNDERWAY
                         .map_or(NO_CREW_ON_THIS_ACTIVITY, |_| CREW),
-                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },

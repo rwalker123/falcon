@@ -303,10 +303,20 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
                 let _completed_this_turn = match verb {
                     // **The probe carries no gear**, so the effective bar IS the raw cost
                     // (`NO_BUILD_GEAR` takes nothing off) — it measures the ladder's own pacing.
-                    Improvement::Cultivate => {
-                        patch.accrue_cultivation(PROBE_FACTION, accrual, cost, cost)
-                    }
-                    _ => patch.accrue_field(PROBE_FACTION, accrual, cost, cost),
+                    Improvement::Cultivate => patch.accrue_cultivation(
+                        PROBE_FACTION,
+                        accrual,
+                        cost,
+                        cost,
+                        rung.retention_bar(cost),
+                    ),
+                    _ => patch.accrue_field(
+                        PROBE_FACTION,
+                        accrual,
+                        cost,
+                        cost,
+                        rung.retention_bar(cost),
+                    ),
                 };
                 let done = match verb {
                     Improvement::Cultivate => patch.is_cultivated(),

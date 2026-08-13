@@ -35,8 +35,8 @@ use core_sim::{
     ExpeditionMission, ExpeditionPhase, FloraConfigHandle, FoodModuleTag, ForkAnswerError,
     HuntingParty, KitChoice, KitJob, LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore,
     MaterialsConfigHandle, RecipesConfigHandle, ResidentBand, RungKey, SiteRefusal, SpeciesRefusal,
-    StartProfile, StartProfileOverrides, WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR,
-    NO_FORAGE_SEASON,
+    StartProfile, StartProfileOverrides, UpkeepFundMode, WellbeingConfigHandle,
+    DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
@@ -628,15 +628,12 @@ enum Command {
         target_y: u32,
         fauna_id: String,
     },
-    /// Put hands on one source's standing upkeep — the third of its three worker allocations, with
-    /// `abandon_improvement`'s source grammar. See `handle_maintain`.
-    Maintain {
+    /// Say how one band splits a maintenance pool it cannot stretch — `spread` or `priority`
+    /// (`docs/plan_standing_upkeep.md` §2.5). See `handle_upkeep_mode`.
+    UpkeepMode {
         faction: FactionId,
-        kind: String,
-        target_x: u32,
-        target_y: u32,
-        fauna_id: String,
-        workers: u32,
+        band_id: u64,
+        mode: String,
     },
     ExtendPen {
         faction: FactionId,
@@ -2021,7 +2018,11 @@ fn seed_source_yield(
                 range_sigmas,
             )
         }
-        LaborTarget::Scout | LaborTarget::Warrior => return,
+        // A band-wide role produces no per-source yield, so there is no row to seed.
+        LaborTarget::Scout
+        | LaborTarget::Warrior
+        | LaborTarget::Agriculture
+        | LaborTarget::Husbandry => return,
     };
     band_allocation_mut(app, band).set_source_yield(target, seeded);
 }
@@ -2106,7 +2107,10 @@ fn validate_labor_policy(
             };
             validate_species_selection(app, *tile, Some(named), RungKey::PlantTended)
         }
-        LaborTarget::Scout | LaborTarget::Warrior => Ok(()),
+        LaborTarget::Scout
+        | LaborTarget::Warrior
+        | LaborTarget::Agriculture
+        | LaborTarget::Husbandry => Ok(()),
     }
 }
 
@@ -2153,7 +2157,10 @@ fn validate_improvement(
                 _ => validate_corral(app, faction, fauna_id),
             }
         }
-        LaborTarget::Scout | LaborTarget::Warrior => Err(format!(
+        LaborTarget::Scout
+        | LaborTarget::Warrior
+        | LaborTarget::Agriculture
+        | LaborTarget::Husbandry => Err(format!(
             "There is nothing to {} on a standing role.",
             improvement.as_str()
         )),
@@ -2733,6 +2740,11 @@ fn handle_assign_labor(
         },
         "scout" => LaborTarget::Scout,
         "warrior" => LaborTarget::Warrior,
+        // **The two keeping roles** (`docs/plan_standing_upkeep.md` §2.5) — staffed like any other
+        // band-wide role, because that is what they are: their hands are a pool against the summed
+        // upkeep of everything this band holds on that web, and `0` stops maintaining the whole web.
+        "agriculture" => LaborTarget::Agriculture,
+        "husbandry" => LaborTarget::Husbandry,
         other => {
             emit_command_failure(
                 app,
@@ -2749,6 +2761,10 @@ fn handle_assign_labor(
         LaborTarget::Hunt { .. } => CommandEventKind::Hunt,
         LaborTarget::Scout => CommandEventKind::Scout,
         LaborTarget::Warrior => CommandEventKind::CancelOrder,
+        // The two keeping roles ride their web's own verb channel, so a player watching a rung's
+        // line sees the hands that hold it move.
+        LaborTarget::Agriculture => CommandEventKind::Cultivate,
+        LaborTarget::Husbandry => CommandEventKind::Corral,
     };
 
     // Stance validation. Unassigning (`workers == 0`) is always allowed — a player must be able to
@@ -4767,7 +4783,13 @@ fn cancel_scope_clears(scope: CancelScope, target: &LaborTarget) -> bool {
             target,
             LaborTarget::Forage { .. } | LaborTarget::Hunt { .. }
         ),
-        CancelScope::Roles => matches!(target, LaborTarget::Scout | LaborTarget::Warrior),
+        CancelScope::Roles => matches!(
+            target,
+            LaborTarget::Scout
+                | LaborTarget::Warrior
+                | LaborTarget::Agriculture
+                | LaborTarget::Husbandry
+        ),
     }
 }
 
@@ -5559,124 +5581,75 @@ fn handle_abandon_improvement(
     );
 }
 
-/// **PUT HANDS ON A SOURCE'S STANDING UPKEEP** — the third of a source's three worker allocations
-/// (`docs/plan_standing_upkeep.md` §2.2), beside the **take** crew `assign_labor` sets and the
-/// **build** crew the improvement verbs set. Deliberately `abandon_improvement`'s grammar:
-///   `maintain <faction> forage <x> <y> <workers>`
-///   `maintain <faction> hunt <herd_id> <workers>`
+/// **SAY HOW A BAND SPLITS A MAINTENANCE POOL IT CANNOT STRETCH** —
+/// `upkeep_mode <faction> <band> spread|priority` (`docs/plan_standing_upkeep.md` §2.5).
 ///
-/// **`workers: 0` is "stop maintaining this."** There is no toggle beside the number — a boolean
-/// would be a second way to say what the count already says, and the two could disagree. The demand
-/// still stands, so the whole of it goes unmet and the improvement slides back down the ladder:
-/// *hold it and spend the hands, or write it off and put them somewhere else.*
+/// It is what is left of the retired `maintain` once **maintenance left the tile**. The keeping is a
+/// band-level standing role now (`assign_labor … agriculture|husbandry <workers>`), so *where the
+/// hands go* is no longer a decision — the pool covers the whole web. What remains is what happens
+/// when the pool falls short of the summed demand, and both answers are defensible:
 ///
-/// **It writes the BAND, not the registry**, which is the change from the toggle it replaced. The
-/// hands are the band's, they come out of the same pool as its gatherers and its builders, and
-/// `idleWorkers` has to see them — a boolean on the ground could carry none of that. It rides the
-/// checkpoint on the band's `LaborAllocation`, like every other assignment field.
+/// - **spread** — proportional to demand, so everything degrades a little.
+/// - **priority** — fund sources completely until the pool runs out, most-invested first, so the
+///   biggest investments stay whole and the marginal ones rot.
 ///
-/// **There is no cap and no owner gate.** A band can only staff a source it is already working, and
-/// what it puts where is its own business — the constraint is that those hands are not elsewhere.
-fn handle_maintain(
+/// **An unknown mode is refused by name**, never defaulted: silently reading a typo as `spread`
+/// would leave the player believing they had protected their Field.
+///
+/// **It writes the BAND's `LaborAllocation`**, so it rides the checkpoint with the assignments and a
+/// restore reproduces the same split.
+fn handle_upkeep_mode(
     app: &mut bevy::prelude::App,
     faction: FactionId,
-    kind: String,
-    tile: UVec2,
-    fauna_id: String,
-    workers: u32,
+    band_id: u64,
+    mode: String,
 ) {
-    // The source, named the way its web names it — `abandon_improvement`'s resolution, verbatim.
-    // The stance is irrelevant (`same_source` matches the tile / herd id alone), so the default
-    // stands in.
-    let target = match kind.trim().to_ascii_lowercase().as_str() {
-        "forage" => LaborTarget::Forage {
-            tile,
-            floor: SOURCE_NAMED_NOT_ASSIGNED,
-            species: None,
-        },
-        "hunt" if !fauna_id.trim().is_empty() => LaborTarget::Hunt {
-            fauna_id: fauna_id.clone(),
-            floor: SOURCE_NAMED_NOT_ASSIGNED,
-        },
-        "hunt" => {
-            emit_command_failure(
-                app,
-                CommandEventKind::CancelOrder,
-                faction,
-                "maintain hunt requires <herd_id>.".to_string(),
-            );
-            return;
-        }
-        other => {
-            emit_command_failure(
-                app,
-                CommandEventKind::CancelOrder,
-                faction,
-                format!("Unknown source kind '{other}' — expected forage or hunt."),
-            );
-            return;
-        }
-    };
-
-    let bands: Vec<Entity> = app
-        .world
-        .query::<(Entity, &PopulationCohort, &LaborAllocation)>()
-        .iter(&app.world)
-        .filter(|(_, cohort, _)| cohort.faction == faction)
-        .filter(|(_, _, allocation)| {
-            allocation
-                .assignments
-                .iter()
-                .any(|assignment| assignment.target.same_source(&target))
-        })
-        .map(|(entity, _, _)| entity)
-        .collect();
-    if bands.is_empty() {
+    let Some(chosen) = UpkeepFundMode::from_token(mode.trim().to_ascii_lowercase().as_str()) else {
         emit_command_failure(
             app,
             CommandEventKind::CancelOrder,
             faction,
             format!(
-                "No band is working {}. Assign workers to it first, then set its keeping crew.",
-                describe_source(&target)
+                "Unknown upkeep mode '{}' — expected {} or {}.",
+                mode.trim(),
+                UpkeepFundMode::Spread.as_str(),
+                UpkeepFundMode::Priority.as_str()
             ),
         );
         return;
-    }
-    // **THE POOL GATE** — keepers come out of the same band as the gatherers and the builders
-    // (`docs/plan_standing_upkeep.md` §2.2). Refused rather than trimmed: *"you have four idle"* is
-    // a sentence the player can act on, where a quietly smaller keeping crew is a shortfall they
-    // discover from the decay.
-    if let Err(idle) = crew_is_affordable(app, faction, &target, workers, ActivityCrew::Maintain) {
-        emit_crew_unaffordable(
-            app,
-            CommandEventKind::CancelOrder,
-            faction,
-            "Keeping this source",
-            workers,
-            idle,
-        );
+    };
+    let mode = chosen;
+    let Some(band) = select_starting_band(
+        app,
+        faction,
+        Some(band_id),
+        "upkeep_mode",
+        CommandEventKind::CancelOrder,
+    ) else {
         return;
+    };
+    {
+        let mut allocation = band_allocation_mut(app, band.entity);
+        allocation.upkeep_fund_mode = mode;
     }
-    for band in &bands {
-        let mut allocation = band_allocation_mut(app, *band);
-        allocation.set_maintain_workers(&target, workers);
-    }
-
     let tick = app.world.resource::<SimulationTick>().0;
     info!(
         target: "shadow_scale::command",
-        command = "maintain",
+        command = "upkeep_mode",
         faction = %faction.0,
-        source = %describe_source(&target),
-        workers,
-        bands = bands.len(),
-        "command.maintain.applied"
+        band = band_id,
+        mode = mode.as_str(),
+        "command.upkeep_mode.applied"
     );
-    let label = if workers == core_sim::NO_CREW_ON_THIS_ACTIVITY {
-        format!("Nobody keeps {} now", describe_source(&target))
-    } else {
-        format!("{workers} keeping {}", describe_source(&target))
+    let label = match mode {
+        UpkeepFundMode::Spread => format!(
+            "{}: short of keepers, everything it holds degrades a little",
+            band.label
+        ),
+        UpkeepFundMode::Priority => format!(
+            "{}: short of keepers, it holds its biggest investments and lets the rest go",
+            band.label
+        ),
     };
     push_command_event(
         app,
@@ -5685,15 +5658,14 @@ fn handle_maintain(
         faction,
         label,
         Some(format!(
-            "status=applied action=maintain workers={workers} bands={} source={}",
-            bands.len(),
-            describe_source(&target)
+            "status=applied action=upkeep_mode mode={} band={band_id}",
+            mode.as_str()
         )),
     );
 }
 
 /// **CAN EVERY BAND WORKING THIS SOURCE SPARE `crew` FOR `activity`?** — the pool gate the
-/// improvement verbs, `extend_pen` and `maintain` all pass through
+/// improvement verbs and `extend_pen` both pass through
 /// (`docs/plan_standing_upkeep.md` §2.2).
 ///
 /// **The three allocations draw on ONE finite band, so a command that staffs one of them has to be
@@ -5756,7 +5728,7 @@ fn crew_is_affordable(
 }
 
 /// The failure a command pushes when [`crew_is_affordable`] refuses — one sentence, so the four
-/// verbs, `extend_pen` and `maintain` cannot phrase the same refusal six ways.
+/// verbs and `extend_pen` cannot phrase the same refusal five ways.
 fn emit_crew_unaffordable(
     app: &mut bevy::prelude::App,
     kind: CommandEventKind,
@@ -6019,6 +5991,8 @@ fn describe_source(target: &LaborTarget) -> String {
         LaborTarget::Hunt { fauna_id, .. } => fauna_id.clone(),
         LaborTarget::Scout => "scouting".to_string(),
         LaborTarget::Warrior => "the watch".to_string(),
+        LaborTarget::Agriculture => "the fields".to_string(),
+        LaborTarget::Husbandry => "the herds".to_string(),
     }
 }
 
@@ -7075,20 +7049,14 @@ fn command_from_payload(
             target_y,
             fauna_id,
         }),
-        ProtoCommandPayload::Maintain {
+        ProtoCommandPayload::UpkeepMode {
             faction_id,
-            kind,
-            target_x,
-            target_y,
-            fauna_id,
-            workers,
-        } => Some(Command::Maintain {
+            band_id,
+            mode,
+        } => Some(Command::UpkeepMode {
             faction: FactionId(faction_id),
-            kind,
-            target_x,
-            target_y,
-            fauna_id,
-            workers,
+            band_id,
+            mode,
         }),
         ProtoCommandPayload::ExtendPen {
             faction_id,
@@ -7976,22 +7944,12 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
                 fauna_id,
             );
         }
-        Command::Maintain {
+        Command::UpkeepMode {
             faction,
-            kind,
-            target_x,
-            target_y,
-            fauna_id,
-            workers,
+            band_id,
+            mode,
         } => {
-            handle_maintain(
-                app,
-                faction,
-                kind,
-                UVec2::new(target_x, target_y),
-                fauna_id,
-                workers,
-            );
+            handle_upkeep_mode(app, faction, band_id, mode);
         }
         Command::ExtendPen {
             faction,
@@ -8666,7 +8624,6 @@ mod tests {
                         improvement: None,
                         kit: None,
                         improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                        maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                     }],
                     ..Default::default()
                 },
@@ -9017,56 +8974,6 @@ mod tests {
         assert_eq!(band_build_crew(&app, band), beyond_the_band - 1);
     }
 
-    /// **The keeping passes the same gate.** Keepers come out of the same band as the gatherers and
-    /// the builders, so `maintain` refuses an over-staffed order exactly as the four verbs do — and
-    /// leaves the source unkept rather than kept by a crew the player did not choose.
-    #[test]
-    fn a_maintain_asking_for_more_hands_than_the_band_has_is_refused_outright() {
-        let mut app = build_headless_app();
-        let faction = FactionId(0);
-        let coord = UVec2::new(1, 1);
-        seed_thriving_patch(&mut app, coord);
-        spawn_working_band(
-            &mut app,
-            faction,
-            LaborTarget::Forage {
-                tile: coord,
-                floor: 0.5,
-                species: None,
-            },
-        );
-        let beyond_the_band = BAND_WORKING_AGE - BAND_WORKERS + 1;
-
-        handle_maintain(
-            &mut app,
-            faction,
-            "forage".to_string(),
-            coord,
-            String::new(),
-            beyond_the_band,
-        );
-
-        assert!(
-            cancel_failure_detail_contains(&app, "the band has"),
-            "the keeping's refusal names the idle hands too"
-        );
-        assert_eq!(
-            maintain_crew(&mut app, faction),
-            NO_CREW_ON_THIS_ACTIVITY,
-            "a refused `maintain` keeps nobody on the source"
-        );
-
-        handle_maintain(
-            &mut app,
-            faction,
-            "forage".to_string(),
-            coord,
-            String::new(),
-            beyond_the_band - 1,
-        );
-        assert_eq!(maintain_crew(&mut app, faction), beyond_the_band - 1);
-    }
-
     /// **A RING CLAIMS HANDS LIKE EVERY OTHER BUILD.** `extend_pen` rides the same `animal:pen` rung
     /// as the pen it widens, so it staffs the same `improvement_workers` allocation and passes the
     /// same pool gate — otherwise widening a fence would be the one build in the game that costs
@@ -9133,113 +9040,138 @@ mod tests {
             .improvement_workers
     }
 
-    /// **`maintain` puts hands on a source's keeping, on both webs, and `0` takes them off again**
-    /// — the third of a source's three worker allocations (`docs/plan_standing_upkeep.md` §2.2).
+    /// **`upkeep_mode` sets the band's fund mode, both ways, and refuses a mode it does not know**
+    /// (`docs/plan_standing_upkeep.md` §2.5).
     ///
-    /// The default is nobody, so both directions are asserted: a one-way command would be a trap.
+    /// It is what is left of the retired `maintain` once maintenance left the tile: the keeping's
+    /// *crew* is `assign_labor … agriculture|husbandry <workers>` now, and what remains to state is
+    /// what happens when that pool cannot cover the band's whole web.
+    ///
+    /// **Both directions are asserted**, because a one-way command would be a trap — and the
+    /// refusal is, because silently reading a typo as the default would leave the player believing
+    /// they had protected their Field.
     #[test]
-    fn maintain_staffs_the_keeping_on_both_webs() {
+    fn upkeep_mode_sets_the_bands_fund_mode_and_refuses_an_unknown_one() {
         let mut app = build_headless_app();
+        app.update();
         let faction = FactionId(0);
-        let coord = UVec2::new(1, 1);
-        seed_thriving_patch(&mut app, coord);
-        spawn_working_band(
-            &mut app,
-            faction,
-            LaborTarget::Forage {
-                tile: coord,
-                floor: 0.5,
-                species: None,
-            },
-        );
+        let band = starting_band_id(&mut app, faction);
         assert_eq!(
-            maintain_crew(&mut app, faction),
-            NO_CREW_ON_THIS_ACTIVITY,
-            "a source nobody has staffed for keeping is not being kept"
+            band_fund_mode(&mut app, faction),
+            UpkeepFundMode::Spread,
+            "an unstated policy is `spread`: nobody is singled out"
         );
 
+        handle_upkeep_mode(&mut app, faction, band, "priority".to_string());
+        assert_eq!(band_fund_mode(&mut app, faction), UpkeepFundMode::Priority);
+
+        handle_upkeep_mode(&mut app, faction, band, "spread".to_string());
+        assert_eq!(
+            band_fund_mode(&mut app, faction),
+            UpkeepFundMode::Spread,
+            "…and it goes back, so the choice is a dial rather than a ratchet"
+        );
+
+        handle_upkeep_mode(&mut app, faction, band, "sideways".to_string());
+        assert!(
+            cancel_failure_detail_contains(&app, "Unknown upkeep mode"),
+            "an unknown mode is named, not guessed at"
+        );
+        assert_eq!(
+            band_fund_mode(&mut app, faction),
+            UpkeepFundMode::Spread,
+            "and a refused mode changes nothing"
+        );
+    }
+
+    /// **The keeping is staffed like any other band-wide role**, through `assign_labor` — which is
+    /// the whole of what "maintenance left the tile" means at the command boundary. `0` stops
+    /// maintaining that web, exactly as `0` unassigns any other row.
+    #[test]
+    fn assign_labor_staffs_the_two_keeping_roles() {
+        let mut app = build_headless_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = starting_band_id(&mut app, faction);
         const KEEPERS: u32 = 3;
-        handle_maintain(
+
+        handle_assign_labor(
             &mut app,
             faction,
-            "forage".to_string(),
-            coord,
-            String::new(),
+            Some(band),
+            "agriculture".to_string(),
             KEEPERS,
-        );
-        assert_eq!(maintain_crew(&mut app, faction), KEEPERS);
-        handle_maintain(
-            &mut app,
-            faction,
-            "forage".to_string(),
-            coord,
-            String::new(),
-            NO_CREW_ON_THIS_ACTIVITY,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         );
         assert_eq!(
-            maintain_crew(&mut app, faction),
+            role_crew(&mut app, faction, &LaborTarget::Agriculture),
+            KEEPERS
+        );
+        assert_eq!(
+            role_crew(&mut app, faction, &LaborTarget::Husbandry),
             NO_CREW_ON_THIS_ACTIVITY,
-            "…and zero takes them off again — that is the whole of 'stop maintaining this'"
+            "the two webs are separate pools — staffing one never staffs the other"
         );
 
-        // **It rides the checkpoint free**, because the crew lives on the band's `LaborAllocation`
-        // and `SimState` captures that component whole (`sim_state.rs`'s `labor: Option<..>`) — a
-        // field added to the allocation is carried by construction, which is what
-        // `tests/sim_state_coverage.rs` exists to keep true. Not re-asserted here, because a
-        // checkpoint round-trip respawns bands and this fixture's hand-rolled band is not the shape
-        // that pass reconstructs.
-    }
-
-    /// **A source no band is working is refused, and so is an unknown web** — `abandon_improvement`'s
-    /// two rejections, on its sibling. (The unknown *kind* never reaches the server from the text
-    /// channel, which fails it at parse; this covers the proto path.)
-    #[test]
-    fn maintain_refuses_an_unknown_kind_and_an_unworked_source() {
-        let mut app = build_headless_app();
-        let faction = FactionId(0);
-        let coord = UVec2::new(1, 1);
-        seed_thriving_patch(&mut app, coord);
-
-        handle_maintain(
+        handle_assign_labor(
             &mut app,
             faction,
-            "orchard".to_string(),
-            coord,
-            String::new(),
-            1,
+            Some(band),
+            "agriculture".to_string(),
+            NO_CREW_ON_THIS_ACTIVITY,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         );
-        assert!(
-            cancel_failure_detail_contains(&app, "Unknown source kind"),
-            "an unknown web is named, not guessed"
-        );
-
-        handle_maintain(
-            &mut app,
-            faction,
-            "forage".to_string(),
-            coord,
-            String::new(),
-            1,
-        );
-        assert!(
-            cancel_failure_detail_contains(&app, "No band is working"),
-            "you cannot staff the keeping of a source nobody is working"
+        assert_eq!(
+            role_crew(&mut app, faction, &LaborTarget::Agriculture),
+            NO_CREW_ON_THIS_ACTIVITY,
+            "…and zero takes them off again — that is the whole of 'stop maintaining this web'"
         );
     }
 
-    /// The hands this faction's band has on one source's keeping. **Queried rather than read off a
-    /// stored `Entity`**, because `restore_sim_state` respawns bands and the id does not survive it.
-    fn maintain_crew(app: &mut bevy::prelude::App, faction: FactionId) -> u32 {
+    /// The `band_id` of this faction's first band — what a per-band command names. It is the band's
+    /// own [`BandId`], not its entity bits: `resolve_starting_unit_entity` matches on the component,
+    /// because an entity id does not survive a checkpoint restore.
+    fn starting_band_id(app: &mut bevy::prelude::App, faction: FactionId) -> u64 {
+        app.world
+            .query::<(&PopulationCohort, &BandId)>()
+            .iter(&app.world)
+            .find(|(cohort, _)| cohort.faction == faction)
+            .map(|(_, id)| id.0)
+            .expect("the start profile seeded a band")
+    }
+
+    /// This faction's band's maintenance fund mode. **Queried rather than read off a stored
+    /// `Entity`**, because `restore_sim_state` respawns bands and the id does not survive it.
+    fn band_fund_mode(app: &mut bevy::prelude::App, faction: FactionId) -> UpkeepFundMode {
+        app.world
+            .query::<(&PopulationCohort, &LaborAllocation)>()
+            .iter(&app.world)
+            .find(|(cohort, _)| cohort.faction == faction)
+            .map(|(_, allocation)| allocation.upkeep_fund_mode)
+            .expect("the faction has a band")
+    }
+
+    /// The hands this faction has on one band-wide role, summed across its bands.
+    fn role_crew(app: &mut bevy::prelude::App, faction: FactionId, role: &LaborTarget) -> u32 {
         app.world
             .query::<(&PopulationCohort, &LaborAllocation)>()
             .iter(&app.world)
             .filter(|(cohort, _)| cohort.faction == faction)
-            .flat_map(|(_, allocation)| allocation.assignments.iter())
-            .map(|assignment| assignment.maintain_workers)
+            .map(|(_, allocation)| allocation.workers_on(role))
             .sum()
     }
 
-    /// `maintain`'s refusals ride the `CancelOrder` feed channel, exactly as
+    /// `upkeep_mode`'s refusals ride the `CancelOrder` feed channel, exactly as
     /// `abandon_improvement`'s do — the two are siblings and read on one line.
     fn cancel_failure_detail_contains(app: &bevy::prelude::App, needle: &str) -> bool {
         app.world.resource::<CommandEventLog>().iter().any(|entry| {
@@ -11065,12 +10997,14 @@ mod tests {
             "the fixture patch must stand above the food peak, or its rows describe an empty patch"
         );
         // **The trio describes ONE rung and ONE turn.** This fixture patch carries a part-prepared
-        // Sow, so the rung at risk is `plant:field` and its demand is what holding this ground
-        // costs; nobody is keeping it, so the whole demand is unmet and the shortfall is the bleed
-        // `advance_cultivation` will apply (`docs/plan_standing_upkeep.md` §2.4).
+        // Sow, so the rung at risk is `plant:field` — and a meter still being RAISED is owed what it
+        // would lose rather than what holding the finished rung costs
+        // (`RungDef::meter_raising_demand`, `docs/plan_standing_upkeep.md` §0). Nobody is building it
+        // and nobody is keeping it, so the whole of that is unmet and the shortfall is the bleed
+        // `advance_cultivation` will apply.
         let field_demand = core_sim::LadderConfig::builtin()
             .rung(RungKey::PlantField)
-            .upkeep_demand(core_sim::UNSCALED_UPKEEP);
+            .meter_raising_demand(core_sim::UNSCALED_UPKEEP);
         assert!(
             field_demand > 0.0,
             "the field rung costs work to hold, or this block asserts three zeroes"

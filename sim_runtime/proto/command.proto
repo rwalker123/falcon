@@ -436,28 +436,27 @@ message AbandonImprovementCommand {
   string fauna_id = 5;  // hunt only
 }
 
-// PUT HANDS ON A SOURCE'S STANDING UPKEEP (docs/plan_standing_upkeep.md section 2.2) - the third of
-// a source's three worker allocations, beside the TAKE crew (assign_labor) and the BUILD crew (the
-// improvement verbs). Same source grammar as AbandonImprovementCommand: `kind` picks the web
-// ("forage" uses target_x/target_y, "hunt" uses fauna_id).
+// SAY HOW A BAND SPLITS A MAINTENANCE POOL IT CANNOT STRETCH (docs/plan_standing_upkeep.md 2.5).
 //
-// `workers = 0` IS "stop maintaining this" - there is no separate toggle, because a boolean beside a
-// crew count would be a second way to say what the number already says and the two could disagree.
-// The demand still stands, so all of it goes unmet and the improvement slides back down the ladder.
-// That is the deal: hold it and spend the hands, or write it off and put them somewhere else.
+// MAINTENANCE IS A BAND-LEVEL STANDING ROLE, not a per-source crew: `agriculture` keeps the plant
+// web, `husbandry` the animal one, each staffed through assign_labor like scout and warrior, and the
+// band's demand is the SUM over everything it holds on that web. An indivisible per-source supplier
+// wasted whatever it did not spend, once per source, and the waste grew as gear made a hand worth
+// more; a pool has no leftover by construction.
 //
-// The default is ZERO. A source nobody has staffed for keeping is not being kept - which costs
-// nothing today, because no shipped rung declares an upkeep.
+// What is left to decide is what happens when the pool cannot cover the sum, and there are two
+// defensible answers, so the player picks one PER BAND:
+//   "spread"   - proportional to demand, so EVERYTHING degrades a little. The default.
+//   "priority" - fund sources COMPLETELY until the pool runs out, MOST-INVESTED FIRST, so the
+//                biggest investments stay whole and the marginal ones rot.
+// An unknown token is refused by name rather than guessed at.
 //
-// Field 56 was SetMaintainCommand (a bool) for the length of one unmerged slice; the slot is reused
-// rather than burned, there being no shipped client to keep compatible with.
-message MaintainCommand {
+// Field 56 was SetMaintainCommand (a bool), then MaintainCommand (a per-source crew); the slot is
+// reused rather than burned, there being no shipped client to keep compatible with.
+message UpkeepModeCommand {
   uint32 faction_id = 1;
-  string kind = 2;      // "forage" | "hunt"
-  uint32 target_x = 3;  // forage only
-  uint32 target_y = 4;  // forage only
-  string fauna_id = 5;  // hunt only
-  uint32 workers = 6;
+  uint64 band_id = 2;
+  string mode = 3;      // "spread" | "priority"
 }
 
 message ExportMapCommand {
@@ -837,7 +836,7 @@ message CommandEnvelope {
     BenchCrewCommand bench_crew = 54;
     // 54 is held by `bench_crew`, so the trade expedition takes 55 (append-only; never renumber).
     SendTradeExpeditionCommand send_trade_expedition = 55;
-    // 55 is held by `send_trade_expedition`, so the maintain allocation takes 56 (append-only).
-    MaintainCommand maintain = 56;
+    // 55 is held by `send_trade_expedition`, so the upkeep mode takes 56 (append-only).
+    UpkeepModeCommand upkeep_mode = 56;
   }
 }
