@@ -1722,13 +1722,12 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             var hunt_forecast := SourceForecast.forecast_inputs(
                 live_herd, SourceForecast.SOURCE_KIND_HERD,
                 HudComposeVocab.BARE_FORECAST_PREFIX, floor)
-            # A MANAGED herd's crew requirement floors this row's ceiling, exactly as it floors the
-            # compose stepper's — otherwise the row renders the under-herded ⚠ below and disables the
-            # `+` that would clear it. `SourceForecast.herd_crew_floor` is the one definition of the
-            # number; the forage branch above passes none, a patch owing no crew.
-            cap = SourceForecast.source_worker_cap_state(hunt_forecast, workers, idle,
-                SourceForecast.herd_crew_floor(
-                    live_herd, improvement != SourceForecast.IMPROVEMENT_NONE))
+            # **NO KEEPER FLOOR ON THIS ROW'S CEILING EITHER** (`docs/plan_standing_upkeep.md` §2.2)
+            # — the compose twin dropped the same term. The keepers a managed herd demands are the
+            # MAINTAIN allocation, answered by the compose sheet's keeping row and by `maintain`,
+            # so raising the TAKE row's `+` to `herdersNeeded` staffed one crew against another
+            # crew's demand.
+            cap = SourceForecast.source_worker_cap_state(hunt_forecast, workers, idle)
         var note := String(yld.get("note", ""))
         var rung := _work_source_rung(kind, patch, live_herd)
         # THE RUNG ON OFFER — a third axis, orthogonal to both `marks` (the verb in flight) and
@@ -1950,9 +1949,9 @@ func _find_work_model(models: Array, key: String) -> Dictionary:
 ## **THE IMPROVEMENT RIDES EVERY CREW EDIT** (issue #442). `assign_labor` deliberately does not touch
 ## the second axis, so a `+`/`−`/Unassign/stance pick that let the pending overlay default to
 ## `IMPROVEMENT_NONE` would blank the axis for the rest of the turn: the row's build badge and its
-## `⌃`-vs-progress slot would flip back to advertising the very rung already under way, and
-## `herd_crew_floor` would drop from `herders_needed_if_managed` to the ownership-gated
-## `herders_needed`, capping the `+` below the keepers the sim demands. The row MODEL already carries
+## `⌃`-vs-progress slot would flip back to advertising the very rung already under way. (It used to
+## move the row's worker CAP too, through the retired `herd_crew_floor`; that floor went with the
+## keeper crew's move onto its own allocation.) The row MODEL already carries
 ## the value `effective_worker_map` resolved (confirmed assignment overlaid with any pending edit), so
 ## it is restated from there rather than re-derived — re-deriving could disagree with the board the
 ## player is clicking on.

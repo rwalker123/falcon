@@ -2808,35 +2808,60 @@ player says *stop maintaining this, take everything, let it go*. There is no tog
 — a boolean and a count could disagree — and what IS suppressed is the command on a source with
 nothing to keep, which is the keeping row's own render test.
 
-### THE STEPPERS CLAMP TO IDLE, because the sim REFUSES rather than trims
+### EACH STEPPER CLAMPS TO `idle + ITS OWN CREW ON THIS SOURCE`
 
 `assign_labor` clamps and says so; the improvement verbs, `extend_pen` and `maintain` **refuse**,
 naming the idle count (*"Cultivating needs 9 workers — the band has 4 idle."*). A silent trim on a
 build is how the gathering it was meant to improve gets disbanded — so the sheet must never offer a
-crew the band cannot staff, and both new steppers cap at the band's idle hands.
+crew the band cannot staff.
 
-**The clamp reads the wire's `idle_workers`, NOT `HudBandLaborState.effective_idle`.** That helper
+**The ceiling is per ACTIVITY, and that is what the sim judges against.**
+`LaborAllocation::idle_for` gives back only the crew on this source for the activity being restated,
+so a build's ceiling is `idle + this source's builders` and the keeping's is `idle + this source's
+keepers` (`HudBandLaborState.assignable_build_workers_*` / `assignable_maintain_workers_*`). Crossing
+them would offer a crew the sim refuses.
+
+**IT IS WHAT MAKES A FULLY-ALLOCATED BAND EDITABLE AT ALL.** Clamped at `idle` alone — which is all
+the client could do while the two crews were write-only — a band with every hand committed capped
+both steppers at **0**: the player could take a keeping crew to nothing and could never put it back,
+on the one source where the decision matters most. Frame: `forage_reopened_crews`.
+
+**Every clamp reads the wire's `idle_workers`, NOT `HudBandLaborState.effective_idle`.** That helper
 sums each assignment's published `workers`, which is the TAKE crew alone, so it would report a band
 mid-Cultivate as having hands it has already committed. `idleWorkers` is `BandWorkforce::idle()` —
 pool minus **every** staffed hand across all three activities, minus the bench — which is the number
 the refusal is judged against.
 
-### The three crews the wire only half answers
+### All three crews are READABLE, and the sheet opens on them
 
-**`LaborAssignment` publishes the TAKE crew and nothing else.** There is no `improvementWorkers` /
-`maintainWorkers` field, so a sheet cannot open on the hands a band already has on a build or on the
-keeping. Two consequences, both deliberate rather than incidental:
+**`LaborAssignment` publishes `workers` / `improvementWorkers` / `maintainWorkers`** — the take, the
+build and the keeping. The last two were write-only for one slice (the client could send them and
+never read them back), and closing that gap retired every compromise it forced:
 
-- **Both new steppers seed at NOBODY** (`ComposeState`'s `_*_build_count` / `_*_maintain_count`, reset
-  by `seed_*`), and `DrawerComposeController.BUILD_CREW_UNSTATED` is what an unmoved one is compared
-  against — so opening a sheet and closing it sends no verb and never silently unstaffs a build in
-  flight. The commands SET rather than add, so a moved stepper is exact.
-- **The clamp is conservative.** The sim gives a source's own crew for that activity back before
-  counting (`LaborAllocation::idle_for`), so restating a build from 2 to 3 costs one idle hand; the
-  client cannot know the 2, so it clamps at `idle` alone. That refuses some legal commands and sends
-  no doomed ones, which is the safe direction.
-- **The keeping row therefore says *"wants 3 · sending 1"***, not *"you have 1"*: the first number is
-  the wire's `upkeepWorkersNeeded`, the second is this sheet's intention.
+- **All three steppers seed from the band's own row** (`seed_forage` / `seed_hunt` take the pair,
+  `HudBandLaborState.build_workers_for_*` / `maintain_workers_for_*` read them). A reopened sheet
+  opens on what the band HAS, which is what makes a restate possible: the commands SET rather than
+  add, so a stepper opening at `0` on a staffed source would offer only the choice to unstaff it.
+- **`0` IS THE WIRE'S ANSWER, NOT A MISSING ONE.** No verb in flight genuinely means no builders, and
+  a source nobody keeps has no keepers — both are the common case. A reader that treated either as
+  "unknown" and substituted a seed would put phantom hands on every unbuilt source in the game.
+- **`_emit_improvement`'s no-op test reads the band's real `improvement_workers`**, so a sheet opened
+  and closed on a staffed build sends nothing (it was a hard `0`, which re-sent the verb every time).
+- **The keeping row says what is TRUE** — *"you have 2 of 3"*, the band's own keepers against the
+  wire's `upkeepWorkersNeeded` — where it could only state an intention before.
+
+### The crop seeds from the ASSIGNMENT, not from the ground
+
+`seed_forage` used to clear the composed crop outright, on the reasoning that a crop pick belongs to
+the PATCH it was made on. True of a tile the band does not work; wrong for one it does — and the
+assignment carries the player's own `species` now.
+
+**It is the SELECTION, and it is deliberately not `ForagePatchState.committedSpecies`.** The patch's
+field is what the GROUND is committed to and only exists once a crew has worked it; the assignment's
+exists from the moment the player chose. **On unworked ground it is the only record there is**, so a
+sheet reopened there re-resolved to the tile's dominant plant and silently re-pointed a 25-turn
+commitment. `HudBandLaborState.species_for_forage` is the reader; `""` stays a real instruction
+(*"pick the tile's dominant legal plant for me"*) rather than an absent one.
 
 ### THE DIP IS RETIRED, and so is `crew_needed`
 
@@ -2863,6 +2888,16 @@ gatherers carry**, and what it costs is the hands standing on it. Deleted, not d
   DIPPED ceiling, so a 25-turn improvement asked for fewer hands than gathering the same ground; the
   quotient is honest now. **`workers_needed` fell 12 → 3 on the reference patch**, and that is the
   same retirement seen from the wire.
+- **`herd_crew_floor` and `useful_floor` went with them, on BOTH cap twins**
+  (`SourceForecast.source_worker_cap_state`, `DrawerComposeController._forecast_worker_cap`). They
+  raised the TAKE cap to a managed herd's `herdersNeeded`, because one crew both hunted the animals
+  and held them — a cap sized on the take alone went dead below the count the sim asked for while the
+  same row rendered the under-herded ⚠. **Those keepers are the MAINTAIN allocation now**, with their
+  own stepper, their own ceiling and their own command, so flooring the take stepper on them staffed
+  one crew against another crew's demand. The *hold* crew is still folded in and is a different
+  thing: it is a fact about this take at this floor, not a demand a KIND of source makes, so it stays
+  inside `max_useful_workers` where both twins pick it up. Frames: `herd_tame_worker_cap` and
+  `herd_tame_worker_cap_sustain`, now a pair asserting the two read the SAME cap.
 - The crew row's *"— building this rung, each carries 25% as much"* note is gone
   (`build_crew_dip_note`, `CREW_BUILD_DIP_NOTE_FORMAT`, `CREW_ROW_DIP_META`); the row it explained
   now carries no penalty to explain.

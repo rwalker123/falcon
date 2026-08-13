@@ -63,11 +63,14 @@ var _forage_seeded_band: int = NO_BAND_ENTITY
 # (`maintain`). They are separate fields rather than one dict because they are edited by three
 # different controls and committed by three different commands.
 #
-# **THEY SEED TO NOBODY, NOT TO THE STANDING CREW, AND THAT IS FORCED BY THE WIRE.**
-# `LaborAssignment` publishes only the take crew, so the client cannot read back what a band already
-# has on a build or on the keeping — see `labor-ui.md` → "The three crews the wire only half answers".
-# A stepper that opens at `0` therefore states what the client KNOWS rather than guessing, and the
-# commands SET rather than add, so a restate is exact.
+# **THEY SEED TO THE STANDING CREW, exactly as the take count does.** `LaborAssignment` publishes all
+# three crews now (`improvement_workers` / `maintain_workers`), so a reopened sheet opens on what the
+# band actually has rather than on nobody — which is what makes a restate possible at all: the
+# commands SET rather than add, so a stepper that opened at `0` on a staffed source would offer the
+# player only the choice to unstaff it.
+#
+# **A SEEDED `0` IS THE WIRE'S ANSWER, NOT A MISSING ONE.** No verb in flight means no builders, and a
+# source nobody keeps has no keepers; both are the common case and neither may be papered over.
 var _forage_build_count: int = 0
 var _forage_maintain_count: int = 0
 
@@ -166,15 +169,22 @@ func begin_forage_source(key: String, band_entity: int) -> void:
 ## changing invalidates them exactly as the source changing does. Without the record the sheet went on
 ## showing the previous band's crew — most damagingly a 0, which turns the commit into an Unassign
 ## against the crew the newly-picked band really has on the tile.
-func seed_forage(count: int, floor: float, improvement: String) -> void:
+func seed_forage(count: int, floor: float, improvement: String, build_count: int = 0,
+		maintain_count: int = 0, species: String = "") -> void:
 	_forage_count = count
-	# The other two allocations belong to the source AND the band, so they reset with the rest of the
-	# composition rather than following the player onto a different patch.
-	_forage_build_count = 0
-	_forage_maintain_count = 0
+	# **THE OTHER TWO ALLOCATIONS SEED FROM THE BAND'S OWN ROW**, like the count and the floor above
+	# them: they belong to the source AND the band, so they re-seed on either changing.
+	_forage_build_count = maxi(build_count, 0)
+	_forage_maintain_count = maxi(maintain_count, 0)
 	_forage_floor = SourceForecast.clamp_floor(floor)
 	_forage_improvement = improvement
-	_forage_species = ""
+	# **THE CROP SEEDS FROM THE ASSIGNMENT'S OWN `species`, which is the SELECTION.** It used to clear
+	# to `""` because a crop pick belongs to the PATCH it was made on and a new tile has a different
+	# basket — true of a tile the band does NOT work, and wrong for one it does: the player's stated
+	# crop is on the wire from the moment they chose it, before any crew has worked the ground and
+	# therefore before the patch has a `committed_species` to read. Reopening threw it away and
+	# re-resolved to the tile's dominant plant.
+	_forage_species = species
 	_forage_seeded_band = _forage_band
 
 ## Forget which tile the forage compose belongs to, so the NEXT render takes the source-changed path
@@ -289,10 +299,11 @@ func reset_hunt_kit() -> void:
 
 ## Re-seed the composed count + floor + improvement from the newly-resolved band's staffing on the
 ## herd — the hunt twin of `seed_forage`, including the seeded-band record.
-func seed_hunt(count: int, floor: float, improvement: String) -> void:
+func seed_hunt(count: int, floor: float, improvement: String, build_count: int = 0,
+		maintain_count: int = 0) -> void:
 	_hunt_count = count
-	_hunt_build_count = 0
-	_hunt_maintain_count = 0
+	_hunt_build_count = maxi(build_count, 0)
+	_hunt_maintain_count = maxi(maintain_count, 0)
 	_hunt_floor = SourceForecast.clamp_floor(floor)
 	_hunt_improvement = improvement
 	_hunt_seeded_band = _hunt_band

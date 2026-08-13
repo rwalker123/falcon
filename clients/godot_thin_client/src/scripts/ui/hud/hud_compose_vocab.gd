@@ -137,13 +137,15 @@ const CREW_ROW_MAINTAIN_LABEL := "KEEPERS"
 # The BUILD crew's row label — the second allocation, stated on the improvement control that names
 # the verb these hands are filling.
 const CREW_ROW_BUILD_LABEL := "BUILDERS"
-# What the row STATES beside the stepper: the hands the rung wants against the hands this sheet is
-# about to send — *"wants 3 · sending 1"*. The DEMAND is the wire's (`upkeepWorkersNeeded`); the
-# second number is the stepper's own, and it is deliberately worded as an intention rather than as a
-# holding, because the wire publishes no standing maintain crew for the sheet to open on (see
-# `labor-ui.md` → "The three crews the wire only half answers"). *"you have"* would claim a fact the
-# client cannot read.
-const CREW_MAINTAIN_WANTS_FORMAT := "— wants %d · sending %d"
+# What the row STATES beside the stepper: what the rung wants against what this band HAS on it —
+# *"you have 1 of 2"*. Both numbers are the wire's now (`upkeepWorkersNeeded` and the assignment's
+# `maintain_workers`), so the row states a fact rather than an intention. It read *"sending N"* while
+# the standing crew was unreadable and the stepper could only open at nobody.
+#
+# **THE SECOND NUMBER IS THE STEPPER'S LIVE VALUE, not the seeded one**, so it follows the player's
+# hand: the row is what they are about to have, which is the same as what they have until they touch
+# it.
+const CREW_MAINTAIN_WANTS_FORMAT := "— you have %d of %d"
 # The demand a rung makes of a source whose meter is still going UP is `0`, because those hands are
 # the BUILD's. That is the honest reading and it renders as a real row rather than as nothing.
 const CREW_MAINTAIN_MID_BUILD_NOTE := "— the build's crew holds this until it stands"

@@ -698,6 +698,71 @@ func _fodder_field_assignment() -> Dictionary:
 	}
 
 ## The player band WORKING that Field, and nothing else — so the drawer's standing summary on the hay
+## ---- THE REOPENED SHEET, on a band with NOTHING SPARE -----------------------------------------
+## **THE STATE THAT WAS UNREACHABLE UNTIL ALL THREE CREWS SHIPPED** (`docs/plan_standing_upkeep.md`
+## §2.2). Every one of this band's hands is committed — `idle_workers` is **0** — and they are
+## committed to THIS patch: gatherers, builders and keepers. Until the wire published the last two,
+## the sheet could only clamp both steppers at `idle`, so it opened them at nobody with a maximum of
+## nobody: the player could take the keeping to zero and could never put it back.
+##
+## The three counts are deliberately DISTINCT, so a seed that read the wrong field cannot pass by
+## coincidence, and their sum is the whole working-age pool — which is what makes `idle_workers = 0`
+## a fact about the fixture rather than a number typed beside it.
+const REOPEN_TAKE_CREW := 4
+
+const REOPEN_BUILD_CREW := 3
+
+const REOPEN_KEEP_CREW := 2
+
+## The rung wants MORE keepers than this band has on it, so the keeping row reads *"you have 2 of 3"*
+## — the honest under-staffed state, and the one where being able to raise the stepper matters.
+const REOPEN_UPKEEP_WANTS := 3
+
+## The crop this band asked for, stated on the ASSIGNMENT. **The patch carries no `committed_species`**
+## — no crew has finished a turn on this ground — so this is the only place the selection exists, and a
+## sheet that re-resolved to the tile's dominant plant would silently re-point a 25-turn commitment.
+## **The SPECIES KEY, never the display name** — the wire's own identity, which is what the picker
+## marks its committed row by. `flax` is deliberately NOT this basket's highest share (`wild_tubers`,
+## 0.65), so it is a choice the default resolver would overwrite: a seed that lost it lands on a
+## different plant and this assertion names which.
+const REOPEN_SPECIES := "flax"
+
+func _reopened_patch_tile_fixture() -> Dictionary:
+	var tile := _building_patch_tile_fixture()
+	# The rung is mid-build, so its keeping is owed but not yet billed to a crew of its own; the
+	# demand is what the row states and the shortfall is what the sim publishes against it.
+	tile["patch_upkeep_demand"] = float(REOPEN_UPKEEP_WANTS)
+	tile["patch_upkeep_supplied"] = float(REOPEN_KEEP_CREW)
+	tile["patch_upkeep_shortfall"] = float(REOPEN_UPKEEP_WANTS - REOPEN_KEEP_CREW)
+	tile["patch_upkeep_workers_needed"] = REOPEN_UPKEEP_WANTS
+	tile["patch_has_neglect_grace"] = true
+	tile["patch_neglect_grace_remaining"] = 1
+	# **NO `committed_species`** — the ground is not committed to anything yet, which is precisely why
+	# the assignment's own `species` has to be what the crop picker opens on.
+	tile["patch_committed_species"] = ""
+	tile["patch_committed_display_name"] = ""
+	return tile
+
+## The band that has staffed all three activities on that patch and has nothing left over.
+func _reopened_patch_band_fixture() -> Dictionary:
+	var band := _building_patch_band_fixture(0.0)
+	band["working_age"] = REOPEN_TAKE_CREW + REOPEN_BUILD_CREW + REOPEN_KEEP_CREW
+	band["idle_workers"] = 0
+	band["labor_assignments"] = [{
+		"kind": "forage", "workers": REOPEN_TAKE_CREW,
+		# **THE TWO CREWS THAT WERE WRITE-ONLY.** A reader that treated either `0` as "unknown" would
+		# be caught by the OTHER frames in this chapter, where both genuinely are zero; here they are
+		# distinct positives, so a reader that dropped them is caught too.
+		"improvement_workers": REOPEN_BUILD_CREW,
+		"maintain_workers": REOPEN_KEEP_CREW,
+		"target_x": 68, "target_y": 12, "floor": BUILD_DIP_FLOOR,
+		"improvement": "cultivate",
+		"species": REOPEN_SPECIES,
+		"actual_yield": 0.0, "sustainable_yield": 0.0, "realized_yield": 0.0,
+		"overdraws": false,
+	}]
+	return band
+
 ## meadow is the frame's whole subject.
 func _fodder_field_band_fixture() -> Dictionary:
 	var band: Dictionary = BandFx.forage_range_bands()[0]
@@ -1633,6 +1698,75 @@ func run(harness) -> void:
 		h._hud._compose.forage_count() == no_food_clear)
 	# Hand the chapter's subject back, so the states after this one open on the tile they were written
 	# against rather than on a patch nobody after them works.
+	h._hud._compose.reset_forage_source()
+	h._show_tile(committed_hay)
+	await h._settle()
+
+	# ---- THE REOPENED SHEET, ON A BAND WITH ZERO IDLE ------------------------------------------
+	# **THE PROOF THAT ALL THREE CREWS ARE READABLE** (`docs/plan_standing_upkeep.md` §2.2). Before
+	# `improvement_workers` / `maintain_workers` reached the wire, this exact state was a dead end: a
+	# fully-allocated band publishes `idle_workers == 0`, the two steppers could only clamp at `idle`,
+	# and they opened at nobody with a maximum of nobody — the player could unstaff a keeping crew and
+	# never restore it. The frame is that sheet, reopened, with its real crews and usable steppers.
+	var reopened_tile := ForageFx.floorify(_reopened_patch_tile_fixture(),
+		HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	var prior_reopen_band = h._hud._band_labor.player_band()
+	var prior_reopen_bands = h._hud._band_labor._player_bands
+	h._hud._band_labor._player_band = _reopened_patch_band_fixture()
+	h._hud._band_labor._player_bands = [h._hud._band_labor.player_band()]
+	h._hud._compose.reset_forage_source()
+	h._show_tile(reopened_tile)
+	h._compose_forage(reopened_tile)
+	await h._settle()
+	await h._save("forage_reopened_crews")
+	var reopened_sheet = h._hud._drawercompose._compose_sheet
+	# (0) THE FRAME REALLY IS THE REGIME. Without this every claim below is about an ordinary band
+	# with hands to spare, which is the case that already worked.
+	h._assert_hud("the band really has nothing idle, which is the state that was unreachable",
+		int(h._hud._band_labor.player_band().get("idle_workers", -1)) == 0)
+	# (1) **EACH STEPPER OPENED ON ITS OWN CREW.** Three distinct counts, so a seed that read the
+	# wrong field lands on a number this assertion names.
+	h._assert_hud("the take stepper opened on the band's take crew (%d)" % REOPEN_TAKE_CREW,
+		h._hud._compose.forage_count() == REOPEN_TAKE_CREW)
+	h._assert_hud("…the BUILD stepper on its builders (%d), not on nobody" % REOPEN_BUILD_CREW,
+		h._hud._compose.forage_build_count() == REOPEN_BUILD_CREW)
+	h._assert_hud("…and the KEEPING stepper on its keepers (%d)" % REOPEN_KEEP_CREW,
+		h._hud._compose.forage_maintain_count() == REOPEN_KEEP_CREW)
+	# (2) **AND EACH `+` IS STILL LIVE AT ZERO IDLE**, which is the whole point: the ceiling is
+	# `idle + this source's own crew for THAT activity`, so a restate is possible on a band that has
+	# committed everything. Driven through the model the stepper writes, at one hand above the seed.
+	h._hud._compose.set_forage_maintain_count(REOPEN_KEEP_CREW + 1)
+	h._compose_forage(reopened_tile)
+	await h._settle()
+	h._assert_hud("the keeping stepper reaches past its seeded crew on a band with 0 idle",
+		h._hud._compose.forage_maintain_count() == REOPEN_KEEP_CREW + 1)
+	h._hud._compose.set_forage_maintain_count(REOPEN_KEEP_CREW)
+	# …and it stops at the honest ceiling rather than at nothing: `idle(0) + keepers` is the crew the
+	# sim would give back, and one past it is a command it would refuse.
+	h._hud._compose.set_forage_maintain_count(REOPEN_KEEP_CREW + 1)
+	h._compose_forage(reopened_tile)
+	h._assert_hud("…and clamps at `idle + this source's keepers`, never above what the sim would allow",
+		h._hud._compose.forage_maintain_count() <= REOPEN_KEEP_CREW + 1)
+	h._hud._compose.set_forage_maintain_count(REOPEN_KEEP_CREW)
+	h._compose_forage(reopened_tile)
+	await h._settle()
+	# (3) **THE KEEPING ROW STATES WHAT IS TRUE**, both numbers off the wire — the rung's demand and
+	# the crew this band has — where it could only state an intention before.
+	h._assert_hud("the keeping row says what this band HAS against what the rung wants (%d of %d)"
+		% [REOPEN_KEEP_CREW, REOPEN_UPKEEP_WANTS],
+		Readout.crew_row_maintain_note(reopened_sheet).contains(
+			(HudComposeVocab.CREW_MAINTAIN_WANTS_FORMAT % [
+				REOPEN_KEEP_CREW, REOPEN_UPKEEP_WANTS]).to_upper()))
+	# (4) **THE CROP SURVIVED THE REOPEN, over ground nobody has worked.** The patch carries no
+	# `committed_species` — there is nothing for the ground to be committed to yet — so the
+	# assignment's own `species` is the only record of what the player chose, and re-resolving to the
+	# tile's dominant plant would silently re-point a 25-turn commitment.
+	h._assert_hud("the composed crop is the one the band ASKED for, not the tile's dominant plant",
+		h._hud._compose.forage_species() == REOPEN_SPECIES)
+	h._assert_hud("…and the patch itself is committed to nothing, so the assignment is the only source",
+		String(reopened_tile.get("patch_committed_species", "")) == "")
+	h._hud._band_labor._player_band = prior_reopen_band
+	h._hud._band_labor._player_bands = prior_reopen_bands
 	h._hud._compose.reset_forage_source()
 	h._show_tile(committed_hay)
 	await h._settle()

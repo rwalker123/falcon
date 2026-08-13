@@ -1375,12 +1375,13 @@ func _ready() -> void:
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
 
-	# THE HERDER FLOOR — the board must not flag a problem and then disable its own remedy. A managed
-	# Wild Fowl herd grew to owe 3 keepers while its take saturates at 2 workers, and the row is staffed
-	# at 2 with idle workers free. The take-side max-useful alone would gate the `+` dead at 2, directly
-	# under the ⚠ that says a 3rd herder is needed (the playtest report). Both cap twins now floor on
-	# `SourceForecast.herd_crew_floor`, so the row's `+` reaches the crew the sim is asking for — and the
-	# assertion states that as the twin invariant, which a PNG structurally cannot carry.
+	# THE HERDER FLOOR, **re-aimed by the keeper crew's move onto its own allocation**
+	# (`docs/plan_standing_upkeep.md` §2.2). A managed Wild Fowl herd owes 3 keepers while its take
+	# saturates at 2 workers, and the row is staffed at 2 with idle workers free. Both cap twins used
+	# to FLOOR on that keeper count, so the take row's `+` reached it; those hands are the maintain
+	# allocation now, answered by the compose sheet's keeping row, so both twins gate at the take's own
+	# usefulness and the ⚠ points at a different control. The assertion states the twins' agreement,
+	# which a PNG structurally cannot carry.
 	_set_world_herds(_herder_floor_herd_fixtures())
 	_push_bands([_herder_floor_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
@@ -7029,8 +7030,8 @@ func _under_herded_work_herd_fixtures() -> Array:
 	return [penned]
 
 ## The band working that Wild Fowl: 2 herders on it (below the crew of 3) and idle workers free, on an
-## EXTRACTIVE rung so `herd_crew_floor` reads the ownership-gated `herders_needed` — the field the row's
-## own under-herded ⚠ gates on, which is the whole point of the frame.
+## EXTRACTIVE rung so the herd reports the ownership-gated `herders_needed` — the field the row's own
+## under-herded ⚠ gates on, which is the whole point of the frame.
 func _herder_floor_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["entity"] = 919
@@ -7061,15 +7062,21 @@ func _herder_floor_herd_fixtures() -> Array:
 	_set_managed_herders(fowl, HERDER_FLOOR_HERDERS_NEEDED)
 	return [fowl]
 
-## THE INVARIANT AS A TEST: one row cannot flag a problem and disable its own remedy, and the two cap
-## twins cannot gate differently.
+## THE INVARIANT AS A TEST — **and the invariant CHANGED with the keeper crew**
+## (`docs/plan_standing_upkeep.md` §2.2).
 ##
-## Three claims, and the middle one is what makes the other two non-vacuous:
-##   1. the row still carries the under-herded ⚠ — the board KNOWS the herd is short a keeper;
-##   2. its `+` is ENABLED at the staffed 2, so the remedy the ⚠ demands is reachable;
+## It used to be *one row cannot flag a problem and disable its own remedy*: the board marked a herd
+## under-herded and its `+` had to reach `herdersNeeded`, because the hunters and the keepers were one
+## crew. **They are two allocations now.** The remedy for an under-herded herd is the compose sheet's
+## KEEPERS stepper and the `maintain` command; the work row's `+` staffs the TAKE, and raising it to a
+## keeper count would put hunters on a bill the keeping owes.
+##
+## So the row keeps its ⚠ — the board still KNOWS — and three claims survive, re-aimed:
+##   1. the row still carries the under-herded ⚠;
+##   2. neither cap twin reaches the keeper crew any more — the ceiling is the TAKE's own usefulness;
 ##   3. `source_worker_cap_state` (the worked row) and `_forecast_worker_cap` (the compose stepper)
-##      answer with the SAME ceiling — the crew of 3, not the take-side 2 — which is the promise the
-##      two twins make by sitting beside each other.
+##      answer with the SAME ceiling, which is the promise the two twins make by sitting beside each
+##      other and is the one thing this frame has always really been about.
 func _assert_herder_floor_row(herd_id: String) -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
 	var idle := _hud._band_labor.effective_idle(band)
@@ -7084,42 +7091,39 @@ func _assert_herder_floor_row(herd_id: String) -> void:
 		found = true
 		if not bool(m.get("under_herded", false)):
 			_fail("expected under_herded on the Hunt row for %s" % herd_id)
-		elif not bool(m.get("can_add", false)):
-			_fail(("the under-herded row for %s disables its own `+` at %d "
-				+ "workers with %d idle — the board flags the shed and refuses the fix")
-				% [herd_id, int(m.get("workers", 0)), idle])
 		else:
-			print("band_panel_preview: assert OK — the under-herded row keeps its `+` live (crew %d > take-useful %d)"
-				% [HERDER_FLOOR_HERDERS_NEEDED, HERDER_FLOOR_TAKE_USEFUL])
+			print("band_panel_preview: assert OK — the board still marks the herd under-herded (wants %d keepers)"
+				% HERDER_FLOOR_HERDERS_NEEDED)
 	if not found:
 		_fail("no Hunt work row for %s" % herd_id)
 		return
-	# The twins, asked the same question about the same herd+policy. `_forecast_worker_cap` is given an
+	# The twins, asked the same question about the same herd. `_forecast_worker_cap` is given an
 	# assignable count above both candidate ceilings so its answer IS the usefulness ceiling and not a
 	# labor bound; `source_worker_cap_state` is probed on either side of that ceiling.
 	var herd := _hud._band_labor.find_world_herd(herd_id)
 	var forecast := SourceForecast.forecast_inputs(herd, SourceForecast.SOURCE_KIND_HERD,
 		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK)
-	# `herd_crew_floor` keys on the IMPROVEMENT axis since #442 (it picks the ownership-gated
-	# `herders_needed` or the would-be `herders_needed_if_managed`), so the probe reads the ROW's own
-	# improvement rather than asserting one — that is what keeps the twin comparison honest.
-	var floor_workers := SourceForecast.herd_crew_floor(herd,
-		_hud._band_labor.improvement_for_hunt(band, herd_id) != SourceForecast.IMPROVEMENT_NONE)
+	# **NO FLOOR ARGUMENT ON EITHER TWIN.** `herd_crew_floor` and `useful_floor` are retired: the crew
+	# they named is the maintain allocation's, answered by the keeping row on the compose sheet.
 	var compose_cap := int(_hud._drawercompose._forecast_worker_cap(
-		forecast, HERDER_FLOOR_HERDERS_NEEDED + 1, floor_workers)["cap"])
+		forecast, HERDER_FLOOR_HERDERS_NEEDED + 1)["cap"])
 	var row_below: bool = bool(SourceForecast.source_worker_cap_state(
-		forecast, HERDER_FLOOR_HERDERS_NEEDED - 1, 1, floor_workers)["can_add"])
+		forecast, HERDER_FLOOR_TAKE_USEFUL - 1, 1)["can_add"])
 	var row_at: bool = bool(SourceForecast.source_worker_cap_state(
-		forecast, HERDER_FLOOR_HERDERS_NEEDED, 1, floor_workers)["can_add"])
-	if compose_cap != HERDER_FLOOR_HERDERS_NEEDED:
-		_fail("the compose stepper caps at %d, not the crew of %d"
-			% [compose_cap, HERDER_FLOOR_HERDERS_NEEDED])
+		forecast, HERDER_FLOOR_TAKE_USEFUL, 1)["can_add"])
+	if compose_cap != HERDER_FLOOR_TAKE_USEFUL:
+		_fail("the compose stepper caps at %d, not the take-useful %d"
+			% [compose_cap, HERDER_FLOOR_TAKE_USEFUL])
+	elif compose_cap >= HERDER_FLOOR_HERDERS_NEEDED:
+		_fail(("the take cap still reaches the keeper crew (%d >= %d) — those hands "
+			+ "belong to the maintain allocation") % [compose_cap, HERDER_FLOOR_HERDERS_NEEDED])
 	elif not (row_below and not row_at):
-		_fail(("the worked row does not gate at the crew of %d "
-			+ "(can_add below=%s, at=%s)") % [HERDER_FLOOR_HERDERS_NEEDED, row_below, row_at])
+		_fail(("the worked row does not gate at the take-useful %d "
+			+ "(can_add below=%s, at=%s)") % [HERDER_FLOOR_TAKE_USEFUL, row_below, row_at])
 	else:
-		print("band_panel_preview: assert OK — both cap twins gate at the crew of %d, above the take-useful %d"
-			% [HERDER_FLOOR_HERDERS_NEEDED, HERDER_FLOOR_TAKE_USEFUL])
+		print(("band_panel_preview: assert OK — both cap twins gate at the take-useful %d, "
+			+ "below the keeper crew of %d the keeping row now answers for")
+			% [HERDER_FLOOR_TAKE_USEFUL, HERDER_FLOOR_HERDERS_NEEDED])
 
 ## The under-contained Hunt row must carry the shed flag: the ⚠ mark, the drifting-off note, and the
 ## `under_herded` model flag the row + inspector tint from.
@@ -7602,7 +7606,7 @@ func _clear_pending_labor() -> void:
 ##   1. the confirmed row really is mid-build: it carries the improvement AND renders the BUILDING badge;
 ##   2. after the edit the row is PENDING and still carries both — it has not flipped back to advertising
 ##      the very rung already under way (`next_rung_ready` excludes the verb in flight, so a blanked axis
-##      re-offers it), and `herd_crew_floor` still keys on the would-be crew rather than the gated one.
+##      re-offers it).
 func _assert_crew_edit_keeps_improvement(herd_id: String, improvement: String) -> void:
 	_clear_pending_labor()
 	# The band is staged LOCALLY rather than read off `_panel_band`, and that is deliberate: an emit

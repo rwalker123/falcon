@@ -589,6 +589,17 @@ half, is the claim, and the negative beside it names the frozen value. The drag 
 `floor_changed(value, committed = false)`, the chart's live half, since only the live-refresh
 registry can make the box follow a gesture that must not rebuild the sheet.
 
+**`forage_reopened_crews` IS THE FRAME THAT PROVES ALL THREE CREWS ARE READABLE.** A band with
+`idle_workers == 0` whose every hand is on ONE patch — 4 gatherers, 3 builders, 2 keepers, three
+distinct counts so a seed that read the wrong field lands on a number the assertion names — reopened
+on that patch's sheet. It was unreachable while `improvementWorkers` / `maintainWorkers` were
+write-only: the steppers could only clamp at `idle`, so they opened at nobody with a maximum of
+nobody. Six `PASS`: the regime itself (`idle == 0`, without which every claim below is about an
+ordinary band), one per stepper opening on its own crew, the keeping stepper reaching PAST its seed
+at zero idle, the keeping row stating `you have 2 of 3` off the wire, and the composed crop surviving
+the reopen over ground with no `committed_species` at all — the case where the assignment's `species`
+is the only record of what the player chose. In `chapters/forage_accounts.gd`.
+
 **The GEAR half is a KIT SWAP, and it needs its own frames** — `herd_kit_swap_bare_build` /
 `herd_kit_swap_geared_build` in `chapters/compose_rungs.gd`, one warren at one crew at one floor with
 only the kit picker moving (`≈17 turns` against `≈11`). It lives in that chapter because both gear

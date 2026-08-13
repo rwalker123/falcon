@@ -1106,9 +1106,13 @@ func _reason_row(entry: Variant) -> Button:
 	if locates:
 		jump.text = "Jump →"
 		jump.add_theme_color_override("font_color", HudStyle.SIGNAL)
-	else:
+	elif HudAttentionVocab.ATTENTION_KINDS_WITH_A_PANEL.has(String(entry.get("kind", ""))):
 		jump.text = "Open ▸"
 		jump.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+	# **A ROW THAT CAN NEITHER JUMP NOR OPEN WEARS NO AFFORDANCE.** `crew_handoff` is a NOTICE — the
+	# sim's completion event carries no coordinates, and a turn may finish several builds, so there is
+	# no one hex or one panel the row could honestly promise. It states where the hands went in words
+	# and leaves the label blank rather than rendering an `Open ▸` that does nothing when pressed.
 	row.add_child(jump)
 
 	button.add_child(row)

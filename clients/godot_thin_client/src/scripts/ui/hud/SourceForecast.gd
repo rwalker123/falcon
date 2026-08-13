@@ -3456,27 +3456,6 @@ static func max_useful_workers(forecast: Dictionary) -> int:
             float(forecast.get("stay", STAY_FRACTION_NONE_BREAKS_OFF))), hold)
     return maxi(int(ceilf(ceiling / per_worker)), hold)
 
-## The herding crew this herd demands, as a FLOOR on a local-hunt worker cap — the one definition,
-## read by BOTH cap twins so a worked row and a compose stepper can never gate differently.
-##
-## A managed herd needs `herders_needed` hands EVERY turn to HOLD it, but the take/prepare max-useful
-## knows nothing about that: it answers "2 workers saturate this herd's take", and the row's `+` then
-## goes dead two below the crew the sim is asking for — while the SAME row renders the under-herded ⚠.
-##
-## A crew that is BUILDING an improvement reads the ownership-INDEPENDENT `herders_needed_if_managed`
-## instead, because the improvement is what MAKES the herd managed: a still-wild herd reports
-## `herders_needed == 0` right up until the Population stage sets ownership, so the plain field would
-## pin the player at the 1-worker prep count and the herd would read under-herded the moment it became
-## theirs. The two fields are equal on an already-managed herd, so this is safe either way.
-##
-## `building` is the IMPROVEMENT axis (issue #442) — the assignment's own `improvement != ""` on a
-## worked row, the composed improvement on the compose sheet. It used to be read off the forecast's
-## `investment` flag, which only existed while a build verb was a value of `policy`.
-static func herd_crew_floor(herd: Dictionary, building: bool) -> int:
-    if building:
-        return int(herd.get("herders_needed_if_managed", 0))
-    return int(herd.get("herders_needed", 0))
-
 ## Per-SOURCE `+`-gate for a CONFIRMED Current-actions Forage/Hunt row — the worked-row twin of the
 ## compose stepper's `max_useful_workers` cap (`DrawerComposeController._forecast_worker_cap`), and
 ## beside it so the two can never disagree. A source's `+` may add a worker only while the band has an
@@ -3487,24 +3466,20 @@ static func herd_crew_floor(herd: Dictionary, building: bool) -> int:
 ## mysterious (the idle-exhausted gate explains itself). Scout/Warrior are band-wide roles with no
 ## ceiling — they keep the plain gate and never call this.
 ##
-## `useful_floor` IS WHAT KEEPS THE TWIN PROMISE HONEST. The compose side folds a managed herd's
-## herding crew into its usefulness ceiling; a row that did not would flag a herd under-herded and then
-## disable the very `+` that fixes it. A HUNT caller therefore passes
-## `herd_crew_floor(herd, building)` — the one definition of that number, keyed on the IMPROVEMENT
-## axis (`building` is a bool: the assignment's own `improvement != ""` on a worked row, the composed
-## improvement on the compose sheet) — and a FORAGE caller passes nothing, a patch owing no crew.
-## The floor is a RAISE, never a new cap, and an UNBOUNDED forecast stays unbounded; a wild herd
-## reports 0, so `max(useful, 0)` is a no-op there.
+## **`useful_floor` IS RETIRED, AND WITH IT `herd_crew_floor`** (`docs/plan_standing_upkeep.md` §2.2).
+## Both twins used to RAISE this ceiling to a managed herd's `herdersNeeded`, because one crew both
+## hunted and held the animals: a cap sized on the take alone went dead below the count the sim was
+## asking for, while the same row rendered the under-herded ⚠. **Those keepers are the MAINTAIN
+## allocation now.** Flooring the TAKE cap on them made the hunt stepper demand hands that belong to
+## another crew — and the crew that answers `herdersNeeded` has its own stepper, its own ceiling
+## (`idle + this source's keepers`) and its own command.
 ##
-## **THE *HOLD* CREW IS NOT PASSED HERE, DELIBERATELY.** It is a floor on usefulness for every source
-## on both webs — not a demand one KIND of source makes — so it lives inside `max_useful_workers`,
-## where both twins pick it up without either caller being trusted to remember it. `useful_floor`
-## stays what it always was: the crew this particular caller's rung is asking for.
-static func source_worker_cap_state(forecast: Dictionary, workers: int, idle: int,
-        useful_floor: int = 0) -> Dictionary:
+## **THE *HOLD* CREW IS STILL FOLDED IN, and it is a different thing** — the hands that take what the
+## source REGROWS, a fact about this take at this floor rather than a demand a kind of source makes.
+## It lives inside `max_useful_workers`, where both twins pick it up without either caller being
+## trusted to remember it.
+static func source_worker_cap_state(forecast: Dictionary, workers: int, idle: int) -> Dictionary:
     var useful := max_useful_workers(forecast)
-    if useful != MAX_USEFUL_UNBOUNDED:
-        useful = maxi(useful, useful_floor)
     if useful == MAX_USEFUL_UNBOUNDED or workers < useful:
         return {"can_add": idle > 0, "note": ""}
     # At/over this source's max-useful: the `+` is capped by the source, not by idle. Explain only

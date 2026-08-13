@@ -123,8 +123,13 @@ paths:
     `populations` separately and the attention array is rebuilt from the populations pass: a producer
     reading the event array directly would answer empty on every frame but one, and the rows would
     flicker away mid-turn — exactly when the player is deciding what to do with those hands.
-    **Non-locating** (`x < 0` → `Open ▸`): the event names its source in words and carries no
-    coordinates, and parsing a tile out of a sentence to place a jump is a guess. Capped at
+    **Non-locating AND affordance-less**, which is a third state beside `Jump →` and `Open ▸`. The
+    event names its source in words and carries no coordinates, so a jump would be a guess; and a
+    turn may finish several builds, so there is no ONE panel the row could open either. It therefore
+    wears **no label at all** — `HudAttentionVocab.ATTENTION_KINDS_WITH_A_PANEL` is the allowlist
+    `TurnOrb` renders `Open ▸` from, and `crew_handoff` is deliberately not on it. An `Open ▸` that
+    does nothing when pressed is a promise the row cannot keep; the detail says where those hands
+    are in words instead (*"they are idle — the band's work board has them"*). Capped at
     `ATTENTION_HANDOFF_MAX_ROWS` with an overflow row, for the off-screen-popover reason.
 
   The fourth (`_awaiting_orders_attention`) runs over the **EXPEDITIONS** split out of that loop:

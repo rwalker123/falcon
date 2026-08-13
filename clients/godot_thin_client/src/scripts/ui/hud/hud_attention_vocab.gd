@@ -126,9 +126,9 @@ const ATTENTION_KIND_CREW_HANDOFF := "crew_handoff"
 ## The row's label — the sim's own sentence, verbatim (*"3 of your cultivate crew stay on (31, 18) to
 ## keep it"*). Not recomposed here: the sim knows which rung finished, how many hands moved and where
 ## they went, and a second phrasing of one event is how two surfaces come to describe it differently.
-const ATTENTION_HANDOFF_DETAIL_CARRIED := "they are keeping it now — re-task them if you would rather not"
+const ATTENTION_HANDOFF_DETAIL_CARRIED := "they are on its keeping now — the source's own sheet moves them"
 
-const ATTENTION_HANDOFF_DETAIL_FREED := "they are idle — put them somewhere"
+const ATTENTION_HANDOFF_DETAIL_FREED := "they are idle — the band's work board has them"
 
 ## **NON-LOCATING**, like the fork row: the event names its source in words but carries no
 ## coordinates, and parsing a tile out of a sentence to place a jump is a guess. The row reads
@@ -138,6 +138,16 @@ const ATTENTION_HANDOFF_MAX_ROWS := 3
 const ATTENTION_HANDOFF_OVERFLOW_LABEL_FORMAT := "+%d more crews changed job"
 
 const ATTENTION_HANDOFF_OVERFLOW_DETAIL := "builds finished and their hands moved"
+
+## **WHICH NON-LOCATING KINDS ACTUALLY OPEN SOMETHING.** A row with no `x`/`y` renders `Open ▸` and
+## routes through `panel_requested`, and `TurnOrbController` decides what that opens — so a kind with
+## no branch there renders an affordance that does nothing when pressed.
+##
+## `crew_handoff` is deliberately such a kind: the sim's completion event carries no coordinates, so
+## the row can name neither a hex to jump to nor one source to open (a turn may finish several). It
+## says WHERE those hands are in words instead, and wears no affordance at all — a promise the row
+## cannot keep is worse than no promise.
+const ATTENTION_KINDS_WITH_A_PANEL: Array[String] = [ATTENTION_KIND_DECISION]
 
 const ATTENTION_SEVERITY_INFO := "info"
 

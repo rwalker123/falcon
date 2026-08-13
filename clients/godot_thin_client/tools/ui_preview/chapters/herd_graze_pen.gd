@@ -16,6 +16,12 @@ const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
 
+## The phrase every take-cap note is built around (`SourceForecast.MAX_USEFUL_NOTE_FORMAT`), so the
+## pair below can be compared as WHOLE NOTES rather than by asking twice whether one number is
+## present: two `contains` claims are satisfied by two different notes, and "the verb moved nothing"
+## is a claim about the note being the same one.
+const TAKE_CAP_NOTE_NEEDLE := "useful here"
+
 const TAME_CAP_WOULD_BE_HERDERS := 30
 
 ## The RETIRED pause note's own stem, and any turn estimate at all — the two needles
@@ -929,11 +935,15 @@ func run(harness) -> void:
 	h._assert_hud("…and states no PAUSE, the phase gating nothing on this web either",
 		not Q.has_label_containing(h._hud._drawercompose._compose_sheet, RETIRED_PAUSED_NOTE_NEEDLE))
 
-	# TAMING-STARTUP-LAG GUARD — composing an INVESTMENT rung (Tame) on a still-WILD herd must offer the
-	# ownership-INDEPENDENT would-be herder crew, not the 1-worker Tame-prep count. A wild herd's
-	# `herders_needed` is ownership-gated to 0, so the take/prepare max-useful (1) used to pin the cap at 1;
-	# the player could staff only 1, the herd became owned next turn needing 3, and read under-herded. The
-	# fix floors the LOCAL-hunt cap on `herders_needed_if_managed` (3) for investment rungs only.
+	# **THE KEEPER CREW IS NOT A TERM IN THE TAKE CAP** (`docs/plan_standing_upkeep.md` §2.2), and this
+	# pair is what pins it. The cap used to be FLOORED on a managed herd's `herdersNeeded` (and, for an
+	# investment rung on a still-wild herd, on the ownership-independent `herdersNeededIfManaged`),
+	# because one crew both hunted the animals and held them. Those keepers are the MAINTAIN allocation
+	# now — their own stepper, their own ceiling, their own command — so a hunt stepper raised to their
+	# count would be staffing one crew against another crew's demand.
+	#
+	# **The pair is the claim**: the same herd at the same floor, composed WITH a Tame and WITHOUT one,
+	# must cap identically — a verb moves no take-side number any more.
 	h._hud.update_intensification([{
 		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
 	}])
@@ -947,28 +957,27 @@ func run(harness) -> void:
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(_tame_worker_cap_herd_fixture())
 	# Tame is DIALED IN through `_compose_herd`, which survives the source-change re-seed — see its doc.
-	h._compose_herd(_tame_worker_cap_herd_fixture(), Spine.COMPOSE_COUNT_UNSET, ForageFx.COMPOSE_FLOOR_UNSET, "tame")
+	# The FLOOR is stated on both halves of the pair, so the only thing differing between them is the
+	# verb — an unset floor would let the re-seed pick one and the comparison would be about that.
+	h._compose_herd(_tame_worker_cap_herd_fixture(), Spine.COMPOSE_COUNT_UNSET,
+		SourceForecast.FLOOR_FOOD_PEAK, "tame")
 	await h._settle()
 	await h._save("herd_tame_worker_cap")
-	# Tame floors the cap on the would-be crew (10), NOT the Tame-prep useful (1): the sheet's max-useful
-	# note reads "max 10 workers useful here". Pre-fix it read "max 1 worker useful here" (floored on the
-	# ownership-gated herders_needed 0).
-	h._assert_hud("Tame offers the full would-be herder crew (max %d), not the 1-worker prep count"
+	var tame_cap_note := Q.label_containing(h._hud._drawercompose._compose_sheet, TAKE_CAP_NOTE_NEEDLE)
+	h._assert_hud("a composed Tame states a take cap at all (\"%s\")" % tame_cap_note,
+		tame_cap_note != "")
+	h._assert_hud("…and it is NOT the would-be herder crew (%d) — those keepers are the maintain crew's"
 		% TAME_CAP_WOULD_BE_HERDERS,
-		Q.has_label_containing(h._hud._drawercompose._compose_sheet,
-			"max %d workers useful" % TAME_CAP_WOULD_BE_HERDERS))
-	h._assert_hud("…and not the pre-fix 1-worker cap",
-		not Q.has_label_containing(h._hud._drawercompose._compose_sheet, "max 1 worker useful"))
-	# COMPANION — the EXTRACTIVE Sustain rung manages nothing, so it needs no herders: its cap is
-	# take-useful only (Sustain 1.50 ÷ 0.30 = 5), and the would-be crew (3) must NOT leak into it.
+		not tame_cap_note.contains("max %d workers useful" % TAME_CAP_WOULD_BE_HERDERS))
+	# COMPANION — the SAME herd at the SAME floor with NO verb composed. Its cap must be the identical
+	# take-useful count: the take is what the stepper is for, and a build beside it moves nothing.
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(_tame_worker_cap_herd_fixture())
 	h._compose_herd(_tame_worker_cap_herd_fixture(), Spine.COMPOSE_COUNT_UNSET, SourceForecast.FLOOR_FOOD_PEAK)
 	await h._settle()
 	await h._save("herd_tame_worker_cap_sustain")
-	h._assert_hud("Sustain caps on its own take-useful (max 7), floored at 0",
-		Q.has_label_containing(h._hud._drawercompose._compose_sheet, "max 7 workers useful"))
-	h._assert_hud("…the would-be herder crew (%d) does not leak into an extractive rung"
-		% TAME_CAP_WOULD_BE_HERDERS,
-		not Q.has_label_containing(h._hud._drawercompose._compose_sheet,
-			"max %d workers useful" % TAME_CAP_WOULD_BE_HERDERS))
+	var bare_cap_note := Q.label_containing(h._hud._drawercompose._compose_sheet, TAKE_CAP_NOTE_NEEDLE)
+	h._assert_hud("an extractive compose caps on its own take-useful (max 7), floored at 0",
+		bare_cap_note.contains("max 7 workers useful"))
+	h._assert_hud("…and the composed Tame read the SAME cap, so the verb moves no take-side number",
+		tame_cap_note == bare_cap_note)

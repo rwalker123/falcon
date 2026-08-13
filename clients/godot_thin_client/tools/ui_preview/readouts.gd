@@ -199,6 +199,13 @@ static func crew_row_label(root: Node) -> String:
 static func has_crew_row_maintain(root: Node) -> bool:
 	return Q.find_meta_node(root, HudWidgets.CREW_ROW_MAINTAIN_META) != null
 
+## The keeping row's WANTS/HAVE note — the line beside the row label stating what the rung wants
+## against what this band has. Read off the row BLOCK (which carries the meta) and joined, because the
+## label and the note are two Labels of one line; `""` when the row did not render.
+static func crew_row_maintain_note(root: Node) -> String:
+	var node := Q.find_meta_node(root, HudWidgets.CREW_ROW_MAINTAIN_META)
+	return " ".join(face_lines(node)) if node != null else ""
+
 ## The keeping row's VERDICT sentence — held, or bleeding and how long the rung has. Its own meta, so
 ## the wants/have note beside it (which carries numbers too) can never be matched by mistake.
 static func maintain_verdict_text(root: Node) -> String:

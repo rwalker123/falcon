@@ -798,6 +798,36 @@ func _validated_improvement(assignment: Dictionary, web: Array) -> String:
 	var improvement := String(assignment.get("improvement", "")).strip_edges().to_lower()
 	return improvement if improvement in web else SourceForecast.IMPROVEMENT_NONE
 
+## **THE OTHER TWO CREWS THIS BAND HAS ON A SOURCE** (`docs/plan_standing_upkeep.md` §2.2) — the hands
+## on the BUILD and on the KEEPING, beside `workers_for_*`'s take crew. All three ship on the
+## assignment now; until they did, the client could SEND a build or a keeping crew and never read one
+## back, which is what forced the compose sheet to seed both steppers at nobody.
+##
+## **`0` IS A REAL READING AND IS THE COMMON ONE** — no verb in flight genuinely means no builders, and
+## a source nobody keeps has no keepers. It must never be treated as "unknown" and replaced by a seed:
+## doing so would put phantom hands on every unbuilt source in the game.
+func build_workers_for_forage(band: Dictionary, x: int, y: int) -> int:
+	return maxi(int(forage_assignment_of(band, x, y).get("improvement_workers", 0)), 0)
+
+func build_workers_for_hunt(band: Dictionary, herd_id: String) -> int:
+	return maxi(int(hunt_assignment_of(band, herd_id).get("improvement_workers", 0)), 0)
+
+func maintain_workers_for_forage(band: Dictionary, x: int, y: int) -> int:
+	return maxi(int(forage_assignment_of(band, x, y).get("maintain_workers", 0)), 0)
+
+func maintain_workers_for_hunt(band: Dictionary, herd_id: String) -> int:
+	return maxi(int(hunt_assignment_of(band, herd_id).get("maintain_workers", 0)), 0)
+
+## **THE CROP THIS BAND ASKED FOR ON A PATCH** — the player's stated SELECTION, which is not the same
+## question as `ForagePatchState.committedSpecies`.
+##
+## The patch's field is what the GROUND is committed to and is only set once a crew has worked it; this
+## one exists from the moment the player chose, so it is the only answer available on a sheet reopened
+## over ground nobody has worked yet. `""` = *"pick the tile's dominant legal plant for me"*, which is
+## a real instruction rather than an absent one.
+func species_for_forage(band: Dictionary, x: int, y: int) -> String:
+	return String(forage_assignment_of(band, x, y).get("species", "")).strip_edges()
+
 ## Max workers a band can commit to ONE source: its idle workers plus any it already has on that
 ## source (the assign REPLACES that count, so re-editing an existing assignment isn't capped below its
 ## current staffing). Reduces to `idle_workers` for a fresh source.
@@ -806,3 +836,24 @@ func assignable_hunt_workers(band: Dictionary, herd_id: String) -> int:
 
 func assignable_forage_workers(band: Dictionary, x: int, y: int) -> int:
 	return int(band.get("idle_workers", 0)) + workers_for_forage(band, x, y)
+
+## **THE SAME CEILING FOR THE OTHER TWO ACTIVITIES**, and the reason all four exist rather than one:
+## the sim gives back only the crew on the SOURCE for the ACTIVITY being restated
+## (`LaborAllocation::idle_for`), so a build's ceiling is `idle + this source's builders` and the
+## keeping's is `idle + this source's keepers`. Crossing them would offer a crew the sim refuses.
+##
+## **THIS IS WHAT MAKES A FULLY-ALLOCATED BAND EDITABLE AT ALL.** With the wire silent on the two
+## crews the client could only clamp at `idle`, so a band with every hand committed capped both
+## steppers at `0`: the player could take a keeping crew to nothing and could never put it back, on
+## the one source where the decision matters most.
+func assignable_build_workers_forage(band: Dictionary, x: int, y: int) -> int:
+	return int(band.get("idle_workers", 0)) + build_workers_for_forage(band, x, y)
+
+func assignable_build_workers_hunt(band: Dictionary, herd_id: String) -> int:
+	return int(band.get("idle_workers", 0)) + build_workers_for_hunt(band, herd_id)
+
+func assignable_maintain_workers_forage(band: Dictionary, x: int, y: int) -> int:
+	return int(band.get("idle_workers", 0)) + maintain_workers_for_forage(band, x, y)
+
+func assignable_maintain_workers_hunt(band: Dictionary, herd_id: String) -> int:
+	return int(band.get("idle_workers", 0)) + maintain_workers_for_hunt(band, herd_id)
