@@ -337,7 +337,7 @@ and these are rates; `B − floor·K` is `K/2` on every rung at `B = K`. **The p
 `hunt_forecast`'s `is_corralled()` early-return, which returns `corral_provisions` (the actual
 constant-escapement corral yield), so forecast == actual for a real pen; only the *un-penned
 projection* is the sustained MSY. Pinned by
-`fauna::tests::the_tame_rung_advertises_its_payoff_above_the_dip_and_wild_sustain`.
+`fauna::tests::the_tame_rung_advertises_its_payoff_above_wild_sustain`.
 - `perWorkerYield` = food/turn one worker contributes (throughput → provisions; **forage folds in the
   tile's `seasonal_weight`**, as `forage_take` does — it can be `0` in a dead season, so consumers must
   not divide by it; hunt has no seasonal factor).

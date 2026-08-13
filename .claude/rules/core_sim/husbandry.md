@@ -185,11 +185,14 @@ managed one.
   the counter (`0` = shedding now), published through the same `herd_keeping_rung` seam the shed gates
   on, so the wire cannot count down against a rung the sim is not applying. See the plant twin in
   `cultivation.md`.
-- **`animal:pastoral`'s `decay_fraction_per_turn` is DELETED, not zeroed** (and `animal:pen`'s `0.0`
-  with it):
-  the arc made `domestication_progress` monotone-up, so the number described a tameness-bleed the sim
-  does not have and **nothing read it** — `RungDef::build_decay` has two production call sites, both on
-  the plant branch. `null` says "this rung's meter does not bleed"; a `0` read like a live dial.
+- **`decay_fraction_per_turn` IS GONE FROM THE LADDER ENTIRELY**, and the animal branch is why it was
+  ever suspect: the neglect-escape arc made `domestication_progress` monotone-up, so the `0.01` on
+  `animal:pastoral` (and the `0.0` on `animal:pen`) described a tameness-bleed the sim does not have
+  and **nothing read**. It was deleted from the animal rungs first and retired outright when the plant
+  branch moved onto the standing upkeep, where **shortfall is the decay**
+  (`docs/plan_standing_upkeep.md` §2.4): a rung that loses exactly the work nobody supplied needs no
+  second dial saying how fast it forgets. **Neither animal rung declares an `upkeep` yet** — their
+  neglect is still the shed, gated on `build.grace_turns`.
 
 ## The `Tame` verb (Intensification rung 2) — the grammar fix
 
@@ -267,11 +270,12 @@ gated, **paid** verb, so both food webs read the same:
   *size* of a fabricated job cannot affect any predicate, which all read `progress >= cost`.)
 - **Per-species price.** The rung's single cost would make *every* species the same job — a rabbit
   costing what a Steppe Runner costs. The species declares its own **`taming_cost_multiplier`**
-  (`fauna_config.json`, default 1.0), and `RungDef::build_cost` / `build_decay` take it — the one seam
-  that honors it, so the Tame arm of `advance_labor_allocation` and the decay in `advance_husbandry`
-  cannot disagree. **The multiplier reaches BOTH**, because `build_decay` reads
-  `decay_fraction_per_turn` off the *scaled* cost, which keeps a rung's build:decay ratio invariant
-  per species for free — *slow to tame, slow to forget*. Every other rung passes `RUNG_COST_UNSCALED`
+  (`fauna_config.json`, default 1.0), and `RungDef::build_cost` takes it — the one seam that honors
+  it, so every caller pricing a Tame reads the same number. **It prices the JOB and nothing else.** It
+  used to reach the decay as well (a bleed was a fraction of the rung's own cost, which kept a
+  build:decay ratio invariant per species for free — *slow to tame, slow to forget*); shortfall is
+  the decay now, so what an improvement loses is what its keepers did not supply — a fact about a
+  crew and a rung, not about how big the job was. Every other rung passes `RUNG_COST_UNSCALED`
   (penning is a flat job for every species — a fence is a fence; only *taming* varies).
   > **It was `taming_rate`, a build TIMESCALE, and the inversion is the honest statement**
   > (`docs/plan_unit_costed_work.md` §3.1). `0.2` on a Steppe Runner said *your people are five times
@@ -282,10 +286,12 @@ gated, **paid** verb, so both food webs read the same:
 - **Config** — the whole rung is `intensification_ladder.json`'s `animal:pastoral` record: verb `tame`,
   `unlock_knowledge: "herding"`, **`earns_knowledge: "penning"`** (slice 4 — a config edit, exactly as
   promised),
-  `ceiling_required: "pastoral"`, `build: { work_cost 50, decay_fraction_per_turn null, grace_turns 2 }`.
+  `ceiling_required: "pastoral"`, `build: { work_cost 50, grace_turns 2 }`, `upkeep: null`.
   The **50 is a reference-crew choice, not a derivation** — the rung declares no crew, so there was
   nothing to multiply today's 25 turns by, and 2 keepers is what rung 2 of the plant web wants for the
-  same claim; `decay_fraction_per_turn` is null because the animal web's meters do not bleed;
+  same claim; `grace_turns 2` is the **un-worked-turn** grace the shed reads, which is still the
+  animal branch's trigger, and `upkeep` is null because this branch sheds animals rather than bleeding
+  a meter;
   **`crew_needed` and `yield_fraction_while_building` are both retired** — the player states the
   build's crew on the verb, so neither a rung-level staffing floor nor a dip has anything left to say.
   **The Tame IS crew-scaled now**, at **the crew the player staffs** — it was crew-*blind* before,
@@ -401,8 +407,9 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
     its food cost lands **exactly when food is scarce**, so a bad winter forces a real choice (eat the
     seed corn and lose future yield, or go hungry).
   - *Sheds-if-under-contained, AFTER A GRACE (neglect-escape arc, `docs/plan_fauna_neglect_escape.md`)*
-    — the binary escape is **retired**. In `advance_husbandry` (Logistics, before Population — the
-    one-turn-lag flag, like `ForagePatch::tended_this_turn`) an under-contained pen **sheds whole
+    — the binary escape is **retired**. In `advance_husbandry` (Logistics, before Population — on
+    `Herd::corralled_tended_this_turn`, the one-turn-lag flag the plant web has since replaced with a
+    supplied-work reading) an under-contained pen **sheds whole
     animals over its labor capacity** into the wild web at `pen_escape_fraction` (slower than pastoral
     — the fence buys time),
     and an untended one is BOTH un-herded (sheds) and un-fed (`pen_fed_fraction = NOT_FED`, so it does

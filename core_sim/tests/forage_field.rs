@@ -37,7 +37,7 @@ use core_sim::{
     MapPresetsHandle, MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick,
     SiteRefusal, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
     StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry,
-    WellbeingConfigHandle, FOOD, RUNG_COST_UNSCALED, SEED_SELECTION_DISCOVERY_ID,
+    WellbeingConfigHandle, FOOD, RUNG_COST_UNSCALED, SEED_SELECTION_DISCOVERY_ID, UNSCALED_UPKEEP,
 };
 
 /// Grant faction-level **Seed Selection** directly via the ledger — the gate the `Sow` policy checks.
@@ -432,6 +432,10 @@ fn spawn_forager_of(
                     // **The same crew staffs the build** — what this fixture meant when one
                     // crew did every job (`docs/plan_standing_upkeep.md` §2.2).
                     improvement_workers: improvement.map_or(NO_CREW_ON_THIS_ACTIVITY, |_| foragers),
+                    // **NO KEEPER, and that is the point.** A meter still being raised is owed its
+                    // BUILDERS (`docs/plan_standing_upkeep.md` §2.4), so a Sow runs at its stated
+                    // pace with nobody on the keeping; the completion hand-off then moves the build's
+                    // crew onto it.
                     maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
@@ -479,14 +483,16 @@ fn field_progress_of(app: &App, coord: UVec2) -> f32 {
 
 /// The `plant:field` rung's build dials, read off the ladder — the same seam the sim drives sowing
 /// with, so a retune moves the tests with the game rather than against it.
-/// **The `plant:field` rung's neglect grace** — the consecutive un-worked turns the feral bleed
-/// forgives before it starts. Read off the ladder, never restated.
+/// **The `plant:field` rung's neglect grace** — the consecutive turns of **shortfall** the feral
+/// bleed forgives before it starts (`docs/plan_standing_upkeep.md` §2.4). Read off the ladder's
+/// `upkeep` block, never restated; the build's own grace is absent on both plant rungs, because
+/// this branch counts unmet demand rather than un-worked turns.
 fn field_grace(app: &App) -> u32 {
     app.world
         .resource::<LadderConfigHandle>()
         .get()
         .rung(RungKey::PlantField)
-        .neglect_grace_turns()
+        .upkeep_grace_turns()
 }
 
 /// **What this file's crew produces on the `plant:field` rung in one turn, and the rung's feral
@@ -498,7 +504,10 @@ fn field_build(app: &App) -> (f32, f32) {
     let field = ladder.rung(RungKey::PlantField);
     (
         field.build_accrual(Some(Improvement::Sow), true, sow_crew(app)),
-        field.build_decay(RUNG_COST_UNSCALED),
+        // **The feral bleed is the rung's own upkeep**: a field nobody keeps goes short by the whole
+        // demand and loses exactly that (`docs/plan_standing_upkeep.md` §2.4). Numerically the same
+        // as the retired `decay_fraction_per_turn × work_cost`, which is why the paces below hold.
+        field.upkeep_demand(UNSCALED_UPKEEP),
     )
 }
 

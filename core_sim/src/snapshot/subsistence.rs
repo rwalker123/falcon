@@ -11,7 +11,7 @@ use crate::forage::{
 };
 use crate::intensification::{
     build_fraction, build_work_per_worker_turn, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY,
-    NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, UNSCALED_UPKEEP,
+    NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED,
 };
 use sim_schema::NO_BUILD_TURNS_ESTIMATE;
 
@@ -921,16 +921,19 @@ pub(crate) fn snapshot_forage_patches(
                 collapse_fraction: ecology.collapse_fraction,
                 stressed_fraction: ecology.stressed_fraction,
                 // **THE STANDING UPKEEP** — the plant twin; see the herd row for the seam and why
-                // all three terms ship.
-                upkeep_demand: ladder
-                    .rung(crate::forage::patch_rung_key(patch))
-                    .upkeep_demand(UNSCALED_UPKEEP),
+                // all three terms ship. Every one of them is resolved through the **at-risk** rung
+                // (`forage::patch_unwinding_rung`), the same seam `advance_cultivation` bleeds and
+                // the grace below counts down against, so a row cannot bill one rung's demand while
+                // the sim bleeds another's.
+                upkeep_demand: crate::forage::patch_upkeep_demand(patch, ladder),
                 upkeep_supplied: patch.upkeep_supplied,
-                upkeep_shortfall: patch.upkeep_shortfall,
-                // **The MAINTAIN activity's own `workers_needed`** — the plant twin.
-                upkeep_workers_needed: ladder
-                    .rung(crate::forage::patch_rung_key(patch))
-                    .upkeep_crew_needed(UNSCALED_UPKEEP),
+                // **Derived, so the three always describe one turn and one rung.** A stored
+                // shortfall would be stamped only on patches some band is assigned to, and would
+                // therefore read `0` on exactly the abandoned patches that are reverting.
+                upkeep_shortfall: crate::forage::patch_upkeep_shortfall(patch, ladder),
+                // **The MAINTAIN activity's own `workers_needed`** — the plant twin, and what makes
+                // a standing cost legible: *"this wants 1, you have 0"*.
+                upkeep_workers_needed: crate::forage::patch_upkeep_workers_needed(patch, ladder),
                 // **The neglect countdown**, resolved through the *same* `patch_unwinding_rung` seam
                 // `advance_cultivation` bleeds through — so the wire counts down against the rung
                 // that will actually revert, not one the patch merely stands on. `None` = a wild

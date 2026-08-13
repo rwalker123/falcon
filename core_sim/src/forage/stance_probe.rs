@@ -34,7 +34,7 @@ use crate::fauna::{
 };
 use crate::fauna_config::{FaunaConfig, HusbandryCeiling, SizeClass};
 use crate::flora_config::FloraConfig;
-use crate::intensification::{LadderConfig, RungDef, RungKey, RUNG_COST_UNSCALED};
+use crate::intensification::{LadderConfig, RungDef, RungKey, RUNG_COST_UNSCALED, UNSCALED_UPKEEP};
 use crate::labor_config::LaborConfig;
 use crate::systems::hunt_take;
 use sim_runtime::TerrainType;
@@ -285,7 +285,6 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
         .to_f32();
         if turns_to_complete.is_none() {
             provisions_over_build += provisions;
-            patch.tended_this_turn = true;
             let eligible = match verb {
                 // The Cultivate arm's gate, minus the knowledge check this probe grants. The health
                 // gate is gone (`docs/plan_harvest_floor.md` §3.2); the escapement room replaced it.
@@ -1137,12 +1136,14 @@ fn probe_build_and_teach_axis() {
         "\n=== Part 3 — WORK UNITS each rung builds per turn, per floor (RungDef::build_accrual) ==="
     );
     println!(
-        "(the floor IS an argument now — it paces the build exactly as it paces the lesson; decay takes no floor. \
-         `cost` is the whole job; the accrual columns are one turn of the rung's reference crew.)"
+        "(the floor no longer paces the build — it paces the LESSON alone. `cost` is the whole job; \
+         the accrual columns are one turn of the rung's reference crew. `upkeep` is what holding the \
+         rung costs per turn, and it is also what a fully unmaintained one bleeds: shortfall IS the \
+         decay.)"
     );
     println!(
         "{:<16} {:>10} {:<10} {:>10} {:>16} {:>16} {:>10}",
-        "rung", "dip", "floor", "cost", "accrual eligible", "accrual !eligible", "decay"
+        "rung", "verb", "floor", "cost", "accrual eligible", "accrual !eligible", "upkeep"
     );
     for (label, key, verb) in rungs {
         let rung = ladder.rung(key);
@@ -1155,7 +1156,7 @@ fn probe_build_and_teach_axis() {
                 rung.build_cost(RUNG_COST_UNSCALED).unwrap_or(0.0),
                 rung.build_accrual(verb, true, full_crew(rung)),
                 rung.build_accrual(verb, false, full_crew(rung)),
-                rung.build_decay(RUNG_COST_UNSCALED),
+                rung.upkeep_demand(UNSCALED_UPKEEP),
             );
         }
     }

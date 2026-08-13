@@ -8569,9 +8569,11 @@ mod tests {
     }
 
     /// The **Tame rung's payoff** (`pastoral_yield`) is what a Sustain hunt pays *once the herd is
-    /// tamed* — the pastoral analog of `managed_yield`/`corralYield`. It exists so the client can quote
-    /// Tame's `→ +Y` instead of only its during-building dip (`ceiling_under(stance, Tame)`), which
-    /// reads *below* the undipped stance.
+    /// tamed* — the pastoral analog of `managed_yield`/`corralYield`. It exists so the client can
+    /// quote Tame's `→ +Y` rather than only the wild hunt beside it, which hides that taming
+    /// out-yields wild hunting. (It was named for the retired investment *dip*, which is what the
+    /// during-building row used to read; the dip is gone — a build has its own crew — and the payoff
+    /// this field carries never depended on it.)
     ///
     /// **Both payoffs are the SUSTAINED MSY on each rung's own ecology** — the long-run rate, which is
     /// `r`-dependent and so orders the ladder strictly: `pastoral_yield` **<** `managed_yield`, a
@@ -8584,7 +8586,7 @@ mod tests {
     /// long-run rate compares a stock to a flow; that the stock is the larger number at `B = K` says
     /// nothing about the ladder. What the rungs buy is that the next animal comes sooner.
     #[test]
-    fn the_tame_rung_advertises_its_payoff_above_the_dip_and_wild_sustain() {
+    fn the_tame_rung_advertises_its_payoff_above_wild_sustain() {
         let fauna = FaunaConfig::builtin();
         // A healthy Wild Boar herd at capacity — a pennable species (`husbandry_ceiling == pen`).
         let mut herd = herd_of_size(SizeClass::Big, 1000.0, 1000.0, 0.06);
@@ -8637,7 +8639,7 @@ mod tests {
     ///
     /// **What is deliberately NOT asserted is dip-versus-payoff.** A dipped stance ceiling is a stock
     /// and a rung payoff is a long-run rate; ordering them was only meaningful while the stance was
-    /// itself a rate. See `the_tame_rung_advertises_its_payoff_above_the_dip_and_wild_sustain`.
+    /// itself a rate. See `the_tame_rung_advertises_its_payoff_above_wild_sustain`.
     #[test]
     fn the_forecast_ceilings_are_the_escapement_stock_and_stay_ordered() {
         let fauna = FaunaConfig::builtin();

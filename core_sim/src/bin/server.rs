@@ -11064,13 +11064,35 @@ mod tests {
             sustain_ceiling > 0.0,
             "the fixture patch must stand above the food peak, or its rows describe an empty patch"
         );
-        assert_eq!(
-            patch.upkeep_demand, 0.0,
-            "no shipped plant rung declares a standing upkeep, so the demand is an honest 0 rather \
-             than a sentinel"
+        // **The trio describes ONE rung and ONE turn.** This fixture patch carries a part-prepared
+        // Sow, so the rung at risk is `plant:field` and its demand is what holding this ground
+        // costs; nobody is keeping it, so the whole demand is unmet and the shortfall is the bleed
+        // `advance_cultivation` will apply (`docs/plan_standing_upkeep.md` §2.4).
+        let field_demand = core_sim::LadderConfig::builtin()
+            .rung(RungKey::PlantField)
+            .upkeep_demand(core_sim::UNSCALED_UPKEEP);
+        assert!(
+            field_demand > 0.0,
+            "the field rung costs work to hold, or this block asserts three zeroes"
         );
-        assert_eq!(patch.upkeep_supplied, 0.0);
-        assert_eq!(patch.upkeep_shortfall, 0.0);
+        assert!((patch.upkeep_demand - field_demand).abs() < 1e-6);
+        assert_eq!(
+            patch.upkeep_supplied, 0.0,
+            "no band is keeping this fixture patch"
+        );
+        assert!(
+            (patch.upkeep_shortfall - field_demand).abs() < 1e-6,
+            "…so the whole demand went unmet — a row reading `0` short beside `0` supplied would \
+             say nothing is wrong on a patch the sim is reverting"
+        );
+        // **And what it would take to stop that — ZERO, because this rung is not BUILT yet.** An
+        // unfinished meter is owed its *builders*, not keepers (`docs/plan_standing_upkeep.md` §2.4),
+        // so quoting "this wants 1 keeper" over a part-sown Field would tell the player to staff a
+        // job that does not exist — and one the sim would not credit if they did.
+        assert_eq!(
+            patch.upkeep_workers_needed, 0,
+            "a rung still being raised asks for no keepers"
+        );
         // **Deliberately not compared against `tended_yield`.** Since the harvest floor a stance row
         // is constant escapement — a *stock* — while `tendedYield`/`fieldYield` are long-run rates;
         // ordering a stock against a rate is not a statement about anything

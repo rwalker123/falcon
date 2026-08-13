@@ -659,21 +659,45 @@ pub fn advance_labor_allocation(
                         completed.push((idx, RungKey::built_by(verb)));
                     }
                     // **THE STANDING UPKEEP, PAID BY ITS OWN CREW** (`docs/plan_standing_upkeep.md`
-                    // §2.2). The demand belongs to the rung the patch **stands on** — not the one it
-                    // is climbing — and what covers it is `maintain_workers × PER_WORKER_OUTPUT`,
-                    // nothing else: no share of a gatherer's turn, no fraction, no ordering. What is
-                    // left over is the shortfall, and the shortfall **is** the decay
+                    // §2.4). What is left over is the shortfall, and the shortfall **is** the decay
                     // (`RungDef::upkeep_decay`, past the rung's grace).
+                    //
+                    // **The demand belongs to the rung AT RISK** (`forage::patch_unwinding_rung`) —
+                    // the newest meter with progress on it, which is the very meter
+                    // `advance_cultivation` would bleed. That is one fact rather than two: what a
+                    // patch costs to hold is what it costs to hold the thing it would otherwise
+                    // lose. A patch standing on `plant:tended` with a half-built Sow therefore owes
+                    // the **field** rung's demand.
+                    //
+                    // **And WHICH CREW answers for it depends on whether that meter is finished**
+                    // (`forage::patch_upkeep_supply`): a built rung is owed its **keepers**, one
+                    // still being raised is owed its **builders**. You cannot be billed to hold
+                    // something you have not finished building — charging a mid-build meter the
+                    // maintain demand made a crew pay to keep ground that did not exist yet.
                     //
                     // **Stamped once per worked source, before the arm branches by rung**, so a
                     // Field's early return cannot skip it — and stamped rather than re-derived at
-                    // capture, because it describes *this* turn's keepers and the capture does not
+                    // capture, because it describes *this* turn's crew and the capture does not
                     // hold them (the `build_turns_remaining` discipline).
-                    let upkeep_demand = ladder
-                        .rung(crate::forage::patch_rung_key(patch))
-                        .upkeep_demand(crate::intensification::UNSCALED_UPKEEP);
-                    patch.upkeep_supplied = activity_work(maintain_workers);
-                    patch.upkeep_shortfall = upkeep_shortfall(upkeep_demand, patch.upkeep_supplied);
+                    //
+                    // **The supply is the only thing stored**, because it is the only thing a
+                    // crew authors; the demand and the shortfall are derived wherever they are
+                    // wanted (`forage::patch_upkeep_shortfall`), so they cannot drift from it or
+                    // from each other.
+                    //
+                    // **IT ACCUMULATES ACROSS THE BANDS WORKING THE SOURCE**, and that is a `+=` the
+                    // requirement's own shape demands: the upkeep is per-SOURCE, so two bands each
+                    // put a fraction of it on the ground. Assigning would let whichever band the
+                    // loop happened to visit last speak for all of them — a crew *gathering* a patch
+                    // a second crew is sowing would overwrite the sowers' supply with its own zero
+                    // and revert the very meter they were filling. `advance_cultivation` zeroes it at
+                    // the top of every turn, so the sum is always this turn's.
+                    patch.upkeep_supplied += crate::forage::patch_upkeep_supply(
+                        patch,
+                        improvement,
+                        activity_work(build_workers),
+                        activity_work(maintain_workers),
+                    );
                     // **THE earn path (§4): practising rung N teaches the knowledge that unlocks rung
                     // N+1.** Driven entirely by the rung the patch *currently stands on* — a wild
                     // patch teaches **Cultivation**, a tended one **Seed Selection** — so the lesson
@@ -720,14 +744,6 @@ pub fn advance_labor_allocation(
                     // boosted `r`. The plant web used to collapse a rung earlier than the animal one;
                     // that asymmetry was the bug.
                     //
-                    // **Working a completed improvement IS tending it**, at either rung — so the flag
-                    // is set here, before the rungs part company, and `advance_cultivation` spares the
-                    // patch. Load-bearing for rung 2 now that it takes the wild path: the flag used to
-                    // ride the managed branch, so moving the tended patch out of it without this would
-                    // send every patch a band Sustain-gathers *feral* while they worked it.
-                    if patch.is_managed() {
-                        patch.tended_this_turn = true;
-                    }
                     if patch.is_field() {
                         // **Production**: what the Field offers this turn. Shared with the pre-commit
                         // forecast (`forage::forage_forecast`), so the client's "expected yield" is
@@ -1008,9 +1024,6 @@ pub fn advance_labor_allocation(
                     // what the sim paid (forecast == actual). The turn progress reaches `1.0` is the
                     // last preparing take; the full tended yield starts the next turn.
                     if improvement == Some(Improvement::Cultivate) {
-                        // Marked worked-as-improvement so `advance_cultivation` spares it: a patch
-                        // under active preparation neither goes feral nor bleeds its partial progress.
-                        patch.tended_this_turn = true;
                         // The rung's own gates, resolved for the engine: the faction must know the
                         // rung's unlock knowledge (Cultivation), and the crew must actually be
                         // working the patch ([`crew_is_working_the_source`] — the term that replaced
@@ -1112,11 +1125,8 @@ pub fn advance_labor_allocation(
                     // construction, so a health gate would make sowing bare ground impossible. You
                     // *tend* a healthy wild stand; you *plant* bare ground. (The animal side already
                     // draws the same line — `Tame` has no health gate either.)
-                    if improvement == Some(Improvement::Sow) {
-                        // Marked worked-as-improvement so `advance_cultivation` spares it: a patch
-                        // under active preparation neither goes feral nor bleeds its partial progress.
-                        patch.tended_this_turn = true;
-                        if accrue_field(
+                    if improvement == Some(Improvement::Sow)
+                        && accrue_field(
                             patch,
                             field_rung,
                             improvement,
@@ -1132,9 +1142,9 @@ pub fn advance_labor_allocation(
                             &equipment_cfg,
                             &crew_kit,
                             &mut patch_build_claims,
-                        ) {
-                            completed.push((idx, RungKey::PlantField));
-                        }
+                        )
+                    {
+                        completed.push((idx, RungKey::PlantField));
                     }
                     // **THE PROJECTION — "what would the next rung take THIS crew?"**
                     // (`docs/plan_unit_costed_work.md` §11). Nothing is being built here, which is by
@@ -1387,7 +1397,11 @@ pub fn advance_labor_allocation(
                     let upkeep_demand = ladder
                         .rung(fauna::herd_rung_key(herd))
                         .upkeep_demand(fauna::herd_head_count(herd));
-                    herd.upkeep_supplied = activity_work(maintain_workers);
+                    // **Accumulated, not assigned** — the plant arm's rule and for its reason: the
+                    // demand is per-SOURCE, so the keepers of every band working this herd sum into
+                    // one supply, and the last band visited must not speak for all of them.
+                    // `advance_husbandry` zeroes it at the top of every turn.
+                    herd.upkeep_supplied += activity_work(maintain_workers);
                     herd.upkeep_shortfall = upkeep_shortfall(upkeep_demand, herd.upkeep_supplied);
                     // **The steady headline** — the forward-projected average food/turn over the next
                     // `realized_horizon` turns, computed from the herd's PRE-take state (before the pen
@@ -3419,7 +3433,9 @@ mod labor_yield_tests {
         SEED_SELECTION_DISCOVERY_ID,
     };
     use crate::forage::{ForagePatch, ForageRegistry};
-    use crate::intensification::{LadderConfig, LadderConfigHandle, RungKey, RUNG_COST_UNSCALED};
+    use crate::intensification::{
+        LadderConfig, LadderConfigHandle, RungKey, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED,
+    };
     use crate::labor_config::LaborConfigHandle;
     use crate::orders::FactionId;
     use crate::resources::{
@@ -4206,16 +4222,20 @@ mod labor_yield_tests {
     /// noticed it had begun costing something — the same punishment-for-invisible-arithmetic the
     /// maintain crew exists to prevent.
     ///
-    /// **Asserted on BOTH branches, against a ladder that actually declares an upkeep.** No shipped
-    /// rung does, so the free branch is what a campaign sees today; a test that only ran the shipped
-    /// config would assert the carry-over vacuously.
+    /// **Asserted on BOTH branches, each against a ladder built for it.** The shipped `plant:tended`
+    /// declares an upkeep since `docs/plan_standing_upkeep.md` §2.4, so the *carry* branch is what a
+    /// campaign sees today and the *free* branch is the one that needs a fixture — the reverse of
+    /// when this test was written. Running one arm on the shipped config either way would assert its
+    /// branch vacuously.
     #[test]
     fn a_completed_build_carries_its_crew_onto_the_keeping_or_frees_it() {
         const BUILDERS: u32 = 4;
 
-        // `plant:tended` with an upkeep bolted on, and the shipped ladder beside it — the two
-        // branches of `RungDef::declares_upkeep`, run through the same completion seam.
-        let with_upkeep = {
+        /// `plant:tended` with its `upkeep` block replaced by `value` — `Some(..)` for a rung that
+        /// costs something to hold, `None` for one that costs nothing. The two branches of
+        /// [`RungDef::declares_upkeep`], run through the same completion seam and off the same
+        /// shipped record, so neither arm can drift into testing a different rung.
+        fn tended_upkeep(value: serde_json::Value) -> LadderConfig {
             let mut json: serde_json::Value =
                 serde_json::from_str(crate::intensification::BUILTIN_INTENSIFICATION_LADDER)
                     .expect("the builtin parses");
@@ -4226,13 +4246,16 @@ mod labor_yield_tests {
                 .iter()
                 .position(|rung| rung["branch"] == "plant" && rung["id"] == "tended")
                 .expect("the shipped ladder defines plant:tended");
-            rungs[idx]["upkeep"] = serde_json::json!({
-                "work_per_turn": 1.0,
-                "scaled_by": "flat",
-                "grace_turns": 0,
-            });
+            rungs[idx]["upkeep"] = value;
             LadderConfig::from_json_str(&json.to_string()).expect("the fixture ladder is valid")
-        };
+        }
+
+        let with_upkeep = tended_upkeep(serde_json::json!({
+            "work_per_turn": 1.0,
+            "scaled_by": "flat",
+            "grace_turns": 0,
+        }));
+        let without_upkeep = tended_upkeep(serde_json::Value::Null);
 
         let run = |ladder: std::sync::Arc<LadderConfig>| -> (u32, u32) {
             let (mut world, tile) = world_with_source(CAP);
@@ -4290,10 +4313,10 @@ mod labor_yield_tests {
             "a finished rung that costs something to HOLD keeps the crew that raised it"
         );
 
-        let (_, freed) = run(LadderConfig::builtin());
+        let (_, freed) = run(std::sync::Arc::new(without_upkeep));
         assert_eq!(
             freed, NO_CREW_ON_THIS_ACTIVITY,
-            "…and a rung that costs nothing frees them — which is every shipped rung today"
+            "…and a rung that costs nothing frees them — the animal branch's shape today"
         );
     }
 
@@ -5504,7 +5527,18 @@ mod labor_yield_tests {
             "a tended patch is still gathered from a real stock: {} vs {biomass}",
             patch.biomass
         );
-        assert!(patch.tended_this_turn, "tending marks the patch worked");
+        // **And gathering it does NOT hold it.** The band above staffed no keepers, so the patch's
+        // whole upkeep went unmet — the behavioural headline of `docs/plan_standing_upkeep.md` §2.4,
+        // and the exact case the retired `tended_this_turn` flag spared for free.
+        assert_eq!(
+            patch.upkeep_supplied, NO_UPKEEP_DEMAND,
+            "a gathering crew supplies nothing toward the keeping"
+        );
+        let ladder = world.resource::<LadderConfigHandle>().get();
+        assert!(
+            crate::forage::patch_upkeep_shortfall(patch, &ladder) > NO_UPKEEP_DEMAND,
+            "so a gathered-but-unkept tended patch is running a shortfall"
+        );
         // Telemetry: `sustainable` is a *measured* MSY line, and a Sustain take is sustainable by
         // its FLOOR (`overdraws`), not by being under that line — the first harvest of a full patch
         // is its accumulated stock and legitimately exceeds one turn's regrowth.

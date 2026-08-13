@@ -210,13 +210,15 @@ pub use food::{
 pub use forage::{
     advance_cultivation, advance_forage_regrowth, commit_fodder_payoff, commit_material_payoff,
     commit_payoff, commit_yield_ratio, composition_for_rung, default_species_for_rung,
-    forage_per_worker_biomass, forage_provisions, forage_source_yield_preview, patch_composition,
-    patch_material_yields, patch_provisions_per_biomass, patch_species_quality,
-    project_arrivals_forage, project_realized_forage, resolve_committed_species, rung_payoff,
-    rung_site_refusal, spawn_initial_forage, species_is_legal_here, tended_take_fodder,
-    tile_flora_composition, tile_forage_capacity, tile_is_fresh_watered, wild_payoff, ForagePatch,
-    ForageRegistry, SpeciesRefusal, CANNOT_CLIMB_RATIO, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON,
-    SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET,
+    forage_per_worker_biomass, forage_provisions, forage_source_yield_preview,
+    patch_at_risk_is_built, patch_composition, patch_material_yields, patch_provisions_per_biomass,
+    patch_species_quality, patch_upkeep_demand, patch_upkeep_shortfall,
+    patch_upkeep_workers_needed, project_arrivals_forage, project_realized_forage,
+    resolve_committed_species, rung_payoff, rung_site_refusal, spawn_initial_forage,
+    species_is_legal_here, tended_take_fodder, tile_flora_composition, tile_forage_capacity,
+    tile_is_fresh_watered, wild_payoff, ForagePatch, ForageRegistry, SpeciesRefusal,
+    CANNOT_CLIMB_RATIO, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
+    WHOLE_BASKET,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use graze::{advance_graze_regrowth, spawn_initial_graze, GrazePatch, GrazeRegistry};

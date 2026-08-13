@@ -940,9 +940,9 @@ Option<FactionId>`, exported as `HerdTelemetryState.domestication`.
   with `RUNG_COMPLETE`. **A `Sustain` hunt tames nothing** — it only
   *teaches* the faction Herding. That de-conflation is slice 3a; see "The `Tame` verb".
 - *Decay*: **there is none.** `domestication_progress` is monotone-up since the neglect-escape arc —
-  neglect sheds **animals**, never tameness — and as of the neglect-grace slice the `animal:pastoral`
-  rung's `decay_fraction_per_turn` is **`null`** rather than the `0.01` it used to carry, because nothing read
-  it (`RungDef::build_decay`'s only production call sites are the two plant rungs). What
+  neglect sheds **animals**, never tameness — and the `decay_fraction_per_turn` the `animal:pastoral`
+  rung used to carry has been retired from the ladder outright: on the plant branch the bleed is the
+  unmet `upkeep` (`docs/plan_standing_upkeep.md` §2.4), and on this one there is nothing to bleed. What
   `advance_husbandry` does to a neglected herd is the **shed**, gated on the rung's `grace_turns` —
   see "Herding is standing labor" in `husbandry.md`.
 - *Yield*: **none here — passive-free pastoral is RETIRED** (intensification ladder slice 3b, §3:
