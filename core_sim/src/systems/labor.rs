@@ -432,10 +432,12 @@ pub fn advance_labor_allocation(
             if workers == 0 {
                 continue;
             }
-            // **The second axis** (issue #442): what this crew is *building*, independent of how hard
-            // it is pulling. `None` = a pure harvest. It dips the take ceiling, drives the build
-            // meter, and is the thing completion clears — `policy` is never written by this system.
-            let improvement = assignment.improvement;
+            // **The player's DECLARATION, which answers only for a meter at zero.** What this crew
+            // is actually building is **derived from the source's own meters**
+            // (`forage::patch_build_verb` / `fauna::herd_build_verb`), because a meter carrying
+            // progress *is* the declaration — so an eroded rung is repairable without the player
+            // re-issuing a verb they never withdrew. Each arm resolves it once its source is in hand.
+            let declared = assignment.improvement;
             // **THE OTHER TWO ALLOCATIONS ON THIS SOURCE** (`docs/plan_standing_upkeep.md` §2.2).
             // `workers` above is the **take** crew; these are the hands the player put on the build
             // and on the keeping. They are independent numbers drawing on one band, so what competes
@@ -653,7 +655,7 @@ pub fn advance_labor_allocation(
                             .is_none()
                         })
                     };
-                    let sow_permitted = improvement == Some(Improvement::Sow)
+                    let sow_permitted = declared == Some(Improvement::Sow)
                         && field_rung.unlock_discovery_id().is_none_or(|knowledge| {
                             knows(&discovery, faction, knowledge, knowledge_threshold)
                         })
@@ -670,9 +672,9 @@ pub fn advance_labor_allocation(
                     // below this rung (an open-water fishery, an alpine peak). Either way the
                     // investment simply does not accrue — you cannot farm what will not climb.
                     let committing =
-                        matches!(improvement, Some(Improvement::Cultivate | Improvement::Sow))
+                        matches!(declared, Some(Improvement::Cultivate | Improvement::Sow))
                             .then(|| {
-                                let rung = if improvement == Some(Improvement::Sow) {
+                                let rung = if declared == Some(Improvement::Sow) {
                                     RungKey::PlantField
                                 } else {
                                     RungKey::PlantTended
@@ -685,7 +687,7 @@ pub fn advance_labor_allocation(
                                     // here). The create case does not occur on a generated map — every
                                     // food-bearing tile already carries a patch — but the branch keeps the
                                     // "you sow what grows here; unwilling ground is rung 4" rule honest.
-                                    let sow_from_nothing = improvement == Some(Improvement::Sow)
+                                    let sow_from_nothing = declared == Some(Improvement::Sow)
                                         && forage_registry.patch(*tile).is_none();
                                     if sow_from_nothing {
                                         resolve_committed_species(
@@ -755,6 +757,9 @@ pub fn advance_labor_allocation(
                     let Some(patch) = forage_registry.patch_mut(*tile) else {
                         continue;
                     };
+                    // **THE LIVE VERB, DERIVED** — the declaration above counts only where the meter
+                    // it names is at zero; otherwise the newest meter with progress on it decides.
+                    let improvement = crate::forage::patch_build_verb(patch, declared);
                     // **The commitment, recorded once and fixed until the patch goes feral.** This is
                     // the first turn a crew works this ground under Cultivate/Sow, so this is where
                     // the tile stops being a mixed basket and becomes one named crop. It takes effect
@@ -763,18 +768,12 @@ pub fn advance_labor_allocation(
                     if let Some(chosen) = committing.as_deref() {
                         patch.commit_species(chosen);
                     }
-                    // **NOTHING LEFT TO BUILD → hand the verb back, whoever finished it.** The four
-                    // accrual arms below only record a completion the *acting* band achieved, but
-                    // `handle_cultivate`/`handle_sow` set the improvement on **every** band working
-                    // the source, so a second crew is left holding a verb for a rung another crew
-                    // climbed. Stated once, here, before the Field arm's early return — which is what
-                    // made a finished Field permanently un-clearable for a second band's `Sow`, the
-                    // one case that could not self-heal (PR #448 review).
-                    if let Some(verb) =
-                        improvement.filter(|verb| forage_rung_already_built(patch, *verb))
-                    {
-                        completed.push((idx, RungKey::built_by(verb)));
-                    }
+                    // **NOTHING LEFT TO BUILD needs no test any more.** A declaration is honoured
+                    // only where the meter it names is at zero (`forage::patch_build_verb`), so a
+                    // stale verb on a finished rung — including a second band's, set by the command
+                    // that fans a verb across every band working the source — derives to `None` and
+                    // drives nothing. The clear that used to be needed to stop it is gone with the
+                    // authority it was cleaning up after.
                     // **THE STANDING UPKEEP, PAID BY ITS OWN CREW** (`docs/plan_standing_upkeep.md`
                     // §2.4). What is left over is the shortfall, and the shortfall **is** the decay
                     // (`RungDef::upkeep_decay`, past the rung's grace).
@@ -1509,16 +1508,12 @@ pub fn advance_labor_allocation(
                     } else {
                         hunt_per_worker_biomass
                     };
-                    // **NOTHING LEFT TO BUILD → hand the verb back, whoever finished it** — the
-                    // animal twin of the Forage arm's identical check, and stated before the pen's
-                    // tend branch `continue`s for the same reason: `handle_corral` sets the verb on
-                    // every band hunting the herd, so the band that did not finish the pen would
-                    // otherwise hold `Corral` on a penned herd forever (PR #448 review).
-                    if let Some(verb) =
-                        improvement.filter(|verb| hunt_rung_already_built(herd, *verb))
-                    {
-                        completed.push((idx, RungKey::built_by(verb)));
-                    }
+                    // **THE LIVE VERB, DERIVED** — the animal twin of the Forage arm's: the
+                    // declaration counts only where the meter it names is at zero, and both animal
+                    // meters are monotone, so a part-built rung stays in flight until it completes.
+                    let improvement = fauna::herd_build_verb(herd, declared);
+                    // **NOTHING LEFT TO BUILD needs no test any more** — see the Forage arm: a
+                    // declaration on a finished meter derives to `None` (`fauna::herd_build_verb`).
                     // **THE STANDING UPKEEP, PAID BY ITS OWN CREW** — the animal twin; see the
                     // Forage arm for why it is stamped once, here, before the pen's tend branch
                     // returns. A herd's demand is its **keeper load** (`head count /
@@ -2697,47 +2692,14 @@ fn announce_dropped_assignment(
     ));
 }
 
-/// **Has this patch already climbed the rung `improvement` builds?** The plant half of the
-/// completion seam's "nothing left to build" test, asked once per worked source *before* the arm
-/// branches by rung — so it reaches a finished Field, whose managed branch returns early and never
-/// visits the build blocks.
-///
-/// It answers **`false` for the animal verbs**, which is the honest reading rather than a defensive
-/// one: nothing has been built toward `Tame` on a patch and nothing ever will be. That state is
-/// unreachable anyway — `validate_improvement` refuses a cross-web verb at every command path — and
-/// answering `true` would silently *clear* a mis-set verb instead of leaving the evidence in place.
-///
-/// **`Cultivate` is answered by `is_managed()`, not `is_cultivated()` — a Field is above rung 2.**
-/// `Sow` needs no prior patch, so a Field can stand on ground that was never tended
-/// (`cultivation_progress == 0`), and on such a patch `is_cultivated()` is false while the Field arm
-/// `continue`s past the Cultivate block entirely: the verb was neither cleared nor accrued, so a
-/// `cultivate` on a wild-sown Field **stalled forever, silently**, and only `abandon_improvement`
-/// could clear it. Reading the *whole* managed state answers the question the seam is actually
-/// asking — *is there anything left to build at this rung on this source* — and a Field that later
-/// lapses flips the answer back, because this is evaluated against the current state each turn.
-/// **IT READS THE METER'S FULLNESS, NOT THE RUNG'S ACHIEVED STATE**, and the difference is a
-/// **repair** (`docs/plan_standing_upkeep.md` §2.4). A tended patch whose meter has rotted to 99% is
-/// still tended — it is above its retention bar — but there *is* something left to build on it, and
-/// a `Cultivate` crew is exactly who builds it. Reading the achieved state here would clear the verb
-/// off a source that needs it and make erosion a one-way ratchet with no way back up short of losing
-/// the rung outright.
-fn forage_rung_already_built(patch: &ForagePatch, improvement: Improvement) -> bool {
-    match improvement {
-        Improvement::Cultivate => patch.cultivation_meter_full() || patch.field_meter_full(),
-        Improvement::Sow => patch.field_meter_full(),
-        Improvement::Tame | Improvement::Corral => false,
-    }
-}
-
-/// The animal twin of [`forage_rung_already_built`], with the same cross-web rule and the same
-/// meter-fullness reading.
-fn hunt_rung_already_built(herd: &Herd, improvement: Improvement) -> bool {
-    match improvement {
-        Improvement::Tame => herd.is_domesticated(),
-        Improvement::Corral => herd.corral_meter_full(),
-        Improvement::Cultivate | Improvement::Sow => false,
-    }
-}
+// **RETIRED: `forage_rung_already_built` / `hunt_rung_already_built`** — the "is there anything left
+// to build at this rung on this source" test, whose one job was to clear a verb the sim would
+// otherwise have driven on a finished rung.
+//
+// **The verb is derived from the meter now** (`forage::patch_build_verb` /
+// `fauna::herd_build_verb`): a declaration is honoured only where the meter it names is at zero, so a
+// stale one on a finished rung answers `None` on its own and there is nothing to clear. The test was
+// cleaning up after an authority that no longer exists.
 
 /// **CHARGE THE CREW'S GEAR FOR THE BUILD PROGRESS IT JUST BOUGHT** — the
 /// [`crate::equipment_config::WearQuantum::BuildProgress`] site, and the only one (issue #515).

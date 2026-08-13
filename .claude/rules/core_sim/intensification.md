@@ -167,31 +167,41 @@ live in two slots:
   sees the verb, so the `Cultivate` start gate is not re-asserted). The improvement is set by its own
   verb: `cultivate` / `sow` / `tame` / `corral`, all four routing through
   `set_improvement_on_working_bands` + `validate_improvement`.
-- **And CLEARED by `abandon_improvement`** (`abandon_improvement <faction> forage <x> <y>` /
-  `… hunt <herd_id>`, proto field 46, alias `abandon`) — the one path that passes `None`. **It is not
-  a nicety: without it the split would have removed a capability by accident.** While the build verb
-  *was* the policy, changing your mind meant picking another policy, so a 25-turn commitment could
-  always be walked away from; giving the stance its own control left the improvement with a set-only
-  one. It:
-  - is **ungated** — abandonment is not a rung transition, so no knowledge, no species ceiling, no
-    site and pointedly **no `Thriving` check**. A *stalled* build on unhealthy ground is exactly when
-    a player reaches for it, and copying `cultivate`'s gates would make the remedy unreachable in that
-    case. Its only rejections are "not a source kind" and "nothing is being built there";
-  - **fails closed at PARSE time on an unknown source kind** (`CommandParseError::UnexpectedToken`),
-    matching `assign_labor`'s identical `forage`/`hunt` grammar and `cancel_order`. The kind decides
-    the *arity*, so a catch-all forage arm read the tile arity for any token: `abandon_improvement 1
-    foo` reported "missing argument: target_x" — an argument unrelated to the mistake — and the
-    4-token form parsed clean, with the server's rejection arriving asynchronously in the feed;
-  - **does not touch the meter.** Each web already has a rule for a source nobody is improving, and
-    this hands the source back to it — the same state an out-of-range lapse reaches. **Plant meters
-    bleed** (`advance_cultivation` applies the at-risk rung's unmet `upkeep`, so a part-prepared patch
-    reverts toward `0` over ~100 unkept turns); **animal meters are kept** (`domestication_progress` is
-    monotone-up since the neglect-escape arc, and neither animal rung declares an upkeep yet).
-    Inventing a forfeit here would make the command
-    differ from walking the band away, which is the same decision with more steps;
-  - names a **source**, not a verb, because at most one improvement is ever in flight on one — and
-    reports on the running verb's own feed channel (`improvement_event_kind`), so a rung's whole life
-    reads on one line.
+
+> #### THE BUILD VERB IS **DERIVED FROM THE METER**, and the stored one is only a declaration
+>
+> `forage::patch_build_verb` / `fauna::herd_build_verb` are the one seam
+> (`docs/plan_standing_upkeep.md` §2.4). Per **meter**, not per source:
+>
+> | meter | state | who declares |
+> |---|---|---|
+> | **zero** | nothing in flight | **the player** — a wild patch could climb to tended *or* be sown, and the sim cannot guess |
+> | **between zero and its cost** | building that rung, **implied** | nobody — the progress banked on it *is* the answer |
+> | **at its cost** | maintaining | nobody |
+>
+> **Newest meter first**, exactly as `patch_unwinding_rung` resolves: a Field with any progress on it
+> governs the tended ground beneath, so a `Cultivate` declared on a Field is **dead** rather than
+> stalled, and a slipping Field can never re-imply a Cultivate.
+>
+> **What it fixed.** `RungDef::build_accrual` banks nothing unless the rung's verb is in flight, and
+> completion freed the declaration — so a completed rung that eroded back below its cost re-entered
+> the *building* state with nothing set and could not be repaired until the player re-issued
+> `cultivate`. They never withdrew that intent. **A player who has paid for a rung and watched it slip
+> adds hands, not a command.**
+>
+> **RETIRED with it: `abandon_improvement`** (the command, the alias, `handle_abandon_improvement`,
+> `describe_source`, `improvement_event_kind`, and proto field 46 — **reserved, never reused**). It
+> existed to let a player walk away from a 25-turn commitment while the *verb* was the commitment;
+> the commitment is the **hands** now, so you walk away by unstaffing the builders
+> (`cultivate <faction> <x> <y> 0`). A command that cleared a *derived* value would either do nothing
+> or fight the derivation, and both are worse than not having it. **There is no stored authority left
+> for it to clear**, which is also why the question of "how do abandonment and re-implication
+> interact" has no answer to arbitrate: it was removed rather than settled.
+>
+> **RETIRED with it too: the "nothing left to build" test** (`forage_rung_already_built` /
+> `hunt_rung_already_built`). Its one job was to clear a verb the sim would otherwise have driven on a
+> finished rung — a stale declaration now derives to `None` on its own.
+
 - **On the wire:** `LaborAssignment.improvement:string` (`""` = a pure harvest) beside the
   now-retired `policy`; the per-source ceiling lists have since gone entirely (a continuous floor
   cannot be enumerated), and so have the two build fractions that replaced them — a building crew
@@ -333,23 +343,14 @@ call them instead of reaching for their own bespoke accrue/cost/decay levers, so
   pass runs **before** the lapsed-assignment removal, which invalidates indices. A rung whose gate
   merely **lapses mid-build** is untouched — nothing completed, so the source keeps its verb and its
   progress.
-  - **It clears EVERY band's verb, and announces ONCE.** The two facts are separate, and conflating
-    them is what broke: the four verb commands set the improvement on *every* band working the
-    source, so a completion is always a many-bands event even though only one crew's accrual crosses
-    `1.0`. So (a) each build arm's **feed line** rides the *transition* — `accrue_cultivation` /
-    `accrue_field` / `accrue_domestication` all answer *"did this call finish it"*, `accrue_corral`'s
-    long-standing convention — and (b) a separate **"nothing left to build"** test runs once per
-    worked source, *before* the arm branches by rung, and clears the verb whoever finished it. The
-    placement is load-bearing: a finished Field and a penned herd take a managed branch that
-    `continue`s past the build blocks entirely, so a second crew's `Sow`/`Corral` was **permanent**
-    (only `abandon_improvement` could clear it) while the rung-2 shapes merely self-healed a turn
-    late with a duplicate feed line.
-    **And the plant test asks `is_managed()`, not `is_cultivated()`** — `Sow` needs no prior patch, so
-    a Field routinely stands on ground that was never tended, where `is_cultivated()` is false and the
-    Field arm's early return skips the Cultivate block: a `cultivate` on such a patch stalled forever,
-    silently, with the meter frozen at zero. A rung *above* the one the verb builds is still "nothing
-    left to build here", and a Field that lapses flips the answer back, since the test is re-asked
-    every turn.
+  - **It announces ONCE, and it no longer has to clear anybody's verb.** The four verb commands set
+    the declaration on *every* band working the source, so a completion is always a many-bands event
+    even though only one crew's accrual crosses the bar — which is why each build arm's **feed line**
+    rides the *transition* (`accrue_cultivation` / `accrue_field` / `accrue_domestication` all answer
+    *"did this call finish it"*, `accrue_corral`'s long-standing convention). The **clearing** half is
+    gone: a stale declaration on a finished meter derives to `None`, so the second crew's `Sow` that
+    used to be permanent, and the `cultivate` on a wild-sown Field that used to stall forever, are
+    both unreachable by construction rather than by a test that had to be asked in the right place.
   > **It used to rewrite `policy` onto a module constant `HARVEST_POLICY_AFTER_BUILD`
   > (the food peak)**, because the build verb had occupied the pressure slot and completion had
   > to hand *something* back — so the sim silently replaced the player's stated policy on a turn they

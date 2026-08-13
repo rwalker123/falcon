@@ -1224,11 +1224,21 @@ fn a_completed_field_clears_the_sow_verb_for_every_band_that_was_building_it() {
         "fixture: the Field must stand by now (progress {})",
         field_progress_of(&app, coord)
     );
+    // **NOBODY IS BUILDING HERE, and that is DERIVED rather than cleared** — a declaration counts
+    // only for a meter at zero (`forage::patch_build_verb`), so a second crew's stale `Sow` on a
+    // finished Field answers `None` on its own.
+    let patch = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("patch")
+        .clone();
     for (label, band) in [("the finisher", first), ("the second crew", second)] {
+        let declared = app.world.get::<LaborAllocation>(band).unwrap().assignments[0].improvement;
         assert_eq!(
-            app.world.get::<LaborAllocation>(band).unwrap().assignments[0].improvement,
+            core_sim::patch_build_verb(&patch, declared),
             None,
-            "{label} must hand the verb back — there is nothing left to sow here"
+            "{label} drives nothing — there is nothing left to sow here"
         );
     }
     assert_eq!(
@@ -1454,9 +1464,22 @@ fn a_cultivate_on_a_field_is_handed_back_rather_than_stalling_forever() {
 
     run_turns_with_forage(&mut app, 1);
 
+    // **The declaration is DEAD, not stalled** — the field meter governs (newest first), so a
+    // `Cultivate` on a Field derives to `None` and drives nothing. No clearing pass is involved.
+    let patch = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("patch")
+        .clone();
+    let declared = app.world.get::<LaborAllocation>(band).unwrap().assignments[0].improvement;
     assert_eq!(
-        app.world.get::<LaborAllocation>(band).unwrap().assignments[0].improvement,
+        core_sim::patch_build_verb(&patch, declared),
         None,
-        "the crew is taken off a rung it can never build on this source"
+        "the crew drives nothing on a rung it can never build on this source"
+    );
+    assert_eq!(
+        patch.cultivation_progress, 0.0,
+        "…and the meter it named never moved"
     );
 }

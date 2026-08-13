@@ -619,15 +619,9 @@ enum Command {
         /// build without clearing its meter.
         workers: u32,
     },
-    /// Abandon whatever improvement is in flight on one source (issue #442) — `kind` picks the web,
-    /// `target_*` names a patch, `fauna_id` a herd. See `handle_abandon_improvement`.
-    AbandonImprovement {
-        faction: FactionId,
-        kind: String,
-        target_x: u32,
-        target_y: u32,
-        fauna_id: String,
-    },
+    // **RETIRED: `AbandonImprovement`.** The build verb is derived from the meter now
+    // (`forage::patch_build_verb`, `docs/plan_standing_upkeep.md` §2.4), so there is no stored
+    // authority for it to clear; a player walks away by unstaffing the builders.
     /// Say how one band splits a maintenance pool it cannot stretch — `spread` or `priority`
     /// (`docs/plan_standing_upkeep.md` §2.5). See `handle_upkeep_mode`.
     UpkeepMode {
@@ -5078,7 +5072,7 @@ fn forage_source(tile: UVec2) -> LaborTarget {
 /// never advances, with no player-facing feedback**. So every distinct crop held on the source is
 /// judged, and the first refusal is the command's.
 ///
-/// **Every crop, not just the first band's** — unlike `abandon_improvement`'s "the first band answers
+/// **Every crop, not just the first band's** — unlike the retired `abandon_improvement`'s "the first band answers
 /// for all of them", which is sound because at most one *improvement* is ever in flight on a source.
 /// Crops are per band and can genuinely differ, and a second band's illegal pick stalls exactly the
 /// same way the first's would.
@@ -5446,140 +5440,11 @@ fn handle_corral(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2, 
     );
 }
 
-/// **Abandon the improvement running on one source** — the command that passes `None` where
-/// `cultivate` / `sow` / `tame` / `corral` pass a verb (issue #442,
-/// `docs/plan_investment_rung_toggle.md`). Text forms:
-///   `abandon_improvement <faction> forage <x> <y>`
-///   `abandon_improvement <faction> hunt <herd_id>`
-///
-/// **It exists because the split otherwise removed a capability the old model had by accident.** When
-/// the build verb *was* the policy, changing your mind meant picking another policy, so a 25-turn
-/// commitment could always be walked away from. Splitting the axes gave the stance its own control
-/// and left the improvement with a set-only one; without this the player could start a Corral and
-/// never stop it.
-///
-/// **Ungated, and that is the design.** Abandonment is not a rung transition: it asks for no
-/// knowledge, no species ceiling, no site and — pointedly — no `Thriving` check. A **stalled** build
-/// on unhealthy ground is exactly when a player reaches for this, and gating it on the conditions
-/// that *started* the build would make the remedy unreachable in precisely that case. The only
-/// rejections are "that is not a source kind" and "nobody is building anything there".
-///
-/// **It does not zero the meter, deliberately.** Each web already has a rule for a source nobody is
-/// improving, and this simply hands the source back to it — the same state an assignment reaches when
-/// it lapses out of range:
-/// - **plant**: `advance_cultivation` bleeds `cultivation_progress` / `field_progress` at the rung's
-///   `decay_per_turn` on every turn the patch is not worked as an improvement, so an abandoned
-///   part-prepared patch reverts toward `0`;
-/// - **animal**: `domestication_progress` is monotone-up (the tameness bleed was retired with the
-///   neglect-escape arc) and the `animal:pen` rung's `decay_per_turn` is `0`, so the meter is kept.
-///
-/// Inventing a forfeit here would have made *this* path differ from walking the band away, which is
-/// the same decision expressed with more steps.
-///
-/// The **stance and the crew are untouched**, as with every improvement-side command: the band goes
-/// on working the source, undipped, under the policy the player chose.
-fn handle_abandon_improvement(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    kind: String,
-    tile: UVec2,
-    fauna_id: String,
-) {
-    // The source, named the way its web names it. The stance is irrelevant — `same_source` matches on
-    // the tile / herd id alone — so the default one stands in.
-    let target = match kind.trim().to_ascii_lowercase().as_str() {
-        "forage" => LaborTarget::Forage {
-            tile,
-            floor: SOURCE_NAMED_NOT_ASSIGNED,
-            species: None,
-        },
-        "hunt" if !fauna_id.trim().is_empty() => LaborTarget::Hunt {
-            fauna_id: fauna_id.clone(),
-            floor: SOURCE_NAMED_NOT_ASSIGNED,
-        },
-        "hunt" => {
-            emit_command_failure(
-                app,
-                CommandEventKind::CancelOrder,
-                faction,
-                "abandon_improvement hunt requires <herd_id>.".to_string(),
-            );
-            return;
-        }
-        other => {
-            emit_command_failure(
-                app,
-                CommandEventKind::CancelOrder,
-                faction,
-                format!("Unknown source kind '{}' — expected forage or hunt.", other),
-            );
-            return;
-        }
-    };
-
-    // **Which verb is actually running**, resolved before the clear so the feed line can name it (and
-    // so "nothing to abandon" is a distinct, honest rejection rather than a silent no-op). At most one
-    // improvement is ever in flight on a source, so the first band working it answers for all of them.
-    let running = app
-        .world
-        .query::<(&PopulationCohort, &LaborAllocation)>()
-        .iter(&app.world)
-        .filter(|(cohort, _)| cohort.faction == faction)
-        .find_map(|(_, allocation)| {
-            allocation
-                .assignments
-                .iter()
-                .find(|assignment| assignment.target.same_source(&target))
-                .and_then(|assignment| assignment.improvement)
-        });
-    let Some(improvement) = running else {
-        emit_command_failure(
-            app,
-            CommandEventKind::CancelOrder,
-            faction,
-            format!("Nothing is being built on {}.", describe_source(&target)),
-        );
-        return;
-    };
-    // The improvement's own feed channel, so abandoning a Corral reads on the same line the Corral
-    // was announced on.
-    let event_kind = improvement_event_kind(improvement);
-
-    // **Abandoning FREES the build's crew** — `set_improvement`'s own rule, stated by the `0`:
-    // hands on a build that is no longer running are hands the band cannot see are free.
-    let cleared = set_improvement_on_working_bands(
-        app,
-        faction,
-        &target,
-        None,
-        core_sim::NO_CREW_ON_THIS_ACTIVITY,
-    );
-    let tick = app.world.resource::<SimulationTick>().0;
-    info!(
-        target: "shadow_scale::command",
-        command = "abandon_improvement",
-        faction = %faction.0,
-        improvement = improvement.as_str(),
-        bands = cleared,
-        "command.abandon_improvement.abandoned"
-    );
-    push_command_event(
-        app,
-        tick,
-        event_kind,
-        faction,
-        format!(
-            "Abandoned {} on {}",
-            improvement.as_str(),
-            describe_source(&target)
-        ),
-        Some(format!(
-            "status=abandoned action=abandon_improvement improvement={} bands={}",
-            improvement.as_str(),
-            cleared
-        )),
-    );
-}
+// **RETIRED: `handle_abandon_improvement`.** The build verb is derived from the meter
+// (`forage::patch_build_verb` / `fauna::herd_build_verb`, `docs/plan_standing_upkeep.md` §2.4), so
+// the stored verb is only a declaration for a meter at zero and there is nothing for this command to
+// clear. **The commitment is the hands**: a player walks away by unstaffing the builders
+// (`cultivate <faction> <x> <y> 0`), which is the same control that started the build.
 
 /// **SAY HOW A BAND SPLITS A MAINTENANCE POOL IT CANNOT STRETCH** —
 /// `upkeep_mode <faction> <band> spread|priority` (`docs/plan_standing_upkeep.md` §2.5).
@@ -5984,28 +5849,9 @@ fn handle_bench_crew(
     );
 }
 
-/// A source named for a player-facing line: a patch by its coordinates, a herd by its id.
-fn describe_source(target: &LaborTarget) -> String {
-    match target {
-        LaborTarget::Forage { tile, .. } => format!("({}, {})", tile.x, tile.y),
-        LaborTarget::Hunt { fauna_id, .. } => fauna_id.clone(),
-        LaborTarget::Scout => "scouting".to_string(),
-        LaborTarget::Warrior => "the watch".to_string(),
-        LaborTarget::Agriculture => "the fields".to_string(),
-        LaborTarget::Husbandry => "the herds".to_string(),
-    }
-}
-
-/// The command-feed channel an improvement's events ride — the same one its *setting* verb used, so a
-/// rung's whole life (start → complete, or start → abandon) reads on one line.
-fn improvement_event_kind(improvement: Improvement) -> CommandEventKind {
-    match improvement {
-        Improvement::Cultivate => CommandEventKind::Cultivate,
-        Improvement::Sow => CommandEventKind::Sow,
-        Improvement::Tame => CommandEventKind::Tame,
-        Improvement::Corral => CommandEventKind::Corral,
-    }
-}
+// **RETIRED with `abandon_improvement`**: `describe_source` and `improvement_event_kind`, its two
+// helpers. Every other command names its own source inline, and the labor system keeps its own copy
+// of the verb→channel map (`systems::labor::improvement_feed_channel`) for the events it pushes.
 
 /// Grazing 2d-β — the `ExtendPen` command. Put an owned, **built** pen at `tile` into the "extending"
 /// state so its keeper band works off the next fenced ring (`pen_radius += 1` at completion, ~25 turns
@@ -7036,19 +6882,6 @@ fn command_from_payload(
             target_y,
             workers,
         }),
-        ProtoCommandPayload::AbandonImprovement {
-            faction_id,
-            kind,
-            target_x,
-            target_y,
-            fauna_id,
-        } => Some(Command::AbandonImprovement {
-            faction: FactionId(faction_id),
-            kind,
-            target_x,
-            target_y,
-            fauna_id,
-        }),
         ProtoCommandPayload::UpkeepMode {
             faction_id,
             band_id,
@@ -7928,21 +7761,6 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
             workers,
         } => {
             handle_corral(app, faction, UVec2::new(target_x, target_y), workers);
-        }
-        Command::AbandonImprovement {
-            faction,
-            kind,
-            target_x,
-            target_y,
-            fauna_id,
-        } => {
-            handle_abandon_improvement(
-                app,
-                faction,
-                kind,
-                UVec2::new(target_x, target_y),
-                fauna_id,
-            );
         }
         Command::UpkeepMode {
             faction,
@@ -9172,7 +8990,7 @@ mod tests {
     }
 
     /// `upkeep_mode`'s refusals ride the `CancelOrder` feed channel, exactly as
-    /// `abandon_improvement`'s do — the two are siblings and read on one line.
+    /// the retired `abandon_improvement`'s did — the two were siblings and read on one line.
     fn cancel_failure_detail_contains(app: &bevy::prelude::App, needle: &str) -> bool {
         app.world.resource::<CommandEventLog>().iter().any(|entry| {
             matches!(entry.kind, CommandEventKind::CancelOrder)
@@ -12118,212 +11936,10 @@ mod tests {
         );
     }
 
-    /// **A running improvement can be ABANDONED, and the stance survives** (issue #442). The
-    /// two-axis split gave the stance its own control and left the improvement with a set-only one,
-    /// which silently removed a capability the old model had by accident: when the build verb *was*
-    /// the policy, changing your mind meant picking another policy. `abandon_improvement` is the
-    /// missing half — the one path that passes `None`.
-    ///
-    /// **Phase 1 pins the "ungated" claim against a state where a gate really would bite**: the box
-    /// is checked on a patch whose faction has **not learned Cultivation**, so the setting verb is
-    /// refused outright and any gate copied onto the abandon path would refuse it too.
-    ///
-    /// It used to use the `EcologyPhase::Thriving` gate for that control. That gate is gone
-    /// (`docs/plan_harvest_floor.md` §3.2 — a build now *slows* under pressure rather than stalling),
-    /// so the knowledge gate is the surviving refusal, and it is the better control anyway: it
-    /// cannot lapse under the build the player is trying to call off.
-    ///
-    /// **Phase 2 pins that abandoning does not forfeit the meter**, which needs a build with progress
-    /// banked.
-    #[test]
-    fn a_running_improvement_can_be_abandoned_and_the_stance_survives() {
-        // --- Phase 1: the stuck state — box checked, nothing banked, ground gone Stressed. ---
-        let mut app = build_headless_app();
-        let faction = FactionId(0);
-        let coord = UVec2::new(1, 1);
-        seed_thriving_patch(&mut app, coord);
-        // Deliberately **not** `grant_cultivation` — the faction cannot set this verb, which is what
-        // makes "abandon is ungated" testable at all.
-        let band = spawn_resident_working_band(
-            &mut app,
-            faction,
-            LaborTarget::Forage {
-                tile: coord,
-                floor: 0.3,
-                species: None,
-            },
-        );
-        {
-            let mut allocation = app
-                .world
-                .get_mut::<LaborAllocation>(band)
-                .expect("the band works the patch");
-            allocation.assignments[0].improvement = Some(Improvement::Cultivate);
-        }
-
-        // The control: *setting* this verb here is refused, so any gate copied onto the abandon path
-        // would refuse it too. Without this line the phase below could pass against a gated abandon.
-        let would_be_refused = validate_improvement(
-            &app,
-            faction,
-            &LaborTarget::Forage {
-                tile: coord,
-                floor: 0.3,
-                species: None,
-            },
-            Improvement::Cultivate,
-        );
-        assert!(
-            would_be_refused
-                .as_ref()
-                .is_err_and(|reason| reason.contains("not learned Cultivation")),
-            "fixture: the SETTING verb must be refused here, or 'ungated' is untested: \
-             {would_be_refused:?}"
-        );
-
-        handle_abandon_improvement(
-            &mut app,
-            faction,
-            "forage".to_string(),
-            coord,
-            String::new(),
-        );
-
-        assert_eq!(
-            band_improvement(&app, band),
-            None,
-            "abandoning is not a rung transition — it takes no gate, least of all the knowledge \
-             gate that refuses to *start* the build the player is trying to call off"
-        );
-        assert_eq!(
-            band_floor(&app, band),
-            0.3,
-            "the floor the player chose is untouched, as with every improvement-side command"
-        );
-        assert_eq!(
-            app.world
-                .get::<LaborAllocation>(band)
-                .expect("the band keeps its allocation")
-                .assignments[0]
-                .workers,
-            BAND_WORKERS,
-            "the crew stays on the source — you abandon the BUILD, not the patch"
-        );
-        assert!(
-            !cultivate_failure_detail_contains(&app, "not thriving"),
-            "abandoning must emit no phase rejection"
-        );
-
-        // --- Phase 2: the meter is not forfeited. ---
-        //
-        // Abandoning hands the source back to its web's own unworked-source rule (here
-        // `advance_cultivation`'s per-turn bleed), which is exactly the state walking the band out of
-        // range already reaches. Inventing a forfeit here would make this path differ from that one.
-        let mut app = build_headless_app();
-        seed_thriving_patch(&mut app, coord);
-        seed_paused_build(&mut app, coord, Some(faction));
-        grant_cultivation(&mut app, faction);
-        let band = spawn_resident_working_band(
-            &mut app,
-            faction,
-            LaborTarget::Forage {
-                tile: coord,
-                floor: 0.5,
-                species: None,
-            },
-        );
-        {
-            let mut allocation = app
-                .world
-                .get_mut::<LaborAllocation>(band)
-                .expect("the band works the patch");
-            allocation.assignments[0].improvement = Some(Improvement::Cultivate);
-        }
-        let banked = app
-            .world
-            .resource::<ForageRegistry>()
-            .patch(coord)
-            .expect("seeded patch")
-            .cultivation_progress;
-        assert!(
-            banked > 0.0,
-            "fixture: there must be progress to walk away from"
-        );
-
-        handle_abandon_improvement(
-            &mut app,
-            faction,
-            "forage".to_string(),
-            coord,
-            String::new(),
-        );
-
-        assert_eq!(band_improvement(&app, band), None);
-        assert_eq!(
-            app.world
-                .resource::<ForageRegistry>()
-                .patch(coord)
-                .expect("seeded patch")
-                .cultivation_progress,
-            banked,
-            "the command does not forfeit progress — the web's decay rule owns that"
-        );
-    }
-
-    /// Abandoning something nobody is building is a **named rejection**, not a silent no-op — the
-    /// same discipline the four setting verbs use for "no band is working that source".
-    #[test]
-    fn abandoning_nothing_is_rejected_by_name() {
-        let mut app = build_headless_app();
-        let faction = FactionId(0);
-        let coord = UVec2::new(1, 1);
-        seed_thriving_patch(&mut app, coord);
-        spawn_resident_working_band(
-            &mut app,
-            faction,
-            LaborTarget::Forage {
-                tile: coord,
-                floor: 0.5,
-                species: None,
-            },
-        );
-
-        handle_abandon_improvement(
-            &mut app,
-            faction,
-            "forage".to_string(),
-            coord,
-            String::new(),
-        );
-        assert!(
-            app.world.resource::<CommandEventLog>().iter().any(|entry| {
-                matches!(entry.kind, CommandEventKind::CancelOrder)
-                    && entry
-                        .detail
-                        .as_deref()
-                        .is_some_and(|detail| detail.contains("Nothing is being built"))
-            }),
-            "a harvesting band has nothing to abandon, and the feed must say so"
-        );
-
-        // An unknown source kind is refused before anything is looked up.
-        handle_abandon_improvement(
-            &mut app,
-            faction,
-            "quarry".to_string(),
-            coord,
-            String::new(),
-        );
-        assert!(
-            app.world.resource::<CommandEventLog>().iter().any(|entry| {
-                entry
-                    .detail
-                    .as_deref()
-                    .is_some_and(|detail| detail.contains("Unknown source kind"))
-            }),
-            "only the two food webs name a source"
-        );
-    }
+    // **RETIRED with `abandon_improvement`**: `a_running_improvement_can_be_abandoned_and_the_stance_survives`
+    // and `abandoning_nothing_is_rejected_by_name`. There is no command left to test — the build verb
+    // is derived from the meter (`docs/plan_standing_upkeep.md` §2.4) and a player walks away by
+    // unstaffing the builders, which `handle_cultivate`'s own zero-crew path already covers.
 
     /// The kind gates: `Corral` on a forage patch and `Cultivate` on a herd are both rejected
     /// outright by `validate_improvement` (the guard each build command routes through).

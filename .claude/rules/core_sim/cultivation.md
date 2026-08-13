@@ -316,11 +316,19 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
   (`validate_improvement`'s `Cultivate` arm): faction knows Cultivation, not already cultivated, not
   another faction's; plus a rejection when **no band is foraging** the tile (staff it first). **No
   health gate** — see "THERE IS NO HEALTH GATE" above.
-- **`abandon_improvement <faction> forage <x> <y>` / `… hunt <herd_id>`** (`handle_abandon_improvement`;
-  `AbandonImprovementCommand` proto field **46**, alias `abandon`) — the **clear** half of the four
-  setting verbs, and the capability the two-axis split would otherwise have removed (see "An
-  assignment has TWO axes" in `intensification.md` for why it is ungated and why it leaves the meter
-  to `advance_cultivation`'s bleed).
+- **THE BUILD VERB IS DERIVED FROM THE METER** (`forage::patch_build_verb`,
+  `docs/plan_standing_upkeep.md` §2.4). A patch with progress on a meter is building that rung; a
+  meter at its cost is maintaining; **only a meter at zero needs the player to say which rung this
+  ground climbs**, which is what the four verb commands are for. So a tended patch that has slipped
+  below its cost is *building* again with no command issued — the player owes it **hands**, not a
+  re-declaration of an intent they never withdrew.
+  - **`abandon_improvement` is RETIRED** with the stored authority it used to clear (proto field 46
+    reserved, never reused). The commitment is the hands: a player walks away by unstaffing the
+    builders, `cultivate <faction> <x> <y> 0`.
+  - **A fully feral patch clears owner, species, cost and rung together** — `reconcile_owner`'s
+    "nothing is left of either improvement" and the derivation's "a meter at zero needs a
+    declaration" are one notion of empty, pinned by
+    `forage_cultivation::a_fully_feral_patch_clears_its_owner_species_and_rung_together`.
 - **Improvement validation** — `Improvement::valid_for_forage` / `valid_for_hunt`: `Cultivate`/`Sow`
   are plant-only and `Tame`/`Corral` animal-only, both stated as **exhaustive** matches so a new verb
   fails to compile until someone says which web it belongs to. `validate_improvement` rejects a

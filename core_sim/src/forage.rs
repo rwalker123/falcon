@@ -315,6 +315,13 @@ pub struct ForagePatch {
     /// survives a rollback for the same reason (the checkpoint clones the whole `ForageRegistry`), so
     /// the first post-restore decay pass does not bleed a patch whose keepers are still on it.
     pub upkeep_supplied: f32,
+    // **RETIRED before it shipped: `ForagePatch::repair_verb`** — a per-turn flag stamped on the edge a
+    // completed meter fell below its cost, so the labor arm could re-stamp the rung's verb.
+    //
+    // **The verb is DERIVED from the meter now** ([`patch_build_verb`]), so there is no edge to catch and
+    // nothing to re-stamp: a meter carrying progress *is* the declaration. An edge-triggered write would
+    // have been a second authority beside the meter, and the two could disagree the moment anything else
+    // touched a build.
 }
 
 // **RETIRED: `ForagePatch::maintain` / `Herd::maintain`** — a per-source boolean the player toggled
@@ -325,6 +332,57 @@ pub struct ForagePatch {
 // state, said twice. **`LaborAssignment::maintain_workers == 0` is the whole of "stop maintaining
 // this"** now (`docs/plan_standing_upkeep.md` §2.2), and it lives with the band that would have
 // supplied the hands rather than on the ground they stand on.
+
+/// **WHICH RUNG THIS PATCH IS BUILDING** — derived from its meters, with the player's declaration
+/// answering only for a meter that is at zero.
+///
+/// # THE METER IS THE DECLARATION
+///
+/// | meter | state | who declares |
+/// |---|---|---|
+/// | **zero** | nothing in flight | **the player** — a wild patch could climb to tended *or* be sown, and the sim cannot guess |
+/// | **between zero and its cost** | building that rung, **implied** | nobody — the progress banked on it *is* the answer |
+/// | **at its cost** | maintaining | nobody |
+///
+/// **Per METER, not per source**: a completed tended patch the player wants to sow is still a
+/// declaration, because its field meter is at zero.
+///
+/// # WHAT THIS FIXED
+///
+/// `RungDef::build_accrual` banks nothing unless the rung's verb is in flight, and completion cleared
+/// the stored verb — so a completed rung that eroded back below its cost re-entered the *building*
+/// state with nothing set, accrued nothing, and could not be repaired until the player re-issued
+/// `cultivate`/`sow`. They never withdrew that intent. **A player who has paid for a rung and watched
+/// it slip adds hands, not a command.**
+///
+/// # AND IT RETIRED `abandon_improvement`
+///
+/// That command existed to let a player walk away from a 25-turn commitment while the *verb* was the
+/// commitment. The commitment is the **hands** now — you walk away by unstaffing the builders
+/// (`cultivate <faction> <x> <y> 0`) — and a command that cleared a *derived* value would either do
+/// nothing or fight the derivation. There is no stored authority left for it to clear.
+///
+/// **The declaration is honoured only at a zero meter**, which is what makes a spent one inert: once
+/// the first accrual lands, the meter answers and the stale declaration is filtered out here rather
+/// than having to be cleaned up somewhere.
+pub fn patch_build_verb(patch: &ForagePatch, declared: Option<Improvement>) -> Option<Improvement> {
+    // **NEWEST METER FIRST, exactly as the unwind resolves** ([`patch_unwinding_rung`]): a Field with
+    // any progress on it governs the tended ground beneath, so a `Cultivate` declared on a Field is
+    // dead rather than stalled — the case that used to need the retired "nothing left to build" test.
+    if patch.field_progress > RUNG_UNSTARTED {
+        return (!patch.field_meter_full()).then_some(Improvement::Sow);
+    }
+    // **A declaration counts for a meter at zero**, which the field's is here — so a `Sow` on tended
+    // ground (or on a bare gathering site) is the player starting the rung above.
+    if declared == Some(Improvement::Sow) {
+        return Some(Improvement::Sow);
+    }
+    if patch.cultivation_progress > RUNG_UNSTARTED {
+        return (!patch.cultivation_meter_full()).then_some(Improvement::Cultivate);
+    }
+    // Both meters at zero: only the player can say which rung this ground climbs.
+    (declared == Some(Improvement::Cultivate)).then_some(Improvement::Cultivate)
+}
 
 /// **WHERE A BUILD METER LANDS THIS TURN — and the jump on the turn it completes.**
 ///
@@ -2026,6 +2084,10 @@ pub fn advance_cultivation(
                 }
             }
         }
+        // **Losing ground needs no flag**: a meter below its cost derives its own rung's verb
+        // ([`patch_build_verb`]), so the labor arm sees a build in flight next Population stage
+        // without anything being stamped here.
+        //
         // **The turns estimate**, on the one-turn cycle: a build the player abandoned must stop
         // publishing a finish date, and the labor arm re-stamps it this turn if a crew is still on it
         // (Logistics runs before Population).

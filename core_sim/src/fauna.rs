@@ -3725,6 +3725,40 @@ pub fn herd_keeping_rung<'a>(herd: &Herd, ladder: &'a LadderConfig) -> Option<&'
     })
 }
 
+/// **WHICH RUNG THIS HERD IS BUILDING** — the animal twin of `forage::patch_build_verb`, with the
+/// same rule: the player declares for a meter at zero, and a meter carrying progress declares for
+/// itself.
+///
+/// # BOTH ANIMAL METERS ARE MONOTONE, AND THAT READS CORRECTLY
+///
+/// `domestication_progress` is monotone-up (the neglect-escape arc retired its bleed) and a pen's
+/// meter never bleeds either, so an animal rung derived as *building* stays that way **until it
+/// completes** — a half-tamed herd is permanently building. That is the honest reading rather than a
+/// loop: it means the `Tame` is still in flight, which it is, and the herd accrues the moment
+/// builders are staffed. Nothing re-declares anything, because nothing is written.
+///
+/// The consequence the plant web has — a completed rung eroding back into the building state — is
+/// therefore unreachable here, which is why no animal rung declares a `meter_decay`.
+pub fn herd_build_verb(
+    herd: &Herd,
+    declared: Option<crate::components::Improvement>,
+) -> Option<crate::components::Improvement> {
+    use crate::components::Improvement;
+    // **Newest meter first**, the twin of `herd_keeping_rung`'s order: a pen with any progress on it
+    // governs, so a `Tame` declared on a penned herd is dead rather than stalled.
+    if herd.corral_progress > RUNG_UNSTARTED {
+        return (!herd.corral_meter_full()).then_some(Improvement::Corral);
+    }
+    // The pen's meter is at zero here, so a `Corral` declaration is the player starting that rung.
+    if declared == Some(Improvement::Corral) {
+        return Some(Improvement::Corral);
+    }
+    if herd.domestication_progress > RUNG_UNSTARTED {
+        return (!herd.is_domesticated()).then_some(Improvement::Tame);
+    }
+    (declared == Some(Improvement::Tame)).then_some(Improvement::Tame)
+}
+
 /// **IS THIS HERD BUILDING OR MAINTAINING?** — `true` = maintaining, the animal twin of
 /// `forage::patch_is_maintaining` and **the same rule with no exception**
 /// (`docs/plan_standing_upkeep.md` §2.4).

@@ -1085,11 +1085,22 @@ fn a_completed_cultivation_announces_once_and_clears_every_bands_verb() {
         "fixture: the patch must be tended by now (progress {})",
         progress_of(&app, coord)
     );
+    // **NOBODY IS BUILDING HERE ANY MORE, and that is now DERIVED rather than cleared.** A
+    // declaration counts only where the meter it names is at zero (`forage::patch_build_verb`), so a
+    // second crew's stale `Cultivate` on a finished rung answers `None` on its own — the pass that
+    // used to hunt down and clear it is retired with the authority it was cleaning up after.
+    let patch = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("patch")
+        .clone();
     for (label, band) in [("the finisher", first), ("the second crew", second)] {
+        let declared = app.world.get::<LaborAllocation>(band).unwrap().assignments[0].improvement;
         assert_eq!(
-            app.world.get::<LaborAllocation>(band).unwrap().assignments[0].improvement,
+            core_sim::patch_build_verb(&patch, declared),
             None,
-            "{label} must hand the verb back — there is nothing left to cultivate here"
+            "{label} drives nothing — there is nothing left to cultivate here"
         );
     }
     assert_eq!(
@@ -2632,5 +2643,223 @@ fn a_rung_that_erodes_below_its_cost_is_building_again() {
         progress_of(&app, coord) > eroded,
         "a Cultivate crew tops a rotted meter back up: {eroded} -> {}",
         progress_of(&app, coord)
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE BUILD VERB IS DERIVED FROM THE METER (`docs/plan_standing_upkeep.md` §2.4)
+// ---------------------------------------------------------------------------------------------
+
+/// **COMPLETE → ERODE → REPAIR → COMPLETE, WITH NO COMMAND ISSUED AT ANY POINT.**
+///
+/// `RungDef::build_accrual` banks nothing unless the rung's verb is in flight, and completion frees
+/// the declaration — so before the derivation a rung that slipped could not be repaired until the
+/// player re-issued `cultivate`. They never withdrew that intent. **A meter carrying progress IS the
+/// declaration**, so what a player owes a slipping rung is *hands*, not a command.
+///
+/// The whole round trip runs here on one band, issuing the verb exactly **once** at the very start.
+#[test]
+fn a_rung_completes_erodes_and_repairs_with_no_command_after_the_first() {
+    let mut app = spawn_world();
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    grant_cultivation_knowledge(&mut app, FactionId(0));
+
+    // The ONE declaration in this test: a wild patch, whose cultivation meter is at zero.
+    let band = spawn_builder(&mut app, tile, coord, Improvement::Cultivate);
+    let build_turns = turns_to_prepare(&app);
+    run_turns_with_forage(&mut app, build_turns);
+    assert!(
+        app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .expect("patch")
+            .is_cultivated(),
+        "fixture: the Cultivate must complete, or there is nothing to erode"
+    );
+    let full = progress_of(&app, coord);
+
+    // **Erode it.** The builders were freed at completion, and nobody is on the keeping — so the
+    // meter slips below its cost with no command involved either.
+    set_forage_improvement(&mut app, band, None);
+    set_forage_workers(&mut app, band, A_KEEPER);
+    // **And take the keepers off.** The completion hand-off moved the builders onto the band's
+    // `agriculture` role, which is exactly what stops a fresh rung decaying — so a test about
+    // erosion has to unstaff it, which is the player's own `assign_labor … agriculture 0`.
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("band exists");
+        allocation
+            .assignments
+            .retain(|a| !matches!(a.target, LaborTarget::Agriculture));
+    }
+    let grace = tended_grace(&app);
+    run_turns_with_forage(&mut app, grace + 2);
+    let eroded = progress_of(&app, coord);
+    assert!(
+        eroded < full,
+        "fixture: the rung must actually slip: {full} -> {eroded}"
+    );
+    assert!(
+        app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .expect("patch")
+            .is_cultivated(),
+        "…while staying tended, which is the state a repair is FOR"
+    );
+
+    // **THE DERIVED VERB IS BACK, with no command.**
+    let patch = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("patch")
+        .clone();
+    assert_eq!(
+        core_sim::patch_build_verb(&patch, None),
+        Some(Improvement::Cultivate),
+        "a meter below its cost declares its own rung — the player re-issues nothing"
+    );
+
+    // **Adding HANDS is the whole of what the player does.** The declaration slot is left empty on
+    // purpose: if the repair needed it, this would not move.
+    let builders = build_crew(&app);
+    set_forage_workers(&mut app, band, builders);
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("band exists");
+        assert_eq!(
+            allocation.assignments[0].improvement, None,
+            "fixture: no declaration is stored — the derivation is doing the work"
+        );
+        allocation.assignments[0].improvement_workers = builders;
+    }
+    run_turns_with_forage(&mut app, 1);
+    assert!(
+        progress_of(&app, coord) > eroded,
+        "hands alone repair it: {eroded} -> {}",
+        progress_of(&app, coord)
+    );
+
+    // …and it climbs all the way back to full, still with nothing re-issued.
+    run_turns_with_forage(&mut app, build_turns + 1);
+    assert_eq!(
+        progress_of(&app, coord),
+        cultivate_cost(&app),
+        "the repair completes the rung again"
+    );
+    assert_eq!(
+        core_sim::patch_build_verb(
+            &app.world
+                .resource::<ForageRegistry>()
+                .patch(coord)
+                .expect("patch")
+                .clone(),
+            None
+        ),
+        None,
+        "and a full meter declares nothing — the source is maintaining again"
+    );
+}
+
+/// **A METER AT EXACTLY ZERO NEEDS A DECLARATION AGAIN** — the one state the sim cannot guess,
+/// because a wild patch could climb to tended *or* be sown.
+///
+/// **Per METER, not per source**: a completed tended patch still needs a `sow` declaration, because
+/// its field meter is at zero.
+#[test]
+fn a_meter_at_zero_needs_the_player_to_declare_again() {
+    let mut app = spawn_world();
+    let (_tile, coord) = prime_thriving_patch(&mut app);
+
+    // (1) A wild patch: both meters at zero, so nothing is implied and either rung is declarable.
+    let wild = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("patch")
+        .clone();
+    assert_eq!(core_sim::patch_build_verb(&wild, None), None);
+    assert_eq!(
+        core_sim::patch_build_verb(&wild, Some(Improvement::Cultivate)),
+        Some(Improvement::Cultivate),
+        "the player declares, and the sim honours it: a zero meter has no answer of its own"
+    );
+    assert_eq!(
+        core_sim::patch_build_verb(&wild, Some(Improvement::Sow)),
+        Some(Improvement::Sow),
+        "…and either rung is theirs to name — this is exactly the state the sim cannot guess"
+    );
+
+    // (2) A completed tended patch: the tended meter answers for itself, the FIELD meter is at zero
+    // and still needs saying.
+    seat_tended_patch(&mut app, coord);
+    let tended = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("patch")
+        .clone();
+    assert_eq!(
+        core_sim::patch_build_verb(&tended, None),
+        None,
+        "a full meter is maintaining — it declares nothing"
+    );
+    assert_eq!(
+        core_sim::patch_build_verb(&tended, Some(Improvement::Sow)),
+        Some(Improvement::Sow),
+        "but the field meter is at zero, so climbing to it is still a declaration"
+    );
+}
+
+/// **A FULLY FERAL PATCH CLEARS OWNER, SPECIES AND RUNG TOGETHER** — one notion of empty, not three.
+///
+/// The derivation's "a meter at zero needs a declaration" and `reconcile_owner`'s "nothing is left of
+/// either improvement" must agree, or a patch could read as unowned while still implying a verb (or
+/// the reverse), and the player would face a source the sim thinks somebody is building.
+#[test]
+fn a_fully_feral_patch_clears_its_owner_species_and_rung_together() {
+    let mut app = spawn_world();
+    let (_tile, coord) = prime_thriving_patch(&mut app);
+    seat_tended_patch(&mut app, coord);
+    {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(coord).expect("patch");
+        patch.species = Some("wild_emmer".to_string());
+    }
+
+    let feral_turns = turns_to_go_fully_feral(&app);
+    run_turns_untended(&mut app, feral_turns);
+
+    let patch = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("patch")
+        .clone();
+    assert_eq!(
+        patch.cultivation_progress,
+        core_sim::RUNG_UNSTARTED,
+        "fixture: the meter must have bled all the way out"
+    );
+    assert_eq!(patch.owner, None, "ownership lapses with the last progress");
+    assert_eq!(patch.species, None, "and so does the committed crop");
+    assert_eq!(
+        patch.cultivation_cost,
+        core_sim::RUNG_UNSTARTED,
+        "and the stamped job with it — a wild patch quotes no price"
+    );
+    assert!(
+        !patch.is_cultivated(),
+        "the rung is gone: the retention bar cleared on the way down"
+    );
+    assert_eq!(
+        core_sim::patch_build_verb(&patch, None),
+        None,
+        "…so the ground implies nothing and the player must declare again — one notion of empty"
     );
 }

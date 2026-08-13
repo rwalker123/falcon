@@ -149,23 +149,14 @@ pub enum CommandPayload {
         /// build without clearing its meter.
         workers: u32,
     },
-    /// **Abandon a running improvement** — clear the build verb off every band of `faction_id`
-    /// working the named source, leaving the harvest stance and the crew untouched (issue #442).
-    ///
-    /// The one command that passes `None` where `Cultivate`/`Sow`/`Tame`/`Corral` pass a verb. It is
-    /// **ungated**: abandonment is not a rung transition, and a *stalled* build on unhealthy ground is
-    /// exactly when a player reaches for it. It does not zero the meter — each web's existing
-    /// unworked-source rule takes over (see `AbandonImprovementCommand` in `command.proto`).
-    ///
-    /// Names a **source**, not a verb: `kind` is `"forage"` (uses `target_x`/`target_y`) or `"hunt"`
-    /// (uses `fauna_id`), because at most one improvement is ever in flight on a source.
-    AbandonImprovement {
-        faction_id: u32,
-        kind: String,
-        target_x: u32,
-        target_y: u32,
-        fauna_id: String,
-    },
+    // **RETIRED: `AbandonImprovement`** — "clear the build verb off every band working this source".
+    //
+    // The build verb is **derived from the meter** now (`forage::patch_build_verb` /
+    // `fauna::herd_build_verb`, `docs/plan_standing_upkeep.md` §2.4): a source with progress on a
+    // meter is building that rung, and the stored verb is only a declaration for a meter at **zero**.
+    // A command that cleared a derived value would either do nothing or fight the derivation, and
+    // both are worse than not having it. **The commitment is the hands** — a player walks away by
+    // unstaffing the builders (`cultivate <faction> <x> <y> 0`). Proto field 46 is reserved.
     /// **Say how a band splits a maintenance pool it cannot stretch**
     /// (`docs/plan_standing_upkeep.md` §2.5) — `"spread"` (everything degrades a little) or
     /// `"priority"` (fund sources completely, most-invested first).
@@ -969,19 +960,6 @@ impl CommandEnvelope {
                 target_y: *target_y,
                 workers: *workers,
             }),
-            CommandPayload::AbandonImprovement {
-                faction_id,
-                kind,
-                target_x,
-                target_y,
-                fauna_id,
-            } => pb::command_envelope::Command::AbandonImprovement(pb::AbandonImprovementCommand {
-                faction_id: *faction_id,
-                kind: kind.clone(),
-                target_x: *target_x,
-                target_y: *target_y,
-                fauna_id: fauna_id.clone(),
-            }),
             CommandPayload::UpkeepMode {
                 faction_id,
                 band_id,
@@ -1420,15 +1398,6 @@ impl CommandEnvelope {
                 target_y: cmd.target_y,
                 workers: cmd.workers,
             },
-            pb::command_envelope::Command::AbandonImprovement(cmd) => {
-                CommandPayload::AbandonImprovement {
-                    faction_id: cmd.faction_id,
-                    kind: cmd.kind,
-                    target_x: cmd.target_x,
-                    target_y: cmd.target_y,
-                    fauna_id: cmd.fauna_id,
-                }
-            }
             pb::command_envelope::Command::UpkeepMode(cmd) => CommandPayload::UpkeepMode {
                 faction_id: cmd.faction_id,
                 band_id: cmd.band_id,

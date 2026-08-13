@@ -266,7 +266,7 @@ pays in conversion, never in concentration*. Authoritative design: `docs/plan_fl
   - **`cultivate` / `sow`** set the rung, so they judge **the crops the crews already hold** — every
     distinct one on the source, at that verb's own rung — rather than the auto-pick. It is the only
     place a `tended`-ceiling crop can be refused for `Sow`, and crops are per band, so "the first
-    band answers for all" (`abandon_improvement`'s rule, sound because at most one *improvement* is
+    band answers for all" (the source-naming rule the retired `abandon_improvement` used, sound because at most one *improvement* is
     ever in flight) does not transfer.
   > **The failure mode both exist to prevent is a SILENT STALL.** A crop this rung refuses makes
   > `resolve_committed_species` return `Err`, so `patch.commit_species` is never called,

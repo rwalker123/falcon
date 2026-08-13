@@ -3361,3 +3361,85 @@ fn a_half_tamed_herd_sheds_only_when_its_build_crew_is_below_the_rate() {
 /// The taming job a half-tamed fixture stands on, in work units — a real cost rather than the
 /// one-worker-turn `FABRICATED_BUILD_COST`, so "half built" is a meter with room in it.
 const A_REAL_TAMING_JOB: f32 = 50.0;
+
+/// **A MONOTONE ANIMAL METER READS AS "STILL BUILDING", NOT AS A RE-DECLARATION LOOP.**
+///
+/// The build verb is derived from the meter (`docs/plan_standing_upkeep.md` §2.4), and both animal
+/// meters are **monotone-up**: `domestication_progress` lost its bleed to the neglect-escape arc, and
+/// a pen's meter never bleeds either. So a part-built animal rung derives *building* and stays that
+/// way **until it completes** — which is the honest reading of a `Tame` that is genuinely still in
+/// flight, and is nothing like the plant web's complete → erode → repair cycle.
+///
+/// **Nothing is written**, so there is no loop to be in: the derivation is a pure read of the meter,
+/// and a herd nobody is staffing simply sits there accruing nothing. The consequence the plant web
+/// has — a *completed* rung falling back into the building state — is unreachable here, which is why
+/// no animal rung declares a `meter_decay`.
+#[test]
+fn a_monotone_animal_meter_stays_building_until_it_completes() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    let cost = A_REAL_TAMING_JOB;
+
+    // (1) A wild herd: nothing banked, so only the player can name a rung.
+    let wild = herd_of(&app, &id);
+    assert_eq!(core_sim::herd_build_verb(&wild, None), None);
+    assert_eq!(
+        core_sim::herd_build_verb(&wild, Some(Improvement::Tame)),
+        Some(Improvement::Tame),
+        "a zero meter has no answer of its own — the player declares"
+    );
+
+    // (2) Part-tamed: the meter answers, with no declaration and no write.
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.owner = Some(FactionId(0));
+        herd.domestication_cost = cost;
+        herd.domestication_progress = cost / 2.0;
+    }
+    let part = herd_of(&app, &id);
+    assert_eq!(
+        core_sim::herd_build_verb(&part, None),
+        Some(Improvement::Tame),
+        "a meter with progress on it declares its own rung"
+    );
+
+    // **And it stays that way across turns nobody staffs** — monotone means it cannot slip back, so
+    // this is a stable read rather than a flapping one.
+    let before = herd_of(&app, &id).domestication_progress;
+    run_turns_untended(&mut app, 8);
+    let after = herd_of(&app, &id);
+    assert!(
+        after.domestication_progress >= before,
+        "monotone: an animal build meter never bleeds ({before} -> {})",
+        after.domestication_progress
+    );
+    assert_eq!(
+        core_sim::herd_build_verb(&after, None),
+        Some(Improvement::Tame),
+        "…so the derived verb is the same answer every turn — no loop, just an unfinished build"
+    );
+
+    // (3) Completed: the meter is full, so it declares nothing and the herd is maintaining.
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.domestication_progress = cost;
+    }
+    let tamed = herd_of(&app, &id);
+    assert_eq!(
+        core_sim::herd_build_verb(&tamed, None),
+        None,
+        "a full meter is maintaining"
+    );
+    assert_eq!(
+        core_sim::herd_build_verb(&tamed, Some(Improvement::Tame)),
+        None,
+        "…and a stale `Tame` declaration on it is inert — nothing has to hunt it down and clear it"
+    );
+    assert_eq!(
+        core_sim::herd_build_verb(&tamed, Some(Improvement::Corral)),
+        Some(Improvement::Corral),
+        "but the pen's meter is at zero, so climbing to it is still the player's to say"
+    );
+}

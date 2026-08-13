@@ -198,6 +198,36 @@ net = supply − maintenance_rate
 | **below its cost** | *building* | the **build crew** — surplus above the rate is progress |
 | **at its cost** | *maintaining* | the band's **keeping pool** — surplus does nothing, shortfall rots |
 
+#### AND THE VERB IS DERIVED FROM THE METER TOO
+
+The same state test answers *which rung is being built*, so nothing needs to be stored or restated:
+
+| meter | state | who declares |
+|---|---|---|
+| **zero** | nothing in flight | **the player** — a wild patch could climb to tended *or* be sown, and the sim cannot guess |
+| **between zero and its cost** | building that rung, **implied** | nobody — the progress banked on it *is* the answer |
+| **at its cost** | maintaining | nobody |
+
+**Per METER, not per source**: a completed tended patch the player wants to sow is still a
+declaration, because its field meter is at zero. **Newest meter first**, so a Field with progress on
+it governs the tended ground beneath — a `Cultivate` on a Field is dead rather than stalled.
+
+**What it fixed.** A build banks nothing unless the rung's verb is in flight, and completion freed the
+declaration — so a completed rung that eroded back below its cost re-entered the *building* state with
+nothing set and could not be repaired until the player re-issued `cultivate`. They never withdrew that
+intent. **A player who has paid for a rung and watched it slip adds hands, not a command.**
+
+**`abandon_improvement` is RETIRED**, not arbitrated. It existed to let a player walk away from a
+25-turn commitment while the *verb* was the commitment; the commitment is the **hands** now, so you
+walk away by unstaffing the builders (`cultivate <faction> <x> <y> 0`). A command that cleared a
+derived value would either do nothing or fight the derivation. Its proto field is reserved, never
+reused — and the "nothing left to build" test went with it, since a stale declaration on a finished
+meter derives to `None` on its own.
+
+**A meter at exactly zero clears back to "the player must declare"** together with everything else
+that empties: `reconcile_owner` drops the owner and the committed crop on the same edge, and the
+stamped cost goes with them. One notion of empty, not three.
+
 That is one state test and two costs. There is no third concept: an earlier cut of this arc gave an
 unfinished meter its *own* demand (`meter_raising_demand`), which was redundant — it is the same rate
 throughout — and carried a per-web exception with no fact under it. Both are deleted. *You cannot be
@@ -376,6 +406,7 @@ hauling: that work is the upkeep, not a second line beside it.
 | `RungBuild::crew_needed` (a staffing floor) | retired — the player states the build's crew |
 | the `maintain` command + `LaborAssignment::maintain_workers` | the **band-level** `agriculture` / `husbandry` roles and `upkeep_mode` (§2.5) |
 | `progress >= cost` as the LOSS test | `upkeep.meter_decay.retain_fraction` — a rung is earned at its cost and held to a stated fraction of it (§2.4) |
+| `abandon_improvement` + the "nothing left to build" test | retired — the build verb is **derived from the meter** (§2.4), so there is no stored authority to clear |
 | `work_cost / crew` as the build pace | `work_cost / (crew − maintenance_rate)` — the rate is a tax on building, and a crew at or below it never finishes (§2.4) |
 | `learn_multiplier(floor)` on the build rate | retired — a build crew is not pulling on the source |
 | `yield_fraction_while_building` (×4 rungs) | retired — the build has its own crew, so what it costs is the hands on it |
