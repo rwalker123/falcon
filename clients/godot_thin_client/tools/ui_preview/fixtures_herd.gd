@@ -45,6 +45,14 @@ const DISTANCE_RAID_TURNS := [9, 7, 6, 6, 6, 6, 6, 6]
 # tiles a turn, so the round trip is ceil(2 × 8 / 2), and the boar's own 2-party cell fills in 8
 # hunting turns (`BOAR_RAID_TURNS[1]`). 16 total, inside the band's 20-turn warn line.
 
+## **WHAT HOLDING A BUILT PEN COSTS, PER TURN, IN WORK** — `intensification_ladder.json`'s
+## `animal:pen` upkeep (`1.0` per keeper-load) over this herd's two loads. Its supplied half is ONE
+## keeper's worth, so the fixture sits at a live shortfall: half the bill unmet, which is exactly the
+## state the keeping row exists to warn about.
+const ANIMAL_PEN_UPKEEP_DEMAND := 2.0
+
+const ANIMAL_PEN_UPKEEP_SUPPLIED := 1.0
+
 const PEN_UPKEEP_RED_DEER := 1.74
 
 const PEN_FED_STARVING := 0.40
@@ -516,12 +524,15 @@ static func herd_fixture() -> Dictionary:
 			"deplete": 2.70,
 			"eradicate": 4.50,
 		},
-		# **THE TWO BUILD DIPS, AS FRACTIONS** (issue #442) — they were `tame` / `corral` ROWS of the
-		# list above, each the 0.23 a builder took because Sustain (0.90) was the only stance a builder
-		# could hold. 0.23 / 0.90 is that same dip stated as the factor it always was, and it now
-		# multiplies WHICHEVER stance the crew holds: a Deplete builder takes 2.70 x 0.256 = 0.69.
-		"tame_build_fraction": 0.23 / 0.90,
-		"corral_build_fraction": 0.23 / 0.90,
+		# **THE STANDING UPKEEP** (`docs/plan_standing_upkeep.md` §2). The animal rungs quote their
+		# rate per KEEPER-LOAD (`head count / animals_per_herder`), which is what lets one number say
+		# *a shepherd minds 300 sheep and a cowherd 80*. This reference herd is WILD, so nothing is
+		# built on it, nothing is owed, and the pair below reads the honest zero rather than a
+		# sentinel — the same reading `has_neglect_grace: false` states one field along.
+		"upkeep_demand": 0.0,
+		"upkeep_supplied": 0.0,
+		"upkeep_shortfall": 0.0,
+		"upkeep_workers_needed": 0,
 		"tile_info": BaseFx.food_tile_fixture(),
 	})
 
@@ -672,6 +683,21 @@ static func domesticated_herd_fixture() -> Dictionary:
 	fixture["pen_larder_bill"] = PEN_UPKEEP_RED_DEER
 	fixture["pen_hay_food"] = 0.0
 	fixture["pen_extend_progress"] = 0.0
+	# **THE STANDING UPKEEP, UNDERPAID** (`docs/plan_standing_upkeep.md` §2, §2.4). The `animal:pen`
+	# rung asks `1.0` work per KEEPER-LOAD and this herd is two loads over; one keeper is on it, so
+	# half the bill goes unmet — and the shortfall IS the decay, so the drawer must say the rung is
+	# being lost and how long it has. It is the ANIMAL web's copy of the reading the plant card makes,
+	# and the one fixture in the corpus that renders the warning rather than the reassurance.
+	fixture["upkeep_demand"] = ANIMAL_PEN_UPKEEP_DEMAND
+	fixture["upkeep_supplied"] = ANIMAL_PEN_UPKEEP_SUPPLIED
+	fixture["upkeep_shortfall"] = ANIMAL_PEN_UPKEEP_DEMAND - ANIMAL_PEN_UPKEEP_SUPPLIED
+	# `ceil(2 / 1)` — two keepers meet the whole bill, against the one that is on it.
+	fixture["upkeep_workers_needed"] = 2
+	# The `animal:pen` rung's own `upkeep.grace_turns` (6), counted down by four turns of shortfall —
+	# so the row reads "lost in 2 turns" rather than the full grace, which is the state a player has
+	# to be able to see coming.
+	fixture["has_neglect_grace"] = true
+	fixture["neglect_grace_remaining"] = 2
 	# Compact NON-food tile_info (like the hunt-distance herd) so the tile card stays short and
 	# the drawer's Husbandry + Corral rows land in-frame rather than below the dock scroll fold.
 	fixture["tile_info"] = {

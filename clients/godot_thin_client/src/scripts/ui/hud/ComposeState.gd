@@ -57,6 +57,19 @@ var _forage_band: int = NO_BAND_ENTITY
 # band's standing assignment, so switching the actor invalidates them exactly as switching the source
 # does — see `seed_forage`.
 var _forage_seeded_band: int = NO_BAND_ENTITY
+# **THE OTHER TWO ALLOCATIONS** (`docs/plan_standing_upkeep.md` §2.2). A source carries three
+# independent crews from a band and the player states each: `_forage_count` above is the TAKE crew
+# (`assign_labor`), this is the BUILD crew (the improvement verb carries it) and the keeping crew
+# (`maintain`). They are separate fields rather than one dict because they are edited by three
+# different controls and committed by three different commands.
+#
+# **THEY SEED TO NOBODY, NOT TO THE STANDING CREW, AND THAT IS FORCED BY THE WIRE.**
+# `LaborAssignment` publishes only the take crew, so the client cannot read back what a band already
+# has on a build or on the keeping — see `labor-ui.md` → "The three crews the wire only half answers".
+# A stepper that opens at `0` therefore states what the client KNOWS rather than guessing, and the
+# commands SET rather than add, so a restate is exact.
+var _forage_build_count: int = 0
+var _forage_maintain_count: int = 0
 
 # ---- Hunt compose (the herd drawer's "assign hunters/herders" block) -----------------------------
 var _hunt_key: String = ""
@@ -69,6 +82,9 @@ var _hunt_autofill := false
 var _hunt_band: int = NO_BAND_ENTITY
 # The hunt twin of `_forage_seeded_band` — same contract.
 var _hunt_seeded_band: int = NO_BAND_ENTITY
+# The hunt twins of `_forage_build_count` / `_forage_maintain_count` — same contract.
+var _hunt_build_count: int = 0
+var _hunt_maintain_count: int = 0
 
 # ---- Party compose (the Band panel's PARTIES zone — NOT drawer state) ----------------------------
 # The quarry the party compose sheet is aimed at (a world herd id), "" until one is picked. It is the
@@ -152,6 +168,10 @@ func begin_forage_source(key: String, band_entity: int) -> void:
 ## against the crew the newly-picked band really has on the tile.
 func seed_forage(count: int, floor: float, improvement: String) -> void:
 	_forage_count = count
+	# The other two allocations belong to the source AND the band, so they reset with the rest of the
+	# composition rather than following the player onto a different patch.
+	_forage_build_count = 0
+	_forage_maintain_count = 0
 	_forage_floor = SourceForecast.clamp_floor(floor)
 	_forage_improvement = improvement
 	_forage_species = ""
@@ -175,6 +195,22 @@ func set_forage_floor(floor: float) -> void:
 
 func set_forage_count(count: int) -> void:
 	_forage_count = count
+
+## The BUILD crew's own count, clamped non-negative at the model so no caller can push a negative
+## crew into a command. `0` is a real value — *staff nobody on this build* — not an absent one.
+func forage_build_count() -> int:
+	return _forage_build_count
+
+func set_forage_build_count(count: int) -> void:
+	_forage_build_count = maxi(count, 0)
+
+## The KEEPING crew's own count. `0` is how the player says *"stop maintaining this, let it go"* —
+## there is no toggle beside it, because a boolean and a count could disagree.
+func forage_maintain_count() -> int:
+	return _forage_maintain_count
+
+func set_forage_maintain_count(count: int) -> void:
+	_forage_maintain_count = maxi(count, 0)
 
 func set_forage_species(species: String) -> void:
 	_forage_species = species
@@ -255,6 +291,8 @@ func reset_hunt_kit() -> void:
 ## herd — the hunt twin of `seed_forage`, including the seeded-band record.
 func seed_hunt(count: int, floor: float, improvement: String) -> void:
 	_hunt_count = count
+	_hunt_build_count = 0
+	_hunt_maintain_count = 0
 	_hunt_floor = SourceForecast.clamp_floor(floor)
 	_hunt_improvement = improvement
 	_hunt_seeded_band = _hunt_band
@@ -275,6 +313,19 @@ func set_hunt_improvement(improvement: String) -> void:
 
 func set_hunt_count(count: int) -> void:
 	_hunt_count = count
+
+## The hunt twins of the forage build/keeping counts — same contract.
+func hunt_build_count() -> int:
+	return _hunt_build_count
+
+func set_hunt_build_count(count: int) -> void:
+	_hunt_build_count = maxi(count, 0)
+
+func hunt_maintain_count() -> int:
+	return _hunt_maintain_count
+
+func set_hunt_maintain_count(count: int) -> void:
+	_hunt_maintain_count = maxi(count, 0)
 
 func arm_hunt_autofill() -> void:
 	_hunt_autofill = true

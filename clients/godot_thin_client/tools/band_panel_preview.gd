@@ -6981,7 +6981,6 @@ func _investment_policy_herd_fixtures() -> Array:
 			"sustain": 0.40, "surplus": 1.10, "deplete": 1.60, "eradicate": 2.40,
 		},
 		# The build dips are FRACTIONS of the held stance now, not rows of the list above (#442).
-		"tame_build_fraction": 0.50, "corral_build_fraction": 0.50,
 	}
 	_set_managed_herders(penned, INVESTMENT_ROW_HERDERS_NEEDED)
 	return [
@@ -8534,8 +8533,7 @@ func _dock_chart_at_kit(quarry: Dictionary, roster: Array, kit_id: String,
 		KitRoster.priced_source(quarry, HudComposeVocab.BARE_FORECAST_PREFIX, roster,
 			KitRoster.JOB_HUNT, "spear_line", kit_id, {}),
 		SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX,
-		SourceForecast.floor_for_preset(SourceForecast.FLOOR_PRESET_PEAK), party,
-		SourceForecast.IMPROVEMENT_NONE, HudComposeVocab.COMPOSE_FIELD_PARTY.to_lower(), false)
+		SourceForecast.floor_for_preset(SourceForecast.FLOOR_PRESET_PEAK), party, HudComposeVocab.COMPOSE_FIELD_PARTY.to_lower(), false)
 
 func _assert_kit_reprices_the_source() -> void:
 	const PUBLISHED_CARRY := RETREAT_REFERENCE_CARRY
@@ -8733,8 +8731,7 @@ func _kit_material_rate(src: Dictionary, prefix: String = "") -> float:
 ## yields row reads it. `src` is already repriced: the kit is the only thing differing between calls.
 func _kit_material_take(src: Dictionary, workers: int) -> float:
 	var forecast := SourceForecast.forecast_inputs(src, SourceForecast.SOURCE_KIND_HERD, "",
-		SourceForecast.floor_for_preset(SourceForecast.FLOOR_PRESET_STRIP),
-		SourceForecast.IMPROVEMENT_NONE)
+		SourceForecast.floor_for_preset(SourceForecast.FLOOR_PRESET_STRIP))
 	var rows := SourceForecast.expected_materials(float(workers), forecast)
 	return float(rows[0].get(SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY, -1.0)) \
 		if not rows.is_empty() else -1.0
@@ -8755,8 +8752,7 @@ func _kit_hunt_forecast(quarry: Dictionary, dispersion: float) -> Dictionary:
 		KitRoster.repriced_source(quarry, "", RETREAT_REFERENCE_CARRY, RETREAT_REFERENCE_CARRY,
 			dispersion),
 		SourceForecast.SOURCE_KIND_HERD, "",
-		SourceForecast.floor_for_preset(SourceForecast.FLOOR_PRESET_STRIP),
-		SourceForecast.IMPROVEMENT_NONE)
+		SourceForecast.floor_for_preset(SourceForecast.FLOOR_PRESET_STRIP))
 
 func _assert_kit_picker_closed() -> void:
 	var picker := _find_meta_control(_panel, KitRoster.KIT_PICKER_META) as OptionButton

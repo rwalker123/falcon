@@ -639,13 +639,6 @@ static func effective_attack_against(kits: Array, kit: Dictionary, band: Diction
 const OFFER_OFFERED_KEY := "offered"
 const OFFER_REASON_KEY := "reason"
 
-## The build dip the offer test asks the source's reach at — the NEUTRAL multiplier, i.e. no dip. A
-## dip is a property of what the player is currently COMPOSING (hands gentling a herd are hands not
-## stalking it), and which kits a sheet offers must be a property of the (kit × quarry) pair alone,
-## or ticking Tame would silently reshuffle the picker. The dip cannot open or close an engagement
-## STAGE anyway; it only narrows a reach the species already has.
-const OFFER_NO_BUILD_DIP := 1.0
-
 ## **DOES THIS KIT CARRY ANYTHING AT ALL?** — the derived reading of "the null kit", and the reason
 ## nothing here spells the id `none`. A kit carrying no item grants nothing anywhere, so there is no
 ## source it can be *inapplicable* to; it is the free bare-handed comparison the whole wear model
@@ -709,8 +702,7 @@ static func kit_offer(kits: Array, kit: Dictionary, job: String, quarry: Diction
 	if penned:
 		return _kit_offered()
 	if not SourceForecast.has_engagement_stage(
-			float(quarry.get(prefix + SOURCE_ENGAGE_RATE, SourceForecast.NO_ENGAGEMENT_STAGE)),
-			OFFER_NO_BUILD_DIP):
+			float(quarry.get(prefix + SOURCE_ENGAGE_RATE, SourceForecast.NO_ENGAGEMENT_STAGE))):
 		return _kit_offered()
 	var bare := unequipped_tier(kits, KIT_ATTACK_KEY)
 	if is_inf(bare):
@@ -750,8 +742,7 @@ static func hunt_gate_closes(kits: Array, kit: Dictionary, band: Dictionary, qua
 	if kit.is_empty() or quarry.is_empty() or bool(quarry.get(QUARRY_CORRALLED_KEY, false)):
 		return false
 	if not SourceForecast.has_engagement_stage(
-			float(quarry.get(prefix + SOURCE_ENGAGE_RATE, SourceForecast.NO_ENGAGEMENT_STAGE)),
-			OFFER_NO_BUILD_DIP):
+			float(quarry.get(prefix + SOURCE_ENGAGE_RATE, SourceForecast.NO_ENGAGEMENT_STAGE))):
 		return false
 	var gate := SourceForecast.hunt_gate_model_at(effective_attack_against(kits, kit, band,
 		float(quarry.get(QUARRY_BODY_MASS_KEY, 0.0))), quarry, "")

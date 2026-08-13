@@ -109,6 +109,38 @@ const UNANSWERED_FORK_LABEL := "A question went unanswered"
 
 const UNANSWERED_FORK_DETAIL := "The turn advanced past a pending fork — it will settle as if nothing was said."
 
+## **A FINISHED BUILD HANDED ITS CREW SOMEWHERE** (`docs/plan_standing_upkeep.md` §2.3). The turn a
+## rung completes, its builders have finished the thing they were staffed for: if the finished rung
+## declares an upkeep those hands CARRY onto its keeping, and if it does not they are FREE. Either
+## way it is a re-allocation the player did not type, on the turn they are deciding what to do next.
+##
+## **IT IS AN ATTENTION ROW BECAUSE OF WHEN IT HAS TO BE READ.** The sim announces it on the feed,
+## which is a log — read after the fact, if at all — and the whole point of the hand-off is that the
+## player can re-task those hands BEFORE ending the turn. The orb is the surface that finds them
+## wherever they are looking, which is exactly the requirement.
+##
+## **INFO, not warn.** Nothing is wrong: a build finished, which is the good news, and the row exists
+## to hand back a decision rather than to report a loss. It sorts below every real problem.
+const ATTENTION_KIND_CREW_HANDOFF := "crew_handoff"
+
+## The row's label — the sim's own sentence, verbatim (*"3 of your cultivate crew stay on (31, 18) to
+## keep it"*). Not recomposed here: the sim knows which rung finished, how many hands moved and where
+## they went, and a second phrasing of one event is how two surfaces come to describe it differently.
+const ATTENTION_HANDOFF_DETAIL_CARRIED := "they are keeping it now — re-task them if you would rather not"
+
+const ATTENTION_HANDOFF_DETAIL_FREED := "they are idle — put them somewhere"
+
+## **NON-LOCATING**, like the fork row: the event names its source in words but carries no
+## coordinates, and parsing a tile out of a sentence to place a jump is a guess. The row reads
+## `Open ▸` rather than promising a hex it cannot reach.
+const ATTENTION_HANDOFF_MAX_ROWS := 3
+
+const ATTENTION_HANDOFF_OVERFLOW_LABEL_FORMAT := "+%d more crews changed job"
+
+const ATTENTION_HANDOFF_OVERFLOW_DETAIL := "builds finished and their hands moved"
+
+const ATTENTION_SEVERITY_INFO := "info"
+
 const ATTENTION_SEVERITY_CRITICAL := "critical"
 
 const ATTENTION_SEVERITY_WARN := "warn"

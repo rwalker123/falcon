@@ -251,9 +251,19 @@ paths:
     larder 0.0" (and the amber Pen-feed debit row disappears), a scrub pen "0% · larder 1.7". The Corral
     / Pen-feed / starving rows above are unchanged.
   - **Extend affordance** (`_build_extend_pen_control`, in the herd `%HerdAssignControls`): on a built
-    pen with no ring in flight (`pen_extend_progress == 0`) an **"Extend pen"** button emits
-    `extend_pen_requested{faction,x,y}` → `Main._on_hud_extend_pen` → `extend_pen <faction> <x> <y>` at
-    the pen anchor (a penned herd sits AT `corralled_at`, so its own tile). While a ring is being fenced
+    pen with no ring in flight (`pen_extend_progress == 0`) a **`Fencers` stepper** over an
+    **"Extend pen"** button, emitting `extend_pen_requested{faction,x,y,workers}` →
+    `Main._on_hud_extend_pen` → **`extend_pen <faction> <x> <y> <workers>`** at the pen anchor (a penned
+    herd sits AT `corralled_at`, so its own tile).
+    **THE RING GAINED A CREW** (`docs/plan_standing_upkeep.md` §2.2): it rides the same `animal:pen`
+    rung as the pen it widens, so it cannot be the one build in the game that is free — it staffs the
+    same BUILD allocation and draws on the same finite band. The stepper clamps to the band's published
+    `idleWorkers` (the sim REFUSES a crew a band cannot staff rather than trimming it), and the button
+    is **disabled at a crew of zero**: the sim would accept `0` and simply never work the ring off, so
+    the control states the requirement instead of sending a command that does nothing. The count is
+    held on `DrawerComposeController._pen_extend_crew` rather than on `ComposeState` — extend-pen is a
+    DRAWER action and never enters a compose sheet, so there is no composition for it to be part of.
+    While a ring is being fenced
     (`pen_extend_progress > 0`) the button is replaced by a WARN-amber **"Fencing N%"** badge — the pen
     twin of the corral-build "Building N%" meter. The server rejects an extend at max radius / unowned /
     Herding-unknown with a feed message; the client does not pre-gate (max radius is not on the wire).

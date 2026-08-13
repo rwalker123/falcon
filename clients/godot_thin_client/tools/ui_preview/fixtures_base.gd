@@ -102,16 +102,12 @@ static func seed_forage_rows(tile: Dictionary) -> Dictionary:
 	else:
 		tile["patch_provisions_per_biomass"] = peak_food / room
 		tile["patch_fodder_per_biomass"] = peak_fodder / room
-	# **THE TWO BUILD DIPS ARE FRACTIONS** (issue #442). `patch_ceiling_cultivate` /
-	# `patch_ceiling_sow` remain the fixture-authoring shorthand — a fixture states the dip as the
-	# absolute rate its comments explain — and this converts each to the wire's fraction form by
-	# dividing by the food-peak ceiling, which is exactly what the old row was. A fixture that states a
-	# fraction outright wins; a barren patch leaves it 0, i.e. "no build described here".
+	# **THE BUILD DIPS ARE RETIRED** (`docs/plan_standing_upkeep.md` §2.2), so the authoring shorthand
+	# `patch_ceiling_<rung>` no longer converts to anything — the native reader stopped publishing
+	# `<rung>BuildFraction` and nothing composes one. The keys are dropped here rather than at every
+	# fixture, so a fixture that still states one is simply ignored instead of seeding a dict key no
+	# reader would ever look at.
 	for rung in SourceForecast.FORAGE_IMPROVEMENTS:
-		var key := "patch_%s_build_fraction" % rung
-		if not tile.has(key):
-			var dip := float(tile.get("patch_ceiling_%s" % rung, 0.0))
-			tile[key] = (dip / peak_food) if peak_food > 0.0 else 0.0
 		tile.erase("patch_ceiling_%s" % rung)
 	for policy in LEGACY_STANCE_FLOORS:
 		tile.erase("patch_ceiling_%s" % policy)
@@ -122,6 +118,15 @@ static func seed_forage_rows(tile: Dictionary) -> Dictionary:
 ## worker-turn at the food peak with no gear, so the shipped 50 and 75 read themselves — and the
 ## pair is what makes the two rungs visibly different jobs rather than one meter filling at
 ## unexplained speeds. Stated here so every plant fixture prices its rungs from one place.
+## **WHAT IT COSTS TO HOLD A TENDED PATCH, PER TURN** — `intensification_ladder.json`'s
+## `plant:tended` `upkeep.work_per_turn`, `scaled_by: flat`. Stated here so every plant fixture bills
+## its keeping from one place, exactly as the two work costs above are.
+const PLANT_TENDED_UPKEEP_PER_TURN := 0.5
+
+## The Field's own, one rung up (`plant:field`, `0.75`/`flat`) — dearer to keep, which is the ladder's
+## whole claim about a higher rung.
+const PLANT_FIELD_UPKEEP_PER_TURN := 0.75
+
 const PLANT_CULTIVATE_WORK_COST := 50.0
 
 const PLANT_SOW_WORK_COST := 75.0
@@ -200,16 +205,21 @@ static func food_tile_fixture() -> Dictionary:
 		# Both are food/turn at output_multiplier 1.0, like the ceilings above.
 		"patch_ceiling_cultivate": 0.24,
 		"patch_tended_yield": 1.20,
-		# THE BUILD CREWS (#442) — `intensification_ladder.json`'s own `crew_needed` for the two plant
-		# rungs (tended 2, field 3), which is what the compose stepper FLOORS its cap on. Not decoration:
-		# the dip shrinks the ceiling the cap divides, so without a crew a Cultivate composed here caps
-		# at ONE forager while the sim asks for two — the exact disagreement the pair of them fixes.
-		"patch_cultivate_crew_needed": 2,
-		"patch_sow_crew_needed": 3,
-		# THE NEGLECT GRACE (#442) — the countdown to this rung reverting. The reference patch IS being
-		# worked (a crew is cultivating it), so it reads the plant:tended rung's full `grace + 1` = 3:
-		# "walk away and you have this long". `has_neglect_grace` is what makes the number readable at
-		# all — a wild patch would ship `false`, not a zero.
+		# **THE STANDING UPKEEP** (`docs/plan_standing_upkeep.md` §2). `plant:tended` declares
+		# `0.5` work per turn, `flat` — a patch is ONE TILE, so the rate is the cost of the thing
+		# existing. The reference patch is KEPT and the bill is met EXACTLY: the sim charges the
+		# keeping against what the crew supplied, capped at the demand, so `supplied == demand` is what
+		# a paid rung reads. A fixture stating more supplied than demanded would render `1 of 0.5 work`
+		# — arithmetic that looks like a defect on the row whose whole job is to be legible.
+		"patch_upkeep_demand": PLANT_TENDED_UPKEEP_PER_TURN,
+		"patch_upkeep_supplied": PLANT_TENDED_UPKEEP_PER_TURN,
+		"patch_upkeep_shortfall": 0.0,
+		# `ceil(0.5 / 1.0)` — one keeper meets the whole bill.
+		"patch_upkeep_workers_needed": 1,
+		# THE NEGLECT GRACE — the countdown to this rung reverting, now counted in turns of upkeep
+		# SHORTFALL. The reference patch is kept, so it reads the plant:tended rung's full
+		# `grace + 1` = 3: "stop paying and you have this long". `has_neglect_grace` is what makes the
+		# number readable at all — a wild patch would ship `false`, not a zero.
 		"patch_has_neglect_grace": true,
 		"patch_neglect_grace_remaining": 3,
 		# Plant RUNG 3 — the Field + the Sow verb. This reference tile is ordinary prairie steppe:

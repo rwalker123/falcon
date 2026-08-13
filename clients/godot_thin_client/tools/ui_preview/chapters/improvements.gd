@@ -33,12 +33,17 @@ const ANY_TURN_ESTIMATE_NEEDLE := "≈"
 ## matter: the frame exists to show a build advancing on a NON-Thriving source.
 const BUILD_ROOM_FLOOR := 0.15
 
-## What the standing lone forager owes there, derived HERE from the fixture: the Cultivate costs
+## The crew on that build, and what it owes — derived HERE from the fixture: the Cultivate costs
 ## `BaseFx.PLANT_CULTIVATE_WORK_COST` (50) with nothing banked (the stressed fixture re-prices its
-## meter to 0), no plant gear takes anything off it, and `learn_multiplier(0.15)` is `0.15 / 0.50` =
-## ×0.30 — so one worker banks 0.3 work a turn and ⌈50 ÷ 0.3⌉ = 167. **A slow build is the reading**:
-## the floor paces it, which is what the aside beside it says in words.
-const TURNS_AT_ROOM_FLOOR := 167
+## meter to 0), no plant gear takes anything off it, and one worker banks one work unit a turn.
+##
+## **THE FLOOR NO LONGER PACES IT** (`docs/plan_standing_upkeep.md` §2.2). `learn_multiplier(0.15)`
+## used to scale the accrual to ×0.30, which read as 167 turns; a build crew is not pulling on the
+## source, so the rate is the builders' plain output and what the floor still decides is only whether
+## there is any room to work in at all. ⌈50 ÷ 1⌉.
+const BUILD_ROOM_BUILDERS := 1
+
+const TURNS_AT_ROOM_FLOOR := 50
 
 ## The one count that takes the singular clause — a build one turn from done — and the smallest one
 ## that does not. The pair is what makes the claim about the FORK rather than about one branch.
@@ -101,14 +106,14 @@ const TURNS_AT_LONE_CREW := 20
 
 const TURNS_AT_FULL_CREW := 5
 
+## The mark every turn clause carries, whatever its count — the `≈` both `BUILD_TURNS_COUNT_*`
+## formats open with. Asserting its ABSENCE is how a withdrawn estimate is told from a shortened one,
+## without pinning the claim to a particular number.
+const BUILD_TURNS_CLAUSE_MARK := "≈"
+
 ## The floor a LIVE drag lands on for the third frame — the `Learning` preset, above the peak. Read
 ## off the preset table rather than restated, so the drag lands where the sheet's own mark is.
 const TURNS_DRAG_FLOOR := SourceForecast.FLOOR_PRESET_VALUES[SourceForecast.FLOOR_PRESET_LEARN]
-
-## …and what the full crew owes there: a floor above the peak teaches faster and builds faster by the
-## same multiplier (0.80 ÷ 0.50 = ×1.6), so four hands bank 6.4 work a turn and the same 20 units left
-## come to ⌈20 ÷ 6.4⌉. It is the reading a floor-blind estimate cannot produce.
-const TURNS_AT_FULL_CREW_LEARNING := 4
 
 ## **THE PLANT WEB'S GEAR TERM, and it is empty for a structural reason**: no plant item declares the
 ## build stat yet (issue #539), so no forage kit arms anybody for a build and every frame in this
@@ -116,14 +121,12 @@ const TURNS_AT_FULL_CREW_LEARNING := 4
 ## `chapters/compose_rungs.gd`'s `_kit_swap_turn_estimate_states`, on the web whose gear exists.
 const NO_BUILD_GEAR := {}
 
-## The take that crew is paid — `min(2 × 0.32, 0.96 × 0.25)` = the DIPPED ceiling, 0.24 food/turn. It is
-## the number the green forecast line, the deal's middle term and the sim's own `actual_yield` must all
-## carry; before the dip reached the forecast the green line quoted 0.64 (the undipped labour take) while
-## the deal beside it said 0.24 — the same patch, the same crew, two different answers on one sheet.
-# The take the sheet quotes on `improvement_build_crew`: the crew clamps to the sim's own
-# `workers_needed` (12), and 12 x 0.32 x 0.25 = 0.96 — exactly the food-peak ceiling, i.e. the
-# saturation point where the dip costs nothing at all. That coincidence IS the frame's subject.
-const BUILD_CREW_DIPPED_TAKE := "0.96"
+## The take the sheet quotes on `improvement_build_crew`: the crew clamps to the sim's own
+## `workers_needed` (3), and 3 × 0.32 = 0.96 — exactly the food-peak ceiling, i.e. the crew that
+## saturates the patch. **It is the PLAIN take, and that is the frame's subject now**: a Cultivate is
+## running beside it and takes nothing off what these gatherers carry (`docs/plan_standing_upkeep.md`
+## §2.2), where the retired dip would have quoted a quarter of it.
+const BUILD_CREW_UNDIPPED_TAKE := "0.96"
 
 ## One rung-meter row's rendered VALUE CELL — `[color=#HEX]<verb> 48 / 50 work (96%)[/color]`, exactly
 ## as `DetailFormat.detail_bbcode` emits it. Word and tint in ONE needle, because the decaying state
@@ -178,7 +181,7 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("improvement_running_plant")
 	var sustain_yields = Readout.yields_text(h._hud._drawercompose._compose_sheet)
-	var sustain_teaching = Readout.teaching_line(h._hud._drawercompose._compose_sheet)
+	var sustain_verdict = Readout.verdict_text(h._hud._drawercompose._compose_sheet)
 	var running_box = ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "cultivate")
 	h._assert_hud("a running Cultivate renders a CHECKED improvement box",
 		running_box is CheckBox and (running_box as CheckBox).button_pressed)
@@ -223,20 +226,21 @@ func run(harness) -> void:
 	# this arc exists to prevent: a caption that dropped `now → after` over rows still drawing arrows
 	# reads exactly like the fix to a header-only claim. Matched by EQUALITY, since a `contains` on
 	# the dip half passes on any caption sharing that prefix.
-	h._assert_hud("a composed build's yields caption keys the dip ALONE, with no floor walk in it",
+	h._assert_hud("a composed build's yields caption states the plain per-turn unit, with no floor walk in it",
 		Readout.yields_header(h._hud._drawercompose._compose_sheet)
-			== SourceForecast.YIELD_ROW_HEADER_WHILE_BUILDING.to_upper())
+			== SourceForecast.YIELD_ROW_HEADER.to_upper())
 	h._assert_hud("…and no reading under it draws an arrow for the caption to have keyed",
 		not Readout.yields_show_a_transition(h._hud._drawercompose._compose_sheet))
-	# **KNOWN LESSON + A BUILD IN FLIGHT — the teaching line keeps the half that is still true.**
-	# Cultivation completed several frames above, so `Teaching cultivation at ×1.00` would be teaching a
-	# craft this faction finished learning; one multiplier paces the lesson and the build meter alike,
-	# so what survives is the BUILDING half. Both halves asserted: the word must be gone AND the
-	# building sentence present, or blanking the line entirely would pass.
+	# **KNOWN LESSON + A BUILD IN FLIGHT — the teaching line goes SILENT** (`docs/plan_standing_upkeep.md`
+	# §2.2). Cultivation completed several frames above, so `Teaching cultivation at ×1.00` would be
+	# teaching a craft this faction finished learning; and the BUILDING half that used to survive it
+	# went with the floor's term on the build rate. The dial buys this source nothing further, and
+	# silence is the honest way to say so. Both halves asserted, so a line that merely dropped the
+	# craft's word cannot pass.
 	h._assert_hud("a lesson the faction already knows is not taught again beside a running build",
 		not Readout.teaching_line(h._hud._drawercompose._compose_sheet).contains(Readout.TEACHING_LESSON_NEEDLE))
-	h._assert_hud("…while the BUILD half, which one multiplier still paces, keeps its line",
-		Readout.teaching_line(h._hud._drawercompose._compose_sheet).contains(Readout.TEACHING_BUILD_NEEDLE))
+	h._assert_hud("…and no BUILDING half survives it — the floor paces no build now",
+		not Readout.teaching_line(h._hud._drawercompose._compose_sheet).contains(Readout.TEACHING_BUILD_NEEDLE))
 	# **THE RUNNING BOX IS LIVE, AND IS NEVER GATED.** Unchecking abandons the build, and the abandon
 	# path asks for nothing — no knowledge, no ceiling, no site, no Thriving — because abandoning a
 	# STALLED build is the case it exists for. A disabled box here would be the regression the split
@@ -281,19 +285,22 @@ func run(harness) -> void:
 	# a `now → after` reading that did move; the take itself never did. That walk is suppressed while a
 	# build is composed, so the string is now the take alone and the old claim fails honestly.
 	#
-	# **The non-vacuity companion is the teaching line**, which really is floor-driven on these two
-	# frames (`learn_multiplier` is `floor / the food peak`, so ×1.00 here and ×0.30 at the deep
-	# draw) — without it, "the take did not move" would pass on a sheet that had stopped rendering.
+	# **The non-vacuity companion is the VERDICT**, which really is floor-driven on these two frames —
+	# the same crew that holds a patch at the food peak cannot draw it to a deep floor, and the
+	# sentence says so — so without it "the take did not move" would pass on a sheet that had stopped
+	# rendering. **The teaching line cannot be that companion any more**: this faction has already
+	# learned Cultivation, and since the floor stopped pacing the build
+	# (`docs/plan_standing_upkeep.md` §2.2) a known lesson leaves the aside silent at every floor.
 	# The PAYOFF is deliberately floor-independent too (a property of the finished rung), so it can
 	# stand in for neither.
 	var deplete_yields = Readout.yields_text(h._hud._drawercompose._compose_sheet)
-	var deplete_teaching = Readout.teaching_line(h._hud._drawercompose._compose_sheet)
+	var deplete_verdict = Readout.verdict_text(h._hud._drawercompose._compose_sheet)
 	print("ui_preview: take  peak=%s  deep=%s" % [sustain_yields, deplete_yields])
-	print("ui_preview: build rate  peak=%s  deep=%s" % [sustain_teaching, deplete_teaching])
+	print("ui_preview: verdict  peak=%s  deep=%s" % [sustain_verdict, deplete_verdict])
 	h._assert_hud("…and the RENDERED take does NOT move with the floor — this crew binds at both",
 		sustain_yields != "" and deplete_yields != "" and sustain_yields == deplete_yields)
-	h._assert_hud("…while the build rate the same crew earns DOES fall with the deeper draw",
-		sustain_teaching != "" and deplete_teaching != "" and sustain_teaching != deplete_teaching)
+	h._assert_hud("…while the VERDICT this crew earns DOES move with the deeper draw",
+		sustain_verdict != "" and deplete_verdict != "" and sustain_verdict != deplete_verdict)
 	# BOTH AXES, READ OFF THEIR OWN CONTROLS. This asserted the two compose-model fields the frame had
 	# just written, which is true whatever the sheet rendered — and "no gate, no repaint" is precisely a
 	# claim about the rendering: the Deplete rung must be lit AND live, with the Cultivate box still
@@ -308,14 +315,11 @@ func run(harness) -> void:
 	h._assert_hud("a deep floor stands beside a running Cultivate — no gate, no repaint",
 		deplete_rung != null and not deplete_rung.disabled and not Readout.rung_is_selected(deplete_rung)
 		and building_box is CheckBox and (building_box as CheckBox).button_pressed)
-	# **THE DIP MOVED ONTO THE CREW** (`docs/plan_harvest_floor.md` §3.1), and this is the assertion
-	# that pins it. The old claim here was that a deeper draw's "while building" term is BIGGER,
-	# because the dip multiplied the ceiling — which is exactly the bug the move fixed: a fraction of a
-	# bigger standing stock still filled the crew's baskets, so a deep floor built for free. The dip is
-	# a factor on THROUGHPUT now, so the build term is floor-INDEPENDENT wherever the crew is the
-	# binding side, and the two floors' build terms are EQUAL there. The crew is deliberately small
-	# enough to bind under both ceilings; the take-today assertion beside it is what stops this from
-	# passing vacuously on a forecast that ignores the floor altogether.
+	# **THE DEAL CARRIES ONE FORECAST NOW** (`docs/plan_standing_upkeep.md` §2.2). It used to carry two
+	# — the take today and the *preparing* take beside it — and the pair existed only because one crew
+	# did both jobs. What survives is the claim the pair was really about: the gatherers' take rises
+	# with a deeper floor and the rung on the table pays what it pays whatever the floor is, so the
+	# deal's payoff is floor-INDEPENDENT while the take under it is not.
 	var band = h._hud._band_labor.player_band()
 	var deep_deal := SourceForecast.improvement_forecast(_seeded_food_tile(),
 		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
@@ -323,24 +327,20 @@ func run(harness) -> void:
 	var peak_deal := SourceForecast.improvement_forecast(_seeded_food_tile(),
 		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
 		SourceForecast.FLOOR_FOOD_PEAK, SourceForecast.IMPROVEMENT_CULTIVATE)
-	var deep_building = SourceForecast.expected_yield(
-		deep_deal["build_forecast"], ForageFx.IMPROVEMENT_STANCE_FRAME_FORAGERS, band)
-	var peak_building = SourceForecast.expected_yield(
-		peak_deal["build_forecast"], ForageFx.IMPROVEMENT_STANCE_FRAME_FORAGERS, band)
-	h._assert_hud("the build term is floor-INDEPENDENT on a labour-bound crew — a deep floor builds no faster",
-		is_equal_approx(deep_building, peak_building))
-	h._assert_hud("…while the UNDIPPED take still rises with it, so the forecast is not floor-blind",
+	h._assert_hud("the rung's payoff is floor-INDEPENDENT — a deep draw buys the same Tended Patch",
+		is_equal_approx(float(deep_deal["payoff"]), float(peak_deal["payoff"])))
+	h._assert_hud("…while the take under it still rises with the floor, so the forecast is not floor-blind",
 		SourceForecast.expected_yield(deep_deal["base_forecast"], ForageFx.IMPROVEMENT_STANCE_FRAME_FORAGERS, band)
 		>= SourceForecast.expected_yield(peak_deal["base_forecast"], ForageFx.IMPROVEMENT_STANCE_FRAME_FORAGERS, band))
 
-	# State 442-build-crew — **THE SHEET AND THE SIM, ON ONE NUMBER.** `forecast_inputs` used to take a
-	# STANCE ONLY, so while a build ran the sheet read the UNDIPPED ceiling and three surfaces went wrong
-	# together: the stepper let the player dial workers the sim reports idle, the green line quoted a take
-	# the sim does not pay, and the overdraw verdict compared an undipped take against the Sustain bar.
-	# The two cap paths are documented as twins that "can never gate differently" — and they could not,
-	# because they were wrong in the SAME way, agreeing with each other while contradicting the sim.
-	# So the control here is the SIM's answer: `workers_needed`, read back off the very assignment the
-	# sheet is composed over.
+	# State 442-build-crew — **THE SHEET AND THE SIM, ON ONE NUMBER.** The control is the SIM's answer:
+	# `workers_needed`, read back off the very assignment the sheet is composed over, so the harness is
+	# never comparing a number it chose to a number it chose again.
+	#
+	# **IT IS THE TAKE ACTIVITY'S COUNT AND NOTHING ELSE** (`docs/plan_standing_upkeep.md` §2.2). It
+	# used to blend the rung's `crew_needed` into a take inverted out of a DIPPED carry, so committing
+	# to a 25-turn Cultivate quadrupled the hands the panel asked for. Both terms are retired: this is
+	# `ceil(ceiling / per_worker)` and a build in flight does not move it.
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
 	h._hud._compose.set_forage_count(BUILD_CREW_DIALED_FORAGERS)
 	h._compose_forage(BaseFx.food_tile_fixture())
@@ -351,37 +351,33 @@ func run(harness) -> void:
 	var rendered_cap = Readout.stepper_value(h._hud._drawercompose._compose_sheet)
 	print("ui_preview: build crew  sim workers_needed=%d  rendered cap=%d" % [
 		sim_workers_needed, rendered_cap])
-	# ONE equality, and the DIP is what carries it. Undipped the cap is ceil(0.96/0.32) = 3 — a quarter
-	# of what the sim asks — and the rung's crew floor (2) sits below either, so only the dipped
-	# inversion lands on the sim's 12.
-	h._assert_hud("the compose stepper caps at the crew the SIM asks for (%d), not at an undipped ceiling"
+	h._assert_hud("the compose stepper caps at the crew the SIM asks for (%d)"
 		% sim_workers_needed, rendered_cap == sim_workers_needed)
 	# THE WORKED-ROW TWIN, on the SAME forecast. `source_worker_cap_state` is the Band panel's gate, and
 	# the two are only genuinely one ceiling if it goes dead at exactly that count — asserted on either
 	# side of it so "always false" cannot pass.
 	var build_forecast := SourceForecast.forecast_inputs(_seeded_food_tile(),
 		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
-		SourceForecast.FLOOR_FOOD_PEAK, SourceForecast.IMPROVEMENT_CULTIVATE)
-	var build_floor := SourceForecast.plant_crew_floor(_seeded_food_tile(),
-		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_CULTIVATE)
+		SourceForecast.FLOOR_FOOD_PEAK)
 	var row_below: bool = bool(SourceForecast.source_worker_cap_state(build_forecast,
-		sim_workers_needed - 1, BUILD_CREW_IDLE_ON_HAND, build_floor)["can_add"])
+		sim_workers_needed - 1, BUILD_CREW_IDLE_ON_HAND)["can_add"])
 	var row_at: bool = bool(SourceForecast.source_worker_cap_state(build_forecast,
-		sim_workers_needed, BUILD_CREW_IDLE_ON_HAND, build_floor)["can_add"])
+		sim_workers_needed, BUILD_CREW_IDLE_ON_HAND)["can_add"])
 	h._assert_hud("…and the WORK BOARD's `+` gates at the same count — live below it, dead at it",
 		row_below and not row_at)
-	# THE READOUT'S TAKE, read off the RENDERED sheet: it must be the sim's own
-	# `min(w × per_worker × dip, ceiling)`, not the undipped labour take.
-	#
-	# **THE SECOND HALF OF THIS PAIR WAS THE DEAL'S "while building" TERM, and it is gone WITH the deal
-	# line rather than merely untested.** The two were asserted to carry the same figure, and they did —
-	# byte for byte, being the same crew through the same dipped forecast — which is precisely the
-	# duplication that retired the line. What remains is the one producer.
+	# THE READOUT'S TAKE, read off the RENDERED sheet: `min(w × per_worker, ceiling)`, with no build
+	# term anywhere in it. A Cultivate is running on this very patch, which is what makes the claim
+	# worth making — the crew building it is a different crew.
 	var build_green = Readout.yields_text(h._hud._drawercompose._compose_sheet)
 	print("ui_preview: build crew  take=%s" % build_green)
-	h._assert_hud("the green forecast line quotes the DIPPED take the sim pays (%s)"
-		% BUILD_CREW_DIPPED_TAKE, build_green.contains(BUILD_CREW_DIPPED_TAKE)
+	h._assert_hud("the green forecast line quotes the PLAIN take the sim pays (%s) beside a running build"
+		% BUILD_CREW_UNDIPPED_TAKE, build_green.contains(BUILD_CREW_UNDIPPED_TAKE)
 		and build_green.contains(SourceForecast.YIELD_RENEWABLE_NOTE.to_upper()))
+	# **AND THE BUILD'S OWN CREW ROW IS THERE**, which is the control this frame gained: the verb is
+	# staffed by a stepper of its own, not by the gatherers above it.
+	h._assert_hud("…and the running Cultivate carries a build crew row of its own",
+		Q.find_meta_node(h._hud._drawercompose._compose_sheet,
+			HudWidgets.BUILD_CREW_ROW_META) != null)
 
 	# THE ABANDON, plant side — driven here rather than on the frame above because committing CLOSES
 	# the sheet and writes a pending assign, which the Deplete frame beside it reads.
@@ -435,6 +431,12 @@ func run(harness) -> void:
 	# not about the phase — a client still keyed on `ecology_phase` renders the pause line here, over a
 	# meter its own face shows advancing, which is the reported defect exactly.
 	h._hud._compose.set_forage_floor(BUILD_ROOM_FLOOR)
+	h._compose_forage(no_room_tile)
+	# **THE BUILD CREW IS DIALLED AFTER THE FIRST OPEN**, the `_compose_herd` re-open contract in the
+	# forage web's own form: a source change re-seeds the composition (`seed_forage`), so a count set
+	# before the sheet is opened on this tile is thrown away. The estimate is the BUILD crew's now, so
+	# without this the frame renders a face with no turns clause at all.
+	h._hud._compose.set_forage_build_count(BUILD_ROOM_BUILDERS)
 	h._compose_forage(no_room_tile)
 	await h._settle()
 	await h._save("improvement_stressed_advances")
@@ -631,17 +633,28 @@ func run(harness) -> void:
 	h._hud._band_labor._player_bands = [BandFx.cultivating_forage_band_fixture()]
 	h._hud._compose.reset_forage_source()
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
-	h._hud._compose.set_forage_count(TURNS_LONE_CREW)
+	# **THE STEPPER THAT MOVES THE ESTIMATE IS THE BUILD'S** (`docs/plan_standing_upkeep.md` §2.2).
+	# The take crew no longer prices a build at all — it was never doing the work — so the A/B is run
+	# on the improvement control's own crew row, which is where the player now answers *how many hands
+	# on this job*. The take crew is held at a plain 1 throughout, so nothing but the builders moves.
+	h._hud._compose.set_forage_count(1)
 	h._show_tile(_seeded_food_tile())
+	h._compose_forage(_seeded_food_tile())
+	# Dialled AFTER the first open, for the reason `_compose_herd`'s docstring gives: the source change
+	# re-seeds the composition, so a build crew set before it is silently thrown away.
+	h._hud._compose.set_forage_build_count(TURNS_LONE_CREW)
 	h._compose_forage(_seeded_food_tile())
 	await h._settle()
 	await h._save("improvement_turns_lone_crew")
 	var lone_face := ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, "cultivate")
-	h._hud._compose.set_forage_count(TURNS_FULL_CREW)
+	h._hud._compose.set_forage_build_count(TURNS_FULL_CREW)
 	h._compose_forage(_seeded_food_tile())
 	await h._settle()
 	await h._save("improvement_turns_full_crew")
 	var full_face := ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, "cultivate")
+	# Captured before the drag, so the drag frame's negative compares against a rendered reading rather
+	# than a recomposition.
+	var full_yields := Readout.yields_text(h._hud._drawercompose._compose_sheet)
 	print("ui_preview: build turns  lone=%s  full=%s" % [lone_face, full_face])
 	# **EQUALITY ON THE WHOLE CLAUSE, and the two counts are derived in this chapter rather than
 	# through the producer under test** — an expectation composed from `build_turns_at` could only
@@ -655,12 +668,18 @@ func run(harness) -> void:
 	# because those spell two different counts — this says so directly, and names the frozen value.
 	h._assert_hud("…so the two crews cannot both read the sim's own committed-crew answer",
 		lone_face != full_face and not full_face.contains(_turns_clause(BaseFx.BUILD_TURNS_REMAINING)))
-	# **AND IT FOLLOWS A LIVE FLOOR DRAG, which is a different seam from the stepper.** A stepper tick
-	# rebuilds the whole sheet; a DRAG must not (the rebuild frees the chart and the gesture dies with
-	# it), so the box only tracks the dial by being in the live-refresh registry. The drag is driven
-	# the way this harness drives every other one — `floor_changed` with `committed = false`, the
-	# signal the chart emits while the pointer is still down — and the frame is what a gesture looks
-	# like mid-flight: the dial has moved and the sheet has not been rebuilt around it.
+	# **AND A LIVE FLOOR DRAG NO LONGER MOVES IT, which is the retirement stated as a rendered claim**
+	# (`docs/plan_standing_upkeep.md` §2.2). The floor used to SCALE the build rate
+	# (`learn_multiplier`), so dragging toward Learning quoted a faster build — *a crew pulling hard on
+	# the source it is improving builds slowly*. **With separate crews the build crew is not pulling
+	# anything**, so the rate is the builders' plain output and the estimate is floor-INDEPENDENT
+	# wherever there is room to work in at all. What the floor still decides is the WORK PREDICATE, and
+	# `improvement_stressed_advances` above is where that is pinned.
+	#
+	# The drag is driven the way this harness drives every other one — `floor_changed` with
+	# `committed = false`, the signal the chart emits while the pointer is still down — and the frame
+	# is what a gesture looks like mid-flight: the dial has moved and the sheet has not been rebuilt
+	# around it, which is what the live-refresh registry buys.
 	var live_chart = Q.find_meta_node(h._hud._drawercompose._compose_sheet,
 		HudWidgets.FLOOR_CHART_META)
 	h._assert_hud("the forage sheet mounts a floor chart to drag at all",
@@ -669,10 +688,14 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("improvement_turns_learning_floor")
 	var dragged_face := ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, "cultivate")
-	h._assert_hud("a floor above the peak builds faster, and the box says so DURING the drag",
-		dragged_face.ends_with(_turns_clause(TURNS_AT_FULL_CREW_LEARNING)))
-	h._assert_hud("…which the same crew at the peak does not read, so the dial genuinely moved it",
-		TURNS_AT_FULL_CREW_LEARNING != TURNS_AT_FULL_CREW and dragged_face != full_face)
+	h._assert_hud("the same builders read the same estimate at a deeper floor — the floor paces no build now",
+		dragged_face.ends_with(_turns_clause(TURNS_AT_FULL_CREW)))
+	# The NEGATIVE that keeps it a claim about the DRAG rather than about a frozen box: the dial really
+	# did move, and the sheet really did re-read it — the take beside the estimate follows the floor,
+	# which is what a sheet ignoring the drag entirely could not produce.
+	h._assert_hud("…while the drag really did land, the take under it having moved with the floor",
+		TURNS_DRAG_FLOOR != SourceForecast.FLOOR_FOOD_PEAK
+			and Readout.yields_text(h._hud._drawercompose._compose_sheet) != full_yields)
 	# **THE DEGENERATE CREW, asked of the producer** — no frame can stage it, a crew of 0 on a tile
 	# this band works being an UNASSIGN, which offers no improvement control at all. A `0` crew makes
 	# the per-turn work zero, and the honest answer to `remaining / 0` is no clause rather than a huge

@@ -284,6 +284,8 @@ func _ready() -> void:
             hud.connect("split_band_requested", Callable(self, "_on_hud_split_band"))
         if hud.has_signal("extend_pen_requested") and not hud.is_connected("extend_pen_requested", Callable(self, "_on_hud_extend_pen")):
             hud.connect("extend_pen_requested", Callable(self, "_on_hud_extend_pen"))
+        if hud.has_signal("maintain_requested") and not hud.is_connected("maintain_requested", Callable(self, "_on_hud_maintain")):
+            hud.connect("maintain_requested", Callable(self, "_on_hud_maintain"))
         if hud.has_signal("improvement_requested") and not hud.is_connected("improvement_requested", Callable(self, "_on_hud_improvement")):
             hud.connect("improvement_requested", Callable(self, "_on_hud_improvement"))
         if hud.has_signal("set_bench_requested") and not hud.is_connected("set_bench_requested", Callable(self, "_on_hud_set_bench")):
@@ -1184,17 +1186,24 @@ static func format_split_band(payload: Dictionary) -> Dictionary:
         "message": "Form a new band.",
     }
 
-## `extend_pen <faction> <x> <y>` targets the pen's ANCHOR TILE, so it names no band at all — it is
-## here for company, not because it carries a band handle.
+## `extend_pen <faction> <x> <y> <workers>` targets the pen's ANCHOR TILE, so it names no band at all
+## — it is here for company, not because it carries a band handle.
+##
+## **THE CREW IS A REQUIRED POSITIONAL** (`docs/plan_standing_upkeep.md` §2.2): a ring rides the same
+## `animal:pen` rung as the pen it widens, so it staffs the same build allocation and draws on the
+## same finite band. The sim REFUSES a count the band cannot staff, naming the idle hands, which is
+## why the sheet clamps its stepper before this is ever built.
 static func format_extend_pen(payload: Dictionary) -> Dictionary:
     var faction := int(payload.get("faction", PLAYER_FACTION_ID))
     var x := int(payload.get("x", -1))
     var y := int(payload.get("y", -1))
     if x < 0 or y < 0:
         return {}
+    var workers: int = max(0, int(payload.get("workers", 0)))
     return {
-        "line": "extend_pen %d %d %d" % [faction, x, y],
-        "message": "Extend pen at (%d, %d)." % [x, y],
+        "line": "extend_pen %d %d %d %d" % [faction, x, y, workers],
+        "message": "Extend pen at (%d, %d) with %d worker%s." % [
+            x, y, workers, "" if workers == 1 else "s"],
     }
 
 ## **THE SECOND AXIS's commands** (issue #442): `cultivate <faction> <x> <y>` / `sow <faction> <x> <y>`
@@ -1212,21 +1221,27 @@ static func format_improvement(payload: Dictionary) -> Dictionary:
     if improvement == "":
         return {}
     var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    # **THE BUILD'S OWN CREW, a required trailing positional on all four verbs**
+    # (`docs/plan_standing_upkeep.md` §2.2). It is what makes the build an allocation the player
+    # states rather than a rider on the take crew, and the sim REFUSES a count the band cannot staff.
+    var workers: int = max(0, int(payload.get("workers", 0)))
     if improvement in IMPROVEMENT_HERD_TARGETED:
         var herd_id := String(payload.get("herd_id", "")).strip_edges()
         if herd_id == "":
             return {}
         return {
-            "line": "%s %d %s" % [improvement, faction, herd_id],
-            "message": "%s %s." % [improvement.capitalize(), herd_id],
+            "line": "%s %d %s %d" % [improvement, faction, herd_id, workers],
+            "message": "%s %s with %d worker%s." % [
+                improvement.capitalize(), herd_id, workers, "" if workers == 1 else "s"],
         }
     var x := int(payload.get("x", -1))
     var y := int(payload.get("y", -1))
     if x < 0 or y < 0:
         return {}
     return {
-        "line": "%s %d %d %d" % [improvement, faction, x, y],
-        "message": "%s (%d, %d)." % [improvement.capitalize(), x, y],
+        "line": "%s %d %d %d %d" % [improvement, faction, x, y, workers],
+        "message": "%s (%d, %d) with %d worker%s." % [
+            improvement.capitalize(), x, y, workers, "" if workers == 1 else "s"],
     }
 
 ## **`set_bench <faction_id> <band_id> recipe <recipe_id>`** — put a recipe on a band's crafting bench
@@ -1320,6 +1335,45 @@ static func format_abandon_improvement(payload: Dictionary) -> Dictionary:
         "message": "Stop improving (%d, %d)." % [x, y],
     }
 
+## **`maintain <faction> forage <x> <y> <workers>` / `maintain <faction> hunt <herd_id> <workers>`**
+## — put hands on a source's STANDING UPKEEP (`docs/plan_standing_upkeep.md` §2.2, §2.5), the third of
+## its three worker allocations beside the take crew (`assign_labor`) and the build crew (the
+## improvement verbs).
+##
+## **IT SHARES `abandon_improvement`'s SOURCE GRAMMAR EXACTLY**, and for the same reason: it names a
+## SOURCE, so the targeting rule is the WEB's (`forage` -> tile, `hunt` -> herd) rather than a verb's.
+## Its own builder, not a branch of that one, because the two commands differ by a required crew tail
+## and folding them would make `workers` optional on one of them.
+##
+## **`0` IS A REAL INSTRUCTION AND IS NEVER OMITTED** — *stop maintaining this, take everything, let
+## it go*. The demand still stands, so all of it goes unmet and the improvement slides back down the
+## ladder; that is the decision, and a client that suppressed the command would silently keep the
+## keeping staffed.
+static func format_maintain(payload: Dictionary) -> Dictionary:
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var kind := String(payload.get("kind", "")).strip_edges().to_lower()
+    var workers: int = max(0, int(payload.get("workers", 0)))
+    if kind == SourceForecast.LABOR_KIND_HUNT:
+        var herd_id := String(payload.get("herd_id", "")).strip_edges()
+        if herd_id == "":
+            return {}
+        return {
+            "line": "maintain %d %s %s %d" % [faction, kind, herd_id, workers],
+            "message": "Keep %s with %d worker%s." % [
+                herd_id, workers, "" if workers == 1 else "s"],
+        }
+    if kind != SourceForecast.LABOR_KIND_FORAGE:
+        return {}
+    var x := int(payload.get("x", -1))
+    var y := int(payload.get("y", -1))
+    if x < 0 or y < 0:
+        return {}
+    return {
+        "line": "maintain %d %s %d %d %d" % [faction, kind, x, y, workers],
+        "message": "Keep (%d, %d) with %d worker%s." % [
+            x, y, workers, "" if workers == 1 else "s"],
+    }
+
 ## Send whatever a `format_*` builder produced, or nothing at all when it declined.
 func _send_formatted_command(formatted: Dictionary) -> void:
     if formatted.is_empty():
@@ -1377,6 +1431,11 @@ func _on_hud_improvement(payload: Dictionary) -> void:
         _send_formatted_command(format_abandon_improvement(payload))
         return
     _send_formatted_command(format_improvement(payload))
+
+## Put hands on a source's standing upkeep — or take them all off, which is the same command with a
+## crew of zero. Sent on the same commit as the `assign_labor` that guarantees the crew is there.
+func _on_hud_maintain(payload: Dictionary) -> void:
+    _send_formatted_command(format_maintain(payload))
 
 ## Stage a recipe on the band's bench (Materials & Crafting). The player staffs the bench, so this
 ## sends the recipe alone and the crew stays where it was until the stepper moves it.

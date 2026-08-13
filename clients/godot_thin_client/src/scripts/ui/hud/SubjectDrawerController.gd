@@ -467,6 +467,11 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
                 SourceForecast.build_work_cost(tile_info, prefix, SourceForecast.IMPROVEMENT_SOW))])
             if sowing:
                 lines.append_array(DetailFormat.build_estimate_lines(tile_info, prefix))
+    # **WHAT IT COSTS TO HOLD WHAT IS BUILT HERE, and how long it has if nobody pays**
+    # (`docs/plan_standing_upkeep.md` §2). It sits under the two rung rows rather than beside them
+    # because it is a property of the SOURCE at whatever rung it stands on, not of either meter — and
+    # a patch with nothing built owes nothing and prints no row at all.
+    lines.append_array(DetailFormat.upkeep_lines(tile_info, prefix))
     return lines
 
 ## The FORAGING row (or nothing) — the human-edible web's stock over its ceiling. The exact twin of

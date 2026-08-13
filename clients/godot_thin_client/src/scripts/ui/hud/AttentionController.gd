@@ -46,6 +46,20 @@ var _bandpanel: BandPanelController = null
 # --- The one retained HudLayer helper, injected as a Callable (see the class header) ---
 var _herd_label_for_id_fn: Callable
 
+## **THE BUILD HAND-OFFS THIS TURN** (`docs/plan_standing_upkeep.md` §2.3) — `{label, carried}` rows
+## ingested off the command-event stream, held until the turn moves on.
+##
+## **THEY ARE HELD, not read straight out of the events, because the two arrive on different
+## dispatches.** `Main` feeds `command_events` and `populations` separately and the attention array is
+## rebuilt from the populations pass, so a producer that read the event array would answer empty on
+## every frame but the one the events landed on — and the rows would flicker away mid-turn, which is
+## exactly when the player is deciding what to do with those hands.
+var _handoffs: Array[Dictionary] = []
+
+## The turn `_handoffs` describes. A hand-off is news about ONE turn, so the list is dropped whole
+## when the turn changes rather than accumulating a session's worth of finished builds.
+var _handoff_turn: int = -1
+
 func _init(band_labor: HudBandLaborState, bandpanel: BandPanelController,
         herd_label_for_id: Callable) -> void:
     _band_labor = band_labor
@@ -79,6 +93,79 @@ func _herd_label_for_id(herd_id: String) -> String:
 ## omission: a patch is owned by the FACTION (`patch.owner == PLAYER_FACTION_ID`), never by a band, so
 ## there is no band whose row it could sit on. `OWNER_NONE` is what it reads as.
 const OWNER_NONE := -1
+
+## The two tokens a hand-off event is recognized by, on the sim's own `status=... action=...` detail
+## line (`systems::labor`'s completion pass). Matched structurally rather than by the label's words,
+## because the label is a sentence written for the player and the detail is the contract.
+const HANDOFF_ACTION_TOKEN := "action=build_complete"
+
+const HANDOFF_STATUS_CARRIED := "status=carried_to_upkeep"
+
+const HANDOFF_STATUS_FREED := "status=freed"
+
+## **INGEST THE TURN'S BUILD HAND-OFFS** (`docs/plan_standing_upkeep.md` §2.3) — the completions whose
+## crew moved, off the same `command_events` array the Telling and the event dock read.
+##
+## **THE SIM'S OWN SENTENCE IS KEPT VERBATIM.** It knows which rung finished, how many hands moved and
+## where they went (*"3 of your cultivate crew stay on (31, 18) to keep it"*); recomposing it here
+## would be a second description of one event, and the two would drift.
+##
+## The `status=` token is what separates the two outcomes: `carried_to_upkeep` means those hands are
+## now paying the rung's keeping, `freed` means they are idle. Anything else on the stream is not a
+## hand-off and is left to the surfaces that own it.
+func ingest_command_events(events_variant: Variant, turn: int) -> void:
+    if not (events_variant is Array):
+        return
+    if turn != _handoff_turn:
+        _handoffs.clear()
+        _handoff_turn = turn
+    for entry_variant in events_variant:
+        if not (entry_variant is Dictionary):
+            continue
+        var entry: Dictionary = entry_variant
+        var detail := String(entry.get("detail", ""))
+        if not detail.contains(HANDOFF_ACTION_TOKEN):
+            continue
+        var carried := detail.contains(HANDOFF_STATUS_CARRIED)
+        if not carried and not detail.contains(HANDOFF_STATUS_FREED):
+            continue
+        _handoffs.append({
+            "label": String(entry.get("label", "")).strip_edges(),
+            "carried": carried,
+        })
+
+## Turn-orb items for the builds that finished this turn and moved their crew (Producer 8) — the
+## next-turn attention half of §2.3's *"either way it is announced"*.
+##
+## **NON-LOCATING** (`x < 0`): the event names its source in words and carries no coordinates, so the
+## row reads `Open` rather than promising a jump it would have to guess. Capped like the awaiting
+## rows, for the same off-screen-popover reason.
+func _crew_handoff_attention() -> Array:
+    var items: Array = []
+    for i in _handoffs.size():
+        var handoff: Dictionary = _handoffs[i]
+        if i >= HudAttentionVocab.ATTENTION_HANDOFF_MAX_ROWS:
+            items.append({
+                "kind": HudAttentionVocab.ATTENTION_KIND_CREW_HANDOFF,
+                "severity": HudAttentionVocab.ATTENTION_SEVERITY_INFO,
+                "label": HudAttentionVocab.ATTENTION_HANDOFF_OVERFLOW_LABEL_FORMAT % (
+                    _handoffs.size() - i),
+                "detail": HudAttentionVocab.ATTENTION_HANDOFF_OVERFLOW_DETAIL,
+                "x": HudAttentionVocab.ATTENTION_NON_LOCATING,
+                "y": HudAttentionVocab.ATTENTION_NON_LOCATING,
+            })
+            break
+        items.append({
+            "kind": HudAttentionVocab.ATTENTION_KIND_CREW_HANDOFF,
+            "severity": HudAttentionVocab.ATTENTION_SEVERITY_INFO,
+            "label": String(handoff["label"]),
+            "detail": HudAttentionVocab.ATTENTION_HANDOFF_DETAIL_CARRIED \
+                if bool(handoff["carried"]) \
+                else HudAttentionVocab.ATTENTION_HANDOFF_DETAIL_FREED,
+            "x": HudAttentionVocab.ATTENTION_NON_LOCATING,
+            "y": HudAttentionVocab.ATTENTION_NON_LOCATING,
+        })
+    return items
 
 func build_band_attention(player_bands: Array, player_expeditions: Array) -> Array:
     var attention: Array = []
@@ -147,6 +234,10 @@ func build_band_attention(player_bands: Array, player_expeditions: Array) -> Arr
     # hang it on, so there is no band whose roster it could be found through. Patches carry an owner on
     # the wire (herds do not), which is what makes an assignment-free scan attributable here.
     attention.append_array(_unworked_rung_attention(player_bands))
+    # Producer 8 — a finished build's crew moved (§2.3). Outside the band loop and fed by the command
+    # stream rather than by the roster: a hand-off is an EVENT, and no band field records that it
+    # happened.
+    attention.append_array(_crew_handoff_attention())
     return attention
 
 ## An orb row's "Jump →". A row that locates an AWAITING EXPEDITION routes through the SAME path the

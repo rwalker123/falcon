@@ -371,25 +371,17 @@ const YIELD_ACCOUNT_UNITS := {
 ## the unit alone.
 const YIELD_ROW_HEADER := "per turn"
 const YIELD_ROW_HEADER_WITH_AFTER := "per turn · now → after"
-## **THE CAPTION A COMPOSED BUILD TAKES, AND IT IS THE WHOLE CAPTION.** While a rung is going up the
-## crew carries the rung's `yield_fraction_while_building`, so the readings under this row are the
-## DIPPED take — a number the sheet otherwise gives no way to tell apart from the undipped one it
-## replaced. It never composes with the arrow's key, because a building sheet states **no arrow**:
-## the floor walk is suppressed at the model while a build is composed (`labor-ui.md` → "A COMPOSED
-## BUILD SUPPRESSES THE FLOOR WALK"), so the two facts cannot both be true on one row.
-const YIELD_ROW_HEADER_WHILE_BUILDING := "per turn · while building"
-
-## **THE ONE RESOLUTION OF THE ROW'S CAPTION**, over the two facts that can key it: is a build
-## dipping these readings, and do they carry a holding rate to arrow toward. THREE states, because
-## the pair is not independent — a composed build drops the `after` readings, so `while_building`
-## always arrives with `has_after` false and the fourth combination is unreachable. It is resolved
-## in one place: `build_yields_row` calls it and no caller composes a caption of its own, because
-## two sites deciding separately is how the `while building` override once came to swallow the
-## arrow's key. A caller with no per-turn rate AT ALL (the raid's whole-trip payload) supplies its
-## own `header` and never reaches here.
-static func yield_row_header(while_building: bool, has_after: bool) -> String:
-    if while_building:
-        return YIELD_ROW_HEADER_WHILE_BUILDING
+## **THE ONE RESOLUTION OF THE ROW'S CAPTION**, over the single fact that can key it: do these
+## readings carry a holding rate to arrow toward.
+##
+## **THE THIRD STATE — `per turn · while building` — IS RETIRED WITH THE DIP**
+## (`docs/plan_standing_upkeep.md` §2.2). It said *these readings are the DIPPED take*, which was
+## only ever true while ONE crew both gathered and built. The build has its own crew now, so a rung
+## going up takes nothing off what the gatherers carry and the take under this caption is the plain
+## one — a caption marking it as reduced would be describing arithmetic the sim no longer does.
+## A caller with no per-turn rate AT ALL (the raid's whole-trip payload) supplies its own `header`
+## and never reaches here.
+static func yield_row_header(has_after: bool) -> String:
     return YIELD_ROW_HEADER_WITH_AFTER if has_after else YIELD_ROW_HEADER
 ## The transition inside ONE account's reading: `2.26 → 0.42`. The glyph is the row's second job for
 ## an arrow — the retired routing suffix (`→ CAMP`) was the first — but the two never coexisted, and
@@ -707,27 +699,21 @@ const FORECAST_PAYOFF_MATERIAL_KEYS := {
 const FORECAST_FEED_KEYS := {
     "corral": "pen_upkeep",
 }
-# THE DURING-BUILD DIP, as a FRACTION of the selected stance's ceiling — one wire field per
-# improvement (issue #442). The two rungs of a web keep two numbers because their dials are
-# independently tunable; folding them onto one would pass every forecast==actual test by today's
-# coincidence and lie the moment either is retuned.
-const FORECAST_BUILD_FRACTION_KEYS := {
-    IMPROVEMENT_CULTIVATE: "cultivate_build_fraction",
-    IMPROVEMENT_SOW: "sow_build_fraction",
-    IMPROVEMENT_TAME: "tame_build_fraction",
-    IMPROVEMENT_CORRAL: "corral_build_fraction",
-}
-# The identity dip — what a ceiling is multiplied by when NO build is under way. The sim's
-# `NO_BUILD_UNDERWAY_DIP`, spelled once here so "not building" is a value rather than a branch.
-const NO_BUILD_DIP := 1.0
-# THE PLANT BUILD CREW each improvement demands — the plant twin of a managed herd's `herders_needed`,
-# and the FLOOR under the worker cap (`plant_crew_floor`). Only the plant rungs declare one: the animal
-# rungs take their crew from the herd's own size, which is why there is no `IMPROVEMENT_TAME` row here
-# rather than a zero one — a missing key is the honest "this web answers elsewhere".
-const FORECAST_CREW_KEYS := {
-    IMPROVEMENT_CULTIVATE: "cultivate_crew_needed",
-    IMPROVEMENT_SOW: "sow_crew_needed",
-}
+# **THE DURING-BUILD DIP IS RETIRED, and so is the build's `crew_needed`**
+# (`docs/plan_standing_upkeep.md` §2.2). `<rung>BuildFraction` and `<rung>CrewNeeded` are deprecated
+# wire slots the native reader no longer publishes, so nothing here reads them and nothing composes
+# a fraction from them.
+#
+# The dip said *"this crew is preparing ground, not gathering"*, which is a statement about a SHARED
+# crew and about nothing else. A source carries three independent allocations now — take, build,
+# maintain — so what a build costs is the hands standing on it, and the gatherers beside them carry
+# what gatherers carry. There is no factor left to multiply anything by: `preparing = 0` is read off
+# the model, not off a number.
+#
+# `crew_needed` was a staffing FLOOR under the source's published `workers_needed`, needed only
+# because that count was inverted out of a DIPPED take. With each activity stating its own crew there
+# is no blended count for a floor to raise, and `workers_needed` is answered per activity — hands to
+# meet the upkeep (`upkeep_workers_needed`), hands to haul the offer (`workers_needed`).
 # The per-source BUILD METER each improvement fills, 0..1. The one place that mapping is written down
 # (`RungGates.rung_in_progress` reads it, so the compose sheet, the work board and the map badge can
 # never quote different meters for one verb).
@@ -764,6 +750,38 @@ const FORECAST_BUILD_WORK_COST_KEYS := {
 # PROPOSING, which is what a compose sheet's stepper asks; that is the terms below.
 const FORECAST_BUILD_TURNS_KEY := "build_turns_remaining"
 const FORECAST_BUILD_GEAR_WORK_KEY := "build_work_from_gear"
+# **WHAT IT COSTS TO HOLD THIS SOURCE AT THE RUNG IT STANDS ON**, in work units per turn — the RATE
+# half of the ladder beside the build's PILE (`docs/plan_standing_upkeep.md` §2). All four ship on
+# BOTH webs under the same names, which is what lets one readout serve a patch and a herd.
+#
+# **THE SIM ANSWERS AND THIS CLIENT SUBTRACTS NOTHING.** `upkeep_shortfall` is published, not derived
+# from `demand − supplied`: it is EXACTLY what the improvement decays by once the shortfall outlasts
+# the rung's grace, and a client re-deriving it would be a second authority over the number the whole
+# readout exists to make legible (the `pen_feed_upkeep` discipline).
+const FORECAST_UPKEEP_DEMAND_KEY := "upkeep_demand"
+const FORECAST_UPKEEP_SUPPLIED_KEY := "upkeep_supplied"
+const FORECAST_UPKEEP_SHORTFALL_KEY := "upkeep_shortfall"
+# **THE MAINTAIN ACTIVITY'S OWN `workers_needed`** — hands to MEET the demand, beside the take
+# activity's (`SourceYield.workersNeeded`, hands to haul the offer). A blended count across two units
+# is what a single worker allocation forced; each activity answers for itself now.
+#
+# **`0` ON A SOURCE WHOSE METER IS STILL BEING BUILT IS CORRECT, NOT A GAP** — its hands are the
+# build's, so *"wants 0 keepers"* mid-build is the honest reading and must not be papered over.
+const FORECAST_UPKEEP_CREW_KEY := "upkeep_workers_needed"
+# **THE COUNTDOWN, AND THE BOOL THAT MAKES ITS ZERO READABLE.** Both webs ship the pair: the flag says
+# *there is a built rung here that can be lost*, the count says how many more turns of SHORTFALL are
+# forgiven before the decay starts. `0` under a true flag is *biting this turn*; the flag false is
+# *nothing at stake*, which is the same number and the opposite news — read the flag first.
+const FORECAST_NEGLECT_GRACE_FLAG_KEY := "has_neglect_grace"
+const FORECAST_NEGLECT_GRACE_KEY := "neglect_grace_remaining"
+## No standing cost at all — a wild patch, a wild herd, a rung that declares no upkeep. The demand is
+## ALWAYS MEANINGFUL (never a sentinel), so this is a measured nothing rather than an absent answer.
+const NO_UPKEEP_DEMAND := 0.0
+## Nobody is needed to hold something that costs nothing to hold.
+const NO_UPKEEP_CREW := 0
+## Below this a work rate is nothing to state — the same floor the food flow uses, so a `0.00 work`
+## row can never be printed by one readout and suppressed by another.
+const UPKEEP_WORK_MIN := 0.005
 # **…AND THE SOURCE'S TERM IN THE SAME ESTIMATE** — `build_turns_at` evaluates the closed form from
 # it (`.claude/rules/core_sim/yield-forecast.md` → "THE BOUNDARY, stated once": where a closed form
 # exists the sim ships the TERMS and the client evaluates it).
@@ -1316,8 +1334,8 @@ static func yield_range_clause(m: Dictionary) -> String:
 ## Whether the pre-launch fight lines have anything to say about this source. A PEN and the whole
 ## PLANT web publish no engagement stage (`NO_ENGAGEMENT_STAGE`), which is exactly the byte-identity
 ## this gate buys: a penned animal is not stalked and a berry does not fight back.
-static func has_engagement_stage(engage_rate: float, dip: float) -> bool:
-    return not is_inf(engagement_per_worker(engage_rate, dip))
+static func has_engagement_stage(engage_rate: float) -> bool:
+    return not is_inf(engagement_per_worker(engage_rate))
 
 # THE GATE's ONE verdict. It names both terms, because "you cannot" without the arithmetic is a
 # tooltip the player has no way to act on: knowing it is the WEAPON and not the headcount is the whole
@@ -1712,7 +1730,7 @@ static func escapement_room(src: Dictionary, prefix: String, floor: float) -> fl
 ## **IT IS THE STANDING RUNG THAT DECIDES THIS, NEVER THE COMPOSED ONE.** The wire flag is the only
 ## input, and a source the crew is merely BUILDING toward rung 3 — mid-`Sow`, mid-`Corral` — is
 ## deliberately NOT managed, because until the Field or the Pen exists the crew is still drawing the
-## WILD stand down (at a dipped carry — see `build_dip`), and that drawdown is exactly what the sheet
+## WILD stand down, and that drawdown is exactly what the sheet
 ## has to price. Reading the composed rung here would quote a source that does not exist yet: the
 ## escapement chart would blank on a stand that is still being harvested, and a pastoral herd's
 ## ceiling would swap to `corral_yield` while its animals are still being hunted off the range. Rung 2
@@ -1930,11 +1948,11 @@ static func peak_animal_drop(ceiling: float, body: float) -> int:
 ## `0` where the term has nothing to say: a source with no engagement stage (`NO_ENGAGEMENT_STAGE` —
 ## a pen, the plant web) or a degenerate body/dip. The `max()` then keeps the haul crew and neither
 ## web regresses. Units on `ceiling`/`body` are free, exactly as they are for `haul_workers`.
-static func engage_workers(ceiling: float, body: float, engage_rate: float, dip: float,
+static func engage_workers(ceiling: float, body: float, engage_rate: float,
         stay: float) -> int:
     if body <= 0.0:
         return 0
-    var reach := engagement_per_worker(engage_rate, dip)
+    var reach := engagement_per_worker(engage_rate)
     if is_inf(reach):
         return 0
     var landed := animals_stayed(reach, stay)
@@ -1951,8 +1969,8 @@ static func engage_workers(ceiling: float, body: float, engage_rate: float, dip:
 ## of zero — so a caller drops the term with a `min()` or an `is_inf` rather than a per-site branch on
 ## `NO_ENGAGEMENT_STAGE`. **The dip rides it** (`docs/plan_harvest_floor.md` §3.1): hands gentling a
 ## herd are hands not stalking it.
-static func engagement_per_worker(engage_rate: float, dip: float) -> float:
-    var reach := maxf(engage_rate, 0.0) * maxf(dip, 0.0)
+static func engagement_per_worker(engage_rate: float) -> float:
+    var reach := maxf(engage_rate, 0.0)
     if reach <= NO_ENGAGEMENT_STAGE or is_inf(reach):
         return ENGAGEMENT_UNBOUNDED
     return reach
@@ -1973,11 +1991,11 @@ static func engagement_per_worker(engage_rate: float, dip: float) -> float:
 ## now* named 108 hands and the stepper capped at 82. **`stay` is REQUIRED**: it has no default, so a
 ## call site cannot silently take the raw reach by omission, which is exactly how the two arms came to
 ## disagree.
-static func engagement_carry(body_mass: float, engage_rate: float, dip: float,
+static func engagement_carry(body_mass: float, engage_rate: float,
         stay: float) -> float:
     if body_mass <= 0.0:
         return ENGAGEMENT_UNBOUNDED
-    var reach := engagement_per_worker(engage_rate, dip)
+    var reach := engagement_per_worker(engage_rate)
     return ENGAGEMENT_UNBOUNDED if is_inf(reach) \
         else body_mass * animals_stayed(reach, stay)
 
@@ -1992,9 +2010,9 @@ static func engagement_carry(body_mass: float, engage_rate: float, dip: float,
 ## `stay` is a pass-through to the engage half; the haul side knows nothing about a retreat, a body
 ## weighing the same whether it was easy or hard to bring down.
 static func take_workers(ceiling: float, body: float, per_worker: float,
-        engage_rate: float, dip: float, stay: float) -> int:
+        engage_rate: float, stay: float) -> int:
     return maxi(haul_workers(ceiling, body, per_worker),
-        engage_workers(ceiling, body, engage_rate, dip, stay))
+        engage_workers(ceiling, body, engage_rate, stay))
 
 ## **HOW MANY ANIMALS THIS PARTY BRINGS INTO CONTACT THIS TURN** — the client mirror of the sim's
 ## `fauna::animals_engaged`, and the one definition of it, so no two readings of a herd can disagree
@@ -2003,12 +2021,12 @@ static func take_workers(ceiling: float, body: float, per_worker: float,
 ## statement and is why the worker test comes first.
 ##
 ## `ENGAGEMENT_UNBOUNDED` for a source with no engagement stage, so the caller's `min()` drops the arm.
-static func animals_engaged(workers: int, engage_rate: float, dip: float) -> float:
+static func animals_engaged(workers: int, engage_rate: float) -> float:
     if workers <= 0:
         return 0.0
     if engage_rate <= NO_ENGAGEMENT_STAGE:
         return ENGAGEMENT_UNBOUNDED
-    return maxf(floorf(float(workers) * engage_rate * maxf(dip, 0.0)), ENGAGED_AT_LEAST)
+    return maxf(floorf(float(workers) * engage_rate), ENGAGED_AT_LEAST)
 
 ## **HOW MANY OF THE ENGAGED ANIMALS STAY TO BE FOUGHT** — the retreat, the stage between engagement
 ## and the fight, mirroring `fauna::animals_that_stay` at the quantile a FORECAST reads it at. The sim
@@ -2056,13 +2074,13 @@ static func animals_stayed(engaged: float, stay: float) -> float:
 ## cap that had already become engagement-aware. A source with no engagement stage answers
 ## `ENGAGEMENT_UNBOUNDED`, so the `min` collapses to the carry and forage and pens are unmoved.
 static func crew_to_clear(room: float, carry: float, reaching: int,
-        body_mass: float, engage_rate: float, dip: float,
+        body_mass: float, engage_rate: float,
         stay: float = STAY_FRACTION_NONE_BREAKS_OFF) -> int:
     if not can_price_crew(carry):
         return NO_CREW_ANSWER
     if room <= 0.0:
         return 0
-    var per_worker := minf(carry, engagement_carry(body_mass, engage_rate, dip, stay))
+    var per_worker := minf(carry, engagement_carry(body_mass, engage_rate, stay))
     return maxi(maxi(1, ceili(room / per_worker)), maxi(reaching, 0))
 
 ## ***HOLD IT AFTER*** — the crew that takes exactly what grows back at the floor, so the stock sits
@@ -2080,14 +2098,14 @@ static func crew_to_clear(room: float, carry: float, reaching: int,
 ## engagement half answers 0 for a pen and for a species with no engagement stage, so the `max`
 ## collapses back to the haul crew and neither web moves.
 static func crew_to_hold(samples: PackedFloat32Array, floor: float, carry: float,
-        body_mass: float, engage_rate: float, dip: float, stay: float) -> int:
+        body_mass: float, engage_rate: float, stay: float) -> int:
     if not can_price_crew(carry):
         return NO_CREW_ANSWER
     var growth := regrowth_at(samples, clamp_floor(floor))
     if growth <= 0.0:
         return 0
     if body_mass > 0.0:
-        return take_workers(growth, body_mass, carry, engage_rate, dip, stay)
+        return take_workers(growth, body_mass, carry, engage_rate, stay)
     return maxi(1, ceili(growth / carry))
 
 ## The same *hold it after* crew, resolved straight from a SOURCE — the form `forecast_inputs` carries
@@ -2099,15 +2117,13 @@ static func crew_to_hold(samples: PackedFloat32Array, floor: float, carry: float
 ## Field or a built Pen down, so "the crew that takes what grows back" is not a question its wire
 ## curve answers — its cap is `production / per_worker`, and flooring that on a wild-drawdown number
 ## would staff a source against a projection it does not follow.
-static func hold_crew(src: Dictionary, kind: String, prefix: String, floor: float,
-        improvement: String) -> int:
+static func hold_crew(src: Dictionary, kind: String, prefix: String, floor: float) -> int:
     if source_is_managed(src, kind, prefix):
         return 0
-    var dip := build_dip(src, prefix, improvement)
     var crew := crew_to_hold(regrowth_samples(src, prefix), floor,
-        per_worker_biomass(src, prefix) * dip,
+        per_worker_biomass(src, prefix),
         float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)),
-        float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)), dip,
+        float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)),
         float(src.get(prefix + FORECAST_STAY_FRACTION_KEY, STAY_FRACTION_NONE_BREAKS_OFF)))
     return maxi(crew, 0)
 
@@ -2125,17 +2141,15 @@ static func hold_crew(src: Dictionary, kind: String, prefix: String, floor: floa
 ##
 ## A RUNG-3 MANAGED SOURCE IS EXCLUDED, exactly as it is for the hold crew: the sim never draws a
 ## Field or a built Pen down, so a drawdown projection says nothing about how many hands it can use.
-static func reach_crew(src: Dictionary, kind: String, prefix: String, floor: float,
-        improvement: String) -> int:
+static func reach_crew(src: Dictionary, kind: String, prefix: String, floor: float) -> int:
     if source_is_managed(src, kind, prefix):
         return 0
-    var dip := build_dip(src, prefix, improvement)
     var crew := crew_that_reaches(regrowth_samples(src, prefix),
         float(src.get(prefix + FORECAST_BIOMASS_KEY, 0.0)),
         float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0)), floor,
-        per_worker_biomass(src, prefix) * dip,
+        per_worker_biomass(src, prefix),
         float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)),
-        float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)), dip,
+        float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)),
         float(src.get(prefix + FORECAST_STAY_FRACTION_KEY, STAY_FRACTION_NONE_BREAKS_OFF)))
     return maxi(crew, 0)
 
@@ -2201,7 +2215,7 @@ static func project_stock(samples: PackedFloat32Array, biomass: float, capacity:
 ## **THE CLOSED FORM AND THE PROBE WALKS MUST CARRY THE SAME `stay`**, or the seed lands below the
 ## answer and the probe spends its budget climbing back to it.
 static func crew_that_reaches(samples: PackedFloat32Array, biomass: float, capacity: float,
-        floor: float, carry: float, body_mass: float, engage_rate: float, dip: float,
+        floor: float, carry: float, body_mass: float, engage_rate: float,
         stay: float = STAY_FRACTION_NONE_BREAKS_OFF) -> int:
     if not can_price_crew(carry) or capacity <= 0.0:
         return NO_CREW_ANSWER
@@ -2210,11 +2224,11 @@ static func crew_that_reaches(samples: PackedFloat32Array, biomass: float, capac
     if start_fraction <= floor_fraction:
         return 0
     var peak := peak_regrowth_between(samples, floor_fraction, start_fraction)
-    var per_worker := minf(carry, engagement_carry(body_mass, engage_rate, dip, stay))
+    var per_worker := minf(carry, engagement_carry(body_mass, engage_rate, stay))
     var need := maxi(1, floori(maxf(peak, 0.0) / per_worker) + 1)
     for _step in range(CREW_PROBE_STEPS):
         var walk := project_stock(samples, biomass, capacity, floor, float(need) * carry,
-            engaged_quantum(need, body_mass, engage_rate, dip, stay))
+            engaged_quantum(need, body_mass, engage_rate, stay))
         if int(walk["reached_turn"]) != PROJECTION_REACHED_NONE:
             return need
         need += 1
@@ -2244,20 +2258,19 @@ static func crew_that_reaches(samples: PackedFloat32Array, biomass: float, capac
 ## remove. A source with no engagement stage resolves to `ENGAGEMENT_UNBOUNDED` and walks exactly the
 ## carry-bound projection it always did.
 static func take_draws_down(src: Dictionary, kind: String, prefix: String, floor: float,
-        workers: int, improvement: String) -> bool:
+        workers: int) -> bool:
     var capacity := float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0))
     var samples := regrowth_samples(src, prefix)
     if capacity <= 0.0 or not has_growth_curve(samples) \
             or source_is_managed(src, kind, prefix):
         return true
     var biomass := float(src.get(prefix + FORECAST_BIOMASS_KEY, 0.0))
-    var dip := build_dip(src, prefix, improvement)
-    var carry := per_worker_biomass(src, prefix) * dip
+    var carry := per_worker_biomass(src, prefix)
     var crew := maxi(workers, 0)
     var walk := project_stock(samples, biomass, capacity, clamp_floor(floor),
         float(crew) * carry,
         engaged_quantum(crew, float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)),
-            float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)), dip,
+            float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)),
             float(src.get(prefix + FORECAST_STAY_FRACTION_KEY,
                 STAY_FRACTION_NONE_BREAKS_OFF))))
     return float(walk["settled_fraction"]) \
@@ -2511,19 +2524,17 @@ const DENIAL_TAKE_LEFT_FORMAT := " · leaves %s on the range"
 # at a floor above zero; otherwise it names WHICH of the sim's two non-degeneracy ends the player is
 # standing on (`core_sim/src/intensification.rs` → "BOTH ENDS ARE NON-DEGENERATE").
 const TEACHING_RATE_FORMAT := "Teaching %s at ×%.2f"
-# The tail is the fact worth stating BESIDE the number, and which fact that is depends on whether a
-# build is in flight: since slice 3 the same multiplier paces the build meter and the lesson, so a
-# builder is told the two move together rather than being told again to raise the floor.
+# **THE TAIL IS ABOUT THE LESSON AND NOTHING ELSE NOW** (`docs/plan_standing_upkeep.md` §2.2). It
+# used to fork on whether a build was in flight, because one multiplier paced the build meter and the
+# lesson together — *a crew pulling hard on the source it is improving builds slowly*. **With separate
+# crews the build crew is not pulling anything**, so `learn_multiplier` scales the KNOWLEDGE accrual
+# alone: the floor buys a faster LESSON and nothing else, and a builder told otherwise would be handed
+# the wrong remedy for a slow build (the remedy is hands, on the builders' own stepper).
+#
+# `TEACHING_RATE_BUILD_TAIL` and `TEACHING_BUILD_ONLY_FORMAT` went with the term. A KNOWN lesson on a
+# building source now states no line at all, which is what it always meant: the top of the dial buys
+# that source nothing further.
 const TEACHING_RATE_FLOOR_TAIL := " — a higher floor teaches faster."
-const TEACHING_RATE_BUILD_TAIL := " and building at the same rate."
-# …and the same sentence with its TEACHING half dropped, for a lesson the faction has already
-# finished learning. One multiplier paces the lesson and the build meter alike, so when the lesson is
-# known the build is the whole of what the top of the dial still buys — and the line that went on
-# saying "Teaching cultivation at ×1.00" long after the player learned Cultivation was reported from
-# play. Same decimals and the same "a higher floor …" shape as the two tails above, because it is the
-# same fact about the same number.
-const TEACHING_BUILD_ONLY_FORMAT := "Building at ×%.2f — a higher floor builds faster."
-# `floor = 0` — the multiplier itself is zero: stripping teaches nothing.
 const TEACHING_NOTHING_STRIPPED := "Teaching nothing: nothing is left standing."
 # …and the other end: the escapement room is empty (or nobody is assigned), so the sim's work
 # predicate is false and no practice happens at any multiplier. Watching teaches nothing.
@@ -2618,23 +2629,15 @@ static func crew_is_taking(workers: int, biomass: float, capacity: float, floor:
 ## tracks). The `TEACHING_NOTHING_*` ends below are UNLEARNED-only for the same reason: they name why
 ## no lesson is being earned, which is not a question for someone who already has it.
 static func teaching_note(lesson: String, floor: float, taking: bool,
-        building: bool, lesson_known: bool) -> Dictionary:
+        lesson_known: bool) -> Dictionary:
     if lesson == "":
         return {}
+    # **A LESSON ALREADY LEARNED LEAVES NOTHING FOR THE DIAL TO BUY ON THIS SOURCE.** It used to keep
+    # a BUILDING half — one multiplier paced both — and that half retired with the floor's term on the
+    # build rate (`docs/plan_standing_upkeep.md` §2.2). Silence is the honest answer: the top of the
+    # dial teaches a craft the faction already has, and paces no build at all.
     if lesson_known:
-        # **THE BUILD HALF IS GATED ON THE SAME WORK PREDICATE THE LESSON IS**, and that is a fact
-        # about the sim, not a display nicety: build accrual and knowledge accrual are paced by the
-        # one `learn_multiplier` and gated by the one `crew_is_working_the_source`, so a crew taking
-        # nothing is building nothing. Without this the line reads `Building at ×1.00` beside a
-        # verdict saying no one is assigned — the multiplier is a function of the FLOOR alone, so it
-        # happily reads 1.00 at the food peak with an empty crew. (At a STRIPPED floor it would read
-        # 0.00 and merely look odd; the unworked case is the one that states a falsehood.)
-        if not building or not taking:
-            return {}
-        return {
-            "text": TEACHING_BUILD_ONLY_FORMAT % learn_multiplier(floor),
-            "teaching": true,
-        }
+        return {}
     # "The floor is at zero" is `floor_zone`'s own STRIP test, not a second spelling of it — the same
     # answer the 💀 glyph and the strip hint are keyed off, so the aside cannot disagree with them.
     var stripped := floor_zone(floor) == FLOOR_ZONE_STRIP
@@ -2645,7 +2648,7 @@ static func teaching_note(lesson: String, floor: float, taking: bool,
         }
     return {
         "text": (TEACHING_RATE_FORMAT % [lesson, learn_multiplier(floor)]) \
-            + (TEACHING_RATE_BUILD_TAIL if building else TEACHING_RATE_FLOOR_TAIL),
+            + TEACHING_RATE_FLOOR_TAIL,
         "teaching": true,
     }
 
@@ -2695,8 +2698,7 @@ static func harvest_verdict(walk: Dictionary, workers: int, biomass: float, capa
 ## (`rung_lesson_known`), and it is a PARAMETER because this layer is all-`static` and holds no
 ## snapshot: knowledge belongs to the faction, not to the source, so nothing here can look it up.
 static func floor_chart_model(src: Dictionary, kind: String, prefix: String, floor: float,
-        workers: int, improvement: String, crew_noun: String,
-        lesson_known: bool) -> Dictionary:
+        workers: int, crew_noun: String, lesson_known: bool) -> Dictionary:
     var capacity := float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0))
     var biomass := float(src.get(prefix + FORECAST_BIOMASS_KEY, 0.0))
     var samples := regrowth_samples(src, prefix)
@@ -2705,11 +2707,7 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
     var floor_value := clamp_floor(floor)
     if not known:
         return {"known": false, "floor": floor_value}
-    # The dip is bound on its own rather than folded straight into the carry, because the crew row
-    # STATES it (`build_dip` below) — one resolution, so the note and the numbers it explains cannot
-    # come from two different reads.
-    var dip := build_dip(src, prefix, improvement)
-    var carry := per_worker_biomass(src, prefix) * dip
+    var carry := per_worker_biomass(src, prefix)
     # Bound once and passed to EVERYTHING below — the walk, all three crew targets, the verdict and
     # out on the model. The flag draws from the model and the verdict is composed here, so a second
     # read of the same keys is how the sheet ends up naming one threshold in two units
@@ -2726,16 +2724,16 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
     # curve, the settle point and the verdict are composed here, from the herd's own wire terms.
     var stay := float(src.get(prefix + FORECAST_STAY_FRACTION_KEY, STAY_FRACTION_NONE_BREAKS_OFF))
     var walk := project_stock(samples, biomass, capacity, floor_value, float(workers) * carry,
-        engaged_quantum(workers, body_mass, engage_rate, dip, stay))
+        engaged_quantum(workers, body_mass, engage_rate, stay))
     # **ALL THREE CREW ANSWERS CARRY THE RETREAT.** They ask different questions about different stocks
     # — hold the regrowth, clear the room this turn, draw the stock down at all — and they may disagree
     # on that account, but they may not disagree about how many animals a hand lands. `crew_to_hold`
     # was the last one sized on the RAW reach, on the grounds that it is the sim's `hunt_take_workers`
     # and the stepper cap floors on it; the consequence was a cap BELOW the *clear it now* pill on the
     # same sheet (82 against 108), naming a crew the panel then refused to let the player assign.
-    var hold := crew_to_hold(samples, floor_value, carry, body_mass, engage_rate, dip, stay)
+    var hold := crew_to_hold(samples, floor_value, carry, body_mass, engage_rate, stay)
     var reaching := crew_that_reaches(samples, biomass, capacity, floor_value, carry, body_mass,
-        engage_rate, dip, stay)
+        engage_rate, stay)
     var quarry := herd_display_name(src) if kind == SOURCE_KIND_HERD else ""
     return {
         "known": true,
@@ -2770,13 +2768,8 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
         "quarry": quarry,
         "learn_multiplier": learn_multiplier(floor_value),
         "crew_to_clear": crew_to_clear(escapement_room(src, prefix, floor_value), carry, reaching,
-            body_mass, engage_rate, dip, stay),
+            body_mass, engage_rate, stay),
         "crew_to_hold": hold,
-        # **THE DIP THE TWO TARGETS ABOVE WERE DIVIDED BY** (§3.1), carried so the crew row can SAY
-        # it. Every impossible-looking number on a building sheet follows from it — six foragers move
-        # 12 biomass a turn at the rung's quarter carry, not 48 — and the only other cue is a ticked
-        # box further down the sheet, which states the build without stating its price.
-        "build_dip": dip,
         # `regrows` from the SAME samples the projection walks and `crew_to_hold` divides — so the
         # verdict's promise of an aftermath, the `hold it after` count and the readout's `after`
         # reading are three consequences of one number and cannot contradict each other. They did:
@@ -2785,11 +2778,11 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
             crew_noun, body_mass, quarry, regrowth_at(samples, floor_value) > 0.0),
         # THE ASIDE'S SECOND LINE, composed HERE rather than at the render site for the same reason
         # the verdict and the idle note are: it is a function of the floor, so it has to be recomposed
-        # by every live drag, and this model IS what a drag recomposes. `improvement` is the box the
-        # player has ticked, so a builder's sentence follows the checkbox too.
+        # by every live drag, and this model IS what a drag recomposes. **It takes no `improvement`**:
+        # the line is about the LESSON alone now (`docs/plan_standing_upkeep.md` §2.2), and a build in
+        # flight neither speeds it up nor is paced by it.
         "teaching_note": teaching_note(rung_lesson(kind, src, prefix), floor_value,
-            crew_is_taking(workers, biomass, capacity, floor_value),
-            improvement != IMPROVEMENT_NONE, lesson_known),
+            crew_is_taking(workers, biomass, capacity, floor_value), lesson_known),
     }
 
 ## The herd's per-worker rate, ceiling AT `floor` and one-animal quantum ON THE AXIS IT IS QUANTISED
@@ -2805,15 +2798,15 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
 ##
 ## **`improvement` IS REQUIRED, and it is required because the default was the bug.** This used to take
 ## `forecast_inputs`' `IMPROVEMENT_NONE` default, so every take composed from these rates was priced
-## UNDIPPED while the sim pays `workers × per_worker × build_dip` — a herd mid-Tame or mid-Corral quoted
+## UNDIPPED while the sim paid `workers × per_worker × build_dip` — a herd mid-Tame or mid-Corral quoted
 ## roughly 4× what it would be paid, and the sheet's own worker cap and chart (which DO carry the verb)
 ## disagreed with the take beside them. A caller that genuinely wants the undipped rates — the SUSTAIN
 ## reference the take is judged against — must now say `IMPROVEMENT_NONE` out loud rather than get it by
 ## omission. The dip rides `per_worker` ALONE (`forecast_inputs` → §3.1): `ceiling` and `per_animal` come
 ## back undipped either way, so a build changes what the crew CARRIES, never the room or the body it is
 ## quantised against.
-static func herd_axis_rates(herd: Dictionary, floor: float, improvement: String) -> Dictionary:
-    var forecast := forecast_inputs(herd, SOURCE_KIND_HERD, "", floor, improvement)
+static func herd_axis_rates(herd: Dictionary, floor: float) -> Dictionary:
+    var forecast := forecast_inputs(herd, SOURCE_KIND_HERD, "", floor)
     return {
         "per_worker": float(forecast["axis_per_worker"]),
         "ceiling": float(forecast["axis_ceiling"]),
@@ -2830,7 +2823,6 @@ static func herd_axis_rates(herd: Dictionary, floor: float, improvement: String)
         # bounds the whole-animal COUNT with `animals_engaged`, which is why the pair travels raw and
         # undipped: that function applies the dip, and it is the ONE mirror of the sim's arithmetic.
         "engage_rate": float(forecast["engage_rate"]),
-        "dip": float(forecast["dip"]),
         # **THE RETREAT TRAVELS WITH THE PAIR, AND ONLY THE TAKE MAY SPEND IT.** The quantised take
         # bounds its animal count on what STAYS, not on what is reached — the sim's `stayers` between
         # the engagement and the fight — while every crew size on this sheet is measured on the raw
@@ -2865,33 +2857,6 @@ static func forecast_is_known(src: Dictionary, kind: String, prefix: String) -> 
     return not material_payoff_rows(
         src.get(prefix + FORECAST_MATERIAL_PER_BIOMASS_KEY, [])).is_empty()
 
-## **THE ONE PLACE A BUILD'S DIP IS RESOLVED** — `<rung>BuildFraction` off the source, or
-## `NO_BUILD_DIP` when nothing is in flight. It is the client twin of `LadderConfig::build_dip`, and
-## every crew term in this file goes through it, so the compose sheet, the work board and the deal
-## line cannot apply the dip differently (or, as they did, three of them not at all).
-##
-## A `<= 0` fraction is the wire saying it does not describe this rung's build on this source — a
-## species that can never be penned, a rung-3 source with nothing left to build
-## (`NO_BUILD_REMAINING_FRACTION`). That is NOT "the build pays zero", so it answers the identity
-## rather than collapsing every take to nothing; `improvement_forecast` makes the same call the other
-## way, declining to quote a deal it cannot price.
-##
-## **A RUNG THIS SOURCE HAS ALREADY BUILT DIPS NOTHING** (`live_improvement`), and that is the sim's
-## own rule rather than a client kindness: `intensification::BuildDips::of` says *"[the identity]
-## equally when the rung it names has nothing left to build — a crew standing on a finished source is
-## harvesting, not preparing."* The WIRE cannot say it for rung 2 — `BuildDips::for_branch` publishes
-## `Some(fraction)` for **both** rungs whatever the source has climbed, and only a rung-3 *managed*
-## forecast carries `NOTHING_LEFT_TO_BUILD` — so the fraction alone is not enough and the source's own
-## done flags settle it here.
-static func build_dip(src: Dictionary, prefix: String, improvement: String) -> float:
-    if live_improvement(src, prefix, improvement) == IMPROVEMENT_NONE:
-        return NO_BUILD_DIP
-    if not FORECAST_BUILD_FRACTION_KEYS.has(improvement):
-        return NO_BUILD_DIP
-    var fraction := float(src.get(
-        prefix + String(FORECAST_BUILD_FRACTION_KEYS[improvement]), 0.0))
-    return fraction if fraction > 0.0 else NO_BUILD_DIP
-
 ## PRE-COMMIT FORECAST (the compose-time counterpart to `source_yield_readout`'s post-hoc note).
 ## The source's per-worker throughput + the take ceiling AT `floor`, per account — all per turn at its
 ## CURRENT biomass, at output_multiplier 1.0. `src` is a herd dict (bare keys) or a tile_info (the
@@ -2904,18 +2869,14 @@ static func build_dip(src: Dictionary, prefix: String, improvement: String) -> f
 ## evaluates `max(0, B − floor·K) × <account>PerBiomass` — see `escapement_room` for why that is a
 ## sound exception to "the sim exports the answer", and where the exception stops.
 ##
-## **THE BUILD DIP MULTIPLIES THE CREW, NOT THE CEILING** (§3.1). It rides `per_worker*` here — and
-## therefore `axis_per_worker`, hence `max_useful_workers`' divisor and `expected_yield`'s crew term —
-## while every ceiling stays undipped: the source offers what stands above the floor whether the crew
-## is harvesting it or building on it. `IMPROVEMENT_NONE` (the default) is the identity, so a pure
-## harvest reads exactly as before, and a crew big enough to saturate the source's stock pays no dip
-## at all (which is the client-visible consequence of the move: the remedy for a slow build is hands).
+## **NO BUILD TERM REACHES THESE RATES** (`docs/plan_standing_upkeep.md` §2.2). The during-build dip
+## multiplied `per_worker*` here until the allocations split; the build has its own crew now, so a
+## rung going up takes nothing off what the gatherers carry and this forecast answers the same
+## numbers whether or not one is in flight. That is why it takes no `improvement`.
 ##
 ## `kind` is the caller-stated SOURCE_KIND_*; `prefix` only spells the wire keys (the two are
 ## independent — a herd and a raw wire patch share the empty prefix).
-static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor: float,
-        improvement: String = IMPROVEMENT_NONE) -> Dictionary:
-    var dip := build_dip(src, prefix, improvement)
+static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor: float) -> Dictionary:
     # ---- THE CEILING, PER ACCOUNT ---------------------------------------------------------------
     # A rung-3 MANAGED source (a Field, a built Pen) is never drawn down: it pays its managed
     # production at every floor, so it reads the rung's own payoff fields instead of composing an
@@ -2982,11 +2943,6 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
     if kind == SOURCE_KIND_FORAGE:
         var carry := per_worker_biomass(src, prefix)
         per_worker_fodder = carry * float(src.get(prefix + FORECAST_FODDER_PER_BIOMASS_KEY, 0.0))
-    per_worker *= dip
-    per_worker_fodder *= dip
-    # **THE DIP RIDES THE MATERIAL CREW TERM TOO**, for the reason it rides the other two: a crew
-    # preparing a rung is not harvesting at full rate, whatever the account.
-    #
     # **BOTH WEBS PUBLISH IT**, and the plant one arrived second: a cash-crop patch's gather banks
     # fibre and tobacco, and until this reached the wire the forage compose sheet quoted only the food
     # and the feed. It reads through the SAME prefixed key as the herd's, which is what let one
@@ -2996,8 +2952,8 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
     # does, so it is honestly EMPTY in a dead season and must NOT be divided by anything here. A
     # client that re-applied the weight would double it; one that recovered a rate by dividing by it
     # would divide by zero on the very tile the emptiness is describing.
-    var per_worker_material := scaled_material_rows(
-        src.get(prefix + FORECAST_PER_WORKER_MATERIAL_KEY, []), dip)
+    var per_worker_material := material_payoff_rows(
+        src.get(prefix + FORECAST_PER_WORKER_MATERIAL_KEY, []))
     # WHOLE-ANIMAL HUNT: a take of whole animals (`food_per_animal` = one animal's yield in food; 0 or
     # absent for a forage patch, which harvests grain by the handful). The peak-turn carry need is
     # quantized to whole bodies (see `max_useful_workers`), so it fires ONLY for a hunt of a live,
@@ -3047,11 +3003,8 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         # vector, not off this turn's ceilings: a herd stripped to its floor pays nothing in ANY
         # account, and the question "which account would it pay?" still has an answer.
         "zero_account": zero_account_of(src, prefix),
-        # **THE CREW'S THROUGHPUT IN BIOMASS**, undipped — the term the two worker targets divide by.
-        # It is carried raw rather than dipped because a target answers a question about the CREW
-        # (`crew_to_clear` / `crew_to_hold` apply the dip themselves, from the same `dip` above).
+        # **THE CREW'S THROUGHPUT IN BIOMASS** — the term the two worker targets divide by.
         "per_worker_biomass": per_worker_biomass(src, prefix),
-        "dip": dip,
         # **THE ENGAGEMENT THROUGHPUT, RAW** (`docs/plan_hunt_through_combat.md` §2) — carried
         # undipped beside the `dip` above for the reason `per_worker_biomass` is: the two consumers
         # (`expected_yield_account`'s reach arm and `max_useful_workers`' engagement crew) apply the
@@ -3072,11 +3025,11 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         # the same number the chart's second crew target offers — the hands that take exactly what
         # grows back at this floor — and `max_useful_workers` takes the max of it and the one-turn
         # count. See there for why the cap, not the target, was the wrong number.
-        "hold_crew": hold_crew(src, kind, prefix, floor, improvement),
+        "hold_crew": hold_crew(src, kind, prefix, floor),
         # **AND THE CREW THAT REACHES THE FLOOR**, the cap's second projection-derived floor. See
         # `reach_crew`: the *clear it now* target is floored on it, and a target the stepper cannot
         # reach is the panel arguing with itself.
-        "reach_crew": reach_crew(src, kind, prefix, floor, improvement),
+        "reach_crew": reach_crew(src, kind, prefix, floor),
         # **A PRESENCE test, not a rate test** (#426). It used to be `per_worker >= ε`, which conflated
         # "the wire carried no forecast" with "the rate is genuinely zero" — and its own docstring said
         # it meant the former. A zero-conversion crop makes the latter real, so the two came apart and
@@ -3085,18 +3038,17 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
     }
 
 ## **THE WHOLE DEAL AN IMPROVEMENT OFFERS, composed in ONE place** (issue #442) — the take the crew
-## holds today, the dipped take it accepts while it builds, and the payoff the finished rung pays:
+## holds today, and the payoff the finished rung pays:
 ##
-##     +0.96  ->  +0.24 while building  ->  +1.20 /turn
-##      today          preparing               payoff
+##     +0.96  ->  +1.20 /turn
+##      today        payoff
 ##
-## **THE DIP RIDES THE CREW, SO `preparing` IS NOT A SCALED CEILING** (`docs/plan_harvest_floor.md`
-## §3.1). It is `min(workers x per_worker x fraction, ceiling)` — which differs from
-## `min(...) x fraction` wherever the crew is already ceiling-bound, and that is exactly the case the
-## move exists to fix: a crew big enough to saturate the source pays no dip at all, so the remedy for
-## a slow build is more hands rather than a deeper floor. The three terms are therefore priced by the
-## CALLER through `expected_yield_account`, which is why `base_forecast` and `build_forecast` are both
-## carried whole rather than a pair of pre-multiplied numbers.
+## **THE MIDDLE TERM IS RETIRED WITH THE DIP** (`docs/plan_standing_upkeep.md` §2.2). It was the
+## *preparing* take — what the crew accepted while it built — and it existed because one crew did
+## both jobs. A build has its own crew now, so the gatherers' take is the same number before, during
+## and after the build, and a second reading of it beside the first would state one fact twice.
+## `base_forecast` is therefore the only forecast carried, priced by the CALLER through
+## `expected_yield_account`.
 ##
 ## Returns `{}` when `improvement` is `IMPROVEMENT_NONE` or the source carries no forecast, so a caller
 ## renders no deal rather than a deal made of zeros. `floor` is the crew's escapement floor; the two
@@ -3112,12 +3064,11 @@ static func improvement_forecast(src: Dictionary, kind: String, prefix: String, 
     var base_forecast := forecast_inputs(src, kind, prefix, floor)
     if not bool(base_forecast["known"]):
         return {}
-    # The dip factor. 0/absent means the wire does not describe this rung's build on this source
-    # (a species that can never be penned, a rung-3 source with nothing left to build) — the deal is
-    # then unquotable, so say nothing rather than render a `x 0` dip reading "building pays nothing".
-    var fraction := float(src.get(
-        prefix + String(FORECAST_BUILD_FRACTION_KEYS[improvement]), 0.0))
-    if fraction <= 0.0:
+    # **A RUNG THE WIRE PRICES NO JOB FOR ON THIS SOURCE IS UNQUOTABLE** — a species that can never
+    # be penned, a rung this source has already climbed past. The build's own cost is what says so
+    # now (it is published whether or not a build is in flight), where the retired dip fraction used
+    # to; a deal composed anyway would advertise a payoff for a rung that cannot be built here.
+    if build_work_cost(src, prefix, improvement) <= BUILD_WORK_COST_NONE:
         return {}
     var payoff := float(src.get(prefix + String(FORECAST_PAYOFF_KEYS[improvement]), 0.0))
     # The payoff's non-food component — a VECTOR like every other yield in this model. Fodder is
@@ -3140,14 +3091,10 @@ static func improvement_forecast(src: Dictionary, kind: String, prefix: String, 
     return {
         "improvement": improvement,
         "floor": clamp_floor(floor),
-        "build_fraction": fraction,
-        # The crew's forecast WITHOUT the build (what it takes today) and WITH it (what it takes while
-        # the rung goes up) — two whole forecasts rather than two numbers, so each term is priced per
-        # account through the same `expected_yield_account` the committed row will be.
+        # The crew's forecast — ONE, priced per account through the same `expected_yield_account` the
+        # committed row will be.
         "base_forecast": base_forecast,
-        "build_forecast": forecast_inputs(src, kind, prefix, floor, improvement),
-        # The un-crewed reference the picker faces quote: what the SOURCE offers at this floor. The
-        # ceiling is dip-free by construction now, so there is exactly one of these, not one per term.
+        # The un-crewed reference the picker faces quote: what the SOURCE offers at this floor.
         "ceiling": float(base_forecast["ceiling"]),
         "ceiling_fodder": float(base_forecast["ceiling_fodder"]),
         "payoff": payoff,
@@ -3170,7 +3117,7 @@ static func improvement_forecast(src: Dictionary, kind: String, prefix: String, 
 ## `🌾 Tended Patch` while its crew targets and its take were still quoted at the Cultivate build's
 ## 25% carry: the panel said the build was over and priced it as running. Reported from play, where
 ## the sheet asked for 6 foragers to hold a patch the sim's own standing rate showed 2 already
-## holding. Every crew term goes through `build_dip`, so stating it once here is what keeps the two
+## holding. Stating it once here is what keeps the two
 ## halves of the panel dividing by ONE throughput.
 static func live_improvement(src: Dictionary, prefix: String, improvement: String) -> String:
     return IMPROVEMENT_NONE if improvement_is_done(src, prefix, improvement) else improvement
@@ -3235,6 +3182,44 @@ static func build_work_from_gear(src: Dictionary, prefix: String) -> float:
     return maxf(float(src.get(prefix + FORECAST_BUILD_GEAR_WORK_KEY, BUILD_WORK_NONE)),
         BUILD_WORK_NONE)
 
+## **WHAT THIS SOURCE COSTS TO HOLD, READ IN ONE PLACE** — the four published upkeep numbers plus the
+## neglect countdown beside them, as one dict, so the compose sheet's maintain row, the tile card, the
+## herd drawer and the turn orb cannot read a different subset and reach different conclusions.
+##
+## **NOTHING HERE IS DERIVED.** `shortfall` is the wire's own field, never `demand − supplied`: it IS
+## the decay, and a client that subtracted would be a second authority over the number the readout
+## exists to make legible. `crew` is the maintain activity's `workers_needed`, which is `0` while the
+## rung is still going up because those hands are the BUILD's.
+##
+## `at_risk` is the pair's gate — `has_neglect_grace` — and it means *there is something here that can
+## be lost*. It has to be read before `grace`, exactly as `has_owner` is before `owner`: `0` grace on
+## an at-risk source means **the penalty is biting this turn**, and `0` on one that is not at risk
+## means nothing is at stake at all. The two are the same number and opposite news.
+##
+## `prefix` spells the keys, so one call serves a `patch_`-prefixed tile_info and a bare herd dict.
+static func upkeep_state(src: Dictionary, prefix: String) -> Dictionary:
+    return {
+        "demand": maxf(float(src.get(prefix + FORECAST_UPKEEP_DEMAND_KEY, NO_UPKEEP_DEMAND)),
+            NO_UPKEEP_DEMAND),
+        "supplied": maxf(float(src.get(prefix + FORECAST_UPKEEP_SUPPLIED_KEY, NO_UPKEEP_DEMAND)),
+            NO_UPKEEP_DEMAND),
+        "shortfall": maxf(float(src.get(prefix + FORECAST_UPKEEP_SHORTFALL_KEY, NO_UPKEEP_DEMAND)),
+            NO_UPKEEP_DEMAND),
+        "crew": maxi(int(src.get(prefix + FORECAST_UPKEEP_CREW_KEY, NO_UPKEEP_CREW)),
+            NO_UPKEEP_CREW),
+        "at_risk": bool(src.get(prefix + FORECAST_NEGLECT_GRACE_FLAG_KEY, false)),
+        "grace": maxi(int(src.get(prefix + FORECAST_NEGLECT_GRACE_KEY, 0)), 0),
+    }
+
+## Does this source cost anything to hold? The one test every upkeep readout gates on, so a rung that
+## declares no upkeep renders no row rather than a `0.00 work` one.
+static func has_upkeep(state: Dictionary) -> bool:
+    return float(state.get("demand", NO_UPKEEP_DEMAND)) >= UPKEEP_WORK_MIN
+
+## Is the keeping being underpaid THIS turn? The gate on every warning the shortfall drives.
+static func upkeep_is_short(state: Dictionary) -> bool:
+    return float(state.get("shortfall", NO_UPKEEP_DEMAND)) >= UPKEEP_WORK_MIN
+
 ## **HOW MANY TURNS THIS RUNG WOULD TAKE AT A CREW AND A FLOOR THE PLAYER IS PROPOSING** — the ONE
 ## home of the client's turn estimate, and the reason the compose sheet's number moves when the
 ## stepper does.
@@ -3249,13 +3234,20 @@ static func build_work_from_gear(src: Dictionary, prefix: String) -> float:
 ## exactly, which is the safety argument for having both: a sheet that could disagree with the card
 ## would lie about the very decision the card then reports.
 ##
-##     gear(w)  = min(w, kit_gear's saturating crew) × kit_gear's per-worker worth
-##     turns(w) = ceil((cost − done − gear(w)) / (w × PER_WORKER_TURN × learn_multiplier(floor)))
+##     gear(b)  = min(b, kit_gear's saturating crew) × kit_gear's per-worker worth
+##     turns(b) = ceil((cost − done − gear(b)) / (b × PER_WORKER_TURN))
 ##
-## **The floor term is `learn_multiplier`, not a second spelling of `floor / FLOOR_FOOD_PEAK`.** The
-## sim's build accrual is `crew output × learn_multiplier(floor)`, that helper is the client's one
-## copy of it, and a peak written out again here is how the sheet and the chart's teaching rail start
-## disagreeing about what a floor buys.
+## **`b` IS THE BUILD'S OWN CREW, and both terms are quoted at it** (`docs/plan_standing_upkeep.md`
+## §2.2). A source carries three allocations now; the builders are the ones filling this meter, so
+## the rate is theirs and the gear is resolved over them — a tool's contribution is a rate per worker,
+## so it is summed over the *builders*, and the coverage behind it is resolved over the builders too.
+##
+## **THE FLOOR IS NO LONGER A FACTOR ON THE RATE.** `learn_multiplier(floor)` scaled the accrual while
+## one crew both gathered and built — *a crew pulling hard on the source it is improving builds
+## slowly*. **With separate crews the build crew is not pulling anything**, so the sim's
+## `build_accrual` takes no floor at all and neither does this. `learn_multiplier` still paces the
+## KNOWLEDGE accrual, which is where *how much you leave standing shapes what you learn* still holds —
+## and that is why `floor` stays a parameter here: the work PREDICATE below reads it.
 ##
 ## `kit_gear` is the CREW'S kit, as `BUILD_GEAR_PER_WORKER` / `BUILD_GEAR_SATURATING_CREW` off the
 ## band's own resolved row (`KitRoster.build_gear`) — the caller passes it because which kit the crew
@@ -3297,7 +3289,7 @@ static func build_turns_at(src: Dictionary, prefix: String, improvement: String,
         return BUILD_TURNS_NO_ESTIMATE
     var per_worker_turn := maxf(float(src.get(
         prefix + FORECAST_BUILD_PER_WORKER_TURN_KEY, BUILD_WORK_NONE)), BUILD_WORK_NONE)
-    var work_per_turn := float(workers) * per_worker_turn * learn_multiplier(floor)
+    var work_per_turn := float(workers) * per_worker_turn
     if work_per_turn <= BUILD_WORK_NONE:
         return BUILD_TURNS_NO_ESTIMATE
     # **THE GEAR TERM SATURATES IN THE CREW, and the `min` is on the HEAD COUNT.** Coverage arms a
@@ -3461,7 +3453,6 @@ static func max_useful_workers(forecast: Dictionary) -> int:
         # herd so the cap and the two pills cannot resolve one kit's dispersion two ways.
         return maxi(take_workers(ceiling, per_animal, per_worker,
             float(forecast.get("engage_rate", NO_ENGAGEMENT_STAGE)),
-            float(forecast.get("dip", NO_BUILD_DIP)),
             float(forecast.get("stay", STAY_FRACTION_NONE_BREAKS_OFF))), hold)
     return maxi(int(ceilf(ceiling / per_worker)), hold)
 
@@ -3485,23 +3476,6 @@ static func herd_crew_floor(herd: Dictionary, building: bool) -> int:
     if building:
         return int(herd.get("herders_needed_if_managed", 0))
     return int(herd.get("herders_needed", 0))
-
-## **The PLANT twin of `herd_crew_floor`** (issue #442) — the crew the rung being built on this patch
-## demands (`<rung>CrewNeeded`), as a FLOOR on the compose stepper's worker cap. Same shape, same
-## contract, same one definition: a RAISE, never a new cap, and `0` for a patch that is only being
-## gathered.
-##
-## It exists because the dip and the cap fight each other. While a build runs the ceiling the cap
-## divides is `stance × buildFraction`, so `ceil(ceiling / perWorker)` collapses — a 25-turn
-## improvement asked for FEWER hands than gathering the same ground, and the sim's own
-## `source_crew_needed` (`max(build crew, take crew)`) then reported the row overstaffed at the count
-## the sheet had just capped it to. The rung's crew is the standing half of exactly that `max`.
-##
-## `prefix` spells the keys, so this reads a `patch_`-prefixed tile_info and a raw wire patch alike.
-static func plant_crew_floor(patch: Dictionary, prefix: String, improvement: String) -> int:
-    if not FORECAST_CREW_KEYS.has(improvement):
-        return 0
-    return int(patch.get(prefix + String(FORECAST_CREW_KEYS[improvement]), 0))
 
 ## Per-SOURCE `+`-gate for a CONFIRMED Current-actions Forage/Hunt row — the worked-row twin of the
 ## compose stepper's `max_useful_workers` cap (`DrawerComposeController._forecast_worker_cap`), and
@@ -3559,7 +3533,6 @@ static func expected_yield(forecast: Dictionary, workers: int, band: Dictionary)
 static func engagement_reach(forecast: Dictionary, workers: int, per_animal_key: String) -> float:
     return engaged_quantum(workers, float(forecast.get(per_animal_key, 0.0)),
         float(forecast.get("engage_rate", NO_ENGAGEMENT_STAGE)),
-        float(forecast.get("dip", NO_BUILD_DIP)),
         float(forecast.get("stay", STAY_FRACTION_NONE_BREAKS_OFF)))
 
 ## The same arm with its quantum handed in rather than looked up — the form the CHART's projection
@@ -3576,10 +3549,10 @@ static func engagement_reach(forecast: Dictionary, workers: int, per_animal_key:
 ## wire's "nothing breaks off", which is what leaves a pen, the plant web and every source that
 ## publishes no retreat byte-identical to before the stage existed.
 static func engaged_quantum(workers: int, per_animal: float, engage_rate: float,
-        dip: float, stay: float = STAY_FRACTION_NONE_BREAKS_OFF) -> float:
+        stay: float = STAY_FRACTION_NONE_BREAKS_OFF) -> float:
     if per_animal <= 0.0:
         return ENGAGEMENT_UNBOUNDED
-    return animals_stayed(animals_engaged(workers, engage_rate, dip), stay) * per_animal
+    return animals_stayed(animals_engaged(workers, engage_rate), stay) * per_animal
 
 ## The same take on ANY ONE account (#426). `min(workers × per_worker, ceiling)` is applied PER
 ## COMPONENT, never to a total: the sim caps each account against its own ceiling, and a patch whose
@@ -4645,8 +4618,6 @@ static func expedition_party_cap(band: Dictionary) -> int:
 ## the plateau scan already watches the delivered payload run into. Engagement is the arm the scan
 ## cannot see, so it is the arm this adds.
 ##
-## **A DETACHED PARTY BUILDS NOTHING**, so the dip is `IMPROVEMENT_NONE`'s — resolved through
-## `build_dip` rather than written as a bare 1.0, so "not building" stays one value in one place.
 ## `0` for a herd with no engagement stage (a pen; a species the roster cannot resolve) and for one
 ## with no body to count, which is what leaves every raid predating this field byte-identical.
 static func expedition_engage_crew(herd: Dictionary, floor: float) -> int:
@@ -4656,7 +4627,6 @@ static func expedition_engage_crew(herd: Dictionary, floor: float) -> int:
     return engage_workers(escapement_room(herd, prefix, floor),
         float(herd.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)),
         float(herd.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)),
-        build_dip(herd, prefix, IMPROVEMENT_NONE),
         # The party's OWN retreat: `advance_expeditions` runs `HuntParty::stayers` exactly as a
         # resident hunt does, and the herd handed in here is already kit-priced, so this is the
         # effective stay fraction under the raid's chosen kit rather than the quarry's bare wariness.

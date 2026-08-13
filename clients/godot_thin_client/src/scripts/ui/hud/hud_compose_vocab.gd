@@ -129,27 +129,33 @@ const CREW_TARGET_HOLD_TOOLTIP := "Enough hands to take exactly what grows back 
 const CREW_ROW_LABEL_SEPARATION := 4
 const CREW_ROW_SEPARATION := 6
 
-# **THE BUILD DIP, STATED WHERE IT IS BEING DIVIDED BY** (`docs/plan_harvest_floor.md` §3.1). A crew
-# preparing a rung carries the rung's `yield_fraction_while_building` — a quarter, on both plant rungs
-# — so six foragers move 12 biomass a turn where the patch's own throughput says 48. Every
-# "impossible" number on a building sheet follows from that one factor: the two targets, the take, the
-# settle point, the verdict's remedy crew. Until this line the only cue was a ticked box further down
-# the sheet, which states that a build is running and never states its price, and the sheet read as
-# though six foragers simply could not out-take one patch.
-#
-# It rides the CREW ROW because the two targets beside it are the numbers it explains, in the row
-# label's own faint register — the dip is context for the decision, never the decision.
-#
-# **IT DELIBERATELY DOES NOT SAY "while building"**, and the reason has changed twice. It was first
-# worded away from that phrase because the improvement DEAL LINE's middle term carried it, and two
-# labels on one sheet carrying one phrase is how a search for either silently finds the other
-# (measured at seven of the deal's assertions). The deal line was then deleted and the phrase became
-# the harness's needle for its ABSENCE — and the deal has since come BACK, into the readout, where
-# `SourceForecast.YIELD_ROW_HEADER_WHILE_BUILDING` prints it as the yields row's caption. So the
-# needle's premise is dead and the collision is live again: the wording stays because it says what
-# this note is about — the CREW's carry, not the caption over the take.
-const CREW_BUILD_DIP_NOTE_FORMAT := "— building this rung, each carries %d%% as much"
-# The row-label and its note are one phrase, so they sit closer than the stepper and the pills do.
+# **THE MAINTAIN CREW ROW** (`docs/plan_standing_upkeep.md` §2.2) — the third of a source's three
+# worker allocations, beside the take crew's stepper above it and the build crew's on the improvement
+# control below. It is a stepper and nothing else: *"stop maintaining this"* is a crew of ZERO, and a
+# toggle beside the number would be a second way to say what the number already says.
+const CREW_ROW_MAINTAIN_LABEL := "KEEPERS"
+# The BUILD crew's row label — the second allocation, stated on the improvement control that names
+# the verb these hands are filling.
+const CREW_ROW_BUILD_LABEL := "BUILDERS"
+# What the row STATES beside the stepper: the hands the rung wants against the hands this sheet is
+# about to send — *"wants 3 · sending 1"*. The DEMAND is the wire's (`upkeepWorkersNeeded`); the
+# second number is the stepper's own, and it is deliberately worded as an intention rather than as a
+# holding, because the wire publishes no standing maintain crew for the sheet to open on (see
+# `labor-ui.md` → "The three crews the wire only half answers"). *"you have"* would claim a fact the
+# client cannot read.
+const CREW_MAINTAIN_WANTS_FORMAT := "— wants %d · sending %d"
+# The demand a rung makes of a source whose meter is still going UP is `0`, because those hands are
+# the BUILD's. That is the honest reading and it renders as a real row rather than as nothing.
+const CREW_MAINTAIN_MID_BUILD_NOTE := "— the build's crew holds this until it stands"
+# **THE CLIFF, IN WORDS.** A completed meter sits EXACTLY at its own cost, so the first bleeding turn
+# drops it below and the rung is LOST — three unkept turns costs a tended patch, two costs a Field.
+# The countdown is the wire's (`neglectGraceRemaining`), never one composed here.
+const CREW_MAINTAIN_LOSS_SOON_FORMAT := "⚠ short %d work — this rung is lost in %d turn%s"
+const CREW_MAINTAIN_LOSS_NOW_FORMAT := "⚠ short %d work — this rung is being lost NOW"
+# The reassuring half, and it is worth a line: a player who has just staffed the keeping needs to see
+# that it took.
+const CREW_MAINTAIN_HELD_TEXT := "✓ held — nothing is bleeding away"
+# The maintain row's own label separation, matching the take crew row's.
 const CREW_ROW_NOTE_SEPARATION := 5
 
 # A crew TARGET is a PILL, and the shape is the point: the stepper beside it is a boxed control you
@@ -247,7 +253,10 @@ const POLICY_TOOLTIP_NAME_FORMAT := "%s — %s"
 # feed message, so the client does not pre-gate on those (max radius is not on the wire).
 const PEN_EXTEND_LABEL := "Extend pen"
 
-const PEN_EXTEND_TOOLTIP := "Fence another ring around the pen: the keeper works it off over ~25 turns at a reduced take, then the pen grazes more land and feeds itself further. Rejected at the pen-radius maximum."
+const PEN_EXTEND_TOOLTIP := "Fence another ring around the pen, worked off by the crew you name: a ring rides the same pen rung as the pen it widens, so it costs the same work and claims hands from the same band as the gathering and the keeping. Then the pen grazes more land and feeds itself further. Rejected at the pen-radius maximum, and refused outright if the band has fewer idle hands than you asked for."
+# The ring's crew row-label. Its own word rather than KEEPERS: these hands are FENCING, not holding
+# the herd, and the two allocations sit on the same card.
+const PEN_EXTEND_CREW_LABEL := "Fencers"
 
 const PEN_FENCING_LABEL := "Fencing %d%%"
 
@@ -451,8 +460,8 @@ const IMPROVEMENT_DONE_UPKEEP_FORMAT := "%s %s · %s fodder/turn upkeep"
 #     copy may say so plainly.
 # Neither line promises progress BACK, because neither web gives any.
 const IMPROVEMENT_ABANDON_HINTS := {
-    "forage": "Unchecking stops the work — the crew keeps foraging at the stance you chose and stops paying the build dip. Nothing is refunded, and an unworked patch's progress slowly bleeds away.",
-    "hunt": "Unchecking stops the work — the crew keeps hunting at the stance you chose and stops paying the build dip. Nothing is refunded, but the progress already made is kept.",
+    "forage": "Unchecking stops the work and frees the build's crew — the gatherers are untouched, since they were never paying for it. Nothing is refunded, and an unkept patch's progress bleeds away.",
+    "hunt": "Unchecking stops the work and frees the build's crew — the hunters are untouched, since they were never paying for it. Nothing is refunded, but the progress already made is kept.",
 }
 
 # Joins the rung's own hint to the abandon consequence in the running control's tooltip. The two are
@@ -466,7 +475,7 @@ const IMPROVEMENT_TOOLTIP_SEPARATOR := "\n\n"
 # ground it is clearing builds slowly, in proportion to its escapement floor — so the line rendered a
 # WARN "Paused" beneath a meter the same face showed advancing, and its remedy (ease workers off) was
 # backwards: the FLOOR paces the build, and easing off does not raise it. What the sheet says instead
-# is what it already said better one register up — `SourceForecast.TEACHING_BUILD_ONLY_FORMAT`'s live
+# is what it already said better one register up — the aside's own teaching line, whose live
 # "Building at ×1.60 — a higher floor builds faster" — and a build that genuinely accrues nothing
 # (nothing standing above the floor) states that by dropping its turn estimate entirely.
 

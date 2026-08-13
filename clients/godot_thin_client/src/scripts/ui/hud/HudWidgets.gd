@@ -725,10 +725,18 @@ const READOUT_LOCKED_ACCOUNT_META := "readout_locked_account"
 ## and passes without ever reaching the stepper.
 const CREW_ROW_LABEL_META := "crew_row_label"
 
-## The crew row's BUILD-DIP note, as `Control` meta — its own, because it must be assertable by
-## ABSENCE as well as by presence ("no build in flight, so no dip is claimed"), and the row label
-## beside it renders either way.
-const CREW_ROW_DIP_META := "crew_row_dip"
+## The KEEPING row's label, as `Control` meta — its own, because the row must be assertable by
+## ABSENCE as well as by presence: a wild source with nothing built on it owes nothing and states no
+## keeping row at all.
+const CREW_ROW_MAINTAIN_META := "crew_row_maintain"
+
+## The keeping row's VERDICT line — held, or bleeding and how long the rung has. Its own meta rather
+## than a scan of the row, because the wants/have note sits beside it and carries numbers too.
+const MAINTAIN_VERDICT_META := "maintain_verdict"
+
+## The BUILD crew's stepper row, as `Control` meta — the second of the three allocations, mounted on
+## the improvement control that states the verb it staffs.
+const BUILD_CREW_ROW_META := "build_crew_row"
 
 ## The VERDICT line, as `Control` meta — value is the severity (`SourceForecast.VERDICT_*`), which is
 ## the assertable half: the sentence carries turn counts and percentages that move with the fixture.
@@ -1246,23 +1254,6 @@ static func build_crew_targets(model: Dictionary, workers: int, on_pick: Callabl
             HudStyle.button_font_color("primary" if selected else "ghost", btn.disabled)))
     return row
 
-## **THE CREW ROW'S BUILD-DIP NOTE** — *"— while building, each carries 25% as much"*, the one line
-## that makes the two targets beside it arithmetic rather than magic. `dip` is
-## `SourceForecast.floor_chart_model`'s own `build_dip`, so the note and the targets are divided by
-## one number by construction; `null` (no note at all) at the identity, because a crew that is only
-## gathering carries a full load and saying so would be noise on every non-building sheet.
-##
-## It wears the row label's exact treatment — `INK_FAINT` at the section-label size — but is NOT
-## uppercased: it is a sentence about the row, not a second row-label.
-static func build_crew_dip_note(dip: float) -> Label:
-    if dip >= SourceForecast.NO_BUILD_DIP:
-        return null
-    var note := Label.new()
-    note.text = HudComposeVocab.CREW_BUILD_DIP_NOTE_FORMAT % HudFormat.progress_percent(dip)
-    note.set_meta(CREW_ROW_DIP_META, true)
-    note.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-    note.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
-    return note
 
 ## ONE crew-target pill: an empty-`text` Button under a two-Label face, the horizontal twin of
 ## `_policy_rung_cell` and for the same structural reason — two font sizes cannot live in one
@@ -1371,26 +1362,20 @@ static func build_readout_box(parent: Container) -> VBoxContainer:
 ## `header` OVERRIDES that caption for a caller whose readings are not a per-turn rate at all — the
 ## raid's whole-trip payload, which has no `/turn` and no holding state to arrow toward.
 ##
-## `while_building` is the OTHER key a per-turn caption can carry: these readings are the DIPPED
-## take. It is a FLAG rather than a second header string, and that is the whole point — the caption is
-## resolved in ONE place (`SourceForecast.yield_row_header`) over that flag and the `has_after` this
-## function is the only place that knows, so the caption and the marks under it cannot be composed
-## separately. A caller that composed its own caption did exactly that once: the `while building`
-## string replaced `now → after` and left the row's arrow unkeyed.
-##
-## **A BUILDING ROW CARRIES NO ARROW TO KEY.** The floor walk is suppressed at the yield model while a
-## build is composed, so `has_after` is false whenever `while_building` is true and the resolver has
-## three states rather than four. `has_after` is still read here rather than assumed, because it is
-## the ROWS that decide it and a widget that inferred it from the flag would be a second opinion.
+## **THE `while_building` KEY IS RETIRED WITH THE DIP** (`docs/plan_standing_upkeep.md` §2.2). It said
+## *these readings are the DIPPED take*; a build has its own crew now, so the readings are the plain
+## take whether or not a rung is going up. `has_after` is the only fact left that can key the caption,
+## and it is read from the ROWS here — the one place that knows — so the caption and the marks under
+## it cannot be composed separately.
 static func build_yields_row(rows: Array, number_tint: Color, note: String, note_tint: Color,
-        waste: String, header: String = "", while_building: bool = false) -> VBoxContainer:
+        waste: String, header: String = "") -> VBoxContainer:
     var block := VBoxContainer.new()
     block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     block.add_theme_constant_override("separation", HudComposeVocab.READOUT_YIELD_V_SEPARATION)
     var has_after := rows.any(func(row: Dictionary) -> bool:
         return row.has(SourceForecast.YIELD_ROW_AFTER))
     var caption := header if header != "" \
-        else SourceForecast.yield_row_header(while_building, has_after)
+        else SourceForecast.yield_row_header(has_after)
     block.add_child(alloc_section_label(caption))
     var flow := HFlowContainer.new()
     flow.set_meta(YIELDS_ROW_META, true)

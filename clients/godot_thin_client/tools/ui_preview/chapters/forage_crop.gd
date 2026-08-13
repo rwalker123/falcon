@@ -498,9 +498,9 @@ func run(harness) -> void:
 	# caption composing the arrow's key unconditionally fails here whichever of the two it read.
 	# `improvement_running_plant` is where the SUPPRESSION alone is pinned, against a crew that does
 	# reach its floor.
-	h._assert_hud("…under a caption keying the dip alone, this crew reaching no holding rate",
+	h._assert_hud("…under the plain per-turn caption, this crew reaching no holding rate",
 		Readout.yields_header(h._hud._drawercompose._compose_sheet)
-			== SourceForecast.YIELD_ROW_HEADER_WHILE_BUILDING.to_upper())
+			== SourceForecast.YIELD_ROW_HEADER.to_upper())
 	# **A CREW OF ZERO IS BUILDING NOTHING, AND THE ASIDE MAY NOT SAY OTHERWISE.** `learn_multiplier`
 	# is a function of the FLOOR alone, so at the food peak it reads ×1.00 no matter who is assigned —
 	# and this frame has a composed Cultivate with NOBODY on it. The build half is gated on the same

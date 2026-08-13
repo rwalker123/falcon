@@ -1702,16 +1702,13 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # rung MARK beside it answers a different question (what the source IS) and both stay.
             label = String(HudWorkVocab.WORK_ROW_PLANT_FORMATS.get(
                 HudFormat.plant_crew_label(patch, HudComposeVocab.BARE_FORECAST_PREFIX), "")) % [x, y]
-            # THE ROW'S OWN IMPROVEMENT DIPS ITS CEILING, and its rung's build crew floors the count —
-            # the plant twins of the herd branch below, and the same reason: while a build runs the sim
-            # caps the take at `stance ceiling × buildFraction` and asks for `max(build crew, take
-            # crew)` hands. A stance-only forecast here let the board's `+` add workers the sim then
-            # reported idle on the same row.
+            # **THE VERB NO LONGER MOVES THIS ROW'S CAP** (`docs/plan_standing_upkeep.md` §2.2). It
+            # used to twice over — the take was dipped while a build ran, and the rung's own
+            # `crew_needed` floored the count back up — because one crew did both jobs. The build has
+            # its own crew now, so the take is the plain one and the count is the plain quotient.
             cap = SourceForecast.source_worker_cap_state(SourceForecast.forecast_inputs(
                 patch, SourceForecast.SOURCE_KIND_FORAGE,
-                HudComposeVocab.BARE_FORECAST_PREFIX, floor, improvement), workers, idle,
-                SourceForecast.plant_crew_floor(
-                    patch, HudComposeVocab.BARE_FORECAST_PREFIX, improvement))
+                HudComposeVocab.BARE_FORECAST_PREFIX, floor), workers, idle)
         else:
             var herd_label := _herd_label_for_id(herd_id)
             icon = FoodIcons.for_herd(herd_label)
@@ -1720,12 +1717,11 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # Herds MIGRATE, so the cap reads the herd's LIVE dict from `_band_labor.world_herds()` rather than the
             # assignment's launch-time target.
             live_herd = _band_labor.find_world_herd(herd_id)
-            # The IMPROVEMENT dips the ceiling here too (see the forage branch): a crew building a pen
-            # is paid `stance × corralBuildFraction`, so a stance-only forecast caps this row above
-            # what the sim will pay it.
+            # The verb is not a term here either (see the forage branch): a crew building a pen is
+            # its own allocation, so the hunters' take is the plain one.
             var hunt_forecast := SourceForecast.forecast_inputs(
                 live_herd, SourceForecast.SOURCE_KIND_HERD,
-                HudComposeVocab.BARE_FORECAST_PREFIX, floor, improvement)
+                HudComposeVocab.BARE_FORECAST_PREFIX, floor)
             # A MANAGED herd's crew requirement floors this row's ceiling, exactly as it floors the
             # compose stepper's — otherwise the row renders the under-herded ⚠ below and disables the
             # `+` that would clear it. `SourceForecast.herd_crew_floor` is the one definition of the
@@ -2692,8 +2688,7 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
         KitRoster.JOB_HUNT, default_kit, kit_id, band)
     var chart_model := SourceForecast.floor_chart_model(priced_herd,
         SourceForecast.SOURCE_KIND_HERD,
-        HudComposeVocab.BARE_FORECAST_PREFIX, _send_hunt_floor, _send_expedition_count,
-        SourceForecast.IMPROVEMENT_NONE, HudComposeVocab.COMPOSE_FIELD_PARTY.to_lower(),
+        HudComposeVocab.BARE_FORECAST_PREFIX, _send_hunt_floor, _send_expedition_count, HudComposeVocab.COMPOSE_FIELD_PARTY.to_lower(),
         SourceForecast.rung_lesson_known(SourceForecast.SOURCE_KIND_HERD, herd,
             HudComposeVocab.BARE_FORECAST_PREFIX, _player_knowledge()))
     if bool(chart_model.get("known", false)) and _band_zone_tier != HudWorkVocab.BAND_ZONE_TIER_SHORT:

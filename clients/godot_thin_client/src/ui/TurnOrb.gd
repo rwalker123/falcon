@@ -69,6 +69,10 @@ const KIND_DECISION := "decision"
 # the row say WHICH investment is bleeding before the label is read.
 const KIND_UNWORKED_RUNG := "unworked_rung"
 const KIND_UNDER_CREWED_HERD := "under_crewed_herd"
+# A finished build's crew moved — onto the new rung's keeping, or back to the idle pool
+# (`docs/plan_standing_upkeep.md` §2.3). The icon is the workers' own glyph rather than a rung's: the
+# row is about the HANDS, and which rung finished is already in the sim's own sentence on it.
+const KIND_CREW_HANDOFF := "crew_handoff"
 const KIND_ICON := {
 	KIND_IDLE_WORKERS: "🛠",
 	KIND_STARVING: "🍖",
@@ -77,6 +81,7 @@ const KIND_ICON := {
 	KIND_STARVING_PEN: FoodIcons.POLICY_ICONS[FoodIcons.POLICY_CORRAL],
 	KIND_UNWORKED_RUNG: FoodIcons.POLICY_ICONS[FoodIcons.POLICY_SOW],
 	KIND_UNDER_CREWED_HERD: FoodIcons.POLICY_ICONS[FoodIcons.POLICY_TAME],
+	KIND_CREW_HANDOFF: "🛠",
 	# A question put to the people, awaiting their answer. Line art, NOT the ❔ emoji: emoji
 	# presentation renders as tofu/a blob at row size (the hazard that forced MagnifierButton and
 	# the policy icons to hand-draw). Verified at true size in `turn_orb_fork_blocks.png`.

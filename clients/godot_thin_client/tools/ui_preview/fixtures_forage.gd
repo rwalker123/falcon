@@ -80,8 +80,6 @@ const STALE_VERB_FOOD_PER_BIOMASS := 0.03325
 # per-material vector on the composition entry, not a rate on the patch.)
 # The plant rungs' `yield_fraction_while_building` (`intensification_ladder.json`) — the factor that
 # must NOT ride a crew whose build has already landed.
-
-const STALE_VERB_BUILD_FRACTION := 0.25
 # Two throughputs are "the same" when they agree to within the resolution the panel states a rate at.
 
 ## Rewrite one source dict IN PLACE. `prefix` is "" for a raw herd / wire patch, `patch_` for the
@@ -295,18 +293,21 @@ const ZERO_CREW := 0
 ## 15)", which stopped being true when the cap learned about the dip (#442): a BUILDING crew is capped
 ## on `stance × 0.25`, so Sustain clamps to 2 (the build crew) and Deplete to 3. Both frames still show
 ## the ceiling binding — that is what the clamp guarantees — and the pair still differs only by stance.
-# **LABOUR-BOUND UNDER BOTH FLOORS, deliberately.** The build term is floor-independent only where
-# the crew is the binding side, so this sits under the food-peak ceiling's dipped crew count
-# (0.96 / (0.32 x 0.25) = 12). Fifteen was chosen when the dip rode the CEILING and the frame's claim
-# was the opposite one; at 15 the peak's ceiling binds and the two floors' build terms differ.
+# **LABOUR-BOUND UNDER BOTH FLOORS, deliberately.** It sits under the food-peak ceiling's crew count
+# (0.96 / 0.32 = 3 with the dip retired), so the crew is the binding side at both floors.
 
-const IMPROVEMENT_STANCE_FRAME_FORAGERS := 8
+const IMPROVEMENT_STANCE_FRAME_FORAGERS := 2
 
 ## **THE SIM'S OWN `workers_needed` FOR A CULTIVATING CREW ON THE REFERENCE PATCH.** Its derivation from
 ## the ladder's and the fixture's numbers is on `BandFx.cultivating_forage_band_fixture`, which ships it on the
 ## wire; `improvement_build_crew` asserts the compose cap equals what the sheet READS BACK off that
 ## assignment, so the control is the sim's published answer rather than a number the harness chose twice.
-const CULTIVATE_SIM_WORKERS_NEEDED := 12
+##
+## **IT FELL FROM 12 TO 3 WITH THE DIP** (`docs/plan_standing_upkeep.md` §2.2). Under the dip the take
+## crew was inverted out of a QUARTER carry, so saturating the same ceiling took four times the hands
+## — and `workers_needed` then blended that count with the rung's `crew_needed`. Both terms are
+## retired: the count is `ceil(0.96 / 0.32)` and the build's hands are their own allocation.
+const CULTIVATE_SIM_WORKERS_NEEDED := 3
 
 ## A CROP-PICKER ROW by the plant it names. A row's face is `<name> <share>% · <payoff>×`, whose share
 ## and payoff digits are the fixture's business and change whenever a basket is retuned, so the row is
@@ -573,12 +574,6 @@ const THREE_ROLE_GRAZE_CAPACITY := 130.0
 ## forecast pair is deliberately asymmetric with Cultivate's: `ceiling_sow` is ~0 because a sown
 ## patch has no standing crop to take a fraction of (a bare-ground sow is PURE investment), and
 ## `field_yield` is 2× the tended yield — the payoff that makes the ladder's top plant rung worth it.
-## SOW'S BUILD DIP, as the wire's own FRACTION of the food-peak ceiling — `0.02 / 0.96`, i.e. the
-## near-zero absolute dip this fixture's docstring describes over `food_tile_fixture`'s own Sustain
-## ceiling. A sown patch has no standing crop to take a fraction of, so a bare-ground sow is PURE
-## investment: that asymmetry against Cultivate's quarter is rung 3's whole bargain, and it is what
-## the readout's `without the build` row is measured against on a Sow sheet.
-const SOW_BUILD_FRACTION := 0.02 / 0.96
 
 static func sowable_tile_fixture() -> Dictionary:
 	var tile := BaseFx.food_tile_fixture()
@@ -594,16 +589,15 @@ static func sowable_tile_fixture() -> Dictionary:
 	tile["site_name"] = ""
 	# The ground answers the site requirement: rich enough AND watered. No refusal.
 	tile["patch_sow_site_refusal"] = ""
-	# **THE FRACTION IS STATED OUTRIGHT, NOT VIA `patch_ceiling_sow`, AND THAT IS A REPAIR.**
-	# `seed_forage_rows` converts the authoring shorthand only `if not tile.has(<fraction key>)` — and
-	# `food_tile_fixture()` has already run it once, writing `patch_sow_build_fraction = 0.0` off its own
-	# `patch_ceiling_sow` of 0 and ERASING the shorthand key. A layered fixture restating the shorthand
-	# is therefore ignored on the re-seed, so this patch carried a build fraction of ZERO,
-	# `improvement_forecast` answered `{}` for Sow, and the whole rung quoted no deal on any frame: no
-	# payoff row, no `without the build` row, and a bare face before those rows existed. The docstring's
-	# own escape hatch — "a fixture that states a fraction outright wins" — is what closes it.
-	tile["patch_sow_build_fraction"] = SOW_BUILD_FRACTION
+	# **WHAT MAKES THE SOW RUNG QUOTABLE IS ITS PRICE, NOT A DIP** (`docs/plan_standing_upkeep.md`
+	# §2.2). `improvement_forecast` declines a rung the wire prices no job for on this source, so the
+	# Field's own `work_cost` is what has to be present for the deal to render — `food_tile_fixture`
+	# already states it. The retired `patch_sow_build_fraction` used to be that gate, and a fixture
+	# that left it at zero silently quoted no deal at all on any Sow frame.
 	tile["patch_field_yield"] = 2.40
+	# A FIELD is dearer to keep than the tended ground under it — the ladder's own claim about a
+	# higher rung, stated on the rung the sheet is offering.
+	tile["patch_upkeep_demand"] = BaseFx.PLANT_FIELD_UPKEEP_PER_TURN
 	return BaseFx.seed_forage_rows(tile)
 
 ## A patch mid-SOW: the rung-3 build meter is running, so the Field row reads "Sowing 45%". It sits

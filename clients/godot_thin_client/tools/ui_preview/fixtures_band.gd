@@ -189,15 +189,16 @@ static func forage_range_bands() -> Array:
 ## caller on the reference tile.
 ## **`workers_needed` IS THE SIM'S OWN ANSWER, AND IT IS WHAT THE COMPOSE CAP IS JUDGED AGAINST.**
 ## Derived here by the sim's rule rather than picked, so the assertion on `improvement_build_crew` has a
-## control it did not write itself. For this patch under Sustain + Cultivate
-## (`BaseFx.food_tile_fixture`: per-worker 0.32, Sustain ceiling 0.96, cultivate fraction 0.25, crew 2):
-##   take        = min(w × 0.32 × 0.25, 0.96)       (`forage::forage_take` — **THE DIP RIDES THE CREW**)
-##   take crew   = ceil(0.96 / (0.32 × 0.25)) = 12  (`systems::labor::workers_needed_for_take`)
-##   workers_needed = max(build crew 2, take crew 12) = 12  (`systems::labor::source_crew_needed`)
-## **THE NUMBER QUADRUPLED when the dip moved off the ceiling** (`docs/plan_harvest_floor.md` §3.1),
-## and that is its whole player-visible consequence: a crew big enough to saturate the source's stock
-## pays no dip at all, so the remedy for a slow build is HANDS — at a 25% carry, four times as many.
-## It read `2` under the dipped ceiling and `1` before either half of that existed.
+## control it did not write itself.
+## For this patch under Sustain + Cultivate
+## (`BaseFx.food_tile_fixture`: per-worker 0.32, Sustain ceiling 0.96):
+##   take           = min(w × 0.32, 0.96)      (`forage::forage_take`)
+##   workers_needed = ceil(0.96 / 0.32) = 3    (`systems::labor::workers_needed_for_take`)
+## **IT IS THE TAKE CREW AND NOTHING ELSE NOW** (`docs/plan_standing_upkeep.md` §2.2). It used to be
+## `max(build crew, take crew)` over a take dipped to a quarter, which read 12 — a number that said
+## more about the retired dip than about the patch. With each activity stating its own crew there is
+## no blended count for a rung's floor to raise, and the build's hands answer through the improvement
+## verb's own stepper.
 static func cultivating_forage_band_fixture(x: int = 66, y: int = 10) -> Dictionary:
 	var band: Dictionary = forage_range_bands()[0]
 	band["labor_assignments"] = [{

@@ -998,6 +998,77 @@ static func build_turns_clause(turns: int) -> String:
 ## advertises a tool that did nothing.
 ##
 ## `prefix` spells the keys, so one call serves a `patch_`-prefixed `tile_info` and a bare herd dict.
+## (The producer it describes is `build_estimate_lines`, below the keeping row.)
+
+## The KEEPING row's key and its two value forms. `Keeping` rather than `Upkeep` because the row
+## answers *what does it take to hold this*, in hands and work, and "upkeep" is already the pen feed's
+## word for a bill paid in food.
+const UPKEEP_ROW := "Keeping"
+
+const UPKEEP_VALUE_FORMAT := "%s of %s work — wants %d %s"
+
+## The keeper noun, singular and plural. Its own pair rather than a `(s)` suffix, which reads as a
+## form field rather than as a sentence.
+const UPKEEP_KEEPER_ONE := "keeper"
+
+const UPKEEP_KEEPER_MANY := "keepers"
+
+## **A RUNG STILL GOING UP OWES NOTHING YET**, its hands being the build's. Stated in words, because
+## `0.00 of 0.00 work — wants 0` reads as a defect on the very rung a player has just committed to.
+const UPKEEP_MID_BUILD_VALUE := "the build's crew holds it until it stands"
+
+## The row that only appears when the keeping is UNDERPAID — its own key, so the tint registry can ink
+## it as a warning without inking the bill above it.
+const UPKEEP_RISK_ROW := "At risk"
+
+const UPKEEP_LOST_SOON_FORMAT := "short %s work — this rung is lost in %d turn%s"
+
+const UPKEEP_LOST_NOW_FORMAT := "short %s work — this rung is being lost NOW"
+
+## **THE KEEPING ROW — what it costs to HOLD this source, and how long it has if nobody pays**
+## (`docs/plan_standing_upkeep.md` §2, §2.4). One producer for BOTH webs, because the four upkeep
+## fields ship under the same names on a patch and on a herd, and a card that worded the plant web's
+## bill differently from the animal web's would be answering *"what does it cost to hold this?"* twice.
+##
+## **THE EDGE IS A CLIFF, WHICH IS WHY THE COUNTDOWN IS ON THE CARD AND NOT ONLY IN AN ALERT.** A
+## completed meter sits exactly at its own cost, so the FIRST bleeding turn drops it below and the rung
+## is lost — three unkept turns costs a tended patch, two costs a Field. A player who loses a 25-turn
+## investment with no warning reads it as a bug, so the warning stands wherever the improvement does.
+##
+## Nothing here is derived: the demand, the supply and the shortfall are three published fields, and
+## the countdown is `neglectGraceRemaining` read through its own flag. Empty on a source that owes
+## nothing AND has nothing at risk — a wild patch prints no row rather than a `0.00 work` one.
+static func upkeep_lines(src: Dictionary, prefix: String) -> Array[String]:
+    var lines: Array[String] = []
+    var state := SourceForecast.upkeep_state(src, prefix)
+    if not SourceForecast.has_upkeep(state) and not bool(state.get("at_risk", false)):
+        return lines
+    var demand := float(state["demand"])
+    var supplied := float(state["supplied"])
+    var crew := int(state["crew"])
+    # **THE BILL AND WHAT WAS PAID AGAINST IT, in one row.** `crew` is the maintain activity's own
+    # `workers_needed`; it is `0` while the rung is still going up, because those hands are the
+    # BUILD's — which the row says in words rather than printing "0 keepers".
+    lines.append("%s: %s" % [UPKEEP_ROW, UPKEEP_MID_BUILD_VALUE if crew <= SourceForecast.NO_UPKEEP_CREW
+        else UPKEEP_VALUE_FORMAT % [format_work_units(supplied), format_work_units(demand), crew,
+            UPKEEP_KEEPER_ONE if crew == 1 else UPKEEP_KEEPER_MANY]])
+    if not SourceForecast.upkeep_is_short(state):
+        return lines
+    # **THE SHORTFALL IS THE DECAY, CONTINUOUSLY** (§2.4): half the hands means it slides at half rate.
+    # The countdown beside it is the rung's remaining grace, which is what turns *it is bleeding* into
+    # *you have two turns*.
+    var grace := int(state["grace"])
+    if not bool(state.get("at_risk", false)) or grace <= 0:
+        lines.append("%s: %s" % [UPKEEP_RISK_ROW,
+            UPKEEP_LOST_NOW_FORMAT % format_work_units(float(state["shortfall"]))])
+        return lines
+    lines.append("%s: %s" % [UPKEEP_RISK_ROW, UPKEEP_LOST_SOON_FORMAT % [
+        format_work_units(float(state["shortfall"])), grace,
+        "" if grace == 1 else HudAttentionVocab.ATTENTION_TURN_PLURAL_SUFFIX]])
+    return lines
+
+## **THE TWO SUB-ROWS UNDER A RUNNING BUILD METER** — see the block above `upkeep_lines` for the
+## full note; this is the producer it describes.
 static func build_estimate_lines(source: Dictionary, prefix: String) -> Array[String]:
     var lines: Array[String] = []
     var turns := SourceForecast.build_turns_remaining(source, prefix)
@@ -1911,6 +1982,10 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array, assign
     # the card's own header states the hex two rows above them (`TILE (34, 24)`), so a herd stating
     # it again was the same coordinate pair twice on one card. `Next waypoint` below is a different
     # fact — where it is HEADING, which nothing else on the card says — and stays.
+    # **WHAT IT COSTS TO HOLD THIS HERD AT ITS RUNG, and how long it has if nobody pays**
+    # (`docs/plan_standing_upkeep.md` §2) — the animal web's half of the one keeping row both webs
+    # share. A wild herd owes nothing and prints none.
+    lines.append_array(upkeep_lines(herd_data, HudComposeVocab.BARE_FORECAST_PREFIX))
     var next_x := int(herd_data.get("next_x", -1))
     var next_y := int(herd_data.get("next_y", -1))
     if next_x >= 0 and next_y >= 0:

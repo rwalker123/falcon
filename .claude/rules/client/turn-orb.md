@@ -106,6 +106,27 @@ paths:
   `turn_orb_unworked_rung`, whose fixture carries a WORKED patch as a negative control precisely so a
   roster read that sees no crews fails the row COUNT.
 
+  - **`crew_handoff`** (**info**, NON-locating, `_crew_handoff_attention`) — a build finished this turn
+    and its crew MOVED: onto the finished rung's keeping if that rung declares an upkeep, back to the
+    idle pool if it does not (`docs/plan_standing_upkeep.md` §2.3). **It is an attention row because of
+    WHEN it has to be read**: the sim announces it on the feed, which is a log, and the whole point of
+    the hand-off is that the player can re-task those hands *before ending the turn*.
+    **INFO, not warn** — nothing is wrong; a build finished, which is the good news, and the row hands
+    back a decision rather than reporting a loss. It sorts below every real problem.
+    **The label is the SIM's own sentence, verbatim** (*"3 of your cultivate crew stay on (31, 18) to
+    keep it"*): the sim knows which rung finished, how many hands moved and where they went, and a
+    second phrasing here would drift from the feed's. The detail is the client's own *what to do about
+    it* clause, forked on `status=carried_to_upkeep` vs `status=freed`.
+    **It is fed by the COMMAND STREAM, not the roster** — `Hud.ingest_command_events` also hands the
+    array to `AttentionController.ingest_command_events(events, turn)`, which keeps the matching rows
+    until the turn changes. Held rather than read live because `Main` dispatches `command_events` and
+    `populations` separately and the attention array is rebuilt from the populations pass: a producer
+    reading the event array directly would answer empty on every frame but one, and the rows would
+    flicker away mid-turn — exactly when the player is deciding what to do with those hands.
+    **Non-locating** (`x < 0` → `Open ▸`): the event names its source in words and carries no
+    coordinates, and parsing a tile out of a sentence to place a jump is a guess. Capped at
+    `ATTENTION_HANDOFF_MAX_ROWS` with an overflow row, for the off-screen-popover reason.
+
   The fourth (`_awaiting_orders_attention`) runs over the **EXPEDITIONS** split out of that loop:
   - **`awaiting_orders`** (warn) — an expedition in `ExpeditionPhase::Awaiting`: parked at its
     objective, burning provisions, doing nothing until the player acts. Structurally the same class

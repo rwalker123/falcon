@@ -193,11 +193,16 @@ static func crew_row_label(root: Node) -> String:
 	var node := Q.find_meta_node(root, HudWidgets.CREW_ROW_LABEL_META)
 	return (node as Label).text if node is Label else ""
 
-## The crew row's BUILD-DIP note, by its own meta — `""` when none rendered, which is a real reading
-## and half of what the note is asserted on: a line that appears on every sheet claims nothing. Not
-## found by text, and not by scanning the row: the row LABEL sits beside it and renders either way.
-static func crew_row_dip_note(root: Node) -> String:
-	var node := Q.find_meta_node(root, HudWidgets.CREW_ROW_DIP_META)
+## **DID THE KEEPING ROW RENDER AT ALL?** — half of what the row is asserted on, a row that appears
+## on every sheet claiming nothing. By its own meta, which rides the whole BLOCK (label + stepper +
+## verdict), so this is a presence test rather than a text read.
+static func has_crew_row_maintain(root: Node) -> bool:
+	return Q.find_meta_node(root, HudWidgets.CREW_ROW_MAINTAIN_META) != null
+
+## The keeping row's VERDICT sentence — held, or bleeding and how long the rung has. Its own meta, so
+## the wants/have note beside it (which carries numbers too) can never be matched by mistake.
+static func maintain_verdict_text(root: Node) -> String:
+	var node := Q.find_meta_node(root, HudWidgets.MAINTAIN_VERDICT_META)
 	return (node as Label).text if node is Label else ""
 
 ## The verdict's SENTENCE — the row's Labels joined (the severity dot is a Label of the row too, so it

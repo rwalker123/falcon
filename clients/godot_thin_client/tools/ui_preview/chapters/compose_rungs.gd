@@ -1339,6 +1339,11 @@ func _kit_swap_turn_estimate_states() -> void:
 	h._show_herd(warren)
 	h._compose_herd(warren, KIT_SWAP_KEEPERS, SourceForecast.FLOOR_FOOD_PEAK)
 	h._hud._compose.set_hunt_kit_id(BandFx.KIT_ID_BIG_GAME)
+	# **THE ESTIMATE IS QUOTED AT THE BUILD'S OWN CREW** (`docs/plan_standing_upkeep.md` §2.2), so the
+	# frames dial the builders rather than the take crew — and dial them AFTER the first open, the
+	# `_compose_herd` re-open contract, since a source change re-seeds the composition. The gear term
+	# is resolved over these same hands, which is the whole of what the kit swap moves.
+	h._hud._compose.set_hunt_build_count(KIT_SWAP_KEEPERS)
 	h._compose_herd(warren)
 	await h._settle()
 	await h._save("herd_kit_swap_bare_build")
@@ -1390,6 +1395,9 @@ func _kit_swap_turn_estimate_states() -> void:
 	h._show_herd(stocked_warren)
 	h._compose_herd(stocked_warren, OVER_GEARED_KEEPERS, SourceForecast.FLOOR_FOOD_PEAK)
 	h._hud._compose.set_hunt_kit_id(HUSBANDRY_KIT_ID)
+	# The BUILD's crew, dialled after the open — see (a) above. The gear is resolved over these hands,
+	# so the "gear alone pays the job off" regime is a claim about the BUILDERS' coverage.
+	h._hud._compose.set_hunt_build_count(OVER_GEARED_KEEPERS)
 	h._compose_herd(stocked_warren)
 	await h._settle()
 	await h._save("herd_kit_swap_over_geared")

@@ -573,8 +573,16 @@ un-recorded, which is the whole reason this line says re-measure.)
 
 **The compose sheet's own turn estimate is worth FIVE frames and TWELVE `PASS`.** Three are one
 A/B plus a drag: `improvement_turns_lone_crew` / `improvement_turns_full_crew` (one patch, one floor,
-crews 1 and 4 — `≈20 turns` against `≈5 turns`) and `improvement_turns_learning_floor` (the same crew
-mid-DRAG at the Learning preset, `≈4 turns`), all three in `chapters/improvements.gd`. **A frame set
+**BUILD** crews 1 and 4 — `≈20 turns` against `≈5 turns`) and `improvement_turns_learning_floor` (the
+same crew mid-DRAG at the Learning preset), all three in `chapters/improvements.gd`.
+**THE STEPPER THE A/B MOVES IS THE BUILD'S** (`docs/plan_standing_upkeep.md` §2.2) — the take crew no
+longer prices a build at all — and it is dialled AFTER the first open, the `_compose_herd` re-open
+contract in the forage web's form: a source change re-seeds the composition, so a build crew set
+before the sheet opens on that tile is thrown away and the face renders with no clause at all.
+**The drag frame's claim INVERTED with the floor's retirement**: it used to assert a deeper floor
+quoted a FASTER build (`learn_multiplier` scaled the accrual); a build crew is not pulling on the
+source, so the same builders now read the SAME estimate at both floors, and the non-vacuity companion
+is the take beneath it, which does still follow the dial. **A frame set
 that renders one crew proves nothing here**: the defect was a sheet quoting the sim's committed-crew
 answer, which renders a perfectly plausible number and simply never moves — so the A/B, not either
 half, is the claim, and the negative beside it names the frozen value. The drag is driven through

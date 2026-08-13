@@ -61,13 +61,28 @@ signal recall_expedition_requested(payload: Dictionary)
 ## Main formats the `split_band …` command.
 signal split_band_requested(payload: Dictionary)
 ## Emitted when the player extends a built pen by one fenced ring (Grazing 2d-γ). Payload keys:
-## { faction, x, y } — the pen's anchor tile. Main formats the `extend_pen <faction> <x> <y>` command.
+## { faction, x, y, workers } — the pen's anchor tile and the crew that works the ring off. Main
+## formats `extend_pen <faction> <x> <y> <workers>`. **The crew is required**: a ring rides the same
+## pen rung as the pen it widens (`docs/plan_standing_upkeep.md` §2.2), so it cannot be the one build
+## in the game that is free.
 signal extend_pen_requested(payload: Dictionary)
 ## Emitted when the player commits an IMPROVEMENT — the second axis (issue #442). Payload keys:
-## { faction, improvement, x, y, herd_id }. Main formats the matching verb
+## { faction, improvement, x, y, herd_id, workers }. Main formats the matching verb
 ## (`cultivate` / `sow` / `tame` / `corral`). RELAYED from `DrawerComposeController`, which is its
 ## only emitter, exactly as `extend_pen_requested` is.
+##
+## **`workers` IS THE BUILD'S OWN CREW** (`docs/plan_standing_upkeep.md` §2.2) — the second of a
+## source's three worker allocations, independent of the take crew `assign_labor` set.
 signal improvement_requested(payload: Dictionary)
+
+## Emitted when the player staffs (or unstaffs) a source's STANDING UPKEEP — the third allocation.
+## Payload keys: { faction, kind, x, y, herd_id, workers }. Main formats
+## `maintain <faction> forage <x> <y> <workers>` / `maintain <faction> hunt <herd_id> <workers>`.
+##
+## **`workers: 0` IS A REAL ORDER**, not an absent one: it is how the player says *stop maintaining
+## this, take everything, let it go*. There is no toggle beside the number, because a boolean and a
+## count could disagree. RELAYED from `DrawerComposeController`, its only emitter.
+signal maintain_requested(payload: Dictionary)
 ## Emitted when the player presses **Make** in Materials & Crafting — the recipe is STAGED on the
 ## band's bench and nobody is recruited onto it. **The player staffs the bench and the sim never
 ## does**, so there is no crew argument here: the `− n +` stepper is the one thing that picks the
@@ -434,6 +449,8 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: extend_pen_requested.emit(payload))
     _drawercompose.improvement_requested.connect(
         func(payload: Dictionary) -> void: improvement_requested.emit(payload))
+    _drawercompose.maintain_requested.connect(
+        func(payload: Dictionary) -> void: maintain_requested.emit(payload))
     # The command-targeting cluster. Constructed AFTER `_drawercompose` (its three close-sheet nudges)
     # and BEFORE `_bandpanel` (which injects `_targeting` — so `_targeting` must exist first). The pick
     # flow's `_bandpanel.rerender()` is therefore a lazily-bound lambda: `_bandpanel` is null now but
@@ -1500,6 +1517,13 @@ func _load_ui_balance_config() -> void:
 ## `commandEvents` ring, so a player opening the client mid-session sees recent history.
 func ingest_command_events(events_variant: Variant) -> void:
     _telling.ingest_events(events_variant)
+    # **AND THE ATTENTION MODEL TAKES THE BUILD HAND-OFFS OFF THE SAME ARRAY**
+    # (`docs/plan_standing_upkeep.md` §2.3). A finished build's crew moves — onto the new rung's
+    # keeping, or back to the idle pool — and the player has to re-task around it BEFORE ending the
+    # turn, which a feed line read after the fact cannot deliver. It is a THIRD reader of one stream
+    # rather than a fourth surface: the row it produces lands in the turn orb's registry beside every
+    # other demand on the player.
+    _attention.ingest_command_events(events_variant, _band_labor.current_turn())
 func update_band_alerts(populations_variant: Variant) -> void:
     if not (populations_variant is Array):
         return
