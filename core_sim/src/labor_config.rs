@@ -128,20 +128,23 @@ const DEFAULT_CULTIVATION_TENDED_CONVERSION_GAIN: f32 = 2.0;
 /// investment dip it pays while preparing) moved to the shared ladder,
 /// `data/intensification_ladder.json` → the `plant:tended` rung's `build` block
 /// (`crate::intensification`), because plants and animals must climb on the *same* numbers — and, as
-/// of slice 4, so did the **earned-knowledge levers** (`knowledge_progress_per_turn`, since split
-/// into the ladder's `learn_rate` + per-knowledge `lesson_costs`, /
-/// `knowledge_completion_threshold` → the ladder's `knowledge` block): once the earn path became one
+/// of slice 4, so did the **earned-knowledge levers** (`knowledge_progress_per_turn` (since split
+/// into the ladder's `learn_rate` + per-knowledge `lesson_costs`) / `knowledge_completion_threshold`
+/// → the ladder's `knowledge` block): once the earn path became one
 /// rung-driven seam, a per-web copy of "20 turns to learn a rung" was pure duplication. What stays
 /// here is the plant web's own economy: **the two rungs' payoffs** — rung 2's growth gain and rung 3's
 /// managed rate. They stay here for the same reason `pastoral_gain`/`pen_gain` stay in `fauna_config`:
 /// a rung's *payoff* is its web's economy, where its *build* is the ladder's grammar.
 ///
 /// A patch worked with the **Cultivate** improvement in flight ([`crate::components::Improvement::Cultivate`])
-/// — faction knows Cultivation, patch is **Thriving** — accrues the `plant:tended` rung's
+/// — faction knows Cultivation, and something stands above the crew's floor
+/// (`systems::labor::crew_is_working_the_source`; the old `Thriving` health gate is gone,
+/// `docs/plan_harvest_floor.md` §3.2) — accrues the `plant:tended` rung's
 /// work units toward the `plant:tended` rung's `work_cost` while yielding only that rung's
-/// `yield_fraction_while_building ×` the assignment's own stance ceiling (the investment cost). A cultivated patch that isn't tended any given
-/// turn goes **feral**, its progress decaying by the rung's `decay_per_turn` back below `1.0`
-/// (reverting to a wild gather patch). A tended patch is **still a wild stand** — the tending buys it
+/// `yield_fraction_while_building ×` the crew's own throughput (the investment cost). A cultivated
+/// patch that isn't tended any given turn goes **feral**, its progress decaying by the rung's
+/// `decay_per_turn` — in **work units**, back below the cost stamped on the patch — until the meter
+/// empties and it is a wild gather patch again. A tended patch is **still a wild stand** — the tending buys it
 /// a faster curve (`tended_regrowth_gain`), and the band gathers it under the full policy axis,
 /// drawing it down, exactly as a *pastoral* herd is hunted on its boosted `r`. The plant mirror of
 /// fauna's `HusbandryConfig`.

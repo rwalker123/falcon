@@ -148,8 +148,12 @@ paths:
   **Husbandry** row shows "Domesticating N%" while it's being tamed and "🐄 Domesticated"
   (SIGNAL tint via `_husbandry_value_hex`) once fully domesticated. This is the **per-source** half
   of the two-meter split — THIS herd's own meter (see "The Intensification Ladder" below). Progress
-  builds while a band works the herd under the **`Tame`** policy (and pauses, without loss, whenever
-  the herd is not Thriving — surfaced by `_tame_stalled_hint`). **NOT under Sustain**, and there is
+  builds while a band works the herd under the **`Tame`** policy. **There is no health gate**: the
+  ecology phase stopped pacing the build when `docs/plan_harvest_floor.md` §3.2 replaced that cliff
+  with a rate, so a crew pulling hard on a herd tames it *slowly* rather than not at all, in
+  proportion to the floor it holds. What genuinely halts the meter is a crew with **nothing standing
+  above its own floor** — no escapement room, so no work — which is what `_tame_stalled_hint`
+  surfaces. **NOT under Sustain**, and there is
   no `domesticate` command: both were retired by the ladder arc (`docs/plan_intensification_ladder.md`
   §4.1) — taming as a hidden Sustain side effect, with a visible-but-disabled `Corral` beside it, is
   the exact UX problem that arc exists to fix. See `core_sim` Fauna & Wild Game — Domestication /

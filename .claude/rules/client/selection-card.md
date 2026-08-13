@@ -2,6 +2,8 @@
 paths:
   - "clients/godot_thin_client/src/scripts/ui/hud/{SelectionCardController,SubjectDrawerController}.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/{HudSelectionState,hud_selection_vocab}.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/DetailFormat.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/SourceForecast.gd"
 ---
 
 <!-- Extracted verbatim from lines 178-178;180-180;1612-1775 of clients/godot_thin_client/CLAUDE.md at blob 20553fb8f9b193b80338a8c06765d511b81b601e

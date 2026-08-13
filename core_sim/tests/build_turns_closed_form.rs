@@ -43,6 +43,13 @@ use core_sim::{
 /// two zeroes.
 const TAMEABLE_SPECIES: &str = "Wild Boar";
 
+/// **A tameable species whose `Tame` costs exactly the rung's own price** — `taming_cost_multiplier`
+/// **1.0**, where the shipped Wild Boar is 1.25. It is what puts the over-geared case within reach of
+/// a crew a band can actually staff: [`KEEPERS`] × the handling gear's 8.5 covers a 50-unit job
+/// outright, and the shipped roster has five such rows (rabbit, fowl, crag goat, wild sheep, snow
+/// hare).
+const UNSCALED_TAMEABLE_SPECIES: &str = "Crag Goats";
+
 /// **The kit the keepers are sent out with** — the one shipped roster entry declaring
 /// `EquipmentStat::BuildWork`, so the gear term under test is non-zero rather than a term the
 /// arithmetic never exercises.
@@ -68,9 +75,20 @@ const TEST_CAPACITY: f32 = 4_000.0;
 /// separate languages and nothing else pins them together.
 const CLIENT_FLOOR_FOOD_PEAK: f32 = 0.5;
 
+/// **The client's reading of a job with no work left in it** — one turn, the transcription of
+/// `intensification::BUILD_FINISHES_IN_ONE_TURN`.
+const CLIENT_BUILD_FINISHES_IN_ONE_TURN: u32 = 1;
+
 /// A headless world whose one game herd has been reshaped into a tameable species standing at
 /// [`TEST_CAPACITY`], with the viewer able to see it.
 fn world_with_a_tameable_herd() -> (App, String, UVec2) {
+    world_with_a_herd_of(TAMEABLE_SPECIES)
+}
+
+/// The same world, reshaped into a **named** species — the axis the over-geared case needs, since
+/// whether a crew's gear can cover the whole job is decided by that species'
+/// `taming_cost_multiplier`.
+fn world_with_a_herd_of(species_display: &str) -> (App, String, UVec2) {
     let mut app = build_headless_app();
     app.update();
     let id = {
@@ -86,7 +104,7 @@ fn world_with_a_tameable_herd() -> (App, String, UVec2) {
         .world
         .resource::<FaunaConfigHandle>()
         .get()
-        .species_by_display(TAMEABLE_SPECIES)
+        .species_by_display(species_display)
         .expect("the shipped roster carries the fixture species")
         .clone();
     let pos = {
@@ -96,7 +114,7 @@ fn world_with_a_tameable_herd() -> (App, String, UVec2) {
             .iter_mut()
             .find(|herd| herd.id == id)
             .expect("the herd the id came from");
-        herd.species = TAMEABLE_SPECIES.to_string();
+        herd.species = species_display.to_string();
         herd.body_mass = species.body_mass;
         herd.husbandry_ceiling = species.husbandry_ceiling;
         // Freeze the range-derived K: this file measures the BUILD's arithmetic, not the grazing
@@ -141,6 +159,19 @@ fn spawn_taming_keepers(
     pos: UVec2,
     fauna_id: &str,
     gear: GearHeld,
+) -> bevy::prelude::Entity {
+    spawn_keepers(app, pos, fauna_id, gear, Some(Improvement::Tame))
+}
+
+/// The same band under a **stated** improvement — `None` is the crew that is hunting and *deciding*,
+/// which is the state the compose sheet is by definition looking at and where the wire publishes a
+/// projection rather than a running countdown.
+fn spawn_keepers(
+    app: &mut App,
+    pos: UVec2,
+    fauna_id: &str,
+    gear: GearHeld,
+    improvement: Option<Improvement>,
 ) -> bevy::prelude::Entity {
     let tile = app
         .world
@@ -193,7 +224,7 @@ fn spawn_taming_keepers(
                         floor: BUILDER_FLOOR,
                     },
                     workers: KEEPERS,
-                    improvement: Some(Improvement::Tame),
+                    improvement,
                     kit: Some(kit),
                 }],
                 ..Default::default()
@@ -232,7 +263,12 @@ fn client_turns_estimate(
     }
     let remaining = work_cost - work_done - gear;
     if remaining <= 0.0 {
-        return None;
+        // **A bar the gear alone already pays off is ONE turn, not "no estimate"** — the sim's own
+        // `build_turns_remaining` answers `1` there (`docs/plan_unit_costed_work.md` §6.2: a bar at
+        // or below zero completes the build on its first worked turn), so a client form that
+        // withheld the line would blank the readout at exactly the crew size that demonstrates the
+        // arc's claim.
+        return Some(CLIENT_BUILD_FINISHES_IN_ONE_TURN);
     }
     Some((remaining / work_per_turn).ceil() as u32)
 }
@@ -513,11 +549,147 @@ fn a_herds_published_build_meters_agree_with_their_work_pairs_on_the_turn_they_c
 /// assignment's floor by it (`learn_multiplier(floor) = floor / MSY_BIOMASS_FRACTION`), and the
 /// client holds its own literal because no config crosses the wire — so a retune of the sim's peak
 /// would silently re-scale every turn estimate the sheet draws.
+///
+/// **IT READS THE GDSCRIPT, and that is what makes this a pin rather than a restatement.** Asserting
+/// a third hand-transcribed Rust literal against the sim's constant guards nothing: editing
+/// `SourceForecast.gd` fires no test, which is exactly the drift the pairing exists to forbid. So
+/// the client's file is parsed for its own `const FLOOR_FOOD_PEAK`, the way
+/// `core_sim/tests/tuning_manifest_drift.rs` reads the client's tuning manifest.
+/// [`CLIENT_FLOOR_FOOD_PEAK`] survives as the value the closed form above is *evaluated* at, and is
+/// asserted equal to both.
 #[test]
 fn the_clients_food_peak_constant_is_the_sims_own() {
+    let declared = client_floor_food_peak();
     assert_eq!(
-        CLIENT_FLOOR_FOOD_PEAK, MSY_BIOMASS_FRACTION,
-        "the client's SourceForecast.FLOOR_FOOD_PEAK and the sim's MSY_BIOMASS_FRACTION are \
-         separate literals in separate languages; a retune of one must move the other"
+        declared, MSY_BIOMASS_FRACTION,
+        "SourceForecast.gd declares FLOOR_FOOD_PEAK {declared} where the sim's \
+         MSY_BIOMASS_FRACTION is {MSY_BIOMASS_FRACTION}; they are separate literals in separate \
+         languages and a retune of one must move the other"
     );
+    assert_eq!(
+        CLIENT_FLOOR_FOOD_PEAK, declared,
+        "and the form this file evaluates must be the one the client ships"
+    );
+}
+
+/// **`SourceForecast.gd`'s own `FLOOR_FOOD_PEAK` literal**, parsed out of the shipped script.
+///
+/// Located relative to `CARGO_MANIFEST_DIR` rather than an absolute path, so it resolves from any
+/// checkout — including the several worktrees this repo is developed in at once
+/// (`tuning_manifest_drift.rs`'s rule). A missing file or a renamed constant **panics**: the pin's
+/// whole job is to notice that the pairing has moved, and a silent skip would leave two rule files
+/// claiming a guard that no longer exists.
+fn client_floor_food_peak() -> f32 {
+    const DECLARATION: &str = "const FLOOR_FOOD_PEAK :=";
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../clients/godot_thin_client/src/scripts/ui/hud/SourceForecast.gd");
+    let script = std::fs::read_to_string(&path).unwrap_or_else(|err| {
+        panic!(
+            "read the client's SourceForecast at {}: {err} — the sim's food peak is pinned against \
+             its literal",
+            path.display()
+        )
+    });
+    let declaration = script
+        .lines()
+        .map(str::trim)
+        .find_map(|line| line.strip_prefix(DECLARATION))
+        .unwrap_or_else(|| {
+            panic!(
+                "{} declares no `{DECLARATION}` — if the constant was renamed, re-point this pin \
+                 rather than dropping it",
+                path.display()
+            )
+        });
+    declaration.trim().parse().unwrap_or_else(|err| {
+        panic!("SourceForecast.gd's FLOOR_FOOD_PEAK is not a number ({declaration:?}): {err}")
+    })
+}
+
+/// **AN OVER-GEARED CREW IS QUOTED ONE TURN ON THE WIRE, NEVER `-1`.**
+///
+/// `LadderConfig::effective_build_cost` is deliberately unfloored (`cost − t`, the build floor was
+/// tried and rejected), so a crew holding enough handling gear drives the bar to or below zero. That
+/// is a **finished** job, not an unanswerable one: `docs/plan_unit_costed_work.md` §6.2 says such a
+/// bar "completes the build on its first worked turn".
+///
+/// **It is reachable on the shipped roster at a crew a band can staff** — six keepers each holding a
+/// set of handling gear take `6 × 8.5 = 51` units off a 50-unit `Tame` — and publishing
+/// `NO_BUILD_TURNS_ESTIMATE` there broke the arc's own headline claim at exactly the crew size that
+/// demonstrates it: the estimate fell 25 → 13 → 4 → 2 → *nothing* as hands were added.
+///
+/// Asserted **off the exported snapshot** in both states the field has: the **projection** a crew
+/// that is deciding reads (the compose sheet's case, and the one the player meets), and the **live**
+/// stamp of the crew that ran the build. The client's own form is held to the same answer, because a
+/// sheet withholding the line while the card states it is the disagreement this file exists to
+/// forbid.
+#[test]
+fn a_crew_whose_gear_pays_the_tame_off_is_quoted_one_turn_on_the_wire() {
+    for improvement in [None, Some(Improvement::Tame)] {
+        let (mut app, id, pos) = world_with_a_herd_of(UNSCALED_TAMEABLE_SPECIES);
+        let keepers = spawn_keepers(&mut app, pos, &id, GearHeld::APartysWorth, improvement);
+        app.world.run_system_once(advance_herds);
+        app.world.run_system_once(advance_labor_allocation);
+        recapture_snapshot_in_place(&mut app.world);
+
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let herd = snapshot
+            .herds
+            .iter()
+            .find(|row| row.id == id)
+            .expect("the watched herd is on the wire");
+        let band = snapshot
+            .populations
+            .iter()
+            .find(|row| row.entity == keepers.to_bits())
+            .expect("the keeper band is on the wire");
+        let tiers = band
+            .kit_tiers
+            .iter()
+            .find(|row| row.kit_id == HANDLING_KIT)
+            .expect("the band publishes a tier row per roster kit");
+
+        // **The fixture is only about anything if the gear genuinely over-pays the job**, which is
+        // the whole regime under test — a crew short of that is the ordinary multi-turn case the
+        // test above already covers.
+        let gear = client_gear_term(
+            tiers.build_work_per_worker,
+            tiers.build_work_saturating_crew,
+            KEEPERS,
+        );
+        assert!(
+            gear >= herd.tame_work_cost,
+            "fixture: {KEEPERS} keepers' gear ({gear}) must cover the whole {} of the Tame, or the \
+             bar never reaches zero",
+            herd.tame_work_cost
+        );
+
+        assert_eq!(
+            herd.build_turns_remaining, 1,
+            "a Tame the crew's gear pays off outright finishes on its first worked turn — \
+             improvement {improvement:?}, cost {} done {} gear {gear}",
+            herd.tame_work_cost, herd.tame_work_done
+        );
+
+        // And the client's transcribed form must say the same thing, or the compose sheet blanks a
+        // line the tile card is rendering.
+        assert_eq!(
+            client_turns_estimate(
+                herd.tame_work_cost,
+                herd.tame_work_done,
+                tiers.build_work_per_worker,
+                tiers.build_work_saturating_crew,
+                herd.build_work_per_worker_turn,
+                KEEPERS,
+                BUILDER_FLOOR,
+            ),
+            u32::try_from(herd.build_turns_remaining).ok(),
+            "the client's form must reproduce the sim's answer in the over-geared regime too"
+        );
+    }
 }

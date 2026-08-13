@@ -802,7 +802,8 @@ and a turns conversion would need a forecast of what the band is about to do.
 > handling gear — worked both at a slaughter and on a `Tame` — has to pick one: `≈12 gardens' worth`
 > and `≈2500 biomass butchered` are the same condition counted two ways, and stating both would need
 > the readout to know the usage mix it exists to let the player choose. The item **declares** its
-> headline by writing that quantum first, exactly as `tiers[0]` declares the default tier.
+> headline by writing that quantum first, exactly as `tiers[0]` declares the default tier — and
+> `husbandry_gear` declares `biomass_collected`, so **its** row reads *"≈2500 biomass butchered"*.
 
 > #### THE BUILD QUANTUM IS THE ONE WHOSE UNIT IS NOT ITS NOUN
 >
@@ -811,7 +812,10 @@ and a turns conversion would need a forecast of what the band is about to do.
 > a player holding a hoe thinks in *builds*. `100 / 0.16 = 625` is arithmetically right and says
 > nothing, so the gauge quotes it against a **named reference job**: the noun is *"gardens' worth"*
 > and `quantum_units_per_noun` divides by the `plant:tended` rung's own `work_cost`, giving
-> **"12 gardens' worth left"**.
+> **"12 gardens' worth left"** — for the first item that **headlines** the build quantum. **No
+> shipped item does**: the only build-wearing item is `husbandry_gear`, which leads with the
+> slaughter, so today this arm is exercised by
+> `the_build_quanta_are_quoted_against_the_ladders_reference_job` and waits on issue #539's hoe.
 >
 > **The reference is the LADDER's** (`intensification::REFERENCE_BUILD_RUNG`), carried on
 > `BandCraftInputs::reference_build_cost` and resolved once per capture — so a retune of the rung

@@ -72,15 +72,23 @@ static func three_role_tile_fixture() -> Dictionary:
 	}
 
 ## An over-drawn, UNCULTIVATED forage patch: the Tile card's "Ecology" row must still render
-## (the phase gates cultivation, so it always shows on a patch) as a WARN-amber "⚠ Stressed".
-## Biomass is well below capacity, mirroring a patch foraged past its regrowth.
+## (the phase no longer gates cultivation, and the row shows on every patch regardless) as a
+## WARN-amber "⚠ Stressed". Biomass is well below capacity, mirroring a patch foraged past its
+## regrowth — **and well below the FOOD PEAK, which is what makes this the fixture the compose
+## sheet's work predicate is judged on**: at any floor above `22 / 100` there is nothing standing
+## above it, so a Cultivate composed here accrues nothing and states no turn estimate.
+##
+## **IT RE-PRICES ITS METER, because it re-dials the fraction.** Zeroing `cultivation_progress` off
+## the reference tile's 0.6 without re-pricing left the absolutes behind at `30 / 50 work (0%)` —
+## exactly the percentage-vs-absolute disagreement `BaseFx.price_plant_build` exists to make
+## impossible.
 static func stressed_tile_fixture() -> Dictionary:
 	var tile := BaseFx.food_tile_fixture()
 	tile["patch_cultivation_progress"] = 0.0
 	tile["patch_is_cultivated"] = false
 	tile["patch_ecology_phase"] = "stressed"
 	tile["patch_biomass"] = 22.0
-	return tile
+	return BaseFx.price_plant_build(tile)
 
 ## A fully-tended forage patch: the Tile card shows the "🌾 Tended Patch" badge (SIGNAL tint)
 ## plus an "Ecology" row, instead of the in-progress "Cultivation N%".

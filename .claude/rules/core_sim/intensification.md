@@ -211,8 +211,17 @@ the whole reason the dials moved out of `labor_config`/`fauna_config` and into t
   rung when the meter reaches it.
 - **`build_turns_remaining(cost, done, work_this_turn)`** is the one place `ceil((cost − done) /
   work)` lives, so the wire's `buildTurnsRemaining` cannot drift from the meter it describes. `None`
-  means **no estimate** — the job is paid for, or the crew produced nothing and the build is
-  *stalled*, which has no finite answer.
+  means **no estimate**, and only a **stall** earns it — a crew producing nothing has no finite
+  answer, and a huge number would read as a promise.
+  > **A bar the meter is already at or past is `1`, not `None`** (`BUILD_FINISHES_IN_ONE_TURN`), and
+  > the two states that reach it are one sentence: the work is already banked, or **the crew's gear
+  > pays the job off outright** — `effective_build_cost` is unfloored, so a well-equipped crew drives
+  > the bar below zero, and §6.2 of the plan says such a bar *"completes the build on its first worked
+  > turn"*. Answering `-1` there broke the arc's own headline claim at exactly the crew size that
+  > demonstrates it: on the shipped roster six geared keepers take `6 × 8.5 = 51` off a 50-unit
+  > `Tame`, so the estimate fell 25 → 13 → 4 → 2 → *nothing* as hands were added. Pinned at the seam
+  > and on the exported snapshot (`build_turns_closed_form.rs`), in both the projection and the live
+  > stamp.
 - **`LadderConfig::projected_build_turns` — the same question asked of a rung nobody has started.**
   It assembles exactly the four calls the in-flight stamp makes (`build_cost` →
   `build_work_from_gear` → `effective_build_cost` → `build_accrual`, then `build_turns_remaining`)
@@ -594,7 +603,10 @@ Appended (append-only) on both tables:
     places, across the saturated and the linear gear regime.
   - **The food peak is NOT published.** The client holds `SourceForecast.FLOOR_FOOD_PEAK`, which must
     equal `fauna::MSY_BIOMASS_FRACTION` (`learn_multiplier(floor) = floor / MSY_BIOMASS_FRACTION`);
-    the two are separate literals in separate languages and the same test pins them together.
+    the two are separate literals in separate languages, and the same test pins them together by
+    **parsing `SourceForecast.gd` for its own `const`** — the `tuning_manifest_drift.rs` shape. It
+    read a third Rust transcription of the client's value until PR #544's review: that asserted the
+    sim against itself, so an edit to the GDScript fired nothing while this sentence claimed a guard.
 - **`buildTurnsRemaining` IS A PROJECTION, never `-1`-because-nothing-is-being-built.** It is stamped
   by the labor arm (the only place the crew, the floor and the kit are all in hand) as transient
   per-turn scratch on `tended_this_turn`'s cycle, and cleared by the next turn's Logistics decay pass
@@ -610,6 +622,18 @@ Appended (append-only) on both tables:
   > `0`-because-unpenned"*), and it takes the same remedy. The client still cannot compute it — it
   > holds neither the crew's output, nor the floor multiplier, nor the kit's coverage-weighted
   > contribution — so the sim answers.
+- **IT IS A PER-SOURCE FIELD WRITTEN PER ASSIGNMENT, so several bands can answer for one source** —
+  and the rule that decides between them is `systems::labor::BuildEstimateClaims`, not the order the
+  labor loop happens to visit bands in. **A running build beats a projection** (a band merely
+  gathering a patch another band is Cultivating published its quote of the *next* rung over the
+  running build's countdown); **among running builds the soonest finish wins**, since every crew
+  fills the same meter and each quote counts only its own output, so the smallest is the least wrong;
+  and **a stall never displaces a moving crew, but still claims the source** — *"no estimate"* is the
+  running build's own answer. **`buildWorkFromGear` rides the same winner**, because the two are read
+  as one pair by the client's closed form. Guards:
+  `forage_cultivation::{a_running_build_outranks_a_bystanders_projection_on_the_same_patch,
+  the_soonest_of_two_building_crews_is_the_one_published}`, the second asserted under **both** spawn
+  orders — a rule that holds for one order is last-writer-wins with a nicer number.
 - **The projection resolves the next rung through the ladder's OWN order** — `RungKey::above`, an
   exhaustive match, composed onto the two seams that already answer *where does this source stand*
   (`forage::patch_rung_key`, `fauna::herd_rung_key`, the key-shaped halves of `patch_rung`/`herd_rung`).

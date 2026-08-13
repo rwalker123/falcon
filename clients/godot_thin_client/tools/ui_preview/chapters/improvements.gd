@@ -16,7 +16,35 @@ const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
 
-const IMPROVEMENT_PAUSED_NEEDLE := "ease off and it resumes"
+## The RETIRED pause note's own stem — the line that told a player to ease workers off a build the
+## floor was pacing. Spelled as a LITERAL because the vocabulary const is gone: a needle recomposed
+## from a live format could only ever describe whatever the code still says.
+const RETIRED_PAUSED_NOTE_NEEDLE := "ease off and it resumes"
+
+## **ANY TURN ESTIMATE AT ALL, on either compose face.** Both count forms open with the approximation
+## mark (`HudComposeVocab.BUILD_TURNS_COUNT_FORMAT` / `_ONE`) and nothing else on those faces carries
+## one, so this finds an estimate without naming a count — which is what an ABSENCE claim needs: a
+## needle built from a specific number passes straight over a face quoting a different one.
+const ANY_TURN_ESTIMATE_NEEDLE := "≈"
+
+## The floor `improvement_stressed_advances` composes at — **beneath the stressed patch's own 22 / 100
+## stock**, so `max(0, B − floor·K)` is positive and the crew is genuinely working it, and above
+## `FLOOR_MIN`, where `learn_multiplier` is 0 and nothing would accrue for the other reason. Both ends
+## matter: the frame exists to show a build advancing on a NON-Thriving source.
+const BUILD_ROOM_FLOOR := 0.15
+
+## What the standing lone forager owes there, derived HERE from the fixture: the Cultivate costs
+## `BaseFx.PLANT_CULTIVATE_WORK_COST` (50) with nothing banked (the stressed fixture re-prices its
+## meter to 0), no plant gear takes anything off it, and `learn_multiplier(0.15)` is `0.15 / 0.50` =
+## ×0.30 — so one worker banks 0.3 work a turn and ⌈50 ÷ 0.3⌉ = 167. **A slow build is the reading**:
+## the floor paces it, which is what the aside beside it says in words.
+const TURNS_AT_ROOM_FLOOR := 167
+
+## The one count that takes the singular clause — a build one turn from done — and the smallest one
+## that does not. The pair is what makes the claim about the FORK rather than about one branch.
+const TURNS_SINGULAR_JOB := 1
+
+const TURNS_PLURAL_JOB := 2
 
 ## The offer wording that must NOT appear while the rung is gated — the imperative the gated state
 ## exists to remove. Kept as a literal so a reworded offer cannot silently pass this assertion.
@@ -119,8 +147,16 @@ func _seeded_food_tile() -> Dictionary:
 ## The running face's TURN CLAUSE alone — ` — ≈20 turns` — composed through the shipped format with an
 ## empty meter half, so the assertion pins the clause and not the meter beside it. The format is the
 ## HUD's own; what this chapter states independently is the COUNT.
+## A patch's standing stock as a share of its capacity, read off the FIXTURE — the quantity a floor is
+## compared against when asking whether anything stands above it. Stated here rather than as a
+## constant so a fixture that re-dials either term cannot leave the precondition asserting a stale
+## ratio.
+func _stock_fraction(tile: Dictionary) -> float:
+	return float(tile["patch_biomass"]) / float(tile["patch_carrying_capacity"])
+
 func _turns_clause(turns: int) -> String:
-	return HudComposeVocab.IMPROVEMENT_RUNNING_TURNS_FORMAT % ["", turns]
+	return HudComposeVocab.IMPROVEMENT_RUNNING_TURNS_FORMAT % ["",
+		HudComposeVocab.BUILD_TURNS_COUNT_FORMAT % turns]
 
 func run(harness) -> void:
 	h = harness
@@ -353,29 +389,63 @@ func run(harness) -> void:
 		"abandon_improvement %d forage %d %d" % [HudConst.PLAYER_FACTION_ID,
 			int(BaseFx.food_tile_fixture()["x"]), int(BaseFx.food_tile_fixture()["y"])])
 
-	# State 442-cultivate-paused — the PAUSED build. The sim deliberately leaves this alone: a patch that
-	# drops out of Thriving mid-build KEEPS its improvement and merely pauses accrual
-	# (`.claude/rules/core_sim/cultivation.md` — "neither lost nor silently switched"). The control has to
-	# say the same thing: the box stays CHECKED and a WARN line states the pause, its cause and the
-	# ease-off remedy. This is the `_tame_stalled_hint` treatment, now on the plant web too.
+	# State 442-cultivate-no-room — **THE FLOOR STANDS ABOVE THE STOCK, so the sheet quotes NOTHING.**
+	# It was `improvement_paused_plant`, and it asserted the contradiction as a pass: the frame is a
+	# Stressed patch, and the control carried "⚠ Paused — … this only advances while Thriving" because
+	# the phase was not Thriving. No rung stops on the phase (`docs/plan_harvest_floor.md` §3.2 replaced
+	# that cliff with a rate), so that line contradicted the meter beside it and prescribed the reverse
+	# of the remedy. What DOES stop this build is the other reading of the same fixture: at the food
+	# peak nothing stands above the floor on a patch holding 22 of 100, so `crew_is_working_the_source`
+	# is false, the sim accrues nothing and publishes no estimate — and `build_turns_at` now carries
+	# that predicate too, instead of quoting the fastest number on the axis for a build going nowhere.
+	var no_room_tile := TileFx.stressed_tile_fixture()
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
 	h._hud._compose.reset_forage_source()
-	h._show_tile(TileFx.stressed_tile_fixture())
-	h._compose_forage(TileFx.stressed_tile_fixture())
+	h._show_tile(no_room_tile)
+	h._compose_forage(no_room_tile)
 	await h._settle()
-	await h._save("improvement_paused_plant")
-	var paused_box = ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "cultivate")
-	h._assert_hud("a paused build keeps its box CHECKED — progress is not lost",
-		paused_box is CheckBox and (paused_box as CheckBox).button_pressed)
-	h._assert_hud("…and the WARN line names the pause, its cause and the ease-off remedy",
-		Q.has_label_containing(h._hud._drawercompose._compose_sheet, IMPROVEMENT_PAUSED_NEEDLE))
+	await h._save("improvement_no_room_plant")
+	var no_room_box = ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "cultivate")
+	var no_room_face := ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, "cultivate")
+	print("ui_preview: no-room build  face=%s" % no_room_face)
+	# The PRECONDITIONS, without which the two claims below are made about a frame that never staged
+	# the case: the composed floor really is above this patch's own stock fraction, and the phase the
+	# retired note keyed off really is non-Thriving.
+	h._assert_hud("the composed floor really does stand above the patch's stock, so there is no room",
+		SourceForecast.FLOOR_FOOD_PEAK > _stock_fraction(no_room_tile)
+			and SourceForecast.escapement_room(no_room_tile, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+				SourceForecast.FLOOR_FOOD_PEAK) <= SourceForecast.BUILD_NO_ESCAPEMENT_ROOM)
+	h._assert_hud("…and the patch is not Thriving, so the retired pause line would have fired",
+		String(no_room_tile["patch_ecology_phase"]) != HudFloraVocab.ECOLOGY_PHASE_THRIVING)
+	h._assert_hud("a build with no room states NO estimate — the sheet cannot quote what the sim will not accrue",
+		not no_room_face.contains(ANY_TURN_ESTIMATE_NEEDLE))
+	h._assert_hud("…and no PAUSE line is stated anywhere on the sheet, the phase gating nothing",
+		not Q.has_label_containing(h._hud._drawercompose._compose_sheet, RETIRED_PAUSED_NOTE_NEEDLE))
+	h._assert_hud("a stalled build keeps its box CHECKED — progress is not lost",
+		no_room_box is CheckBox and (no_room_box as CheckBox).button_pressed)
 	# **THE SHARPEST CASE FOR THE UNGATED RULE.** A STALLED build is exactly when a player reaches for
-	# the abandon, so a paused box must stay LIVE — and this is the one frame where greying it would
-	# look defensible (the source has left Thriving, which is what gates the build's own START). The
-	# notes here are a loud WARN line, so this also pins that `notes` do not disable a RUNNING control
-	# the way they disable an OFFERED one.
-	h._assert_hud("a PAUSED build's box is still live — abandoning a stalled build is the whole point",
-		paused_box is CheckBox and not (paused_box as CheckBox).disabled)
+	# the abandon, so its box must stay LIVE — and this is the one frame where greying it would look
+	# defensible (the source has left Thriving, which is what USED to gate the build's own start).
+	h._assert_hud("a stalled build's box is still live — abandoning it is the whole point",
+		no_room_box is CheckBox and not (no_room_box as CheckBox).disabled)
+
+	# State 442-cultivate-stressed-advances — **THE SAME STRESSED PATCH, BUILDING.** Only the floor
+	# moved: dropped beneath the patch's own stock the crew is working it again, so the build accrues
+	# and the face quotes the turns. This is the half that says the frame above is about the ROOM and
+	# not about the phase — a client still keyed on `ecology_phase` renders the pause line here, over a
+	# meter its own face shows advancing, which is the reported defect exactly.
+	h._hud._compose.set_forage_floor(BUILD_ROOM_FLOOR)
+	h._compose_forage(no_room_tile)
+	await h._settle()
+	await h._save("improvement_stressed_advances")
+	var advancing_face := ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, "cultivate")
+	print("ui_preview: stressed advancing  face=%s" % advancing_face)
+	h._assert_hud("a floor beneath the stock leaves room, so the SAME patch quotes its turns",
+		advancing_face.ends_with(_turns_clause(TURNS_AT_ROOM_FLOOR)))
+	h._assert_hud("…and still says nothing about being paused, on a patch that is still Stressed",
+		not Q.has_label_containing(h._hud._drawercompose._compose_sheet, RETIRED_PAUSED_NOTE_NEEDLE))
+	# Back to the peak for the states below, which state no floor of their own.
+	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
 
 	# State 442-cultivate-done — the DONE state. A finished patch's rung becomes a static LABEL (no box
 	# to uncheck, nothing to clear), and the NEXT rung's checkbox renders beneath it. This is the state
@@ -612,6 +682,17 @@ func run(harness) -> void:
 			HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_CULTIVATE,
 			SourceForecast.BUILD_CREW_NONE, SourceForecast.FLOOR_FOOD_PEAK,
 			NO_BUILD_GEAR) == SourceForecast.BUILD_TURNS_NO_ESTIMATE)
+	# **THE SINGULAR, asked of the producer** — no fixture in the corpus lands a one-turn job, and
+	# staging one would pin a whole frame's arithmetic to a rounding. Both compose faces spell their
+	# count through `DetailFormat.build_turns_clause`, so the pair is asked of it: a build one turn out
+	# must not read `≈1 turns` on the sheet beside the tile card's own `≈1 turn at this crew`. The
+	# PLURAL half is what stops "always singular" passing.
+	h._assert_hud("a one-turn job reads in the singular on the compose face",
+		DetailFormat.build_turns_clause(TURNS_SINGULAR_JOB)
+			== HudComposeVocab.BUILD_TURNS_COUNT_ONE)
+	h._assert_hud("…and every other count keeps the plural",
+		DetailFormat.build_turns_clause(TURNS_PLURAL_JOB)
+			== HudComposeVocab.BUILD_TURNS_COUNT_FORMAT % TURNS_PLURAL_JOB)
 
 	# Restore the unassigned near band + a plain Sustain compose for the range states below.
 	h._hud._band_labor._player_band = BandFx.forage_range_bands()[0]

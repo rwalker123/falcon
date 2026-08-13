@@ -2096,7 +2096,10 @@ table ForagePatchState {
   buildTurnsRemaining:int = -1;
   // WHAT THE CREW'S TOOLS TOOK OFF THIS BUILD, in work units (appended,
   // docs/plan_unit_costed_work.md section 6) - the `t` in
-  // `effective_cost = max(workCost x minBuildFraction, workCost - t)`.
+  // `effective_cost = workCost - t`, and NOTHING FLOORS IT: a floor shipped briefly and was
+  // rejected, because how far a kit may shrink a job is decided by the job's own `workCost` and the
+  // tool's contribution, both of which are dials. A bar at or below zero simply completes the build
+  // on its first worked turn (`buildTurnsRemaining` reads `1` there, never `-1`).
   //
   // A tool's help lands on the JOB, not on the crew's output, and that is the whole shape: a
   // multiplier on the crew cancels the cost, so it saves the same PERCENTAGE of turns on a garden
@@ -3091,7 +3094,10 @@ table HerdTelemetryState {
   buildTurnsRemaining:int = -1;
   // WHAT THE CREW'S TOOLS TOOK OFF THIS BUILD, in work units (appended,
   // docs/plan_unit_costed_work.md section 6) - the `t` in
-  // `effective_cost = max(workCost x minBuildFraction, workCost - t)`.
+  // `effective_cost = workCost - t`, and NOTHING FLOORS IT: a floor shipped briefly and was
+  // rejected, because how far a kit may shrink a job is decided by the job's own `workCost` and the
+  // tool's contribution, both of which are dials. A bar at or below zero simply completes the build
+  // on its first worked turn (`buildTurnsRemaining` reads `1` there, never `-1`).
   //
   // A tool's help lands on the JOB, not on the crew's output, and that is the whole shape: a
   // multiplier on the crew cancels the cost, so it saves the same PERCENTAGE of turns on a garden

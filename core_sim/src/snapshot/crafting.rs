@@ -973,3 +973,78 @@ pub(crate) fn builtin_craft_inputs() -> &'static BandCraftInputs<'static> {
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::equipment_config::WearQuantum;
+
+    /// **THE BUILD QUANTUM IS THE ONE WHOSE UNIT IS NOT ITS NOUN**, and this pins the divisor that
+    /// turns one into the other — `quantum_units_per_noun`'s only non-identity arm.
+    ///
+    /// **It is unreachable from the shipped roster today**, which is exactly why it is pinned here
+    /// rather than left to a wire test: `husbandry_gear` is the only item that wears on a build and
+    /// it declares `biomass_collected` first, so no published `equipmentBatches` row currently
+    /// divides by anything. The arm goes live the day an item **leads** with `build_progress` (issue
+    /// #539's hoe), and an untested conversion would quote that item's whole life in bare work units.
+    #[test]
+    fn the_build_quanta_are_quoted_against_the_ladders_reference_job() {
+        let reference = crate::intensification::LadderConfig::builtin().reference_build_cost();
+        assert!(
+            reference > 0.0,
+            "fixture: the ladder must price its reference job, or the divisor is meaningless"
+        );
+        assert_eq!(
+            quantum_units_per_noun(WearQuantum::BuildProgress, reference),
+            reference,
+            "a build's noun is the REFERENCE JOB, so its divisor is that job's own work cost — a \
+             work unit means nothing to a player holding a hoe"
+        );
+        for quantum in [
+            WearQuantum::Strike,
+            WearQuantum::BiomassHauled,
+            WearQuantum::BiomassGathered,
+            WearQuantum::BiomassCollected,
+            WearQuantum::TileRevealed,
+            WearQuantum::ItemCrafted,
+        ] {
+            assert_eq!(
+                quantum_units_per_noun(quantum, reference),
+                ONE_UNIT_IS_ITS_OWN_NOUN,
+                "{quantum:?} counts in its own unit — a kill is a kill"
+            );
+        }
+    }
+
+    /// **THE SHIPPED HANDLING GEAR HEADLINES THE SLAUGHTER, NOT THE BUILD** — `wear[0]` is the
+    /// entry a life gauge quotes (`ItemDefinition::headline_wear`), and the order is the model.
+    ///
+    /// Pinned because it is a **readout** decision a config reorder would silently make: the gauge
+    /// would flip from *"≈2500 biomass butchered"* to *"≈12 gardens' worth"*, quoting a keeper's kit
+    /// in the plant web's reference job. `docs/plan_unit_costed_work.md` §6.3 assumed this item
+    /// already led with the build; it never has.
+    #[test]
+    fn the_handling_gears_life_gauge_reads_in_butchered_biomass() {
+        let equipment = EquipmentConfig::builtin();
+        let gear = equipment
+            .item("husbandry_gear")
+            .expect("the shipped roster carries the handling gear");
+        assert_eq!(
+            gear.headline_wear().per,
+            WearQuantum::BiomassCollected,
+            "the handling gear's gauge reads in butchered biomass"
+        );
+        assert!(
+            gear.wears_on(WearQuantum::BuildProgress),
+            "fixture: it must still wear on the build, or the ordering claim is vacuous"
+        );
+        assert_eq!(
+            quantum_units_per_noun(
+                gear.headline_wear().per,
+                crate::intensification::LadderConfig::builtin().reference_build_cost()
+            ),
+            ONE_UNIT_IS_ITS_OWN_NOUN,
+            "so its published `quantaLeft` is a raw biomass count, unconverted"
+        );
+    }
+}

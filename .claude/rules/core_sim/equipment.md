@@ -170,7 +170,10 @@ spends handling animals.
   live on `EquipmentStat::neutral`, so reading one as the other is not something a call site can do.
 - **NOT named for husbandry.** Both webs' rungs read the one build seam, so a stat keyed to the
   animal branch would need renaming the day a hoe ships. What is animal-only today is the *content*:
-  `husbandry_gear` is the only declarer, so both plant rungs resolve `1.0`.
+  `husbandry_gear` is the only declarer, so both plant rungs resolve the neutral **`0.0`**
+  (`NO_BUILD_GEAR`) — a plant crew's tools take *nothing* off a Cultivate or a Sow yet. Reading that
+  neutral as `1.0` would hand every ungeared plant crew a free work unit per worker off every job,
+  which is exactly the wrong-neutral confusion `EquipmentStat::neutral` exists to make impossible.
 - **IT IS COVERAGE-WEIGHTED, like the carries — and THIS ANSWERS THE QUESTION `BuildRate` LEFT
   OPEN.** *"Whether a digging tool wants the covered reading instead"*: **yes**. The old stat was
   uncovered only because averaging a **multiplier** says *bring fewer keepers and the pen goes up
@@ -246,13 +249,24 @@ a shallow floor halves its accrual and pays proportionally less gear for the sam
 > durability, precisely what a build cost before any of this. The tool did that work and wears for
 > it.
 >
-> **`ItemDefinition::headline_wear` is REQUOTED against the reference job** (§6.3). A work unit means
-> nothing to a player holding a hoe, so the life gauge reads **"12 gardens' worth left"** rather than
-> "625 builds left": `WearQuantum::BuildProgress`'s noun is *"gardens' worth"* and
-> `snapshot::crafting::quantum_units_per_noun` divides by the reference job's `work_cost`. **The
-> reference is the LADDER's** (`intensification::REFERENCE_BUILD_RUNG`), resolved per capture rather
-> than carried as a literal, so a retune of the rung moves the readout with it — and the conversion
-> lives at the readout because `WearQuantum` knows nothing about rungs.
+> **A LIFE READOUT QUOTES THE BUILD QUANTUM AGAINST THE REFERENCE JOB** — `WearQuantum::BuildProgress`'s
+> noun is *"gardens' worth"* and `snapshot::crafting::quantum_units_per_noun` divides by the reference
+> job's `work_cost`, so a gauge reads **"12 gardens' worth left"** rather than "625 builds left": a
+> work unit means nothing to a player holding a hoe. **The reference is the LADDER's**
+> (`intensification::REFERENCE_BUILD_RUNG`), resolved per capture rather than carried as a literal, so
+> a retune of the rung moves the readout with it — and the conversion lives at the readout because
+> `WearQuantum` knows nothing about rungs.
+>
+> **NO SHIPPED ITEM HEADLINES THE BUILD QUANTUM, so no gauge reads in gardens today.**
+> `husbandry_gear` — the only item that wears on a build at all — declares `biomass_collected`
+> **first**, and `headline_wear` is `wear[0]`, so its gauge reads *"≈2500 biomass butchered"* and is
+> **unchanged** by pricing improvements in work. That ordering stays, for two reasons: a keeper's gear
+> is worked on the beast far more turns than on a fence, and *"gardens' worth"* names the **plant**
+> reference job, so headlining the build here would quote animal handling gear in the other web's
+> unit. The conversion is for the first item to **lead** with `build_progress` — issue #539's hoe,
+> which is what it was written for. (`docs/plan_unit_costed_work.md` §6.3 reads *"one readout has to
+> change"* on the premise that this gauge said *"≈12.5 builds"*; it never did.) What the work-priced
+> quantum genuinely bought is on the **charge** side — a bigger job eats more gear — and that is live.
 
 **It is charged for the progress the METER TOOK, not the progress the RUNG OFFERED.** Each build arm
 reads its source's meter before the accrual and hands `systems::labor::charge_build_wear` the
@@ -304,10 +318,12 @@ free — the whole thing *wear follows the work actually done* exists to prevent
   and it must be `item_crafted`.
 - **A LIFE READOUT QUOTES THE FIRST ENTRY** (`ItemDefinition::headline_wear`), and the order is the
   model, exactly as `tiers[0]` declares the default tier. A fuel gauge reads in one unit, so an item
-  on several quanta has to pick one: `≈12 builds` and `≈2500 biomass butchered` are the same
+  on several quanta has to pick one: `≈12 gardens' worth` and `≈2500 biomass butchered` are the same
   condition counted two ways, and stating both would need the readout to know the usage mix it exists
-  to let the player choose. **The gauge is therefore accurate under one usage assumption** — a band
-  splitting its gear between a pen and a `Tame` runs out sooner than the pen-only count says. A
+  to let the player choose. **The handling gear declares the slaughter first**, so that is what its
+  gauge says — see "THE QUANTUM IS SIZE-SENSITIVE NOW" above for why the build reading waits for an
+  item that leads with it. **The gauge is therefore accurate under one usage assumption** — a band
+  splitting its gear between a pen and a `Tame` runs out sooner than the butchering-only count says. A
   per-quantum row is a wire and readout change this slice deliberately does not make.
 
 ### The warrior kit reuses `attack`, and a band-wide kit may carry no mass bound

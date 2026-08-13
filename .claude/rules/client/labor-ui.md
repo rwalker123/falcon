@@ -2622,10 +2622,19 @@ which did move; suppressing the walk under a composed build is what exposed it, 
 the equality — agreeing with the floor-independence claim beside it, which is the same number — over
 a teaching-line companion that keeps it non-vacuous.
 
-**The pause line is both webs' now.** A build accrues only while its source is Thriving, and that is
-deliberately not a gate (a source's phase swings as it is worked). The sim PAUSES, losing nothing, and
-`_improvement_paused_note` states the pause, its cause and the ease-off remedy on the Running control.
-It was `_tame_stalled_hint`, animal-only, because the plant web had no control to hang it on.
+**THE RUNNING CONTROL STATES NO PAUSE, and the phase-keyed line that did is retired.** It was
+`_tame_stalled_hint` (animal-only), then `_improvement_paused_note` on both webs, and both were true
+of a sim that stopped a build outside `EcologyPhase::Thriving`. `docs/plan_harvest_floor.md` §3.2
+replaced that cliff with a RATE, so the note fired on any non-Thriving source — a Cultivate on a
+Stressed patch rendered `⚠ Paused — … this only advances while Thriving` beneath a meter the same
+face showed advancing, and its remedy (ease workers off) was backwards, the FLOOR being what paces the
+build. `IMPROVEMENT_PAUSED_FORMAT` went with it, and **the running control's `notes` array now carries
+the pen's zero-payoff warning alone**.
+
+What the sheet says in its place is what it already said better: the aside's live
+`Building at ×0.30 — a higher floor builds faster`, and — for a build that genuinely accrues nothing,
+which is an empty escapement room and never a phase — the turn estimate dropping out entirely.
+`RungGates`' "deliberately NOT gated" note points at the pace, not at a note that no longer exists.
 
 **The one asymmetry that survives, and must be kept:** the **Corral** done-state label carries the
 pen's per-turn fodder upkeep (`🐄 Penned · 1.74 fodder/turn upkeep`) and the **Tame** one does not — a
@@ -2810,8 +2819,10 @@ because the sheet has a crew stepper and a floor slider and the card has neither
 | tile card · herd drawer | `SourceForecast.build_turns_remaining` — the `penFeedUpkeep` discipline | no crew control, so the only question is *what is happening here*, which is exactly what the sim's answer for the committed crew says |
 
 ```text
+working  = improvement ∈ {cultivate, tame} ⇒ max(0, biomass − floor × carryingCapacity) > 0
 gear(w)  = min(w, kitTiers[kit].buildWorkSaturatingCrew) × kitTiers[kit].buildWorkPerWorker
-turns(w) = ceil((workCost − workDone − gear(w)) / (w × buildWorkPerWorkerTurn × learn_multiplier(floor)))
+left(w)  = workCost − workDone − gear(w)
+turns(w) = 1 where left(w) <= 0, else ceil(left(w) / (w × buildWorkPerWorkerTurn × learn_multiplier(floor)))
 ```
 
 **The SOURCE carries one term and the KIT carries the other**, and which side each sits on is what
@@ -2829,6 +2840,18 @@ it. The floor term is `learn_multiplier`, not a second spelling of `floor / FLOO
 helper is the client's one copy of the sim's `MSY_BIOMASS_FRACTION`, and a peak written out again is
 how the sheet and the chart's teaching rail come to disagree about what a floor buys.
 
+**THE WORK PREDICATE IS PART OF THE FORM, and it rides TWO rungs and not four.** `RungDef::
+build_accrual`'s `eligible` carries `systems::labor::crew_is_working_the_source` — *is anything
+standing above this assignment's floor?* — on **Cultivate** and **Tame**, so a floor above the
+source's own stock fraction accrues nothing while `learn_multiplier` is at its LARGEST. A sheet
+without the term quoted the fastest estimate on the whole axis for a build the sim was not advancing,
+beside a tile card correctly rendering no turn line at all. `SourceForecast.escapement_room` is the
+client's copy of `max(0, B − floor·K)`, and this is the ONE reader of it that is not a ceiling —
+admitted for the same reason the ceilings are, that the sheet prices a crew and a floor nobody has
+committed. **`Sow` and `Corral` omit it in the sim and must omit it here**: bare ground stands below
+every floor by construction, so requiring room would make rung 3's create-from-nothing case
+unquotable, and a pen is fenced around a herd already drawn to its keeper's floor.
+
 > **`buildWorkFromGear` on the SOURCE is a different question and must not be read here.** It is the
 > RESOLVED contribution for the crew that worked that source this turn — the tile card's and the herd
 > drawer's `−17 work off this job` line — so it answers for a committed crew and a committed kit, and
@@ -2845,8 +2868,26 @@ dies with it). The crew half needs nothing — a stepper tick rebuilds the sheet
 
 `SourceForecast.BUILD_TURNS_NO_ESTIMATE` (`-1`) renders as **no clause at all** on both producers; a
 `0` in its place promises a build about to land. The sheet's producer answers it for a crew of
-nobody, a rung the wire prices nothing on, a floor at which nothing accrues, and a job the gear alone
-already pays off — the sim's own four `None`s.
+nobody, a rung the wire prices nothing on, a floor at which nothing accrues, and a crew standing over
+an empty escapement room. Each is the sim's own `None`, which it reserves for a **stalled** build.
+
+**A JOB THE GEAR ALONE PAYS OFF IS `BUILD_FINISHES_IN_ONE_TURN`, NOT "no estimate"** — the client's
+transcription of `intensification::BUILD_FINISHES_IN_ONE_TURN`, which the sim returns for the same two
+states: the work is already banked, or the crew's gear covers the job outright
+(`LadderConfig::effective_build_cost` is unfloored, so a well-equipped crew drives the bar to or below
+zero). Both finish on the first worked turn (`docs/plan_unit_costed_work.md` §6.2), which is an
+ANSWER — and the two constants must not be conflated, because withholding the line broke this arc's
+own headline claim at exactly the crew that demonstrates it: **it is reachable on shipped config**, a
+start-stocked band's 26 `husbandry_gear` units at 8.5 apiece covering a 50-unit Tame at six keepers,
+so the estimate fell 25 → 13 → 4 → 2 → *nothing* as hands were added, beside a tile card correctly
+reading `≈1 turn at this crew`.
+
+**And the count is SPELLED in one place, for both faces** — `DetailFormat.build_turns_clause`, which
+forks the singular (`≈1 turn` / `≈25 turns`). The two faces quote one estimate about one job, so a
+build one turn out reading `≈1 turns` on the sheet beside the tile card's own `≈1 turn at this crew`
+(`HudSelectionVocab.BUILD_TURNS_ROW_ONE`) would be the same number worded two ways on one screen.
+`BUILD_PRICE_TURNS_FORMAT` / `IMPROVEMENT_RUNNING_TURNS_FORMAT` therefore take the clause already
+spelled and never a raw count.
 - The percentage is **still the `*_progress` fraction**, never `workDone / workCost` re-derived here.
   The wire ships both and they are exactly each other; dividing client-side would be a second
   authority over one meter. The copy and the composer are
@@ -3433,13 +3474,12 @@ already pays off — the sim's own four `None`s.
       > for the gathering-site rule, arriving from the other direction.
       >
       > What the player is told instead is the PACE, live and quantified: the compose sheet's aside
-      > reads `Building at ×1.60 — a higher floor builds faster` (see "THE ASIDE'S TEACHING LINE"),
-      > and a build whose source has left Thriving states its PAUSE on the running control
-      > (`_improvement_paused_note` — the one surviving reader of
-      > `HudFloraVocab.ECOLOGY_PHASE_THRIVING` on this web). Neither is a gate.
+      > reads `Building at ×1.60 — a higher floor builds faster` (see "THE ASIDE'S TEACHING LINE").
+      > **Nothing on the control mentions the phase at all** — the running control's pause note is
+      > retired, and with it the compose sheet's last reader of
+      > `HudFloraVocab.ECOLOGY_PHASE_THRIVING` (see "THE RUNNING CONTROL STATES NO PAUSE").
 
-      The one remedy here that is the *opposite* of "work harder" is `_tame_stalled_hint` (below),
-      whose condition is a stock rather than a policy. The gates are re-validated every render.
+      The gates are re-validated every render.
       **Known gap (pre-existing):** `_hunt_policy_gates` does NOT check herd
       **ownership** — the tracks are per-faction, so a herd tamed by ANOTHER faction reads as
       available client-side while the sim rejects the assign.
@@ -3503,13 +3543,16 @@ already pays off — the sim's own four `None`s.
       reduced take that turn, so "Hunters" is honest there; Corral is a clause because it builds the
       pen the keepers hold. ui_preview `herd_compose_reopen_fresh` asserts the noun flips on the
       in-place-patched button, and `herd_fully_herded` / `herd_under_herded` render the drawer form.
-    - **`_tame_stalled_hint` — the one silent rule, said out loud.** Taming accrues only while the
-      herd is **Thriving**, but that is deliberately NOT a gate: a herd's phase swings as it is
-      hunted, so refusing the verb would be un-actionable churn. The sim just **pauses** the meter
-      (progress is neither lost nor switched). Silence would recreate exactly the hidden-rule problem
-      this arc exists to kill, so whenever `Tame` is composed on a non-Thriving herd the drawer states
-      the pause, its live phase, that progress is safe, and the ease-off remedy (WARN amber).
-      ui_preview `herd_tame_stalled`.
+    - **A STALLED Tame is stated by the ABSENCE of its estimate, and the phase says nothing.** The
+      silent rule this axis used to have was `_tame_stalled_hint`: taming accrued only while the herd
+      was **Thriving**, that was deliberately not a gate (a herd's phase swings as it is hunted), and
+      the drawer said so in a WARN line. Both the gate and the line are gone —
+      `docs/plan_harvest_floor.md` §3.2 made the FLOOR pace the build instead — so what genuinely
+      stalls a Tame is an empty escapement room, and the sheet states that by quoting no turns at all
+      beside an aside that already reads *"Nothing is taken — the whole stock stays standing. A crew
+      with nothing to work learns nothing and builds nothing."* ui_preview `herd_tame_stalled` is
+      re-fixtured onto exactly that: a Stressed herd composed at `FLOOR_MAX`, which is both the
+      sharpest case (×2.00 is the largest multiplier on the axis) and the retired line's own trigger.
     - **The Sow SITE gate — the refusal is an ANSWER, not a bool.** Only ~**46 of 4160** tiles (1.1%)
       will take seed, so "why can't I sow here?" is *the* question rung 3 provokes — and the client
       **cannot re-derive** it (no per-biome capacity table, no hydrology). The sim ships the verdict

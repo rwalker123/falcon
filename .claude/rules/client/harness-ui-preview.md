@@ -565,7 +565,7 @@ built from the code under test can only agree with itself. **They are the SIM's 
 from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
 payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-**A clean run is 318 frames / 975 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
+**A clean run is 320 frames / 989 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
 three times in one arc and once across a merge, and a running total kept by addition would be wrong
 by now. (The measurement above came back FIVE higher than the 895 recorded before it while the arc
 #527 review added exactly ONE claim — the `Carrying:` mass one. Four `PASS`es had accumulated
@@ -589,12 +589,41 @@ declares the build stat yet, so the crew A/B's frames exercise the ungeared arm 
 saturation claims are DRIVEN beside the frames — a crew above the kit's own saturating crew cannot be
 staffed on a frame without putting the assertion at the mercy of the stepper's cap.
 
+**`herd_kit_swap_over_geared` is the BOUNDARY of that same form** — the same warren and kit over a
+band holding a party's worth of hurdles, six armed keepers taking 51 work off a 50-unit Tame, reading
+`50 work, ≈1 turn` rather than the bare `50 work` a withheld estimate leaves. It is the shipped
+start-stock case (`_pen_axis_band` takes the gear's saturating crew as a parameter for it), and the
+frame doubles as the only RENDERED singular clause in the corpus — no other fixture lands a one-turn
+job. Three `PASS`: a precondition that the stepper really staffed the over-geared crew (a clamp below
+it would leave the claims describing an ordinary build), the one-turn clause, and the negative naming
+the bare price. Sabotage-verified by restoring the `BUILD_TURNS_NO_ESTIMATE` return — exactly the
+one-turn claim and its negative fail, the precondition rightly staying green.
+
 Sabotage-verified five ways, each failing a DISJOINT subset: reverting the running face to
 `build_turns_remaining` fails the three crew-A/B claims; building the control outside the live
 registry fails the two drag claims; resolving a FIXED kit instead of the offered one fails the geared
 frame, the two-kits negative and the saturation claim; and dropping the `min` on the head count fails
 the geared frame and both saturation claims while leaving the bare frame green (a kit that arms
 nobody is unaffected by an uncapped head count).
+
+**The estimate's own WORK PREDICATE is a third pair, and one of them is a NEGATIVE frame** —
+`improvement_no_room_plant` (was `improvement_paused_plant`) and `improvement_stressed_advances`, one
+Stressed patch with only the FLOOR moving: above its 22 / 100 stock nothing stands above the floor and
+the face quotes NOTHING; beneath it the same patch reads `≈167 turns`. **The pair is the claim** — a
+lone negative passes on a sheet that stopped quoting turns at all, and a lone positive on one with no
+predicate. The animal half is `herd_tame_stalled`, re-fixtured onto a Stressed herd composed at
+`FLOOR_MAX`, which is the reported case at its sharpest: ×2.00 is the largest multiplier on the axis,
+so an omitted predicate quotes the FASTEST estimate in the game for a build going nowhere. Its
+absence needle is the `≈` both count forms open with, never a specific count, which is what an
+absence claim needs. Two more `PASS` ride the crew A/B for the singular/plural fork
+(`DetailFormat.build_turns_clause`), driven rather than staged — no fixture lands a one-turn job.
+
+Sabotage-verified two ways, DISJOINT: dropping the predicate from `build_turns_at` fails exactly the
+two no-estimate claims (plant and animal) and nothing else; restoring the retired
+`_improvement_paused_note` fails exactly the three pause-line absences (both plant frames and the
+herd). **Those three absences are what the retargeting bought** — `improvement_paused_plant` asserted
+the presence of that line, so the contradiction the review found was captured in this harness as a
+pass.
 
 **The work-costed build readout added SEVEN `PASS` and NO frame** (`docs/plan_unit_costed_work.md`
 §11): five on the plant A/B in `chapters/improvements.gd` and two on `herd_corral` in

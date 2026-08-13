@@ -18,6 +18,14 @@ var h
 
 const TAME_CAP_WOULD_BE_HERDERS := 30
 
+## The RETIRED pause note's own stem, and any turn estimate at all — the two needles
+## `herd_tame_stalled` is judged on. Both are LITERALS: the paused format is deleted (a needle
+## recomposed from a live format could only describe whatever the code still says), and the estimate's
+## mark is what both count forms open with, so it finds an estimate without naming a count.
+const RETIRED_PAUSED_NOTE_NEEDLE := "ease off and it resumes"
+
+const TAME_TURN_ESTIMATE_NEEDLE := "≈"
+
 # The Red Deer pen at its settled escapement point (design doc §7, MEASURED from a sim run): the
 # feed the herd demands per turn, and the share of it a broke keeper managed to pay in the starving
 # state. `pen_fed_fraction` < 1 ⇒ the herd is shrinking.
@@ -890,16 +898,36 @@ func run(harness) -> void:
 	# Its picker button wears the `→ +1.20/turn` payoff, above Sustain's `up to +0.90/turn`.
 	await h._save("herd_tame")
 
-	# State 6b-tame-stalled — the "why isn't my Tame progressing?" hint. Taming accrues ONLY while the
-	# herd is Thriving, but is deliberately NOT gated on it (a herd's phase swings as you hunt it), so
-	# the sim just PAUSES the meter. Silence here would recreate exactly the hidden-rule problem this
-	# arc exists to kill, so the drawer says it: what stopped, why, that progress is NOT lost, and the
-	# remedy (ease off — the opposite of "work harder").
+	# State 6b-tame-stalled — the "why isn't my Tame progressing?" state, **RE-FIXTURED ONTO THE THING
+	# THAT ACTUALLY STOPS IT.** It used to stage a non-Thriving herd, because taming was gated on
+	# `EcologyPhase::Thriving` and the drawer said so in a WARN line. `docs/plan_harvest_floor.md` §3.2
+	# replaced that cliff with a rate — the phase PACES a build now and never stops one — so the herd is
+	# still Stressed here (the retired note's own trigger, kept so a regression has something to fire
+	# on) and what stalls the build is the FLOOR: dragged to `FLOOR_MAX`, nothing stands above it, the
+	# sim's work predicate is false and nothing accrues however fast `learn_multiplier` says the crew
+	# would learn. **That floor is the sharpest case on the whole axis**: ×2.00 is the largest
+	# multiplier there is, so a sheet that omitted the predicate quoted its FASTEST estimate here.
 	h._hud._compose.reset_hunt_source()
-	h._show_herd(_taming_stalled_herd_fixture())
-	h._compose_herd(_taming_stalled_herd_fixture(), Spine.COMPOSE_COUNT_UNSET, ForageFx.COMPOSE_FLOOR_UNSET, "tame")
+	var stalled_herd := _taming_stalled_herd_fixture()
+	h._show_herd(stalled_herd)
+	h._compose_herd(stalled_herd, Spine.COMPOSE_COUNT_UNSET, SourceForecast.FLOOR_MAX, "tame")
 	await h._settle()
 	await h._save("herd_tame_stalled")
+	var stalled_face := ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
+		SourceForecast.IMPROVEMENT_TAME)
+	print("ui_preview: tame stalled  face=%s" % stalled_face)
+	# The PRECONDITIONS: the herd really is standing entirely below the composed floor (`_show_herd`
+	# floorifies the fixture, so the stock is read back off the DICT the sheet was handed rather than
+	# off the authored pair), and the phase the retired note keyed off really is non-Thriving.
+	h._assert_hud("nothing stands above a floor at the top of the axis, so the crew is not working the herd",
+		SourceForecast.escapement_room(stalled_herd, HudComposeVocab.BARE_FORECAST_PREFIX,
+			SourceForecast.FLOOR_MAX) <= SourceForecast.BUILD_NO_ESCAPEMENT_ROOM)
+	h._assert_hud("…and the herd is not Thriving, so the retired pause line would have fired",
+		String(stalled_herd["ecology_phase"]) != HudFloraVocab.ECOLOGY_PHASE_THRIVING)
+	h._assert_hud("a stalled Tame quotes NO turns — not the fastest number on the floor axis",
+		not stalled_face.contains(TAME_TURN_ESTIMATE_NEEDLE))
+	h._assert_hud("…and states no PAUSE, the phase gating nothing on this web either",
+		not Q.has_label_containing(h._hud._drawercompose._compose_sheet, RETIRED_PAUSED_NOTE_NEEDLE))
 
 	# TAMING-STARTUP-LAG GUARD — composing an INVESTMENT rung (Tame) on a still-WILD herd must offer the
 	# ownership-INDEPENDENT would-be herder crew, not the 1-worker Tame-prep count. A wild herd's

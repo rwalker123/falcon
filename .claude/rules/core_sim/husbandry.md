@@ -86,7 +86,7 @@ invariant.
 |---|---|---|---|
 | Wild, Sustain hunt | `ecology` | `wild_r` (rabbit 0.35 · deer 0.10 · mammoth 0.04) | a worker |
 | Mobile domesticated (**pastoral**) | `husbandry.pastoral.ecology` | `min(cap, wild_r × pastoral_gain)` (gain 2.0) | **a worker** (a Hunt assignment, like a wild herd — passive-free pastoral is retired) |
-| Corral, building | the `animal:pen` rung's `yield_fraction_while_building ×` the CREW's carry | — | a worker, 25 turns |
+| Corral, building | the `animal:pen` rung's `yield_fraction_while_building ×` the CREW's carry | — | the keepers, and **75 work units** (not a fixed turn count — the keeper crew is the throughput, so the turns move with `herders_needed`) |
 | Corral, finished (**pen**) | `husbandry.pen.ecology` | `min(cap, wild_r × pen_gain)` (gain 4.0, cap 1.0) | a worker + **feed (footprint-offset)** + pinned |
 
 - **Grazing 2d retired the flat pastoral 0.25 / pen 0.90.** The managed rungs now scale each species'
@@ -220,9 +220,11 @@ gated, **paid** verb, so both food webs read the same:
   (a crew the herd's own escapement binds pays nothing for it, legibly — hire twice the people), and
   the dip is **floor-independent by construction**.
   `domestication_progress` accrues the crew's own output in **work units** —
-  `workers × PER_WORKER_OUTPUT × learn_multiplier(floor) × build_rate` — against a job costing
+  `workers × PER_WORKER_OUTPUT × learn_multiplier(floor)` — against a job costing
   `work_cost × the species' taming_cost_multiplier` (**50 units for a rabbit, 250 for a Steppe
-  Runner**), via the shared `RungDef::build_accrual` / `build_cost` seam. **Turns are the output**,
+  Runner**), via the shared `RungDef::build_accrual` / `build_cost` seam. **The keepers' KIT is not
+  in that expression**: the handling gear takes work off the **job**, never off the crew's output —
+  see "The build axis" in `equipment.md`. **Turns are the output**,
   so a bigger keeper crew gentles the same herd sooner; see "An improvement costs WORK, not turns" in
   `intensification.md`. **Gates:** the faction knows **Herding**, the species'
   `husbandry_ceiling` allows domestication (Grazing 2d-δ), and **something stands above the crew's

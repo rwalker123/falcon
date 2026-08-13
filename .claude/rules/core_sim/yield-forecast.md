@@ -262,7 +262,9 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > and no stepper can move.
 >
 > The **food peak** is not published: the client holds its own `SourceForecast.FLOOR_FOOD_PEAK`, which
-> must equal the sim's `fauna::MSY_BIOMASS_FRACTION` and is pinned against it in the same file.
+> must equal the sim's `fauna::MSY_BIOMASS_FRACTION`. The same file pins them together by **reading
+> the GDScript's own `const`** rather than a Rust transcription of it — a transcribed literal
+> compares the sim with itself, so the client script could be retuned with no test firing.
 >
 > **`regrowthSamples` is sampled, and NOT because the curve is hard to write down.** It is **two
 > different functions**: a patch is pure logistic with a reseed floor and **no Allee term**, a herd has

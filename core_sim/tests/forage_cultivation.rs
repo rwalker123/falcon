@@ -1482,3 +1482,103 @@ fn the_published_neglect_countdown_hits_zero_on_the_turn_the_meter_moves() {
         "a wild patch has no improvement to lose"
     );
 }
+
+/// **THE BUILDING CREW'S ANSWER IS THE ONE THE SOURCE PUBLISHES.**
+///
+/// `build_turns_remaining` is a **per-source** field written **per assignment**, and two bands
+/// routinely work one patch — one running a Cultivate, one simply gathering. Without a rule the
+/// field was **last-writer-wins**, decided by the order the labor loop visits bands in, so the
+/// gatherer's *projection of the next rung* landed on top of the running build's countdown and the
+/// tile card quoted turns for a crew that was not building.
+///
+/// The two answers are held far apart on purpose — a builder of [`build_crew`] hands against a lone
+/// gatherer — so the assertion cannot pass by coincidence, and the gatherer is spawned **second** so
+/// it is the one whose write would win.
+#[test]
+fn a_running_build_outranks_a_bystanders_projection_on_the_same_patch() {
+    let mut app = spawn_world();
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    grant_cultivation_knowledge(&mut app, FactionId(0));
+    let crew = build_crew(&app);
+    spawn_forager_of(&mut app, tile, coord, Some(Improvement::Cultivate), crew);
+    // The bystander: same patch, no verb, one pair of hands — so its projection of the very same
+    // rung is far longer than the builder's countdown.
+    const ONE_BYSTANDER: u32 = 1;
+    spawn_forager_of(&mut app, tile, coord, None, ONE_BYSTANDER);
+    run_turns_with_forage(&mut app, 1);
+
+    let patch = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("patch")
+        .clone();
+    let published = patch
+        .build_turns_remaining
+        .expect("a patch with a running build quotes a finish date");
+
+    // What each crew would say, from the ladder itself rather than from literals.
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let rung = ladder.rung(RungKey::PlantTended);
+    let quote = |workers: u32, banked: f32| {
+        let cost = rung
+            .build_cost(RUNG_COST_UNSCALED)
+            .expect("the tended rung builds");
+        core_sim::build_turns_remaining(
+            cost,
+            banked,
+            rung.build_accrual(Some(Improvement::Cultivate), true, FOOD_PEAK_FLOOR, workers),
+        )
+        .expect("a staffed build quotes a finish date")
+    };
+    let builders_answer = quote(crew, patch.cultivation_progress);
+    let bystanders_answer = quote(ONE_BYSTANDER, patch.cultivation_progress);
+    assert!(
+        bystanders_answer > builders_answer,
+        "fixture: the two crews must disagree, or last-writer-wins is invisible \
+         ({bystanders_answer} vs {builders_answer})"
+    );
+    assert_eq!(
+        published, builders_answer,
+        "the patch must publish the BUILDING crew's countdown, not the bystander's projection of \
+         the same rung ({bystanders_answer})"
+    );
+}
+
+/// **AMONG CREWS BUILDING THE SAME SOURCE, THE SOONEST FINISH WINS.** They all fill one meter, so
+/// each crew's quote counts only its own output and is therefore an over-estimate; the smallest is
+/// the least wrong, and it is the one that must survive whichever order the loop visits the bands
+/// in. Asserted **both ways round**, because a rule that only holds for one spawn order is the
+/// last-writer-wins defect with a nicer number.
+#[test]
+fn the_soonest_of_two_building_crews_is_the_one_published() {
+    let published_for = |big_crew_first: bool| -> u32 {
+        let mut app = spawn_world();
+        let (tile, coord) = prime_thriving_patch(&mut app);
+        grant_cultivation_knowledge(&mut app, FactionId(0));
+        let crew = build_crew(&app);
+        const ONE_HAND: u32 = 1;
+        let crews = if big_crew_first {
+            [crew, ONE_HAND]
+        } else {
+            [ONE_HAND, crew]
+        };
+        for workers in crews {
+            spawn_forager_of(&mut app, tile, coord, Some(Improvement::Cultivate), workers);
+        }
+        run_turns_with_forage(&mut app, 1);
+        app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .expect("patch")
+            .build_turns_remaining
+            .expect("a patch with two running builds quotes a finish date")
+    };
+
+    let big_first = published_for(true);
+    let small_first = published_for(false);
+    assert_eq!(
+        big_first, small_first,
+        "the published estimate must not depend on the order the labor loop visits the bands in"
+    );
+}

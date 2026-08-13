@@ -276,10 +276,19 @@ pub fn build_fraction(done: f32, cost: f32) -> f32 {
 /// the same crew against the rung it would climb next, which is what lets the compose sheet quote a
 /// job before the player commits to it.
 ///
-/// `None` = **no estimate**, and it means exactly two things, both of which the wire renders as
-/// [`NO_BUILD_TURNS_ESTIMATE`]: the job is already paid for (nothing left to wait for), or the crew
-/// produced nothing this turn and the build is **stalled** — a stall has no finite answer, and
-/// quoting a huge one would read as a promise.
+/// `None` = **no estimate**, and it means exactly ONE thing, which the wire renders as
+/// [`NO_BUILD_TURNS_ESTIMATE`]: the crew produced nothing this turn, so the build is **stalled** — a
+/// stall has no finite answer, and quoting a huge one would read as a promise. (The callers add the
+/// other no-answer cases before they ever reach here: no crew on the source, the top of the ladder,
+/// a gate that refuses.)
+///
+/// **A bar the meter is already at or past is [`BUILD_FINISHES_IN_ONE_TURN`], not "no answer"**, and
+/// the two states that reach it are the same sentence: the work is already banked, or the crew's
+/// **gear pays the job off outright** ([`LadderConfig::effective_build_cost`] is unfloored, so a
+/// well-equipped crew drives the bar to or below zero). Both *"finish on the first worked turn"*
+/// (`docs/plan_unit_costed_work.md` §6.2), and answering `-1` there broke the arc's own headline
+/// claim at exactly the crew size that demonstrates it — the estimate fell 25 → 13 → 4 → 2 → *no
+/// estimate* as hands were added.
 ///
 /// **The sim answers it because the client cannot**: the client holds neither the crew's output, nor
 /// the floor multiplier, nor the kit's build rate — the same division of labour as `penFeedUpkeep`
@@ -290,10 +299,18 @@ pub fn build_turns_remaining(cost: f32, done: f32, work_this_turn: f32) -> Optio
     }
     let remaining = cost - done;
     if remaining <= 0.0 {
-        return None;
+        return Some(BUILD_FINISHES_IN_ONE_TURN);
     }
     Some((remaining / work_this_turn).ceil() as u32)
 }
+
+/// **THE ANSWER FOR A BAR A WORKING CREW IS ALREADY AT OR PAST** — one turn, because a build with no
+/// work left to do completes on the first turn anybody works it.
+///
+/// Named rather than a bare `1` at the one site that returns it, so the *reason* travels with the
+/// value: this is *"there is nothing left to wait for"*, which is a real answer, and deliberately
+/// **not** [`NO_BUILD_TURNS_ESTIMATE`], which means *"there is no answer"*.
+pub const BUILD_FINISHES_IN_ONE_TURN: u32 = 1;
 
 /// **The floor a build on a RUNG-3 MANAGED source passes** — the food peak, so [`learn_multiplier`]
 /// is exactly `×1.0`.
@@ -1289,8 +1306,9 @@ impl LadderConfig {
     /// never quote a rung the gates would refuse**, so a caller that cannot answer one of them passes
     /// `false` and the wire says "no estimate" instead of naming a job the player cannot take.
     ///
-    /// `None` — no estimate — for a rung with nothing to build, a gate that refuses, a crew that
-    /// produces nothing, or a meter already past the bar.
+    /// `None` — no estimate — for a rung with nothing to build, a gate that refuses, or a crew that
+    /// produces nothing. A meter already past the bar — including a bar the crew's **gear** pays off
+    /// outright — is [`BUILD_FINISHES_IN_ONE_TURN`], not `None`: it is an answer.
     // The rung, its per-source price, its meter, and the three things a crew brings (hands, floor,
     // kit) are all genuinely inputs — the same list `build_accrual` + `build_cost` +
     // `effective_build_cost` take between them.
@@ -2165,8 +2183,14 @@ mod tests {
     }
 
     /// **The turns estimate is `ceil(remaining / this turn's work)`, and a STALL has no estimate.**
-    /// `None` is the wire's [`NO_BUILD_TURNS_ESTIMATE`]: a build nobody is advancing cannot be quoted
-    /// a finish date, and a huge number would read as a promise.
+    /// `None` is the wire's [`NO_BUILD_TURNS_ESTIMATE`], and a stall is the only thing that earns it:
+    /// a build nobody is advancing cannot be quoted a finish date, and a huge number would read as a
+    /// promise.
+    ///
+    /// **A bar already at or below the meter is `1`, NOT `None`** — the work is banked, so the job
+    /// finishes the first turn anybody works it. That is the case a well-geared crew reaches through
+    /// an unfloored [`LadderConfig::effective_build_cost`], and conflating it with *"no answer"* is
+    /// what made the estimate vanish as hands were added.
     #[test]
     fn the_turns_estimate_rounds_up_and_declines_to_quote_a_stall() {
         const COST: f32 = 50.0;
@@ -2179,14 +2203,79 @@ mod tests {
         );
         assert_eq!(
             build_turns_remaining(COST, COST, 2.0),
-            None,
-            "a paid-for job has nothing left to wait for"
+            Some(BUILD_FINISHES_IN_ONE_TURN),
+            "a job whose work is already banked finishes on the next worked turn"
+        );
+        assert_eq!(
+            build_turns_remaining(-1.0, RUNG_UNSTARTED, 2.0),
+            Some(BUILD_FINISHES_IN_ONE_TURN),
+            "and so does one the crew's gear paid off outright — the bar is below zero, which is an \
+             ANSWER"
         );
         assert_eq!(
             build_turns_remaining(COST, 10.0, 0.0),
             None,
             "a stalled build has no finite estimate"
         );
+    }
+
+    /// **AN OVER-GEARED CREW IS QUOTED ONE TURN, NOT "NO ESTIMATE"** — the projection half, on the
+    /// shipped roster and at a crew a real band can staff, because that is where the defect was
+    /// visible: the compose sheet is by definition looking at a rung nobody has started.
+    ///
+    /// Six keepers each holding handling gear take `6 × 8.5 = 51` work units off a 50-unit `Tame`,
+    /// so [`LadderConfig::effective_build_cost`] — which is deliberately unfloored — hands
+    /// [`build_turns_remaining`] a bar below zero. The quote must fall to `1` and stop there rather
+    /// than disappearing at exactly the crew size that demonstrates *add hands and watch it drop*.
+    #[test]
+    fn a_crew_whose_gear_pays_the_job_off_is_quoted_one_turn_not_no_estimate() {
+        const PER_WORKER: f32 = 8.5;
+        /// The `taming_cost_multiplier` of a species that costs exactly the rung's own price — the
+        /// regime the shipped roster's rabbit, fowl, crag goat, wild sheep and snow hare are all in.
+        const UNSCALED_SPECIES: f32 = RUNG_COST_UNSCALED;
+        let ladder = LadderConfig::builtin();
+        let pastoral = ladder.rung(RungKey::AnimalPastoral);
+        let cost = pastoral
+            .build_cost(UNSCALED_SPECIES)
+            .expect("the pastoral rung builds");
+
+        let quote = |keepers: u32| {
+            ladder.projected_build_turns(
+                pastoral,
+                UNSCALED_SPECIES,
+                RUNG_UNSTARTED,
+                FOOD_PEAK_FLOOR,
+                keepers,
+                PER_WORKER,
+                true,
+            )
+        };
+
+        // The fixture is only meaningful if the gear genuinely over-pays the job.
+        let over_geared = 6;
+        assert!(
+            build_work_from_gear(PER_WORKER, over_geared) >= cost,
+            "fixture: {over_geared} keepers' gear must cover the whole {cost}-unit job"
+        );
+        assert_eq!(
+            quote(over_geared),
+            Some(BUILD_FINISHES_IN_ONE_TURN),
+            "gear that pays the job off outright finishes it on the first worked turn"
+        );
+
+        // And the quote is monotone into that floor rather than falling off it: each added hand
+        // shortens the job until it cannot be shortened further.
+        let mut previous = quote(1).expect("one keeper is still quotable");
+        for keepers in 2..=over_geared {
+            let turns = quote(keepers).unwrap_or_else(|| {
+                panic!("a crew of {keepers} must be quotable — it is working the herd")
+            });
+            assert!(
+                turns <= previous,
+                "adding a hand must never lengthen the quote: {turns} at {keepers} vs {previous}"
+            );
+            previous = turns;
+        }
     }
 
     /// A rung with **no verb** is never driven — the `wild` rungs, which are nothing to *build*:

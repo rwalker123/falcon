@@ -55,12 +55,14 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
     shipped 0.50 dip),
     and the dip is **floor-independent by construction**, so there is no floor a builder can pick to
     dodge it. See "The build engine" in `intensification.md` for the measurement that forced the move.
-  - **Accrues its crew's whole output** — `workers × PER_WORKER_OUTPUT × learn_multiplier(floor) ×
-    build_rate`, in **work units**, toward the rung's `work_cost` (sets `owner` on first accrual;
+  - **Accrues its crew's whole output** — `workers × PER_WORKER_OUTPUT × learn_multiplier(floor)`,
+    in **work units**, toward the rung's `work_cost` (sets `owner` on first accrual;
     only the owner accrues), **gated** on the faction *knowing Cultivation* and on the crew having
     something standing above its floor to work (`systems::labor::crew_is_working_the_source`). See
     "An improvement costs WORK, not turns" in `intensification.md`: the cost is fixed, **turns are
-    the output**, and there is no crew cap.
+    the output**, and there is no crew cap. **The crew's KIT is not in that expression** — a tool
+    takes work off the **job**, never off the crew's output, which is what makes a hoe fade on a
+    farm; see "The build axis" in `equipment.md`. No plant item declares the stat today.
   - **THERE IS NO HEALTH GATE, on the verb or on the accrual** (`docs/plan_harvest_floor.md` §3.2).
     `Cultivate` used to demand `EcologyPhase::Thriving` as a **start** gate, with an exemption for a
     build already underway (`ForagePatch::cultivation_underway`) and a whole start-vs-continue ruling
@@ -170,8 +172,9 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
     > marked the patch worked every turn, so rung 2 could neither decay further nor re-accrue (only
     > `Cultivate` accrues it, and at most one improvement is ever in flight). The patch was stranded
     > one hundredth below a rung it had already paid for, **permanently**.
-  - **A lost rung is ANNOUNCED**, on the edge where a completed rung crosses back below
-    `RUNG_COMPLETE` — `ForagePatch::decay_cultivation`/`decay_field` return that transition, the exact
+  - **A lost rung is ANNOUNCED**, on the edge where a completed rung crosses back below **the cost
+    stored on that source** (`RUNG_COMPLETE` is retired — the meter is in absolute work units and the
+    completion bar is per-source) — `ForagePatch::decay_cultivation`/`decay_field` return that transition, the exact
     mirror of the accrue helpers' "did this call finish it", and `forage::announce_rung_lost` pushes
     the verb's **own** feed kind (`Cultivate`/`Sow`, detail `status=feral reason=untended action=…`).
     Once, not every turn of the bleed that follows: the 25-turn payoff has already been destroyed. The

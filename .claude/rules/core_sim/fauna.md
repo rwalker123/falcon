@@ -933,10 +933,14 @@ elsewhere). Seeded per-turn from `map_seed ^ tick ^ salt` (deterministic under r
 `domestication_cost`) and `owner:
 Option<FactionId>`, exported as `HerdTelemetryState.domestication`.
 - *Accrual — the **`Tame`** verb, not a side effect of hunting*: in `advance_labor_allocation`
-  (Population), a Hunt assignment carrying **`Improvement::Tame`** on a **Thriving** herd adds the
+  (Population), a Hunt assignment carrying **`Improvement::Tame`** adds the
   crew's own output in work units against `work_cost × the species' taming_cost_multiplier`, for the acting faction
   (sets `owner` on first accrual; only the owner accrues; gated on **Herding** + the species'
-  husbandry ceiling). At `1.0` the herd domesticates. **A `Sustain` hunt tames nothing** — it only
+  husbandry ceiling + something standing above the crew's floor). **There is no health gate** —
+  `docs/plan_harvest_floor.md` §3.2 replaced it with the floor's rate on every rung of both webs, and
+  the "Ecology phase" section above says the same. The herd is domesticated once the meter reaches
+  the cost stored on it, which is what `is_domesticated()` compares; the old normalized `1.0` retired
+  with `RUNG_COMPLETE`. **A `Sustain` hunt tames nothing** — it only
   *teaches* the faction Herding. That de-conflation is slice 3a; see "The `Tame` verb".
 - *Decay*: **there is none.** `domestication_progress` is monotone-up since the neglect-escape arc —
   neglect sheds **animals**, never tameness — and as of the neglect-grace slice the `animal:pastoral`

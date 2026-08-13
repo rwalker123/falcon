@@ -2,8 +2,21 @@
 
 **Issue #542**, under arc #184. Blocks #539 (the plant web's build tool).
 
-**Status: DESIGN, model settled 2026-08-11.** §§1–9 are the model; §10 records what was decided and
-the two tuning questions left. Nothing here is implemented — §11 is the slicing.
+**Status: SLICES 1–4 SHIPPED (2026-08-12); slice 5 and §12 are not built.** §§1–9 are the model and
+describe the sim as it now runs, except where a section says otherwise; §10 records what was decided
+and the one tuning question left; §11 is the slicing.
+
+**What is live and what is not**, because a dozen rule files and `snapshot.fbs` cite this document by
+section as the authority for shipped wire fields:
+
+| | |
+|---|---|
+| §§1–2, 4–9 | **live** — the work/practice model, the gear contribution, the wire, validation |
+| §3 | **half** — the pacing-neutral costs shipped; the *spread* beside them is slice 5 |
+| §6.2's clamp | **rejected and removed** — see the bullet, which records why |
+| §11 slices 1–4 | **shipped** |
+| §11 slice 5 | **not built** — the cost spread, awaiting playtest measurement |
+| §12 | **not built** — settled design, filed as #555 |
 
 ---
 
@@ -283,12 +296,22 @@ the gear, for free.
 and should wear for it. Keep `charge_build_wear`'s existing before/after delta discipline (a build
 the source refuses spends no gear) and `ExtendPen`'s documented exception.
 
-**One readout has to change.** `ItemDefinition::headline_wear` is the item's life gauge — the
-sentence that today reads *"≈12.5 builds"* on the handling gear, the same way the sled reads
-*"≈5000 biomass hauled"*. It works today only because every build is the same size. Once a Cultivate
-is 50 units and a Farm is 300, *"12.5 builds"* is not a statement. **Quote it against a named
-reference job** — *"≈12 gardens' worth"*, the reference being rung 2's cost — rather than in bare
-work units, which mean nothing to a player holding a hoe.
+> **This section originally claimed a readout had to change, and the premise was FALSE.** It said
+> `ItemDefinition::headline_wear` reads *"≈12.5 builds"* on the handling gear and would stop being a
+> statement once builds had different sizes. `headline_wear` is `wear[0]`, and `husbandry_gear`'s
+> first entry is `biomass_collected` — **on `main` as well**. That gauge has always read
+> *"≈2500 biomass butchered"* and has never quoted builds at all, so there was nothing to requote.
+>
+> **The rule the false claim was reaching for is still the right one**, and it is why this is a
+> correction rather than a deletion: a life gauge must not be quoted in bare work units, which mean
+> nothing to a player holding a tool. When an item does lead with `build_progress` — #539's hoe is
+> the first that will — its headline belongs against a **named reference job**
+> (*"≈12 gardens' worth"*, the reference being rung 2's cost). The conversion is built and pinned;
+> it is simply not reached by any shipped item yet.
+>
+> Quoting the *handling gear* that way would have been wrong on its own terms besides: it is a
+> keeper's kit, and stating its life in the **plant** web's reference job describes a tool that
+> spends far more turns on the beast than on the fence.
 
 ## 7. What survives unchanged
 
@@ -325,7 +348,15 @@ divides at capture, which is the repo's standing discipline (the client does zer
   improve*, and the player can only see that if something says so. The client **cannot** compute it —
   it holds neither the crew's output, nor the floor multiplier, nor the kit's coverage-weighted
   contribution — so the sim answers it, the same discipline as `penFeedUpkeep` and the yield
-  forecast. `−1` (or an absent/false companion bool) where no build is in flight.
+  forecast.
+
+  > **As shipped it is a PROJECTION, not "−1 when nothing is being built"** — this section originally
+  > said the latter, and that turned out to withhold the estimate on exactly the unstarted rung §11's
+  > compose sheet exists to price. It follows `penUpkeep`'s precedent (a projection for an unpenned
+  > herd, the live demand for a penned one): with no build in flight, a source carrying a crew quotes
+  > what its **next** rung would take that crew, through the rung's real gates. **`−1` means only
+  > "there is no answer"** — top of the ladder, a gate refuses, no crew, or a stalled one.
+  > `sim_schema::NO_BUILD_TURNS_ESTIMATE` is the sentinel's one home.
 - The one existing turns-valued readout, `neglectGraceRemaining`, counts unworked turns and is
   computed sim-side. Unaffected.
 
@@ -362,7 +393,7 @@ crew-scaled** and that is accepted (§1.2). Knowledge does **not** feed throughp
 through the tools it unlocks (§5). The wire **gains** `workDone` / `workCost` / `buildTurnsRemaining`
 (§8). `headline_wear` quotes a **reference job** (§6.3).
 
-**Left open, and both are tuning rather than model:**
+**Left open, and it is tuning rather than model:**
 
 1. **The cost spread itself** — what a Sow, a Corral and an eventual Farm cost relative to a
    Cultivate, and what each lesson costs. Wants measurement against a real campaign, not a decision

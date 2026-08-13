@@ -946,13 +946,14 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int, useful_floor: i
 ## same forecast, because they are the same decision about different stock.
 ##
 ## The states and their precedence (see `HudWidgets.build_improvement_control` for the shape):
-##   RUNNING first — something is being built here, so nothing else is on offer. Its face carries the
-##       meter, and a WARN pause line appears when the source has left Thriving, which is the ONE
-##       silent rule on this axis: the meter accrues only while the source is Thriving, and that is
-##       deliberately NOT a gate (a source's phase swings as it is worked, so refusing the verb would
-##       be un-actionable churn). The sim just PAUSES, losing nothing — and saying nothing here would
-##       recreate exactly the hidden rule this whole arc exists to kill. It was animal-only
-##       (`_tame_stalled_hint`) because the plant web had no control to hang it on.
+##   RUNNING first — something is being built here, so nothing else is on offer. Its face carries
+##       the meter and, where the crew's proposed floor leaves anything for them to work, the turn
+##       estimate. **It states no PAUSE**: the phase-keyed WARN line this state used to carry
+##       (`_improvement_paused_note`, animal-only `_tame_stalled_hint` before that) described a sim
+##       that stopped a build outside Thriving, and `docs/plan_harvest_floor.md` §3.2 replaced that
+##       cliff with a rate — so it warned of a pause beside a meter its own face showed advancing. The
+##       rule it existed to make audible is stated better one register up, live and quantified, by the
+##       aside's teaching line.
 ##   DONE next — the source stands on a built rung, so the state gets a static label, and the NEXT
 ##       rung's checkbox renders beneath it if there is one.
 ##   OFFERED last — an unchecked box naming the next rung. When that rung is GATED the
@@ -996,7 +997,16 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         # (`herd`/`forage`). They differ on the animal web, so this conversion is not optional.
         var deal := SourceForecast.improvement_forecast(
             source, SourceForecast.source_kind_for_labor(kind), prefix, floor, composed)
-        var notes := _improvement_paused_note(source, prefix)
+        # **THE ONLY NOTE A RUNNING BUILD CAN CARRY IS THE PEN'S ZERO PAYOFF, and the phase-keyed
+        # PAUSE line that used to lead it is gone** (`docs/plan_harvest_floor.md` §3.2). No rung on
+        # either web stops on `EcologyPhase`: the sim replaced that cliff with a RATE, so a crew
+        # pulling hard on the ground it is clearing builds SLOWLY. The line therefore printed
+        # "⚠ Paused … this only advances while Thriving" beside a meter its own face showed advancing,
+        # and prescribed the opposite of the remedy — the FLOOR is what paces the build, which the
+        # aside states live ("Building at ×1.60 — a higher floor builds faster"). What genuinely stops
+        # a build is an empty escapement room, and the honest statement of THAT is the estimate
+        # dropping out (`SourceForecast.build_turns_at`'s work predicate), not a note about the phase.
+        var notes: Array = []
         var running_face := HudComposeVocab.IMPROVEMENT_RUNNING_BARE_FORMAT % [
             glyph, DetailFormat.build_meter_value(participle,
                 SourceForecast.improvement_progress(source, prefix, composed),
@@ -1014,7 +1024,7 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
             source, prefix, composed, workers, floor, kit_gear)
         if running_turns != SourceForecast.BUILD_TURNS_NO_ESTIMATE:
             running_face = HudComposeVocab.IMPROVEMENT_RUNNING_TURNS_FORMAT % [
-                running_face, running_turns]
+                running_face, DetailFormat.build_turns_clause(running_turns)]
         if not deal.is_empty():
             var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
             var feed := float(deal["feed"]) * output
@@ -1145,14 +1155,6 @@ func _improvement_running_tooltip(kind: String, improvement: String) -> String:
         String(HudComposeVocab.IMPROVEMENT_HINTS.get(improvement, "")),
         String(HudComposeVocab.IMPROVEMENT_ABANDON_HINTS.get(kind, "")),
     ])
-
-## The WARN pause line for a running build, as the note array the control renders beneath its box —
-## empty when the source is Thriving (nothing to explain). Both webs read the same `ecology_phase`.
-func _improvement_paused_note(source: Dictionary, prefix: String) -> Array:
-    var phase := String(source.get(prefix + "ecology_phase", "")).strip_edges().to_lower()
-    if phase == "" or phase == HudFloraVocab.ECOLOGY_PHASE_THRIVING:
-        return []
-    return [HudComposeVocab.IMPROVEMENT_PAUSED_FORMAT % phase.capitalize()]
 
 ## The done-state label's face. **The Corral rung carries the pen's per-turn upkeep and the Tame rung
 ## does not, and that asymmetry is deliberate and permanent** (spec §4): a penned herd cannot graze,

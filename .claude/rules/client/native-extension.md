@@ -434,7 +434,7 @@ runner fails the run on a caught Rust panic (see the `decode_guard.gd` Key Scrip
 ---
 
 
-## The BUILD, priced in WORK — fifteen keys, and one the decoder deliberately DROPPED
+## The BUILD, priced in WORK — thirteen key names over sixteen sites, and one the decoder deliberately DROPPED
 
 `docs/plan_unit_costed_work.md` §8. An improvement costs a fixed number of WORK UNITS now and turns
 are the OUTPUT, so `dict/subsistence.rs` decodes the absolutes beside the `0..1` fractions it already
@@ -468,7 +468,7 @@ term in the same estimate. **The estimate's GEAR terms are not source fields at 
 - **The plant seven are TWO wirings, and the guard is what says so.** A patch does not travel whole:
   `MapView._tile_info_at` copies it key by key, so every one of them also needs the `patch_`-prefixed
   cross-ref and a `FOW_DISCOVERED_HIDDEN_KEYS` entry. `tools/patch_crossref_guard.gd` caught exactly
-  that omission on this arc — the decoder emitted all six and the panel would have read none. (The
+  that omission on this arc — the decoder emitted all seven and the panel would have read none. (The
   kit row travels whole, like a herd dict, so the gear pair is one wiring.)
 
 ## The `connections` section, and the eight cohort fields the shipment arc appended

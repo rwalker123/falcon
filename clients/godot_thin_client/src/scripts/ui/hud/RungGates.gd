@@ -81,10 +81,11 @@ static func sow_site_refusal_reason(tile_info: Dictionary) -> String:
 ## gates Tame** (it no longer gates Corral, and taming is no longer ungated), and the **new Penning
 ## gates Corral**. Corral additionally needs THIS herd tamed — the per-source half of the split.
 ##
-## Deliberately NOT gated: the source being Thriving. Building on a source whose phase swings as it is
-## worked would be un-actionable, so the sim just PAUSES the meter instead — see
-## `DrawerComposeController._improvement_paused_note`, the WARN line the improvement control renders
-## on BOTH webs, which is how the player is told rather than left to guess.
+## Deliberately NOT gated: the source being Thriving — and nothing on the control says otherwise
+## either. The sim paces a build by the FLOOR rather than stopping it on the phase (see
+## `forage_gates` above), so the WARN "Paused … only advances while Thriving" line the running control
+## used to carry is retired with the gate it described; what the sheet states instead is the live pace
+## in the aside's teaching line.
 ##
 ## Known gap (pre-existing): no ownership check — the sim's tracks are per-faction, so a herd tamed by
 ## ANOTHER faction reads as available here while the sim rejects the assign.

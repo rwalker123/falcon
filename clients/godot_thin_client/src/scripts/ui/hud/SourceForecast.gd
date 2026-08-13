@@ -778,6 +778,19 @@ const FORECAST_BUILD_PER_WORKER_TURN_KEY := "build_work_per_worker_turn"
 ## for a stalled build (a crew producing nothing has no finite answer) and for a source nobody is
 ## working. A missing line is honest; a zero is a promise the build is about to finish.
 const BUILD_TURNS_NO_ESTIMATE := -1
+
+## **THE ANSWER FOR A BAR A WORKING CREW IS ALREADY AT OR PAST** — one turn, because a build with no
+## work left in it completes on the first turn anybody works it. The client's transcription of
+## `intensification::BUILD_FINISHES_IN_ONE_TURN`, which the sim returns for the same two states: the
+## work is already banked, or the crew's GEAR pays the job off outright.
+##
+## **Named rather than a bare `1` at the site that returns it, and deliberately NOT
+## `BUILD_TURNS_NO_ESTIMATE`** — this is *"there is nothing left to wait for"*, which is a real answer,
+## where the sentinel means *"there is no answer"*. Conflating the two is what let a well-equipped crew
+## blank the readout at exactly the crew size the arc's *add hands and watch it drop* claim is
+## demonstrated by. `DetailFormat.BUILD_TURNS_SINGULAR` is a different constant with the same value:
+## that one is the display fork (*which wording does a count of 1 take?*), this one is a build's answer.
+const BUILD_FINISHES_IN_ONE_TURN := 1
 ## The cost below which a job has no stated price — a source the wire does not price this rung on.
 ## The readout falls back to the bare percentage there rather than printing `18 / 0 work`.
 const BUILD_WORK_COST_NONE := 0.0
@@ -788,6 +801,23 @@ const BUILD_WORK_NONE := 0.0
 ## The proposed crew that has no estimate to give: nobody. `work_per_turn` is zero there, and the
 ## honest reading of `remaining / 0` is *no answer*, never a huge number.
 const BUILD_CREW_NONE := 0
+
+## **THE RUNGS WHOSE BUILD THE SIM GATES ON THE WORK PREDICATE** — *is anything standing above this
+## assignment's floor?* (`systems::labor::crew_is_working_the_source`, the term that replaced both
+## webs' `EcologyPhase::Thriving` gate). A crew watching a source it is not drawing down learns
+## nothing and builds nothing, however hard the floor would otherwise teach.
+##
+## **IT IS EXACTLY TWO RUNGS, AND THE OMISSION ON THE OTHER TWO IS DELIBERATE, NOT AN OVERSIGHT.**
+## `Sow` and `Corral` carry no such term in the sim: bare ground stands below every floor by
+## construction, so requiring room would make the create-from-nothing case rung 3 exists for
+## impossible, and a pen is fenced around a herd already drawn to its keeper's floor. Adding them
+## here would blank the estimate on precisely the jobs whose price the sheet must quote.
+const BUILD_WORK_PREDICATE_IMPROVEMENTS := [IMPROVEMENT_CULTIVATE, IMPROVEMENT_TAME]
+
+## An empty escapement room — the boundary `crew_is_working_the_source` compares against, named
+## because a bare `0.0` beside `max(0, B − floor·K)` reads as an arbitrary epsilon rather than as the
+## exact value that expression is clamped at.
+const BUILD_NO_ESCAPEMENT_ROOM := 0.0
 
 ## **THE GEAR TERM'S TWO HALVES, keyed on the dict a caller hands `build_turns_at`** — the work units
 ## one equipped worker takes off a build, and how many of the band's workers this kit can actually
@@ -1656,6 +1686,14 @@ static func outbound_travel_turns(band: Dictionary, herd: Dictionary,
 ## on the number the sim would. The division of labour is **the client draws the curve, the sim states
 ## the take**: `SourceYield.actual` for a COMMITTED assignment is still the sim's answer, quantisation
 ## and all. Do not let this composition creep from ceilings into takes.
+##
+## **THE ONE READER THAT IS NOT A CEILING IS `build_turns_at`'S WORK PREDICATE** — *is anything
+## standing above this floor at all?*, a test on this expression's SIGN rather than a quantity derived
+## from it (`systems::labor::crew_is_working_the_source`, on the Cultivate and Tame rungs alone). It is
+## admitted for the same reason the ceilings are: the sheet prices a crew and a floor nobody has
+## committed, so the sim has no answer to ship for it, and a sheet that omitted the term quoted the
+## FASTEST estimate on the axis for a build the sim was not advancing at all. Nothing else may reach
+## for it.
 ##
 ## **THE BUILD DIP IS NOT HERE — it multiplies the CREW** (`docs/plan_harvest_floor.md` §3.1). Dipping
 ## the ceiling let a deeper floor build for free (a fraction of a bigger standing stock still filled
@@ -3224,15 +3262,38 @@ static func build_work_from_gear(src: Dictionary, prefix: String) -> float:
 ## carries is the sheet's picker's answer, not the source's, and it is what lets a kit swap re-price
 ## the whole estimate. `{}` is a legal reading and means the crew carries nothing that helps.
 ##
+## **THE WORK PREDICATE IS PART OF THE FORM, and leaving it out is a lie at the loudest end of the
+## slider.** `RungDef::build_accrual`'s `eligible` carries `crew_is_working_the_source` on Cultivate
+## and Tame, so a floor above the source's own stock fraction accrues NOTHING — while
+## `learn_multiplier` is at its largest there. Without this term four foragers dragged to a 100% floor
+## were quoted the FASTEST estimate on the whole axis for a build the sim was not advancing at all,
+## beside a tile card correctly rendering no turn line. `escapement_room` is the client's copy of
+## `max(0, B − floor·K)`; see `BUILD_WORK_PREDICATE_IMPROVEMENTS` for why it rides two rungs and not
+## four, and `escapement_room`'s own note for why THIS is the one place that composition may be
+## reached for.
+##
 ## `BUILD_TURNS_NO_ESTIMATE` — rendering as no clause at all — for every case with no finite answer:
 ## a crew of nobody, a rung the wire prices nothing on, a floor (or a per-worker output) at which
-## nothing accrues, and a job the gear alone already pays off. Each is the sim's own `None`.
+## nothing accrues, and a rung whose crew is standing over an empty escapement room. Each is the
+## sim's own `None`, which it reserves for a build that is **stalled** and for nothing else.
+##
+## **A JOB THE GEAR ALONE ALREADY PAYS OFF IS `BUILD_FINISHES_IN_ONE_TURN`, NOT "no estimate".** A bar
+## at or below zero completes on the first worked turn (`docs/plan_unit_costed_work.md` §6.2), which is
+## an ANSWER; withholding the line there blanked the readout at exactly the crew size that
+## demonstrates this arc's own claim — a start-stocked band's handling gear covers a 50-unit Tame at
+## six keepers, so the estimate fell 25 → 13 → 4 → 2 → *nothing* as hands were added.
 static func build_turns_at(src: Dictionary, prefix: String, improvement: String, workers: int,
         floor: float, kit_gear: Dictionary) -> int:
     if workers <= BUILD_CREW_NONE:
         return BUILD_TURNS_NO_ESTIMATE
     var cost := build_work_cost(src, prefix, improvement)
     if cost <= BUILD_WORK_COST_NONE:
+        return BUILD_TURNS_NO_ESTIMATE
+    # **THE WORK PREDICATE, on the two rungs that carry it in the sim.** No room above the floor means
+    # no build, so no estimate — the same `max(0, B − floor·K)` the yield curve composes, and the only
+    # other place the client may compose it.
+    if BUILD_WORK_PREDICATE_IMPROVEMENTS.has(improvement) \
+            and escapement_room(src, prefix, floor) <= BUILD_NO_ESCAPEMENT_ROOM:
         return BUILD_TURNS_NO_ESTIMATE
     var per_worker_turn := maxf(float(src.get(
         prefix + FORECAST_BUILD_PER_WORKER_TURN_KEY, BUILD_WORK_NONE)), BUILD_WORK_NONE)
@@ -3248,8 +3309,12 @@ static func build_turns_at(src: Dictionary, prefix: String, improvement: String,
     var gear := float(equipped) * maxf(float(kit_gear.get(
         BUILD_GEAR_PER_WORKER, BUILD_WORK_NONE)), BUILD_WORK_NONE)
     var remaining := cost - build_work_done(src, prefix, improvement) - gear
+    # **A BAR THE GEAR ALONE PAYS OFF FINISHES ON THE FIRST WORKED TURN** — an answer, and the sim's
+    # own (`intensification::build_turns_remaining` returns `Some(BUILD_FINISHES_IN_ONE_TURN)` here).
+    # Answering `BUILD_TURNS_NO_ESTIMATE` instead left the tile card quoting `≈1 turn` beside a sheet
+    # quoting nothing for the same build.
     if remaining <= BUILD_WORK_NONE:
-        return BUILD_TURNS_NO_ESTIMATE
+        return BUILD_FINISHES_IN_ONE_TURN
     return ceili(remaining / work_per_turn)
 
 ## **THE SAME SATURATING QUOTIENT, ASKED OF EVERY ACCOUNT THE AXIS IS NOT** — the crew past which this

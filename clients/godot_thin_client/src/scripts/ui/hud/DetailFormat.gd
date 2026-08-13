@@ -975,7 +975,17 @@ static func build_price_clause(work_cost: float, turns: int) -> String:
     var price := HudComposeVocab.BUILD_PRICE_WORK_FORMAT % format_work_units(work_cost)
     if turns == SourceForecast.BUILD_TURNS_NO_ESTIMATE:
         return price
-    return HudComposeVocab.BUILD_PRICE_TURNS_FORMAT % [price, turns]
+    return HudComposeVocab.BUILD_PRICE_TURNS_FORMAT % [price, build_turns_clause(turns)]
+
+## **THE COMPOSE SHEET'S TURN CLAUSE — `≈20 turns`, or `≈1 turn`** — the count and its noun, decided in
+## ONE place for both compose faces (the offered face's price and the running face's tail). They quote
+## one estimate about one job, so a build one turn out that read `≈1 turns` on the sheet beside the
+## tile card's `≈1 turn at this crew` would be the same number worded two ways on one screen.
+## `HudSelectionVocab.BUILD_TURNS_ROW_ONE` is that card's half of the same pair.
+static func build_turns_clause(turns: int) -> String:
+    if turns == BUILD_TURNS_SINGULAR:
+        return HudComposeVocab.BUILD_TURNS_COUNT_ONE
+    return HudComposeVocab.BUILD_TURNS_COUNT_FORMAT % turns
 
 ## **THE TWO SUB-ROWS UNDER A RUNNING BUILD METER** — the sim's turn estimate, and what the crew's
 ## tools took off the job — indented so they read as an expansion of the meter row above them rather
