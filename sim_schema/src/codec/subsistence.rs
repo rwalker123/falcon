@@ -453,10 +453,8 @@ fn create_herds<'a>(
                 preySenseRadius: herd.prey_sense_radius,
                 // Ownership-independent would-be herder count (taming-startup-lag fix) — appended last.
                 herdersNeededIfManaged: herd.herders_needed_if_managed,
-                // The two build dips as FRACTIONS (issue #442) — the dip multiplies the selected
-                // stance's row, so it is no longer a row of its own. Appended last.
-                tameBuildFraction: herd.tame_build_fraction,
-                corralBuildFraction: herd.corral_build_fraction,
+                // The two build dips are RETIRED: `tameBuildFraction`/`corralBuildFraction` are
+                // `(deprecated)` slots and flatc emits no `Args` field for them.
                 // The neglect grace — appended last.
                 hasNeglectGrace: herd.has_neglect_grace,
                 neglectGraceRemaining: herd.neglect_grace_remaining,
@@ -497,6 +495,13 @@ fn create_herds<'a>(
                 buildTurnsRemaining: herd.build_turns_remaining,
                 buildWorkFromGear: herd.build_work_from_gear,
                 buildWorkPerWorkerTurn: herd.build_work_per_worker_turn,
+                // **The standing upkeep** — appended last (append-only wire,
+                // docs/plan_standing_upkeep.md §2). All three terms ship, so the client subtracts
+                // nothing; `upkeepDemand` follows `penUpkeep`'s always-meaningful rule.
+                upkeepDemand: herd.upkeep_demand,
+                upkeepSupplied: herd.upkeep_supplied,
+                upkeepShortfall: herd.upkeep_shortfall,
+                upkeepWorkersNeeded: herd.upkeep_workers_needed,
             },
         );
         entries.push(entry);
@@ -553,14 +558,11 @@ fn create_forage_patches<'a>(
                 fodderPerBiomass: patch.fodder_per_biomass,
                 tendedFodder: patch.tended_fodder,
                 fieldFodder: patch.field_fodder,
-                // The two build dips as FRACTIONS (issue #442) — appended last.
-                cultivateBuildFraction: patch.cultivate_build_fraction,
-                sowBuildFraction: patch.sow_build_fraction,
-                // The neglect grace + the two build crews — appended last.
+                // The two build dips are RETIRED — `(deprecated)` slots, no `Args` field.
+                // The neglect grace — appended last. The two build-crew slots retired with
+                // `crew_needed`; they are `(deprecated)` and flatc emits no `Args` field for them.
                 hasNeglectGrace: patch.has_neglect_grace,
                 neglectGraceRemaining: patch.neglect_grace_remaining,
-                cultivateCrewNeeded: patch.cultivate_crew_needed,
-                sowCrewNeeded: patch.sow_crew_needed,
                 // One gatherer's BIOMASS throughput, seasonal weight folded in — appended last
                 // (append-only wire). The plant twin of the herd field; `0` in a dead season.
                 perWorkerBiomass: patch.per_worker_biomass,
@@ -584,6 +586,13 @@ fn create_forage_patches<'a>(
                 buildTurnsRemaining: patch.build_turns_remaining,
                 buildWorkFromGear: patch.build_work_from_gear,
                 buildWorkPerWorkerTurn: patch.build_work_per_worker_turn,
+                // **The standing upkeep** — appended last (append-only wire,
+                // docs/plan_standing_upkeep.md §2). All three terms ship, so the client subtracts
+                // nothing; `upkeepDemand` follows `penUpkeep`'s always-meaningful rule.
+                upkeepDemand: patch.upkeep_demand,
+                upkeepSupplied: patch.upkeep_supplied,
+                upkeepShortfall: patch.upkeep_shortfall,
+                upkeepWorkersNeeded: patch.upkeep_workers_needed,
             },
         );
         entries.push(entry);

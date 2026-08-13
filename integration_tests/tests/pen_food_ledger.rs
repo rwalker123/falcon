@@ -18,6 +18,7 @@
 //! field is the *actual* debit, not the demanded amount).
 
 use bevy::prelude::Entity;
+use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     build_headless_app, run_turn, scalar_from_f32, scalar_one, DiscoveryProgressLedger, FactionId,
     GrazeRegistry, HerdRegistry, LaborAllocation, LaborAssignment, LaborTarget, PopulationCohort,
@@ -134,6 +135,8 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32) -> (f32, f32, f32, f32, f32, f
             workers: workers.max(1),
             improvement: None,
             kit: None,
+            improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
+            maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
         }],
         ..Default::default()
     });

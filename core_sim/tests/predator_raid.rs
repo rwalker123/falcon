@@ -13,6 +13,7 @@ use bevy::math::UVec2;
 use bevy::prelude::{Entity, With};
 use bevy::MinimalPlugins;
 
+use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     advance_predator_raids, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
     spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
@@ -149,6 +150,8 @@ fn resident_band(app: &mut App, tile: Entity, working: u32, warriors: u32) -> En
             workers: warriors,
             improvement: None,
             kit: None,
+            improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
+            maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
         }]
     } else {
         Vec::new()

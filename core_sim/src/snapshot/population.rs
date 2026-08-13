@@ -1056,6 +1056,7 @@ pub(crate) fn snapshot_demographics(
 mod tests {
     use super::*;
     use crate::expedition_config::ExpeditionConfig;
+    use crate::intensification::NO_CREW_ON_THIS_ACTIVITY;
     // Test-only since the restore path that shared them was deleted.
     use crate::components::{
         ExpeditionPhase, FertilityFactors, LocalStore, MoraleCause, MoraleContributions,
@@ -1204,6 +1205,8 @@ mod tests {
                 workers: 4,
                 improvement: None,
                 kit: None,
+                improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
+                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             last_yields: vec![SourceYield {
                 arrivals,
@@ -1334,6 +1337,8 @@ mod tests {
                 workers: 4,
                 improvement: None,
                 kit: None,
+                improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
+                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             last_yields: vec![SourceYield::ZERO],
             ..Default::default()

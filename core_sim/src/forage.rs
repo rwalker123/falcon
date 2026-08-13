@@ -76,8 +76,8 @@ use crate::{
     flora_config::{FloraConfig, FloraShare},
     food::FoodModuleTag,
     intensification::{
-        BuildDips, LadderConfig, LadderConfigHandle, RungBranch, RungDef, RungKey, SiteRefusal,
-        FABRICATED_BUILD_COST, NEGLECT_NONE, NO_BUILD_GEAR, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
+        LadderConfig, LadderConfigHandle, RungDef, RungKey, SiteRefusal, FABRICATED_BUILD_COST,
+        NEGLECT_NONE, NO_BUILD_GEAR, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
     },
     labor_config::{ForageLaborConfig, LaborConfigHandle, NO_FORAGE_CAPACITY},
     materials_config::MaterialPayoff,
@@ -273,7 +273,25 @@ pub struct ForagePatch {
     /// the meter it protects — otherwise a restore could hand a patch a fresh grace it had already
     /// spent.
     pub neglect_turns: u16,
+    /// **WHAT THE MAINTAIN CREW SUPPLIED TOWARD THIS PATCH'S STANDING UPKEEP THIS TURN**, in work
+    /// units — `activity_work(maintain_workers)`, stamped by the labor arm that resolved it
+    /// (`docs/plan_standing_upkeep.md` §2). Transient per-turn scratch on
+    /// [`Self::build_turns_remaining`]'s cycle, and for its reason: it describes *this* turn's crew.
+    pub upkeep_supplied: f32,
+    /// **WHAT WENT UNMET**, in work units — [`crate::intensification::upkeep_shortfall`], and
+    /// therefore exactly what [`RungDef::upkeep_decay`] bleeds off the meter past the rung's grace.
+    /// Same transient cycle as [`Self::upkeep_supplied`].
+    pub upkeep_shortfall: f32,
 }
+
+// **RETIRED: `ForagePatch::maintain` / `Herd::maintain`** — a per-source boolean the player toggled
+// to stop paying a standing upkeep.
+//
+// It answered *"is this being kept"* beside a crew that answered *"by how many hands"*, and the two
+// could disagree: a source maintained by nobody and a source deliberately written off are the same
+// state, said twice. **`LaborAssignment::maintain_workers == 0` is the whole of "stop maintaining
+// this"** now (`docs/plan_standing_upkeep.md` §2.2), and it lives with the band that would have
+// supplied the hands rather than on the ground they stand on.
 
 /// **WHERE A BUILD METER LANDS THIS TURN — and the jump on the turn it completes.**
 ///
@@ -314,6 +332,8 @@ impl ForagePatch {
             owner: None,
             tended_this_turn: false,
             neglect_turns: NEGLECT_NONE,
+            upkeep_supplied: NO_UPKEEP_DEMAND,
+            upkeep_shortfall: NO_UPKEEP_DEMAND,
         }
     }
 
@@ -1707,6 +1727,11 @@ pub fn advance_cultivation(
         // a crew is still on it (Logistics runs before Population).
         patch.build_turns_remaining = None;
         patch.build_work_from_gear = NO_BUILD_GEAR;
+        // **And this turn's upkeep accounting**, on the same cycle and for the same reason: the two
+        // figures describe the crew that worked the patch, so an abandoned patch must stop reporting
+        // what a crew that has gone paid.
+        patch.upkeep_supplied = NO_UPKEEP_DEMAND;
+        patch.upkeep_shortfall = NO_UPKEEP_DEMAND;
     }
 }
 
@@ -1824,10 +1849,8 @@ pub(crate) fn forage_take(
     tile_composition: &[FloraShare],
     workers: u32,
     floor: f32,
-    improvement: Option<Improvement>,
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
-    ladder: &LadderConfig,
     output_multiplier: f32,
     // **This crew's resolved BASKET tier**, in biomass/worker before the season — see
     // `forage_per_worker_biomass`.
@@ -1840,12 +1863,14 @@ pub(crate) fn forage_take(
     // patch's rung: what a tended patch buys is a faster refill, which shows up next turn as more
     // stock standing above the floor. One call still serves rungs 1 and 2 alike.
     let take_ceiling = forage_escapement_ceiling(floor, patch.biomass, patch.carrying_capacity);
-    // **The build dip rides the CREW** (`docs/plan_harvest_floor.md` §3.1): a crew clearing ground
-    // carries a fraction of what a gathering crew carries, whatever floor it holds. Multiplying the
-    // ceiling instead is what let the harshest draw build for free.
-    let worker_cap = workers as f32
-        * forage_per_worker_biomass(per_worker_biomass_capacity, seasonal)
-        * ladder.build_dip(improvement);
+    // **`workers` IS THE TAKE CREW, and it is the only crew in this expression**
+    // (`docs/plan_standing_upkeep.md` §2.2). A build and a keeping on this same patch are their own
+    // allocations with their own hands; nothing they do scales what these gatherers carry. The
+    // retired `yield_fraction_while_building` multiplied this term to say *"the crew is clearing,
+    // not gathering"* — which is a statement the player now makes by putting the hands where they
+    // want them, rather than one the sim derives from a fraction.
+    let worker_cap =
+        workers as f32 * forage_per_worker_biomass(per_worker_biomass_capacity, seasonal);
     let take = worker_cap
         .min(take_ceiling)
         .max(0.0)
@@ -2315,7 +2340,6 @@ pub(crate) fn forage_forecast(
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
     equipped_gather_rate: f32,
-    ladder: &LadderConfig,
     // **The crew's per-gatherer throughput for THIS turn, season already folded in**
     // (`forage_per_worker_biomass(resolved basket tier, seasonal)`). Taken pre-folded rather than as
     // the tier + the season, so this signature stays inside clippy's argument budget and there is
@@ -2379,12 +2403,6 @@ pub(crate) fn forage_forecast(
         // A wild or tended patch IS drawn down — it is a wild stand either way, which is what makes
         // rungs 1 and 2 floor-live and rung 3 (a Field) not.
         managed_production: None,
-        // **The plant web's two build dips, as the FACTORS they are** (issue #442 §2.2). They used
-        // to be three more ceiling *rows* — `ceiling_prepare` (Cultivate), `ceiling_sow` and a
-        // permanently-zero `ceiling_tame` — each the rung's fraction of the **Sustain** ceiling,
-        // which was only expressible while a build verb *was* the policy. A patch is a plant source,
-        // so it prices `Cultivate` and `Sow`; `Tame`/`Corral` are not askable of it by type.
-        build_dips: BuildDips::for_branch(ladder, RungBranch::Plant),
         // **Cultivate's "then Y"** — what this patch will pay once tended, on the tended curve. On a
         // patch that is *already* tended this is simply its own `ceiling_sustain`, which is the truth:
         // the rung is built, and the number is what it pays. (Sow's "then Y" is `field_provisions`,
@@ -2470,13 +2488,11 @@ pub fn project_realized_forage(
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
     equipped_gather_rate: f32,
-    ladder: &LadderConfig,
     per_worker_biomass_capacity: f32,
     seasonal: f32,
     output_multiplier: f32,
     workers: u32,
     floor: f32,
-    improvement: Option<Improvement>,
     horizon: u32,
 ) -> f32 {
     if horizon == 0 {
@@ -2514,10 +2530,8 @@ pub fn project_realized_forage(
                 tile_composition,
                 workers,
                 floor,
-                improvement,
                 forage,
                 flora,
-                ladder,
                 output_multiplier,
                 per_worker_biomass_capacity,
                 seasonal,
@@ -2560,13 +2574,11 @@ pub fn project_arrivals_forage(
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
     equipped_gather_rate: f32,
-    ladder: &LadderConfig,
     per_worker_biomass_capacity: f32,
     seasonal: f32,
     output_multiplier: f32,
     workers: u32,
     floor: f32,
-    improvement: Option<Improvement>,
     horizon: u32,
 ) -> Vec<f32> {
     // `LaborConfig::validate` pins `horizon > 0`; a zero horizon yields an empty schedule, which the
@@ -2599,10 +2611,8 @@ pub fn project_arrivals_forage(
                 tile_composition,
                 workers,
                 floor,
-                improvement,
                 forage,
                 flora,
-                ladder,
                 output_multiplier,
                 per_worker_biomass_capacity,
                 seasonal,
@@ -2627,13 +2637,11 @@ pub fn forage_source_yield_preview(
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
     equipped_gather_rate: f32,
-    ladder: &LadderConfig,
     per_worker_biomass_capacity: f32,
     seasonal: f32,
     output_multiplier: f32,
     workers: u32,
     floor: f32,
-    improvement: Option<Improvement>,
     realized_horizon: u32,
     arrivals_horizon: u32,
     // `combat_config.forecast_range_sigmas`. **The plant web has no stochastic stage** — no
@@ -2647,7 +2655,6 @@ pub fn forage_source_yield_preview(
         forage,
         flora,
         equipped_gather_rate,
-        ladder,
         forage_per_worker_biomass(per_worker_biomass_capacity, seasonal),
         output_multiplier,
     );
@@ -2671,13 +2678,11 @@ pub fn forage_source_yield_preview(
         forage,
         flora,
         equipped_gather_rate,
-        ladder,
         per_worker_biomass_capacity,
         seasonal,
         output_multiplier,
         workers,
         floor,
-        improvement,
         realized_horizon,
     );
     // The discrete twin, from the same patch state: what lands on each of the next
@@ -2688,13 +2693,11 @@ pub fn forage_source_yield_preview(
         forage,
         flora,
         equipped_gather_rate,
-        ladder,
         per_worker_biomass_capacity,
         seasonal,
         output_multiplier,
         workers,
         floor,
-        improvement,
         arrivals_horizon,
     );
     // **`managed` is rung 3 ONLY** (slice 7). It marks the sources whose harvest cannot overdraw —
@@ -2704,16 +2707,8 @@ pub fn forage_source_yield_preview(
         &forecast,
         sustainable,
         patch.is_field(),
-        // **The plant web's standing crew is the BUILD's** — a patch has no herders, so what a crew is
-        // owed regardless of the take is whatever rung it is preparing (`LadderConfig::build_crew`,
-        // `NO_BUILD_CREW` for a pure gather). This is the *same* seam the resolved Forage arm floors
-        // on, which is the point: the seed used to pass `0` here, so a freshly-composed `Cultivate`
-        // inverted the dipped take alone and reported "only 1 of 2 working" against the compose
-        // sheet's own "max 2 workers useful here" — until the next turn resolved and overwrote it.
-        ladder.build_crew(improvement),
         workers,
         floor,
-        improvement,
         realized,
         arrivals,
         range_sigmas,
@@ -2741,7 +2736,6 @@ mod tests {
     }
 
     use super::*;
-    use crate::components::NO_IMPROVEMENT_UNDERWAY;
     use crate::labor_config::LaborConfig;
     use sim_runtime::TerrainType;
 
@@ -2850,10 +2844,8 @@ mod tests {
             NO_BASKET,
             20,
             0.5,
-            NO_IMPROVEMENT_UNDERWAY,
             &forage,
             &FloraConfig::builtin(),
-            &LadderConfig::builtin(),
             1.0,
             equipped_gather_rate(),
             1.0,
@@ -2890,10 +2882,8 @@ mod tests {
                 NO_BASKET,
                 20,
                 0.5,
-                NO_IMPROVEMENT_UNDERWAY,
                 &forage,
                 &FloraConfig::builtin(),
-                &LadderConfig::builtin(),
                 1.0,
                 equipped_gather_rate(),
                 1.0,
@@ -2945,10 +2935,8 @@ mod tests {
                 NO_BASKET,
                 3,
                 0.0,
-                NO_IMPROVEMENT_UNDERWAY,
                 &forage,
                 &FloraConfig::builtin(),
-                &LadderConfig::builtin(),
                 1.0,
                 equipped_gather_rate(),
                 1.0,
@@ -2988,10 +2976,8 @@ mod tests {
                 NO_BASKET,
                 workers,
                 policy,
-                NO_IMPROVEMENT_UNDERWAY,
                 &forage,
                 &FloraConfig::builtin(),
-                &LadderConfig::builtin(),
                 1.0,
                 equipped_gather_rate(),
                 1.0,
@@ -3118,10 +3104,8 @@ mod tests {
                 NO_BASKET,
                 50,
                 0.0,
-                NO_IMPROVEMENT_UNDERWAY,
                 &forage,
                 &FloraConfig::builtin(),
-                &LadderConfig::builtin(),
                 1.0,
                 equipped_gather_rate(),
                 1.0,

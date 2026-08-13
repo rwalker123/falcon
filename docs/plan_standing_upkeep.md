@@ -63,32 +63,102 @@ An improvement may declare up to three things. All are in **work units**
 building the term against routes, because an architecture that assumes every improvement produces
 something breaks on the first one that does not.
 
-### 2.2 The worker's turn is ONE budget
+### 2.2 The PLAYER allocates workers per activity
 
-A crew of `n` produces `n × PER_WORKER_OUTPUT × learn_multiplier(floor)` work units this turn, plus
-whatever their gear contributes. That is **one pool**, and all three costs draw on it.
+**A source carries up to three independent worker allocations from a band, and the player states
+each one.** There is no split rule to derive, because there is nothing to derive.
 
-This is the load-bearing change, and it pays for itself immediately: **it dissolves the dip.**
+| Activity | Set by | Was |
+|---|---|---|
+| **take** | `assign_labor` — unchanged; its `workers` is the take crew | the only allocation |
+| **build** | the improvement verb, which now takes a worker count | rode the take crew |
+| **maintain** | the `maintain` command | did not exist |
 
-`yield_fraction_while_building` (0.50 on all four shipped rungs) exists to say *"this crew is
-preparing ground, not gathering"* — which is a work-budget conflict, hardcoded as a fraction. Under
-one budget it is not a dial, it is arithmetic: work spent on the build is work not spent on the take.
-Four magic numbers retire, along with a term nobody ever chose (the plant web sat at 0.25 for years
-purely because that was the pre-move constant's value).
+`extend_pen` takes a worker count on the same grammar and routes through the **build** allocation: a
+ring rides the same `animal:pen` rung as the pen it widens, so it cannot be the one build in the game
+that is free.
 
-**The split falls out of the worker count, not out of a new lever.** Building while short-handed
-means a smaller take; wanting both means assigning more hands. That is the same opportunity-cost
-constraint the no-crew-cap decision already rests on, and it needs no new player-facing control.
+They draw on the same finite band, so **competition between them is the opportunity cost** — and it
+is visible in the numbers the player typed rather than buried in a fraction or in an ordering they
+cannot see. **No cap** means no cap on any *one* activity — fifty hands may keep a pen and fifty more
+widen it, and the constraint is what those hands are not doing elsewhere — but the three together can
+never exceed the band. Two rules hold that line, and they answer different questions:
 
-### 2.3 The priority order — upkeep, then build, then production
+- **A command that asks for more hands than the band has idle is REFUSED**, naming what is available
+  (*"Cultivating needs 9 workers — the band has 4 idle."*). It refuses where `assign_labor` clamps,
+  because a smaller *gathering* crew is a coherent version of the same order while a quietly-smaller
+  *build* crew is a commitment the player believes they made.
+- **A band that SHRANK sheds**, tail-first and **maintain → build → take** within the row: a band
+  that has just lost people keeps gathering longest, because the keeping and the build are
+  investments and the food is not.
 
-**You hold what you have before you take from it.** A crew too small to do both keeps the thing
-standing and takes less; a crew that spends everything on the take watches its improvement slide back
-down the ladder.
+**The gear a build's crew carries is quoted at that crew, not at the band's crew on the source.** A
+tool's contribution is a rate per worker, so it is summed over the *builders*; the coverage behind it
+is resolved over the builders too.
 
-Build sits ahead of production for the same reason: a rung transition you have committed to is a
-standing commitment, and starving it in favour of this turn's yield is what the maintain toggle
-(§2.5) exists to express deliberately, rather than something that should happen by accident.
+The arithmetic is then trivial:
+
+```text
+upkeep_supplied  = maintain_workers × PER_WORKER_OUTPUT
+upkeep_shortfall = max(0, upkeep_demand − upkeep_supplied)      // → decay, past grace
+build_work       = build_workers × PER_WORKER_OUTPUT            // − what the crew's gear takes off the job
+take             = min(take_workers × per_worker_capacity, source_offer)
+```
+
+#### This is what dissolved the dip
+
+`yield_fraction_while_building` (0.50 on all four shipped rungs) said *"this crew is preparing ground,
+not gathering"* — which is true of a **shared** crew and of nothing else. Separate the allocations and
+it is not a dial, it is a fact about where the hands are: the gatherers on a patch carry what
+gatherers carry, and what a Cultivate costs is the people who are clearing instead. Four magic numbers
+retire, along with a term nobody ever chose (the plant web sat at 0.25 for years purely because that
+was the pre-move constant's value).
+
+**The cost no longer depends on a regime the player cannot see.** Under the dip, a crew big enough to
+saturate the source's standing stock paid *nothing* for its build, because the ceiling bound it
+either way; a thin crew paid the full fraction. The price is now the same statement at every
+staffing.
+
+#### And it retired `crew_needed`
+
+A rung declared a **staffing floor** under the source's published `workers_needed`, because that count
+was inverted out of the *take* and a building crew was paid a dipped take — so committing to a
+25-turn Cultivate made the panel ask for **one** forager where the same wild patch asks for two. With
+each activity stating its own crew there is no blended count for a floor to raise, and
+`workers_needed` is answered **per activity**: hands to meet the upkeep, hands to haul the offer.
+
+#### The floor comes off the build rate
+
+`learn_multiplier(floor)` no longer scales `build_accrual`. The shipped rule — *a crew pulling hard on
+the source it is improving builds slowly* — was written when one crew did both jobs. **With separate
+crews the build crew is not pulling anything**, and worse: a build crew on a source nobody is
+harvesting has **no floor to read at all**, so the term would have to be invented from a default
+nobody chose.
+
+- `learn_multiplier` keeps scaling **knowledge accrual**, where *how much you leave standing shapes
+  what you learn* still holds.
+- **`MANAGED_SOURCE_FLOOR` disappears with it** — it existed only because rung-3 builds had no real
+  floor to pass. The one place it still meant something (a managed rung's *lesson*) is now stated by
+  a seam of its own.
+- **Upkeep never reads the floor either.** It is charged against raw worker-turns, because a route has
+  no escapement floor at all and an upkeep that read one could not be applied to this arc's actual
+  target.
+- **Pacing is unchanged**: `learn_multiplier` is exactly `×1.0` at the food peak, which is the floor a
+  fresh assignment carries. Only sub-peak floors build faster now.
+
+### 2.3 Build completion hands the crew to maintenance
+
+The turn a build completes, its crew has finished the thing it was staffed for. **If the finished rung
+declares an upkeep, those hands carry onto that rung's maintain allocation**; if it declares none,
+they free up.
+
+Without the carry-over a brand-new pen starts decaying on turn one because nobody noticed it had begun
+costing something — a punishment for arithmetic the player cannot see, which is the same failure §2.5
+exists to prevent.
+
+**Either way it is announced.** The completion already pushes a feed line; the hand-off rides the same
+channel, because a crew moving is a thing the player has to re-task around and a silent re-allocation
+is only ever discovered later.
 
 ### 2.4 Shortfall IS the decay — continuously
 
@@ -104,25 +174,30 @@ when the demand goes unmet*.
 `grace_turns` survives unchanged in meaning: consecutive turns of shortfall forgiven before decay
 begins.
 
-### 2.5 The maintain toggle — one boolean per source, default on
+### 2.5 "Stop maintaining this" is a crew of ZERO
 
-**The player must be able to say "stop maintaining this, take everything, let it go."**
+**The player must be able to say "stop maintaining this, take everything, let it go."** With the
+maintain allocation that is not a separate control at all — it is `maintain <faction> <source…> 0`.
 
-Without it, hard-coded priority creates a trap. A pen needing 5 work a turn, staffed for 2: all 2 go
-to upkeep, it is still 3 short so it decays anyway, and the crew takes **nothing**. The player has
-paid into a losing position for zero yield, as a penalty for arithmetic they cannot see.
+Without it, a hard-coded priority creates a trap. A pen needing 5 work a turn, staffed for 2: all 2 go
+to upkeep, it is still 3 short so it decays anyway, and the crew has spent itself for nothing. The
+player has paid into a losing position as a penalty for arithmetic they cannot see.
 
-With the toggle the same position is a real decision: hold it and take less, or write it off, take
-everything, and let it slide. That is the same principle the pen's starve mechanic already states —
-*starving your animals should be a decision, not an accident*.
+With the crew as the control the same position is a real decision: **hold it and spend the hands, or
+write it off and put them somewhere else.** That is the principle the pen's starve mechanic already
+states — *starving your animals should be a decision, not an accident*.
+
+**There is no boolean beside the number**, and that is deliberate: a toggle would be a second way to
+say what the count already says, and the two could disagree. A source maintained by nobody and a
+source deliberately written off are the same state.
 
 **Routes need this more than anything else does.** The ladder's central claim is that you pave where
-traffic pays the upkeep and let it be a trail elsewhere. Without a toggle, the only way to stop
-maintaining a paved road is to stop *using* it — which also stops the traffic that made it worth
-having. *"Keep the traffic, drop the road back to dirt"* is unreachable otherwise.
+traffic pays the upkeep and let it be a trail elsewhere. Without the ability to unstaff the keeping,
+the only way to stop maintaining a paved road is to stop *using* it — which also stops the traffic that
+made it worth having. *"Keep the traffic, drop the road back to dirt"* is unreachable otherwise.
 
 It maps onto grammar that already exists: `abandon_improvement` is the "I am done building this"
-command, and this is its standing-cost sibling.
+command, and `maintain` is its standing-cost sibling, sharing its source grammar exactly.
 
 ### 2.6 Upkeep has a scale term, and that is the generic piece
 
@@ -186,7 +261,9 @@ hauling: that work is the upkeep, not a second line beside it.
 | the shed (`shed_uncontained_animals`) | the animal web's **shortfall penalty** |
 | `decay_fraction_per_turn` as an independent dial | what happens when the demand goes unmet |
 | `tended_this_turn` / `tamed_this_turn` binary flags | retired — shortfall is continuous |
-| `yield_fraction_while_building` (×4 rungs) | retired — the budget does it |
+| `RungBuild::crew_needed` (a staffing floor) | retired — the player states the build's crew |
+| `learn_multiplier(floor)` on the build rate | retired — a build crew is not pulling on the source |
+| `yield_fraction_while_building` (×4 rungs) | retired — the build has its own crew, so what it costs is the hands on it |
 | `pen.upkeep_per_biomass` + the pasture/hay/larder split | the **resource half** of the pen rung's upkeep (hay and larder), with pasture as its **offset** — unchanged in behavior |
 | `TerrainDefinition::infrastructure_cost` (never read) | the route rung's **scale term** |
 
@@ -199,10 +276,14 @@ before any tuning — `plan_unit_costed_work.md` §11 learned this: *a cost spre
 change is invisible*.
 
 1. **This design doc.**
-2. **The mechanism, pacing-neutral.** The upkeep term on the ladder engine — config shape, the
-   per-turn demand, the one-budget priority order, shortfall→decay, the maintain toggle. **No rung
-   declares an upkeep yet**, so behavior is provably unchanged and the engine can be landed and
-   reviewed on its own.
+2. **The mechanism.** The upkeep term on the ladder engine — config shape, the per-turn demand, the
+   one-budget priority order, shortfall→decay, the maintain toggle. **No rung declares an upkeep
+   yet**, so the upkeep half is dormant.
+   > **It is NOT pacing-neutral, and the one change it makes is the arc's headline.** The dip and the
+   > budget cannot both be live without double-counting work, so `yield_fraction_while_building`
+   > retires here. That makes slice 2 a single reviewable claim — *the dip is now emergent* — with a
+   > measurable before/after, and leaves slices 3 and 4 as config plus penalty-rewiring on a seam that
+   > already exists.
 3. **The plant web onto it.** `plant:tended` and `plant:field` declare upkeep; the binary bleed
    retires; the dip dissolves.
 4. **The animal web onto it.** `herders_needed` becomes an upkeep rate; the shed becomes its
@@ -224,10 +305,16 @@ will actually be tested. Merging them is a merge-time call.
 - **The scale primitives' bounded set.** §2.6 names three (herd size, area/capacity, route
   length×terrain). Whether those are three primitives or one parameterized one is slice 2's to
   settle against the code.
-- **Whether production stays a *capacity* or becomes work.** Today a take is capped by
-  `workers × per_worker_biomass_capacity` — a carrying capacity, not a work cost. §2.2 assumes it
-  joins the budget; if it stays a capacity, the dip does **not** dissolve and §2.2's main argument is
-  weaker. Slice 2 must decide this explicitly rather than inheriting it.
+- ~~**Whether production stays a *capacity* or becomes work.**~~ **Settled: it joins the budget, and
+  the capacity survives as a second cap.** Ray: *"it will fall out of the worker count for sure — as
+  you are building, you need to allocate more workers, otherwise your take will be less."* A take
+  cannot fall while building unless building and taking draw on the same pool. What the budget
+  produces is an **effective worker count**, which then meets the existing
+  `per_worker_biomass_capacity` exactly as it does today — so hauling stays a carrying limit and the
+  work model decides how many hands are left to haul with.
+  > **The consequence to watch in playtest:** the retired dip was a flat 0.50, so a building crew
+  > took half. Under the budget a building crew takes **nothing**, and a band that wants both must
+  > staff both. That is a materially harsher early game, and it is the first thing to check.
 - **What the maintain toggle does to a build in flight.** Turning maintenance off while building the
   next rung is expressible; whether it is meaningful (you are letting the thing you stand on decay
   while climbing off it) is a play question.

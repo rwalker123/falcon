@@ -14,6 +14,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
+use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     advance_cultivation, advance_forage_regrowth, advance_labor_allocation, commit_payoff,
     commit_yield_ratio, default_species_for_rung, scalar_from_f32, scalar_one, scalar_zero,
@@ -285,7 +286,13 @@ fn spawn_forager_at(
                 current_tile: tile,
                 size: 30,
                 children: scalar_zero(),
-                working: scalar_from_f32(foragers as f32),
+                // **THE BAND HAS TO AFFORD BOTH CREWS, WHETHER OR NOT ONE IS STAFFED YET.** The
+                // take and the build draw on one pool (`docs/plan_standing_upkeep.md` §2.2), so a
+                // band sized at the gathering crew alone is over-committed the moment a verb is
+                // staffed beside it — and `LaborAllocation::normalize` then trims the build away,
+                // leaving a fixture that measures a job nobody is doing. Idle hands cost these
+                // fixtures nothing: every take is capped by the crew the assignment names.
+                working: scalar_from_f32((foragers + foragers) as f32),
                 elders: scalar_zero(),
                 stores: LocalStore::new(),
                 morale: scalar_one(),
@@ -320,6 +327,10 @@ fn spawn_forager_at(
                     workers: foragers,
                     improvement,
                     kit: None,
+                    // **The same crew staffs the build** — what this fixture meant when one
+                    // crew did every job (`docs/plan_standing_upkeep.md` §2.2).
+                    improvement_workers: improvement.map_or(NO_CREW_ON_THIS_ACTIVITY, |_| foragers),
+                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },
@@ -374,25 +385,21 @@ fn provisions_f32(app: &mut App) -> f32 {
     total
 }
 
-/// The plant rung-2 build dials — the investment dip, **what [`BUILD_CREW`] produces in one turn**,
-/// and the feral rate in absolute work units — read off the ladder's `plant:tended` rung
+/// The plant rung-2 build dials — **what [`BUILD_CREW`] produces in one turn** and the feral rate
+/// in absolute work units — read off the ladder's `plant:tended` rung
 /// (`intensification_ladder.json`), the same seam the sim drives cultivation with.
-fn cultivation_config(app: &App) -> (f32, f32, f32) {
+///
+/// It used to hand back the rung's `yield_fraction_while_building` as a third term; the dip is
+/// retired (`docs/plan_standing_upkeep.md` §2.2), so what a building turn pays is not a config
+/// reading at all — it is the whole of the crew's budget, and the take is zero.
+fn cultivation_config(app: &App) -> (f32, f32) {
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let tended = ladder.rung(RungKey::PlantTended);
     (
-        tended
-            .yield_fraction_while_building()
-            .expect("the tended rung is an investment"),
         // The crew IS the throughput now (`docs/plan_unit_costed_work.md` §1.2), so this reads at
         // the head count the build fixtures actually staff — computing it at any other would
         // describe a build nobody here is running.
-        tended.build_accrual(
-            Some(Improvement::Cultivate),
-            true,
-            FOOD_PEAK_FLOOR,
-            build_crew(app),
-        ),
+        tended.build_accrual(Some(Improvement::Cultivate), true, build_crew(app)),
         tended.build_decay(RUNG_COST_UNSCALED),
     )
 }
@@ -400,19 +407,17 @@ fn cultivation_config(app: &App) -> (f32, f32, f32) {
 /// **The crew a BUILD test staffs, and it is deliberately NOT [`FORAGE_WORKERS`].**
 ///
 /// The two numbers exist for different reasons and only one of them is about the build. 5000 is
-/// chosen so a *take* is ceiling-bound rather than labor-bound; it became a **build-pacing** number
-/// only when the crew stopped being capped, and at that head count a 50-unit Cultivate finishes in a
-/// single turn — leaving no part-prepared patch for a decay, a grace or a completion test to stand
-/// on. So the build fixtures staff the rung's own `crew_needed`, the staffing the shipped cost was
-/// priced against (`docs/plan_unit_costed_work.md` §3). **The one-turn over-crewed build is real and
-/// is pinned on purpose**, by `over_crewing_a_build_is_no_longer_capped`.
-fn build_crew(app: &App) -> u32 {
-    app.world
-        .resource::<LadderConfigHandle>()
-        .get()
-        .rung(RungKey::PlantTended)
-        .build_crew_needed()
-        .expect("the tended rung declares a crew")
+/// chosen so a *take* is ceiling-bound rather than labor-bound; at that head count a 50-unit
+/// Cultivate finishes in a single turn — leaving no part-prepared patch for a decay, a grace or a
+/// completion test to stand on. So the build fixtures staff **two**, the staffing the shipped cost
+/// was priced against (`docs/plan_unit_costed_work.md` §3) and, until the ladder stopped declaring
+/// one, the `plant:tended` rung's own `crew_needed`. **The one-turn over-crewed build is real and is
+/// pinned on purpose**, by `over_crewing_a_build_is_no_longer_capped`.
+///
+/// It is a **fixture** number now rather than a config reading, because the player states a build's
+/// crew (`docs/plan_standing_upkeep.md` §2.2) and there is no rung-level staffing left to read.
+fn build_crew(_app: &App) -> u32 {
+    2
 }
 
 /// The whole `plant:tended` job, in work units — what a build test divides by to get its turns.
@@ -431,7 +436,7 @@ fn turns_to_prepare(app: &App) -> u32 {
     core_sim::build_turns_remaining(
         cultivate_cost(app),
         core_sim::RUNG_UNSTARTED,
-        cultivation_config(app).1,
+        cultivation_config(app).0,
     )
     .expect("a staffed Cultivate finishes")
 }
@@ -439,7 +444,7 @@ fn turns_to_prepare(app: &App) -> u32 {
 /// **Turns a fully-untended patch takes to bleed a completed rung all the way back to nothing** —
 /// `ceil(cost / decay)`, plus slack for the one-turn flag lag and the rung's grace.
 fn turns_to_go_fully_feral(app: &App) -> u32 {
-    let (_, _, decay) = cultivation_config(app);
+    let (_, decay) = cultivation_config(app);
     (cultivate_cost(app) / decay).ceil() as u32 + 2
 }
 
@@ -512,17 +517,17 @@ fn sustain_forage_teaches_cultivation_but_never_tames_the_patch() {
         .is_cultivated());
 }
 
-/// **The investment cost.** A crew preparing ground carries `yield_fraction_while_building ×` what
-/// the same crew gathering it carries — it is clearing, not gathering — and the reduced take is
-/// *sustainable*, so the patch stays Thriving throughout.
+/// **The investment cost is HANDS, and the gatherers beside them are untouched**
+/// (`docs/plan_standing_upkeep.md` §2.2). A Cultivate is staffed in its own right, so what it costs
+/// is the people who are clearing instead of gathering — a number the player typed — and the patch
+/// keeps paying whatever the crew still on it can carry.
 ///
-/// **It is asked at [`SOLE_FORAGER`], not at the ample crew the rest of this file uses.**
-/// `docs/plan_harvest_floor.md` §3.1 moved the dip off the take ceiling and onto crew throughput, so
-/// a crew big enough to saturate the standing stock anyway pays **nothing** for the build — legibly
-/// so, since the remedy is to hire four times the people. Both regimes are asserted, because either
-/// alone reads as a bug.
+/// **Both staffings are asserted, and they agree**: the price is in the allocation, so it does not
+/// depend on whether hands or the patch's standing stock is the binding term. Under the retired
+/// `yield_fraction_while_building` an ample crew paid nothing at all for the build, which is the
+/// asymmetry this test used to pin.
 #[test]
-fn cultivate_pays_a_fraction_of_the_sustain_yield_and_keeps_the_patch_healthy() {
+fn cultivate_leaves_the_gatherers_take_alone_and_keeps_the_patch_healthy() {
     let sparse_yield = |improvement| {
         let mut app = spawn_world();
         let (tile, coord) = prime_thriving_patch(&mut app);
@@ -539,21 +544,25 @@ fn cultivate_pays_a_fraction_of_the_sustain_yield_and_keeps_the_patch_healthy() 
     );
 
     let mut app = spawn_world();
-    let (fraction, _, _) = cultivation_config(&app);
     assert!(
-        (cultivating_yield - fraction * sustain_yield).abs() < EPSILON,
-        "preparing pays fraction × what the same crew gathers: {cultivating_yield} vs {}",
-        fraction * sustain_yield
+        (cultivating_yield - sustain_yield).abs() < EPSILON,
+        "the lone forager gathers exactly what they gathered before the Cultivate was staffed \
+         beside them: {cultivating_yield} vs {sustain_yield}"
     );
-    // …and the other regime: an ample crew clears the same standing surplus for no yield at all,
-    // because the patch's stock — not the crew — is what binds.
+    // …and the ample crew reads the same way, which is what the separate allocation bought: an
+    // ample crew used to escape the dip entirely, because the patch's stock — not the crew — was
+    // what bound, so the cost depended on a regime the player could not see.
+    assert!(
+        one_turn_yield(None) > 0.0,
+        "the ample-crew baseline must be a real take"
+    );
     assert!(
         (one_turn_yield(Some(Improvement::Cultivate)) - one_turn_yield(None)).abs() < EPSILON,
-        "a crew that saturates the stock anyway pays no dip"
+        "an ample crew reads the same, build or no build"
     );
 
-    // Over a full preparation the patch never leaves Thriving — the dip is drawn off the MSY ceiling,
-    // so it is a sustainable take, not a depletion.
+    // Over a full preparation the patch never leaves Thriving — a preparing crew draws nothing at
+    // all, so there is no depletion to survive.
     let (tile, coord) = prime_thriving_patch(&mut app);
     grant_cultivation_knowledge(&mut app, FactionId(0));
     spawn_builder(&mut app, tile, coord, Improvement::Cultivate);
@@ -566,67 +575,23 @@ fn cultivate_pays_a_fraction_of_the_sustain_yield_and_keeps_the_patch_healthy() 
             .unwrap()
             .ecology_phase,
         EcologyPhase::Thriving,
-        "the preparing take is sustainable — the patch stays healthy"
+        "the crew works the patch at the floor they chose throughout — preparing changes nothing \
+         about the draw"
     );
 }
 
-/// **A CREW THAT STRIPS THE GROUND IT IS CLEARING BUILDS SLOWLY** — §0.3's measurement, inverted.
-///
-/// Before `docs/plan_harvest_floor.md` §3 the harshest draw was strictly dominant while building:
-/// dipped ×0.25, *every* stance completed a 25-turn Cultivate on schedule and the deepest one paid
-/// 3.8× the food for it. The floor now paces the build (`intensification::learn_multiplier`), so
-/// pulling harder buys food today at the price of turns — a real trade instead of a free lunch.
-///
-/// Asserted as a **relation**, not a pair of literals: a 0.15 build takes materially longer than a
-/// food-peak one, and it still completes (the rate is a slope, not a gate — there is no lapse state
-/// left to strand a build in).
-#[test]
-fn a_low_floor_cultivate_takes_materially_longer_than_a_food_peak_one() {
-    /// Long enough for even the shallowest swept floor to finish several times over, so a run that
-    /// hits it is a genuine never-completes rather than an impatient harness.
-    const PATIENCE_TURNS: u32 = 400;
-
-    /// How much longer the deep-floor build must take before the trade counts as *material*. The
-    /// arithmetic says `0.5 / 0.15 ≈ 3.3×`; the bound is deliberately loose because what is being
-    /// pinned is that the pressure costs turns at all, not the exact slope (which is
-    /// `learn_multiplier`'s to change).
-    const MATERIALLY_LONGER: f32 = 2.0;
-
-    let crew = build_crew(&spawn_world());
-    let turns_to_cultivate = |floor: f32| -> u32 {
-        let mut app = spawn_world();
-        let (tile, coord) = prime_thriving_patch(&mut app);
-        grant_cultivation_knowledge(&mut app, FactionId(0));
-        spawn_forager_at(
-            &mut app,
-            tile,
-            coord,
-            Some(Improvement::Cultivate),
-            crew,
-            floor,
-        );
-        for turn in 1..=PATIENCE_TURNS {
-            run_turns_with_forage(&mut app, 1);
-            if app
-                .world
-                .resource::<ForageRegistry>()
-                .patch(coord)
-                .is_some_and(|patch| patch.is_cultivated())
-            {
-                return turn;
-            }
-        }
-        panic!("a build at floor {floor} never completed in {PATIENCE_TURNS} turns");
-    };
-
-    let at_the_peak = turns_to_cultivate(FOOD_PEAK_FLOOR);
-    let stripping = turns_to_cultivate(0.15);
-    assert!(
-        stripping as f32 >= at_the_peak as f32 * MATERIALLY_LONGER,
-        "a crew stripping the ground it is clearing must pay for it in turns: {stripping} vs \
-         {at_the_peak} at the food peak"
-    );
-}
+// **RETIRED: `a_low_floor_cultivate_takes_materially_longer_than_a_food_peak_one`** — §0.3's
+// measurement inverted: the harshest draw used to be strictly dominant while building (dipped ×0.25,
+// every stance completed a 25-turn Cultivate on schedule and the deepest paid 3.8× the food), and
+// `learn_multiplier` on the accrual made pulling harder cost turns instead.
+//
+// **That rule was written when one crew did both jobs.** A Cultivate is staffed in its own right now
+// (`docs/plan_standing_upkeep.md` §2.2), so the builders are not pulling on the patch and there is no
+// pressure of theirs for a floor to describe — and a build crew on a patch nobody is gathering has no
+// floor to read at all. §0.3's defect cannot recur for the stronger reason that there is no shared
+// crew for a deep draw to build with for free. The floor still paces the LESSON
+// (`RungDef::knowledge_accrual`), and the pacing-neutrality of taking it off the build is pinned by
+// `intensification::taking_the_floor_off_the_build_rate_is_pacing_neutral_at_the_food_peak`.
 
 /// **The first worked turn commits the ground to one named plant** (Flora Roster S1) — and, until
 /// the improvement completes, that commitment costs and buys nothing: the patch still carries the
@@ -718,7 +683,7 @@ fn cultivate_completes_then_pays_the_tended_yield() {
     let (tile, coord) = prime_thriving_patch(&mut app);
     grant_cultivation_knowledge(&mut app, FactionId(0));
     let band = spawn_builder(&mut app, tile, coord, Improvement::Cultivate);
-    let (_, work_per_turn, _) = cultivation_config(&app);
+    let (work_per_turn, _) = cultivation_config(&app);
     let turns = turns_to_prepare(&app);
 
     // Progress accrues at the crew's full output — no net-of-decay drag while it is working.
@@ -960,7 +925,7 @@ fn abandoned_preparation_decays() {
         "the fixture must run past the grace, or it would pin nothing"
     );
     run_turns_untended(&mut app, ABANDONED_TURNS);
-    let (_, _, decay) = cultivation_config(&app);
+    let (_, decay) = cultivation_config(&app);
     let decayed = progress_of(&app, coord);
     let expected_decay = decay * (ABANDONED_TURNS - SPARED_LAG_TURNS - grace) as f32;
     assert!(
@@ -981,9 +946,9 @@ fn abandoned_preparation_decays() {
 ///   patch at (x, y)" once per crew. `ForagePatch::accrue_cultivation` now answers *"did this call
 ///   finish it"*, `Herd::accrue_corral`'s convention.
 /// - **Clearing the verb does NOT.** Whoever finished it, a rung with nothing left to build must
-///   hand the verb back — otherwise the crew that lost the race keeps paying
-///   `yield_fraction_while_building` on prepared ground, which is issue #420 all over again for the
-///   second band.
+///   hand the verb back — otherwise the crew that lost the race keeps spending its whole work budget
+///   on prepared ground and gathering none of it, which is issue #420 all over again for the second
+///   band.
 #[test]
 fn a_completed_cultivation_announces_once_and_clears_every_bands_verb() {
     let mut app = spawn_world();
@@ -1142,7 +1107,7 @@ fn the_feral_bleed_starts_exactly_one_turn_past_the_grace() {
     );
 
     run_turns_untended(&mut app, 1);
-    let (_, _, decay) = cultivation_config(&app);
+    let (_, decay) = cultivation_config(&app);
     assert!(
         (progress_of(&app, coord) - (seated_cost - decay)).abs() < 1e-6,
         "the first turn past the grace bleeds exactly one turn's decay: {}",
@@ -1250,14 +1215,7 @@ fn over_crewing_a_build_is_no_longer_capped() {
 /// worker as overstaffing.
 #[test]
 fn a_running_build_demands_at_least_its_crew() {
-    let crew = {
-        let app = spawn_world();
-        let ladder = app.world.resource::<LadderConfigHandle>().get();
-        ladder
-            .rung(RungKey::PlantTended)
-            .build_crew_needed()
-            .expect("the tended rung declares a crew")
-    };
+    let crew = build_crew(&spawn_world());
 
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
@@ -1527,7 +1485,7 @@ fn a_running_build_outranks_a_bystanders_projection_on_the_same_patch() {
         core_sim::build_turns_remaining(
             cost,
             banked,
-            rung.build_accrual(Some(Improvement::Cultivate), true, FOOD_PEAK_FLOOR, workers),
+            rung.build_accrual(Some(Improvement::Cultivate), true, workers),
         )
         .expect("a staffed build quotes a finish date")
     };

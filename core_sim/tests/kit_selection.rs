@@ -15,6 +15,7 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 
+use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     advance_expeditions, advance_herds, advance_labor_allocation, advance_tick, build_headless_app,
     recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero, BandEquipment,
@@ -258,6 +259,8 @@ fn spawn_hunting_band(
                     workers: CREW,
                     improvement: None,
                     kit,
+                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
+                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },
@@ -510,6 +513,8 @@ fn a_gather_crew_wears_only_the_baskets_and_a_kitless_one_wears_nothing() {
                         workers: CREW,
                         improvement: None,
                         kit: Some(chosen),
+                        improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
+                        maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                     }],
                     ..Default::default()
                 },
@@ -1374,12 +1379,16 @@ fn every_labor_row_publishes_the_kit_it_is_priced_at() {
                         improvement: None,
                         // Named nothing — the wire must still say which kit it is working under.
                         kit: None,
+                        improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
+                        maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                     },
                     LaborAssignment {
                         target: LaborTarget::Scout,
                         workers: CREW,
                         improvement: None,
                         kit: None,
+                        improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
+                        maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                     },
                 ],
                 ..Default::default()
@@ -1769,6 +1778,8 @@ fn spawn_gathering_band(app: &mut App, baskets_owned: u32) -> (bevy::prelude::En
                     workers: CREW,
                     improvement: None,
                     kit: None,
+                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
+                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },

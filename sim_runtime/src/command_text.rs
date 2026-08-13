@@ -127,25 +127,31 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         verb: "tame",
         aliases: &[],
         summary: "Set the Tame improvement on the bands hunting a wild herd (their harvest stance is left alone): an investment that pays a reduced take while the herd is gentled, then makes it pastoral livestock (needs Herding knowledge, earned by Sustain hunting, and a species that can be domesticated).",
-        usage: "tame <faction_id> <herd_id>",
+        usage: "tame <faction_id> <herd_id> <workers>",
     },
     CommandVerbHelp {
         verb: "cultivate",
         aliases: &[],
         summary: "Set the Cultivate improvement on the bands foraging a Thriving patch (their harvest stance is left alone): an investment that pays a reduced yield while the crop is prepared, then a higher tended yield (needs Cultivation knowledge, earned by Sustain foraging).",
-        usage: "cultivate <faction_id> <x> <y>",
+        usage: "cultivate <faction_id> <x> <y> <workers>",
     },
     CommandVerbHelp {
         verb: "sow",
         aliases: &[],
         summary: "Set the Sow improvement on the bands foraging a tile (their harvest stance is left alone): an investment that builds a Field, out-yielding a tended patch. It PLACES the source — even ground with no forage site on it will take seed — but only where the land is ALREADY very fertile and near fresh water (the river valleys, ~1% of the map): rung 3 can carry seed, not water or fertilizer. Needs Seed Selection knowledge, earned by working tended patches.",
-        usage: "sow <faction_id> <x> <y>",
+        usage: "sow <faction_id> <x> <y> <workers>",
     },
     CommandVerbHelp {
         verb: "abandon_improvement",
         aliases: &["abandon"],
         summary: "Abandon the improvement a band is building on a source: the crew keeps working it under the harvest stance you chose, and stops paying the build dip. Always allowed — abandoning a STALLED build is exactly when you want it. Accumulated progress is not zeroed; it is left to whatever the source does when nobody is improving it (a plant meter bleeds away, an animal meter is kept).",
         usage: "abandon_improvement <faction_id> forage <x> <y> | abandon_improvement <faction_id> hunt <herd_id>",
+    },
+    CommandVerbHelp {
+        verb: "maintain",
+        aliases: &[],
+        summary: "Put hands on a source's STANDING upkeep - the third of a source's three worker allocations, beside the take crew (assign_labor) and the build crew (the improvement verbs). All three come out of one band, so what competes for hands is visible in the numbers you type. There is no cap. WORKERS 0 IS 'stop maintaining this': the demand still stands, so all of it goes unmet and the improvement slides back down the ladder - hold it and spend the hands, or write it off and put them somewhere else. No shipped rung declares an upkeep yet, so this costs nothing today.",
+        usage: "maintain <faction_id> forage <x> <y> <workers> | maintain <faction_id> hunt <herd_id> <workers>",
     },
     CommandVerbHelp {
         verb: "set_bench",
@@ -169,13 +175,13 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         verb: "corral",
         aliases: &[],
         summary: "Set the Corral improvement on the bands hunting your domesticated herd at a tile (their harvest stance is left alone): an investment that pays a reduced take while the pen is built, then pins the herd there (needs Penning knowledge, earned by working herds you have already TAMED — Herding gates tame, not corral).",
-        usage: "corral <faction_id> <x> <y>",
+        usage: "corral <faction_id> <x> <y> <workers>",
     },
     CommandVerbHelp {
         verb: "extend_pen",
         aliases: &[],
-        summary: "Grow the fenced footprint of your built pen at a tile by one ring: the keeper works it off over ~25 turns at a reduced take, then the pen grazes more land (a ring rides the same rung as the pen, so it needs Penning too — plus an owned penned herd and room below the pen-radius max).",
-        usage: "extend_pen <faction_id> <x> <y>",
+        summary: "Grow the fenced footprint of your built pen at a tile by one ring, worked off by the crew you name: a ring rides the same animal:pen rung as the pen it widens, so it costs the same work and claims hands from the same band as the gathering and the keeping. Needs Penning, an owned penned herd, a band already keeping it, and room below the pen-radius max.",
+        usage: "extend_pen <faction_id> <x> <y> <workers>",
     },
     CommandVerbHelp {
         verb: "answer_fork",
@@ -747,9 +753,13 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let herd_id = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("herd_id"))?;
+            let crew_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("workers"))?;
             Ok(CommandPayload::Tame {
                 faction_id: parse_u32(faction_str, "tame faction")?,
                 herd_id: herd_id.to_string(),
+                workers: parse_u32(crew_str, "tame workers")?,
             })
         }
         "cultivate" => {
@@ -762,10 +772,14 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let y_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            let crew_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("workers"))?;
             Ok(CommandPayload::Cultivate {
                 faction_id: parse_u32(faction_str, "cultivate faction")?,
                 target_x: parse_u32(x_str, "cultivate target_x")?,
                 target_y: parse_u32(y_str, "cultivate target_y")?,
+                workers: parse_u32(crew_str, "cultivate workers")?,
             })
         }
         "sow" => {
@@ -778,10 +792,14 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let y_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            let crew_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("workers"))?;
             Ok(CommandPayload::Sow {
                 faction_id: parse_u32(faction_str, "sow faction")?,
                 target_x: parse_u32(x_str, "sow target_x")?,
                 target_y: parse_u32(y_str, "sow target_y")?,
+                workers: parse_u32(crew_str, "sow workers")?,
             })
         }
         "abandon_improvement" | "abandon" => {
@@ -826,6 +844,57 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                         target_x: parse_u32(x_str, "abandon_improvement target_x")?,
                         target_y: parse_u32(y_str, "abandon_improvement target_y")?,
                         fauna_id: String::new(),
+                    })
+                }
+                _ => Err(CommandParseError::UnexpectedToken(kind)),
+            }
+        }
+        "maintain" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let faction_id = parse_u32(faction_str, "maintain faction")?;
+            let kind = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("kind"))?
+                .to_ascii_lowercase();
+            // **`abandon_improvement`'s grammar, verbatim** — including its rule that an unknown
+            // source kind fails **here**, at parse time, rather than being read with the forage
+            // arity and rejected asynchronously for an argument unrelated to the mistake.
+            match kind.as_str() {
+                "hunt" => {
+                    let fauna_id = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("fauna_id"))?;
+                    let crew_str = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("workers"))?;
+                    Ok(CommandPayload::Maintain {
+                        faction_id,
+                        kind,
+                        target_x: 0,
+                        target_y: 0,
+                        fauna_id: fauna_id.to_string(),
+                        workers: parse_u32(crew_str, "maintain workers")?,
+                    })
+                }
+                "forage" => {
+                    let x_str = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("target_x"))?;
+                    let y_str = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("target_y"))?;
+                    let crew_str = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("workers"))?;
+                    Ok(CommandPayload::Maintain {
+                        faction_id,
+                        kind,
+                        target_x: parse_u32(x_str, "maintain target_x")?,
+                        target_y: parse_u32(y_str, "maintain target_y")?,
+                        fauna_id: String::new(),
+                        workers: parse_u32(crew_str, "maintain workers")?,
                     })
                 }
                 _ => Err(CommandParseError::UnexpectedToken(kind)),
@@ -901,10 +970,14 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let y_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            let crew_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("workers"))?;
             Ok(CommandPayload::Corral {
                 faction_id: parse_u32(faction_str, "corral faction")?,
                 target_x: parse_u32(x_str, "corral target_x")?,
                 target_y: parse_u32(y_str, "corral target_y")?,
+                workers: parse_u32(crew_str, "corral workers")?,
             })
         }
         "extend_pen" => {
@@ -917,10 +990,14 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let y_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            let crew_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("workers"))?;
             Ok(CommandPayload::ExtendPen {
                 faction_id: parse_u32(faction_str, "extend_pen faction")?,
                 target_x: parse_u32(x_str, "extend_pen target_x")?,
                 target_y: parse_u32(y_str, "extend_pen target_y")?,
+                workers: parse_u32(crew_str, "extend_pen workers")?,
             })
         }
         "cancel_order" => {
@@ -1839,10 +1916,11 @@ mod tests {
     #[test]
     fn parse_tame_command() {
         assert_eq!(
-            parse_command_line("tame 0 game_deer_07").unwrap(),
+            parse_command_line("tame 0 game_deer_07 4").unwrap(),
             CommandPayload::Tame {
                 faction_id: 0,
                 herd_id: "game_deer_07".to_string(),
+                workers: 4,
             }
         );
         // herd_id is required.
@@ -1963,17 +2041,23 @@ mod tests {
     #[test]
     fn parse_cultivate_command() {
         assert_eq!(
-            parse_command_line("cultivate 0 7 3").unwrap(),
+            parse_command_line("cultivate 0 7 3 4").unwrap(),
             CommandPayload::Cultivate {
                 faction_id: 0,
                 target_x: 7,
                 target_y: 3,
+                workers: 4,
             }
         );
-        // Both coordinates are required.
+        // Both coordinates are required, and so is the build's crew — a verb with no crew names
+        // no decision, and guessing one would staff a build the player did not staff.
         assert!(matches!(
             parse_command_line("cultivate 0 7"),
             Err(CommandParseError::MissingArgument("target_y"))
+        ));
+        assert!(matches!(
+            parse_command_line("cultivate 0 7 3"),
+            Err(CommandParseError::MissingArgument("workers"))
         ));
     }
 
@@ -1982,50 +2066,70 @@ mod tests {
     #[test]
     fn parse_sow_command() {
         assert_eq!(
-            parse_command_line("sow 0 7 3").unwrap(),
+            parse_command_line("sow 0 7 3 4").unwrap(),
             CommandPayload::Sow {
                 faction_id: 0,
                 target_x: 7,
                 target_y: 3,
+                workers: 4,
             }
         );
-        // Both coordinates are required.
+        // Both coordinates are required, and so is the build's crew — a verb with no crew names
+        // no decision, and guessing one would staff a build the player did not staff.
         assert!(matches!(
             parse_command_line("sow 0 7"),
             Err(CommandParseError::MissingArgument("target_y"))
+        ));
+        assert!(matches!(
+            parse_command_line("sow 0 7 3"),
+            Err(CommandParseError::MissingArgument("workers"))
         ));
     }
 
     #[test]
     fn parse_corral_command() {
         assert_eq!(
-            parse_command_line("corral 0 7 3").unwrap(),
+            parse_command_line("corral 0 7 3 4").unwrap(),
             CommandPayload::Corral {
                 faction_id: 0,
                 target_x: 7,
                 target_y: 3,
+                workers: 4,
             }
         );
-        // Both coordinates are required.
+        // Both coordinates are required, and so is the build's crew — a verb with no crew names
+        // no decision, and guessing one would staff a build the player did not staff.
         assert!(matches!(
             parse_command_line("corral 0 7"),
             Err(CommandParseError::MissingArgument("target_y"))
         ));
+        assert!(matches!(
+            parse_command_line("corral 0 7 3"),
+            Err(CommandParseError::MissingArgument("workers"))
+        ));
     }
 
+    /// A ring rides the same `animal:pen` rung as the pen it widens, so it takes a crew on the same
+    /// grammar as the four improvement verbs (`docs/plan_standing_upkeep.md` §2.2) — and, like them,
+    /// refuses to guess one.
     #[test]
     fn parse_extend_pen_command() {
         assert_eq!(
-            parse_command_line("extend_pen 0 7 3").unwrap(),
+            parse_command_line("extend_pen 0 7 3 4").unwrap(),
             CommandPayload::ExtendPen {
                 faction_id: 0,
                 target_x: 7,
                 target_y: 3,
+                workers: 4,
             }
         );
         assert!(matches!(
             parse_command_line("extend_pen 0 7"),
             Err(CommandParseError::MissingArgument("target_y"))
+        ));
+        assert!(matches!(
+            parse_command_line("extend_pen 0 7 3"),
+            Err(CommandParseError::MissingArgument("workers"))
         ));
     }
 
@@ -2523,6 +2627,69 @@ mod tests {
         assert!(matches!(
             parse_command_line("abandon_improvement 1 foo 4 7"),
             Err(CommandParseError::UnexpectedToken(token)) if token == "foo"
+        ));
+    }
+
+    /// **`maintain` reads `abandon_improvement`'s grammar, plus a crew tail.** The two are siblings
+    /// — one drops the build, the other staffs (or unstaffs) the standing cost — so a player who
+    /// knows one can type the other.
+    #[test]
+    fn parse_maintain_reads_each_webs_arity_and_the_crew() {
+        assert_eq!(
+            parse_command_line("maintain 1 forage 4 7 0").unwrap(),
+            CommandPayload::Maintain {
+                faction_id: 1,
+                kind: "forage".to_string(),
+                target_x: 4,
+                target_y: 7,
+                fauna_id: String::new(),
+                // **Zero is a real instruction, not an absent one** — *stop maintaining this*.
+                workers: 0,
+            }
+        );
+        assert_eq!(
+            parse_command_line("maintain 1 hunt game_test 3").unwrap(),
+            CommandPayload::Maintain {
+                faction_id: 1,
+                kind: "hunt".to_string(),
+                target_x: 0,
+                target_y: 0,
+                fauna_id: "game_test".to_string(),
+                workers: 3,
+            }
+        );
+    }
+
+    /// **Fail closed on an unknown source kind, AT PARSE TIME** — `abandon_improvement`'s rule,
+    /// verbatim and for its reason: the kind decides the *arity*, so a catch-all forage arm turns a
+    /// typo into a complaint about an argument unrelated to the mistake.
+    #[test]
+    fn parse_maintain_rejects_an_unknown_source_kind() {
+        assert!(matches!(
+            parse_command_line("maintain 1 foo 0"),
+            Err(CommandParseError::UnexpectedToken(token)) if token == "foo"
+        ));
+        assert!(matches!(
+            parse_command_line("maintain 1 foo 4 7 0"),
+            Err(CommandParseError::UnexpectedToken(token)) if token == "foo"
+        ));
+    }
+
+    /// The crew is **required**, not defaulted: `maintain …` with no number names no decision, and
+    /// guessing one would staff (or unstaff) a source the player asked nothing about.
+    #[test]
+    fn parse_maintain_requires_the_crew() {
+        assert!(matches!(
+            parse_command_line("maintain 1 forage 4 7"),
+            Err(CommandParseError::MissingArgument("workers"))
+        ));
+        assert!(matches!(
+            parse_command_line("maintain 1 hunt game_test"),
+            Err(CommandParseError::MissingArgument("workers"))
+        ));
+        assert!(matches!(
+            parse_command_line("maintain 1 hunt game_test some"),
+            Err(CommandParseError::InvalidInteger { .. })
         ));
     }
 

@@ -1261,6 +1261,76 @@ mod tests {
         );
     }
 
+    /// **THE STANDING UPKEEP SURVIVES THE WIRE, on both webs, as FOUR terms**
+    /// (`docs/plan_standing_upkeep.md` §2). The demand, what was supplied and what went unmet all
+    /// ship rather than being left as a subtraction, because the sim answers and the client does
+    /// zero arithmetic — the `penFeedUpkeep` discipline — and `upkeepWorkersNeeded` beside them is
+    /// the **maintain** activity's own `workers_needed`, in its own unit.
+    ///
+    /// **There is no `maintain` flag.** *"Stop maintaining this"* is a crew of zero
+    /// (`maintain <faction> <source…> 0`), so the state is carried by the number the player typed
+    /// rather than by a boolean that could disagree with it.
+    #[test]
+    fn the_standing_upkeep_survives_the_wire_on_both_webs() {
+        const DEMAND: f32 = 5.0;
+        const SUPPLIED: f32 = 2.0;
+        const SHORTFALL: f32 = DEMAND - SUPPLIED;
+        /// `ceil(DEMAND / PER_WORKER_OUTPUT)` — the hands it would take to meet it.
+        const KEEPERS_NEEDED: u32 = 5;
+
+        let snapshot = WorldSnapshot {
+            herds: vec![HerdTelemetryState {
+                upkeep_demand: DEMAND,
+                upkeep_supplied: SUPPLIED,
+                upkeep_shortfall: SHORTFALL,
+                upkeep_workers_needed: KEEPERS_NEEDED,
+                ..HerdTelemetryState::default()
+            }],
+            forage_patches: vec![ForagePatchState::default()],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("a decodable snapshot envelope");
+        let subsistence = envelope
+            .payload_as_snapshot()
+            .expect("a snapshot payload")
+            .subsistence()
+            .expect("a subsistence section");
+
+        let herd = subsistence.herds().expect("the herds").get(0);
+        assert_eq!(herd.upkeepDemand(), DEMAND);
+        assert_eq!(
+            herd.upkeepWorkersNeeded(),
+            KEEPERS_NEEDED,
+            "the maintain activity answers its own `workers_needed`, in keepers"
+        );
+        assert_eq!(herd.upkeepSupplied(), SUPPLIED);
+        assert_eq!(
+            herd.upkeepShortfall(),
+            SHORTFALL,
+            "the shortfall ships rather than being left as `demand - supplied` for the client"
+        );
+
+        let patch = subsistence
+            .foragePatches()
+            .expect("the forage patches")
+            .get(0);
+        assert_eq!(
+            patch.upkeepDemand(),
+            0.0,
+            "no shipped plant rung declares an upkeep, so the demand is an honest 0 — always \
+             meaningful, never a sentinel (the `penUpkeep` rule)"
+        );
+        assert_eq!(patch.upkeepSupplied(), 0.0);
+        assert_eq!(patch.upkeepShortfall(), 0.0);
+        assert_eq!(
+            patch.upkeepWorkersNeeded(),
+            0,
+            "…so nobody is needed to keep it"
+        );
+    }
+
     /// **THE KIT'S PER-WORKER BUILD CONTRIBUTION SURVIVES THE WIRE, and the retired multiplier's
     /// slot publishes only its neutral.** Both halves matter: a consumer must be able to read the
     /// successor, and one still reading `buildRate` must not be handed a number in work units — it

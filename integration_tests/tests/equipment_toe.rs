@@ -21,6 +21,7 @@
 //! confusion this slice corrects.
 
 use bevy::{math::UVec2, prelude::Entity};
+use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     available_workers, build_headless_app, run_turn, BandEquipment, CommandEventKind,
     CommandEventLog, CreaturesConfig, EffectTier, EquipmentConfig, EquipmentStat,
@@ -115,6 +116,8 @@ fn hunting_world_of(
                 workers: crew.unwrap_or(workers).max(1),
                 improvement: None,
                 kit: None,
+                improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
+                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             ..Default::default()
         },
@@ -147,6 +150,8 @@ fn gathering_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
                 workers: workers.max(1),
                 improvement: None,
                 kit: None,
+                improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
+                maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             ..Default::default()
         },
@@ -166,6 +171,8 @@ fn scouting_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
             workers: workers.max(1),
             improvement: None,
             kit: None,
+            improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
+            maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
         }],
         ..Default::default()
     });
@@ -1953,6 +1960,8 @@ fn report_the_strike_wear_the_shipped_opening_pays() {
             workers: workers.max(1),
             improvement: None,
             kit: None,
+            improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
+            maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
         }],
         ..Default::default()
     });

@@ -117,21 +117,37 @@ pub enum CommandPayload {
     Tame {
         faction_id: u32,
         herd_id: String,
+        /// **The BUILD's own crew** — hands on this verb, independent of the take crew `assign_labor`
+        /// set and of the maintain crew (`docs/plan_standing_upkeep.md` §2.2). No cap; `0` stops the
+        /// build without clearing its meter.
+        workers: u32,
     },
     Cultivate {
         faction_id: u32,
         target_x: u32,
         target_y: u32,
+        /// **The BUILD's own crew** — hands on this verb, independent of the take crew `assign_labor`
+        /// set and of the maintain crew (`docs/plan_standing_upkeep.md` §2.2). No cap; `0` stops the
+        /// build without clearing its meter.
+        workers: u32,
     },
     Sow {
         faction_id: u32,
         target_x: u32,
         target_y: u32,
+        /// **The BUILD's own crew** — hands on this verb, independent of the take crew `assign_labor`
+        /// set and of the maintain crew (`docs/plan_standing_upkeep.md` §2.2). No cap; `0` stops the
+        /// build without clearing its meter.
+        workers: u32,
     },
     Corral {
         faction_id: u32,
         target_x: u32,
         target_y: u32,
+        /// **The BUILD's own crew** — hands on this verb, independent of the take crew `assign_labor`
+        /// set and of the maintain crew (`docs/plan_standing_upkeep.md` §2.2). No cap; `0` stops the
+        /// build without clearing its meter.
+        workers: u32,
     },
     /// **Abandon a running improvement** — clear the build verb off every band of `faction_id`
     /// working the named source, leaving the harvest stance and the crew untouched (issue #442).
@@ -150,10 +166,28 @@ pub enum CommandPayload {
         target_y: u32,
         fauna_id: String,
     },
+    /// **Put hands on one source's standing upkeep** — the third of a source's three worker
+    /// allocations (`docs/plan_standing_upkeep.md` §2.2), sharing `abandon_improvement`'s source
+    /// grammar.
+    ///
+    /// **`workers: 0` is "stop maintaining this"** — there is no toggle beside the number. The
+    /// demand still stands, so all of it goes unmet and the improvement slides.
+    Maintain {
+        faction_id: u32,
+        kind: String,
+        target_x: u32,
+        target_y: u32,
+        fauna_id: String,
+        workers: u32,
+    },
     ExtendPen {
         faction_id: u32,
         target_x: u32,
         target_y: u32,
+        /// **The ring's own crew** — a ring rides the same `animal:pen` rung as the pen it widens,
+        /// so it staffs the same build allocation and draws on the same finite band
+        /// (`docs/plan_standing_upkeep.md` §2.2).
+        workers: u32,
     },
     /// **Put a recipe on a band's crafting bench.** The crew is the player's to name — see
     /// [`BENCH_CREW_UNSPECIFIED`].
@@ -907,27 +941,33 @@ impl CommandEnvelope {
             CommandPayload::Tame {
                 faction_id,
                 herd_id,
+                workers,
             } => pb::command_envelope::Command::Tame(pb::TameCommand {
                 faction_id: *faction_id,
                 herd_id: herd_id.clone(),
+                workers: *workers,
             }),
             CommandPayload::Cultivate {
                 faction_id,
                 target_x,
                 target_y,
+                workers,
             } => pb::command_envelope::Command::Cultivate(pb::CultivateCommand {
                 faction_id: *faction_id,
                 target_x: *target_x,
                 target_y: *target_y,
+                workers: *workers,
             }),
             CommandPayload::Sow {
                 faction_id,
                 target_x,
                 target_y,
+                workers,
             } => pb::command_envelope::Command::Sow(pb::SowCommand {
                 faction_id: *faction_id,
                 target_x: *target_x,
                 target_y: *target_y,
+                workers: *workers,
             }),
             CommandPayload::AbandonImprovement {
                 faction_id,
@@ -941,6 +981,21 @@ impl CommandEnvelope {
                 target_x: *target_x,
                 target_y: *target_y,
                 fauna_id: fauna_id.clone(),
+            }),
+            CommandPayload::Maintain {
+                faction_id,
+                kind,
+                target_x,
+                target_y,
+                fauna_id,
+                workers,
+            } => pb::command_envelope::Command::Maintain(pb::MaintainCommand {
+                faction_id: *faction_id,
+                kind: kind.clone(),
+                target_x: *target_x,
+                target_y: *target_y,
+                fauna_id: fauna_id.clone(),
+                workers: *workers,
             }),
             CommandPayload::SetBench {
                 faction_id,
@@ -973,19 +1028,23 @@ impl CommandEnvelope {
                 faction_id,
                 target_x,
                 target_y,
+                workers,
             } => pb::command_envelope::Command::Corral(pb::CorralCommand {
                 faction_id: *faction_id,
                 target_x: *target_x,
                 target_y: *target_y,
+                workers: *workers,
             }),
             CommandPayload::ExtendPen {
                 faction_id,
                 target_x,
                 target_y,
+                workers,
             } => pb::command_envelope::Command::ExtendPen(pb::ExtendPenCommand {
                 faction_id: *faction_id,
                 target_x: *target_x,
                 target_y: *target_y,
+                workers: *workers,
             }),
             CommandPayload::AnswerFork {
                 faction_id,
@@ -1347,21 +1406,25 @@ impl CommandEnvelope {
             pb::command_envelope::Command::Tame(cmd) => CommandPayload::Tame {
                 faction_id: cmd.faction_id,
                 herd_id: cmd.herd_id,
+                workers: cmd.workers,
             },
             pb::command_envelope::Command::Cultivate(cmd) => CommandPayload::Cultivate {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
+                workers: cmd.workers,
             },
             pb::command_envelope::Command::Sow(cmd) => CommandPayload::Sow {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
+                workers: cmd.workers,
             },
             pb::command_envelope::Command::Corral(cmd) => CommandPayload::Corral {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
+                workers: cmd.workers,
             },
             pb::command_envelope::Command::AbandonImprovement(cmd) => {
                 CommandPayload::AbandonImprovement {
@@ -1372,6 +1435,14 @@ impl CommandEnvelope {
                     fauna_id: cmd.fauna_id,
                 }
             }
+            pb::command_envelope::Command::Maintain(cmd) => CommandPayload::Maintain {
+                faction_id: cmd.faction_id,
+                kind: cmd.kind,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
+                fauna_id: cmd.fauna_id,
+                workers: cmd.workers,
+            },
             pb::command_envelope::Command::SetBench(cmd) => CommandPayload::SetBench {
                 faction_id: cmd.faction_id,
                 band_id: cmd.band_id,
@@ -1391,6 +1462,7 @@ impl CommandEnvelope {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
+                workers: cmd.workers,
             },
             pb::command_envelope::Command::AnswerFork(cmd) => CommandPayload::AnswerFork {
                 faction_id: cmd.faction_id,

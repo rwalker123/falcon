@@ -443,11 +443,11 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > `fauna::hunt_escapement_ceiling` is the one source, and it is one expression parameterised by a
 > **floor**: `escapement_ceiling(floor, B, K)` — `max(0, B − floor·K)`, and **nothing else**. The herd
 > hands over the stock standing above the floor; the crew's throughput is the only other term.
-> **THE BUILD DIP IS NOT IN IT** (`docs/plan_harvest_floor.md` §3.1, and `intensification.md`'s "A
-> ceiling therefore carries no dip at all"): the dip multiplies the CREW, so `hunt_escapement_ceiling`
-> takes no `improvement` and no ladder. Writing it here as `… × build_dip` — as this file did — hands a
-> reader the double-discount, because the crew term they multiply by is dipped already. **There is no
-> stance axis** —
+> **THE BUILD IS NOT IN IT AT ALL** (`docs/plan_standing_upkeep.md` §2.2): a build has its own crew,
+> so neither the ceiling nor the hunters' throughput carries a build term — `hunt_escapement_ceiling`
+> takes no `improvement` and no ladder, and nothing beside it does either. (It carried none even while
+> the dip was live, when the dip multiplied the CREW; writing it here as `… × build_dip` — as this
+> file did — handed a reader a double discount.) **There is no stance axis** —
 > `FollowPolicy` is deleted, and the floor rides `LaborTarget::Hunt` (a resident band) or
 > `ExpeditionMission::Hunt` (a raid) as an `f32` fraction of `K`.
 >
@@ -458,7 +458,7 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > | `0.30` | drawn down, still above the Allee brink |
 > | `0.15` (`ecology.collapse_fraction`) | pinned AT the brink, Collapsing |
 > | `0` | nothing standing — under `extinction_floor`, and gone |
-> | a build in flight | **the same room, undipped** — the rung's `yield_fraction_while_building` is applied to the CREW, not to this |
+> | a build in flight | **the same room** — the build's hands are staffed separately and are not hunting, so nothing about the herd's offer changes |
 >
 > **Validated `0.0..=1.0` at the command boundary and never clamped** (`components::floor_is_valid`);
 > an absent floor becomes `DEFAULT_ESCAPEMENT_FLOOR`. The four values above are the ones the retired
@@ -608,7 +608,7 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   and drops only on a genuine multi-band fall — wild = 0 unchanged (a wild herd isn't yours to
 >   maintain). `herd_herders_needed` reads this stabilized field (falling back to the raw ceil only for
 >   a not-yet-stabilized managed herd — the turn it is tamed, or a test fixture), so **every** consumer
->   (`herded_fraction` decay, `source_crew_needed`, the `herdersNeeded` snapshot field) is steady; the
+>   (`herded_fraction` decay, the take-crew `max()`, the `herdersNeeded` snapshot field) is steady; the
 >   wire field is unchanged, just no longer churning.
 > - **Heads, not tonnes.** The denominator is per-**animal** (`SpeciesDef::animals_per_herder`,
 >   per-species: fowl/rabbit 200, crag_goat 80, boar 15, steppe_runner/marsh_grazer 15, aurochs 12;
@@ -617,15 +617,17 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   says "one herder per 100 fowl but one per 2 boar" and invents a 45-herder steppe megaherd that is a
 >   pure artifact of the unit (4,560 biomass of Steppe Runner is **86 animals** ⇒ ~6 herders).
 > - **ONE need, not three — but "one need" means one CREW, not one formula.** The herders mind the herd,
->   *reach* it and *butcher* it, so a managed rung reports **one** number and staffs **one** team
->   (`intensification::source_crew_needed`, shared with the plant web, where the standing half is the
->   building rung's crew instead) — but that team must be big enough for **all three** jobs, which
->   scale on **three different units**:
+>   *reach* it and *butcher* it, so a managed rung's **take** reports one number and staffs one team —
+>   but that team must be big enough for **all three** jobs, which scale on **three different units**.
+>   (The **build**'s hands are a separate allocation the player states on the verb, and the
+>   **keeping**'s are `upkeepWorkersNeeded`; the shared `intensification::source_crew_needed` that used
+>   to fold a build crew in here is retired — see "`workers_needed` IS THE TAKE'S OWN COUNT" in
+>   `yield-forecast.md`.)
 >
 >   | term | unit | rate |
 >   |---|---|---|
 >   | `herd_herders_needed` | **heads** minded | `animals_per_herder` (one herder minds 12 aurochs) |
->   | `fauna::hunt_engage_workers` | **animals brought down** | `engage_rate × build_dip × stay` (one hunter reaches 10 fowl, 0.05 mammoths — and keeps only what stands) |
+>   | `fauna::hunt_engage_workers` | **animals brought down** | `engage_rate × stay` (one hunter reaches 10 fowl, 0.05 mammoths — and keeps only what stands) |
 >   | `fauna::hunt_haul_workers` | **biomass** carried | `per_worker_biomass_capacity` (one hauler carries 40) |
 >
 >   A shepherd minds ~300 sheep and could not carry three. So
@@ -645,7 +647,7 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >     (The retreat only widens that dominance: it divides the reach crew by `stay ≤ 1` and leaves the
 >     haul crew alone, so the roster-wide tie above is the *calmest* case.)
 >   - **THE RETREAT PRICES THE CREW, not only the take.** `hunt_engage_workers`' divisor is what one
->     hunter puts on the ground — `engage_rate × build_dip × stay` — and never the raw reach, because
+>     hunter puts on the ground — `engage_rate × stay` — and never the raw reach, because
 >     **a party that keeps one animal in four needs four times the hands to draw the same stock
 >     down**. `stay` is the party's OWN [`HuntingParty::stay_fraction`] (the quarry's `wariness` folded
 >     with the kit's `dispersion`, `equipment.md`), the identical term the take beside it is priced
@@ -739,18 +741,14 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >
 > - **The haul term is the CEILING's carry crew, not this turn's `carried`** (`fauna::hunt_haul_workers`).
 >   `workers_needed`'s hauling component is the crew that carries home the **peak animal drop the
->   ceiling allows** — `ceil((floor(ceiling/body) + 1)·body / (per_worker × build_dip))`, off the
->   assignment's `hunt_escapement_ceiling`, the same number the take is bounded by and the same count
->   the client's compose panel `_max_useful_workers` caps at. **The ceiling is UNDIPPED and the
->   per-hauler rate is DIPPED**, and the asymmetry is the whole of §3.1: the herd offers what stands
->   above the floor whether the party is harvesting it or gentling it, but a gentling hauler carries
->   `yield_fraction_while_building ×` what a hunting one does, so it takes proportionally more of them.
->   Dividing the *undipped* rate into that room sized a harvesting crew and then paid it the building
->   take — the row read "enough hands" for a crew that provably could not lift the drop, and disagreed
->   with the client's own cap by exactly the dip
->   (`labor::a_herd_being_tamed_sizes_its_haul_crew_on_the_dipped_carry`, whose plant twin
->   `a_labor_bound_cultivate_crew_is_not_reported_overstaffed` pins the same unit mismatch on the
->   continuous side). It is deliberately **not**
+>   ceiling allows** — `ceil((floor(ceiling/body) + 1)·body / per_worker)`, off the assignment's
+>   `hunt_escapement_ceiling`, the same number the take is bounded by and the same count the client's
+>   compose panel `_max_useful_workers` caps at. **Neither half carries a build term any more**
+>   (`docs/plan_standing_upkeep.md` §2.2): the herd offers what stands above the floor, and a hauler
+>   carries what a hauler carries, whether or not a separately-staffed crew is gentling the herd
+>   beside them. While the dip was live the two halves had to be dipped *asymmetrically* (an undipped
+>   ceiling over a dipped rate) or the row read "enough hands" for a crew that provably could not lift
+>   the drop; with the dip gone the asymmetry has nothing left to reconcile. It is deliberately **not**
 >   `workers_needed_for_take(take.carried, …)`: a slow breeder whose room above the floor is lighter
 >   than one body drops **zero** animals on a wait turn, so inverting `carried` collapses
 >   `workers_needed` to `0` — and, for a managed herd, to the bare herder count via `max()`. That made
@@ -769,10 +767,9 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   overstaffing inversion.
 > - **The ENGAGEMENT term is sized off the SAME peak drop, and it is the one that binds on light game**
 >   (`fauna::hunt_engage_workers`, `docs/plan_hunt_through_combat.md` §2) — `ceil(peak_animal_drop /
->   (engage_rate × build_dip × stay))`, the inverse of the **closed-form per-hunter bring-down rate**,
+>   (engage_rate × stay))`, the inverse of the **closed-form per-hunter bring-down rate**,
 >   sharing `peak_animal_drop` with the haul term so the two crews can never be sized against different
->   drops. The dip rides it for the reason it rides carry (§3.1): hands spent gentling a herd are hands
->   not stalking it. The retreat rides it for the reason it rides the take: what a hunter *reaches* is
+>   drops. The retreat rides it for the reason it rides the take: what a hunter *reaches* is
 >   not what a hunter *lands* (see "THE RETREAT PRICES THE CREW" above).
 >
 >   **It is the inverse of the rate, NOT of `fauna::animals_engaged`.** That helper answers how many

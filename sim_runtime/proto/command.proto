@@ -156,12 +156,24 @@ message HuntFaunaCommand {
 message TameCommand {
   uint32 faction_id = 1;
   string herd_id = 2;
+  // THE BUILD'S OWN CREW (docs/plan_standing_upkeep.md section 2.2). A source carries up to three
+  // independent worker allocations from a band - the TAKE crew (assign_labor), this BUILD crew, and
+  // the MAINTAIN crew (MaintainCommand) - and the player states each. They draw on one finite band,
+  // so competing for hands IS the opportunity cost, visible in the numbers typed rather than buried
+  // in a fraction. There is no cap. `0` stops the build without clearing its meter.
+  uint32 workers = 3;
 }
 
 message CultivateCommand {
   uint32 faction_id = 1;
   uint32 target_x = 2;
   uint32 target_y = 3;
+  // THE BUILD'S OWN CREW (docs/plan_standing_upkeep.md section 2.2). A source carries up to three
+  // independent worker allocations from a band - the TAKE crew (assign_labor), this BUILD crew, and
+  // the MAINTAIN crew (MaintainCommand) - and the player states each. They draw on one finite band,
+  // so competing for hands IS the opportunity cost, visible in the numbers typed rather than buried
+  // in a fraction. There is no cap. `0` stops the build without clearing its meter.
+  uint32 workers = 4;
 }
 
 // The intensification ladder's plant rung-3 verb: set the Sow policy on the bands already foraging
@@ -176,6 +188,12 @@ message SowCommand {
   uint32 faction_id = 1;
   uint32 target_x = 2;
   uint32 target_y = 3;
+  // THE BUILD'S OWN CREW (docs/plan_standing_upkeep.md section 2.2). A source carries up to three
+  // independent worker allocations from a band - the TAKE crew (assign_labor), this BUILD crew, and
+  // the MAINTAIN crew (MaintainCommand) - and the player states each. They draw on one finite band,
+  // so competing for hands IS the opportunity cost, visible in the numbers typed rather than buried
+  // in a fraction. There is no cap. `0` stops the build without clearing its meter.
+  uint32 workers = 4;
 }
 
 // The intensification ladder's animal rung-3 verb: pen the domesticated herd standing on the target
@@ -187,6 +205,12 @@ message CorralCommand {
   uint32 faction_id = 1;
   uint32 target_x = 2;
   uint32 target_y = 3;
+  // THE BUILD'S OWN CREW (docs/plan_standing_upkeep.md section 2.2). A source carries up to three
+  // independent worker allocations from a band - the TAKE crew (assign_labor), this BUILD crew, and
+  // the MAINTAIN crew (MaintainCommand) - and the player states each. They draw on one finite band,
+  // so competing for hands IS the opportunity cost, visible in the numbers typed rather than buried
+  // in a fraction. There is no cap. `0` stops the build without clearing its meter.
+  uint32 workers = 4;
 }
 
 // Grazing 2d-beta: grow the fenced footprint of a built pen by one ring (pen_radius += 1), worked off
@@ -198,6 +222,10 @@ message ExtendPenCommand {
   uint32 faction_id = 1;
   uint32 target_x = 2;
   uint32 target_y = 3;
+  // THE RING'S OWN CREW (docs/plan_standing_upkeep.md section 2.2). A ring rides the same animal:pen
+  // rung as the pen it widens, so it staffs the same BUILD allocation and draws on the same finite
+  // band - otherwise widening a fence would be the one build in the game that costs nothing.
+  uint32 workers = 4;
 }
 
 // The Telling (fork tier): answer a pending narrative fork. `beat_id` names the fork the faction
@@ -406,6 +434,30 @@ message AbandonImprovementCommand {
   uint32 target_x = 3;  // forage only
   uint32 target_y = 4;  // forage only
   string fauna_id = 5;  // hunt only
+}
+
+// PUT HANDS ON A SOURCE'S STANDING UPKEEP (docs/plan_standing_upkeep.md section 2.2) - the third of
+// a source's three worker allocations, beside the TAKE crew (assign_labor) and the BUILD crew (the
+// improvement verbs). Same source grammar as AbandonImprovementCommand: `kind` picks the web
+// ("forage" uses target_x/target_y, "hunt" uses fauna_id).
+//
+// `workers = 0` IS "stop maintaining this" - there is no separate toggle, because a boolean beside a
+// crew count would be a second way to say what the number already says and the two could disagree.
+// The demand still stands, so all of it goes unmet and the improvement slides back down the ladder.
+// That is the deal: hold it and spend the hands, or write it off and put them somewhere else.
+//
+// The default is ZERO. A source nobody has staffed for keeping is not being kept - which costs
+// nothing today, because no shipped rung declares an upkeep.
+//
+// Field 56 was SetMaintainCommand (a bool) for the length of one unmerged slice; the slot is reused
+// rather than burned, there being no shipped client to keep compatible with.
+message MaintainCommand {
+  uint32 faction_id = 1;
+  string kind = 2;      // "forage" | "hunt"
+  uint32 target_x = 3;  // forage only
+  uint32 target_y = 4;  // forage only
+  string fauna_id = 5;  // hunt only
+  uint32 workers = 6;
 }
 
 message ExportMapCommand {
@@ -785,5 +837,7 @@ message CommandEnvelope {
     BenchCrewCommand bench_crew = 54;
     // 54 is held by `bench_crew`, so the trade expedition takes 55 (append-only; never renumber).
     SendTradeExpeditionCommand send_trade_expedition = 55;
+    // 55 is held by `send_trade_expedition`, so the maintain allocation takes 56 (append-only).
+    MaintainCommand maintain = 56;
   }
 }

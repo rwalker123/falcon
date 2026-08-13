@@ -2,7 +2,6 @@ use super::*;
 use crate::combat;
 use crate::components::RaidOrders;
 use crate::fauna::AnimalTake;
-use crate::intensification::NO_BUILD_UNDERWAY_DIP;
 
 /// **The reason token for a HUNTING party whose quarry vanished under it** — the herd went extinct,
 /// or dispersed, while the party was still working it, so the trip ends with nothing left to take.
@@ -161,7 +160,6 @@ pub fn advance_expeditions(
     let cfg = configs.expedition.get();
     let fauna = configs.fauna.get();
     let labor = configs.labor.get();
-    let ladder = configs.ladder.get();
     let vis_cfg = configs.visibility.0.as_ref();
     // **Predators Phase 0 — the expedition-hunt danger seam** (`docs/plan_predators.md`). A hunting
     // party takes casualties like a resident band, but **bloodier**: far from home and unsupported, so
@@ -500,11 +498,9 @@ pub fn advance_expeditions(
                         // the same floor a fresh assignment gets, so replenishing on the march can
                         // never be the thing that ruins a herd.
                         DEFAULT_ESCAPEMENT_FLOOR,
-                        NO_IMPROVEMENT_UNDERWAY,
                         per_worker_biomass,
                         &party_for(scout_quarry_mass),
                         &fauna,
-                        &ladder,
                         carry_room,
                         fauna::HuntDraw::Seeded(seed),
                     );
@@ -1427,9 +1423,9 @@ pub(crate) fn workers_needed_for_take(take: f32, per_worker_capacity: f32, assig
 /// (`fauna::animals_that_stay`) are resolved here and handed to the one quantiser, which is also what
 /// retired this function's hand-rolled copy of the `max(1, carryable)` arithmetic.
 ///
-/// **A detached party builds nothing**, so the engagement carries the identity build dip
-/// ([`NO_BUILD_UNDERWAY_DIP`]) — a rung transition is place-bound work, and since issue #442 an
-/// `ExpeditionMission::Hunt` cannot even name an improvement.
+/// **A detached party builds nothing and holds nothing**, so its whole crew hunts — a rung
+/// transition is place-bound work, and since issue #442 an `ExpeditionMission::Hunt` cannot even
+/// name an improvement.
 #[allow(clippy::too_many_arguments)] // the herd's state and the party's caps are all inputs
 fn expedition_take_biomass(
     workers: u32,
@@ -1491,7 +1487,7 @@ fn expedition_take_biomass(
     // `docs/plan_hunt_through_combat.md` §1, in the same order `systems::hunt_take` runs them.
     // Wariness `0` makes the retreat an exact identity that consumes no randomness, so a raid is
     // byte-identical until values are authored.
-    let engaged = fauna::animals_engaged(workers, engage_rate, NO_BUILD_UNDERWAY_DIP)
+    let engaged = fauna::animals_engaged(workers, engage_rate)
         // **Restraint is free** — the mission's floor bounds what the party goes after, so a raid at
         // its floor takes no casualties for animals it was never going to kill (§1).
         .min(fauna::animals_affordable(ceiling, body_mass));
@@ -1501,14 +1497,8 @@ fn expedition_take_biomass(
     // forecast, so the two cannot diverge once this is right.
     let stayed = party.stayers(engaged, wariness, draw);
     // **The fight decides the kill** (§4) — the same resolution the resident band runs.
-    // A detached party builds nothing, so its crew carries the identity dip ([`NO_BUILD_UNDERWAY_DIP`]).
-    let fight = fauna::resolve_hunt_fight(
-        stayed,
-        workers as f32 * NO_BUILD_UNDERWAY_DIP,
-        party,
-        &quarry,
-        draw,
-    );
+    // A detached party builds nothing, so its whole crew fights.
+    let fight = fauna::resolve_hunt_fight(stayed, workers as f32, party, &quarry, draw);
     // Whole animals through **the** quantiser: as many as the bank has readied, bounded by what the
     // party brought down and by what the pack can seat but never below one — so if the pack cannot
     // seat one (`carryable == 0`) while the herd has banked one, the party still kills ONE and wastes
@@ -1733,14 +1723,12 @@ pub fn hunt_take(
     herd: &mut Herd,
     workers: u32,
     floor: f32,
-    improvement: Option<Improvement>,
     per_worker_biomass_capacity: f32,
     // The hunters' own strength — kit composed in — and the tuning they fight at. The take's kill
     // arm IS this fight (`docs/plan_hunt_through_combat.md` §4), so a party that cannot beat the
     // quarry's `defense` comes home with nothing however much the herd could spare.
     party: &fauna::HuntingParty,
     fauna: &FaunaConfig,
-    ladder: &LadderConfig,
     carry_room_biomass: f32,
     // **Live or forecast** — a live hunt draws the retreat and the attack rolls from its per-event
     // seed (`fauna::retreat_seed`), never a shared RNG stream, or hunt ordering would change outcomes
@@ -1769,22 +1757,17 @@ pub fn hunt_take(
     // whole take). Folding the carry room into the collection rather than clamping afterwards is what
     // keeps a nearly-full party from slaughtering an animal it has no room for.
     //
-    // **The build dip rides the CREW, not the ceiling** (`docs/plan_harvest_floor.md` §3.1): a
-    // resident band gentling or fencing this herd carries `yield_fraction_while_building ×` what a
-    // hunting crew carries; an expedition passes [`NO_IMPROVEMENT_UNDERWAY`], because a
-    // rung-transition is place-bound work a detached party cannot do — and since #442 its mission
-    // type cannot even name one. On throughput the dip is floor-independent by construction, which
-    // is what stops a deep floor from building for free (§0.3).
-    let collection = (workers as f32 * per_worker_biomass_capacity * ladder.build_dip(improvement))
-        .min(carry_room_biomass.max(0.0));
+    // **`workers` IS THE TAKE CREW, and nothing scales it** (`docs/plan_standing_upkeep.md` §2.2):
+    // a resident band gentling or fencing this herd staffs that build in its own right, so the
+    // hunters here are only ever hunters. An expedition passes [`NO_IMPROVEMENT_UNDERWAY`] anyway,
+    // because a rung transition is place-bound work a detached party cannot do — and since #442 its
+    // mission type cannot even name one.
+    let collection =
+        (workers as f32 * per_worker_biomass_capacity).min(carry_room_biomass.max(0.0));
     // **Engagement, then retreat, then the quantiser** — stages 1 and 2 of
     // `docs/plan_hunt_through_combat.md` §1. Wariness `0` makes the retreat an exact identity that
     // consumes no randomness, so this is byte-identical until values are authored.
-    let engaged = fauna::animals_engaged(
-        workers,
-        fauna.engage_rate_for(&herd.species),
-        ladder.build_dip(improvement),
-    );
+    let engaged = fauna::animals_engaged(workers, fauna.engage_rate_for(&herd.species));
     // **Restraint is FREE, and the floor is what makes it so** (`docs/plan_hunt_through_combat.md`
     // §1): the escapement floor bounds what the party *goes after*, not what it declines to kill
     // afterwards. A crew at its floor that engaged normally would take casualties and wear its kit
@@ -1804,7 +1787,7 @@ pub fn hunt_take(
     // bouncing off it forever (`docs/plan_hunt_through_combat.md` §4.2).
     let fight = fauna::resolve_hunt_fight(
         stayed,
-        workers as f32 * ladder.build_dip(improvement),
+        workers as f32,
         party,
         &fauna::herd_quarry_fight(herd, fauna),
         draw,

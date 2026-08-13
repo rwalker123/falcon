@@ -2,6 +2,7 @@ mod common;
 
 use bevy::prelude::{Entity, UVec2};
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
+use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     build_headless_app, scalar_from_f32, scalar_one, scalar_zero, BandId, FactionId, GenerationId,
     LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MoraleCause, PopulationCohort,
@@ -139,6 +140,8 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                         workers: 2,
                         improvement: None,
                         kit: None,
+                        improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
+                        maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                     },
                     LaborAssignment {
                         target: LaborTarget::Hunt {
@@ -148,6 +151,8 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                         workers: 2,
                         improvement: None,
                         kit: None,
+                        improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
+                        maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                     },
                 ],
                 ..Default::default()

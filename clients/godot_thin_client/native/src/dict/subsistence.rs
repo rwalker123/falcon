@@ -359,15 +359,30 @@ pub(crate) fn herds_to_array(
         // `(deprecated)` and the sim writes nothing to it. What a source pays beyond food is
         // MATERIALS, which ride the cohort's `material_batches`. The GDScript that read the
         // key it used to insert is a separate pass — the key simply stops appearing.
-        // THE BUILD DIPS, AS FRACTIONS (issue #442) — the animal twins of `ForagePatchState`'s
-        // `cultivate_build_fraction` / `sow_build_fraction`. The dip stopped being a
-        // `hunt_policy_ceilings` ROW (that list is exactly the four stances now) because a crew may
-        // hold ANY stance while it builds, so the dip has to multiply whichever stance is selected:
-        //     preparing(stance, rung) = hunt_policy_ceilings[stance] × <rung>_build_fraction
-        // Composed in ONE place client-side (`SourceForecast.improvement_forecast`) and paired with
-        // `pastoral_yield` / `corral_yield` as the "→ then +Y" half of the deal.
-        let _ = dict.insert("tame_build_fraction", herd.tameBuildFraction());
-        let _ = dict.insert("corral_build_fraction", herd.corralBuildFraction());
+        // THE BUILD DIPS ARE RETIRED (docs/plan_standing_upkeep.md section 2.2). A crew's turn is
+        // one work budget, so a crew building takes NOTHING and `preparing(stance, rung)` is `0`
+        // from the model rather than from a published factor. The `tameBuildFraction` /
+        // `corralBuildFraction` wire slots stay `(deprecated)` and flatc no longer emits an
+        // accessor, so the `tame_build_fraction` / `corral_build_fraction` dict keys simply stop
+        // appearing — the GDScript that reads them is a separate pass.
+        //
+        // THE STANDING UPKEEP (same doc, section 2) — what it costs to HOLD this herd's rung, per
+        // turn, in work units. All three terms ship so the client subtracts nothing, and
+        // `upkeep_demand` follows `pen_upkeep`'s rule: ALWAYS MEANINGFUL, so a rung with no upkeep
+        // reads an honest `0` (which is every shipped rung today) rather than a sentinel.
+        //
+        // THERE IS NO `maintain` FLAG: "stop maintaining this" is a crew of ZERO
+        // (`maintain <faction> hunt <herd> 0`), so the state rides the number the player typed
+        // rather than a boolean that could disagree with it. `upkeep_workers_needed` is the MAINTAIN
+        // activity's own workers_needed, in its own unit, beside the TAKE activity's
+        // (`SourceYield.workersNeeded` = hands to haul the offer).
+        let _ = dict.insert("upkeep_demand", herd.upkeepDemand());
+        let _ = dict.insert("upkeep_supplied", herd.upkeepSupplied());
+        let _ = dict.insert("upkeep_shortfall", herd.upkeepShortfall());
+        let _ = dict.insert(
+            "upkeep_workers_needed",
+            i64::from(herd.upkeepWorkersNeeded()),
+        );
         // THE NEGLECT GRACE (issue #442) — the animal twin of `ForagePatchState`'s pair. A COUNTDOWN,
         // not a counter: `0` = the shed is biting NOW, `N > 0` = it bites in N more un-herded turns,
         // and a herd whose keepers are present reads the rung's full `grace + 1` ("walk away and you
@@ -773,12 +788,15 @@ pub(crate) fn forage_patches_to_array(
         // patch happens to stand on. (Their `*_trade` siblings went with arc #527's axis.)
         let _ = dict.insert("tended_fodder", patch.tendedFodder());
         let _ = dict.insert("field_fodder", patch.fieldFodder());
-        // THE BUILD DIPS, AS FRACTIONS (issue #442) — the plant twins of `HerdTelemetryState`'s
-        // `tame_build_fraction` / `corral_build_fraction`; see there for why the dip stopped being a
-        // `forage_policy_ceilings` row. `MapView` cross-refs both onto `tile_info` (as `patch_*`)
-        // exactly as it does the payoffs they pair with.
-        let _ = dict.insert("cultivate_build_fraction", patch.cultivateBuildFraction());
-        let _ = dict.insert("sow_build_fraction", patch.sowBuildFraction());
+        // THE BUILD DIPS ARE RETIRED — the plant twins of `HerdTelemetryState`'s pair; see there
+        // for why, and for what replaced them. THE STANDING UPKEEP rides here in their place.
+        let _ = dict.insert("upkeep_demand", patch.upkeepDemand());
+        let _ = dict.insert("upkeep_supplied", patch.upkeepSupplied());
+        let _ = dict.insert("upkeep_shortfall", patch.upkeepShortfall());
+        let _ = dict.insert(
+            "upkeep_workers_needed",
+            i64::from(patch.upkeepWorkersNeeded()),
+        );
         // THE NEGLECT GRACE (issue #442) — how many more un-worked turns this patch can absorb before
         // its improvement starts reverting. A COUNTDOWN, not a counter, so no client does the
         // subtraction: `0` = the ground is reverting RIGHT NOW, `N > 0` = it starts in N more
@@ -793,17 +811,13 @@ pub(crate) fn forage_patches_to_array(
             "neglect_grace_remaining",
             i64::from(patch.neglectGraceRemaining()),
         );
-        // THE BUILD CREWS (issue #442) — the crew each plant rung's build actually wants. It FLOORS
-        // the compose sheet's worker cap (`max(ceil(ceiling / perWorker), <rung>CrewNeeded)`, the
-        // plant twin of `SourceForecast.herd_crew_floor`), because while a build runs the ceiling is
-        // the DIP — so without the floor a 25-turn improvement asked for FEWER hands than gathering
-        // the same ground. Build progress also scales with it (`min(workers / crew, 1)`), so an
-        // under-crewed build simply takes proportionally longer. `0` = this rung declares no crew.
-        let _ = dict.insert(
-            "cultivate_crew_needed",
-            i64::from(patch.cultivateCrewNeeded()),
-        );
-        let _ = dict.insert("sow_crew_needed", i64::from(patch.sowCrewNeeded()));
+        // THE BUILD CREWS ARE RETIRED with `crew_needed` (docs/plan_standing_upkeep.md section
+        // 2.2). They floored the compose sheet's worker cap because that cap was inverted out of the
+        // TAKE and a building crew was paid a dipped take, so a 25-turn improvement asked for FEWER
+        // hands than gathering the same ground. THE PLAYER STATES THE BUILD'S CREW NOW —
+        // `cultivate|sow <faction> <x> <y> <workers>` — so there is no blended count for a
+        // rung-level floor to raise. The `cultivateCrewNeeded` / `sowCrewNeeded` wire slots stay
+        // `(deprecated)` and flatc emits no accessor, so those dict keys simply stop appearing.
         array.push(&dict.to_variant());
     }
     array

@@ -42,14 +42,15 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 
+use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     animals_affordable, animals_engaged, build_headless_app, herd_capacity, herd_hunt_yield,
     hunt_escapement_ceiling, hunt_take, recapture_snapshot_in_place, retreat_seed, scalar_from_f32,
     scalar_one, scalar_zero, spawn_initial_herds, CombatConfig, CombatConfigHandle, FactionId,
     FaunaConfig, FaunaConfigHandle, GenerationId, Herd, HerdRegistry, HuntDraw, HuntingParty,
-    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
-    LocalStore, MoraleCause, PopulationCohort, ResidentBand, SnapshotHistory, TileRegistry,
-    NO_IMPROVEMENT_UNDERWAY, NO_RETREAT,
+    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LocalStore, MoraleCause,
+    PopulationCohort, ResidentBand, SnapshotHistory, TileRegistry, NO_IMPROVEMENT_UNDERWAY,
+    NO_RETREAT,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -296,6 +297,9 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
                     workers: CREW,
                     improvement: NO_IMPROVEMENT_UNDERWAY,
                     kit: None,
+                    improvement_workers: NO_IMPROVEMENT_UNDERWAY
+                        .map_or(NO_CREW_ON_THIS_ACTIVITY, |_| CREW),
+                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },
@@ -309,7 +313,6 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
 fn seed_the_forecast(app: &mut App, band: bevy::prelude::Entity, fauna_id: &str, floor: f32) {
     let seeded = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
-        let ladder = app.world.resource::<LadderConfigHandle>().get();
         let labor = app.world.resource::<LaborConfigHandle>().get();
         let combat = app.world.resource::<CombatConfigHandle>().get();
         let registry = app.world.resource::<HerdRegistry>();
@@ -317,13 +320,11 @@ fn seed_the_forecast(app: &mut App, band: bevy::prelude::Entity, fauna_id: &str,
         core_sim::hunt_source_yield_preview(
             herd,
             &fauna,
-            &ladder,
             equipped_haul_rate(),
             &party_at(&combat),
             CONTENT_BAND_OUTPUT_MULTIPLIER,
             CREW,
             floor,
-            NO_IMPROVEMENT_UNDERWAY,
             labor.yield_average_horizon_turns,
             labor.arrivals_horizon_turns,
             combat.forecast_range_sigmas,
@@ -375,7 +376,6 @@ fn exported_row(app: &App, band: bevy::prelude::Entity) -> sim_runtime::LaborAss
 /// file never re-derives the number it is asserting about.
 fn take_at(app: &App, herd: &Herd, seed: u64) -> core_sim::HuntOutcome {
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
-    let ladder = app.world.resource::<LadderConfigHandle>().get();
 
     let combat = app.world.resource::<CombatConfigHandle>().get();
     let mut quarry = herd.clone();
@@ -383,11 +383,9 @@ fn take_at(app: &App, herd: &Herd, seed: u64) -> core_sim::HuntOutcome {
         &mut quarry,
         CREW,
         FOOD_PEAK,
-        NO_IMPROVEMENT_UNDERWAY,
         equipped_haul_rate(),
         &party_at(&combat),
         &fauna,
-        &ladder,
         NO_CARRY_LIMIT,
         HuntDraw::Seeded(seed),
     )
@@ -534,7 +532,6 @@ fn a_wary_herd_costs_hunter_turns_and_never_herd_biomass() {
     // herd lost. `hunt_take` mutates the herd, so the copy is the ledger.
     let run = |app: &App, turns: u64| {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
-        let ladder = app.world.resource::<LadderConfigHandle>().get();
 
         let combat = app.world.resource::<CombatConfigHandle>().get();
         let mut herd = herd_of(app, &id);
@@ -546,11 +543,9 @@ fn a_wary_herd_costs_hunter_turns_and_never_herd_biomass() {
                 &mut herd,
                 CREW,
                 FOOD_PEAK,
-                NO_IMPROVEMENT_UNDERWAY,
                 equipped_haul_rate(),
                 &party_at(&combat),
                 &fauna,
-                &ladder,
                 NO_CARRY_LIMIT,
                 HuntDraw::Seeded(retreat_seed(map_seed, tick, &herd_id, CREW)),
             );
@@ -794,7 +789,8 @@ fn the_exported_forecast_is_the_take_when_the_escapement_floor_binds() {
             hunt_escapement_ceiling(FOOD_PEAK, herd.biomass, herd_capacity(&herd, &fauna));
         (
             animals_affordable(ceiling, herd.body_mass),
-            animals_engaged(CREW, fauna.engage_rate_for(&herd.species), 1.0),
+            // A pure hunt builds nothing and holds nothing, so its whole crew reaches.
+            animals_engaged(CREW, fauna.engage_rate_for(&herd.species)),
         )
     };
     assert!(

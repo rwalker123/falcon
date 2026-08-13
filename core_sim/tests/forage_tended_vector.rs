@@ -33,6 +33,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
+use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     advance_labor_allocation, commit_fodder_payoff, patch_provisions_per_biomass, scalar_from_f32,
     scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_world, tended_take_fodder,
@@ -296,6 +297,8 @@ fn spawn_forager_with_workers(
                     workers,
                     improvement: None,
                     kit: None,
+                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
+                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },

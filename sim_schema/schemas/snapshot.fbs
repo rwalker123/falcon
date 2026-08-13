@@ -1859,29 +1859,18 @@ table ForagePatchState {
   // be quoted as one per-turn number, so there is no replacement scalar here.
   fieldTrade:float (deprecated);
   fieldFodder:float = 0;
-  // --- THE BUILD DIPS, AS FRACTIONS (appended, issue #442) ---------------------------------------
-  // Each plant investment rung's `yield_fraction_while_building` (0 < f < 1) — the factor a crew's
-  // take is multiplied by while it builds that rung.
+  // --- THE BUILD DIPS: RETIRED (docs/plan_standing_upkeep.md section 2.2) ------------------------
+  // Each plant investment rung's `yield_fraction_while_building`, the factor a crew's take was
+  // multiplied by while it built that rung.
   //
-  // THE DIP IS NO LONGER A CEILING ROW. It used to ride `foragePolicyCeilings` as a fifth and sixth
-  // row (`cultivate`, `sow`), each the fraction applied to the SUSTAIN ceiling — correct only while
-  // a build verb WAS the policy, so a builder could hold no other stance. Now the improvement is its
-  // own axis, so the dip is the fraction and the client applies it to whichever stance row is
-  // selected:
-  //   preparing(stance, rung) = foragePolicyCeilings[stance] × <rung>BuildFraction
-  // and `foragePolicyCeilings` is exactly the four stance rows.
-  //
-  // The two rungs keep two numbers because their dials are independently tunable; folding them onto
-  // one would pass every forecast==actual test by today's coincidence (both 0.25) and lie the moment
-  // either is retuned.
-  //
-  // `0` (the default) means NOTHING LEFT TO BUILD at that rung — a Field publishes it on both — and
-  // is deliberately outside the `0 < f < 1` range a real dip lives in, so the two states cannot be
-  // confused. It used to publish the identity `1.0` there, which said the build was free AND still
-  // on offer. Consumers must treat a non-positive fraction as "this rung is not offerable here" and
-  // quote no deal, never as a `× 0` dip.
-  cultivateBuildFraction:float = 0;
-  sowBuildFraction:float = 0;
+  // THE DIP DISSOLVED INTO THE WORK BUDGET. It said "this crew is preparing ground, not gathering",
+  // which is a work-budget conflict hardcoded as a fraction; a crew-turn is ONE POOL, so work spent
+  // on the build is work not spent on the take, and a building crew now simply takes NOTHING. There
+  // is no factor left to publish: the client reads `preparing(stance, rung) = 0` from the model
+  // rather than from a number. Deprecated rather than deleted because FlatBuffers field ids are
+  // POSITIONAL — removing one renumbers every field after it.
+  cultivateBuildFraction:float (deprecated);
+  sowBuildFraction:float (deprecated);
   // --- THE NEGLECT GRACE (appended) --------------------------------------------------------------
   // How many more turns nobody may work this patch before its improvement starts reverting. The sim
   // now forgives a rung's `grace_turns` of consecutive neglect before the feral bleed begins, so a
@@ -1901,23 +1890,18 @@ table ForagePatchState {
   // patch carrying both reports the Field's grace.
   hasNeglectGrace:bool = false;
   neglectGraceRemaining:uint = 0;
-  // --- THE BUILD CREW (appended) ------------------------------------------------------------------
-  // The crew each plant investment rung's build actually wants (`crew_needed` on the ladder). Two
-  // things ride it, and both were wrong without it:
-  //   1. It FLOORS the compose sheet's worker cap. The cap is otherwise `ceil(ceiling / perWorker)`,
-  //      and while a build runs the ceiling is the DIP — so committing to a 25-turn improvement asked
-  //      for FEWER people than gathering the same ground. Compose:
-  //        maxUsefulWorkers(stance, rung) = max(ceil(ceiling / perWorker), <rung>CrewNeeded)
-  //      This is exactly what `herdersNeeded` already does for a managed herd.
-  //   2. Build progress SCALES with it: the rung accrues at `progress_per_turn ×
-  //      min(workers / crewNeeded, 1)`, so "25 turns" means "25 turns at full crew" and an
-  //      under-crewed build takes proportionally longer.
-  // `0` = this rung declares no crew (nothing to floor, nothing scaled) — today only reachable on the
-  // animal rungs, whose crew comes from the herd's size instead. Two fields for the two rungs, the
-  // `cultivateBuildFraction`/`sowBuildFraction` rule: independently tunable dials must not share a
-  // number.
-  cultivateCrewNeeded:uint = 0;
-  sowCrewNeeded:uint = 0;
+  // --- THE BUILD CREW: RETIRED (docs/plan_standing_upkeep.md section 2.2) -------------------------
+  // The crew each plant investment rung's build wanted (`crew_needed` on the ladder). It FLOORED the
+  // compose sheet's worker cap, because the cap was inverted out of the TAKE and a building crew was
+  // paid a dipped take — so committing to a 25-turn improvement asked for FEWER people than gathering
+  // the same ground.
+  //
+  // THE PLAYER STATES THE BUILD'S CREW NOW: `cultivate|sow|tame|corral <faction> <target...>
+  // <workers>` names it outright, so there is no blended count for a rung-level floor to raise and no
+  // number for the sim to guess. Deprecated rather than deleted because FlatBuffers field ids are
+  // POSITIONAL - removing one renumbers every field after it.
+  cultivateCrewNeeded:uint (deprecated);
+  sowCrewNeeded:uint (deprecated);
   // --- THE PER-BIOMASS YIELD VECTOR (appended, docs/plan_harvest_floor.md §5) --------------------
   // What ONE UNIT of this source's standing stock is worth, in each account, at the rates the sim
   // actually pays with. With `biomass` (B) and `carryingCapacity` (K) already on this table, the
@@ -2133,6 +2117,34 @@ table ForagePatchState {
   // the COMMITTED crew and is what a card with no stepper renders; this is a term a sheet WITH a
   // stepper evaluates. The two agree at the committed crew and floor by construction.
   buildWorkPerWorkerTurn:float = 0;
+  // --- THE STANDING UPKEEP (appended, docs/plan_standing_upkeep.md section 2) --------------------
+  // What it costs to HOLD this patch at the rung it stands on, in WORK UNITS - the RATE half of
+  // the ladder, beside the build's PILE. All three are published rather than two, because the sim
+  // answers and the client does zero arithmetic (the penFeedUpkeep discipline).
+  //
+  //   upkeepDemand    = what the rung demands this turn. Follows penUpkeep's rule: it is ALWAYS
+  //                     MEANINGFUL, never a sentinel - for a rung that declares no upkeep it is
+  //                     honestly 0. Every shipped rung declares none today, so it reads 0
+  //                     everywhere, and that is the honest reading rather than a gap.
+  //   upkeepSupplied  = what the crew actually paid toward it out of this turn's work budget.
+  //   upkeepShortfall = what went unmet - and therefore EXACTLY what the improvement decays by,
+  //                     once the shortfall outlasts the rung's own grace. Shortfall IS the decay
+  //                     (section 2.4): half the hands means it slides at half rate, not at the full
+  //                     neglect rate and not at nothing.
+  //
+  //   upkeepWorkersNeeded = hands to MEET the demand, ceil(demand / PER_WORKER_OUTPUT). The maintain
+  //                     activity's own workers_needed, in its own unit, beside the take activity's
+  //                     (SourceYield.workersNeeded = hands to haul the offer). A blended count across
+  //                     units is what a single worker allocation forced; each activity answers for
+  //                     itself now.
+  //
+  // THERE IS NO `maintain` FLAG. "Stop maintaining this" is ASSIGNING ZERO WORKERS
+  // (maintain <faction> <source...> 0) - a boolean beside a crew count would be a second way to say
+  // what the number already says, and the two could disagree.
+  upkeepDemand:float = 0;
+  upkeepSupplied:float = 0;
+  upkeepShortfall:float = 0;
+  upkeepWorkersNeeded:uint = 0;
 }
 
 // One STANCE's ceiling on one tile, in every account the tile's basket pays (issue #426). The plant
@@ -2796,15 +2808,11 @@ table HerdTelemetryState {
   // RETIRED (arc #527) with the trade-goods axis.
   pastoralTrade:float (deprecated);
   corralTrade:float (deprecated);
-  // --- THE BUILD DIPS, AS FRACTIONS (appended, issue #442) --- the animal twins of
-  // `ForagePatchState.cultivateBuildFraction`/`sowBuildFraction`; see there for why the dip stopped
-  // being a `huntPolicyCeilings` row. `huntPolicyCeilings` is now exactly the four stance rows, and
-  //   preparing(stance, rung) = huntPolicyCeilings[stance] × <rung>BuildFraction
-  // is the "Preparing +X" the compose sheet renders beside `pastoralYield` / `corralYield`'s "→ +Y".
-  // `0` = NOTHING LEFT TO BUILD at that rung (a penned herd publishes it on both) — see the
-  // `ForagePatchState` twins for why the sentinel sits outside the `0 < f < 1` dip range.
-  tameBuildFraction:float = 0;
-  corralBuildFraction:float = 0;
+  // --- THE BUILD DIPS: RETIRED --- the animal twins of
+  // `ForagePatchState.cultivateBuildFraction`/`sowBuildFraction`; see there for why the dip
+  // dissolved into the work budget and why the slots stay rather than being deleted.
+  tameBuildFraction:float (deprecated);
+  corralBuildFraction:float (deprecated);
   // --- THE NEGLECT GRACE (appended) --- the animal twin of `ForagePatchState`'s pair; see there for
   // the countdown's exact reading and why the bool is not optional to check. The penalty it counts
   // down to is the SHED (animals over the keepers' labor capacity drift into the wild web), not a
@@ -3131,6 +3139,34 @@ table HerdTelemetryState {
   // the COMMITTED crew and is what a card with no stepper renders; this is a term a sheet WITH a
   // stepper evaluates. The two agree at the committed crew and floor by construction.
   buildWorkPerWorkerTurn:float = 0;
+  // --- THE STANDING UPKEEP (appended, docs/plan_standing_upkeep.md section 2) --------------------
+  // What it costs to HOLD this herd at the rung it stands on, in WORK UNITS - the RATE half of
+  // the ladder, beside the build's PILE. All three are published rather than two, because the sim
+  // answers and the client does zero arithmetic (the penFeedUpkeep discipline).
+  //
+  //   upkeepDemand    = what the rung demands this turn. Follows penUpkeep's rule: it is ALWAYS
+  //                     MEANINGFUL, never a sentinel - for a rung that declares no upkeep it is
+  //                     honestly 0. Every shipped rung declares none today, so it reads 0
+  //                     everywhere, and that is the honest reading rather than a gap.
+  //   upkeepSupplied  = what the crew actually paid toward it out of this turn's work budget.
+  //   upkeepShortfall = what went unmet - and therefore EXACTLY what the improvement decays by,
+  //                     once the shortfall outlasts the rung's own grace. Shortfall IS the decay
+  //                     (section 2.4): half the hands means it slides at half rate, not at the full
+  //                     neglect rate and not at nothing.
+  //
+  //   upkeepWorkersNeeded = hands to MEET the demand, ceil(demand / PER_WORKER_OUTPUT). The maintain
+  //                     activity's own workers_needed, in its own unit, beside the take activity's
+  //                     (SourceYield.workersNeeded = hands to haul the offer). A blended count across
+  //                     units is what a single worker allocation forced; each activity answers for
+  //                     itself now.
+  //
+  // THERE IS NO `maintain` FLAG. "Stop maintaining this" is ASSIGNING ZERO WORKERS
+  // (maintain <faction> <source...> 0) - a boolean beside a crew count would be a second way to say
+  // what the number already says, and the two could disagree.
+  upkeepDemand:float = 0;
+  upkeepSupplied:float = 0;
+  upkeepShortfall:float = 0;
+  upkeepWorkersNeeded:uint = 0;
 }
 
 table CommandEventState {

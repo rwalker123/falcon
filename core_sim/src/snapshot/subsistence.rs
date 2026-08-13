@@ -10,8 +10,8 @@ use crate::forage::{
     patch_neglect_grace_remaining, patch_provisions_per_biomass, tended_fodder,
 };
 use crate::intensification::{
-    build_fraction, build_work_per_worker_turn, NO_BUILD_GEAR, NO_BUILD_REMAINING_FRACTION,
-    RUNG_COST_UNSCALED,
+    build_fraction, build_work_per_worker_turn, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY,
+    NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, UNSCALED_UPKEEP,
 };
 use sim_schema::NO_BUILD_TURNS_ESTIMATE;
 
@@ -25,12 +25,6 @@ const NO_ANIMAL_PAYS_FODDER: f32 = 0.0;
 /// scalars, and it deliberately reuses the "biting now" value rather than inventing a sentinel the
 /// client could mistake for a real countdown.
 const NO_NEGLECT_REMAINING: u32 = 0;
-
-/// **The crew a rung that declares none publishes.** Unreachable on the plant branch today (both
-/// plant rungs state a `crew_needed`), but the wire must say something, and `0` is the schema's own
-/// "this rung declares no crew" reading — never a fabricated `1`, which would floor the worker cap at
-/// a number nobody chose.
-const NO_RUNG_CREW: u32 = 0;
 
 /// **The wire's finite reading of "this source has no engagement stage"** — a **pen** (a penned animal
 /// is not stalked) and a species the roster cannot resolve, both of which
@@ -310,7 +304,6 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     hunt_forecast(
                         herd,
                         fauna,
-                        ladder,
                         equipped_haul_rate,
                         party,
                         FORECAST_OUTPUT_MULTIPLIER,
@@ -646,23 +639,25 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 herders_needed_if_managed: herd
                     .map(|herd| would_be_herders_needed(herd, fauna))
                     .unwrap_or(0),
-                // **The two animal build dips, as the fractions they are** (issue #442). They used to
-                // be extra `hunt_policy_ceilings` rows, each stating the dip against Sustain alone;
-                // the dip now multiplies whichever stance the crew holds, so the wire carries the
-                // factor and the client applies it to the selected row. Read off the *same*
-                // `SourceYieldForecast::build_dips` the take path prices a build with.
-                //
-                // A **penned** herd has nothing left to build, and says so with the out-of-range
-                // `NO_BUILD_REMAINING_FRACTION` rather than the identity `1.0`, which claimed the
-                // build was free *and* still on offer.
-                tame_build_fraction: forecast
-                    .build_dips
-                    .rung_two
-                    .unwrap_or(NO_BUILD_REMAINING_FRACTION),
-                corral_build_fraction: forecast
-                    .build_dips
-                    .rung_three
-                    .unwrap_or(NO_BUILD_REMAINING_FRACTION),
+                // **THE STANDING UPKEEP** (`docs/plan_standing_upkeep.md` §2) — what holding this
+                // herd's rung demands, what its keepers supplied and what went unmet, all three
+                // published so the client subtracts nothing. The demand is the ladder's own price,
+                // always meaningful (the `penUpkeep` rule); the supplied/unmet pair is this turn's
+                // scratch, stamped by the labor arm that resolved the keeping crew.
+                upkeep_demand: herd.map_or(NO_UPKEEP_DEMAND, |herd| {
+                    ladder
+                        .rung(crate::fauna::herd_rung_key(herd))
+                        .upkeep_demand(crate::fauna::herd_head_count(herd))
+                }),
+                upkeep_supplied: herd.map_or(NO_UPKEEP_DEMAND, |herd| herd.upkeep_supplied),
+                upkeep_shortfall: herd.map_or(NO_UPKEEP_DEMAND, |herd| herd.upkeep_shortfall),
+                // **The MAINTAIN activity's own `workers_needed`** — hands to meet the demand, in
+                // its own unit. The take activity's answer rides `SourceYield::workers_needed`.
+                upkeep_workers_needed: herd.map_or(NO_CREW_ON_THIS_ACTIVITY, |herd| {
+                    ladder
+                        .rung(crate::fauna::herd_rung_key(herd))
+                        .upkeep_crew_needed(crate::fauna::herd_head_count(herd))
+                }),
                 // **The neglect countdown**, resolved through the *same* `herd_keeping_rung` seam
                 // `advance_husbandry` gates the shed on, so the wire can never count down a grace
                 // against a rung the sim is not applying. `None` = a wild herd: nobody's to keep, so
@@ -783,7 +778,6 @@ pub(crate) fn snapshot_forage_patches(
                 forage,
                 flora,
                 equipped_gather_rate,
-                ladder,
                 // **The EQUIPPED reference rate, not any band's basket tier** — a patch row is a fact
                 // about the *patch*, and a patch has no band to resolve a kit against. Exactly the
                 // rule `HerdTelemetryState` already follows for the hunt's haul; a band's real,
@@ -926,37 +920,23 @@ pub(crate) fn snapshot_forage_patches(
                 // `refresh_ecology_phase` classified the word above with.
                 collapse_fraction: ecology.collapse_fraction,
                 stressed_fraction: ecology.stressed_fraction,
-                // **The two plant build dips, as fractions** (issue #442) — the twins of the herd's
-                // `tame_build_fraction`/`corral_build_fraction`, off the same `build_dips` the take
-                // path prices a build with. `preparing(stance) = ceiling[stance] × fraction`.
-                // A **Field** has nothing left to build; see the herd twin above for why that is
-                // `NO_BUILD_REMAINING_FRACTION` and not the identity.
-                cultivate_build_fraction: forecast
-                    .build_dips
-                    .rung_two
-                    .unwrap_or(NO_BUILD_REMAINING_FRACTION),
-                sow_build_fraction: forecast
-                    .build_dips
-                    .rung_three
-                    .unwrap_or(NO_BUILD_REMAINING_FRACTION),
+                // **THE STANDING UPKEEP** — the plant twin; see the herd row for the seam and why
+                // all three terms ship.
+                upkeep_demand: ladder
+                    .rung(crate::forage::patch_rung_key(patch))
+                    .upkeep_demand(UNSCALED_UPKEEP),
+                upkeep_supplied: patch.upkeep_supplied,
+                upkeep_shortfall: patch.upkeep_shortfall,
+                // **The MAINTAIN activity's own `workers_needed`** — the plant twin.
+                upkeep_workers_needed: ladder
+                    .rung(crate::forage::patch_rung_key(patch))
+                    .upkeep_crew_needed(UNSCALED_UPKEEP),
                 // **The neglect countdown**, resolved through the *same* `patch_unwinding_rung` seam
                 // `advance_cultivation` bleeds through — so the wire counts down against the rung
                 // that will actually revert, not one the patch merely stands on. `None` = a wild
                 // patch, which is most of them.
                 has_neglect_grace: neglect_grace.is_some(),
                 neglect_grace_remaining: neglect_grace.unwrap_or(NO_NEGLECT_REMAINING),
-                // **The two build crews** — the floor under the client's worker cap, and the
-                // denominator its build actually accrues against. `0` means the rung declares no
-                // crew (unreachable on the plant branch today; the field is the honest shape rather
-                // than a fabricated `1`).
-                cultivate_crew_needed: ladder
-                    .rung(RungKey::PlantTended)
-                    .build_crew_needed()
-                    .unwrap_or(NO_RUNG_CREW),
-                sow_crew_needed: ladder
-                    .rung(RungKey::PlantField)
-                    .build_crew_needed()
-                    .unwrap_or(NO_RUNG_CREW),
                 // The two investment rungs' PAYOFF twins — each projected at **its own** rung
                 // (`tended_*` at rung 2, `field_*` at rung 3), never at the rung the patch happens to
                 // stand on. That is the #433 rule, and getting it wrong is the exact defect #433

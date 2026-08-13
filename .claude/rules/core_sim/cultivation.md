@@ -46,16 +46,15 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
   **no start profile lists it**, so no faction begins knowing Cultivation.
 - **The `Cultivate` improvement — the investment.** In `advance_labor_allocation`'s **Forage** arm
   (Population), a patch worked with `Improvement::Cultivate` in flight:
-  - **Costs a yield dip while preparing.** The crew carries the `plant:tended` rung's
-    `yield_fraction_while_building ×` what a gathering crew of the same size carries — the dip
-    multiplies **crew throughput**, never the take ceiling (`docs/plan_harvest_floor.md` §3.1). The
-    crew is clearing and planting, not gathering. Two consequences follow and both are intended: a
-    build costs yield **only while hands are the scarce thing** (a crew big enough to saturate the
-    patch's standing stock anyway pays nothing for it — the remedy is to hire twice the people, at the
-    shipped 0.50 dip),
-    and the dip is **floor-independent by construction**, so there is no floor a builder can pick to
-    dodge it. See "The build engine" in `intensification.md` for the measurement that forced the move.
-  - **Accrues its crew's whole output** — `workers × PER_WORKER_OUTPUT × learn_multiplier(floor)`,
+  - **Costs the hands it is staffed with, and nothing else.** `yield_fraction_while_building` is
+    **retired** (`docs/plan_standing_upkeep.md` §2.2): the player states the build's crew on the verb
+    (`cultivate <faction> <x> <y> <workers>`), so what a Cultivate costs is *the people who are
+    clearing instead of gathering*, and the gatherers beside them carry exactly what they carried
+    before. It is the same statement at every staffing, where the dip's price depended on whether the
+    patch's standing stock was binding the crew — a regime the player cannot see.
+  - **Accrues its crew's whole output** — `improvement_workers × PER_WORKER_OUTPUT`, **no floor
+    term** (a build crew is not pulling on the patch — see "THE FLOOR CAME OFF THE BUILD RATE" in
+    `intensification.md`),
     in **work units**, toward the rung's `work_cost` (sets `owner` on first accrual;
     only the owner accrues), **gated** on the faction *knowing Cultivation* and on the crew having
     something standing above its floor to work (`systems::labor::crew_is_working_the_source`). See
@@ -83,8 +82,10 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
   - **Marks the patch `tended_this_turn`**, so `advance_cultivation` spares a patch under active
     preparation — the investment banks the crew's **full** output (25 turns at the shipped 50-unit
     cost, at the rung's own crew of 2 **and at the food peak**), not net-of-decay.
-  - **Break-even, and it is now a CROP choice** (defaults `fraction` 0.25, `work_cost` 50).
-    Measured on the reference basket below: the dip forgoes **0.527 prov/turn × 25 = 13.19 prov**
+  - **Break-even, and it is now a CROP choice** (`work_cost` 50). The figures below were measured
+    under the retired 0.25 dip and describe **the shape, not today's numbers**: what a build costs is
+    now the hands on it, so the forgone yield is whatever those hands would have gathered.
+    Measured on the reference basket below: the dip forgave **0.527 prov/turn × 25 = 13.19 prov**
     across the build; favoring the basket's **best** staple then out-pays wild Sustain by
     **+0.625/turn** and recoups in **21.1 turns**, while favoring a **marginal** member of the same
     basket pays **+0.213/turn** and takes **61.8** — nearly 3× as long on the same tile for the same
@@ -125,14 +126,14 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
   tell tended from abandoned. The old
   even-split-across-all-the-owner's-bands payment in `advance_cultivation` is **retired**, as is the
   flat `tended_provisions_per_biomass` managed rate.
-  - **Completion CLEARS the improvement — a completed patch is never left building.** The dip means
-    "the crew is preparing ground, not gathering", which is why it is charged for the whole build; the
-    moment the meter fills it stops being true *and can never become true again on this ground*, so
-    `Cultivate` is a dead rung there. `advance_labor_allocation` therefore sets the completing
+  - **Completion CLEARS the improvement — a completed patch is never left building.** A build verb
+    means "these hands are preparing ground, not gathering"; the moment the meter fills that stops
+    being true *and can never become true again on this ground*, so `Cultivate` is a dead rung there. `advance_labor_allocation` therefore sets the completing
     assignment's `improvement` back to `None`, preserving the tile, the **committed species**, the
-    worker count **and the stance**. **The completing turn still pays the dip** (the accrue-after-take
-    ordering: the turn progress reaches the job's cost is the last preparing take), and the undipped ceiling
-    pays from the next turn. The completion event's detail is
+    worker count **and the stance**, and **hands the build's crew on**: onto the keeping if the
+    finished rung declares an upkeep, otherwise back to the idle pool — announced either way, so the
+    player can re-task. **The completing turn still pays the build's whole price** (the
+    accrue-after-take ordering). The completion event's detail is
     `status=complete action=cultivate x=… y=…`; the `retired_policy=` token went with the constant
     (issue #442 — the pass used to rewrite `policy` to `HARVEST_POLICY_AFTER_BUILD`). **This is the
     one seam for all four build verbs** — `Sow`, `Tame` and `Corral` clear identically, from the same
@@ -191,11 +192,11 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
     patch worked every turn never decays; a patch whose band leaves starts counting toward its rung's
     grace one turn later.
 - **The loop (the settle pull).** Sustain-forage a thriving patch → *learn* Cultivation → **choose** to
-  pay the Cultivate dip for ~25 turns → the patch becomes tended → a band tending it collects the
+  staff a Cultivate crew for ~25 turns at two hands → the patch becomes tended → a band tending it collects the
   higher tended yield **place-locally** → move the band away and it goes feral, reverting to wild.
   Place-locality + feral + a sunk investment = the band is **pinned near its farm**: intensifying
   raises output *and* deepens the anchor.
-- **`cultivate` command (repurposed)** — `cultivate <faction> <x> <y>` (`handle_cultivate`; unchanged
+- **`cultivate` command (repurposed)** — `cultivate <faction> <x> <y> <workers>` (`handle_cultivate`; unchanged
   proto/runtime/text plumbing, `CommandEventKind::Cultivate`) **sets the `Cultivate` improvement** on
   the band(s) already foraging that tile (`set_improvement_on_working_bands`) — the command form of
   what the client's checkbox does. It **claims nothing**, and since issue #442 it touches the
@@ -218,32 +219,25 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
 - **Sedentarization (folded)** — `sedentarization_tick` reads `herds.domesticated_count(faction) +
   forage.cultivated_count(faction)` for its **domestication** input: plant + animal domestication
   share the one driver (no new weight, no re-balance).
-- **The build DEMANDS A CREW — as a FLOOR, and it no longer caps the accrual.** `plant:tended`'s
-  `crew_needed` is **2** and `plant:field`'s is **3** (`RungBuild::crew_needed`):
-  - **They floor the source's `workers_needed`** (`intensification::source_crew_needed`, the same
-    `max(standing crew, take crew)` a managed herd's `herders_needed` has always used, with
-    `LadderConfig::build_crew(improvement)` supplying the plant half). Without the floor the count came
-    from the harvest alone — and while a build runs the crew's throughput is **dipped** — so committing to a
-    25-turn improvement asked for **one** forager where the same wild patch under Sustain asks for two,
-    and flagged the second worker as overstaffing. *Doing more work required fewer people.* **The floor
-    has to reach the assign-time SEED as well as the resolved turn**, or the compose sheet and the tile
-    card contradict each other in one frame — see "The crew floor is ONE definition" in
-    `yield-forecast.md`.
-  - **They no longer scale the accrual.** The retired `crew_scale`
-    (`progress_per_turn × min(workers / crew_needed, 1)`) capped a build at the rung's stated rate, so
-    over-crewing bought nothing. Since improvements were priced in work the **crew IS the
-    throughput**: a Cultivate run by one hand takes 50 turns, by two 25, by ten **5** — with no cap
-    (`docs/plan_unit_costed_work.md` §1.2). The declared crew is what the shipped **cost** was priced
-    against, which is why 25 turns is still the reference reading.
-  - On the wire as `ForagePatchState.cultivateCrewNeeded` / `sowCrewNeeded`, so the client can floor
-    its compose-sheet cap the way it already floors a herd's on `herdersNeeded`.
+- **`crew_needed` IS RETIRED, and so is the `workers_needed` floor it fed.** It was a staffing
+  floor under the source's published `workers_needed`, needed only because that count was inverted
+  out of a **dipped** take: committing to a 25-turn improvement asked for *one* forager where the
+  same wild patch asks for two, so doing more work required fewer people. With each activity stating
+  its own crew there is no blended count for a floor to raise — `workers_needed` is the **take**'s own
+  count, `upkeepWorkersNeeded` is the **maintain**'s, and the build's crew is the number the player
+  typed on the verb. `RungDef::build_crew_needed`, `LadderConfig::build_crew`, `source_crew_needed`
+  and the `cultivateCrewNeeded` / `sowCrewNeeded` wire slots went with it (the slots stay
+  `(deprecated)` — FlatBuffers field ids are positional). **The crew is still the throughput**: a
+  Cultivate run by one hand takes 50 turns, by two 25, by ten **5**, with no cap beyond the band's own
+  pool (`docs/plan_unit_costed_work.md` §1.2). The declared cost was priced against two hands, which
+  is why 25 turns is still the reference reading.
 - **Config.** The plant rung-2 **build dials moved to `intensification_ladder.json`**'s `plant:tended`
   rung (`build`: **`work_cost` 50** work units → 25 turns to prepare **at the rung's crew of 2, at the
   food peak, with no gear**, `decay_fraction_per_turn` 0.01 the feral-reversion rate as a fraction of
   that cost, **`grace_turns` 2** — cleared, weeded ground keeps its clearing a couple of
-  turns after the crew stops — **`crew_needed` 2** — the same two hands the reference tile's wild
-  Sustain gather wants — **`yield_fraction_while_building` 0.50** — was the old `cultivating_yield_fraction` 0.25 until it was raised to match the animal rungs, which had always been 0.50,
-  the investment cost: the preparing take ceiling as a fraction of the patch's Sustain/MSY ceiling), so
+  turns after the crew stops; **`crew_needed` and `yield_fraction_while_building` are both retired**
+  — the player states the build's crew and the gatherers beside it are untouched, so neither a
+  staffing floor nor a dip has anything left to say), so
   the plant and animal ladders can only be tuned together (see "The Intensification Ladder"). What stays
   in `labor_config.json` `forage.cultivation` (`CultivationConfig`): **`tended_regrowth_gain`** (1.0 —
   NEUTRAL since Flora Roster S2: a tended patch's stock regrows exactly as fast as wild. It began as
@@ -265,8 +259,8 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
   invariants (`0 < work_cost`, `0 < decay_fraction_per_turn < 1` **when present**
   — `null` is how a rung says its meter does not bleed, and a parked `0` is rejected because it would
   mean the same thing while reading like a live dial — `grace_turns < work_cost / reference_output` (a
-  grace that outlasts its own build makes walking away free), `crew_needed != Some(0)`,
-  `0 < yield_fraction_while_building < 1`) are now **enforced on every load path** by
+  grace that outlasts its own build makes walking away free)) are now **enforced on every load path**
+  by
   `LadderConfig::validate()`, which owns them — as are the **knowledge** invariants
   (`learn_rate > 0`, every `lesson_cost > 0`, **every knowledge the sim teaches priced at all**,
   `0 < completion_threshold <= 1`), which moved to the ladder with those dials in slice 4. **The levers homed here are now validated on every load path**
@@ -452,10 +446,11 @@ herd has one appetite).
   each rung's `Thriving` gate, rung 3 never had one, and requiring it would make the
   create-from-nothing case impossible — **bare ground stands below every floor**, by construction. The
   floor still paces the build, so a crew stripping the ground it is sowing still builds nothing.
-- **The investment.** The `plant:field` rung's `yield_fraction_while_building` (0.50) × the crew's own
-  throughput (`docs/plan_harvest_floor.md` §3.1 — the dip multiplies hands, not the ceiling). On
-  **bare** ground there is nothing for the crew to carry a fraction of, so a bare-ground sow is
-  near-pure investment. `forage_field.rs` pins that as a
+- **The investment is the sowing crew itself** — the hands `sow <faction> <x> <y> <workers>` names,
+  which are hands not gathering (`docs/plan_standing_upkeep.md` §2.2; the rung's
+  `yield_fraction_while_building` is retired). On **bare** ground there is nothing for the gatherers
+  beside them to carry either, so a bare-ground sow is near-pure investment. `forage_field.rs` pins
+  that as a
   **relation, not a pair of literals** — the whole build is a trickle beside the Field it buys
   (`while_building_per_turn < BUILD_TRICKLE_FRACTION × field_yield`) — because since #433 the Field's
   payout scales with the committed crop's own rate, so any literal would be true of one crop only.
@@ -476,15 +471,15 @@ herd has one appetite).
   `advance_cultivation` bleeds **one** meter per untended turn, the highest rung that still has
   progress on it, each at its own rung's `decay_fraction_per_turn × work_cost` and past its own
   `grace_turns` (`plant:field`: `work_cost` **75**, decay fraction 0.01, grace **1** — a standing crop is the most perishable thing on the ladder
-  and wants hands every turn; `crew_needed` **3** — sowing *places* a source rather than tidying one,
-  and its 75-unit cost is that crew's 25 turns).
+  and wants hands every turn; the 75-unit cost is 25 turns at three hands, sowing *placing* a source
+  rather than tidying one).
   So an abandoned Field reverts to a **wild** gather patch and lapses to zero over ~100 turns, and
   only then does the tended ground beneath it begin to go. It does **not** step down to a tended patch
   on the way — that would pay the deserter rung 2's managed yield for free — but it no longer drags
   rung 2 down with it either: *the least-established improvement is the most fragile*. Ownership
   clears only once nothing is left of either meter. See "Feral if unworked" above for the grace, the
   ordering's own bug, and the feed line.
-- **`sow <faction> <x> <y>` command** (`handle_sow`; `SowCommand` proto field **41**,
+- **`sow <faction> <x> <y> <workers>` command** (`handle_sow`; `SowCommand` proto field **41**,
   `CommandEventKind::Sow`) — **sets the `Sow` improvement** on the bands already foraging that tile,
   the command form of the client's checkbox (issue #442: the stance beside it is left alone). It sows nothing outright; the seed goes in when the crew
   works the ground, so the improvement need only be checked once. Rejections, each
@@ -503,9 +498,9 @@ herd has one appetite).
   `fieldProgress:float` + `isField:bool` (the rung-3 meter and the completed rung — read the *bool*,
   never infer a rung from the float) beside the already-shipped `cultivationProgress`/`isCultivated`,
   so the client has **both** plant meters for the §4.1 two-meter split; `ceilingSow:float` +
-  `fieldYield:float` (Sow's payoff, the twin of `tendedYield`; its **dip** is the appended
-  `sowBuildFraction`, which multiplies the CREW's throughput since `docs/plan_harvest_floor.md` §3.1,
-  and `ceilingSow`/`ceilingCultivate`
+  `fieldYield:float` (Sow's payoff, the twin of `tendedYield`; the `sowBuildFraction` that briefly
+  carried its **dip** is `(deprecated)` with the dip itself — a building crew takes nothing, so there
+  is no factor left to publish — and `ceilingSow`/`ceilingCultivate`
   are retired `(deprecated)` slots — two rungs still keep two numbers, so a retune of one cannot move
   the other); and **`sowSiteRefusal:string`** — `""` when the ground takes seed, else
   **`"not_gathering_site"`** / `"too_dry"` / `"too_poor"` / `"too_poor_and_too_dry"`
@@ -527,7 +522,6 @@ herd has one appetite).
 - **On the client (slice 6):** the native reader — now
   `clients/godot_thin_client/native/src/dict/subsistence.rs::forage_patches_to_array`, not the old
   `lib.rs` home — surfaces all five as dict keys: `field_progress` / `is_field` /
-  `sow_build_fraction` (the appended fraction that replaced the retired `ceiling_sow`, issue #442) /
   `field_yield` / `sow_site_refusal` (the last optional), beside the already-shipped
   `cultivation_progress` / `is_cultivated`. **Two spellings reach GDScript and they are not
   interchangeable:** `HudBandLaborState.forage_patch_lookup()` holds the keys **bare**, while the

@@ -24,6 +24,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
+use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     advance_cultivation, advance_forage_regrowth, advance_labor_allocation,
     default_species_for_rung, generate_hydrology, rung_site_refusal, scalar_from_f32, scalar_one,
@@ -59,11 +60,6 @@ const SOLE_FORAGER: u32 = 1;
 
 /// Float slack for provisions comparisons (fixed-point conversion + multiplication order).
 const EPSILON: f32 = 1e-4;
-
-/// **The floor at which `learn_multiplier` is exactly ×1.0** — the food peak, and the floor a fresh
-/// assignment carries. Passed wherever a build rate is read for its *stated* pace rather than for a
-/// floor's fraction of it (`docs/plan_harvest_floor.md` §3).
-const FOOD_PEAK_FLOOR: f32 = core_sim::MSY_BIOMASS_FRACTION;
 
 /// What "pays nothing" means in provisions: freshly sown ground's take is a *fraction of the MSY of a
 /// seed stock below its Allee threshold*, i.e. exactly zero — this is slack for the fixed-point grid,
@@ -340,14 +336,12 @@ fn spawn_builder(
     patch: UVec2,
     improvement: Improvement,
 ) -> bevy::prelude::Entity {
+    // The build's crew is the fixture's to state now (`docs/plan_standing_upkeep.md` §2.2) — the
+    // rung declares none. Two for a Cultivate and three for a Sow are the staffings the two shipped
+    // `work_cost`s were priced against.
+    const CULTIVATE_CREW: u32 = 2;
     let crew = match improvement {
-        Improvement::Cultivate => app
-            .world
-            .resource::<LadderConfigHandle>()
-            .get()
-            .rung(RungKey::PlantTended)
-            .build_crew_needed()
-            .expect("the tended rung declares a crew"),
+        Improvement::Cultivate => CULTIVATE_CREW,
         _ => sow_crew(app),
     };
     spawn_forager_of(app, tile, patch, Some(improvement), crew)
@@ -394,7 +388,13 @@ fn spawn_forager_of(
                 current_tile: tile,
                 size: 30,
                 children: scalar_zero(),
-                working: scalar_from_f32(foragers as f32),
+                // **THE BAND HAS TO AFFORD BOTH CREWS, WHETHER OR NOT ONE IS STAFFED YET.** The
+                // take and the build draw on one pool (`docs/plan_standing_upkeep.md` §2.2), so a
+                // band sized at the gathering crew alone is over-committed the moment a verb is
+                // staffed beside it — and `LaborAllocation::normalize` then trims the build away,
+                // leaving a fixture that measures a job nobody is doing. Idle hands cost these
+                // fixtures nothing: every take is capped by the crew the assignment names.
+                working: scalar_from_f32((foragers + foragers) as f32),
                 elders: scalar_zero(),
                 stores: LocalStore::new(),
                 morale: scalar_one(),
@@ -429,6 +429,10 @@ fn spawn_forager_of(
                     workers: foragers,
                     improvement,
                     kit: None,
+                    // **The same crew staffs the build** — what this fixture meant when one
+                    // crew did every job (`docs/plan_standing_upkeep.md` §2.2).
+                    improvement_workers: improvement.map_or(NO_CREW_ON_THIS_ACTIVITY, |_| foragers),
+                    maintain_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },
@@ -493,7 +497,7 @@ fn field_build(app: &App) -> (f32, f32) {
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let field = ladder.rung(RungKey::PlantField);
     (
-        field.build_accrual(Some(Improvement::Sow), true, FOOD_PEAK_FLOOR, sow_crew(app)),
+        field.build_accrual(Some(Improvement::Sow), true, sow_crew(app)),
         field.build_decay(RUNG_COST_UNSCALED),
     )
 }
@@ -505,13 +509,10 @@ fn field_build(app: &App) -> (f32, f32) {
 /// The rung's own `crew_needed` is the staffing the shipped cost was priced against
 /// (`docs/plan_unit_costed_work.md` §3). The one-turn over-crewed build is real and pinned on
 /// purpose by `forage_cultivation::over_crewing_a_build_is_no_longer_capped`.
-fn sow_crew(app: &App) -> u32 {
-    app.world
-        .resource::<LadderConfigHandle>()
-        .get()
-        .rung(RungKey::PlantField)
-        .build_crew_needed()
-        .expect("the field rung declares a crew")
+fn sow_crew(_app: &App) -> u32 {
+    // The build's crew is the fixture's to state (`docs/plan_standing_upkeep.md` §2.2); three is the
+    // staffing the `plant:field` rung's 75-unit `work_cost` was priced against.
+    3
 }
 
 /// The whole `plant:tended` job, in work units — the completed rung-2 meter's value.
@@ -792,16 +793,16 @@ fn the_plant_ladder_climbs_wild_then_tended_then_field() {
     );
 }
 
-/// **Sowing a patch that is already tended still costs the rung's dip.** Upgrading rung 2 → rung 3 is
-/// a Cultivate-shaped verb like every other rung-transition: the crew carries only a fraction of
-/// what it would otherwise bring home while it works. (On bare ground that fraction is a fraction of
-/// nothing — see above; here it bites a real harvest.)
+/// **Sowing a patch that is already tended costs HANDS.** Upgrading rung 2 → rung 3 is a
+/// Cultivate-shaped verb like every other rung-transition, and its price is the people in the seed
+/// rather than in the baskets (`docs/plan_standing_upkeep.md` §2.2) — so the gatherers who stay on
+/// the patch carry exactly what they carried before.
 ///
-/// **Both crews are [`SOLE_FORAGER`]**, because `docs/plan_harvest_floor.md` §3.1 put the dip on
-/// crew throughput: a crew the standing crop binds pays nothing for the build, so the cost is only
-/// observable where hands are the scarce thing.
+/// **Both crews are [`SOLE_FORAGER`]**, kept from when the retired `yield_fraction_while_building`
+/// was only observable where hands were the scarce thing. The cost no longer depends on which side
+/// binds, but the fixture stays at one hand so the baseline is the same staffing.
 #[test]
-fn sowing_a_tended_patch_pays_the_dip_then_upgrades_it() {
+fn sowing_a_tended_patch_leaves_the_gatherers_take_alone_then_upgrades_it() {
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
     seat_completed_rung(&mut app, coord, RungKey::PlantTended);
@@ -810,18 +811,11 @@ fn sowing_a_tended_patch_pays_the_dip_then_upgrades_it() {
         registry.patch_mut(coord).unwrap().owner = Some(FactionId(0));
     }
     grant_seed_selection(&mut app, FactionId(0));
-    let dip = {
-        let ladder = app.world.resource::<LadderConfigHandle>().get();
-        ladder
-            .rung(RungKey::PlantField)
-            .yield_fraction_while_building()
-            .expect("the field rung is an investment")
-    };
 
     // The tended harvest this patch would pay if nobody were upgrading it. **Committed to the same
     // crop**: a Sow commits the ground to one named plant (Flora Roster S1), which changes its
     // conversion rate, so an uncommitted baseline would be measuring the commitment rather than the
-    // rung's dip.
+    // rung's cost.
     // `turns == 0` measures the FIRST harvest of an untouched patch — the accumulated stock above the
     // escapement floor, which is the number the dip is a fraction of on the very same turn. A
     // positive `turns` runs it that many turns first and measures the last one: the STEADY rate, the
@@ -851,10 +845,10 @@ fn sowing_a_tended_patch_pays_the_dip_then_upgrades_it() {
     // rather than between building and gathering.
     let tended_yield = tended_baseline(0, SOLE_FORAGER);
 
-    // **The dip, measured in its own world at [`SOLE_FORAGER`].** It has to be a separate run: the
-    // rung's `crew_needed` is 3, so a lone forager builds at a third of the rate and the completion
-    // half of this test would need three times the turns for reasons that have nothing to do with
-    // the dip.
+    // **The build turn, measured in its own world at [`SOLE_FORAGER`].** It has to be a separate
+    // run: the rung's `crew_needed` is 3, so a lone forager builds at a third of the rate and the
+    // completion half of this test would need three times the turns for reasons that have nothing to
+    // do with what a building turn pays.
     {
         let mut sparse = spawn_world();
         let (tile, coord) = prime_thriving_patch(&mut sparse);
@@ -875,13 +869,18 @@ fn sowing_a_tended_patch_pays_the_dip_then_upgrades_it() {
         sparse.world.run_system_once(advance_labor_allocation);
         let while_sowing = provisions_f32(&mut sparse);
         assert!(
-            (while_sowing - dip * tended_yield).abs() < EPSILON,
-            "upgrading pays the rung's dip on what the same crew would gather: {while_sowing} vs {}",
-            dip * tended_yield
+            tended_yield > 0.0,
+            "the same crew must gather something when not sowing, or 'takes nothing' proves \
+             nothing: {tended_yield}"
+        );
+        assert!(
+            (while_sowing - tended_yield).abs() < EPSILON,
+            "the gatherers are untouched by the Sow staffed beside them: {while_sowing} vs \
+             {tended_yield}"
         );
     }
 
-    // Worked to completion the patch stands on rung 3 — and stops paying the dip.
+    // Worked to completion the patch stands on rung 3 — and its crew starts gathering again.
     spawn_builder(&mut app, tile, coord, Improvement::Sow);
     let turns_to_sow = turns_to_sow(&app);
     run_turns_with_forage(&mut app, turns_to_sow);
@@ -901,16 +900,16 @@ fn sowing_a_tended_patch_pays_the_dip_then_upgrades_it() {
     let tended_steady = tended_baseline(turns_to_sow, FORAGE_WORKERS);
     assert!(
         after_completion > tended_steady,
-        "once the Field stands the dip stops and it out-pays the patch it replaced: \
-         {after_completion} vs {tended_steady}"
+        "once the Field stands the build stops claiming the turn and it out-pays the patch it \
+         replaced: {after_completion} vs {tended_steady}"
     );
 }
 
 /// **Completion retires the build verb** (issue #420) — the `Sow` twin of the plant rung-2, animal
 /// rung-2 and animal rung-3 cases pinned in `systems::labor::labor_yield_tests`. The turn a Field
 /// finishes, the assignment is rewritten from `Sow` onto the harvest rung, carrying the tile, the
-/// committed crop and the crew across: left on the build verb the band would go on paying
-/// `yield_fraction_while_building` on ground with nothing left to sow.
+/// committed crop and the crew across: left on the build verb the band would go on spending its
+/// whole work budget on ground with nothing left to sow, and gathering none of it.
 #[test]
 fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
     let mut app = spawn_world();

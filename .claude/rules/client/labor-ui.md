@@ -57,8 +57,25 @@ There is no per-stance ceiling row on either web. What ships instead is the **te
 
 ```text
 ceiling(floor, account) = max(0, B − floor·K) × <account>PerBiomass
-expected(workers, rung) = min(workers × perWorkerYield × <rung>BuildFraction, ceiling(floor))
+expected(workers)       = min(workers × perWorkerYield, ceiling(floor))
 ```
+
+> #### THE BUILD FRACTIONS ARE OFF THE WIRE — the sim publishes no dip to fold in
+>
+> **A build has its own crew** (`docs/plan_standing_upkeep.md` §2.2): the player states it on the verb
+> (`cultivate|sow|tame|corral <target…> <workers>`, and `extend_pen` likewise), so the gatherers or
+> hunters beside a build carry exactly what they carried before and there is no factor left to
+> multiply anything by. `ForagePatchState.cultivateBuildFraction` / `sowBuildFraction` and
+> `HerdTelemetryState.tameBuildFraction` / `corralBuildFraction` are `(deprecated)` slots the sim no
+> longer writes, and the native reader no longer inserts their dict keys — so **a GDScript expression
+> multiplying by one is reading a key that is not there**. The two `*CrewNeeded` slots went the same
+> way with `crew_needed` (`yield-forecast.md` → "`workers_needed` IS THE TAKE'S OWN COUNT"), and what
+> rides those tables now is the upkeep quartet: `upkeepDemand`, `upkeepSupplied`, `upkeepShortfall`
+> and `upkeepWorkersNeeded` — the **maintain** activity's own `workers_needed`, in keepers, beside the
+> take's own in haulers.
+>
+> **The dip prose below this line describes GDScript that still folds one in**, which is the shape the
+> client-side pass has to unwind; the wire contract above is what it must unwind toward.
 
 **This is a deliberate, narrow exception to "the sim exports the answer".** That rule exists because a
 hunt's TAKE is rounded to whole animals — `floor(ceiling / bodyMass)` is not linear, so no client can

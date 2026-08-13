@@ -106,7 +106,7 @@ pub use combat_config::{
     BUILTIN_COMBAT_CONFIG,
 };
 pub use components::{
-    available_workers, floor_is_valid, floor_overdraws, raid_is_recurring, BandBench,
+    available_workers, floor_is_valid, floor_overdraws, raid_is_recurring, ActivityCrew, BandBench,
     BandEquipment, BandId, BandTravel, BandWorkforce, BatchGrade, DeathCause,
     DemographicFlowAccumulator, DrawnInputs, DrawnMaterial, ElementKind, EquipmentBatch,
     Expedition, ExpeditionMission, ExpeditionPhase, Improvement, KnowledgeFragment,
@@ -234,12 +234,13 @@ pub use influencers::{
     InfluencerImpacts, InfluentialId, InfluentialRoster, SupportChannel, BUILTIN_INFLUENCER_CONFIG,
 };
 pub use intensification::{
-    build_fraction, build_turns_remaining, build_work_per_worker_turn, knows, learn_multiplier,
-    load_intensification_ladder_from_env, BuildDips, LadderConfig, LadderConfigHandle,
-    LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef, RungFeeding, RungHarvest,
-    RungKey, RungMovement, RungSiteRequirement, SiteRefusal, BUILTIN_INTENSIFICATION_LADDER,
-    FABRICATED_BUILD_COST, MANAGED_SOURCE_FLOOR, NO_BUILD_GEAR, NO_BUILD_UNDERWAY_DIP,
-    PER_WORKER_OUTPUT, RUNG_COST_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED,
+    activity_work, build_fraction, build_turns_remaining, build_work_per_worker_turn, knows,
+    learn_multiplier, load_intensification_ladder_from_env, upkeep_shortfall, LadderConfig,
+    LadderConfigHandle, LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef,
+    RungFeeding, RungHarvest, RungKey, RungMovement, RungSiteRequirement, RungUpkeep, SiteRefusal,
+    UpkeepScale, BUILTIN_INTENSIFICATION_LADDER, FABRICATED_BUILD_COST, NO_BUILD_GEAR,
+    NO_CREW_ON_THIS_ACTIVITY, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT, RUNG_COST_UNSCALED,
+    RUNG_UNSTARTED, SITE_ACCEPTED, UNSCALED_UPKEEP,
 };
 pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,
