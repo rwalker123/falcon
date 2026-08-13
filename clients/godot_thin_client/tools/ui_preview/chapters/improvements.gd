@@ -89,6 +89,12 @@ const METER_AWAY_TILE_X := 64
 ## match the rendered VALUE markup, which no other row can produce.
 const CULTIVATION_ROW_KEY := "Cultivation"
 
+## **A NEGATIVE THIS CLIENT DOES NOT RECOGNISE** — one past the two the wire spells
+## (`sim_schema::{NO_BUILD_TURNS_ESTIMATE, BUILD_NEVER_FINISHES}`). It stands for whatever the
+## field grows next, and the claim it pins is that an unknown answer renders as NO answer rather
+## than falling into whichever branch happens to be last.
+const UNKNOWN_BUILD_TURNS_SENTINEL := -3
+
 ## ---- THE REPAIR (`improvement_rung_slipped`) --------------------------------------------------
 ## Where a slipped tended patch's meter sits: below its cost, so the rung is BUILDING again, and
 ## above `plant:tended`'s own `retain_fraction` (0.75), so the ground is still tended. The gap
@@ -687,6 +693,56 @@ func run(harness) -> void:
 	# (`herd_corral`), where the shipped handling gear really does take work off the job.
 	h._assert_hud("a build no tool helps states NO gear line, not a zero one",
 		not building_row.contains(HudSelectionVocab.BUILD_GEAR_WORK_ROW_FORMAT.split("%s")[0]))
+
+	#   (c) NEVER — **the third answer, and the one this card was silent about**
+	#   (`docs/plan_standing_upkeep.md` §2.4). The SAME patch with the SAME crew ON it, whose
+	#   staffing is at or below the maintenance rate: the meter is not bleeding — somebody is
+	#   working it — so the row keeps its BUILD verb and its neutral ink, and what changes is the
+	#   estimate beneath it. `buildTurnsRemaining` publishes three answers now, and `-2` is *this
+	#   staffing never finishes*: a standing fact about a commitment the player has already made,
+	#   where `-1`'s states are a transient absence of information. Folded into one sentinel it
+	#   rendered as NO LINE here — visible only to a compose sheet that redid the comparison
+	#   itself — which is the reassuring direction on the one state that should stop them.
+	BaseFx.price_plant_build(meter_tile, SourceForecast.BUILD_TURNS_NEVER)
+	h._hud._band_labor._player_band = BandFx.cultivating_forage_band_fixture()
+	h._hud._band_labor._player_bands = [h._hud._band_labor.player_band()]
+	h._hud.clear_selection()
+	h._show_tile(meter_tile)
+	await h._settle()
+	await h._save("tile_meter_never")
+	var never_row = h._hud.tile_detail.text
+	print("ui_preview: meter never  %s" % Readout.detail_excerpt(never_row, CULTIVATION_ROW_KEY))
+	# **THE WORD AND THE INK, in one needle, exactly as the A/B above pins its two.** The indented
+	# branch tints the WHOLE line, so the markup is the claim: silence and neutral ink are both
+	# failures here, and only asserting the colour separates ∞-the-warning from the larder runway's
+	# ∞, which draws the identical glyph for the opposite news.
+	h._assert_hud("a committed crew below the rate reads ∞ on the card, in WARN ink",
+		never_row.contains("[color=#%s]%s%s" % [HudStyle.WARN_HEX,
+			DetailFormat.MORALE_BREAKDOWN_INDENT,
+			HudSelectionVocab.BUILD_TURNS_ROW_NEVER % DetailFormat.BUILD_TURNS_NEVER_GLYPH]))
+	# …and the meter above it still reads as a BUILD in neutral ink — the crew is ON it. Without
+	# this the frame is satisfied by the reverting state, which is a different fact with a
+	# different remedy: nobody is there, against somebody is there and it is not enough.
+	h._assert_hud("…while the meter itself still reads as a BUILD — somebody IS on this one",
+		never_row.contains(_meter_value_markup(
+			HudFloraVocab.CULTIVATION_PREPARING_LABEL, HudStyle.INK_HEX)))
+	# **THE THREE SENTINELS, ASKED OF THE PRODUCER, because two of them render as an ABSENCE and an
+	# absence cannot be told from a producer that has stopped rendering at all.** `-1` is silent,
+	# `-2` says ∞, a count says the count — and the client DERIVES none of it: an unstaffed source
+	# and a gate that refuses both reach this reader as `-1`, and re-deriving either would claim
+	# every idle improvement on the map never finishes.
+	var never_answer := {SourceForecast.FORECAST_BUILD_TURNS_KEY: SourceForecast.BUILD_TURNS_NEVER}
+	var never_lines := "\n".join(
+		DetailFormat.build_estimate_lines(never_answer, HudComposeVocab.BARE_FORECAST_PREFIX))
+	h._assert_hud("the wire's `-2` renders ∞ rather than the silence `-1` earns",
+		never_lines.contains(DetailFormat.BUILD_TURNS_NEVER_GLYPH)
+			and never_lines.contains(HudSelectionVocab.BUILD_TURNS_ROW_TAIL))
+	# …and it is READ, not derived: a sentinel this client does not recognise is *no answer*, never
+	# a guess. `-3` stands for whatever the wire grows next.
+	h._assert_hud("…and an unrecognised negative stays silent — the client guesses at nothing",
+		not "\n".join(DetailFormat.build_estimate_lines(
+			{SourceForecast.FORECAST_BUILD_TURNS_KEY: UNKNOWN_BUILD_TURNS_SENTINEL},
+			HudComposeVocab.BARE_FORECAST_PREFIX)).contains(HudSelectionVocab.BUILD_TURNS_ROW_TAIL))
 
 	# ---- THE TURN ESTIMATE FOLLOWS THE STEPPER (docs/plan_unit_costed_work.md §11) ----------------
 	# **ONE PATCH, ONE FLOOR, TWO CREWS — and a frame set that renders only one crew proves nothing

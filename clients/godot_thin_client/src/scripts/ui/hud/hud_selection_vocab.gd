@@ -125,6 +125,15 @@ const BUILD_TURNS_ROW_FORMAT := "≈%d turns " + BUILD_TURNS_ROW_TAIL
 # …and its singular, so a build one turn out does not read `≈1 turns at this crew`.
 const BUILD_TURNS_ROW_ONE := "≈1 turn " + BUILD_TURNS_ROW_TAIL
 
+# **AND THE THIRD ANSWER — `∞ turns at this crew`** (`SourceForecast.BUILD_TURNS_NEVER`, the wire's
+# own `-2`). It keeps the SAME tail, and that is the whole reason this row can say it at all: the tail
+# names the CREW, so a card with no stepper on it still points at the thing the player has to change.
+# It wears no `≈` — every other reading here is an estimate that could come in early or late, and a
+# meter that does not advance has no distribution to hedge. The glyph is
+# `DetailFormat.BUILD_TURNS_NEVER_GLYPH`, shared with the larder runway and inked amber here because
+# on a build it is the opposite news.
+const BUILD_TURNS_ROW_NEVER := "%s turns " + BUILD_TURNS_ROW_TAIL
+
 # `your gear: −8.5 work off this job` — what the crew's tools took off the COST, in the units the
 # cost is quoted in. It is the only way a player can tell a tool is worth carrying to a garden and
 # not to a farm: the contribution is a fixed number of units against a job whose size is not, so its

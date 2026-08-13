@@ -2948,6 +2948,15 @@ own transcription carries the term.
 its own sentinel, `SourceForecast.BUILD_TURNS_NEVER`, kept apart from `BUILD_TURNS_NO_ESTIMATE`
 because the two render differently — see "∞ IS THE ANSWER" below.
 
+**THIS IS THE ONE COMPARISON THE CLIENT STILL MAKES, and it survives only because the sim cannot
+answer the question it asks.** `buildTurnsRemaining` publishes all three answers for the crew ALREADY
+on the source, so every crewless surface READS the verdict; a stepper mid-drag is a crew the sim has
+never seen, which is what leaves a proposal to price. **The sim's two boundaries are honoured here by
+construction rather than by a second opinion**: an UNSTAFFED source takes the `workers <=
+BUILD_CREW_NONE` branch and answers `BUILD_TURNS_NO_ESTIMATE`, and a rung whose gate refuses it is
+never priced at all — a GATED control spends its whole slot on the reason and quotes no price, so this
+is never reached for one.
+
 **`learn_multiplier(floor)` is no longer a factor.** It scaled the accrual when one crew did both
 jobs (*a crew pulling hard on the source it is improving builds slowly*); a build crew is not pulling
 anything, so the sim's `build_accrual` takes no floor and neither does this. **The floor is still a
@@ -3183,9 +3192,10 @@ dies with it). The crew half needs nothing — a stepper tick rebuilds the sheet
 `0` in its place promises a build about to land. The sheet's producer answers it for a crew of
 nobody, a rung the wire prices nothing on, a source banking nothing per worker-turn, and a crew
 standing over an empty escapement room — each of them *there is no question here yet* rather than an
-answer about a crew the player has stated. **A crew that is merely too SMALL is the other sentinel**
-(`BUILD_TURNS_NEVER`), and it must render: see "∞ IS THE ANSWER" below. Both transcribe the sim's own
-`None`; what separates them is whether there is a crew on screen for the answer to be about.
+answer about a crew the player has stated. The **sim** answers it for the same class of states, plus
+two more of its own that no client may re-derive: an unstaffed source, and a build whose knowledge,
+site or species gate does not hold. **A crew that is merely too SMALL is the other sentinel**
+(`BUILD_TURNS_NEVER`), and it must render on every producer: see "∞ IS THE ANSWER" below.
 
 ### ∞ IS THE ANSWER FOR A CREW THAT NEVER FINISHES, AND IT IS AMBER
 
@@ -3193,6 +3203,16 @@ answer about a crew the player has stated. **A crew that is merely too SMALL is 
 offered face's price — through `DetailFormat.build_turns_clause`, which spells every count in one
 place. It wears no `≈`: every other reading there is an estimate that could come in early or late, and
 this one is not an estimate at all.
+
+**AND ON THE TILE CARD AND THE HERD DRAWER, WHICH IS WHERE IT MATTERS MOST.** It is `-2` on the wire
+(`sim_schema::BUILD_NEVER_FINISHES`, beside `NO_BUILD_TURNS_ESTIMATE`'s `-1`), so
+`SourceForecast.build_turns_remaining` reads it rather than flattening every negative, and
+`DetailFormat.build_estimate_lines` renders `∞ turns at this crew` in the same amber. The two were ONE
+sentinel for a release and this row was silent for it — so the state a player has to act on was
+visible only while dragging a stepper they may never open. The row keeps its `at this crew` tail,
+which is what makes it actionable on a surface with no stepper. The card's own half of this is in
+`selection-card.md` → "The build meter says WORK", including the ink's seam (`detail_bbcode`'s
+indented branch, keyed on the glyph) and the two sim boundaries a client-side comparison would blur.
 
 **THE GLYPH IS THE LARDER RUNWAY'S, AND THE MEANING IS INVERTED.** `DetailFormat.FOOD_UNLIMITED_GLYPH`
 is `∞` on the Food line for *your larder never empties*; on a build it is the worst news the sheet can

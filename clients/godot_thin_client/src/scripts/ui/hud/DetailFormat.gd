@@ -686,6 +686,13 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
                 row_hex = HudStyle.HEALTHY_HEX
             elif line.contains(DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH):
                 row_hex = HudStyle.WARN_HEX
+            # **THE BUILD'S `∞` IS THE THIRD SIGN THIS BRANCH RECOGNISES**, and it takes the same amber
+            # a negative contribution does: a crew that never finishes is the one reading on a source
+            # card that should stop the player (`build_estimate_lines`). The larder runway draws the
+            # identical glyph for the OPPOSITE news and never lands here — it is a `Key: value` row,
+            # tinted by `_value_hex` — so the mark can be shared while the ink stays disjoint.
+            elif line.contains(DetailFormat.BUILD_TURNS_NEVER_GLYPH):
+                row_hex = HudStyle.WARN_HEX
             out += "[color=#%s]%s[/color]\n" % [row_hex, line]
             continue
         # The overgrazing warning is a full-width WARN sentence (biomass > K), tinted with the same
@@ -1154,7 +1161,15 @@ static func build_estimate_lines(source: Dictionary, prefix: String) -> Array[St
     var lines: Array[String] = []
     var turns := SourceForecast.build_turns_remaining(source, prefix)
     if turns != SourceForecast.BUILD_TURNS_NO_ESTIMATE:
-        var row := HudSelectionVocab.BUILD_TURNS_ROW_ONE if turns == BUILD_TURNS_SINGULAR \
+        # **`∞ turns at this crew` IS THE ANSWER THIS ROW EXISTS TO CARRY, and it is the one the two
+        # crewless surfaces were silent about** (`docs/plan_standing_upkeep.md` §2.4). A crew at or
+        # below the maintenance rate never finishes — a standing fact about a staffing the player has
+        # ALREADY committed, where the other no-answer states are a transient absence of information —
+        # so it renders here, where they look every turn, and `detail_bbcode` inks it amber off the
+        # glyph. Rendering nothing was the reassuring direction on the one state that should stop them.
+        var row := HudSelectionVocab.BUILD_TURNS_ROW_NEVER % BUILD_TURNS_NEVER_GLYPH \
+            if turns == SourceForecast.BUILD_TURNS_NEVER \
+            else HudSelectionVocab.BUILD_TURNS_ROW_ONE if turns == BUILD_TURNS_SINGULAR \
             else HudSelectionVocab.BUILD_TURNS_ROW_FORMAT % turns
         lines.append("%s%s" % [MORALE_BREAKDOWN_INDENT, row])
     var gear := SourceForecast.build_work_from_gear(source, prefix)

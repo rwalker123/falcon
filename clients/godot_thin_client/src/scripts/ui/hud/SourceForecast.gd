@@ -815,6 +815,14 @@ const BUILD_TURNS_NO_ESTIMATE := -1
 ## floor — and renders as no clause at all. This one is an ANSWER to a crew the player has stated, and
 ## the answer is ∞: it must be visible, and visible as a WARNING, because it is the one readout that
 ## should stop them. A large number in its place would read as a promise.
+##
+## **IT IS THE WIRE'S OWN VALUE** — `sim_schema::BUILD_NEVER_FINISHES`, published on
+## `buildTurnsRemaining` beside `NO_BUILD_TURNS_ESTIMATE`'s `-1` and passed through verbatim by the
+## decoder. The two were ONE sentinel for a release, which is why the tile card and the herd drawer
+## rendered no line for a fact the player needed and only the compose sheet — which redid the
+## comparison itself — could show it. Nothing in this client derives it from a source the sim has
+## answered for; the one place a comparison still happens is `build_turns_at`, which prices a crew
+## the sim has never seen.
 const BUILD_TURNS_NEVER := -2
 
 ## **A METER NOBODY HAS PUT WORK INTO**, and **a meter standing exactly at its cost** — the two edges
@@ -3232,12 +3240,26 @@ static func build_work_cost(src: Dictionary, prefix: String, improvement: String
         prefix + String(FORECAST_BUILD_WORK_COST_KEYS[improvement]), BUILD_WORK_COST_NONE)),
         BUILD_WORK_COST_NONE)
 
-## **THE SIM'S OWN TURN ESTIMATE** for whatever this source is building, or `BUILD_TURNS_NO_ESTIMATE`.
-## Per SOURCE, not per rung, so it takes no improvement. A caller MUST test the sentinel and render
-## nothing rather than a zero — see the const.
+## **THE SIM'S OWN TURN ESTIMATE** for whatever this source is building. Per SOURCE, not per rung, so
+## it takes no improvement.
+##
+## **THREE ANSWERS, AND THE CLIENT COMPARES NOTHING TO TELL THEM APART.** A count is a finish date at
+## the crew that is on it; `BUILD_TURNS_NEVER` is *this staffing never finishes*, which renders as an
+## amber `∞`; `BUILD_TURNS_NO_ESTIMATE` is *there is genuinely no answer*, which renders as no line.
+## It flattened every negative to the second of those, which is what left the tile card and the herd
+## drawer silent on the one build state a player must act on.
+##
+## **THE SIM DRAWS TWO BOUNDARIES HERE THAT A CLIENT-SIDE COMPARISON WOULD BLUR**, and both reach this
+## reader as `-1`: an UNSTAFFED source has promised nothing (a comparison would call every idle
+## improvement on the map a never-finisher), and a build whose knowledge, site or species gate does not
+## hold accrues nothing for a reason that has nothing to do with staffing. Neither is this client's to
+## re-derive — it holds no gates — so any unrecognised negative reads as *no answer* rather than being
+## guessed at.
 static func build_turns_remaining(src: Dictionary, prefix: String) -> int:
     var turns := int(src.get(prefix + FORECAST_BUILD_TURNS_KEY, BUILD_TURNS_NO_ESTIMATE))
-    return turns if turns >= 0 else BUILD_TURNS_NO_ESTIMATE
+    if turns >= 0 or turns == BUILD_TURNS_NEVER:
+        return turns
+    return BUILD_TURNS_NO_ESTIMATE
 
 ## **THE WORK UNITS THE CREW'S TOOLS TOOK OFF THE RUNNING BUILD.** `0` when no build is in flight or
 ## the crew carries nothing that helps, which is what every readout gates its gear line on — a
@@ -3392,6 +3414,19 @@ static func is_unbuilt_and_unpaid(src: Dictionary, prefix: String, kind: String)
 ## the crew cannot reach; `core_sim/tests/build_turns_closed_form.rs` pins the two forms equal on the
 ## exported snapshot. **A crew at or below the rate answers `BUILD_TURNS_NEVER`**, which is a real
 ## answer about a stated crew rather than the absent one `BUILD_TURNS_NO_ESTIMATE` names.
+##
+## **THIS IS THE ONE COMPARISON THE CLIENT STILL MAKES, and it survives because the sim cannot answer
+## the question it asks.** `buildTurnsRemaining` publishes all three answers — including
+## `BUILD_TURNS_NEVER` — for the crew ALREADY on the source, and every crewless surface reads it
+## through `build_turns_remaining` rather than re-deriving anything. A stepper the player is dragging
+## is a crew the sim has never seen, so there is nothing to read; what makes that safe is that the two
+## agree exactly at the COMMITTED crew, which is now checkable on three states rather than two.
+##
+## **THE SIM'S TWO BOUNDARIES ARE HONOURED HERE BY CONSTRUCTION, NOT BY A SECOND OPINION.** An
+## UNSTAFFED source answers `BUILD_TURNS_NO_ESTIMATE` at the first branch below, so a proposal of
+## nobody can never claim *never finishes*; and a rung whose knowledge, site or species gate refuses
+## it is never priced at all — a GATED control spends its whole slot on the reason and quotes no
+## price, so this is never reached for one.
 ##
 ## **`b` IS THE BUILD'S OWN CREW, and both terms are quoted at it** (`docs/plan_standing_upkeep.md`
 ## §2.2). A source carries three allocations now; the builders are the ones filling this meter, so

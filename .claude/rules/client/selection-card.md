@@ -335,9 +335,29 @@ them rather than as two more facts about the source. `prefix` spells the keys, s
   (`buildTurnsRemaining`, the `penFeedUpkeep` discipline). The trailing *at this crew* is
   load-bearing — without it the number reads as a property of the RUNG, which is the fixed-turn model
   this arc replaced.
-- **`-1` MEANS NO ESTIMATE AND RENDERS AS NO LINE** (`SourceForecast.BUILD_TURNS_NO_ESTIMATE`). The
-  sim answers it for a stalled build and for a source nobody works. A `0 turns` in its place promises
-  a build about to land, which is why the guard is in the producer rather than left to a formatter.
+- **THE FIELD PUBLISHES THREE ANSWERS, AND THE CARD RENDERS ALL THREE.** A count is a finish date;
+  **`-2` is `∞ turns at this crew`, in WARN amber** (`SourceForecast.BUILD_TURNS_NEVER`, the wire's
+  `sim_schema::BUILD_NEVER_FINISHES`) — a crew at or below the source's maintenance rate never
+  finishes, which is a standing fact about a commitment the player has ALREADY made; **`-1` renders as
+  NO LINE** (`BUILD_TURNS_NO_ESTIMATE`), there being genuinely no answer. A `0 turns` in place of
+  either promises a build about to land, which is why the guard is in the producer rather than left to
+  a formatter.
+- **THE `∞` IS THE STATE THIS CARD WAS SILENT ABOUT.** The two were ONE sentinel for a release, so a
+  build nobody could finish rendered as no line here and on the herd drawer — the two surfaces a player
+  reads every turn — and was visible only on a compose sheet that redid the comparison itself. That is
+  backwards for the one reading that should stop them. The row keeps `BUILD_TURNS_ROW_TAIL`
+  (*at this crew*), which is what makes it actionable on a surface with no stepper: it names the thing
+  to change. It wears no `≈` — a meter that does not advance has no distribution to hedge.
+- **THE INK RIDES THE GLYPH, in `detail_bbcode`'s indented branch**, beside the morale contributions'
+  ± signs and by the same rule that branch already stated: an indented family is neutral until it
+  carries a sign. The larder runway draws the identical `∞` for the OPPOSITE news and never lands
+  there — it is a `Key: value` row, tinted by `_value_hex` — so the mark is shared while the ink stays
+  disjoint.
+- **THE CLIENT DERIVES NONE OF IT.** Two of the sim's boundaries reach this reader as `-1` and a
+  comparison here would blur both: an **unstaffed** source has promised nothing (deriving would call
+  every idle improvement on the map a never-finisher), and a build whose **knowledge, site or species
+  gate** does not hold accrues nothing for a reason that has nothing to do with staffing. An
+  unrecognised negative therefore reads as *no answer* rather than being guessed at.
 - **`your gear: −17 work off this job` renders only above zero** (`buildWorkFromGear`). It is the only
   way a player can tell a tool is worth carrying to a garden and not to a farm — the contribution is a
   fixed number of units against a job whose size is not, so its share shrinks as the job grows. **The
@@ -349,16 +369,25 @@ them rather than as two more facts about the source. `prefix` spells the keys, s
   build; the Corral branch takes them once taming is done). Under a REVERTING meter they would
   describe a build nobody is doing.
 
-**Frames + assertions.** `tile_meter_building` / `tile_meter_reverting` (`chapters/improvements.gd`)
-carry the plant A/B — the same patch at the same meter, with only the band's assignment moving — plus
-the turn row's presence, the reverting half's silence, and the gear line's NEGATIVE (a plant build no
-tool helps states none). `herd_corral` (`chapters/herd_graze_pen.gd`) carries the animal positive:
-the gear line and the turn row on a keeper crew holding the shipped handling gear. **The `-1` rule
-needs a DRIVEN claim of its own and gets one**: the reverting frame is silent because its fixture
-states `-1`, so it would stay silent for a producer that RENDERED the sentinel — `build_estimate_lines`
-is therefore asked directly, over one source dict in its two states. Sabotage-verified three ways,
-each failing a DISJOINT claim: rendering the sentinel fails the driven negative alone, dropping the
-gear gate fails the plant negative alone, and reading the gear as zero fails the animal positive alone.
+**Frames + assertions.** `tile_meter_building` / `tile_meter_reverting` / **`tile_meter_never`**
+(`chapters/improvements.gd`) carry the plant set — ONE patch at ONE meter value, with only the band's
+assignment and the published sentinel moving — plus the turn row's presence, the reverting half's
+silence, and the gear line's NEGATIVE (a plant build no tool helps states none). `herd_corral`
+(`chapters/herd_graze_pen.gd`) carries the animal positive: the gear line and the turn row on a keeper
+crew holding the shipped handling gear.
+
+**The `∞` frame is asserted as MARKUP, word and ink together**, the treatment the building/reverting
+pair already takes — silence and neutral ink are both failures, and only the colour separates it from
+the larder's own `∞`. Its companion claim is that the METER above it still reads as a BUILD in neutral
+ink: somebody IS on this one, which is a different fact with a different remedy from the reverting
+state's nobody-is-there, and without it the frame is satisfied by that state.
+
+**The sentinels need DRIVEN claims of their own and get three**: a frame that is silent because its
+fixture states `-1` would stay silent for a producer that RENDERED the sentinel, so
+`build_estimate_lines` is asked directly — `-1` silent, `-2` says `∞`, and an unrecognised negative
+stays silent rather than falling into whichever branch happens to be last. Sabotage-verified, each
+failing a DISJOINT claim: rendering the sentinel fails the driven negative alone, dropping the gear
+gate fails the plant negative alone, and reading the gear as zero fails the animal positive alone.
 
 **The fixtures DERIVE `work_done` from the fraction they already state** (`BaseFx.price_plant_build` /
 `HerdFx.price_animal_build`), so a fixture that re-dials a meter cannot end up with a percentage and
