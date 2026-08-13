@@ -946,13 +946,14 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int, useful_floor: i
 ## same forecast, because they are the same decision about different stock.
 ##
 ## The states and their precedence (see `HudWidgets.build_improvement_control` for the shape):
-##   RUNNING first — something is being built here, so nothing else is on offer. Its face carries the
-##       meter, and a WARN pause line appears when the source has left Thriving, which is the ONE
-##       silent rule on this axis: the meter accrues only while the source is Thriving, and that is
-##       deliberately NOT a gate (a source's phase swings as it is worked, so refusing the verb would
-##       be un-actionable churn). The sim just PAUSES, losing nothing — and saying nothing here would
-##       recreate exactly the hidden rule this whole arc exists to kill. It was animal-only
-##       (`_tame_stalled_hint`) because the plant web had no control to hang it on.
+##   RUNNING first — something is being built here, so nothing else is on offer. Its face carries
+##       the meter and, where the crew's proposed floor leaves anything for them to work, the turn
+##       estimate. **It states no PAUSE**: the phase-keyed WARN line this state used to carry
+##       (`_improvement_paused_note`, animal-only `_tame_stalled_hint` before that) described a sim
+##       that stopped a build outside Thriving, and `docs/plan_harvest_floor.md` §3.2 replaced that
+##       cliff with a rate — so it warned of a pause beside a meter its own face showed advancing. The
+##       rule it existed to make audible is stated better one register up, live and quantified, by the
+##       aside's teaching line.
 ##   DONE next — the source stands on a built rung, so the state gets a static label, and the NEXT
 ##       rung's checkbox renders beneath it if there is one.
 ##   OFFERED last — an unchecked box naming the next rung. When that rung is GATED the
@@ -968,8 +969,14 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int, useful_floor: i
 ## `extra_rows` is the caller's whole-control hook: the plant web drops its CROP PICKER beneath the
 ## box, since which crop this rung commits to is part of the same decision. Passing it in rather than
 ## branching keeps this function free of flora knowledge.
+##
+## **`workers`, `floor` AND `kit_gear` ARE THE PROPOSAL, not the standing assignment** — the stepper's
+## count, the slider's floor and the gear terms of the kit the picker is OFFERING. Both faces price
+## their turn estimate against them through `SourceForecast.build_turns_at`, which is the whole reason
+## this control is rebuilt by the live-refresh registry at its call sites: the sim's own
+## `buildTurnsRemaining` answers for the crew already there and cannot move under any of the three.
 func _build_improvement_control(kind: String, source: Dictionary, prefix: String, floor: float,
-        composed: String, band: Dictionary,
+        composed: String, band: Dictionary, workers: int, kit_gear: Dictionary,
         on_toggle: Callable, target: VBoxContainer,
         extra_rows: Callable = Callable()) -> void:
     # RUNNING — a composed improvement that is not yet built. `composed` covers both the wire's
@@ -980,19 +987,44 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         var glyph := FoodIcons.for_policy(composed)
         var participle := String(
             HudComposeVocab.IMPROVEMENT_RUNNING_LABELS.get(composed, composed.capitalize()))
-        var percent := HudFormat.progress_percent(
-            SourceForecast.improvement_progress(source, prefix, composed))
-        # **THE METER IS THE WHOLE FACE.** The payoff that used to close it (`· then 1.39 food`) is a
-        # readout row now — it stood one line above a PER TURN box quoting a different number for the
-        # same source, with nothing on either to say which question each was answering.
+        # **THE METER IS THE WHOLE FACE, AND IT NOW STATES THE JOB'S SIZE.** The payoff that used to
+        # close it (`· then 1.39 food`) is a readout row now — it stood one line above a PER TURN box
+        # quoting a different number for the same source, with nothing on either to say which
+        # question each was answering. The work absolutes come from the SAME composer the tile card
+        # and the herd drawer use, so one build never reads two ways on one screen.
         #
         # `kind` here is the LABOR kind (`hunt`/`forage`); the forecast layer speaks SOURCE kinds
         # (`herd`/`forage`). They differ on the animal web, so this conversion is not optional.
         var deal := SourceForecast.improvement_forecast(
             source, SourceForecast.source_kind_for_labor(kind), prefix, floor, composed)
-        var notes := _improvement_paused_note(source, prefix)
+        # **THE ONLY NOTE A RUNNING BUILD CAN CARRY IS THE PEN'S ZERO PAYOFF, and the phase-keyed
+        # PAUSE line that used to lead it is gone** (`docs/plan_harvest_floor.md` §3.2). No rung on
+        # either web stops on `EcologyPhase`: the sim replaced that cliff with a RATE, so a crew
+        # pulling hard on the ground it is clearing builds SLOWLY. The line therefore printed
+        # "⚠ Paused … this only advances while Thriving" beside a meter its own face showed advancing,
+        # and prescribed the opposite of the remedy — the FLOOR is what paces the build, which the
+        # aside states live ("Building at ×1.60 — a higher floor builds faster"). What genuinely stops
+        # a build is an empty escapement room, and the honest statement of THAT is the estimate
+        # dropping out (`SourceForecast.build_turns_at`'s work predicate), not a note about the phase.
+        var notes: Array = []
         var running_face := HudComposeVocab.IMPROVEMENT_RUNNING_BARE_FORMAT % [
-            glyph, participle, percent]
+            glyph, DetailFormat.build_meter_value(participle,
+                SourceForecast.improvement_progress(source, prefix, composed),
+                SourceForecast.build_work_done(source, prefix, composed),
+                SourceForecast.build_work_cost(source, prefix, composed))]
+        # **"ADD HANDS AND WATCH IT DROP" IS THE WHOLE POINT, so it goes on the face beside the crew
+        # stepper that moves it — and it is priced at THIS stepper's crew and THIS slider's floor.**
+        # It read the sim's `buildTurnsRemaining` for a release, which is the answer for the crew
+        # ALREADY on the source: the sheet quoted `≈32 turns` at one worker and went on quoting it as
+        # the player stepped to three, freezing the one readout this arc exists to make legible on the
+        # one panel where the decision is being made. `build_turns_at` evaluates the closed form the
+        # sim publishes the terms for; `BUILD_TURNS_NO_ESTIMATE` still renders as no clause at all
+        # rather than as a `0` that would promise the build is about to land.
+        var running_turns := SourceForecast.build_turns_at(
+            source, prefix, composed, workers, floor, kit_gear)
+        if running_turns != SourceForecast.BUILD_TURNS_NO_ESTIMATE:
+            running_face = HudComposeVocab.IMPROVEMENT_RUNNING_TURNS_FORMAT % [
+                running_face, DetailFormat.build_turns_clause(running_turns)]
         if not deal.is_empty():
             var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
             var feed := float(deal["feed"]) * output
@@ -1029,10 +1061,23 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
     if offer.is_empty():
         return
     var rung := String(offer["policy"])
-    # The verb alone — the payoff this used to close on now reads in the readout, one register down.
+    # The verb and its PRICE — the payoff this used to close on reads in the readout, one register
+    # down, and what closes it now is what the job COSTS. **A verb with no price was survivable only
+    # while every verb cost the same 25 turns**: rungs declare their own size in work units now, so a
+    # sheet that offers `Sow a field here` without saying it is half again the Cultivate below it
+    # hides the one number the choice turns on. `workCost` is published whether or not a build runs —
+    # that is what makes the quote available pre-commit — and the turns half is quoted for the crew,
+    # floor and kit the player is COMPOSING (the running face above carries why), dropped entirely
+    # where that has no finite answer. A rung nobody has started is exactly the state the sim's own
+    # estimate cannot speak to: there is no crew on it yet to have been measured.
     var offer_face := HudComposeVocab.IMPROVEMENT_OFFER_BARE_FORMAT % [
         FoodIcons.for_policy(rung),
         String(HudComposeVocab.IMPROVEMENT_OFFER_LABELS.get(rung, rung.capitalize()))]
+    var offer_price := DetailFormat.build_price_clause(
+        SourceForecast.build_work_cost(source, prefix, rung),
+        SourceForecast.build_turns_at(source, prefix, rung, workers, floor, kit_gear))
+    if offer_price != "":
+        offer_face = HudComposeVocab.IMPROVEMENT_OFFER_PRICED_FORMAT % [offer_face, offer_price]
     var reasons := RungGates.gate_reasons_for({rung: offer.get("reasons", [])}, rung)
     # **GATED — THE REASON IS THE CONTROL, and the offer text is not shown at all.** This used to
     # render the full offer ("🌱 Cultivate this patch · then 0.04 food · 0.81 fodder") as
@@ -1110,14 +1155,6 @@ func _improvement_running_tooltip(kind: String, improvement: String) -> String:
         String(HudComposeVocab.IMPROVEMENT_HINTS.get(improvement, "")),
         String(HudComposeVocab.IMPROVEMENT_ABANDON_HINTS.get(kind, "")),
     ])
-
-## The WARN pause line for a running build, as the note array the control renders beneath its box —
-## empty when the source is Thriving (nothing to explain). Both webs read the same `ecology_phase`.
-func _improvement_paused_note(source: Dictionary, prefix: String) -> Array:
-    var phase := String(source.get(prefix + "ecology_phase", "")).strip_edges().to_lower()
-    if phase == "" or phase == HudFloraVocab.ECOLOGY_PHASE_THRIVING:
-        return []
-    return [HudComposeVocab.IMPROVEMENT_PAUSED_FORMAT % phase.capitalize()]
 
 ## The done-state label's face. **The Corral rung carries the pen's per-turn upkeep and the Tame rung
 ## does not, and that asymmetry is deliberate and permanent** (spec §4): a penned herd cannot graze,
@@ -1939,13 +1976,24 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # the readout, which put the payoff (then on the box's own face) BELOW the PER TURN box it
         # differs from and gave the two numbers no visible relationship at all.
         if not is_unassign:
-            _build_improvement_control(SourceForecast.LABOR_KIND_HUNT, herd,
-                HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_floor(), composed_improvement,
-                band,
-                func(improvement: String) -> void:
-                    _compose.set_hunt_improvement(improvement)
-                    _build_herd_assign_controls(_live_herd(herd_id, herd), target),
-                target)
+            # **THE CONTROL IS IN THE LIVE SET, because its turn estimate is priced at the floor.**
+            # The crew half tracks on its own — a stepper tick rebuilds the whole sheet — but a floor
+            # DRAG must not, so the box is rebuilt in place by the registry exactly as the yields row
+            # and the crew targets are. The registry's own rule decides it: anything whose value
+            # depends on the floor belongs in it.
+            var improvement_host := VBoxContainer.new()
+            improvement_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+            target.add_child(improvement_host)
+            var on_improvement_toggled := func(improvement: String) -> void:
+                _compose.set_hunt_improvement(improvement)
+                _build_herd_assign_controls(_live_herd(herd_id, herd), target)
+            _register_live(live_hosts, improvement_host, chart_model, _compose.hunt_count(),
+                func(host: Container, live: Dictionary, crew: int) -> void:
+                    _build_improvement_control(SourceForecast.LABOR_KIND_HUNT, herd,
+                        HudComposeVocab.BARE_FORECAST_PREFIX, _live_floor(live),
+                        composed_improvement, band, crew,
+                        KitRoster.build_gear(band, kit_id),
+                        on_improvement_toggled, host as VBoxContainer))
         # THE ONE RESOLUTION OF THIS SHEET'S DEAL, spent by the readout below. An unassign quotes
         # none: the control above is not built either, so there would be no rung on the card for the
         # rows to be about.
@@ -2642,25 +2690,34 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # UNASSIGN: what abandoning costs is already on the card in the rung's own hint ("It must stay
     # staffed or it goes feral"), so a second warning here would state one fact twice.
     if not is_unassign:
-        _build_improvement_control(SourceForecast.LABOR_KIND_FORAGE, tile_info,
-            HudComposeVocab.FORAGE_FORECAST_PREFIX, _compose.forage_floor(), composed_improvement,
-            band,
-            func(improvement: String) -> void:
-                _compose.set_forage_improvement(improvement)
-                _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target),
-            target,
-            # WHICH CROP this rung commits the patch to (flora roster S1), beneath the box
-            # because it is part of the same decision. Re-resolved every render (the rung can
-            # change), so the composed crop can never name a plant this tile+rung cannot take — and ""
-            # always remains valid, meaning "take the sim's default".
-            func(rung: String, host: VBoxContainer) -> void:
-                var crop_picker := _build_crop_picker(basket, rung, _compose.forage_species(),
-                    committed_species if is_committed else "",
-                    func(species: String) -> void:
-                        _compose.set_forage_species(species)
-                        _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target))
-                if crop_picker != null:
-                    host.add_child(crop_picker))
+        var on_improvement_toggled := func(improvement: String) -> void:
+            _compose.set_forage_improvement(improvement)
+            _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target)
+        # WHICH CROP this rung commits the patch to (flora roster S1), beneath the box
+        # because it is part of the same decision. Re-resolved every render (the rung can
+        # change), so the composed crop can never name a plant this tile+rung cannot take — and ""
+        # always remains valid, meaning "take the sim's default".
+        var crop_rows := func(rung: String, host: VBoxContainer) -> void:
+            var crop_picker := _build_crop_picker(basket, rung, _compose.forage_species(),
+                committed_species if is_committed else "",
+                func(species: String) -> void:
+                    _compose.set_forage_species(species)
+                    _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target))
+            if crop_picker != null:
+                host.add_child(crop_picker)
+        # **IN THE LIVE SET, for the reason the hunt sheet's twin is** — the box's turn estimate is
+        # priced at the floor as well as at the crew, and a floor DRAG may not rebuild the sheet. The
+        # crop picker rides along inside the control; rebuilding it costs a few buttons and keeps the
+        # rung and its list one object, which is what `extra_rows` exists to guarantee.
+        var improvement_host := VBoxContainer.new()
+        improvement_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        target.add_child(improvement_host)
+        _register_live(live_hosts, improvement_host, chart_model, _compose.forage_count(),
+            func(host: Container, live: Dictionary, crew: int) -> void:
+                _build_improvement_control(SourceForecast.LABOR_KIND_FORAGE, tile_info,
+                    HudComposeVocab.FORAGE_FORECAST_PREFIX, _live_floor(live), composed_improvement,
+                    band, crew, KitRoster.build_gear(band, forage_kit_id),
+                    on_improvement_toggled, host as VBoxContainer, crop_rows))
     # **THE PAYOFF FOLLOWS THE SELECTED CROP, AND IT IS RESOLVED EXACTLY ONCE** (issue #419). The
     # readout's payoff row and the crop picker one control up must read ONE seam or they quote
     # different crops — which is the whole defect that issue named, in its second home. `deal_rung` is

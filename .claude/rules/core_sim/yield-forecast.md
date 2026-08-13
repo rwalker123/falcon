@@ -225,9 +225,46 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > | escapement ceiling | **terms** — `biomass`, `carryingCapacity`, `*PerBiomass` | `max(0, B − f·K) × rate` is linear and exact; this is what retired the four stance rows |
 > | build dip | **terms** — the four `*BuildFraction` fields | a factor on the crew term, likewise exact |
 > | engagement bound | **term** — `HerdTelemetryState.engageRate` | `workers × engageRate × dip × bodyMass` is linear in the crew, exactly like the carry term beside it |
+> | a build's crew output | **term** — `buildWorkPerWorkerTurn` on both source tables | what ONE worker banks per turn at the food peak; `workers × this × floor/peak` is linear in the crew. Published rather than left a client `1.0` because `intensification::build_work_per_worker_turn` is a **sum of terms** with one term today |
+> | a build's gear contribution | **terms** — `buildWorkPerWorker` × `buildWorkSaturatingCrew` on `PopulationCohortState.kitTiers[]` | coverage arms a **prefix** of a party, so the total is `min(workers, units held) × worth` — piecewise-linear and **saturating**. Both terms are facts about the **band's ledger**, so they ride the kit row and not a source row: an unstarted rung still has them, and a kit picker re-prices the whole estimate off the row of the kit under the cursor |
+> | a build's turn count | **BOTH** — the terms above, and the answer `buildTurnsRemaining` | the sheet has a crew stepper and the tile card does not, so both are needed and neither replaces the other. See below |
 > | the take | **the answer** — `SourceYield.actual` | `floor(ceiling / bodyMass)` is not linear; no client can re-derive it |
 > | raid trip length | **an answer, ASKED FOR** — `HuntTripForecastQuery` on the command socket | a bounded forward simulation; there is no expression to hand over, and it depends on the asking band's kit and wear, which no per-herd row carries |
 > | the growth curve | **sampled answers** — `regrowthSamples` × `REGROWTH_CURVE_SAMPLES` | see below |
+>
+> **THE BUILD'S TURN COUNT IS THE ONE ROW THAT SHIPS BOTH SHAPES, and the reason is the stepper.**
+> `buildTurnsRemaining` is the sim's answer for the crew **already** working the source — the right
+> and only thing for the tile card and the herd drawer, which have no crew control. A compose sheet
+> has one, and *"add hands and watch it drop"* is the whole point of the field it sits next to, so it
+> evaluates the form itself:
+>
+> ```text
+> gear(w)  = min(w, buildWorkSaturatingCrew) × buildWorkPerWorker      ← the KIT row
+> turns(w) = ceil((workCost − workDone − gear(w)) / (w × buildWorkPerWorkerTurn × floor / foodPeak))
+> ```
+>
+> The client draws the curve; the sim states the answer — the same division as the take, one row
+> further along. **Evaluated at the committed crew and floor the two must agree exactly**, and that
+> equality is the whole safety argument for the arrangement: a sheet that could disagree would lie
+> about the very decision the card then reports differently. Pinned on the **exported snapshot** in
+> two places — the gear term against the source's own `buildWorkFromGear`, then the whole form
+> against `buildTurnsRemaining` — across both gear regimes (the saturation binding and inert), by
+> `core_sim/tests/build_turns_closed_form.rs`.
+>
+> **WHICH TABLE A TERM RIDES FOLLOWS FROM WHAT IT IS A FACT ABOUT, and the gear pair is the case that
+> makes it concrete.** Both halves of `gear(w)` are properties of the band's *kit and ledger* — units
+> held, and each unit's reach — so they ride `kitTiers[]`, per **offered** kit. That is what lets an
+> unstarted rung be quoted at all (no crew has worked it, so no source-side scratch exists) and what
+> makes the sheet's **kit picker** re-price the estimate: picking a different kit reads a different
+> row. A source-row copy would answer for whichever kit the committed crew happened to carry, which
+> is the frozen-readout defect one control over. The source rows keep `buildWorkFromGear` — the
+> **resolved** contribution for the crew that worked it this turn, which the running readout wants
+> and no stepper can move.
+>
+> The **food peak** is not published: the client holds its own `SourceForecast.FLOOR_FOOD_PEAK`, which
+> must equal the sim's `fauna::MSY_BIOMASS_FRACTION`. The same file pins them together by **reading
+> the GDScript's own `const`** rather than a Rust transcription of it — a transcribed literal
+> compares the sim with itself, so the client script could be retuned with no test firing.
 >
 > **`regrowthSamples` is sampled, and NOT because the curve is hard to write down.** It is **two
 > different functions**: a patch is pure logistic with a reseed floor and **no Allee term**, a herd has

@@ -361,12 +361,27 @@ drift, and a tool that lasts 25 items ends up teaching a craft in 30. Pinned by
 `crafting::the_lesson_and_the_tools_wear_are_charged_the_same_number_of_times`, which counts the
 items finished and asserts *both* charges equal that count.
 
-**The dial is `intensification_ladder.json`'s `knowledge.lesson_per_crafted_item` (0.2 → 5 items per
-craft), a SIBLING of `progress_per_turn` rather than a reading of it.** A ladder lesson is charged
-per turn worked and scaled by the crew's floor; a craft lesson is charged per item, and there is no
-floor to scale it by and no turn to charge it on. It lives on the ladder rather than in
-`recipes.json` so that **every knowledge pace in the game is tuned in one file**, which is the reason
-the ladder's other two moved there in slice 4.
+**The dial is `intensification_ladder.json`'s `knowledge.craft_lesson_per_item` (4.0 **practice
+units** per item, against that craft's own `knowledge.lesson_costs` entry of 20 → 5 items per craft),
+a SIBLING of `learn_rate` rather than a reading of it.** A ladder lesson is charged per turn worked
+and scaled by the crew's floor; a craft lesson is charged per item, and there is no floor to scale it
+by and no turn to charge it on. It lives on the ladder rather than in `recipes.json` so that **every
+knowledge pace in the game is tuned in one file**, which is the reason the ladder's other dials moved
+there in slice 4.
+
+> **A CRAFT IS PRICED IN THE SAME CURRENCY AS A RUNG'S LESSON, and goes through the same divisor**
+> (`docs/plan_unit_costed_work.md` §4). `credit_craft_lesson` credits
+> `LadderKnowledge::ledger_credit(craft, craft_lesson_per_item)` — literally the call a rung's
+> `knowledge_accrual` makes — so a bench and a rung cannot come to disagree about what a lesson costs,
+> and **the ledger stays normalized**: the cost is a divisor at the seam, never a widening of
+> `DiscoveryProgressLedger`'s `0..1` unit.
+>
+> **It moved with the currency rather than being left alone.** It was `lesson_per_crafted_item` `0.2`
+> — a fraction of a normalized threshold — and leaving it that way while its sibling became a *cost*
+> is precisely the drift the slice-4 consolidation existed to prevent. `4.0 / 20` is the same 5 items:
+> the crafts' pacing did not move. **`crafting::CRAFTS_WITH_A_DISCOVERY` is what makes the pricing
+> exhaustive** — `LadderConfig::validate` walks it and refuses to load a ladder that leaves a craft
+> unpriced, because a defaulted cost is a pace nobody chose.
 
 ---
 
@@ -586,7 +601,8 @@ committed band *spends* one.
 
 Bench time is deliberately **not** the binding constraint: four hands work a `work: 8` sled off in
 four turns bare-handed, against ten turns of banked hide. **A craft is ~5 items** (the ladder's
-`lesson_per_crafted_item`), so ~25–40 turns of deliberate work — the same order as one rung of the
+`craft_lesson_per_item` against that craft's `lesson_costs` entry), so ~25–40 turns of deliberate
+work — the same order as one rung of the
 intensification ladder — and the tool it unlocks is a further ~28-turn investment (a tanning frame is
 8 fibre + 2 bone, and the bone is what paces it) that then pays back over the 25 items it lasts.
 
@@ -783,10 +799,33 @@ and a turns conversion would need a forecast of what the band is about to do.
 
 > **AN ITEM ON SEVERAL QUANTA IS QUOTED ON ITS FIRST** (`ItemDefinition::headline_wear`, issue #515 —
 > `equipment.md` → "An item may wear on SEVERAL quanta"). A gauge reads in **one** unit, so the
-> handling gear — worked both at a slaughter and on a `Tame` — has to pick one: `≈12 builds` and
-> `≈2500 biomass butchered` are the same condition counted two ways, and stating both would need the
-> readout to know the usage mix it exists to let the player choose. The item **declares** its headline
-> by writing that quantum first, exactly as `tiers[0]` declares the default tier.
+> handling gear — worked both at a slaughter and on a `Tame` — has to pick one: `≈12 gardens' worth`
+> and `≈2500 biomass butchered` are the same condition counted two ways, and stating both would need
+> the readout to know the usage mix it exists to let the player choose. The item **declares** its
+> headline by writing that quantum first, exactly as `tiers[0]` declares the default tier — and
+> `husbandry_gear` declares `biomass_collected`, so **its** row reads *"≈2500 biomass butchered"*.
+
+> #### THE BUILD QUANTUM IS THE ONE WHOSE UNIT IS NOT ITS NOUN
+>
+> Since improvements were priced in work (`docs/plan_unit_costed_work.md` §6.3),
+> `WearQuantum::BuildProgress` is charged per **work unit** — one worker-turn at the food peak — while
+> a player holding a hoe thinks in *builds*. `100 / 0.16 = 625` is arithmetically right and says
+> nothing, so the gauge quotes it against a **named reference job**: the noun is *"gardens' worth"*
+> and `quantum_units_per_noun` divides by the `plant:tended` rung's own `work_cost`, giving
+> **"12 gardens' worth left"** — for the first item that **headlines** the build quantum. **No
+> shipped item does**: the only build-wearing item is `husbandry_gear`, which leads with the
+> slaughter, so today this arm is exercised by
+> `the_build_quanta_are_quoted_against_the_ladders_reference_job` and waits on issue #539's hoe.
+>
+> **The reference is the LADDER's** (`intensification::REFERENCE_BUILD_RUNG`), carried on
+> `BandCraftInputs::reference_build_cost` and resolved once per capture — so a retune of the rung
+> moves the readout with it rather than leaving a literal behind. The conversion lives at the readout
+> because `WearQuantum` knows nothing about rungs, and it is `1.0` for every other quantum, whose unit
+> already *is* the thing being counted (a kill is a kill).
+>
+> **The free win this pays out:** because the charge is per work unit, **a bigger job eats more
+> gear with no per-improvement authoring** — a 75-unit Sow burns 1.5× what a 50-unit Cultivate does,
+> and a Steppe Runner's 250-unit `Tame` 5× a rabbit's.
 >
 > **So the gauge is accurate under one usage assumption, not unconditionally** — a band splitting its
 > handling gear between a pen and a climb runs out sooner than the pen-only count says. That is the

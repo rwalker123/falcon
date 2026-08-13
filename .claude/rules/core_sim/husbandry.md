@@ -86,7 +86,7 @@ invariant.
 |---|---|---|---|
 | Wild, Sustain hunt | `ecology` | `wild_r` (rabbit 0.35 · deer 0.10 · mammoth 0.04) | a worker |
 | Mobile domesticated (**pastoral**) | `husbandry.pastoral.ecology` | `min(cap, wild_r × pastoral_gain)` (gain 2.0) | **a worker** (a Hunt assignment, like a wild herd — passive-free pastoral is retired) |
-| Corral, building | the `animal:pen` rung's `yield_fraction_while_building ×` the CREW's carry | — | a worker, 25 turns |
+| Corral, building | the `animal:pen` rung's `yield_fraction_while_building ×` the CREW's carry | — | the keepers, and **75 work units** (not a fixed turn count — the keeper crew is the throughput, so the turns move with `herders_needed`) |
 | Corral, finished (**pen**) | `husbandry.pen.ecology` | `min(cap, wild_r × pen_gain)` (gain 4.0, cap 1.0) | a worker + **feed (footprint-offset)** + pinned |
 
 - **Grazing 2d retired the flat pastoral 0.25 / pen 0.90.** The managed rungs now scale each species'
@@ -147,8 +147,9 @@ Ecology/husbandry tunables live in the `ecology` (`regrowth_rate`, `collapse_fra
 `fauna_config.json`.
 **The pen's BUILD dials live in `intensification_ladder.json`** (the `animal:pen`
 rung's `build` block), and as of slice 4 so do the **earned-knowledge dials** (the ladder-level
-`knowledge` block — the old `knowledge_progress_per_turn` / `knowledge_completion_threshold`, which
-`labor_config` duplicated verbatim) — see "The Intensification Ladder": both food webs climb on the same
+`knowledge` block — the old `knowledge_progress_per_turn`, since split into `learn_rate` plus a
+per-knowledge `lesson_costs` entry, and `knowledge_completion_threshold`, which `labor_config`
+duplicated verbatim) — see "The Intensification Ladder": both food webs climb on the same
 numbers.
 **`FaunaConfig` is validated** (`FaunaConfig::validate`, run inside `from_json_str`, so every load path
 — builtin, default file, `FAUNA_CONFIG_PATH` override — is covered; the `expedition_config.rs` /
@@ -185,7 +186,8 @@ managed one.
   the counter (`0` = shedding now), published through the same `herd_keeping_rung` seam the shed gates
   on, so the wire cannot count down against a rung the sim is not applying. See the plant twin in
   `cultivation.md`.
-- **`animal:pastoral`'s `decay_per_turn` is DELETED, not zeroed** (and `animal:pen`'s `0.0` with it):
+- **`animal:pastoral`'s `decay_fraction_per_turn` is DELETED, not zeroed** (and `animal:pen`'s `0.0`
+  with it):
   the arc made `domestication_progress` monotone-up, so the number described a tameness-bleed the sim
   does not have and **nothing read it** — `RungDef::build_decay` has two production call sites, both on
   the plant branch. `null` says "this rung's meter does not bleed"; a `0` read like a live dial.
@@ -217,10 +219,14 @@ gated, **paid** verb, so both food webs read the same:
   gentling the herd, not harvesting it. So a build costs yield only while hands are the scarce thing
   (a crew the herd's own escapement binds pays nothing for it, legibly — hire twice the people), and
   the dip is **floor-independent by construction**.
-  `domestication_progress` accrues that rung's
-  `progress_per_turn` **× `learn_multiplier(floor)` × the species' `taming_rate`** (slice 3c —
-  0.04 × 1.0 → 25 turns for a rabbit at the food peak, × 0.2 → 125 for a Steppe Runner) via the shared
-  `RungDef::build_accrual` seam. **Gates:** the faction knows **Herding**, the species'
+  `domestication_progress` accrues the crew's own output in **work units** —
+  `workers × PER_WORKER_OUTPUT × learn_multiplier(floor)` — against a job costing
+  `work_cost × the species' taming_cost_multiplier` (**50 units for a rabbit, 250 for a Steppe
+  Runner**), via the shared `RungDef::build_accrual` / `build_cost` seam. **The keepers' KIT is not
+  in that expression**: the handling gear takes work off the **job**, never off the crew's output —
+  see "The build axis" in `equipment.md`. **Turns are the output**,
+  so a bigger keeper crew gentles the same herd sooner; see "An improvement costs WORK, not turns" in
+  `intensification.md`. **Gates:** the faction knows **Herding**, the species'
   `husbandry_ceiling` allows domestication (Grazing 2d-δ), and **something stands above the crew's
   floor** (`systems::labor::crew_is_working_the_source` — the escapement room in biomass, read before
   the whole-animal quantiser, so a herd that cannot yet spare a whole body is still being worked).
@@ -241,7 +247,7 @@ gated, **paid** verb, so both food webs read the same:
   (`decay_under_herded`/`decay_domestication`) is deleted. An abandoned part-tamed herd keeps its earned
   progress; what neglect costs is **animals** (the shed, see "Herding is standing labor"). `Herd::tamed_this_turn`
   is still cleared each turn so it can't go stale, but its consumer (the retired decay-sparing) is gone.
-  `taming_rate` now scales only the `Tame` *build* (progress-up), never a decay. **Distinct from an ordinary
+  `taming_cost_multiplier` now prices only the `Tame` *job*, never a decay. **Distinct from an ordinary
   hunt at any other floor**: a plain hunt *harvests* a herd; only `Tame` raises the taming meter.
 - **`tame <faction_id> <herd_id>` command** (`handle_tame`; `TameCommand` proto field **40**,
   `CommandEventKind::Tame`) — **sets the `Tame` improvement** on the bands already hunting the herd,
@@ -255,26 +261,37 @@ gated, **paid** verb, so both food webs read the same:
   and `Herd::claim_domestication`. It let the player snap progress to `1.0` and skip the investment,
   which is the entire decision (the plant side removed its twin for that exact reason). **Proto field
   30 is reserved and must never be reused.** Tests that needed a tamed-herd fixture now run the real
-  `accrue_domestication(faction, RUNG_COMPLETE)`, which obeys the husbandry ceiling — you cannot
-  fabricate a domesticated `wild` herd.
-- **Per-species pace (slice 3c).** The rung's single `progress_per_turn` tamed *every* species in the
-  same 25 turns — a rabbit cost what a Steppe Runner cost. The species now declares its own
-  **`taming_rate`** (`fauna_config.json`, default 1.0), and `RungDef::build_accrual`/`build_decay` take
-  it as a **build timescale** — the one seam that honors it, so the Tame arm of
-  `advance_labor_allocation` and the decay in `advance_husbandry` cannot disagree. Scaling *both* rates
-  is load-bearing, not tidiness: a progress-only multiplier would put a Steppe Runner at
-  `0.04 × 0.2 = 0.008`/turn against the rung's `0.01`/turn decay — **literally untameable**. Every
-  other rung passes `RUNG_TIMESCALE_UNSCALED` (penning is a flat 25 turns for every species — a fence
-  is a fence; only *taming* varies). See the `fauna_config.json` row for the roster.
+  accrual through **`Herd::tame_outright(faction)`**, which obeys the husbandry ceiling — you cannot
+  fabricate a domesticated `wild` herd. (It replaced `accrue_domestication(faction, RUNG_COMPLETE)`,
+  which stopped meaning anything once a job had a size; it pays a nominal one-worker-turn job, and the
+  *size* of a fabricated job cannot affect any predicate, which all read `progress >= cost`.)
+- **Per-species price.** The rung's single cost would make *every* species the same job — a rabbit
+  costing what a Steppe Runner costs. The species declares its own **`taming_cost_multiplier`**
+  (`fauna_config.json`, default 1.0), and `RungDef::build_cost` / `build_decay` take it — the one seam
+  that honors it, so the Tame arm of `advance_labor_allocation` and the decay in `advance_husbandry`
+  cannot disagree. **The multiplier reaches BOTH**, because `build_decay` reads
+  `decay_fraction_per_turn` off the *scaled* cost, which keeps a rung's build:decay ratio invariant
+  per species for free — *slow to tame, slow to forget*. Every other rung passes `RUNG_COST_UNSCALED`
+  (penning is a flat job for every species — a fence is a fence; only *taming* varies).
+  > **It was `taming_rate`, a build TIMESCALE, and the inversion is the honest statement**
+  > (`docs/plan_unit_costed_work.md` §3.1). `0.2` on a Steppe Runner said *your people are five times
+  > worse at their job on this animal*; `taming_cost_multiplier: 5.0` says *the animal is five times
+  > the work*, which is what anyone would have meant — and it composes with a later cost spread,
+  > where a rate could not. Same pacing at the same crew.
+  See the `fauna_config.json` row for the roster.
 - **Config** — the whole rung is `intensification_ladder.json`'s `animal:pastoral` record: verb `tame`,
   `unlock_knowledge: "herding"`, **`earns_knowledge: "penning"`** (slice 4 — a config edit, exactly as
   promised),
-  `ceiling_required: "pastoral"`, `build: { progress_per_turn 0.04, decay_per_turn null, grace_turns 2,
-  crew_needed null, yield_fraction_while_building 0.50 }`. `progress_per_turn` **moved verbatim** from
-  `fauna_config.json` `husbandry`; the dip is **new** (a **playtest dial** — 0.50 mirrors the
-  animal-side `corral` precedent); `decay_per_turn` is null because the animal web's meters do not
-  bleed; `crew_needed` is null because a herd's crew comes from its **size** (`herders_needed`), not
-  from the rung, so a `Tame` build's accrual is **not** scaled by crew the way a plant build's is.
+  `ceiling_required: "pastoral"`, `build: { work_cost 50, decay_fraction_per_turn null, grace_turns 2,
+  crew_needed null, yield_fraction_while_building 0.50 }`. The **50 is a reference-crew choice, not a
+  derivation** — the rung declares no crew, so there was nothing to multiply today's 25 turns by, and
+  2 keepers is what rung 2 of the plant web wants for the same claim; the dip is a **playtest dial**
+  (0.50 mirrors the animal-side `corral` precedent); `decay_fraction_per_turn` is null because the
+  animal web's meters do not bleed; `crew_needed` is null because a herd's crew comes from its **size**
+  (`herders_needed`), not from the rung, so there is no rung-level staffing floor to state.
+  **The Tame IS crew-scaled now**, at that herd's own keeper crew — it was crew-*blind* before, taking
+  25 turns whether two hands or twenty worked the herd, and a crew-blind build is exactly what pricing
+  improvements in work removes (`docs/plan_unit_costed_work.md` §1.2).
 - **Slice 3b landed the rest of the rung:** passive-free pastoral is **retired** (a tamed herd yields
   only through a worker's Hunt assignment, at the pastoral `r` — see "Domestication / husbandry" and
   "The husbandry yield ladder") and the **`drift_to_owner`** movement primitive is live (see "Herd
@@ -293,15 +310,18 @@ of the *existing* herd domestication, and the fauna-side twin of "Cultivation" u
 Forage. Taming a herd is *symmetric* with preparing a patch, but the **product differs and that
 difference is the settle mechanic**: an *un*corralled domesticated herd stays **mobile** (pastoralism
 travels with the band); **corralling pins it**. Like Cultivate, corralling is an **explicit `Corral`
-policy with an investment cost** — not a free command. A `Herd` carries `corral_progress: f32` (0–1,
-the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at that tile) + a transient
+policy with an investment cost** — not a free command. A `Herd` carries `corral_progress: f32` (**work
+units**, complete at its stored `corral_cost`; the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at that tile) + a transient
 `corralled_tended_this_turn` flag. *Sim-only — the client readout is a follow-up (see below).*
 
 - **Rung-3 earned-knowledge gate — PENNING** (slice 4's §4.3 reshuffle; **it was Herding**). *Learned
   by doing* and **never start-granted**: hunting a **pastoral** (tamed) herd accrues faction
   **Penning** knowledge (discovery `PENNING_DISCOVERY_ID` = 2006, `fauna.rs`) at the ladder's
-  `knowledge.progress_per_turn` **scaled by the assignment's floor** — *"you learn penning by managing
-  tamed herds"*, and how fast depends on how much you leave standing
+  `knowledge.learn_rate` **scaled by the assignment's floor, over Penning's own `lesson_cost`** —
+  *"you learn penning by managing tamed herds"*, and how fast depends on how much you leave standing.
+  **It does NOT depend on how many hands are on the herd**: a lesson is credited once per source per
+  turn, in **practice units**, which is the currency the build's work units are deliberately kept
+  apart from (`intensification.md` → "A LESSON COSTS PRACTICE — and practice is NOT work")
   (`intensification::learn_multiplier`; the health gate is gone, `docs/plan_harvest_floor.md` §3.2). The **`Corral` policy** (and the `corral` / `extend_pen` commands, which ride the same
   `animal:pen` rung) is refused until the faction knows it; every gate resolves the id off the rung
   record, never a literal. The `penning` tag → discovery 2006 mapping is declared in
@@ -315,7 +335,8 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   built**: the crew carries the `animal:pen` rung's `yield_fraction_while_building ×` what a hunting
   crew of the same size carries (`docs/plan_harvest_floor.md` §3.1 — the dip multiplies hands, not the
   ceiling), and `corral_progress` accrues that rung's
-  `progress_per_turn × learn_multiplier(floor)` (0.04 → 25 turns at the food peak). **Its `eligible`
+  crew's own output in work units against the rung's `work_cost` of **75** (25 turns at a reference
+  crew of 3, at the food peak). **Its `eligible`
   deliberately carries no work predicate**, unlike the two rung-2 builds: it replaced a rung's
   `Thriving` gate, rung 3 never had one, and fencing a herd is ground work — a pen goes up around a
   flock already drawn down to its keeper's own floor. **Gates:** the faction knows **Herding**
@@ -323,8 +344,8 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   (progress is kept — a half-built pen is materials on the ground; unlike cultivation it does **not**
   decay *gradually*). That "progress is kept" applies to a **mid-build** lapse only — a **completed
   pen whose herd escapes loses its progress outright** (reset to `0.0`; see *Escapes-if-untended*
-  below). Accrued **after** the take, so the turn pays exactly what the forecast promised. At `1.0`
-  `Herd::corral_at` pens it (sets `corralled_at`, stops roaming, grants the one-turn tended grace),
+  below). Accrued **after** the take, so the turn pays exactly what the forecast promised. At the job's
+  cost `Herd::corral_at` pens it (sets `corralled_at`, stops roaming, grants the one-turn tended grace),
   pushes a `CommandEventKind::Corral` feed line, and **clears the assignment's `improvement`** — the
   keeper crew stays on the herd, under the stance it chose, rather than fencing a pen that is already
   up. Extending a pen is command-driven (`herd.pen_extending`), not improvement-driven, so the clear
@@ -421,10 +442,12 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   validated `>= 1`), the **`pastoral`** block (phase bands only). **The pen's
   investment cost and build rate moved to `intensification_ladder.json`'s `animal:pen` rung** — the old
   `corralling_yield_fraction` 0.50 is its `yield_fraction_while_building`, the old
-  `corral_build_progress_per_turn` 0.04 its `progress_per_turn` (unchanged values) — and in **slice 4**
+  `corral_build_progress_per_turn` 0.04 its rate, since re-expressed as **`work_cost` 75** work units
+  — 25 turns at a reference crew of 3, the pacing-neutral cost — and in **slice 4**
   the earned-knowledge levers `knowledge_progress_per_turn` (0.05) / `knowledge_completion_threshold`
   (1.0) moved to that file's ladder-level **`knowledge`** block at the same values, `labor_config`
-  having duplicated them verbatim (see "The Intensification Ladder").
+  having duplicated them verbatim; the rate has since split into `learn_rate` 1.0 over a per-knowledge
+  `lesson_costs` entry of 20, which is the same 0.05 (see "The Intensification Ladder").
   `claim_threshold` is **deleted** with the `domesticate` early-claim it gated (slice 3a — it let the
   player skip the investment). The retired flat rates
   `provisions_per_biomass` (0.01) / `corral_provisions_per_biomass` (0.012) and `fauna::corral_provisions`
@@ -483,6 +506,11 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
     **gross** yield (a preview quoting a number the player will never bank). At or below `K/2` the
     projected `corralYield` is honestly `0` (escapement — the pen pays nothing until the herd
     rebuilds).
+    > **`buildTurnsRemaining` is the same rule applied to TIME.** It publishes the turns a running
+    > Tame/Corral still needs, and — with nothing being built — what the rung this herd would climb
+    > next would take the crew currently working it. `-1` only where there is genuinely no answer
+    > (already penned, a gate refuses, no crew, or a stalled build). `intensification.md` → "The build
+    > on the wire" owns the seam, the gates it carries and which `*WorkCost` it belongs beside.
   - **`penFedFraction`** = last turn's fed fraction (`1.0` = fully fed, `< 1` = **starving** — the herd
     and its yield are shrinking, and it recovers when fed again).
   - **Demanded ≠ paid** (load-bearing): a starving pen demands more than it is paid, and
@@ -518,6 +546,79 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   1b**, only to `main`: without the readout the player watches their larder drain with no explanation.
   **Phase 2 (deferred):** the pen's upkeep is drawn *first* from the tile's `ForagePatch` biomass (the
   animals eat grass — a resource humans can't), and only the **shortfall** is hauled from the larder.
+
+### A herd row is assembled from TWO frames, and it must describe ONE turn
+
+`herd_snapshot_entries` walks the display **`HerdTelemetry`** entries and resolves each one's live
+**`Herd`** out of the registry (`registry.find(&entry.id)`), then fills the row from *both*. The two
+are not the same frame:
+
+| source | written | what it is as of |
+|---|---|---|
+| `HerdTelemetry` entry | Startup, then Logistics — the end of `advance_herds`, and `repopulate_fauna` on an immigration | **the previous turn** for anything `advance_husbandry` or Population touches |
+| live `Herd` | authoritative at all times | this turn |
+
+Three stages of writes land **after** the last telemetry write and before the capture: the rest of
+Logistics (`advance_predation`, then `advance_husbandry`'s shed / starve / despawn), the whole of
+Population (`advance_labor_allocation` — the build accrual, the hunt take, `corral_at`), and every
+stage between. So **every field a row takes from the entry is a turn behind every field it takes
+live**, and a row that mixes the two lets the player *see* the contradiction — which is worse than a
+row that is uniformly late.
+
+**The governing rule: two fields describing one fact must agree in the frame they ship in.** What is
+left on the entry, and why:
+
+| field | source | why |
+|---|---|---|
+| `id` · `label` · `species` · `sizeClass` · `huntable` | entry | identity and shape; nothing writes them after spawn |
+| `x` / `y` | entry | **kept as a pair with the fog gate**, which decided this row's visibility against `entry.position` — publishing a different tile beside it would describe a herd whose presence was judged somewhere else. They cannot differ in any case: the only Population-stage writer of `current_pos` is `Herd::corral_at`, and the tile it is handed is `herd.position()`, the hex the herd already stands on |
+| everything else | **live `Herd`** | see below |
+
+- **The build meters** — `domestication`, `corralled`, `corralProgress` — through
+  `intensification::build_fraction`, because the build engine accrues in `advance_labor_allocation`
+  at Population.
+- **`biomass`**, because `advance_husbandry`'s shed/starve shrink and the Population hunt take both
+  land after the entry. This one is **not cosmetic**: the client composes the escapement ceiling as
+  `max(0, B − floor·K) × rate`, taking `B` from here and `K` from the live `carryingCapacity`, so a
+  stale `B` quoted every yield preview from two different turns, every turn.
+- **`ecologyPhase`**, **re-derived at capture** from the same stock, capacity and ecology the row
+  publishes beside it (`classify_ecology_phase(biomass, herd_capacity, herd_ecology)` — the same
+  three seams `Herd::refresh_ecology_phase` uses, so it restates the sim's own call rather than
+  modelling it again). The entry's copy was classified in Logistics, while the cut points beside it
+  (`collapseFraction` / `stressedFraction`) and `regrowthSamples` are read live off `herd_ecology`,
+  which switches rung the instant a Tame or Corral completes — so on a completing turn the published
+  word and the published cuts described **different rungs**. Re-deriving is safe because **nothing in
+  the sim gates on `Herd::ecology_phase`**: the rung health gates were replaced by the floor's learn
+  multiplier, and its only remaining readers are the analytics log line, the display mirror, and the
+  Telling's `fauna.collapsing_group_count` / `most_collapsed_species`, which sample the stored word
+  and are untouched. There is no behaviour for the wire to disagree with.
+- **The heading** — `nextX` / `nextY`, and `routeLength` beside them — because `Herd::corral_at`
+  clears `next_pos` in Population, so a herd penned this turn published the heading of the roam its
+  pen had just ended and the map drew a migration arrow on an animal that cannot move. (`routeLength`
+  is live for uniformity only; a herd's route is built at spawn and never rewritten.)
+
+**The lag became a contradiction when the work pair joined it in the same sentence.** `tameWorkDone`
+/ `tameWorkCost` are live, so a completed Tame published as *"Domesticating 50 / 50 work (99%)"* —
+one row, one meter, two frames — and read Domesticated the turn after, with nothing in the sim having
+reverted.
+
+**The three tests that can see this class of defect all resolve a turn in STAGE ORDER**, which is the
+only arrangement in which the two frames can disagree; the snapshot unit tests fabricate the telemetry
+from the registry in the same instant and are structurally blind to it.
+`core_sim/tests/build_turns_closed_form.rs` pins each build meter against its work pair on the turn
+that rung completes. `core_sim/tests/ecology_bands_on_the_wire.rs` pins the phase word against its own
+published cuts on the turn a Tame completes — **and it authors distinct pastoral bands to do it**,
+because the shipped `husbandry.pastoral.ecology` block is `{}` and inherits the wild cuts, so on the
+shipped numbers a rung transition moves the ecology object without moving its cut points and no
+assertion could tell the two rungs apart. `core_sim/tests/herd_row_one_frame.rs` pins the stock
+against a real post-telemetry writer (a starving pen) and the heading against the turn the pen
+completes.
+
+**`HerdTelemetry` is NOT rebuilt after Population, deliberately.** Per-field live reads were chosen
+over a second rebuild because a rebuild's blast radius covers the herds `advance_husbandry` sheds or
+despawns later in Logistics, which today publish with no registry herd and a zeroed forecast. The
+`entry` copy survives on every live-read field as the fallback for the unreachable "in telemetry,
+gone from the registry" case.
 
 See Also: "Cultivation (Intensification Phase 1a)" under Depletable Forage — the plant twin of this
 mechanic (the two are near-mechanical transposes).

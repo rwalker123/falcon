@@ -33,7 +33,7 @@ cost a whole design conversation to unpick. **"Kit" now means only the roster en
 | **`sled`** — travois, drag harness | `hunt_carry` **40** (equipped, on its **tier**) | per **biomass hauled home from a hunt** |
 | **`baskets`** | `forage_carry` **8** (equipped, on its **tier**) | per **biomass gathered** |
 | **`traps`** — the passive device (snares, nets, weirs) | `attack` **20** bounded to `max_body_mass` **1.0**, `dispersion` **0**, `exposure` **0** | per **landed blow** |
-| **`husbandry_gear`** — hurdles, halters, a butchering stone, vessels | `pen_carry` **12** (unequipped), `build_rate` **1.5** (equipped, on its **tier**) | per **biomass BUTCHERED off a pen**, **and** per **unit of build progress accrued** — the one item on two quanta |
+| **`husbandry_gear`** — hurdles, halters, a butchering stone, vessels | `pen_carry` **12** (unequipped), `build_work` **8.5** (equipped, on its **tier**) | per **biomass BUTCHERED off a pen**, **and** per **unit of build progress accrued** — the one item on two quanta |
 | **`wayfinding`** — tallies, marked staves, a fire-drill | `scout_vantage_range` **1** (unequipped) | per **tile revealed for the FIRST time** |
 | **`clubs`** | `attack` **6** (equipped) | per **landed blow** |
 | **`tanning_frame`** — a BENCH TOOL, bounds `hide` | `craft_speed` **2.0**, `craft_quality_ceiling` **0.90**, `craft_material_efficiency` **0.80**, all equipped | per **item completed at the bench** |
@@ -131,9 +131,29 @@ stats parted.
 
 ### The build axis — the handling kit earns its job across the whole ladder
 
-**`EquipmentStat::BuildRate` multiplies a rung's per-source build accrual** (issue #515), applied
-inside the one build seam (`RungDef::build_accrual`) beside the escapement floor, the species' taming
-timescale and the crew scale. Neutral at `1.0`; `husbandry_gear`'s flint tier declares **1.5**.
+**`EquipmentStat::BuildWork` is the WORK UNITS ONE EQUIPPED WORKER TAKES OFF A BUILD'S COST**
+(issue #515, reshaped by `docs/plan_unit_costed_work.md` §6). Neutral at **`0.0`**; `husbandry_gear`'s
+flint tier declares **8.5**. It is subtracted from the job inside
+`LadderConfig::effective_build_cost`, **not** multiplied into `RungDef::build_accrual`.
+
+> #### IT LANDS ON THE JOB, AND THAT IS THE LOAD-BEARING ARITHMETIC
+>
+> ```text
+> on the crew:  turns_bare = cost / (n·w),  turns_geared = cost / (n·(w + h))
+>               ratio = w / (w + h)          ← THE COST CANCELS
+> on the job:   effective_cost = cost − t,   saving = t / cost
+> ```
+>
+> It was `BuildRate`, a **multiplier on the crew's output**, and a multiplier saves the same
+> *percentage* of turns on a garden, a field and a farm alike — **forever**. The intuition a hoe must
+> satisfy (real on a garden plot, nearly nothing on a farm) is unreachable from there. Subtracted
+> from the job, **the job's own size decides**: 8.5 per worker is a third of a 50-unit garden at the
+> reference crew and a seventeenth of a 300-unit farm, and **the tool never mentions either
+> improvement by name**.
+>
+> **The fade on a farm is therefore CONFIG's job** — rung 4 is born at ~300 units precisely so the
+> hand tools of the era are noise against it. It is a dial to tune, **not** a property to build into
+> the resolution rule.
 
 **The defect it closes.** The husbandry kit only paid off *once a pen existed* — its `pen_carry` is
 read on a corralled herd and nowhere else — so the gear did nothing across the entire climb that
@@ -141,26 +161,58 @@ produces the pen. That is backwards for what the gear physically is: hurdles, ha
 butchering stone are **animal-handling** tools, and `Tame` and `Corral` are exactly the turns a band
 spends handling animals.
 
-- **A MULTIPLIER, not a two-tier rate, and that is what lets a second item declare it.** The
-  `TWO_TIER` stats find their other side by searching the whole item table and taking the first
-  match, so each may be declared by exactly one item or the answer resolves alphabetically. A plant
-  build tool (issue #539) is a second declarer by construction. So the stat is the kind a kit
-  resolves as the **max of what its live items declare** — `dispersion` and `exposure`'s shape — and
-  a spent item stops contributing it, which for a multiplier means stepping back to the neutral.
+- **NOT a two-tier rate, and that is what lets a second item declare it.** The `TWO_TIER` stats
+  find their other side by searching the whole item table and taking the first match, so each may be
+  declared by exactly one item or the answer resolves alphabetically. A plant build tool (issue #539)
+  is a second declarer by construction. So the stat is the kind a kit resolves as the **max of what
+  its live items declare** (`KitChoice::best_declared` — `dispersion` and `exposure`'s shape), and a
+  spent item stops contributing it. **The neutral it steps back to is `0.0`, not `1.0`** — the two
+  live on `EquipmentStat::neutral`, so reading one as the other is not something a call site can do.
 - **NOT named for husbandry.** Both webs' rungs read the one build seam, so a stat keyed to the
   animal branch would need renaming the day a hoe ships. What is animal-only today is the *content*:
-  `husbandry_gear` is the only declarer, so both plant rungs resolve `1.0`.
-- **IT IS NOT COVERAGE-AVERAGED, and it is the one axis that is not.** The carries are per-worker
-  rates, so `EquipmentConfig::coverage`'s `weighted_rate` divides them over people exactly. A build
-  rate is a property of the **work**, and both animal rungs declare no `crew_needed` at all, so their
-  accrual does not scale with the crew in the first place — averaging says *bring fewer keepers and
-  the pen goes up faster*. Measured: one set of hurdles among ten keepers resolved **×1.05** against
-  the ×1.5 the gear declares, and every un-geared hand added made the build slower. `labor.rs`
-  resolves it as `equipment_cfg.build_rate(&crew_kit, &band_kit)`. The plant rungs *are* crew-scaled,
-  so #539 inherits the open question of whether a digging tool wants the covered reading instead.
-- **It multiplies the accrual and NOT `build_decay`** — the opposite treatment to `timescale`, for
-  `floor`'s reason: decay happens on turns nobody works the source, so there is no crew and no kit to
-  read. Better tools make a build arrive sooner; they do not make an abandoned one forget slower.
+  `husbandry_gear` is the only declarer, so both plant rungs resolve the neutral **`0.0`**
+  (`NO_BUILD_GEAR`) — a plant crew's tools take *nothing* off a Cultivate or a Sow yet. Reading that
+  neutral as `1.0` would hand every ungeared plant crew a free work unit per worker off every job,
+  which is exactly the wrong-neutral confusion `EquipmentStat::neutral` exists to make impossible.
+- **IT IS COVERAGE-WEIGHTED, like the carries — and THIS ANSWERS THE QUESTION `BuildRate` LEFT
+  OPEN.** *"Whether a digging tool wants the covered reading instead"*: **yes**. The old stat was
+  uncovered only because averaging a **multiplier** says *bring fewer keepers and the pen goes up
+  faster* — measured, one set of hurdles among ten keepers resolved **×1.05** against the ×1.5
+  declared, and every un-geared hand added made the build *slower*. A per-worker contribution off the
+  **cost** is a **SUM**, not an average: an un-geared hand adds zero rather than diluting.
+  - **`t = Σ over the crew`, and `KitCoverage::weighted_rate × head count` is exactly that sum** —
+    the partly-equipped-party seam the carries already run on. Five hoed workers and five bare answer
+    `5 × worth`, the same shape as five sledded hunters and five sledless hauling `5 × 40 + 5 × 12`.
+  - **The tool is WIELDED.** A worker holding one contributes its worth; a worker without one does
+    not. `labor.rs` resolves it as
+    `crew_coverage.weighted_rate(|kit| equipment_cfg.build_work_per_worker(kit, &band_kit))`, and the
+    labor arm sums it with `intensification::build_work_from_gear`.
+  - **A start-stocked band holds ONE set of hurdles**, so ten keepers take *one worker's worth* off
+    the job — pinned by
+    `labor::labor_yield_tests::the_handling_kit_takes_work_off_the_job_rather_than_speeding_the_crew`,
+    which also asserts the two arms' per-turn **accrual is identical**. A half-geared build is
+    honestly slower now, which it was not before.
+- **CALIBRATION — a fully-geared animal build is UNMOVED.** The retired `build_rate` ×1.5 on a
+  50-unit `Tame` at the reference keeper crew of **2** saved 8.33 of 25 turns, i.e. it was worth
+  **≈17 units of the job** — **8.5 per worker**, which is what the tier declares. Two fully-equipped
+  keepers therefore still finish in **17 turns**, exactly where the multiplier left it
+  (`intensification::tests::a_fully_geared_reference_crew_tames_in_the_turns_the_retired_multiplier_gave`),
+  and one equipped keeper of the two now takes **21** — honestly slower, where the uncovered
+  multiplier gave that crew the whole ×1.5.
+- **It moves the JOB'S BAR and NOT `build_decay`** — the same treatment `floor` gets, and for the
+  same reason: decay happens on turns nobody works the source, so there is no crew and no kit to
+  read. `build_decay` therefore bleeds a fraction of the **raw** cost, never of the tooled-down one:
+  better tools make a build arrive sooner; they do not make an abandoned one forget more slowly.
+  (The per-source **cost multiplier** *does* reach the decay, because `build_decay` reads
+  `decay_fraction_per_turn` off the scaled cost — see `intensification.md`.)
+- **The stored companion cost stays the RAW job, and the meter JUMPS on completion.** The bar the
+  crew must reach moves with the kit; the cost `is_cultivated()` and its three siblings compare
+  against does not, or a tool wearing out mid-build would *un*-complete a rung. So crossing the
+  effective bar sets the meter to the raw cost (`forage::banked_or_paid_off`) — the jump is the units
+  the tool pre-paid, and it is honest: they were worked, they were simply worked by the tool.
+- **Evaluated live each turn** off the crew's current kit, so gaining or wearing out a tool mid-build
+  takes effect immediately and **no state records "this build was geared"**. What is published is a
+  per-turn scratch reading (`buildWorkFromGear`), not a stored property of the build.
 - **It does NOT touch `yield_fraction_while_building`.** The payoff already compounds — a faster
   build pays the dip for fewer turns — and a second lever on the same turns would be a rate axis with
   nothing asking for one.
@@ -174,12 +226,47 @@ spends handling animals.
 **The use quantum is `WearQuantum::BuildProgress`, charged over the accrual.** A build has no
 discrete event — a kill, a hauled unit and a finished craft either happened or did not — so the
 meter's own increment is what a use *is*, the same treatment the two biomass quanta give a take.
-Every build totals `RUNG_COMPLETE == 1.0`, so **a build costs a fixed amount of gear whatever else is
-true of it**: a Steppe Runner's 125-turn `Tame` and a rabbit's 25-turn one burn identical hurdles,
-and a crew building at a shallow floor halves its accrual and doubles its turns to the same total.
-That invariance is the reason to prefer it over a per-worker-turn charge, which would be a clock in a
-per-use costume *and* would make the gear's cost track a species' `taming_rate`. **Still not a
-clock**: a stalled build moves the meter by zero and pays zero.
+**Still not a clock**: a stalled build moves the meter by zero and pays zero, and a crew building at
+a shallow floor halves its accrual and pays proportionally less gear for the same turns.
+
+> #### THE QUANTUM IS SIZE-SENSITIVE NOW, and it cost nothing to make it so
+>
+> The meter's increment is in **work units** since `docs/plan_unit_costed_work.md`, so
+> **a bigger job eats more gear, with no per-improvement authoring** — the thing this section used to
+> record as impossible ("a build costs a fixed amount of gear whatever else is true of it"; a Steppe
+> Runner's `Tame` and a rabbit's burned identical hurdles). A 75-unit Sow burns 1.5× what a 50-unit
+> Cultivate does, and a Steppe Runner's 250-unit `Tame` burns 5× a rabbit's, because the species'
+> `taming_cost_multiplier` prices the *job* rather than slowing the crew.
+>
+> **The declared amount was divided by 50 to keep that free** — `husbandry_gear`'s `build_progress`
+> **8.0 → 0.16**, where 50 is the reference job (`plant:tended`'s `work_cost`). Gear life per
+> reference build is therefore *exactly* unchanged: `100 / 0.16 = 625` work units ≈ **12.5 gardens'
+> worth**, the same 12.5 builds the old dial bought.
+>
+> **THE CHARGE INCLUDES THE UNITS THE TOOL PRE-PAID**, and the arithmetic is what makes that exact:
+> the meter jumps to the raw cost on the turn it completes, so the before/after delta over a
+> fully-geared 50-unit build sums to the whole 50 (33 worked, 17 pre-paid) — `50 × 0.16 = 8.0`
+> durability, precisely what a build cost before any of this. The tool did that work and wears for
+> it.
+>
+> **A LIFE READOUT QUOTES THE BUILD QUANTUM AGAINST THE REFERENCE JOB** — `WearQuantum::BuildProgress`'s
+> noun is *"gardens' worth"* and `snapshot::crafting::quantum_units_per_noun` divides by the reference
+> job's `work_cost`, so a gauge reads **"12 gardens' worth left"** rather than "625 builds left": a
+> work unit means nothing to a player holding a hoe. **The reference is the LADDER's**
+> (`intensification::REFERENCE_BUILD_RUNG`), resolved per capture rather than carried as a literal, so
+> a retune of the rung moves the readout with it — and the conversion lives at the readout because
+> `WearQuantum` knows nothing about rungs.
+>
+> **NO SHIPPED ITEM HEADLINES THE BUILD QUANTUM, so no gauge reads in gardens today.**
+> `husbandry_gear` — the only item that wears on a build at all — declares `biomass_collected`
+> **first**, and `headline_wear` is `wear[0]`, so its gauge reads *"≈2500 biomass butchered"* and is
+> **unchanged** by pricing improvements in work. That ordering stays, for two reasons: a keeper's gear
+> is worked on the beast far more turns than on a fence, and *"gardens' worth"* names the **plant**
+> reference job, so headlining the build here would quote animal handling gear in the other web's
+> unit. The conversion is for the first item to **lead** with `build_progress` — issue #539's hoe,
+> which is what it was written for. (`docs/plan_unit_costed_work.md` §6.3 reads *"one readout has to
+> change"* on the premise that this gauge said *"≈12.5 builds"*; it never did.) What the work-priced
+> quantum genuinely bought is on the **charge** side — a bigger job eats more gear — and that is live.
 
 **It is charged for the progress the METER TOOK, not the progress the RUNG OFFERED.** Each build arm
 reads its source's meter before the accrual and hands `systems::labor::charge_build_wear` the
@@ -194,6 +281,13 @@ nothing"* a property of the arithmetic rather than a rule each call site must re
 the fixed total **exact**: the completing turn pays for the sliver it banked, not for a full turn's
 offer the meter clamped away. Guard:
 `labor::labor_yield_tests::a_build_the_source_refuses_spends_no_gear`.
+
+**A ring is raised by the KEEPERS on the tending assignment.** `ExtendPen` is command-driven rather
+than assignment-driven, so it has no crew of its own; it used to be handed a named
+`PEN_EXTEND_CREW` of **one**, on the reasoning that the crew factor was the identity whatever was
+passed. That reasoning expired with the crew cap — the crew is the build's throughput now — so the
+constant is **deleted** and the arm passes the assignment's own `workers`, or every ring would be a
+one-hand job beside a pen raised by the whole crew.
 
 **`ExtendPen` is the one arm that still bills the offer**, for two reasons that hold only there: a
 ring is raised around a herd the faction already owns, so there is no owner-lock to refuse it; and
@@ -224,10 +318,12 @@ free — the whole thing *wear follows the work actually done* exists to prevent
   and it must be `item_crafted`.
 - **A LIFE READOUT QUOTES THE FIRST ENTRY** (`ItemDefinition::headline_wear`), and the order is the
   model, exactly as `tiers[0]` declares the default tier. A fuel gauge reads in one unit, so an item
-  on several quanta has to pick one: `≈12 builds` and `≈2500 biomass butchered` are the same
+  on several quanta has to pick one: `≈12 gardens' worth` and `≈2500 biomass butchered` are the same
   condition counted two ways, and stating both would need the readout to know the usage mix it exists
-  to let the player choose. **The gauge is therefore accurate under one usage assumption** — a band
-  splitting its gear between a pen and a `Tame` runs out sooner than the pen-only count says. A
+  to let the player choose. **The handling gear declares the slaughter first**, so that is what its
+  gauge says — see "THE QUANTUM IS SIZE-SENSITIVE NOW" above for why the build reading waits for an
+  item that leads with it. **The gauge is therefore accurate under one usage assumption** — a band
+  splitting its gear between a pen and a `Tame` runs out sooner than the butchering-only count says. A
   per-quantum row is a wire and readout change this slice deliberately does not make.
 
 ### The warrior kit reuses `attack`, and a band-wide kit may carry no mass bound

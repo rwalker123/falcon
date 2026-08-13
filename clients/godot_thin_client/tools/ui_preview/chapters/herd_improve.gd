@@ -179,6 +179,10 @@ func run(harness) -> void:
 		Readout.teaching_line(h._hud._drawercompose._compose_sheet).contains(Readout.TEACHING_BUILD_NEEDLE))
 	h._assert_hud("a running Tame's box is LIVE too — the abandon path is ungated on both webs",
 		tame_box is CheckBox and not (tame_box as CheckBox).disabled)
+	# **THE GEAR HALF OF THE ESTIMATE IS THE KIT'S, so its claims live with the kit** — the frames and
+	# the saturation assertions are `chapters/compose_rungs.gd`'s `_kit_swap_turn_estimate_states`,
+	# which is where a roster carrying the handling kit is staged. Nothing here states a gear term:
+	# this chapter's band is on the stalking kit, which arms nobody for a build.
 	# **THE SUPPRESSED FLOOR WALK, on the web whose model composes its `after` a different way.** The
 	# hunt model rescales a quantised take into every account it pays, so its holding rate is built by
 	# code the plant model shares none of — a gate added to one web only would leave this sheet

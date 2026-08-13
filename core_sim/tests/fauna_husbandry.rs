@@ -19,7 +19,7 @@ use core_sim::{
     SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
     TileRegistry, WellbeingConfigHandle, FOOD, FULLY_HERDED, HERDING_DISCOVERY_ID,
-    MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID, RUNG_COMPLETE,
+    MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
 };
 
 /// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
@@ -141,10 +141,47 @@ fn spawn_hunter(app: &mut App, herd_id: &str, policy: f32) -> bevy::prelude::Ent
     spawn_crew(app, herd_id, policy, None)
 }
 
-/// A band hunting `herd_id` under `Sustain` while **building** `improvement` — the stance a builder
-/// normally holds, so the build meter accrues and the dip rides an MSY draw.
+/// **THE KEEPER CREW A BUILD FIXTURE STAFFS, and it is deliberately NOT [`HUNT_WORKERS`]** — the
+/// herd's own `would_be_herders_needed`, which is the crew the animal web sizes a managed herd's
+/// labor with.
+///
+/// Two reasons that now coincide. **Under-staffing it sheds animals**, which would confound every
+/// measurement below. And since the crew became the build's *throughput*
+/// (`docs/plan_unit_costed_work.md` §1.2) it is also the honest answer to *"how long does this
+/// take"*: an animal build's pace is its herd's own keeper crew, where the rung declares none.
+///
+/// 5000 was chosen so a *take* is ceiling-bound rather than labor-bound; it became a **build-pacing**
+/// number only when the crew stopped being capped, and at that head count every animal build
+/// finishes in a single turn — leaving no part-built pen and no per-species pace to measure at all.
+/// **That one-turn over-crewed build is real and is pinned on purpose** by
+/// `a_bigger_keeper_crew_tames_materially_faster`.
+fn keeper_crew(app: &App, herd_id: &str) -> u32 {
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let herd = herd_of(app, herd_id);
+    core_sim::would_be_herders_needed(&herd, &fauna)
+}
+
+/// A band hunting `herd_id` at the food peak while **building** `improvement`, staffed at the herd's
+/// own [`keeper_crew`].
 fn spawn_builder(app: &mut App, herd_id: &str, improvement: Improvement) -> bevy::prelude::Entity {
-    spawn_crew(app, herd_id, 0.5, Some(improvement))
+    let keepers = keeper_crew(app, herd_id);
+    spawn_crew_of(
+        app,
+        herd_id,
+        MSY_BIOMASS_FRACTION,
+        Some(improvement),
+        keepers,
+    )
+}
+
+/// Re-staff a band mid-run — the climb test changes rung between legs, and the two animal rungs were
+/// priced against different reference crews.
+fn set_hunt_workers(app: &mut App, band: bevy::prelude::Entity, workers: u32) {
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("band exists")
+        .assignments[0]
+        .workers = workers;
 }
 
 fn spawn_crew(
@@ -380,7 +417,7 @@ fn reseat(app: &mut App, id: &str, cap: f32, biomass: f32) {
 fn domesticate(app: &mut App, id: &str) {
     let mut registry = app.world.resource_mut::<HerdRegistry>();
     let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-    herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+    herd.tame_outright(FactionId(0));
     herd.herded_fraction = FULLY_HERDED;
 }
 
@@ -469,18 +506,18 @@ fn tame_policy_domesticates_thriving_herd() {
 
     // A herd under active taming is spared the decay pass (`tamed_this_turn`, mirroring a patch under
     // Cultivate), so it accrues the FULL progress_per_turn(0.04) → 25 turns at the rung's own pace.
-    // The map picks the species, and slice 3c makes the *timescale* per-species (a `taming_rate` 0.2
-    // herd needs 125), so run the slowest tameable row's worth of turns rather than a bare 30 —
-    // this test is about "sustained Tame work tames and the tamer owns it", not about the pace.
-    let slowest_taming_rate = {
+    // The map picks the species, and the taming COST is per-species (a `taming_cost_multiplier` 5.0
+    // herd is five times the work), so run the dearest tameable row's worth of turns rather than a
+    // bare 30 — this test is about "sustained Tame work tames and the tamer owns it", not the pace.
+    let dearest_taming_cost = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         fauna
             .species
             .values()
-            .map(|def| def.taming_rate)
-            .fold(f32::INFINITY, f32::min)
+            .map(|def| def.taming_cost_multiplier)
+            .fold(1.0_f32, f32::max)
     };
-    run_turns_with_hunt(&mut app, (30.0 / slowest_taming_rate).ceil() as u32);
+    run_turns_with_hunt(&mut app, (30.0 * dearest_taming_cost).ceil() as u32);
 
     let registry = app.world.resource::<HerdRegistry>();
     let herd = registry.find(&id).expect("domesticated herd persists");
@@ -600,11 +637,22 @@ fn a_deep_floor_beside_a_tame_build_takes_more_now_and_finishes_later() {
     // statement about the stance, not about the horizon.
     const TURNS: u32 = 60;
 
-    let run = |policy: f32| {
+    // **Two runs per floor, at two staffings, because the two claims need different crews.** The
+    // TAKE half wants a crew the ceiling binds ([`HUNT_WORKERS`]) or it measures the carry cap; the
+    // BUILD half wants the rung's reference keeper crew ([`TAME_KEEPERS`]) or the build finishes in
+    // one turn at every floor and there is no pace left to compare
+    // (`docs/plan_unit_costed_work.md` §1.2). One number cannot serve both since the crew became the
+    // build's throughput.
+    let run = |policy: f32, big_crew: bool| {
         let mut app = spawn_world();
         let id = prime_thriving_herd(&mut app);
         grant_herding(&mut app);
-        spawn_crew(&mut app, &id, policy, Some(Improvement::Tame));
+        let keepers = if big_crew {
+            HUNT_WORKERS
+        } else {
+            keeper_crew(&app, &id)
+        };
+        spawn_crew_of(&mut app, &id, policy, Some(Improvement::Tame), keepers);
         let before = provisions_f32(&mut app);
         run_turns_with_hunt(&mut app, 1);
         let first_turn_take = provisions_f32(&mut app) - before;
@@ -613,8 +661,10 @@ fn a_deep_floor_beside_a_tame_build_takes_more_now_and_finishes_later() {
         (first_turn_take, herd)
     };
 
-    let (sustain_take, sustain_herd) = run(0.5);
-    let (deplete_take, deplete_herd) = run(0.15);
+    let (sustain_take, _) = run(0.5, true);
+    let (deplete_take, deplete_drawn) = run(0.15, true);
+    let (_, sustain_herd) = run(0.5, false);
+    let (_, deplete_herd) = run(0.15, false);
 
     // (1) It is sayable, and it pays MORE now — the dip rides the stance the player chose.
     assert!(
@@ -630,9 +680,10 @@ fn a_deep_floor_beside_a_tame_build_takes_more_now_and_finishes_later() {
         sustain_herd.domestication_progress
     );
 
-    // (2) And it defeats itself: the herd is driven out of Thriving, so the meter stops.
+    // (2) And it defeats itself: the herd is driven out of Thriving. Read off the ceiling-bound run
+    // — a keeper-sized crew is labor-bound and cannot draw the herd down far enough to show it.
     assert_ne!(
-        deplete_herd.ecology_phase,
+        deplete_drawn.ecology_phase,
         core_sim::EcologyPhase::Thriving,
         "a floor below the food peak has no equilibrium above it — the herd is drawn out of \
          Thriving. That is a consequence of the draw, not a gate on the build."
@@ -652,12 +703,12 @@ fn a_deep_floor_beside_a_tame_build_takes_more_now_and_finishes_later() {
 }
 
 /// Re-badge a primed herd **as another species** — the display name is what
-/// `FaunaConfig::taming_rate_for` resolves, so this puts the *same herd, on the same code path*, at a
-/// different species' taming timescale with one dial changed and nothing else. The husbandry ceiling
+/// `FaunaConfig::taming_cost_multiplier_for` resolves, so this puts the *same herd, on the same code
+/// path*, at a different species' taming COST with one dial changed and nothing else. The husbandry ceiling
 /// is taken from the same roster row, so the fixture can never be an incoherent species (a herd that
 /// tames at a ceiling its species forbids). Everything the turn loop keys off the herd itself
 /// (`size_class` → graze range → `K`, `fodder_per_biomass`, `regrowth_rate`) is untouched, so the
-/// ecology under the two runs is identical and only the taming rate differs.
+/// ecology under the two runs is identical and only the taming cost differs.
 fn rebadge_as(app: &mut App, id: &str, species_key: &str) {
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
     let def = fauna
@@ -671,14 +722,20 @@ fn rebadge_as(app: &mut App, id: &str, species_key: &str) {
     herd.husbandry_ceiling = ceiling;
 }
 
-/// Turns of sustained `Tame` work before the herd is domesticated (capped, so a species that can
-/// never tame fails loudly instead of hanging).
-fn turns_to_tame(species_key: &str, cap_turns: u32) -> u32 {
+/// Turns of sustained `Tame` work before the herd is domesticated, at an explicit keeper crew
+/// (capped, so a species that can never tame fails loudly instead of hanging).
+fn turns_to_tame_with(species_key: &str, keepers: u32, cap_turns: u32) -> u32 {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
     rebadge_as(&mut app, &id, species_key);
     grant_herding(&mut app);
-    spawn_builder(&mut app, &id, Improvement::Tame);
+    spawn_crew_of(
+        &mut app,
+        &id,
+        MSY_BIOMASS_FRACTION,
+        Some(Improvement::Tame),
+        keepers,
+    );
     for turn in 1..=cap_turns {
         run_turns_with_hunt(&mut app, 1);
         if herd_of(&app, &id).is_domesticated() {
@@ -688,28 +745,107 @@ fn turns_to_tame(species_key: &str, cap_turns: u32) -> u32 {
     panic!("{species_key} never tamed within {cap_turns} turns");
 }
 
-/// **Taming speed is a PER-SPECIES dial on one shared rung** (slice 3c). Before it, the
-/// `animal:pastoral` rung's single `progress_per_turn` tamed every animal in the same 25 turns — a
-/// rabbit cost what a Steppe Runner cost. Now the rung owns the mechanic and the species scales it:
-/// a quick, forgiving warren is 25 turns; binding a large migratory herd is generational (125).
+/// **Taming is a PER-SPECIES COST on one shared rung** (`docs/plan_unit_costed_work.md` §3.1).
+/// Before the dial existed the `animal:pastoral` rung priced every animal alike — a rabbit cost
+/// what a Steppe Runner cost. Now the rung owns the mechanic and the species prices it: a quick,
+/// forgiving warren is the rung's own 50 work units; binding a large migratory herd is 250.
 ///
-/// Same herd, same verb, same code path — one dial apart (`rebadge_as`).
+/// **This asserts the COST ratio and a live turn ordering, not a pair of turn literals.** Turns are
+/// an *output* now (`work_cost / crew output`), so "125 turns" is a statement about a staffing level
+/// rather than about the species — and the two species being compared do not even want the same
+/// crew, since `animals_per_herder` differs. What is invariant is the price: five times the work,
+/// five times the turns **at the same crew**.
 #[test]
-fn taming_speed_is_a_per_species_dial_on_the_shared_rung() {
-    // `taming_rate` 1.0 → the rung's own pace.
-    let rabbit = turns_to_tame("rabbit", 40);
-    // `taming_rate` 0.2 → a 5× longer build. (Also the case that proves the multiplier scales the
-    // whole *timescale*: at 0.04 × 0.2 = 0.008/turn against the rung's 0.01/turn decay, a
-    // progress-only multiplier would leave this species literally untameable.)
-    let steppe_runner = turns_to_tame("steppe_runner", 160);
+fn taming_is_a_per_species_cost_on_the_shared_rung() {
+    /// The crew both runs are staffed at, so the turn ratio *is* the cost ratio. Large enough that
+    /// neither rebadged species is under-herded (an under-staffed keeper sheds animals, which would
+    /// confound the measurement), small enough that a 250-unit Tame is not one turn.
+    const SHARED_KEEPERS: u32 = 10;
+    /// The multiple `fauna_config.json` declares between the two rows: `taming_cost_multiplier`
+    /// 5.0 against 1.0.
+    const STEPPE_RUNNER_IS_THIS_MUCH_MORE_WORK: u32 = 5;
+
+    let rabbit = turns_to_tame_with("rabbit", SHARED_KEEPERS, 60);
+    let steppe_runner = turns_to_tame_with("steppe_runner", SHARED_KEEPERS, 300);
+
+    assert_eq!(
+        steppe_runner,
+        rabbit * STEPPE_RUNNER_IS_THIS_MUCH_MORE_WORK,
+        "the same crew on the same herd pays {STEPPE_RUNNER_IS_THIS_MUCH_MORE_WORK}x the turns for \
+         a Steppe Runner: rabbit {rabbit}, steppe runner {steppe_runner}"
+    );
+}
+
+/// **AN UNTAMED HERD QUOTES THE TAME IT WOULD TAKE ON, AND DOUBLING THE CREW HALVES THE QUOTE** —
+/// `buildTurnsRemaining` is a *projection*, not "`-1` because nothing is being built"
+/// (`docs/plan_unit_costed_work.md` §11).
+///
+/// A compose sheet is by definition looking at a herd nobody has started taming, so a sentinel there
+/// withholds the readout at the one moment it drives the decision. It is the same defect, and the
+/// same remedy, as `HerdTelemetryState.penUpkeep` projecting an unpenned herd's running cost.
+///
+/// The halving is the arc's thesis stated directly — add hands and watch the number fall — and is
+/// asserted as a **relation** rather than against turn literals, because turns are an output of the
+/// crew now. `None` is pinned beside it for a faction that has not learned Herding: a projection must
+/// never quote a rung `validate_tame` would refuse.
+#[test]
+fn an_untamed_herd_quotes_the_tame_it_would_take_on_and_the_quote_halves_with_the_crew() {
+    /// Both runs staff at or above the fixture herd's keeper requirement, so neither is shedding —
+    /// the only thing that differs between them is how many hands are on the job.
+    const SMALL_CREW: u32 = 10;
+
+    let projection = |keepers: u32, herding: bool| -> Option<u32> {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        if herding {
+            grant_herding(&mut app);
+        }
+        // No improvement in flight: this crew is hunting the herd, and deciding.
+        spawn_crew_of(&mut app, &id, MSY_BIOMASS_FRACTION, None, keepers);
+        run_turns_with_hunt(&mut app, 1);
+        herd_of(&app, &id).build_turns_remaining
+    };
+
+    let quoted =
+        projection(SMALL_CREW, true).expect("a wild herd with a crew on it quotes its Tame");
+    let doubled = projection(SMALL_CREW * 2, true).expect("a bigger crew is still quotable");
+    assert_eq!(
+        doubled,
+        quoted.div_ceil(2),
+        "twice the keepers, half the turns: {quoted} at {SMALL_CREW}, {doubled} at {}",
+        SMALL_CREW * 2
+    );
+
+    assert_eq!(
+        projection(SMALL_CREW, false),
+        None,
+        "a faction that has not learned Herding is quoted no Tame at all"
+    );
+}
+
+/// **A BIGGER KEEPER CREW TAMES MATERIALLY FASTER, and that is the arc's own claim on the animal
+/// web** (`docs/plan_unit_costed_work.md` §1.2). Both animal rungs declare `crew_needed: null`, so
+/// before improvements were priced in work they were not merely uncapped but **crew-BLIND**: a Tame
+/// took 25 turns whether two hands or twenty worked the herd. Turns are the output now, so hands buy
+/// them — on every rung, with no cap.
+#[test]
+fn a_bigger_keeper_crew_tames_materially_faster() {
+    /// Both runs use a crew at or above the fixture herd's own keeper requirement, so neither is
+    /// shedding — what differs is only how many hands are on the job.
+    const SMALL_CREW: u32 = 10;
+    const BIG_CREW: u32 = SMALL_CREW * 4;
+
+    let slow = turns_to_tame_with("rabbit", SMALL_CREW, 120);
+    let fast = turns_to_tame_with("rabbit", BIG_CREW, 120);
 
     assert!(
-        rabbit.abs_diff(25) <= 1,
-        "a rabbit tames at the rung's own pace (~25 turns), took {rabbit}"
+        fast < slow,
+        "four times the keepers must finish the same job sooner: {fast} vs {slow}"
     );
-    assert!(
-        steppe_runner.abs_diff(125) <= 1,
-        "a steppe runner tames 5× slower (~125 turns), took {steppe_runner}"
+    assert_eq!(
+        fast,
+        slow.div_ceil(4),
+        "and in proportion — the crew IS the throughput: {fast} vs {slow}"
     );
 }
 
@@ -804,8 +940,8 @@ fn domesticated_herd_is_collapse_immune() {
     let low = {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.accrue_domestication(FactionId(0), RUNG_COMPLETE); // sets owner + progress = 1.0 → domesticated
-                                                                // Below the 15% collapse threshold — a wild herd here would crash.
+        herd.tame_outright(FactionId(0)); // sets owner + progress = 1.0 → domesticated
+                                          // Below the 15% collapse threshold — a wild herd here would crash.
         let low = herd.carrying_capacity * 0.10;
         herd.biomass = low;
         low
@@ -898,7 +1034,8 @@ fn a_low_floor_tame_takes_materially_longer_than_a_food_peak_one() {
         let mut app = spawn_world();
         let id = prime_thriving_herd(&mut app);
         grant_herding(&mut app);
-        spawn_crew(&mut app, &id, floor, Some(Improvement::Tame));
+        let keepers = keeper_crew(&app, &id);
+        spawn_crew_of(&mut app, &id, floor, Some(Improvement::Tame), keepers);
         for turn in 1..=PATIENCE_TURNS {
             run_turns_with_hunt(&mut app, 1);
             if herd_of(&app, &id).is_domesticated() {
@@ -1118,7 +1255,7 @@ fn corral_herd(app: &mut App, id: &str) -> UVec2 {
     let mut registry = app.world.resource_mut::<HerdRegistry>();
     let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
     herd.biomass = herd.carrying_capacity;
-    herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+    herd.tame_outright(FactionId(0));
     // A freshly-penned herd has a crew (`corral_at` grants the tending grace for the same reason) —
     // see `domesticate` for why the meter alone is not enough.
     herd.herded_fraction = FULLY_HERDED;
@@ -1799,7 +1936,7 @@ fn half_built_pen_keeps_progress_when_its_keeper_leaves() {
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+        herd.tame_outright(FactionId(0));
     }
     grant_penning(&mut app);
     let band = spawn_builder(&mut app, &id, Improvement::Corral);
@@ -1807,8 +1944,8 @@ fn half_built_pen_keeps_progress_when_its_keeper_leaves() {
     run_turns_with_hunt(&mut app, 5);
     let half_built = corral_progress_of(&app, &id);
     assert!(
-        half_built > 0.0 && half_built < 1.0,
-        "the pen should be part-built: {half_built}"
+        half_built > 0.0 && !herd_of(&app, &id).is_corralled(),
+        "the pen should be part-built: {half_built} work units banked"
     );
 
     // The keeper walks off mid-build — the investment is NOT an escape and is NOT lost.
@@ -1882,6 +2019,12 @@ fn sub_unit_pastoral_yield_credits_larder() {
 // --- The full climb (intensification ladder slice 4) ----------------------------------------------
 
 /// Faction 0's ledger progress on `discovery`.
+/// **A lesson fully learned** — the ladder's `knowledge.completion_threshold`, the bar
+/// `intensification::knows` compares a faction's ledger progress against. It is deliberately NOT the
+/// old `RUNG_COMPLETE`: the *ledger* is still normalized to `1.0` (slice 2 owns that half), while a
+/// per-source build meter now reads in work units and has no single completion value at all.
+const LESSON_LEARNED: f32 = 1.0;
+
 fn ladder_knowledge(app: &App, discovery: u32) -> f32 {
     app.world
         .resource::<DiscoveryProgressLedger>()
@@ -1941,11 +2084,15 @@ fn the_full_wild_to_pen_climb_is_paced_by_practising_each_rung() {
     let id = prime_thriving_herd(&mut app);
     // A `pen`-ceiling species that actually reaches the top of the ladder, at `taming_rate` 0.8.
     rebadge_as(&mut app, &id, "boar");
-    let band = spawn_hunter(&mut app, &id, 0.5);
+    // The knowledge legs are crew-BLIND (a lesson is credited once per source per turn), so this
+    // band is staffed at the rung's reference keeper crew throughout and re-staffed at leg 4 — the
+    // two animal rungs were priced against different reference crews. See [`TAME_KEEPERS`].
+    let keepers = keeper_crew(&app, &id);
+    let band = spawn_crew_of(&mut app, &id, MSY_BIOMASS_FRACTION, None, keepers);
 
     // Leg 1 — practise the WILD rung: a Sustain hunt teaches Herding, and nothing else.
     let leg1 = turns_until(&mut app, "learn Herding", 60, |app| {
-        ladder_knowledge(app, HERDING_DISCOVERY_ID) >= RUNG_COMPLETE
+        ladder_knowledge(app, HERDING_DISCOVERY_ID) >= LESSON_LEARNED
     });
     assert_eq!(
         ladder_knowledge(&app, PENNING_DISCOVERY_ID),
@@ -1963,16 +2110,19 @@ fn the_full_wild_to_pen_climb_is_paced_by_practising_each_rung() {
     // Leg 3 — **the new leg**: practise the PASTORAL rung. The same Sustain hunt now teaches
     // Penning, because the herd stands on a different rung.
     assert!(
-        ladder_knowledge(&app, PENNING_DISCOVERY_ID) < RUNG_COMPLETE,
+        ladder_knowledge(&app, PENNING_DISCOVERY_ID) < LESSON_LEARNED,
         "Penning cannot already be known — taming a WILD herd practises rung 1, not rung 2"
     );
     set_hunt_improvement(&mut app, band, None);
     let leg3 = turns_until(&mut app, "learn Penning", 60, |app| {
-        ladder_knowledge(app, PENNING_DISCOVERY_ID) >= RUNG_COMPLETE
+        ladder_knowledge(app, PENNING_DISCOVERY_ID) >= LESSON_LEARNED
     });
 
-    // Leg 4 — `Corral`, gated on the Penning the leg above just earned.
+    // Leg 4 — `Corral`, gated on the Penning the leg above just earned. Re-staffed to the herd's
+    // CURRENT keeper crew: it has grown while the legs above ran, and an under-staffed keeper sheds.
     set_hunt_improvement(&mut app, band, Some(Improvement::Corral));
+    let keepers = keeper_crew(&app, &id);
+    set_hunt_workers(&mut app, band, keepers);
     let leg4 = turns_until(&mut app, "build the pen", 60, |app| {
         herd_of(app, &id).is_corralled()
     });
@@ -1990,17 +2140,26 @@ fn the_full_wild_to_pen_climb_is_paced_by_practising_each_rung() {
             "the {leg} leg should be ~20 turns of practice, got {turns}"
         );
     }
-    // The two build legs: ~31 turns to tame a boar (25 / 0.8) and ~25 to fence it.
+    // **THE CLIMB IS KNOWLEDGE-PACED, and since improvements were priced in work it is emphatically
+    // so** (`docs/plan_unit_costed_work.md` §1.2). A build's turns are now `work_cost / crew output`,
+    // and an animal build's crew is the herd's own `herders_needed` — a real boar herd wants enough
+    // keepers to clear a 62.5-unit Tame in a handful of turns. Under-staffing it to slow the build
+    // down is not available: an under-herded flock **sheds**, so the keeper crew is the herd's, not
+    // the player's. So the two build legs are short and the two lessons dominate, which is exactly
+    // what this test's name claims.
+    for (leg, turns) in [("Tame", leg2), ("Corral", leg4)] {
+        assert!(turns >= 1, "the {leg} leg must take at least a turn");
+        assert!(
+            turns < leg1,
+            "the {leg} leg ({turns}) is paid in hands, so it is shorter than a lesson ({leg1}) — \
+             the climb is paced by PRACTISING each rung, not by building it"
+        );
+    }
+    // The headline: a pen is a ~45-turn commitment on this fixture herd, and better than half of it
+    // is the two lessons. Broad band — these are playtest dials.
     assert!(
-        (28..=34).contains(&leg2),
-        "taming a boar ~31 turns, got {leg2}"
-    );
-    assert!((23..=27).contains(&leg4), "fencing ~25 turns, got {leg4}");
-    // The headline: a pen is now a ~95-turn commitment, ~20 turns longer than the pre-slice-4
-    // climb (which had no Penning leg). Broad band — these are playtest dials.
-    assert!(
-        (85..=110).contains(&total),
-        "the whole climb should run ~95 turns, got {total}"
+        (38..=60).contains(&total),
+        "the whole climb should run ~45 turns, got {total}"
     );
 }
 
@@ -2032,7 +2191,7 @@ fn penning_accrues_every_worked_turn_not_only_on_kill_turns() {
 
     let mut wait_turns = 0u32;
     let mut turns = 0u32;
-    while ladder_knowledge(&app, PENNING_DISCOVERY_ID) < RUNG_COMPLETE {
+    while ladder_knowledge(&app, PENNING_DISCOVERY_ID) < LESSON_LEARNED {
         let before = herd_of(&app, &id).biomass;
         run_turns_with_hunt(&mut app, 1);
         // A wait-turn: the herd's biomass did not fall (no whole animal was spared/killed this turn).
@@ -2103,7 +2262,7 @@ fn an_over_stocked_managed_herd_converges_to_its_labor_capacity() {
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+        herd.tame_outright(FactionId(0));
         herd.carrying_capacity = start_animals * body_mass * 2.0; // K well above the stock
         herd.biomass = start_animals * body_mass;
     }
@@ -2131,8 +2290,8 @@ fn an_over_stocked_managed_herd_converges_to_its_labor_capacity() {
         herd.owner.is_some(),
         "a partially-herded herd stays the owner's — only shed-to-zero clears ownership"
     );
-    assert_eq!(
-        herd.domestication_progress, RUNG_COMPLETE,
+    assert!(
+        herd.is_domesticated(),
         "and its tameness is untouched by the shedding: {}",
         herd.domestication_progress
     );
@@ -2158,7 +2317,7 @@ fn the_shed_is_bounded_by_the_true_overage_near_a_ceil_boundary() {
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+        herd.tame_outright(FactionId(0));
         herd.carrying_capacity = current_animals * body_mass * 4.0;
         herd.biomass = current_animals * body_mass;
         // Seat the staffing the labor arm would write for `assigned` herders (needed = ceil = 3).
@@ -2207,7 +2366,7 @@ fn a_partially_herded_pastoral_herd_stays_tame_with_regrowth() {
     let cap = {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+        herd.tame_outright(FactionId(0));
         // Ecological K modestly above the labor capacity, over-stocked to full K.
         let cap = capacity_animals * body_mass * 1.5;
         herd.carrying_capacity = cap;
@@ -2237,8 +2396,8 @@ fn a_partially_herded_pastoral_herd_stays_tame_with_regrowth() {
         herd.owner.is_some(),
         "an understaffed herd stays TAME and owned — it never sheds to zero"
     );
-    assert_eq!(
-        herd.domestication_progress, RUNG_COMPLETE,
+    assert!(
+        herd.is_domesticated(),
         "and its tameness is untouched: {}",
         herd.domestication_progress
     );
@@ -2314,7 +2473,7 @@ fn a_pen_sheds_slower_than_a_pastoral_herd() {
         {
             let mut registry = app.world.resource_mut::<HerdRegistry>();
             let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-            herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+            herd.tame_outright(FactionId(0));
             herd.biomass = herd.carrying_capacity;
             herd.herded_fraction = 0.0;
         }
@@ -2390,7 +2549,7 @@ fn shed_animals_appear_in_the_wild_web() {
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+        herd.tame_outright(FactionId(0));
         herd.biomass = herd.carrying_capacity;
         herd.herded_fraction = NOT_HERDED_FIXTURE; // fully under-contained ⇒ a real shed, once the grace is spent
     }
@@ -2457,7 +2616,7 @@ fn under_herded_lines(app: &App) -> Vec<CommandEventEntry> {
 fn seat_over_stocked_managed(app: &mut App, id: &str, herders: f32, aph: f32, body_mass: f32) {
     let mut registry = app.world.resource_mut::<HerdRegistry>();
     let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-    herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+    herd.tame_outright(FactionId(0));
     let capacity_animals = herders * aph;
     herd.carrying_capacity = capacity_animals * body_mass * 8.0;
     herd.biomass = capacity_animals * body_mass * 4.0; // 4× the labor capacity
@@ -2617,7 +2776,7 @@ fn the_shed_starts_exactly_one_turn_past_the_grace() {
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+        herd.tame_outright(FactionId(0));
         herd.biomass = herd.carrying_capacity;
     }
     let start = herd_of(&app, &id).biomass;
@@ -2652,7 +2811,7 @@ fn holding_a_herd_resets_its_neglect_counter() {
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+        herd.tame_outright(FactionId(0));
         herd.biomass = herd.carrying_capacity;
     }
     let start = herd_of(&app, &id).biomass;
@@ -2688,7 +2847,7 @@ fn the_under_herded_notice_fires_inside_the_grace() {
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+        herd.tame_outright(FactionId(0));
         herd.biomass = herd.carrying_capacity;
     }
     let start = herd_of(&app, &id).biomass;

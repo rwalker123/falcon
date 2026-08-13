@@ -368,11 +368,15 @@ fn the_lesson_and_the_tools_wear_are_charged_the_same_number_of_times() {
         "the frame must be worn exactly once per item finished"
     );
 
-    let lesson = LadderConfigHandle::default()
-        .get()
+    // **The ledger credit is PRACTICE over the craft's own cost** — the same divisor a rung's lesson
+    // goes through (`LadderKnowledge::ledger_credit`), one quantum over: per item finished rather
+    // than per turn worked.
+    let ladder = LadderConfigHandle::default().get();
+    let per_item = ladder
         .knowledge
-        .lesson_per_crafted_item;
-    let expected = (lesson * completed as f32).min(1.0);
+        .ledger_credit("tanning", ladder.knowledge.craft_lesson_per_item)
+        .expect("the ladder prices tanning");
+    let expected = (per_item * completed as f32).min(1.0);
     assert!(
         (bench.knows("tanning") - expected).abs() < 1e-3,
         "tanning must be taught exactly once per item finished: expected {expected}, got {}",

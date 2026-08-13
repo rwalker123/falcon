@@ -36,8 +36,7 @@ use core_sim::{
     MapPresetsHandle, MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick,
     SiteRefusal, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
     StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry,
-    WellbeingConfigHandle, FOOD, NO_BUILD_GEAR, RUNG_TIMESCALE_UNSCALED,
-    SEED_SELECTION_DISCOVERY_ID,
+    WellbeingConfigHandle, FOOD, RUNG_COST_UNSCALED, SEED_SELECTION_DISCOVERY_ID,
 };
 
 /// Grant faction-level **Seed Selection** directly via the ledger — the gate the `Sow` policy checks.
@@ -72,10 +71,17 @@ const FOOD_PEAK_FLOOR: f32 = core_sim::MSY_BIOMASS_FRACTION;
 const NEAR_ZERO_PROVISIONS: f32 = 1e-3;
 
 /// How small "a trickle" is: the whole bare-ground build averages under this fraction of the Field's
-/// own per-turn harvest. Measured on the shipped dials it is ~6% (3.3 provisions across the 25-turn
-/// build against 2.1/turn once the Field stands) — the bound is deliberately loose, since it is
+/// own per-turn harvest. Measured on the shipped dials it is **~13%** (0.19/turn across the 25-turn
+/// build against 1.49/turn once the Field stands) — the bound is deliberately loose, since it is
 /// asserting the *shape* (sowing bare ground is an investment, not a slow harvest), not a number.
-const BUILD_TRICKLE_FRACTION: f32 = 0.1;
+///
+/// **It read ~6% until the build crew came apart from [`FORAGE_WORKERS`]**
+/// (`docs/plan_unit_costed_work.md` §1.2 — the crew is the build's throughput now, so a build
+/// fixture staffs [`sow_crew`]). A three-hand Sow takes far less than the ceiling every turn, so the
+/// young stand it is seeding *grows* under it instead of being held at its floor — and a bigger
+/// standing crop means a bigger dipped take. The share moved because the fixture's staffing did, not
+/// because the rung got cheaper.
+const BUILD_TRICKLE_FRACTION: f32 = 0.2;
 
 /// The **mechanic fixture's** grid — pinned *here*, deliberately not read from
 /// `simulation_config.json`.
@@ -326,6 +332,52 @@ fn spawn_forager(
     spawn_forager_of(app, tile, patch, improvement, FORAGE_WORKERS)
 }
 
+/// **A crew BUILDING the patch, staffed at the rung's own [`sow_crew`]** — not at
+/// [`FORAGE_WORKERS`]. See `sow_crew` for why the two numbers had to come apart.
+fn spawn_builder(
+    app: &mut App,
+    tile: bevy::prelude::Entity,
+    patch: UVec2,
+    improvement: Improvement,
+) -> bevy::prelude::Entity {
+    let crew = match improvement {
+        Improvement::Cultivate => app
+            .world
+            .resource::<LadderConfigHandle>()
+            .get()
+            .rung(RungKey::PlantTended)
+            .build_crew_needed()
+            .expect("the tended rung declares a crew"),
+        _ => sow_crew(app),
+    };
+    spawn_forager_of(app, tile, patch, Some(improvement), crew)
+}
+
+/// **A completed plant rung, seated at the LADDER's own cost.** The feral bleed is an absolute
+/// number of work units per turn (a fraction of that rung's cost), so a fixture seated at a nominal
+/// one-unit job would lapse to nothing in a single bleeding turn.
+fn seat_completed_rung(app: &mut App, coord: UVec2, rung: RungKey) {
+    let cost = app
+        .world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung(rung)
+        .build_cost(RUNG_COST_UNSCALED)
+        .expect("the rung builds");
+    let mut registry = app.world.resource_mut::<ForageRegistry>();
+    let patch = registry.patch_mut(coord).expect("patch exists");
+    match rung {
+        RungKey::PlantField => {
+            patch.field_progress = cost;
+            patch.field_cost = cost;
+        }
+        _ => {
+            patch.cultivation_progress = cost;
+            patch.cultivation_cost = cost;
+        }
+    }
+}
+
 /// [`spawn_forager`] with an explicit head-count — the dip test needs a crew the carry binds.
 fn spawn_forager_of(
     app: &mut App,
@@ -433,23 +485,68 @@ fn field_grace(app: &App) -> u32 {
         .neglect_grace_turns()
 }
 
+/// **What this file's crew produces on the `plant:field` rung in one turn, and the rung's feral
+/// bleed** — both in absolute work units. The accrual is read at [`SOW_CREW`], the head count the
+/// build fixtures actually staff, because the crew *is* the throughput now
+/// (`docs/plan_unit_costed_work.md` §1.2).
 fn field_build(app: &App) -> (f32, f32) {
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let field = ladder.rung(RungKey::PlantField);
     (
-        // Staffed to the rung's full crew — the rung's stated rate, not an under-crewed fraction.
-        field.build_accrual(
-            Some(Improvement::Sow),
-            true,
-            FOOD_PEAK_FLOOR,
-            RUNG_TIMESCALE_UNSCALED,
-            field
-                .build_crew_needed()
-                .expect("the field rung declares a crew"),
-            NO_BUILD_GEAR,
-        ),
-        field.build_decay(RUNG_TIMESCALE_UNSCALED),
+        field.build_accrual(Some(Improvement::Sow), true, FOOD_PEAK_FLOOR, sow_crew(app)),
+        field.build_decay(RUNG_COST_UNSCALED),
     )
+}
+
+/// **The crew a BUILD fixture staffs, and it is deliberately NOT [`FORAGE_WORKERS`].** 5000 is
+/// chosen so a *take* is ceiling-bound rather than labor-bound; it became a **build-pacing** number
+/// only when the crew stopped being capped, and at that head count a 75-unit Sow finishes in a
+/// single turn — leaving no part-sown ground for a decay, a grace or a completion test to stand on.
+/// The rung's own `crew_needed` is the staffing the shipped cost was priced against
+/// (`docs/plan_unit_costed_work.md` §3). The one-turn over-crewed build is real and pinned on
+/// purpose by `forage_cultivation::over_crewing_a_build_is_no_longer_capped`.
+fn sow_crew(app: &App) -> u32 {
+    app.world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung(RungKey::PlantField)
+        .build_crew_needed()
+        .expect("the field rung declares a crew")
+}
+
+/// The whole `plant:tended` job, in work units — the completed rung-2 meter's value.
+fn tended_cost(app: &App) -> f32 {
+    app.world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung(RungKey::PlantTended)
+        .build_cost(RUNG_COST_UNSCALED)
+        .expect("the tended rung builds")
+}
+
+/// The whole `plant:field` job, in work units.
+fn field_cost(app: &App) -> f32 {
+    app.world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung(RungKey::PlantField)
+        .build_cost(RUNG_COST_UNSCALED)
+        .expect("the field rung builds")
+}
+
+/// **Turns [`SOW_CREW`] needs to raise a whole Field**, `ceil(work_cost / work per turn)` — turns are
+/// an output now, so a bare `1.0 / rate` no longer means anything.
+fn turns_to_sow(app: &App) -> u32 {
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let field = ladder.rung(RungKey::PlantField);
+    core_sim::build_turns_remaining(
+        field
+            .build_cost(RUNG_COST_UNSCALED)
+            .expect("the rung builds"),
+        core_sim::RUNG_UNSTARTED,
+        field_build(app).0,
+    )
+    .expect("a staffed Sow finishes")
 }
 
 /// **PLAYABILITY, not mechanic — this is the check that caught worldgen dropping the Field rung.**
@@ -504,7 +601,7 @@ fn sowing_bare_hospitable_ground_creates_a_patch_and_builds_a_field() {
     let mut app = spawn_world();
     let (tile, coord) = find_bare_sowable_tile(&mut app);
     grant_seed_selection(&mut app, FactionId(0));
-    spawn_forager(&mut app, tile, coord, Some(Improvement::Sow));
+    spawn_builder(&mut app, tile, coord, Improvement::Sow);
 
     let expected_capacity = {
         let labor = app.world.resource::<LaborConfigHandle>().get();
@@ -529,8 +626,7 @@ fn sowing_bare_hospitable_ground_creates_a_patch_and_builds_a_field() {
     }
 
     // Sustained work completes the Field in the rung's own `1 / progress_per_turn` turns.
-    let (progress_per_turn, _) = field_build(&app);
-    let turns_to_sow = (1.0 / progress_per_turn).ceil() as u32;
+    let turns_to_sow = turns_to_sow(&app);
     run_turns_with_forage(&mut app, turns_to_sow);
     let registry = app.world.resource::<ForageRegistry>();
     let patch = registry.patch(coord).expect("patch persists");
@@ -562,7 +658,7 @@ fn a_bare_ground_sow_pays_almost_nothing_while_it_builds_then_pays_the_field() {
     let mut app = spawn_world();
     let (tile, coord) = find_bare_sowable_tile(&mut app);
     grant_seed_selection(&mut app, FactionId(0));
-    spawn_forager(&mut app, tile, coord, Some(Improvement::Sow));
+    let band = spawn_builder(&mut app, tile, coord, Improvement::Sow);
 
     // The opening turns pay NOTHING: a fraction of the MSY of a seed stock below its Allee threshold
     // is a fraction of zero. There is nothing there yet — that is the whole cost of the rung.
@@ -572,8 +668,7 @@ fn a_bare_ground_sow_pays_almost_nothing_while_it_builds_then_pays_the_field() {
         "freshly sown ground has nothing to take a fraction of"
     );
 
-    let (progress_per_turn, _) = field_build(&app);
-    let turns_to_sow = (1.0 / progress_per_turn).ceil() as u32;
+    let turns_to_sow = turns_to_sow(&app);
     run_turns_with_forage(&mut app, turns_to_sow);
     let while_building = provisions_f32(&mut app);
     assert!(
@@ -585,7 +680,15 @@ fn a_bare_ground_sow_pays_almost_nothing_while_it_builds_then_pays_the_field() {
         "the field is standing at the end of the build"
     );
 
-    // The payoff lands the moment the Field is complete — and dwarfs the whole build's takings.
+    // **The payoff is read at a crew that can CARRY it.** A Field's managed harvest is capped by
+    // collection (`managed_per_worker_yield`), and the build crew above is the *build's* staffing,
+    // not the Field's — reading the payoff at three hands would compare an investment against a
+    // labor-bound harvest rather than against the rung it bought.
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("band exists")
+        .assignments[0]
+        .workers = FORAGE_WORKERS;
     let before = provisions_f32(&mut app);
     run_turns_with_forage(&mut app, 1);
     let field_yield = provisions_f32(&mut app) - before;
@@ -619,14 +722,14 @@ fn the_plant_ladder_climbs_wild_then_tended_then_field() {
     fn rung_yield(rung: Option<bool>) -> (f32, f32, f32, f32) {
         let mut app = spawn_world();
         let (tile, coord) = prime_thriving_patch(&mut app);
+        match rung {
+            Some(true) => seat_completed_rung(&mut app, coord, RungKey::PlantField),
+            Some(false) => seat_completed_rung(&mut app, coord, RungKey::PlantTended),
+            None => {}
+        }
         let (biomass, capacity) = {
             let mut registry = app.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(coord).unwrap();
-            match rung {
-                Some(true) => patch.field_progress = 1.0,
-                Some(false) => patch.cultivation_progress = 1.0,
-                None => {}
-            }
             if rung.is_some() {
                 patch.owner = Some(FactionId(0));
             }
@@ -701,11 +804,10 @@ fn the_plant_ladder_climbs_wild_then_tended_then_field() {
 fn sowing_a_tended_patch_pays_the_dip_then_upgrades_it() {
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
+    seat_completed_rung(&mut app, coord, RungKey::PlantTended);
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
-        let patch = registry.patch_mut(coord).unwrap();
-        patch.cultivation_progress = 1.0;
-        patch.owner = Some(FactionId(0));
+        registry.patch_mut(coord).unwrap().owner = Some(FactionId(0));
     }
     grant_seed_selection(&mut app, FactionId(0));
     let dip = {
@@ -780,9 +882,9 @@ fn sowing_a_tended_patch_pays_the_dip_then_upgrades_it() {
     }
 
     // Worked to completion the patch stands on rung 3 — and stops paying the dip.
-    spawn_forager(&mut app, tile, coord, Some(Improvement::Sow));
-    let (progress_per_turn, _) = field_build(&app);
-    run_turns_with_forage(&mut app, (1.0 / progress_per_turn).ceil() as u32);
+    spawn_builder(&mut app, tile, coord, Improvement::Sow);
+    let turns_to_sow = turns_to_sow(&app);
+    run_turns_with_forage(&mut app, turns_to_sow);
     let patch_is_field = app
         .world
         .resource::<ForageRegistry>()
@@ -796,7 +898,7 @@ fn sowing_a_tended_patch_pays_the_dip_then_upgrades_it() {
     // Against a tended patch of the SAME age: both have been gathered down to their operating point,
     // so this compares the two rungs rather than one rung's opening stock against the other's steady
     // rate (`docs/plan_harvest_floor.md` §1).
-    let tended_steady = tended_baseline((1.0 / progress_per_turn).ceil() as u32, FORAGE_WORKERS);
+    let tended_steady = tended_baseline(turns_to_sow, FORAGE_WORKERS);
     assert!(
         after_completion > tended_steady,
         "once the Field stands the dip stops and it out-pays the patch it replaced: \
@@ -817,7 +919,7 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
     // Name the crop on the assignment (rather than leaving the auto-pick) so the retire can be
     // asserted to carry the *commitment* across, not merely the tile coordinate.
     let crop = default_sowable_species(&app, coord).expect("sowable ground grows a sowable plant");
-    let band = spawn_forager(&mut app, tile, coord, Some(Improvement::Sow));
+    let band = spawn_builder(&mut app, tile, coord, Improvement::Sow);
     {
         let mut allocation = app
             .world
@@ -830,8 +932,8 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
     }
 
     // Every turn but the last: the meter fills and the verb stays put.
-    let (progress_per_turn, _) = field_build(&app);
-    let turns_to_build = (1.0 / progress_per_turn).ceil() as u32;
+    let turns_to_sow = turns_to_sow(&app);
+    let turns_to_build = turns_to_sow;
     run_turns_with_forage(&mut app, turns_to_build - 1);
     assert!(
         !app.world
@@ -865,7 +967,8 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
     );
     let assignment = &allocation.assignments[0];
     assert_eq!(
-        assignment.workers, FORAGE_WORKERS,
+        assignment.workers,
+        sow_crew(&app),
         "the crew stays on the ground it sowed"
     );
     assert_eq!(
@@ -901,10 +1004,11 @@ fn an_abandoned_field_goes_feral_and_fully_lapses() {
     let mut app = spawn_world();
     let (tile, coord) = find_bare_sowable_tile(&mut app);
     grant_seed_selection(&mut app, FactionId(0));
-    let band = spawn_forager(&mut app, tile, coord, Some(Improvement::Sow));
-    let (progress_per_turn, decay_per_turn) = field_build(&app);
+    let band = spawn_builder(&mut app, tile, coord, Improvement::Sow);
+    let turns_to_sow = turns_to_sow(&app);
+    let (_, decay_per_turn) = field_build(&app);
     assert!(decay_per_turn > 0.0, "an unworked field must bleed");
-    run_turns_with_forage(&mut app, (1.0 / progress_per_turn).ceil() as u32);
+    run_turns_with_forage(&mut app, turns_to_sow);
     assert!(app
         .world
         .resource::<ForageRegistry>()
@@ -952,10 +1056,15 @@ fn an_abandoned_field_goes_feral_and_fully_lapses() {
     }
 
     // Left alone it bleeds all the way to nothing, and ownership lapses with it.
-    run_turns_untended(&mut app, (1.0 / decay_per_turn).ceil() as u32 + 2);
+    let lapse_turns = (field_cost(&app) / decay_per_turn).ceil() as u32 + 2;
+    run_turns_untended(&mut app, lapse_turns);
     let registry = app.world.resource::<ForageRegistry>();
     let patch = registry.patch(coord).unwrap();
-    assert_eq!(patch.field_progress, 0.0, "the investment fully lapses");
+    assert_eq!(
+        patch.field_progress,
+        core_sim::RUNG_UNSTARTED,
+        "the investment fully lapses"
+    );
     assert_eq!(patch.owner, None, "ownership lapses once nothing is left");
     // The patch itself survives — plants reseed, so the stand you planted stays on the map as wild
     // ground (patches never despawn).
@@ -969,7 +1078,7 @@ fn an_abandoned_field_goes_feral_and_fully_lapses() {
 fn sow_seeds_nothing_without_seed_selection() {
     let mut app = spawn_world();
     let (tile, coord) = find_bare_sowable_tile(&mut app);
-    spawn_forager(&mut app, tile, coord, Some(Improvement::Sow));
+    spawn_builder(&mut app, tile, coord, Improvement::Sow);
 
     run_turns_with_forage(&mut app, 30);
 
@@ -1002,8 +1111,8 @@ fn a_completed_field_clears_the_sow_verb_for_every_band_that_was_building_it() {
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
     grant_seed_selection(&mut app, FactionId(0));
-    let first = spawn_forager(&mut app, tile, coord, Some(Improvement::Sow));
-    let second = spawn_forager(&mut app, tile, coord, Some(Improvement::Sow));
+    let first = spawn_builder(&mut app, tile, coord, Improvement::Sow);
+    let second = spawn_builder(&mut app, tile, coord, Improvement::Sow);
     // A token second crew — enough to hold an assignment (and therefore an improvement) without its
     // share of the draw-down changing what the first band is building against.
     app.world
@@ -1015,8 +1124,8 @@ fn a_completed_field_clears_the_sow_verb_for_every_band_that_was_building_it() {
     // Long enough for the meter to fill however the two crews' accruals interleave, plus the turn a
     // band that did not finish it needs to notice (its clear is decided at the top of its own
     // iteration, so a crew processed *before* the finisher clears on the following turn).
-    let (progress_per_turn, _) = field_build(&app);
-    run_turns_with_forage(&mut app, (1.0 / progress_per_turn).ceil() as u32 + 1);
+    let turns_to_sow = turns_to_sow(&app);
+    run_turns_with_forage(&mut app, turns_to_sow + 1);
 
     assert!(
         app.world
@@ -1069,12 +1178,15 @@ fn an_unworked_patch_unwinds_its_newest_rung_first() {
     let (_tile, coord) = find_sowable_tile(&app);
     // A patch standing on rung 2 with a part-built Field on top of it — the state a crew that
     // started sowing a tended patch and then walked away leaves behind.
-    const PART_BUILT_FIELD: f32 = 0.5;
+    seat_completed_rung(&mut app, coord, RungKey::PlantTended);
+    let tended_cost = tended_cost(&app);
+    let sow_cost = field_cost(&app);
+    let part_built_field = sow_cost / 2.0;
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).expect("patch");
-        patch.cultivation_progress = 1.0;
-        patch.field_progress = PART_BUILT_FIELD;
+        patch.field_progress = part_built_field;
+        patch.field_cost = sow_cost;
         patch.owner = Some(FactionId(0));
     }
 
@@ -1082,7 +1194,7 @@ fn an_unworked_patch_unwinds_its_newest_rung_first() {
     let grace = field_grace(&app);
     // Run right through the Field's whole bleed. Cultivation must not move by so much as one turn's
     // decay while the Field still has anything left.
-    let field_bleed_turns = (PART_BUILT_FIELD / field_decay).ceil() as u32;
+    let field_bleed_turns = (part_built_field / field_decay).ceil() as u32;
     run_turns_untended(&mut app, grace + field_bleed_turns);
     {
         let registry = app.world.resource::<ForageRegistry>();
@@ -1094,7 +1206,7 @@ fn an_unworked_patch_unwinds_its_newest_rung_first() {
             patch.field_progress
         );
         assert_eq!(
-            patch.cultivation_progress, 1.0,
+            patch.cultivation_progress, tended_cost,
             "and the tended ground under it lost NOTHING while that was happening"
         );
         assert!(
@@ -1107,11 +1219,16 @@ fn an_unworked_patch_unwinds_its_newest_rung_first() {
     // to bleed. The neglect counter is long past every grace by now, so this is immediate.
     const FLOAT_RESIDUE_TURNS: u32 = 2;
     run_turns_untended(&mut app, FLOAT_RESIDUE_TURNS + 1);
+    // The Field's meter is spent to the last ULP before rung 2 becomes the newest thing to lose.
     let patch_registry = app.world.resource::<ForageRegistry>();
     let patch = patch_registry.patch(coord).expect("patch");
-    assert_eq!(patch.field_progress, 0.0, "the Field is fully gone");
+    assert_eq!(
+        patch.field_progress,
+        core_sim::RUNG_UNSTARTED,
+        "the Field is fully gone"
+    );
     assert!(
-        patch.cultivation_progress < 1.0,
+        patch.cultivation_progress < tended_cost,
         "with the Field gone, the tended rung is the newest thing left and starts to bleed"
     );
 }
@@ -1127,13 +1244,13 @@ fn a_gap_in_a_sow_cannot_strand_the_tended_rung_below_complete() {
     let mut app = spawn_world();
     let (tile, coord) = find_sowable_tile(&app);
     grant_seed_selection(&mut app, FactionId(0));
+    seat_completed_rung(&mut app, coord, RungKey::PlantTended);
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
-        let patch = registry.patch_mut(coord).expect("patch");
-        patch.cultivation_progress = 1.0;
-        patch.owner = Some(FactionId(0));
+        registry.patch_mut(coord).expect("patch").owner = Some(FactionId(0));
     }
-    let band = spawn_forager(&mut app, tile, coord, Some(Improvement::Sow));
+    let tended_cost = tended_cost(&app);
+    let band = spawn_builder(&mut app, tile, coord, Improvement::Sow);
     run_turns_with_forage(&mut app, 5);
     assert!(
         field_progress_of(&app, coord) > 0.0,
@@ -1151,7 +1268,7 @@ fn a_gap_in_a_sow_cannot_strand_the_tended_rung_below_complete() {
         .expect("patch")
         .cultivation_progress;
     assert_eq!(
-        stranded, 1.0,
+        stranded, tended_cost,
         "cultivation cannot move while a Field meter still stands: {stranded}"
     );
     assert!(
@@ -1172,10 +1289,9 @@ fn losing_a_field_pushes_one_feed_line_on_the_sow_channel() {
     let (_tile, coord) = find_sowable_tile(&app);
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
-        let patch = registry.patch_mut(coord).expect("patch");
-        patch.field_progress = 1.0;
-        patch.owner = Some(FactionId(0));
+        registry.patch_mut(coord).expect("patch").owner = Some(FactionId(0));
     }
+    seat_completed_rung(&mut app, coord, RungKey::PlantField);
 
     let grace = field_grace(&app);
     run_turns_untended(&mut app, grace);
@@ -1231,11 +1347,10 @@ fn a_cultivate_on_a_field_is_handed_back_rather_than_stalling_forever() {
     grant_seed_selection(&mut app, FactionId(0));
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
-        let patch = registry.patch_mut(coord).expect("patch");
-        patch.field_progress = 1.0;
-        patch.owner = Some(FactionId(0));
+        registry.patch_mut(coord).expect("patch").owner = Some(FactionId(0));
     }
-    let band = spawn_forager(&mut app, tile, coord, Some(Improvement::Cultivate));
+    seat_completed_rung(&mut app, coord, RungKey::PlantField);
+    let band = spawn_builder(&mut app, tile, coord, Improvement::Cultivate);
     assert_eq!(
         app.world
             .resource::<ForageRegistry>()

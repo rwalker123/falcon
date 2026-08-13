@@ -255,17 +255,30 @@ const KIT_FORAGE_CARRY_BARE := 1.6
 ## equipped tier is here for the chapters that build their OWN roster to exercise the axis.
 const KIT_PEN_CARRY_EQUIPPED := 40.0
 
-## **THE BUILD AXIS — a MULTIPLIER, neutral at 1.0, never a tier** (issue #515). The handling gear is
-## the one shipped item declaring it, so every other kit publishes the neutral and the roster's
-## MINIMUM on this axis is that neutral — which is what `KitRoster.kit_uses` compares against.
+## **THE BUILD AXIS — WORK UNITS off the job per equipped worker, neutral at 0.0, never a tier**
+## (issue #515; the multiplier it replaced retired with `docs/plan_unit_costed_work.md` §6). The
+## handling gear is the one shipped item declaring it, so every other kit publishes the neutral and
+## the roster's MINIMUM on this axis is that neutral — which is what `KitRoster.kit_uses` compares
+## against.
 ##
 ## **EVERY ENTRY MUST STATE IT, including the ones that do nothing.** `unequipped_tier` is the
-## minimum across the roster, so a fixture omitting the key on some entries reads their tier as `0`
-## and drags the minimum below neutral — after which a kit publishing the plain `1.0` tests as
-## though it declared something, and the offer rule would admit kits the sim's roster never would.
-const KIT_BUILD_RATE_NEUTRAL := 1.0
-## What the handling gear buys: the `equipment.json` `husbandry_gear` flint tier's own value.
-const KIT_BUILD_RATE_HANDLING := 1.5
+## minimum across the roster, and an entry omitting the key reads `0.0` — which is the neutral now,
+## so a fixture that skipped some entries would no longer drag the minimum below it. It is stated
+## anyway, because the roster's shape is the wire's and a fixture that quietly relies on a default
+## stops describing what the sim sends.
+const KIT_BUILD_WORK_NEUTRAL := 0.0
+## What the handling gear buys: the `equipment.json` `husbandry_gear` flint tier's own value — the
+## work units ONE equipped keeper takes off a Tame or a Corral.
+const KIT_BUILD_WORK_HANDLING := 8.5
+
+## **HOW MANY KEEPERS THAT GEAR CAN ARM** — the other half of the axis, and the head count the compose
+## sheet's `min(workers, this)` saturates at. A band holding two sets of hurdles arms two keepers and
+## a third finds none left to carry, which is what makes a crew ABOVE it worth staging.
+const KIT_BUILD_SATURATING_CREW_HANDLING := 2
+
+## …and the neutral, which is every kit that carries nothing helping a build: nobody is armed for one,
+## so the gear term is nothing at any crew size.
+const KIT_BUILD_SATURATING_CREW_NONE := 0
 
 const KIT_PEN_CARRY_BARE := 12.0
 
@@ -448,7 +461,7 @@ static func kit_roster_fixture() -> Array:
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
 			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
-			"build_rate": KIT_BUILD_RATE_NEUTRAL,
+			"build_work_per_worker": KIT_BUILD_WORK_NEUTRAL,
 			"item_ids": [KIT_ITEM_SPEARS, KIT_ITEM_SLED],
 		},
 		{
@@ -458,7 +471,7 @@ static func kit_roster_fixture() -> Array:
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_EQUIPPED,
 			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
-			"build_rate": KIT_BUILD_RATE_NEUTRAL,
+			"build_work_per_worker": KIT_BUILD_WORK_NEUTRAL,
 			"item_ids": [KIT_ITEM_BASKETS],
 		},
 		{
@@ -468,7 +481,7 @@ static func kit_roster_fixture() -> Array:
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
 			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_EQUIPPED,
-			"build_rate": KIT_BUILD_RATE_NEUTRAL,
+			"build_work_per_worker": KIT_BUILD_WORK_NEUTRAL,
 			"item_ids": [KIT_ITEM_WAYFINDING],
 		},
 		{
@@ -478,7 +491,7 @@ static func kit_roster_fixture() -> Array:
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
 			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
-			"build_rate": KIT_BUILD_RATE_NEUTRAL,
+			"build_work_per_worker": KIT_BUILD_WORK_NEUTRAL,
 			"item_ids": [KIT_ITEM_CLUBS],
 		},
 		{
@@ -489,7 +502,7 @@ static func kit_roster_fixture() -> Array:
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
 			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
-			"build_rate": KIT_BUILD_RATE_NEUTRAL,
+			"build_work_per_worker": KIT_BUILD_WORK_NEUTRAL,
 			"item_ids": [],
 		},
 	]

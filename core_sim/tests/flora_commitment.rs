@@ -13,9 +13,15 @@
 
 use bevy::math::UVec2;
 use core_sim::{
-    FloraConfig, FloraShare, ForagePatch, LaborConfig, RungKey, BUILTIN_LABOR_CONFIG, WHOLE_BASKET,
+    FactionId, FloraConfig, FloraShare, ForagePatch, LaborConfig, RungKey, BUILTIN_LABOR_CONFIG,
+    WHOLE_BASKET,
 };
 use sim_runtime::TerrainType;
+
+/// **Whose ground the hypothetical committed patch belongs to** — nobody's in particular. A
+/// completed meter needs an owner (the accrual sets one on first progress) and these quotes are a
+/// pure function of ground and config, so the faction cannot matter.
+const QUOTE_OWNER: FactionId = FactionId(0);
 
 /// A pinned seed for every per-tile realization sweep (§10).
 const SWEEP_SEED: u64 = 0x_F10A_5EED_C011_0010;
@@ -56,7 +62,10 @@ fn labor() -> LaborConfig {
 /// A patch standing on the **tended** rung, committed to `species`, on `terrain`'s basket.
 fn tended_patch(terrain: TerrainType, species: Option<&str>, capacity: f32) -> ForagePatch {
     let mut patch = ForagePatch::new(bevy::math::UVec2::new(terrain as u32, 0), capacity);
-    patch.cultivation_progress = 1.0;
+    // The rung is FINISHED here — the quotes below are about a committed patch's basket, not about
+    // the build that reaches it. A meter set to a bare `1.0` no longer completes anything now that a
+    // job has a size (`docs/plan_unit_costed_work.md`), so this runs the real accrual.
+    patch.complete_cultivation(QUOTE_OWNER);
     patch.species = species.map(str::to_string);
     patch
 }

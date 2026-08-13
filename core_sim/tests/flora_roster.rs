@@ -69,7 +69,10 @@ fn tended_and_wild_rate(
     let coord = UVec2::ZERO;
     let capacity = 1.0; // rates are per unit biomass; the capacity is irrelevant to them.
     let mut tended = core_sim::ForagePatch::new(coord, capacity);
-    tended.cultivation_progress = 1.0;
+    // The rung is FINISHED here — a bare `1.0` no longer completes anything now that a job has a
+    // size (`docs/plan_unit_costed_work.md`), so this runs the real accrual. The faction cannot
+    // matter: a rate is a pure function of ground and config.
+    tended.complete_cultivation(core_sim::FactionId(0));
     tended.species = Some(species.to_string());
     let wild = core_sim::ForagePatch::new(coord, capacity);
     (

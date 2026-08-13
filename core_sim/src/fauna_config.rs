@@ -302,26 +302,31 @@ pub struct SpeciesDef {
     /// when present.
     #[serde(default)]
     pub regrowth_rate: Option<f32>,
-    /// **How fast this species tames, as a multiple of the `animal:pastoral` rung's own pace**
-    /// (intensification ladder slice 3c). The rung owns the *mechanic*; the species scales it —
-    /// exactly the split [`SpeciesDef::regrowth_rate`] already uses against `pastoral_gain`/`pen_gain`.
-    /// A single dial on the rung would tame a rabbit and a Steppe Runner in the same 25 turns; taming
-    /// a small, quick, forgiving animal should be fast, and binding a large migratory herd should be
-    /// generational. Roster: rabbit/fowl/crag_goat `1.0` (25 turns) · boar `0.8` (~31) · aurochs `0.5`
-    /// (50) · steppe_runner/marsh_grazer `0.2` (125); a `wild`-ceiling species (deer, mammoth) never
-    /// tames, so it carries none.
+    /// **HOW MUCH MORE WORK THIS SPECIES IS TO TAME, as a multiple of the `animal:pastoral` rung's
+    /// declared `work_cost`.** The rung owns the *mechanic*; the species prices it — exactly the split
+    /// [`SpeciesDef::regrowth_rate`] already uses against `pastoral_gain`/`pen_gain`. A single cost on
+    /// the rung would make a rabbit and a Steppe Runner the same job; taming a small, quick,
+    /// forgiving animal should be light work, and binding a large migratory herd should be
+    /// generational. Roster: rabbit/fowl/crag_goat `1.0` (50 units) · boar `1.25` (62.5) · aurochs
+    /// `2.0` (100) · steppe_runner/marsh_grazer `5.0` (250); a `wild`-ceiling species (deer, mammoth)
+    /// never tames, so it carries none.
     ///
-    /// **It is a TIMESCALE — it scales the rung's `decay_per_turn` as well as its `progress_per_turn`**
-    /// (`RungDef::build_accrual` / `build_decay`, the one seam that honors it). Scaling the speed alone
-    /// would put a Steppe Runner's `0.04 × 0.2 = 0.008`/turn *below* the rung's `0.01`/turn decay —
-    /// literally untameable, and a violation of the ladder's "taming must out-run its decay" bound.
-    /// Scaling both keeps the ratio: **slow to tame, slow to forget**.
+    /// **IT IS A COST, NOT A RATE, AND THE INVERSION IS THE HONEST STATEMENT**
+    /// (`docs/plan_unit_costed_work.md` §3.1). It was `taming_rate` 0.2 on a Steppe Runner, which said
+    /// *your people are five times worse at their job on this animal*; `taming_cost_multiplier` 5.0
+    /// says *the animal is five times the work*, which is what anyone would have meant. Same pacing,
+    /// truer sentence — and it composes with a cost spread, where a rate could not.
     ///
-    /// Defaults to `1.0` (the rung's own pace) when omitted, so an untagged or future species keeps
-    /// today's behaviour. **Playtest dial.** Validated finite & `> 0` (at `0`/negative the species
-    /// would silently never tame, or un-tame while worked).
-    #[serde(default = "default_taming_rate")]
-    pub taming_rate: f32,
+    /// **It scales the rung's DECAY as well as its cost**, because [`RungDef::build_decay`] reads
+    /// `decay_fraction_per_turn` off the *scaled* cost — so the rung's build:decay ratio is invariant
+    /// per species for free: **slow to tame, slow to forget**. Moot today (`animal:pastoral` declares
+    /// no decay at all) but it is the rule that keeps a future decaying rung correct.
+    ///
+    /// Defaults to `1.0` (the rung's own price) when omitted, so an untagged or future species keeps
+    /// today's behaviour. **Playtest dial.** Validated finite & `> 0` (at `0` the species would tame
+    /// the instant any crew touched it; negative is meaningless).
+    #[serde(default = "default_taming_cost_multiplier")]
+    pub taming_cost_multiplier: f32,
     /// **How many ANIMALS one herder can mind** — the standing maintenance a managed (pastoral or
     /// penned) herd demands every turn: `herders_needed = ceil((biomass / body_mass) /
     /// animals_per_herder)` ([`crate::fauna::herders_needed`]). *Just because you aren't killing an
@@ -337,13 +342,13 @@ pub struct SpeciesDef {
     /// megaherd** that was a pure artifact of the unit: 4,560 biomass of Steppe Runner is only **38
     /// animals**, i.e. ~3 herders. Per-species, per-**animal**, is the only unit that reads true.
     ///
-    /// Per-species for the same reason [`SpeciesDef::body_mass`] / [`SpeciesDef::taming_rate`] /
+    /// Per-species for the same reason [`SpeciesDef::body_mass`] / [`SpeciesDef::taming_cost_multiplier`] /
     /// [`SpeciesDef::husbandry_ceiling`] are: a herder minds far more birds than aurochs. Roster:
     /// fowl/rabbit 50, crag_goat 25, boar 15, steppe_runner/marsh_grazer 15, aurochs 12. Deer and
     /// mammoth omit it — a `wild` [`HusbandryCeiling`] is never herded at all.
     ///
     /// Resolved **live** by display name ([`FaunaConfig::animals_per_herder_for`]), never cached on the
-    /// `Herd` — the `taming_rate` path, so retuning reaches herds already on the map (and it needs no
+    /// `Herd` — the `taming_cost_multiplier_for` path, so retuning reaches herds already on the map (and it needs no
     /// snapshot field). Defaults to [`DEFAULT_ANIMALS_PER_HERDER`] when omitted. **Playtest dial.**
     /// Validated finite & `> 0` (at `0` any herd would need infinitely many herders and could never be
     /// fully staffed).
@@ -362,7 +367,7 @@ pub struct SpeciesDef {
     /// a fast wild breeder out-yields it, because taming touched only `r`. Folded into the herd's `K` at
     /// the one seam that writes it (`fauna::ecological_carrying_capacity`, via [`fauna::herd_density_gain`]),
     /// so a wild herd's `×1.0` leaves its `K` byte-identical. Resolved **live** by display name
-    /// ([`FaunaConfig::pastoral_density_for`]), never cached on the `Herd` — the `taming_rate` path, so a
+    /// ([`FaunaConfig::pastoral_density_for`]), never cached on the `Herd` — the `taming_cost_multiplier_for` path, so a
     /// retune reaches herds already on the map. Defaults to [`DEFAULT_HUSBANDRY_DENSITY`] (1.0, neutral).
     /// **Playtest dial.** Validated finite & `>= 1.0` (a gain below 1 would make domestication *reduce*
     /// capacity).
@@ -466,13 +471,14 @@ fn default_loiter_turns() -> [u32; 2] {
     [12, 24]
 }
 
-/// **A species that tames at the `animal:pastoral` rung's own pace** — the neutral timescale, so an
-/// untagged (or future) species behaves exactly as it did before the dial existed. Also what an
-/// unresolvable species name reads as (`FaunaConfig::taming_rate_for`).
-pub const DEFAULT_TAMING_RATE: f32 = 1.0;
+/// **A species that costs exactly what the `animal:pastoral` rung declares** — the neutral
+/// multiplier, so an untagged (or future) species behaves exactly as it did before the dial existed.
+/// Also what an unresolvable species name reads as
+/// (`FaunaConfig::taming_cost_multiplier_for`).
+pub const DEFAULT_TAMING_COST_MULTIPLIER: f32 = 1.0;
 
-fn default_taming_rate() -> f32 {
-    DEFAULT_TAMING_RATE
+fn default_taming_cost_multiplier() -> f32 {
+    DEFAULT_TAMING_COST_MULTIPLIER
 }
 
 /// **Animals one herder minds for a species that does not declare a rate** — mid-roster (between the
@@ -1120,7 +1126,7 @@ impl Default for FollowConfig {
 }
 
 /// Husbandry tuning — **the animal web's own economy**. Taming's own dials are *not* here: the
-/// **`Tame` policy**'s build meter (`progress_per_turn` / `decay_per_turn` /
+/// **`Tame` policy**'s build meter (`work_cost` / `decay_fraction_per_turn` /
 /// `yield_fraction_while_building`) lives on `intensification_ladder.json`'s `animal:pastoral` rung,
 /// alongside the pen's on `animal:pen`, so both food webs climb on the same numbers
 /// (`crate::intensification`). The retired `claim_threshold` — the `domesticate` command's
@@ -1165,11 +1171,12 @@ impl Default for FollowConfig {
 /// (`crate::intensification`), so both food webs climb on the same numbers: while the pen is being
 /// built (`Herd::corral_progress` < 1.0) the crew takes only that rung's
 /// `yield_fraction_while_building × the herd's Sustain (MSY) ceiling` — a sustainable draw, so the
-/// herd stays healthy — accruing its `progress_per_turn` each turn; at `1.0` the herd is penned
+/// herd stays healthy — accruing its crew's work output each turn; at the job's cost the herd is penned
 /// (`corralled_at`) and its keeper harvests the pen's MSY, paying `pen.upkeep_per_biomass` per unit
 /// of biomass in feed. What stays here is the animal web's own economy.
 ///
-/// **The earned-knowledge levers are GONE from here** (slice 4): `knowledge_progress_per_turn` /
+/// **The earned-knowledge levers are GONE from here** (slice 4): `knowledge_progress_per_turn`
+/// (since split into the ladder's `learn_rate` + per-knowledge `lesson_costs`) /
 /// `knowledge_completion_threshold` moved to `intensification_ladder.json`'s ladder-level `knowledge`
 /// block, which `labor_config` had duplicated verbatim — once the earn path became one rung-driven
 /// seam (`RungDef::knowledge_earned`), a number that paces *both* food webs belonged to the ladder,
@@ -1683,12 +1690,15 @@ impl FaunaConfig {
                 require_positive_finite(species_field("regrowth_rate"), regrowth_rate)?;
             }
             // The taming timescale (slice 3c). **Positive is the whole bound**: the multiplier dilates
-            // the `animal:pastoral` rung's `progress_per_turn` AND its `decay_per_turn` together, so the
+            // the `animal:pastoral` rung's `work_cost`, and `build_decay` reads its bleed off that scaled cost, so the
             // ladder's own "taming must out-run its decay" check (`LadderConfig::validate`) already
             // covers every species — the ratio is invariant under a positive scale. At `0` the species
             // would silently never tame while reading as tameable; negative would *un*-tame a herd the
             // crew is working, and (via the same decay) push its progress up while it is abandoned.
-            require_positive_finite(species_field("taming_rate"), def.taming_rate)?;
+            require_positive_finite(
+                species_field("taming_cost_multiplier"),
+                def.taming_cost_multiplier,
+            )?;
             // At `0`/negative a managed herd of this species would demand infinitely many herders — it
             // could never be fully staffed, so every pastoral/penned herd would decay forever with no
             // way for the player to stop it. The dial's *upper* end is a tuning question (how much
@@ -1922,19 +1932,21 @@ impl FaunaConfig {
             .find(|def| def.display_name == display)
     }
 
-    /// **The species' taming timescale** ([`SpeciesDef::taming_rate`]), resolved by the display name a
-    /// `Herd` carries — the same live-resolution path the movement cadence levers take
-    /// (`fauna::advance_herds` → [`FaunaConfig::species_by_display`]), so retuning the dial takes
+    /// **The species' taming cost multiplier** ([`SpeciesDef::taming_cost_multiplier`]), resolved by
+    /// the display name a `Herd` carries — the same live-resolution path the movement cadence levers
+    /// take (`fauna::advance_herds` → [`FaunaConfig::species_by_display`]), so retuning the dial takes
     /// effect on herds already on the map instead of freezing at spawn. A species the table cannot
-    /// resolve (an isolated test fixture) reads [`DEFAULT_TAMING_RATE`] — the rung's own pace, i.e.
-    /// exactly the pre-dial behaviour.
-    pub fn taming_rate_for(&self, display: &str) -> f32 {
+    /// resolve (an isolated test fixture) reads [`DEFAULT_TAMING_COST_MULTIPLIER`] — the rung's own
+    /// price, i.e. exactly the pre-dial behaviour.
+    pub fn taming_cost_multiplier_for(&self, display: &str) -> f32 {
         self.species_by_display(display)
-            .map_or(DEFAULT_TAMING_RATE, |def| def.taming_rate)
+            .map_or(DEFAULT_TAMING_COST_MULTIPLIER, |def| {
+                def.taming_cost_multiplier
+            })
     }
 
     /// **The animals one herder of this species minds** ([`SpeciesDef::animals_per_herder`]), resolved
-    /// by the display name a `Herd` carries — the [`FaunaConfig::taming_rate_for`] path, so retuning
+    /// by the display name a `Herd` carries — the [`FaunaConfig::taming_cost_multiplier_for`] path, so retuning
     /// the dial reaches herds already on the map instead of freezing at spawn. A species the table
     /// cannot resolve (an isolated test fixture) reads [`DEFAULT_ANIMALS_PER_HERDER`].
     pub fn animals_per_herder_for(&self, display: &str) -> f32 {
@@ -1944,7 +1956,7 @@ impl FaunaConfig {
 
     /// **The probability an animal of this species breaks off at contact**
     /// ([`crate::combat::CombatStats::wariness`]), resolved by display name — the
-    /// [`FaunaConfig::taming_rate_for`] path. An unresolvable species reads `0.0`: no retreat, which
+    /// [`FaunaConfig::taming_cost_multiplier_for`] path. An unresolvable species reads `0.0`: no retreat, which
     /// is the identity, and the honest reading of a fixture the roster does not describe.
     pub fn wariness_for(&self, display: &str) -> f32 {
         self.species_by_display(display)
@@ -1953,7 +1965,7 @@ impl FaunaConfig {
 
     /// **The animals one hunter of this species can bring into contact per turn**
     /// ([`SpeciesDef::engage_rate`]), resolved by the display name a `Herd` carries — the
-    /// [`FaunaConfig::taming_rate_for`] path, so retuning the dial reaches herds already on the map.
+    /// [`FaunaConfig::taming_cost_multiplier_for`] path, so retuning the dial reaches herds already on the map.
     ///
     /// **A species the table cannot resolve reads [`f32::INFINITY`] — no engagement bound at all**,
     /// not a small number. The unresolvable case is an isolated test fixture, and the honest reading
@@ -1967,7 +1979,7 @@ impl FaunaConfig {
 
     /// **The quarry's side of a hunt fight** ([`crate::fauna::QuarryFight`] — its combat body plus the
     /// `ferocity` that decides whether it fights back), resolved by display name through the
-    /// [`FaunaConfig::taming_rate_for`] path. **THE seam** every take and forecast path resolves the
+    /// [`FaunaConfig::taming_cost_multiplier_for`] path. **THE seam** every take and forecast path resolves the
     /// fight's quarry through, so none of them can assemble a different animal.
     ///
     /// An unresolvable species (an isolated test fixture) reads [`crate::combat::CombatStats`]'s
@@ -1999,7 +2011,7 @@ impl FaunaConfig {
     /// be stated exactly once (a second copy is how a wolf starts paying meat on one path and nothing
     /// on another).
     ///
-    /// Resolved **live** by display name, the [`FaunaConfig::taming_rate_for`] path, so a retune reaches
+    /// Resolved **live** by display name, the [`FaunaConfig::taming_cost_multiplier_for`] path, so a retune reaches
     /// herds already on the map and it needs no snapshot field.
     ///
     /// An **unknown species key is a config bug, not a runtime case** — but a test fixture may legally
@@ -2053,7 +2065,7 @@ impl FaunaConfig {
     }
 
     /// **The species' pastoral density gain** ([`SpeciesDef::pastoral_density`]), resolved by the
-    /// display name a `Herd` carries — the [`FaunaConfig::taming_rate_for`] path, so retuning the dial
+    /// display name a `Herd` carries — the [`FaunaConfig::taming_cost_multiplier_for`] path, so retuning the dial
     /// reaches herds already on the map instead of freezing at spawn. A species the table cannot resolve
     /// (an isolated test fixture) reads [`DEFAULT_HUSBANDRY_DENSITY`] (neutral, `×1.0`).
     pub fn pastoral_density_for(&self, display: &str) -> f32 {
@@ -2536,7 +2548,7 @@ pub fn load_fauna_config_from_env(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::intensification::{LadderConfig, RungKey, RUNG_COMPLETE};
+    use crate::intensification::{LadderConfig, RungKey};
 
     #[test]
     fn builtin_config_parses() {
@@ -2584,66 +2596,72 @@ mod tests {
         assert_eq!(def.husbandry_ceiling, HusbandryCeiling::Pen);
     }
 
-    /// Slice 3c: the shipped taming timescales, and the `1.0` default for an omitted one. The
-    /// **turns-to-tame** each implies is what the roster is really claiming, so assert that — a dial
-    /// read back as a number nobody can interpret is not a guard.
+    /// The shipped per-species taming **costs**, and the `1.0` default for an omitted one. The
+    /// **work units** each implies is what the roster is really claiming, so assert that — a dial read
+    /// back as a number nobody can interpret is not a guard.
     #[test]
-    fn builtin_taming_rates_match_the_roster() {
+    fn builtin_taming_costs_match_the_roster() {
         let config = FaunaConfig::builtin();
         let ladder = LadderConfig::builtin();
-        let progress_per_turn = ladder
-            .rung(RungKey::AnimalPastoral)
-            .build
-            .as_ref()
-            .expect("the pastoral rung builds")
-            .progress_per_turn;
+        let pastoral = ladder.rung(RungKey::AnimalPastoral);
 
-        for (key, rate, turns_to_tame) in [
-            ("rabbit", 1.0_f32, 25.0_f32),
-            ("fowl", 1.0, 25.0),
-            ("crag_goat", 1.0, 25.0),
-            ("boar", 0.8, 31.25),
-            ("aurochs", 0.5, 50.0),
-            ("steppe_runner", 0.2, 125.0),
-            ("marsh_grazer", 0.2, 125.0),
+        for (key, multiplier, work_units) in [
+            ("rabbit", 1.0_f32, 50.0_f32),
+            ("fowl", 1.0, 50.0),
+            ("crag_goat", 1.0, 50.0),
+            ("boar", 1.25, 62.5),
+            ("aurochs", 2.0, 100.0),
+            ("steppe_runner", 5.0, 250.0),
+            ("marsh_grazer", 5.0, 250.0),
         ] {
             let def = &config.species[key];
-            assert_eq!(def.taming_rate, rate, "{key} taming_rate");
-            assert!(
-                (RUNG_COMPLETE / (progress_per_turn * def.taming_rate) - turns_to_tame).abs()
-                    < 0.01,
-                "{key} should tame in ~{turns_to_tame} turns"
+            assert_eq!(
+                def.taming_cost_multiplier, multiplier,
+                "{key} taming_cost_multiplier"
+            );
+            assert_eq!(
+                pastoral.build_cost(def.taming_cost_multiplier),
+                Some(work_units),
+                "{key} should cost ~{work_units} work units to tame"
             );
         }
-        // A `wild`-ceiling species never tames at all, so it states no rate (and reads the default).
+        // A `wild`-ceiling species never tames at all, so it states no cost (and reads the default).
         for key in ["deer", "mammoth"] {
             assert_eq!(
                 config.species[key].husbandry_ceiling,
                 HusbandryCeiling::Wild
             );
-            assert_eq!(config.species[key].taming_rate, DEFAULT_TAMING_RATE);
+            assert_eq!(
+                config.species[key].taming_cost_multiplier,
+                DEFAULT_TAMING_COST_MULTIPLIER
+            );
         }
-        // An omitted field taming at the rung's own pace is what keeps an untagged/future species on
-        // today's 25 turns.
+        // An omitted field costing the rung's own price is what keeps an untagged/future species on
+        // today's pacing.
         // `body_mass` is REQUIRED (slice 8) — a species with no quantum is not a species, so it must
         // fail to parse rather than default to something.
         let def: SpeciesDef = serde_json::from_str(
             r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1],"body_mass":1,"engage_rate":1}"#,
         )
         .unwrap();
-        assert_eq!(def.taming_rate, DEFAULT_TAMING_RATE);
-        // And an unresolvable species reads the same, so a fixture herd can never tame at `0`/turn.
-        assert_eq!(config.taming_rate_for("No Such Beast"), DEFAULT_TAMING_RATE);
+        assert_eq!(def.taming_cost_multiplier, DEFAULT_TAMING_COST_MULTIPLIER);
+        // And an unresolvable species reads the same, so a fixture herd can never tame for free.
+        assert_eq!(
+            config.taming_cost_multiplier_for("No Such Beast"),
+            DEFAULT_TAMING_COST_MULTIPLIER
+        );
     }
 
-    /// A `taming_rate` of `0` reads as "tameable" everywhere (the ceiling still says `pastoral`) while
-    /// the meter never moves — the silent-disable failure mode config validation exists to catch. A
-    /// negative one would *un*-tame a herd its crew is working.
+    /// A `taming_cost_multiplier` of `0` reads as "tameable" everywhere (the ceiling still says
+    /// `pastoral`) while the job costs nothing — the herd tames the instant any crew touches it,
+    /// which is the silent-disable failure mode config validation exists to catch. A negative one is
+    /// meaningless.
     #[test]
-    fn validate_rejects_a_non_positive_taming_rate() {
+    fn validate_rejects_a_non_positive_taming_cost() {
         for bad in [0.0, -0.2] {
-            let err = reject(|json| json["species"]["rabbit"]["taming_rate"] = (bad).into());
-            assert_rejects_field(err, "species.rabbit.taming_rate");
+            let err =
+                reject(|json| json["species"]["rabbit"]["taming_cost_multiplier"] = (bad).into());
+            assert_rejects_field(err, "species.rabbit.taming_cost_multiplier");
         }
     }
 
@@ -2669,7 +2687,7 @@ mod tests {
     }
 
     /// The density gains default to the neutral `1.0` (a wild/untagged species is unchanged) and
-    /// resolve live by display name — the `taming_rate_for` path, so a retune reaches herds on the map.
+    /// resolve live by display name — the `taming_cost_multiplier_for` path, so a retune reaches herds on the map.
     #[test]
     fn husbandry_density_defaults_to_neutral_and_resolves_live() {
         let config = FaunaConfig::builtin();
@@ -2893,7 +2911,7 @@ mod tests {
             config.hunt.provisions_per_biomass
         );
         // An unresolvable name (a synthetic test fixture) reads the same global rather than zeroing
-        // a herd's yield — the `taming_rate_for`/`animals_per_herder_for` contract. It carries no
+        // a herd's yield — the `taming_cost_multiplier_for`/`animals_per_herder_for` contract. It carries no
         // materials, because there is no global list to fall back to.
         let unknown = config.hunt_yield_for("No Such Beast");
         assert_eq!(unknown.provisions_per_biomass, deer.provisions_per_biomass);

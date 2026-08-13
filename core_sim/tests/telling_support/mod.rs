@@ -24,7 +24,7 @@ use core_sim::{
     MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, Scalar,
     SedentarizationConfigHandle, SedentarizationScore, SimulationConfig, SimulationTick,
     SitesConfigHandle, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, FOOD, RUNG_COMPLETE,
+    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, FOOD,
 };
 
 /// Pinned so selection (seeded from `map_seed`) is reproducible run to run.
@@ -154,7 +154,7 @@ pub fn domesticate(app: &mut App, faction: FactionId, count: usize) {
         .filter(|herd| herd.can_domesticate())
         .take(count);
     for herd in tameable {
-        herd.accrue_domestication(faction, RUNG_COMPLETE);
+        herd.tame_outright(faction);
     }
 }
 

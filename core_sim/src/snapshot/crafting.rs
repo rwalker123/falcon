@@ -34,7 +34,7 @@ use sim_runtime::{
 use crate::{
     components::{BandBench, BandEquipment, LocalStore},
     crafting::{craft_discovery_id, title_from_id},
-    equipment_config::{EquipmentConfig, EquipmentStat},
+    equipment_config::{EquipmentConfig, EquipmentStat, WearQuantum},
     intensification::knows,
     materials_config::MaterialsConfig,
     orders::FactionId,
@@ -173,6 +173,10 @@ pub(crate) struct BandCraftInputs<'a> {
     /// that lives on no recipe row, carried here so [`bench_state`] can publish the whole product
     /// through the same [`crate::systems::rate_per_turn`] the bench applies.
     pub(crate) crafting: &'a crate::recipes_config::CraftingTuning,
+    /// **The reference job an equipment life gauge is quoted against**, in work units — the ladder's
+    /// [`crate::intensification::REFERENCE_BUILD_RUNG`] `work_cost`, resolved once per capture. See
+    /// [`quantum_units_per_noun`] for why a build's wear cannot be counted in its own units.
+    pub(crate) reference_build_cost: f32,
 }
 
 /// **The whole crafting half of one cohort's row**, resolved together because the four readouts
@@ -217,7 +221,7 @@ pub(crate) fn band_craft_state(
         material_batches: material_batches(store, inputs.materials),
         bench: bench_state(bench, store, inputs, &tiers_by_material),
         craft_offers,
-        equipment_batches: equipment_batches(wear, inputs.equipment),
+        equipment_batches: equipment_batches(wear, inputs.equipment, inputs.reference_build_cost),
     }
 }
 
@@ -670,6 +674,35 @@ fn invitation(
     (reason, SEVERITY_NEUTRAL)
 }
 
+/// **HOW MANY OF A QUANTUM'S OWN UNITS ONE OF ITS NOUNS IS** — the divisor that turns a raw
+/// condition-over-wear count into the sentence a player can act on.
+///
+/// **`1.0` for every quantum whose unit IS its noun**: a kill is a kill, a hauled biomass is a hauled
+/// biomass, a finished craft is a craft. [`WearQuantum::BuildProgress`] is the one exception, and it
+/// became one when improvements were priced in work (`docs/plan_unit_costed_work.md` §6.3): its unit
+/// is a **work unit** — one worker-turn at the food peak — while a player holding a hoe thinks in
+/// *builds*. So it is quoted against the **reference job**
+/// ([`crate::intensification::REFERENCE_BUILD_RUNG`], the `plant:tended` rung's own `work_cost`) and
+/// its noun reads *"gardens' worth"*.
+///
+/// **The reference is the LADDER's, resolved here rather than carried as a literal**, so a retune of
+/// the rung moves the readout with it — and it lives at the readout rather than on `WearQuantum`
+/// because that table knows nothing about rungs.
+fn quantum_units_per_noun(quantum: WearQuantum, reference_build_cost: f32) -> f32 {
+    match quantum {
+        WearQuantum::BuildProgress => reference_build_cost,
+        WearQuantum::Strike
+        | WearQuantum::BiomassHauled
+        | WearQuantum::BiomassGathered
+        | WearQuantum::BiomassCollected
+        | WearQuantum::TileRevealed
+        | WearQuantum::ItemCrafted => ONE_UNIT_IS_ITS_OWN_NOUN,
+    }
+}
+
+/// The divisor of a quantum whose unit already *is* the thing the readout counts.
+const ONE_UNIT_IS_ITS_OWN_NOUN: f32 = 1.0;
+
 /// **What the band owns of each item, and how much life is in it.**
 ///
 /// One row per **batch**, plus one `count: 0` row for every config item the band owns none of — so
@@ -678,6 +711,7 @@ fn invitation(
 fn equipment_batches(
     wear: &BandEquipment,
     equipment: &EquipmentConfig,
+    reference_build_cost: f32,
 ) -> Vec<EquipmentBatchState> {
     equipment
         .items()
@@ -714,13 +748,18 @@ fn equipment_batches(
                     // spear.
                     let condition_left =
                         (tier.starting_durability * batch.count as f32 - batch.wear).max(0.0);
-                    let quanta_left = if def.headline_wear().amount > 0.0 {
-                        condition_left / def.headline_wear().amount
+                    // **The wear rate is per QUANTUM UNIT; the readout counts NOUNS**, so the
+                    // divisor carries both (`quantum_units_per_noun` — `1` for every quantum but
+                    // the build's, whose unit is a work unit and whose noun is a whole garden).
+                    let per_noun = def.headline_wear().amount
+                        * quantum_units_per_noun(def.headline_wear().per, reference_build_cost);
+                    let quanta_left = if per_noun > 0.0 {
+                        condition_left / per_noun
                     } else {
                         0.0
                     };
-                    let full_unit_quanta = if def.headline_wear().amount > 0.0 {
-                        tier.starting_durability / def.headline_wear().amount
+                    let full_unit_quanta = if per_noun > 0.0 {
+                        tier.starting_durability / per_noun
                     } else {
                         0.0
                     };
@@ -755,11 +794,7 @@ fn equipment_batches(
 /// An unworn batch reads `Untouched` rather than a count, because the count is not the point when
 /// nothing has been spent — *"sorted by urgency, untouched last"* is the panel's rule and this is
 /// the word it sorts on.
-fn life_wording(
-    worn: f32,
-    quanta_left: f32,
-    quantum: crate::equipment_config::WearQuantum,
-) -> String {
+fn life_wording(worn: f32, quanta_left: f32, quantum: WearQuantum) -> String {
     if worn <= 0.0 {
         return LIFE_UNTOUCHED.to_string();
     }
@@ -920,6 +955,7 @@ pub(crate) fn builtin_craft_inputs() -> &'static BandCraftInputs<'static> {
     static EQUIPMENT: OnceLock<std::sync::Arc<EquipmentConfig>> = OnceLock::new();
     static PLANS: OnceLock<Vec<CraftOfferPlan<'static>>> = OnceLock::new();
     static KNOWN: OnceLock<BTreeMap<String, bool>> = OnceLock::new();
+    static LADDER: OnceLock<std::sync::Arc<crate::intensification::LadderConfig>> = OnceLock::new();
     static INPUTS: OnceLock<BandCraftInputs<'static>> = OnceLock::new();
     INPUTS.get_or_init(|| {
         let materials: &'static MaterialsConfig = MATERIALS.get_or_init(MaterialsConfig::builtin);
@@ -931,6 +967,84 @@ pub(crate) fn builtin_craft_inputs() -> &'static BandCraftInputs<'static> {
             plans: PLANS.get_or_init(|| plan_craft_offers(recipes, equipment)),
             known_crafts: KNOWN.get_or_init(BTreeMap::new),
             crafting: &recipes.crafting,
+            reference_build_cost: LADDER
+                .get_or_init(crate::intensification::LadderConfig::builtin)
+                .reference_build_cost(),
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::equipment_config::WearQuantum;
+
+    /// **THE BUILD QUANTUM IS THE ONE WHOSE UNIT IS NOT ITS NOUN**, and this pins the divisor that
+    /// turns one into the other — `quantum_units_per_noun`'s only non-identity arm.
+    ///
+    /// **It is unreachable from the shipped roster today**, which is exactly why it is pinned here
+    /// rather than left to a wire test: `husbandry_gear` is the only item that wears on a build and
+    /// it declares `biomass_collected` first, so no published `equipmentBatches` row currently
+    /// divides by anything. The arm goes live the day an item **leads** with `build_progress` (issue
+    /// #539's hoe), and an untested conversion would quote that item's whole life in bare work units.
+    #[test]
+    fn the_build_quanta_are_quoted_against_the_ladders_reference_job() {
+        let reference = crate::intensification::LadderConfig::builtin().reference_build_cost();
+        assert!(
+            reference > 0.0,
+            "fixture: the ladder must price its reference job, or the divisor is meaningless"
+        );
+        assert_eq!(
+            quantum_units_per_noun(WearQuantum::BuildProgress, reference),
+            reference,
+            "a build's noun is the REFERENCE JOB, so its divisor is that job's own work cost — a \
+             work unit means nothing to a player holding a hoe"
+        );
+        for quantum in [
+            WearQuantum::Strike,
+            WearQuantum::BiomassHauled,
+            WearQuantum::BiomassGathered,
+            WearQuantum::BiomassCollected,
+            WearQuantum::TileRevealed,
+            WearQuantum::ItemCrafted,
+        ] {
+            assert_eq!(
+                quantum_units_per_noun(quantum, reference),
+                ONE_UNIT_IS_ITS_OWN_NOUN,
+                "{quantum:?} counts in its own unit — a kill is a kill"
+            );
+        }
+    }
+
+    /// **THE SHIPPED HANDLING GEAR HEADLINES THE SLAUGHTER, NOT THE BUILD** — `wear[0]` is the
+    /// entry a life gauge quotes (`ItemDefinition::headline_wear`), and the order is the model.
+    ///
+    /// Pinned because it is a **readout** decision a config reorder would silently make: the gauge
+    /// would flip from *"≈2500 biomass butchered"* to *"≈12 gardens' worth"*, quoting a keeper's kit
+    /// in the plant web's reference job. `docs/plan_unit_costed_work.md` §6.3 assumed this item
+    /// already led with the build; it never has.
+    #[test]
+    fn the_handling_gears_life_gauge_reads_in_butchered_biomass() {
+        let equipment = EquipmentConfig::builtin();
+        let gear = equipment
+            .item("husbandry_gear")
+            .expect("the shipped roster carries the handling gear");
+        assert_eq!(
+            gear.headline_wear().per,
+            WearQuantum::BiomassCollected,
+            "the handling gear's gauge reads in butchered biomass"
+        );
+        assert!(
+            gear.wears_on(WearQuantum::BuildProgress),
+            "fixture: it must still wear on the build, or the ordering claim is vacuous"
+        );
+        assert_eq!(
+            quantum_units_per_noun(
+                gear.headline_wear().per,
+                crate::intensification::LadderConfig::builtin().reference_build_cost()
+            ),
+            ONE_UNIT_IS_ITS_OWN_NOUN,
+            "so its published `quantaLeft` is a raw biomass count, unconverted"
+        );
+    }
 }

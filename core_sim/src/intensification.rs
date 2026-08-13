@@ -6,18 +6,26 @@
 //! manage the wild source in place, rung 3 you control its reproduction — and every rung-transition
 //! is the same **Cultivate-shaped verb**: pick it → the source pays a *reduced* yield while the crew
 //! prepares rather than harvests → a **per-source build meter** climbs → it decays if you walk away →
-//! at `1.0` the source steps up a rung.
+//! at the job's declared cost the source steps up a rung.
+//!
+//! **AN IMPROVEMENT COSTS WORK, NOT TURNS** (`docs/plan_unit_costed_work.md`). A rung declares a fixed
+//! [`RungBuild::work_cost`] in work units; a crew produces [`PER_WORKER_OUTPUT`] per worker per turn,
+//! scaled by the floor it holds and the kit it brought; **turns are the output**. That is what lets a
+//! rung up the ladder be a *bigger job* than the one below it, and what makes a build finish sooner as
+//! the faction improves.
 //!
 //! This module is the **data + the seam**, not a second copy of the rules:
 //! - [`LadderConfig`] (`data/intensification_ladder.json`) holds one [`RungDef`] record per rung —
 //!   the links (verb, unlock/earns knowledge, previous rung, husbandry ceiling) and the build dials.
 //!   Adding a rung that recombines existing primitives is a one-record edit.
-//! - [`RungDef::build_accrual`] / [`RungDef::build_decay`] / [`RungDef::yield_fraction_while_building`]
+//! - [`RungDef::build_accrual`] / [`RungDef::build_cost`] / [`RungDef::build_decay`] /
+//!   [`RungDef::yield_fraction_while_building`]
 //!   are **the** build seam. Both tracks call them instead of reaching for their own bespoke
-//!   accrue/decay/dip levers, so the plant and animal ladders can never drift apart numerically.
-//!   The per-source *state* is unchanged and stays where it lives (`ForagePatch::cultivation_progress`,
-//!   `Herd::domestication_progress`, `Herd::corral_progress`) — the engine supplies the amounts, the
-//!   source owns its meter and the side-effects of completing it (ownership, `corralled_at`, …).
+//!   accrue/cost/decay/dip levers, so the plant and animal ladders can never drift apart numerically.
+//!   The per-source *state* stays where it lives (`ForagePatch::cultivation_progress`,
+//!   `Herd::domestication_progress`, `Herd::corral_progress`, each beside a stored companion **cost**)
+//!   — the engine supplies the amounts, the source owns its meter and the side-effects of completing
+//!   it (ownership, `corralled_at`, …).
 //! - [`knows`] is the one knowledge gate. It retires the inlined
 //!   `ledger.get_progress(faction, ID) >= threshold` checks that used to sit in the labor arms and
 //!   the command handlers.
@@ -33,7 +41,7 @@
 //! rung needing a *new* primitive codes that one primitive once, after which it too is config.
 
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
     str::FromStr,
@@ -58,18 +66,38 @@ use crate::{
 
 pub const BUILTIN_INTENSIFICATION_LADDER: &str = include_str!("data/intensification_ladder.json");
 
-/// A completed build meter. Both tracks store progress in `[0.0, 1.0]` and treat `>= 1.0` as "this
-/// source has climbed the rung", so the completion point is one named constant, not a literal
-/// sprinkled across the accrual sites.
-pub const RUNG_COMPLETE: f32 = 1.0;
+/// **WHAT ONE WORKER PRODUCES IN ONE TURN** — the unit every `work_cost` on the ladder is quoted in
+/// (`docs/plan_unit_costed_work.md` §1.1): *one worker-turn at the food peak, with no gear*. So a
+/// `work_cost` of `50` reads itself — "fifty worker-turns at the food peak" — and the config needs no
+/// second dial to be interpreted.
+///
+/// **It is deliberately NOT a config lever.** A tunable worker output would give two authorities over
+/// the same pacing, and the cost side is the one this arc exists to expose: a rung becomes a bigger
+/// job by *declaring a bigger job*, never by making the crew worse at it.
+pub const PER_WORKER_OUTPUT: f32 = 1.0;
 
-/// **An untouched build meter** — the other end of the same `[0.0, 1.0]` span [`RUNG_COMPLETE`]
-/// closes. Named because the distinction *"has any progress been banked here at all"* is a real
-/// question with real consequences (ownership is set on the first accrual, and the plant web unwinds
-/// *newest rung first*, so `forage::patch_unwinding_rung` asks it of both meters), so the threshold
-/// deserves the same one-home treatment as the completion point rather than a bare literal at each
-/// site that asks.
+/// **An untouched build meter** — zero work units banked. Named because the distinction *"has any
+/// progress been banked here at all"* is a real question with real consequences (ownership is set on
+/// the first accrual, and the plant web unwinds *newest rung first*, so
+/// `forage::patch_unwinding_rung` asks it of both meters), so the threshold deserves one home rather
+/// than a bare literal at each site that asks.
+///
+/// It is also the **unstamped** value of a meter's companion cost field: a source with cost
+/// [`RUNG_UNSTARTED`] has never been worked at this rung, which is why every completion predicate
+/// asks `cost > RUNG_UNSTARTED && progress >= cost` rather than `progress >= cost` alone (`0 >= 0`
+/// would read every wild source as finished).
 pub const RUNG_UNSTARTED: f32 = 0.0;
+
+/// **The cost of a source a FIXTURE fabricated as already finished** — one worker-turn, the smallest
+/// job that can be complete.
+///
+/// A test that wants a tamed herd or a tended patch runs the **real** accrual against this nominal
+/// job (`Herd::tame_outright`, `ForagePatch::complete_cultivation`) rather than writing the meter, so
+/// the husbandry ceiling and the owner-lock still hold — you cannot fabricate a domesticated `wild`
+/// herd. The job's *size* cannot affect any predicate (they all read `progress >= cost`), and stating
+/// it as one worker-turn keeps the fabricated state readable — *one hand, one turn* — instead of
+/// pretending to a price the ladder never quoted.
+pub const FABRICATED_BUILD_COST: f32 = PER_WORKER_OUTPUT;
 
 /// **The grace of a rung there is nothing to neglect on** — a source standing on a rung with no
 /// build meter (either `wild` rung). Zero rather than "infinite" because it is never *used* as a
@@ -78,14 +106,9 @@ pub const RUNG_UNSTARTED: f32 = 0.0;
 /// if that ever stopped being true.
 pub const NO_NEGLECT_GRACE: u32 = 0;
 
-/// **A crew of nobody** — the rejected value of [`RungBuild::crew_needed`] and the `0` denominator
-/// [`RungDef::build_crew_scale`] refuses to divide by.
+/// **A crew of nobody** — the rejected value of [`RungBuild::crew_needed`]. A staffing *floor* of
+/// nobody is nonsense; a rung with no crew model of its own says `null`.
 pub const NO_CREW: u32 = 0;
-
-/// **The whole crew turned up** — the neutral build-crew factor, and what a rung with no declared
-/// crew (`crew_needed: null`) returns from [`RungDef::build_crew_scale`], so its accrual is the
-/// rung's stated rate exactly as before the crew axis existed.
-pub const FULL_CREW_SCALE: f32 = 1.0;
 
 /// **No improvement is being built on this source**, so its build contributes no crew demand and
 /// [`source_crew_needed`] collapses to the take-side count — the pre-crew-axis behaviour, verbatim.
@@ -186,6 +209,109 @@ pub fn learn_multiplier(floor: f32) -> f32 {
     (floor / crate::fauna::MSY_BIOMASS_FRACTION).max(0.0)
 }
 
+/// **WHAT ONE WORKER BANKS ON A BUILD IN ONE TURN AT THE FOOD PEAK**, before the floor and the kit
+/// scale it — the per-worker half of [`crew_work_output`], and **the sum of terms** the model is
+/// written as (`docs/plan_unit_costed_work.md` §5).
+///
+/// **Exactly one term today**, and that shape is deliberate rather than premature: §5 rules that
+/// knowledge does **not** feed throughput (it reaches it through the tools it unlocks, which §6
+/// prices), so there is nothing to add here yet — but a future buff mechanic needs a place to land
+/// that is not a re-inversion of the model.
+///
+/// **It is a function rather than [`PER_WORKER_OUTPUT`] read directly, because it is PUBLISHED**
+/// (`ForagePatchState.buildWorkPerWorkerTurn` / `HerdTelemetryState.buildWorkPerWorkerTurn`). The
+/// compose sheet evaluates the turn estimate against a crew the player is *proposing*, so it needs
+/// this term rather than the sim's answer for the committed crew — and the day a second term lands
+/// here, the client tracks it with no change of its own.
+pub fn build_work_per_worker_turn() -> f32 {
+    PER_WORKER_OUTPUT
+}
+
+/// **WHAT A CREW OF `workers` PRODUCES IN ONE TURN**, before the floor and the kit scale it — the
+/// first term of [`RungDef::build_accrual`], and [`build_work_per_worker_turn`] summed over the
+/// crew.
+fn crew_work_output(workers: u32) -> f32 {
+    workers as f32 * build_work_per_worker_turn()
+}
+
+/// **WHAT THE CREW'S TOOLS TAKE OFF THE JOB** — `Σ over the crew`, which
+/// [`crate::equipment_config::KitCoverage::weighted_rate`] × head count already is
+/// (`docs/plan_unit_costed_work.md` §6.2).
+///
+/// **The tool is WIELDED**: a worker holding one contributes its worth, a worker without one
+/// contributes nothing, so this is a **sum and not an average** — an un-geared hand adds zero rather
+/// than diluting, which is the pathology the retired `BuildRate` multiplier had when averaged
+/// (*bring fewer keepers and the pen goes up faster*). `per_worker` is
+/// [`crate::equipment_config::EquipmentConfig::build_work_per_worker`] resolved through the crew's
+/// coverage, so a partly-equipped party gets exactly the share it carries.
+///
+/// Floored at [`NO_BUILD_GEAR`] so a config that somehow named a negative contribution cannot *add*
+/// work to a job — `EquipmentConfig::validate` rejects one, and this is the arithmetic's own guard.
+pub fn build_work_from_gear(per_worker: f32, workers: u32) -> f32 {
+    (workers as f32 * per_worker).max(NO_BUILD_GEAR)
+}
+
+/// **THE `0..1` FRACTION THE WIRE PUBLISHES** — `done / cost`, so the meter can store absolute work
+/// units while `cultivationProgress` / `fieldProgress` / `corralProgress` / `domestication` keep the
+/// type, meaning and range every shipped readout already renders. **The sim divides at capture**; the
+/// client does no arithmetic (`docs/plan_unit_costed_work.md` §8).
+///
+/// **It divides by the SOURCE'S OWN stamped cost, not the ladder's live one**, which is what makes a
+/// finished source read exactly `1.0` beside an `is_cultivated()` that is already `true` — a later
+/// retune moves the *price* on the wire (`workCost`) without contradicting the rung the player has
+/// already paid for. `RUNG_UNSTARTED` on a source nobody has started, where the ratio is `0/0`.
+pub fn build_fraction(done: f32, cost: f32) -> f32 {
+    if cost <= RUNG_UNSTARTED {
+        return RUNG_UNSTARTED;
+    }
+    (done / cost).clamp(0.0, 1.0)
+}
+
+/// **HOW MANY TURNS A JOB NEEDS AT A STATED CREW, FLOOR AND KIT** — `ceil((cost − done) /
+/// work_this_turn)`, and THE one place that arithmetic lives so the wire's `buildTurnsRemaining`
+/// cannot drift from the meter it describes.
+///
+/// Two callers, one expression. The **live** one passes the crew that just worked the source and its
+/// meter (the build in flight); the **projection** ([`LadderConfig::projected_build_turns`]) passes
+/// the same crew against the rung it would climb next, which is what lets the compose sheet quote a
+/// job before the player commits to it.
+///
+/// `None` = **no estimate**, and it means exactly ONE thing, which the wire renders as
+/// [`NO_BUILD_TURNS_ESTIMATE`]: the crew produced nothing this turn, so the build is **stalled** — a
+/// stall has no finite answer, and quoting a huge one would read as a promise. (The callers add the
+/// other no-answer cases before they ever reach here: no crew on the source, the top of the ladder,
+/// a gate that refuses.)
+///
+/// **A bar the meter is already at or past is [`BUILD_FINISHES_IN_ONE_TURN`], not "no answer"**, and
+/// the two states that reach it are the same sentence: the work is already banked, or the crew's
+/// **gear pays the job off outright** ([`LadderConfig::effective_build_cost`] is unfloored, so a
+/// well-equipped crew drives the bar to or below zero). Both *"finish on the first worked turn"*
+/// (`docs/plan_unit_costed_work.md` §6.2), and answering `-1` there broke the arc's own headline
+/// claim at exactly the crew size that demonstrates it — the estimate fell 25 → 13 → 4 → 2 → *no
+/// estimate* as hands were added.
+///
+/// **The sim answers it because the client cannot**: the client holds neither the crew's output, nor
+/// the floor multiplier, nor the kit's build rate — the same division of labour as `penFeedUpkeep`
+/// and the yield forecast.
+pub fn build_turns_remaining(cost: f32, done: f32, work_this_turn: f32) -> Option<u32> {
+    if work_this_turn <= 0.0 {
+        return None;
+    }
+    let remaining = cost - done;
+    if remaining <= 0.0 {
+        return Some(BUILD_FINISHES_IN_ONE_TURN);
+    }
+    Some((remaining / work_this_turn).ceil() as u32)
+}
+
+/// **THE ANSWER FOR A BAR A WORKING CREW IS ALREADY AT OR PAST** — one turn, because a build with no
+/// work left to do completes on the first turn anybody works it.
+///
+/// Named rather than a bare `1` at the one site that returns it, so the *reason* travels with the
+/// value: this is *"there is nothing left to wait for"*, which is a real answer, and deliberately
+/// **not** [`NO_BUILD_TURNS_ESTIMATE`], which means *"there is no answer"*.
+pub const BUILD_FINISHES_IN_ONE_TURN: u32 = 1;
+
 /// **The floor a build on a RUNG-3 MANAGED source passes** — the food peak, so [`learn_multiplier`]
 /// is exactly `×1.0`.
 ///
@@ -200,25 +326,41 @@ pub fn learn_multiplier(floor: f32) -> f32 {
 /// the value: this is "the floor axis has collapsed here", not "the food peak happens to be right".
 pub const MANAGED_SOURCE_FLOOR: f32 = crate::fauna::MSY_BIOMASS_FRACTION;
 
-/// **The build timescale of a rung whose sources all build at the rung's own pace.** Passed by every
-/// caller that has no per-source multiplier to apply (the plant `tended` patch, the animal `pen` and
-/// its `ExtendPen` rings) — a rung's dials *are* its turns, undilated.
+/// **The cost multiplier of a source that costs exactly what its rung declares.** Passed by every
+/// caller with no per-source multiplier to apply (the plant `tended` patch, the plant `field`, the
+/// animal `pen` and its `ExtendPen` rings) — the rung's `work_cost` *is* the price there.
 ///
 /// The multiplier exists because rung 2 of the animal ladder is **not** one-size-fits-all: a species
-/// declares its own `taming_rate` (`fauna_config`) and the `animal:pastoral` rung's build runs at that
-/// **timescale**. See [`RungDef::build_accrual`] for why it scales the whole timescale rather than the
-/// speed alone.
-pub const RUNG_TIMESCALE_UNSCALED: f32 = 1.0;
+/// declares its own `taming_cost_multiplier` (`fauna_config`), and the honest statement is that the
+/// animal is *more work*, not that the crew is worse at their job. See [`RungDef::build_cost`].
+pub const RUNG_COST_UNSCALED: f32 = 1.0;
 
-/// **The build multiplier of a crew carrying no gear that helps** — the neutral `1.0` a kit resolves
-/// to when none of its live items declares [`crate::equipment_config::EquipmentStat::BuildRate`].
+/// **The work a crew carrying no gear that helps takes off a job** — nothing. The neutral `0.0` a
+/// kit resolves to when none of its live items declares
+/// [`crate::equipment_config::EquipmentStat::BuildWork`].
 ///
-/// It is [`crate::equipment_config::EquipmentConfig::build_rate`]'s answer for every plant build
-/// today (no plant item declares the stat yet — issue #539) and for every animal build whose crew
-/// went out on a kit without handling gear. Named rather than a bare `1.0` at the call sites that
-/// have no band to resolve a kit against — a forecast probe, a test fixture — so *"this crew brought
-/// nothing"* reads as a stated fact rather than an unexplained literal.
-pub const NO_BUILD_GEAR: f32 = 1.0;
+/// **It is `0.0` and not `1.0`, because the gear is ADDITIVE off the job's cost now**
+/// (`docs/plan_unit_costed_work.md` §6): it was the neutral of a *multiplier* on the crew's output,
+/// under which a tool saved the same percentage of turns on a garden and on a farm alike — the
+/// multiplier problem the arc exists to escape. A neutral read as the wrong one of these is a build
+/// either free or unbuildable, which is why the two live on the stat
+/// ([`crate::equipment_config::EquipmentStat::neutral`]) rather than at the call sites.
+///
+/// It is [`crate::equipment_config::EquipmentConfig::build_work_per_worker`]'s answer for every plant
+/// build today (no plant item declares the stat yet — issue #539) and for every animal build whose
+/// crew went out on a kit without handling gear. Named rather than a bare `0.0` at the call sites
+/// that have no band to resolve a kit against — a forecast probe, a test fixture — so *"this crew
+/// brought nothing"* reads as a stated fact rather than an unexplained literal.
+pub const NO_BUILD_GEAR: f32 = 0.0;
+
+/// **THE REFERENCE JOB every build readout is quoted against** — the `plant:tended` rung, the
+/// smallest shipped improvement and the first one a player meets. A work unit means nothing to
+/// someone holding a hoe, so `ItemDefinition::headline_wear`'s life gauge reads *"≈12 gardens'
+/// worth"* rather than *"625 work units"*; the garden is this rung's own `work_cost`.
+///
+/// Named here, on the ladder, because it is a **ladder** fact: the readout must move with a retune of
+/// the rung rather than carrying its own copy of the number.
+pub const REFERENCE_BUILD_RUNG: RungKey = RungKey::PlantTended;
 
 /// **The yield dip of an assignment that is building nothing** — the identity, so a pure harvest pays
 /// its stance's whole ceiling. Named rather than a bare `1.0` at [`LadderConfig::build_dip`]'s `None`
@@ -375,6 +517,30 @@ impl RungKey {
             RungKey::PlantField => "field",
             RungKey::AnimalPastoral => "pastoral",
             RungKey::AnimalPen => "pen",
+        }
+    }
+
+    /// **THE RUNG DIRECTLY ABOVE THIS ONE** — what a source standing here would climb next. `None` at
+    /// the top of a branch: there is nothing left to build, and that is the honest answer rather than
+    /// a rung quoted out of the other web.
+    ///
+    /// It is the seam a **projection** resolves through. [`crate::forage::patch_rung`] /
+    /// [`crate::fauna::herd_rung`] answer *where the source stands*; this answers *what it would
+    /// climb*, so the wire's `buildTurnsRemaining` can quote an unstarted job without any call site
+    /// re-deriving the ladder's order from `is_cultivated()`.
+    ///
+    /// **Exhaustive, like `Improvement::valid_for_forage`** — a new rung fails to compile until
+    /// someone states its place in the climb, rather than defaulting to "nothing above it" and
+    /// silently making the rung above unquotable. `ladder_order_matches_the_coded_climb` pins it
+    /// against the shipped records' own `order`, so the coded ladder and the config's cannot drift.
+    pub fn above(self) -> Option<RungKey> {
+        match self {
+            RungKey::PlantWild => Some(RungKey::PlantTended),
+            RungKey::PlantTended => Some(RungKey::PlantField),
+            RungKey::PlantField => None,
+            RungKey::AnimalWild => Some(RungKey::AnimalPastoral),
+            RungKey::AnimalPastoral => Some(RungKey::AnimalPen),
+            RungKey::AnimalPen => None,
         }
     }
 }
@@ -562,13 +728,24 @@ impl RungSiteRequirement {
 /// forgone yield.
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub struct RungBuild {
-    /// Build progress gained per turn a crew works the source under this rung's `verb` and the
-    /// caller's eligibility gates hold. `1.0 / progress_per_turn` is the build length in turns.
-    /// Validated `> 0` — a zero would silently make the rung unreachable.
-    pub progress_per_turn: f32,
-    /// Build progress bled per turn nobody works the source — "walk away and the cleared ground
-    /// grows back over". Validated `0 < decay_per_turn < progress_per_turn`: a rung that decayed at
-    /// least as fast as it built could never complete.
+    /// **WHAT THIS RUNG COSTS, IN WORK UNITS** — the fixed size of the job
+    /// (`docs/plan_unit_costed_work.md` §1). One unit is one worker-turn at the food peak with no
+    /// gear ([`PER_WORKER_OUTPUT`]), so `50` reads as *"fifty worker-turns"* and the number needs no
+    /// second dial to interpret. **Turns are the OUTPUT**: `work_cost / (workers × output)` is how
+    /// long it takes, and that falls as the faction puts more hands, a shallower floor or better
+    /// tools on the same fixed job.
+    ///
+    /// It replaced a `progress_per_turn` rate against a normalized `1.0` meter, under which every
+    /// improvement on both webs was literally the same 25-turn job and a rung could only become
+    /// *bigger* by declaring the crew *worse*. Validated finite and `> 0` — a zero would silently
+    /// make the rung free.
+    pub work_cost: f32,
+    /// **The fraction of this rung's own cost bled per turn nobody works the source** — "walk away
+    /// and the cleared ground grows back over". `0.01` is ~100 turns to fully lapse *whatever the job
+    /// costs*, which is why it is a fraction rather than an absolute: the build:decay ratio stays a
+    /// per-rung ratio when the cost spread lands (§3.2). [`RungDef::build_decay`] turns it into
+    /// absolute work units. Validated `0 < decay_fraction_per_turn < 1`: a rung that bled its whole
+    /// cost in a turn could never complete.
     ///
     /// **`None` = this rung's meter does not bleed at all**, and that is the animal branch's whole
     /// story: `domestication_progress` is monotone-up (neglect sheds *animals*, never tameness —
@@ -579,12 +756,13 @@ pub struct RungBuild {
     /// documented a mechanic that does not exist. Absent states the truth and cannot be mistaken for
     /// a live dial.
     ///
-    /// **That bound holds per-source too, and it is checked exactly once here.** A per-source
-    /// `timescale` ([`RungDef::build_accrual`]) multiplies *both* rates, so the ratio is invariant and
-    /// no per-species restatement of this bound is needed — only that the multiplier itself is
-    /// positive and finite, which the roster that owns it (`FaunaConfig::validate`) enforces.
+    /// **That bound holds per-source too, and it is checked exactly once here.** A per-source cost
+    /// multiplier ([`RungDef::build_cost`]) scales the cost, and [`RungDef::build_decay`] reads the
+    /// decay off that same scaled cost — so the ratio is invariant for free and no per-species
+    /// restatement of this bound is needed, only that the multiplier itself is positive and finite
+    /// (which the roster that owns it, `FaunaConfig::validate`, enforces).
     #[serde(default)]
-    pub decay_per_turn: Option<f32>,
+    pub decay_fraction_per_turn: Option<f32>,
     /// **The neglect GRACE** — how many consecutive turns a source may go un-worked before this
     /// rung's neglect penalty starts. The penalty applies only while the source's `neglect_turns`
     /// counter is **strictly greater** than this, so `0` restores the old no-grace behaviour and `n`
@@ -597,28 +775,31 @@ pub struct RungBuild {
     /// season, a fence stands for years*, so `plant:tended` and `animal:pen` want different answers
     /// and the two webs are not even monotone in the same direction.
     ///
-    /// Validated `< 1.0 / progress_per_turn` — the grace may not outlast the build itself. A longer
-    /// one makes neglect free over the whole span it took to raise the rung, which is how a penalty
-    /// evaporates silently (the `site_requirement`-that-requires-nothing failure, in the time axis).
+    /// Validated `< work_cost / reference_output` — the grace may not outlast the build itself, where
+    /// the reference build is the one the rung's own [`Self::crew_needed`] (or one worker, where it
+    /// declares none) runs at the food peak. A longer grace makes neglect free over the whole span it
+    /// took to raise the rung, which is how a penalty evaporates silently (the
+    /// `site_requirement`-that-requires-nothing failure, in the time axis).
     pub grace_turns: u32,
-    /// **The crew this rung's build actually wants**, and the denominator the accrual is scaled by
-    /// ([`RungDef::build_accrual`]): `progress_per_turn × min(workers / crew_needed, 1)`. So
-    /// `progress_per_turn` is the **full-crew** rate and an under-crewed build takes proportionally
-    /// longer — "25 turns" means "25 turns at full crew".
-    ///
-    /// It is also the **floor on the source's worker cap**, so a build cannot make a source want
-    /// *fewer* people than gathering it does. Without that floor the cap came only from the harvest
+    /// **THE STAFFING FLOOR ON THE SOURCE'S WORKER CAP** — a build cannot make a source want *fewer*
+    /// people than gathering it does. Without that floor the cap came only from the harvest
     /// (`ceil(ceiling / per_worker)`), and the ceiling during a build is the **dip** — so committing
     /// to a 25-turn improvement made the compose sheet ask for *one* forager where the same wild
     /// patch under Sustain asks for two. The animal web has always had this floor
-    /// (`fauna::herd_herders_needed`); this is the plant twin of it.
+    /// (`fauna::herd_herders_needed`); this is the plant twin of it. Read through
+    /// [`source_crew_needed`], so it can only ever *raise* a count.
+    ///
+    /// **It has ONE job now, not two.** It used to scale the accrual as well
+    /// (`min(workers / crew_needed, 1)`), which capped a build at the rung's stated rate and made
+    /// over-crewing worthless. Under the work model a crew's output *is* its head count
+    /// ([`RungDef::build_accrual`]) and there is no cap: fifty workers finish a Cultivate in a turn,
+    /// and the constraint is opportunity cost across systems rather than a rule forbidding a play
+    /// style (`docs/plan_unit_costed_work.md` §1.2).
     ///
     /// **`None` = this rung's build has no crew model of its own**, which is where both animal rungs
     /// stand: a herd's crew is derived from its *size* (`herders_needed(biomass, body_mass,
     /// animals_per_herder)`), not declared by the rung, so a rung-level constant there would be a
-    /// number nothing reads. Their accrual is therefore unscaled by crew today — stated here rather
-    /// than assumed, because it is an asymmetry between the webs and not an oversight. Validated
-    /// `!= Some(0)`.
+    /// number nothing reads. Validated `!= Some(0)` — a staffing floor of nobody is nonsense.
     #[serde(default)]
     pub crew_needed: Option<u32>,
     /// **The investment cost.** While the meter is filling, the source's take ceiling is only this
@@ -726,9 +907,19 @@ impl RungDef {
     ///
     /// It was `knowledge_earned(floor, eligible) -> Option<u32>` while restraint was a **predicate**
     /// (`floor_teaches` — teach at or above the food peak, nothing below). The harvest floor made
-    /// restraint a **rate**, so the amount is now part of the answer and the rename says so:
-    /// `knowledge.progress_per_turn × learn_multiplier(floor)`. A crew that leaves more standing
-    /// learns faster, in proportion, with the food peak at ×1.0.
+    /// restraint a **rate**, so the amount is now part of the answer and the rename says so.
+    ///
+    /// # The amount is PRACTICE over the lesson's own COST
+    ///
+    /// ```text
+    /// practice = learn_rate × learn_multiplier(floor)     // per SOURCE per turn, NOT per worker
+    /// amount   = practice / lesson_cost(this rung's knowledge)
+    /// ```
+    ///
+    /// **`workers` is deliberately not a parameter here, and that asymmetry with
+    /// [`RungDef::build_accrual`] is the model** — see [`LadderKnowledge`]: work is earned by a
+    /// worker-turn and scales with hands, practice is earned by a *turn the source is worked* and
+    /// must not, or a faction would learn ten times faster by piling hands onto one patch.
     ///
     /// Returns `(discovery, amount)`, or `None` when:
     /// - `eligible` is false — the caller's composed gate. It carries the rung's own terms **and the
@@ -748,8 +939,8 @@ impl RungDef {
     /// can only ever reach an `animal` rung's `earns_knowledge` and a forage a `plant` one's. A master
     /// rancher isn't automatically a farmer.
     ///
-    /// The **base** amount is the ladder's single `knowledge.progress_per_turn` ([`LadderKnowledge`])
-    /// — the rung names the lesson, the ladder paces every lesson alike, and the floor scales it.
+    /// The rung names the lesson; the ladder prices it ([`LadderKnowledge::lesson_costs`]) and the
+    /// floor scales the practice that pays for it.
     pub fn knowledge_accrual(
         &self,
         floor: f32,
@@ -759,18 +950,38 @@ impl RungDef {
         if !eligible {
             return None;
         }
-        let amount = knowledge.progress_per_turn * learn_multiplier(floor);
-        if amount <= 0.0 {
+        let practice = knowledge.learn_rate * learn_multiplier(floor);
+        if practice <= 0.0 {
             return None;
         }
+        let name = self.earns_knowledge.as_deref()?;
+        let amount = knowledge
+            .ledger_credit(name, practice)
+            .expect("validate requires a lesson cost for every knowledge a rung teaches");
         self.earns_discovery_id().map(|lesson| (lesson, amount))
     }
 
-    /// **The build seam — the accrual side.** How much this rung's per-source meter advances this
-    /// turn: `progress_per_turn × learn_multiplier(floor) × timescale × crew_scale(workers)` when
-    /// `improvement` **is** the rung's verb *and* the caller's rung-specific gates hold (`eligible` —
-    /// knows the unlock knowledge, the crew is actually working the source, the species' ceiling
-    /// allows it, the faction owns it), otherwise `0`.
+    /// **The build seam — the accrual side. THE WORK UNITS THIS CREW PRODUCES THIS TURN**, not a
+    /// fraction of anything: `crew output × learn_multiplier(floor)` when `improvement`
+    /// **is** the rung's verb *and* the caller's rung-specific gates hold (`eligible` — knows the
+    /// unlock knowledge, the crew is actually working the source, the species' ceiling allows it, the
+    /// faction owns it), otherwise `0`.
+    ///
+    /// The caller adds it to the source's own meter and completes the rung when the meter reaches
+    /// [`RungDef::build_cost`]. **Turns are the output, not an input** — the same fixed job finishes
+    /// sooner as the faction puts more hands, a shallower floor or better tools on it, which is the
+    /// progression statement the normalized meter could not make.
+    ///
+    /// # `workers` — the crew IS the throughput, and there is no cap
+    ///
+    /// A worker is worth [`PER_WORKER_OUTPUT`], so `n` workers produce `n` units a turn and a Cultivate
+    /// staffed at fifty finishes in a turn. That is allowed: the constraint is opportunity cost across
+    /// systems, not a rule forbidding a play style (`docs/plan_unit_costed_work.md` §1.2). The retired
+    /// `crew_scale` (`min(workers / crew_needed, 1)`) is what capped it;
+    /// [`RungBuild::crew_needed`] survives as the **staffing floor** alone.
+    ///
+    /// A rung with **no verb** (`verb: null`) or **no build** is never driven: it returns `0` — which
+    /// is what keeps the `wild` rungs (nothing to build) out of the engine.
     ///
     /// # `floor` — building rides the same rate learning does
     ///
@@ -780,88 +991,69 @@ impl RungDef {
     /// thin, it *slows* in proportion to how hard the crew is pulling — a rate where there was a
     /// cliff, with no lapse state to hold progress across.
     ///
-    /// It is applied here and **not** to [`RungDef::build_decay`], which shares this function's
-    /// `timescale` but must not share its floor — see [`learn_multiplier`].
+    /// It is applied here and **not** to [`RungDef::build_decay`] — see [`learn_multiplier`].
     ///
-    /// # `workers` — the crew, on a rung that declares one
+    /// # THE GEAR IS NOT HERE, and that is the shape of §6
     ///
-    /// [`RungBuild::crew_needed`] is the crew the rung's work wants, and the accrual is scaled by
-    /// `min(workers / crew_needed, 1)` — **`herded_fraction`'s exact shape**, deliberately: full crew
-    /// builds at the rung's stated rate, half a crew takes twice as long, and piling on more hands
-    /// buys nothing. Otherwise the crew *demand* would be a number the panel reported and the sim
-    /// ignored. A rung with `crew_needed: null` (both animal rungs today) is unscaled by crew.
-    ///
-    /// A rung with **no verb** (`verb: null`) or **no build** is never driven: it returns `0` — which
-    /// is what keeps the `wild` rungs (nothing to build) out of the engine.
-    ///
-    /// # `timescale` — the rung owns the mechanic, the source scales it
-    ///
-    /// The dials are the *rung's*; how fast **this** source climbs it is the source's own nature —
-    /// exactly the split the fauna roster already uses (rung `pastoral_gain` × species wild `r`).
-    /// Today the only scaler is a species' `taming_rate` on `animal:pastoral` (a rabbit is quick and
-    /// forgiving, binding a migratory herd is generational); every other caller passes
-    /// [`RUNG_TIMESCALE_UNSCALED`].
-    ///
-    /// **It is a TIMESCALE, not a speed — [`RungDef::build_decay`] takes the same factor.** Scaling
-    /// accrual alone would be a different, broken mechanic: a Steppe Runner's `0.04 × 0.2 = 0.008`/turn
-    /// would fall *below* the rung's `0.01`/turn decay, so the species could never be tamed at all and
-    /// the ladder's own "taming must out-run its decay" bound would be violated per-species. Scaling
-    /// both preserves the rung's 4:1 ratio — **slow to tame, slow to forget** — which is also the
-    /// truer story: a beast that takes a lifetime to gentle does not go feral in a season.
-    ///
-    /// # `build_rate` — what the crew brought to the work
-    ///
-    /// The crew's kit ([`crate::equipment_config::EquipmentConfig::build_rate`]), neutral at
-    /// [`NO_BUILD_GEAR`] for a crew carrying nothing that helps — which is every plant build and
-    /// every animal one whose crew left the handling gear at home. Hurdles, halters and a butchering
-    /// stone are animal-handling tools, and `Tame` and `Corral` are exactly the turns a band spends
-    /// handling animals (issue #515).
-    ///
-    /// **It multiplies the accrual and NOT [`RungDef::build_decay`]** — the opposite treatment to
-    /// `timescale`, and for the same reason `floor` gets it: decay happens on turns nobody works the
-    /// source, so there is no crew, no kit and no gear to read. Better tools make a build arrive
-    /// sooner; they do not make an abandoned one forget more slowly.
-    ///
-    /// **It does NOT touch [`RungDef::yield_fraction_while_building`], deliberately.** The gear's
-    /// payoff is already compounding — a faster build pays the dip for fewer turns — and a second
-    /// lever on the same turns would be a rate axis with nothing asking for one.
-    ///
-    /// The caller applies the amount to its own meter (`ForagePatch::accrue_cultivation` /
-    /// `Herd::accrue_domestication` / `Herd::accrue_corral`), which owns the clamp to
-    /// [`RUNG_COMPLETE`] and the side-effects of completing.
+    /// A tool's help lands on the **job**, not on the crew's output: it takes work units off the cost
+    /// ([`LadderConfig::effective_build_cost`]), because a multiplier on the crew cancels the cost
+    /// (`turns_geared / turns_bare = w / (w + h)` for any job) and therefore saves the same
+    /// *percentage* of turns on a garden and on a farm alike. The retired `build_rate` parameter was
+    /// exactly that multiplier.
     pub fn build_accrual(
         &self,
         improvement: Option<Improvement>,
         eligible: bool,
         floor: f32,
-        timescale: f32,
         workers: u32,
-        build_rate: f32,
     ) -> f32 {
-        let Some(build) = self.build.as_ref() else {
+        if self.build.is_none() {
             return 0.0;
-        };
+        }
         if !eligible || improvement.is_none() || self.verb_improvement() != improvement {
             return 0.0;
         }
-        let timescale = timescale * self.build_crew_scale(workers);
-        build.progress_per_turn * learn_multiplier(floor) * timescale * build_rate
+        crew_work_output(workers) * learn_multiplier(floor)
     }
 
-    /// **The build seam — the decay side.** How much this rung's per-source meter bleeds on a turn
-    /// nobody works the source: `decay_per_turn × timescale`, the *same* factor
-    /// [`RungDef::build_accrual`] takes (see there — the multiplier dilates the whole build
-    /// timescale, so the rung's build:decay ratio is invariant). `0` for a rung with no build
-    /// (nothing to lose).
+    /// **The build seam — the cost side. WHAT THIS JOB COSTS ON THIS SOURCE**, in work units:
+    /// `work_cost × cost_multiplier`. `None` for a rung with nothing to build.
     ///
-    /// **It takes no `floor`, and that asymmetry with the accrual is deliberate.** Decay is what
-    /// happens on a turn nobody works the source: there is no assignment, so there is no floor to
-    /// read. See [`learn_multiplier`].
-    pub fn build_decay(&self, timescale: f32) -> f32 {
+    /// `cost_multiplier` is the source's own nature — today only a species'
+    /// `taming_cost_multiplier` on `animal:pastoral` (a Steppe Runner is five times the work of a
+    /// rabbit); every other caller passes [`RUNG_COST_UNSCALED`]. The honest statement is that *the
+    /// animal costs more work*, where the retired `taming_rate` said *your people are worse at this*.
+    pub fn build_cost(&self, cost_multiplier: f32) -> Option<f32> {
         self.build
             .as_ref()
-            .and_then(|build| build.decay_per_turn)
-            .map_or(0.0, |decay| decay * timescale)
+            .map(|build| build.work_cost * cost_multiplier)
+    }
+
+    /// **The build seam — the decay side. ABSOLUTE WORK UNITS bled on a turn nobody works the
+    /// source**: `decay_fraction_per_turn × work_cost × cost_multiplier`. `0` for a rung whose meter
+    /// does not bleed (`decay_fraction_per_turn: null` — the whole animal branch) or that has nothing
+    /// to build.
+    ///
+    /// **The per-source cost multiplier reaches the decay as well as the cost, and that is
+    /// load-bearing** — it is what [`RUNG_COST_UNSCALED`]'s predecessor achieved by dilating a
+    /// timescale. Because both sides read the *same* scaled cost, a rung's build:decay ratio is
+    /// invariant under any per-source multiplier **for free**: a beast that takes a lifetime to gentle
+    /// does not go feral in a season, and no per-species restatement of
+    /// [`RungBuild::decay_fraction_per_turn`]'s bound is needed. Moot on the animal branch today
+    /// (both animal rungs declare `null`), but it is the rule that keeps a future decaying rung
+    /// correct.
+    ///
+    /// **It takes no `floor` and no GEAR, and both asymmetries with the accrual are deliberate.**
+    /// Decay is what happens on a turn nobody works the source: there is no assignment, so there is
+    /// no floor — and no crew, so no kit. It therefore bleeds a fraction of the **raw** job, never of
+    /// the tooled-down [`LadderConfig::effective_build_cost`]: better tools make a build arrive
+    /// sooner, they do not make an abandoned one forget more slowly. See [`learn_multiplier`].
+    pub fn build_decay(&self, cost_multiplier: f32) -> f32 {
+        self.build.as_ref().map_or(0.0, |build| {
+            build
+                .decay_fraction_per_turn
+                .map_or(0.0, |fraction| fraction * build.work_cost * cost_multiplier)
+        })
     }
 
     /// **The build seam — the neglect grace.** How many consecutive un-worked turns this rung
@@ -889,19 +1081,6 @@ impl RungDef {
         self.build.as_ref().and_then(|build| build.crew_needed)
     }
 
-    /// **The build seam — how much of the crew showed up**, `min(workers / crew_needed, 1)`, and
-    /// [`FULL_CREW_SCALE`] for a rung that declares no crew. The factor [`RungDef::build_accrual`]
-    /// applies; exposed so a caller that wants to *explain* a slow build (rather than merely run one)
-    /// reads the same number the accrual used.
-    pub fn build_crew_scale(&self, workers: u32) -> f32 {
-        match self.build_crew_needed() {
-            Some(needed) if needed > NO_CREW => {
-                (workers as f32 / needed as f32).min(FULL_CREW_SCALE)
-            }
-            _ => FULL_CREW_SCALE,
-        }
-    }
-
     /// **The build seam — the investment dip.** The fraction of the source's **selected stance's**
     /// ceiling it pays while this rung is being built. `None` for a rung with no build — a caller
     /// with no dip to apply must not silently substitute one.
@@ -918,44 +1097,117 @@ impl RungDef {
     }
 }
 
-/// **How fast the ladder is learned** — the pace of *every* rung's `earns_knowledge`, and the bar at
-/// which a faction may act on one.
+/// **How fast the ladder is learned** — what a turn of practice is worth, what each lesson costs, and
+/// the bar at which a faction may act on one.
 ///
-/// These two dials used to be **duplicated, at identical values, in both webs** (`labor_config`'s
+/// These dials used to be **duplicated, at identical values, in both webs** (`labor_config`'s
 /// `forage.cultivation` and `fauna_config`'s `husbandry`) because each web had its own hard-coded earn
 /// site. Slice 4 made the earn path **one rung-driven seam**
-/// ([`RungDef::knowledge_earned`]), so two per-web copies became a pure DRY hazard — nothing but
+/// ([`RungDef::knowledge_accrual`]), so two per-web copies became a pure DRY hazard — nothing but
 /// discipline kept "20 turns to learn Herding" and "20 turns to learn Cultivation" the same
 /// statement. They live here for the same reason the build dials do: the two ladders must climb on
 /// the same numbers, and the ladder is where a number that describes *both* webs belongs.
-#[derive(Debug, Clone, Copy, Deserialize)]
+///
+/// # A LESSON COSTS PRACTICE — and practice is NOT work
+///
+/// The build half prices a job in **work units** and a crew's hands are its throughput
+/// ([`RungBuild::work_cost`]). The lesson half is the same inversion in a **deliberately separate
+/// currency** (`docs/plan_unit_costed_work.md` §2), and **naming them apart is what stops anyone
+/// adding them**:
+///
+/// | | **work units** | **practice units** |
+/// |---|---|---|
+/// | earned by | a **worker-turn** on the source | a **turn** the source is worked |
+/// | scales with hands? | **yes** — that is what the build arc is for | **no** |
+/// | scaled by the floor? | yes ([`learn_multiplier`]) | yes ([`learn_multiplier`]) |
+/// | tools contribute? | yes | no |
+/// | spent on | a per-source build meter | the faction knowledge ledger |
+///
+/// **LEARNING MUST NOT SCALE WITH HANDS.** Knowledge is faction-level and credited **once per source
+/// per turn** (`systems::labor::credit_rung_lesson`), so a per-worker rate would let a faction learn
+/// ten times faster by piling hands onto one patch — the build arc's no-cap decision without the
+/// opportunity-cost brake that justifies it, since a second lesson costs nothing extra. *You learn by
+/// watching the practice, not by counting the hands doing it.*
+#[derive(Debug, Clone, Deserialize)]
 pub struct LadderKnowledge {
-    /// **The BASE** faction knowledge accrued per turn a crew works a source at a rung that teaches
-    /// (§4.2), scaled by the assignment's floor ([`learn_multiplier`], food peak = ×1.0). So
-    /// `completion_threshold / progress_per_turn` is the lesson's length in turns **at the food
-    /// peak** (`1.0 / 0.05` → ~20), and a crew leaving more standing learns it faster. Validated
-    /// `> 0` — a zero would make every knowledge unlearnable, silently freezing the ladder at rung 1.
-    pub progress_per_turn: f32,
+    /// **What ONE TURN of practice at the food peak is worth, in practice units** — charged once per
+    /// source per turn a crew works a rung that teaches, scaled by the assignment's floor
+    /// ([`learn_multiplier`], food peak = ×1.0). It is `1.0`, so a [`Self::lesson_costs`] entry reads
+    /// itself: a cost of `20` means *twenty worked turns at the food peak*, and a crew leaving more
+    /// standing learns it faster in proportion.
+    ///
+    /// It replaced a `progress_per_turn` of `0.05` — a rate straight into a normalized ledger, under
+    /// which **every lesson on both webs took the same ~20 turns** and a knowledge could only be
+    /// dearer by making the crew worse at learning it. Validated finite and `> 0` — a zero would make
+    /// every knowledge unlearnable, silently freezing the ladder at rung 1.
+    pub learn_rate: f32,
     /// Ledger progress at which a faction **knows** a discovery and may select the verb it gates
     /// ([`knows`]). Validated `0 < t <= 1`: at `0` every knowledge would be known before it was
     /// learned (every gate open from turn 1); above `1` no gate could **ever** open, since
     /// `DiscoveryProgressLedger` clamps accrual to `1.0`.
     pub completion_threshold: f32,
-    /// **What one item finished at a bench teaches of its craft** (`docs/plan_crafting_and_materials.md`
-    /// §5). So `completion_threshold / lesson_per_crafted_item` is a craft's length **in items**
-    /// (`1.0 / 0.2` → 5), the way the two dials above give a ladder lesson's length in turns.
+    /// **WHAT EACH LESSON COSTS, IN PRACTICE UNITS**, keyed by the knowledge's name — the same names
+    /// a rung's `earns_knowledge` spells and [`discovery_id_for`] resolves. `20` is twenty worked
+    /// turns at the food peak.
     ///
-    /// **It is a sibling of [`Self::progress_per_turn`] rather than a reading of it, because the
-    /// quantum differs.** A ladder lesson is charged per *turn worked* and scaled by the crew's
-    /// floor; a craft lesson is charged **per item completed**, on the same quantum as the tool's
-    /// wear, so the two cannot drift. There is no floor to scale it by and no turn to charge it on.
-    /// It lives here rather than in `recipes.json` so that **every knowledge pace in the game is
-    /// tuned in one file**, which is the whole reason the ladder's two moved here in slice 4.
+    /// **Keyed by the KNOWLEDGE, not by the rung that teaches it**, because that is whose property
+    /// the cost is: a knowledge can in principle be taught by more than one rung (and a craft is
+    /// taught by no rung at all), so hanging the number off a rung record would make the same lesson
+    /// cost two different things depending on where it was practised. It lives in this file for the
+    /// reason [`Self::craft_lesson_per_item`] does — **every knowledge pace in the game is tuned in
+    /// one place**.
+    ///
+    /// **Every name the ladder can teach must have an entry**, and `validate` insists on it for the
+    /// rungs' `earns_knowledge` *and* for every craft: a missing entry would make the pace whatever
+    /// a fallback happened to be, which is the parked-`0` failure in a new costume.
+    ///
+    /// All eight are **20** today, which is this slice's own pacing proof (`1.0 / 20` reproduces the
+    /// retired `progress_per_turn` of `0.05` exactly). The spread — rung-3's lessons dearer, and
+    /// `foddering` dearer again — is a later config-only slice.
+    pub lesson_costs: BTreeMap<String, f32>,
+    /// **What one item finished at a bench is worth, in PRACTICE UNITS** — the craft twin of
+    /// [`Self::learn_rate`] (`docs/plan_crafting_and_materials.md` §5). At `4.0` against a craft's
+    /// cost of `20`, a craft is learned in **5 items**.
+    ///
+    /// **It is a sibling of [`Self::learn_rate`] rather than a reading of it, because the quantum
+    /// differs.** A ladder lesson is charged per *turn worked* and scaled by the crew's floor; a
+    /// craft lesson is charged **per item completed**, on the same quantum as the bench tool's wear,
+    /// so the thing that consumes the tool and the thing that teaches the craft cannot drift. There
+    /// is no floor to scale it by and no turn to charge it on.
+    ///
+    /// **It moved with the currency rather than being left alone**: it was `lesson_per_crafted_item`
+    /// `0.2`, a fraction of a normalized threshold, and leaving it that way while its sibling became
+    /// a cost is precisely the drift the slice-4 consolidation existed to prevent. `4.0 / 20` is the
+    /// same 5 items.
     ///
     /// **The crafts pace themselves off the land, which is the point.** Weaving is learned quickly
     /// by a gathering band (fibre is everywhere) and Bone-working slowly by anyone (bone is the
     /// scarcest yield on the roster), with no per-craft dial saying so.
-    pub lesson_per_crafted_item: f32,
+    pub craft_lesson_per_item: f32,
+}
+
+impl LadderKnowledge {
+    /// **THE one place practice units become LEDGER progress** — `practice / lesson_cost` — so the
+    /// two teachers (a rung's [`RungDef::knowledge_accrual`] and a bench's craft lesson) cannot
+    /// divide by different things.
+    ///
+    /// **The ledger stays normalized and this is the divisor at the seam.**
+    /// `DiscoveryProgressLedger::add_progress` clamps to `1.0` and is shared with great discoveries,
+    /// espionage and the start profiles, so widening its unit would be a large blast radius for no
+    /// gain; [`Self::completion_threshold`] stays the ledger bar, the wire's
+    /// `IntensificationKnowledgeState` fields stay `0..1`, and the per-knowledge cost lives here
+    /// instead.
+    ///
+    /// `None` for a knowledge the ladder does not price — unreachable for anything the sim teaches,
+    /// since `validate` requires an entry for every rung lesson and every craft.
+    pub fn ledger_credit(&self, knowledge: &str, practice: f32) -> Option<f32> {
+        self.lesson_cost(knowledge).map(|cost| practice / cost)
+    }
+
+    /// What `knowledge` costs in practice units ([`Self::lesson_costs`]).
+    pub fn lesson_cost(&self, knowledge: &str) -> Option<f32> {
+        self.lesson_costs.get(knowledge).copied()
+    }
 }
 
 /// The whole ladder: every rung of both branches, plus the pace they are learned at
@@ -1009,6 +1261,81 @@ impl LadderConfig {
             Improvement::Tame => RungKey::AnimalPastoral,
             Improvement::Corral => RungKey::AnimalPen,
         })
+    }
+
+    /// **THE BAR A GEARED CREW'S METER MUST REACH** — `cost − t`, where `t` is
+    /// [`build_work_from_gear`].
+    ///
+    /// **The stored companion cost on the source stays the RAW job** (`work_cost ×
+    /// cost_multiplier`), un-tooled and stable, because that is what `is_cultivated()` and its three
+    /// siblings compare against and a meter whose bar moved with the crew's kit would un-complete a
+    /// rung the moment a tool wore out. The offset therefore applies at the **completion comparison
+    /// only**, and the accrue helpers set the meter to the raw cost when it is crossed — the jump is
+    /// the units the tool pre-paid, and it is honest: those units were worked, they were simply
+    /// worked by the tool.
+    ///
+    /// **Nothing floors it.** How far a kit may shrink a job is decided by the job's `work_cost` and
+    /// the tool's `EquipmentStat::BuildWork` — both dials — and later work is *meant* to be
+    /// impractical bare-handed, which means the right tool must be able to reduce a job to a small
+    /// fraction of itself. A bar at or below zero simply means the build completes on the first turn
+    /// it is worked, which is the same no-cap outcome as putting fifty hands on it.
+    pub fn effective_build_cost(&self, cost: f32, gear_work: f32) -> f32 {
+        cost - gear_work
+    }
+
+    /// **HOW MANY TURNS THIS CREW WOULD NEED TO CLIMB `rung`** — the *projection* half of the wire's
+    /// `buildTurnsRemaining`, assembled from exactly the four calls the in-flight stamp makes
+    /// ([`RungDef::build_cost`], [`build_work_from_gear`], [`Self::effective_build_cost`],
+    /// [`RungDef::build_accrual`], then [`build_turns_remaining`]) so a quote for a job nobody has
+    /// started cannot be arithmetic the running build would disagree with.
+    ///
+    /// **It exists because "nothing is being built" is the state the compose sheet is looking at**
+    /// (`docs/plan_unit_costed_work.md` §11). `workCost` answers *what does this job cost*; this
+    /// answers *what would my people take to finish it*, which is the half that makes the arc's
+    /// thesis legible — put more hands on it and watch the number fall. The client cannot derive it:
+    /// it holds neither the crew's output, nor the floor multiplier, nor the kit's contribution. Same
+    /// division of labour, and the same "always meaningful, never zero-because-not-started" rule, as
+    /// `HerdTelemetryState.penUpkeep`.
+    ///
+    /// `banked` is the work already on **that rung's** meter — [`RUNG_UNSTARTED`] for the ordinary
+    /// pre-commit case, and the real figure for a build the player walked away from, so the quote
+    /// agrees with the `workDone` / `workCost` pair published beside it.
+    ///
+    /// `eligible` is the caller's composed gate, exactly as [`RungDef::build_accrual`] takes it: the
+    /// web supplies the rung's own site / ceiling / knowledge / ownership terms. **A projection must
+    /// never quote a rung the gates would refuse**, so a caller that cannot answer one of them passes
+    /// `false` and the wire says "no estimate" instead of naming a job the player cannot take.
+    ///
+    /// `None` — no estimate — for a rung with nothing to build, a gate that refuses, or a crew that
+    /// produces nothing. A meter already past the bar — including a bar the crew's **gear** pays off
+    /// outright — is [`BUILD_FINISHES_IN_ONE_TURN`], not `None`: it is an answer.
+    // The rung, its per-source price, its meter, and the three things a crew brings (hands, floor,
+    // kit) are all genuinely inputs — the same list `build_accrual` + `build_cost` +
+    // `effective_build_cost` take between them.
+    #[allow(clippy::too_many_arguments)]
+    pub fn projected_build_turns(
+        &self,
+        rung: &RungDef,
+        cost_multiplier: f32,
+        banked: f32,
+        floor: f32,
+        workers: u32,
+        gear_per_worker: f32,
+        eligible: bool,
+    ) -> Option<u32> {
+        let cost = rung.build_cost(cost_multiplier)?;
+        let bar = self.effective_build_cost(cost, build_work_from_gear(gear_per_worker, workers));
+        let accrual = rung.build_accrual(rung.verb_improvement(), eligible, floor, workers);
+        build_turns_remaining(bar, banked, accrual)
+    }
+
+    /// **The reference job every build-quantum readout is quoted against**, in work units — the
+    /// [`REFERENCE_BUILD_RUNG`]'s own `work_cost`. See that constant for why the number is the
+    /// ladder's rather than the readout's.
+    pub fn reference_build_cost(&self) -> f32 {
+        self.rung(REFERENCE_BUILD_RUNG)
+            .build_cost(RUNG_COST_UNSCALED)
+            .expect("the reference rung is an investment — it has a build meter")
     }
 
     /// **THE dip multiplier an assignment's ceiling carries** (`docs/plan_investment_rung_toggle.md`
@@ -1103,6 +1430,10 @@ impl LadderConfig {
             }
         }
 
+        // **Every lesson the sim can teach must be PRICED.** Run after the rung loop, so the names
+        // are already known to resolve to real discoveries.
+        self.validate_lesson_cost_coverage()?;
+
         // Every rung a system reaches for by name must exist, so `rung()` is infallible and an
         // override can't silently delete a shipped rung out from under the engine.
         for key in RungKey::ALL {
@@ -1110,6 +1441,33 @@ impl LadderConfig {
                 return Err(LadderConfigError::Invalid {
                     field: format!("rungs[{}:{}]", key.branch().as_str(), key.id()),
                     constraint: "define every rung the simulation drives by name (see RungKey)"
+                        .to_string(),
+                    value: "missing".to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// **Every knowledge the sim teaches has a price** — each rung's `earns_knowledge` and each of
+    /// the crafts ([`crate::crafting::CRAFTS_WITH_A_DISCOVERY`], the coded set a bench can teach).
+    ///
+    /// **A missing entry is a load failure, not a silent default.** A defaulted lesson would be paced
+    /// by whatever the fallback happened to be — a number nobody chose, on a knowledge nobody could
+    /// find the dial for — which is the parked-`0` failure mode in a new costume. `knowledge_accrual`
+    /// and `credit_craft_lesson` therefore both read the map as total.
+    fn validate_lesson_cost_coverage(&self) -> Result<(), LadderConfigError> {
+        let taught = self
+            .rungs
+            .iter()
+            .filter_map(|rung| rung.earns_knowledge.as_deref());
+        for name in taught.chain(crate::crafting::CRAFTS_WITH_A_DISCOVERY) {
+            if self.knowledge.lesson_cost(name).is_none() {
+                return Err(LadderConfigError::Invalid {
+                    field: format!("knowledge.lesson_costs[{name}]"),
+                    constraint: "price every knowledge the sim can teach — a rung's \
+                                 `earns_knowledge` and every craft. A missing cost would pace the \
+                                 lesson off a default nobody chose"
                         .to_string(),
                     value: "missing".to_string(),
                 });
@@ -1199,14 +1557,27 @@ fn discovery_id_for(name: &str) -> Option<u32> {
 /// what config validation is for (the `FaunaConfig::validate` discipline these bounds were moved from,
 /// where each web asserted its own copy of them).
 fn validate_knowledge(knowledge: &LadderKnowledge) -> Result<(), LadderConfigError> {
-    if !knowledge.progress_per_turn.is_finite() || knowledge.progress_per_turn <= 0.0 {
+    if !knowledge.learn_rate.is_finite() || knowledge.learn_rate <= 0.0 {
         return Err(LadderConfigError::Invalid {
             field: "knowledge".to_string(),
-            constraint: "teach at a positive rate — at `progress_per_turn <= 0` no knowledge is \
-                         ever learned and the whole ladder silently freezes at rung 1"
+            constraint: "pay a positive amount of practice per worked turn — at `learn_rate <= 0` \
+                         no knowledge is ever learned and the whole ladder silently freezes at \
+                         rung 1"
                 .to_string(),
-            value: format!("progress_per_turn = {}", knowledge.progress_per_turn),
+            value: format!("learn_rate = {}", knowledge.learn_rate),
         });
+    }
+    for (name, cost) in &knowledge.lesson_costs {
+        if !cost.is_finite() || *cost <= 0.0 {
+            return Err(LadderConfigError::Invalid {
+                field: format!("knowledge.lesson_costs[{name}]"),
+                constraint:
+                    "cost a positive amount of practice — a free lesson is known before it \
+                             is learned, so every gate it holds is open on turn 1"
+                        .to_string(),
+                value: format!("{cost}"),
+            });
+        }
     }
     if !knowledge.completion_threshold.is_finite()
         || knowledge.completion_threshold <= 0.0
@@ -1221,16 +1592,16 @@ fn validate_knowledge(knowledge: &LadderKnowledge) -> Result<(), LadderConfigErr
             value: format!("completion_threshold = {}", knowledge.completion_threshold),
         });
     }
-    if !knowledge.lesson_per_crafted_item.is_finite() || knowledge.lesson_per_crafted_item <= 0.0 {
+    if !knowledge.craft_lesson_per_item.is_finite() || knowledge.craft_lesson_per_item <= 0.0 {
         return Err(LadderConfigError::Invalid {
             field: "knowledge".to_string(),
-            constraint: "teach a positive amount per item crafted — at `lesson_per_crafted_item \
-                         <= 0` no craft is ever learned and every tool stays permanently \
-                         unreachable"
+            constraint: "pay a positive amount of practice per item crafted — at \
+                         `craft_lesson_per_item <= 0` no craft is ever learned and every tool stays \
+                         permanently unreachable"
                 .to_string(),
             value: format!(
-                "lesson_per_crafted_item = {}",
-                knowledge.lesson_per_crafted_item
+                "craft_lesson_per_item = {}",
+                knowledge.craft_lesson_per_item
             ),
         });
     }
@@ -1308,53 +1679,62 @@ fn validate_build(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError>
     let Some(build) = rung.build.as_ref() else {
         return Ok(());
     };
-    if !build.progress_per_turn.is_finite() || build.progress_per_turn <= 0.0 {
+    if !build.work_cost.is_finite() || build.work_cost <= 0.0 {
         return Err(LadderConfigError::Invalid {
             field: where_.to_string(),
-            constraint: "build the rung at a positive rate — a zero/negative \
-                         `progress_per_turn` makes it unreachable, silently"
+            constraint: "cost a positive amount of work — a zero/negative `work_cost` makes the \
+                         rung free the turn any crew touches it, silently"
                 .to_string(),
-            value: format!("progress_per_turn = {}", build.progress_per_turn),
+            value: format!("work_cost = {}", build.work_cost),
         });
     }
-    if let Some(decay) = build.decay_per_turn {
-        if !decay.is_finite() || decay <= 0.0 || decay >= build.progress_per_turn {
+    if let Some(fraction) = build.decay_fraction_per_turn {
+        if !fraction.is_finite() || fraction <= 0.0 || fraction >= 1.0 {
             return Err(LadderConfigError::Invalid {
                 field: where_.to_string(),
-                constraint: "decay at a positive rate slower than it builds — a rung that bleeds \
-                             at least as fast as it accrues can never complete, and a rung that \
-                             does not bleed at all says so with `decay_per_turn: null` rather \
-                             than a `0` that reads like a live dial"
-                    .to_string(),
-                value: format!(
-                    "decay_per_turn = {decay} against progress_per_turn = {}",
-                    build.progress_per_turn
-                ),
+                constraint:
+                    "bleed a strict fraction of its own cost per turn (0 < f < 1) — a rung \
+                             that bleeds its whole cost in a turn can never survive one turn of \
+                             neglect, and a rung that does not bleed at all says so with \
+                             `decay_fraction_per_turn: null` rather than a `0` that reads like a \
+                             live dial"
+                        .to_string(),
+                value: format!("decay_fraction_per_turn = {fraction}"),
             });
         }
     }
     // The grace may not outlast the build itself: forgive neglect for longer than it took to raise
     // the rung and the penalty never fires within the span anyone would notice — the mechanic
     // evaporates without a word, which is the failure every bound in this function guards against.
-    let build_turns = RUNG_COMPLETE / build.progress_per_turn;
+    //
+    // **The reference build is the rung's own crew at the food peak.** Turns are an output now, so
+    // "how long does this rung take" has no single answer — it depends on the hands put on it. The
+    // rung's declared `crew_needed` is the staffing this job was priced against; a rung that declares
+    // none (both animal rungs, whose crew comes from the herd) is measured against one worker, which
+    // is the most forgiving reading and therefore the safe one for a bound.
+    let reference_output = build.crew_needed.unwrap_or(1) as f32 * PER_WORKER_OUTPUT;
+    let build_turns = build.work_cost / reference_output;
     if (build.grace_turns as f32) >= build_turns {
         return Err(LadderConfigError::Invalid {
             field: where_.to_string(),
-            constraint: "forgive fewer turns of neglect than the rung takes to build — a grace \
-                         that outlasts its own build makes walking away free, silently"
+            constraint: "forgive fewer turns of neglect than the rung takes to build at its own \
+                         crew — a grace that outlasts its own build makes walking away free, \
+                         silently"
                 .to_string(),
             value: format!(
-                "grace_turns = {} against a {build_turns}-turn build (progress_per_turn = {})",
-                build.grace_turns, build.progress_per_turn
+                "grace_turns = {} against a {build_turns}-turn build (work_cost = {} at a \
+                 reference output of {reference_output}/turn)",
+                build.grace_turns, build.work_cost
             ),
         });
     }
     if build.crew_needed == Some(NO_CREW) {
         return Err(LadderConfigError::Invalid {
             field: where_.to_string(),
-            constraint: "ask for at least one worker, or say `crew_needed: null` — a rung whose \
-                         build wants nobody would accrue at `min(workers / 0, 1)`, and a `0` that \
-                         means \"no crew model\" is indistinguishable from one that means \"free\""
+            constraint: "ask for at least one worker, or say `crew_needed: null` — `crew_needed` \
+                         is the staffing FLOOR on the source's worker cap, and a floor of nobody is \
+                         nonsense; a `0` that means \"no crew model\" is indistinguishable from one \
+                         that means \"nobody need turn up\""
                 .to_string(),
             value: "crew_needed = 0".to_string(),
         });
@@ -1488,21 +1868,32 @@ mod tests {
     use super::*;
     use serde_json::Value;
 
-    /// The crew a rung with no declared `crew_needed` is exercised at. The scale is the identity
-    /// there, so the number cannot affect the assertion — it is named so that no bare `1` implies
-    /// the test picked a staffing level.
+    /// **The reference crew of a rung that declares none** — one worker, i.e. the crew the shipped
+    /// animal rungs' costs were quoted against in the config comment. Named so that no bare `1`
+    /// implies the test picked a staffing level for a reason of its own.
     const UNSCALED_CREW: u32 = 1;
 
     /// **The floor at which [`learn_multiplier`] is exactly ×1.0** — the food peak. Every accrual
-    /// assertion that is *not about the floor* passes it, so the call reads the rung's stated
-    /// `progress_per_turn` rather than a floor's fraction of it. That is the normalisation's whole
-    /// point: the 25-turn Cultivate is still 25 turns here.
+    /// assertion that is *not about the floor* passes it, so the call reads the crew's own output
+    /// rather than a floor's fraction of it. That is the normalisation's whole point: the 25-turn
+    /// Cultivate is still 25 turns here.
     const FOOD_PEAK_FLOOR: f32 = crate::fauna::MSY_BIOMASS_FRACTION;
 
-    /// Every accrual assertion below staffs the build to the rung's **full** crew, so it measures the
-    /// rung's stated `progress_per_turn` rather than a staffing shortfall's fraction of it.
-    fn full_crew(rung: &RungDef) -> u32 {
+    /// Every accrual assertion below staffs the build to the rung's **reference** crew, so a
+    /// build-length assertion reads the number the config comment quotes.
+    fn reference_crew(rung: &RungDef) -> u32 {
         rung.build_crew_needed().unwrap_or(UNSCALED_CREW)
+    }
+
+    /// **What one turn of the reference crew at the food peak with no gear produces** — the accrual
+    /// every build-length assertion divides the rung's cost by.
+    fn reference_accrual(rung: &RungDef) -> f32 {
+        rung.build_accrual(
+            rung.verb_improvement(),
+            true,
+            FOOD_PEAK_FLOOR,
+            reference_crew(rung),
+        )
     }
 
     /// Mutate the builtin ladder JSON and expect `validate` (inside `from_json_str`) to reject it —
@@ -1626,64 +2017,265 @@ mod tests {
         let tended = ladder.rung(RungKey::PlantTended);
         let build = tended.build.as_ref().expect("tended rung builds");
 
-        // Staffed to the rung's full crew, so this reads its stated rate rather than a shortfall's.
+        // The crew IS the throughput now: `crew` workers at the food peak with no gear produce
+        // `crew × PER_WORKER_OUTPUT` work units.
         let crew = build.crew_needed.expect("the tended rung declares a crew");
         assert_eq!(
-            tended.build_accrual(
-                Some(Improvement::Cultivate),
-                true,
-                FOOD_PEAK_FLOOR,
-                RUNG_TIMESCALE_UNSCALED,
-                crew,
-                crate::intensification::NO_BUILD_GEAR,
-            ),
-            build.progress_per_turn
+            tended.build_accrual(Some(Improvement::Cultivate), true, FOOD_PEAK_FLOOR, crew,),
+            crew as f32 * PER_WORKER_OUTPUT
         );
         // Wrong verb → nothing, even though the crew is working the patch.
         assert_eq!(
-            tended.build_accrual(
-                Some(Improvement::Sow),
-                true,
-                FOOD_PEAK_FLOOR,
-                RUNG_TIMESCALE_UNSCALED,
-                crew,
-                crate::intensification::NO_BUILD_GEAR,
-            ),
+            tended.build_accrual(Some(Improvement::Sow), true, FOOD_PEAK_FLOOR, crew,),
             0.0
         );
         // No improvement at all → nothing. A crew that is only harvesting builds nothing, whatever
         // its stance.
-        assert_eq!(
-            tended.build_accrual(
-                None,
-                true,
-                FOOD_PEAK_FLOOR,
-                RUNG_TIMESCALE_UNSCALED,
-                crew,
-                crate::intensification::NO_BUILD_GEAR
-            ),
-            0.0
-        );
+        assert_eq!(tended.build_accrual(None, true, FOOD_PEAK_FLOOR, crew), 0.0);
         // Right verb, gate lapsed → nothing accrues (progress is neither lost nor advanced).
         assert_eq!(
-            tended.build_accrual(
-                Some(Improvement::Cultivate),
-                false,
-                FOOD_PEAK_FLOOR,
-                RUNG_TIMESCALE_UNSCALED,
-                crew,
-                crate::intensification::NO_BUILD_GEAR,
-            ),
+            tended.build_accrual(Some(Improvement::Cultivate), false, FOOD_PEAK_FLOOR, crew,),
             0.0
         );
+        // The cost is the job, and the decay is a fraction OF that job — both in absolute units.
+        assert_eq!(tended.build_cost(RUNG_COST_UNSCALED), Some(build.work_cost));
         assert_eq!(
-            tended.build_decay(RUNG_TIMESCALE_UNSCALED),
-            build.decay_per_turn.expect("the tended rung bleeds")
+            tended.build_decay(RUNG_COST_UNSCALED),
+            build
+                .decay_fraction_per_turn
+                .expect("the tended rung bleeds")
+                * build.work_cost
         );
         assert_eq!(
             tended.yield_fraction_while_building(),
             Some(build.yield_fraction_while_building)
         );
+    }
+
+    /// **A bigger crew finishes the same job sooner, with no cap** — the arc's whole claim at the
+    /// seam (`docs/plan_unit_costed_work.md` §1.2). The retired `crew_scale` capped the accrual at
+    /// the rung's stated rate, so over-crewing bought nothing; it now buys turns, on **every** rung
+    /// including the two animal ones that were crew-*blind*.
+    #[test]
+    fn a_bigger_crew_finishes_the_same_job_sooner_on_every_rung() {
+        let ladder = LadderConfig::builtin();
+        for key in [
+            RungKey::PlantTended,
+            RungKey::PlantField,
+            RungKey::AnimalPastoral,
+            RungKey::AnimalPen,
+        ] {
+            let rung = ladder.rung(key);
+            let work = |workers| {
+                rung.build_accrual(rung.verb_improvement(), true, FOOD_PEAK_FLOOR, workers)
+            };
+            assert_eq!(work(0), 0.0, "{key:?}: nobody working, nothing built");
+            assert_eq!(
+                work(1),
+                PER_WORKER_OUTPUT,
+                "{key:?}: one worker is worth one worker-turn"
+            );
+            assert_eq!(
+                work(20),
+                20.0 * PER_WORKER_OUTPUT,
+                "{key:?}: twenty hands produce twenty units — there is no crew cap"
+            );
+            // Turns are the OUTPUT: the same fixed cost, twice the crew, half the turns.
+            let cost = rung
+                .build_cost(RUNG_COST_UNSCALED)
+                .expect("the rung builds");
+            assert_eq!(
+                build_turns_remaining(cost, RUNG_UNSTARTED, work(2)),
+                build_turns_remaining(cost, RUNG_UNSTARTED, work(1)).map(|turns| turns.div_ceil(2)),
+                "{key:?}: doubling the crew halves the turns"
+            );
+        }
+    }
+
+    /// **A TOOL'S SAVING IS A SHARE OF THE JOB, so it fades as the job grows** — the arithmetic §6.1
+    /// turns on, and the reason the contribution is subtracted from the cost rather than multiplied
+    /// into the crew.
+    ///
+    /// A **multiplier** would save the same *percentage* of turns whatever the job costs
+    /// (`turns_geared / turns_bare = w / (w + h)`, the cost cancels). Subtracted, the same 17 units
+    /// are a third of a 50-unit garden and a seventeenth of a 300-unit farm — **and the tool never
+    /// mentions either improvement by name**. The fade is therefore *config's* job (a Farm is born
+    /// large), not a property of the rule.
+    #[test]
+    fn a_tools_saving_shrinks_as_the_job_grows() {
+        let ladder = LadderConfig::builtin();
+        /// A fully-geared reference keeper crew: two hands, `husbandry_gear`'s 8.5 each.
+        const GEAR_WORK: f32 = 17.0;
+        /// The shipped `plant:tended` cost, and a stand-in for the ~300-unit Farm rung 4 is born at.
+        const GARDEN: f32 = 50.0;
+        const FARM: f32 = 300.0;
+
+        let saved = |cost: f32| (cost - ladder.effective_build_cost(cost, GEAR_WORK)) / cost;
+        assert!(
+            (saved(GARDEN) - GEAR_WORK / GARDEN).abs() < 1e-6,
+            "the tool takes a THIRD off a garden: {}",
+            saved(GARDEN)
+        );
+        assert!(
+            saved(FARM) * 3.0 < saved(GARDEN),
+            "and is noise against a farm — under a third of the share, not the same share: {} vs {}",
+            saved(FARM),
+            saved(GARDEN)
+        );
+    }
+
+    /// **THE GEAR IS A SUM OVER THE CREW, NEVER AN AVERAGE** (§6.2) — the partly-equipped-party rule
+    /// the carries already run on, and the property that lets the cost-side stat be
+    /// coverage-weighted where the retired multiplier could not be.
+    #[test]
+    fn the_gear_contribution_sums_over_the_crew_and_floors_at_neutral() {
+        const PER_WORKER: f32 = 8.5;
+        assert_eq!(build_work_from_gear(PER_WORKER, 0), NO_BUILD_GEAR);
+        assert_eq!(build_work_from_gear(PER_WORKER, 2), 2.0 * PER_WORKER);
+        assert_eq!(build_work_from_gear(PER_WORKER, 20), 20.0 * PER_WORKER);
+        assert_eq!(
+            build_work_from_gear(NO_BUILD_GEAR, 20),
+            NO_BUILD_GEAR,
+            "a crew carrying nothing that helps takes nothing off, however many of them there are"
+        );
+        // A negative contribution cannot *add* work — `EquipmentConfig::validate` rejects one, and
+        // this is the arithmetic's own guard.
+        assert_eq!(build_work_from_gear(-5.0, 2), NO_BUILD_GEAR);
+    }
+
+    /// **A FULLY-GEARED ANIMAL BUILD IS UNMOVED, and that is this slice's pacing proof** — the
+    /// calibration §6.2 sets `husbandry_gear`'s 8.5 by: the retired `build_rate` ×1.5 on a 50-unit
+    /// job at the reference keeper crew of 2 saved 8.33 of 25 turns, i.e. it was worth ≈17 units of
+    /// the job, which is 8.5 **per worker**.
+    #[test]
+    fn a_fully_geared_reference_crew_tames_in_the_turns_the_retired_multiplier_gave() {
+        let ladder = LadderConfig::builtin();
+        let pastoral = ladder.rung(RungKey::AnimalPastoral);
+        /// The reference keeper crew the animal costs were priced against — see
+        /// `the_food_peak_preserves_every_rungs_stated_build_length`.
+        const KEEPERS: u32 = 2;
+        /// What `husbandry_gear`'s flint tier declares, per equipped worker.
+        const PER_WORKER: f32 = 8.5;
+        /// What the retired ×1.5 multiplier bought at this crew: `ceil(50 / (2 × 1.5))`.
+        const GEARED_TURNS: u32 = 17;
+
+        let cost = pastoral
+            .build_cost(RUNG_COST_UNSCALED)
+            .expect("the pastoral rung builds");
+        let accrual =
+            pastoral.build_accrual(pastoral.verb_improvement(), true, FOOD_PEAK_FLOOR, KEEPERS);
+        let bar = ladder.effective_build_cost(cost, build_work_from_gear(PER_WORKER, KEEPERS));
+        assert_eq!(
+            build_turns_remaining(bar, RUNG_UNSTARTED, accrual),
+            Some(GEARED_TURNS),
+            "a fully-geared reference keeper crew must finish where the multiplier left it"
+        );
+        // And a HALF-geared crew is honestly slower, which it was not before: the multiplier was
+        // resolved uncovered, so one set of hurdles among the crew bought the whole ×1.5.
+        let half = ladder.effective_build_cost(cost, build_work_from_gear(PER_WORKER, 1));
+        let half_turns =
+            build_turns_remaining(half, RUNG_UNSTARTED, accrual).expect("a staffed build finishes");
+        assert!(
+            half_turns > GEARED_TURNS,
+            "half the crew equipped must take longer than all of it: {half_turns} vs \
+             {GEARED_TURNS}"
+        );
+    }
+
+    /// **The turns estimate is `ceil(remaining / this turn's work)`, and a STALL has no estimate.**
+    /// `None` is the wire's [`NO_BUILD_TURNS_ESTIMATE`], and a stall is the only thing that earns it:
+    /// a build nobody is advancing cannot be quoted a finish date, and a huge number would read as a
+    /// promise.
+    ///
+    /// **A bar already at or below the meter is `1`, NOT `None`** — the work is banked, so the job
+    /// finishes the first turn anybody works it. That is the case a well-geared crew reaches through
+    /// an unfloored [`LadderConfig::effective_build_cost`], and conflating it with *"no answer"* is
+    /// what made the estimate vanish as hands were added.
+    #[test]
+    fn the_turns_estimate_rounds_up_and_declines_to_quote_a_stall() {
+        const COST: f32 = 50.0;
+        assert_eq!(build_turns_remaining(COST, RUNG_UNSTARTED, 2.0), Some(25));
+        assert_eq!(build_turns_remaining(COST, 40.0, 3.0), Some(4), "rounds up");
+        assert_eq!(
+            build_turns_remaining(COST, 49.9, 2.0),
+            Some(1),
+            "the last sliver is still a turn"
+        );
+        assert_eq!(
+            build_turns_remaining(COST, COST, 2.0),
+            Some(BUILD_FINISHES_IN_ONE_TURN),
+            "a job whose work is already banked finishes on the next worked turn"
+        );
+        assert_eq!(
+            build_turns_remaining(-1.0, RUNG_UNSTARTED, 2.0),
+            Some(BUILD_FINISHES_IN_ONE_TURN),
+            "and so does one the crew's gear paid off outright — the bar is below zero, which is an \
+             ANSWER"
+        );
+        assert_eq!(
+            build_turns_remaining(COST, 10.0, 0.0),
+            None,
+            "a stalled build has no finite estimate"
+        );
+    }
+
+    /// **AN OVER-GEARED CREW IS QUOTED ONE TURN, NOT "NO ESTIMATE"** — the projection half, on the
+    /// shipped roster and at a crew a real band can staff, because that is where the defect was
+    /// visible: the compose sheet is by definition looking at a rung nobody has started.
+    ///
+    /// Six keepers each holding handling gear take `6 × 8.5 = 51` work units off a 50-unit `Tame`,
+    /// so [`LadderConfig::effective_build_cost`] — which is deliberately unfloored — hands
+    /// [`build_turns_remaining`] a bar below zero. The quote must fall to `1` and stop there rather
+    /// than disappearing at exactly the crew size that demonstrates *add hands and watch it drop*.
+    #[test]
+    fn a_crew_whose_gear_pays_the_job_off_is_quoted_one_turn_not_no_estimate() {
+        const PER_WORKER: f32 = 8.5;
+        /// The `taming_cost_multiplier` of a species that costs exactly the rung's own price — the
+        /// regime the shipped roster's rabbit, fowl, crag goat, wild sheep and snow hare are all in.
+        const UNSCALED_SPECIES: f32 = RUNG_COST_UNSCALED;
+        let ladder = LadderConfig::builtin();
+        let pastoral = ladder.rung(RungKey::AnimalPastoral);
+        let cost = pastoral
+            .build_cost(UNSCALED_SPECIES)
+            .expect("the pastoral rung builds");
+
+        let quote = |keepers: u32| {
+            ladder.projected_build_turns(
+                pastoral,
+                UNSCALED_SPECIES,
+                RUNG_UNSTARTED,
+                FOOD_PEAK_FLOOR,
+                keepers,
+                PER_WORKER,
+                true,
+            )
+        };
+
+        // The fixture is only meaningful if the gear genuinely over-pays the job.
+        let over_geared = 6;
+        assert!(
+            build_work_from_gear(PER_WORKER, over_geared) >= cost,
+            "fixture: {over_geared} keepers' gear must cover the whole {cost}-unit job"
+        );
+        assert_eq!(
+            quote(over_geared),
+            Some(BUILD_FINISHES_IN_ONE_TURN),
+            "gear that pays the job off outright finishes it on the first worked turn"
+        );
+
+        // And the quote is monotone into that floor rather than falling off it: each added hand
+        // shortens the job until it cannot be shortened further.
+        let mut previous = quote(1).expect("one keeper is still quotable");
+        for keepers in 2..=over_geared {
+            let turns = quote(keepers).unwrap_or_else(|| {
+                panic!("a crew of {keepers} must be quotable — it is working the herd")
+            });
+            assert!(
+                turns <= previous,
+                "adding a hand must never lengthen the quote: {turns} at {keepers} vs {previous}"
+            );
+            previous = turns;
+        }
     }
 
     /// A rung with **no verb** is never driven — the `wild` rungs, which are nothing to *build*:
@@ -1703,34 +2295,27 @@ mod tests {
                 Some(Improvement::Corral),
             ] {
                 assert_eq!(
-                    wild.build_accrual(
-                        improvement,
-                        true,
-                        FOOD_PEAK_FLOOR,
-                        RUNG_TIMESCALE_UNSCALED,
-                        full_crew(wild),
-                        crate::intensification::NO_BUILD_GEAR,
-                    ),
+                    wild.build_accrual(improvement, true, FOOD_PEAK_FLOOR, reference_crew(wild),),
                     0.0
                 );
             }
-            assert_eq!(wild.build_decay(RUNG_TIMESCALE_UNSCALED), 0.0);
+            assert_eq!(wild.build_cost(RUNG_COST_UNSCALED), None);
+            assert_eq!(wild.build_decay(RUNG_COST_UNSCALED), 0.0);
             assert_eq!(wild.yield_fraction_while_building(), None);
         }
     }
 
-    /// **Taming must out-run its own decay**, or no herd could ever be tamed by sustained work.
-    /// Relocated from `fauna_config::tests::validate_rejects_taming_that_cannot_outrun_its_decay`
-    /// with the dials themselves: the bound now lives on the rung that owns them, and
-    /// `LadderConfig::validate` applies it to every rung of both webs rather than each web
-    /// re-asserting its own copy.
+    /// **A rung may not bleed its whole cost in a turn** — the shape the old "decay must be slower
+    /// than the build" bound takes once decay is a *fraction of the job* rather than a rate against
+    /// another rate. At `1.0` a rung would lose everything the first unworked turn, which is a rung
+    /// nobody could hold rather than one nobody could build.
     #[test]
-    fn rejects_taming_that_cannot_outrun_its_decay() {
+    fn rejects_a_decay_that_bleeds_the_whole_job_in_a_turn() {
         let err = reject(|json| {
-            let idx = rung_index(json, "animal", "pastoral");
-            json["rungs"][idx]["build"]["decay_per_turn"] = (0.04).into();
+            let idx = rung_index(json, "plant", "tended");
+            json["rungs"][idx]["build"]["decay_fraction_per_turn"] = (1.0).into();
         });
-        assert_rejects(err, "animal:pastoral");
+        assert_rejects(err, "plant:tended");
     }
 
     /// **Sustain is not a taming verb** — the §4.1 de-conflation, asserted at the engine seam: the
@@ -1747,11 +2332,13 @@ mod tests {
                 Some(Improvement::Tame),
                 true,
                 FOOD_PEAK_FLOOR,
-                RUNG_TIMESCALE_UNSCALED,
-                full_crew(pastoral),
-                crate::intensification::NO_BUILD_GEAR,
+                reference_crew(pastoral),
             ),
-            build.progress_per_turn
+            reference_crew(pastoral) as f32 * PER_WORKER_OUTPUT
+        );
+        assert_eq!(
+            pastoral.build_cost(RUNG_COST_UNSCALED),
+            Some(build.work_cost)
         );
         for improvement in [
             None,
@@ -1764,9 +2351,7 @@ mod tests {
                     improvement,
                     true,
                     FOOD_PEAK_FLOOR,
-                    RUNG_TIMESCALE_UNSCALED,
-                    full_crew(pastoral),
-                    crate::intensification::NO_BUILD_GEAR,
+                    reference_crew(pastoral),
                 ),
                 0.0,
                 "{improvement:?} must not tame a herd — only Tame does"
@@ -1778,9 +2363,7 @@ mod tests {
                 Some(Improvement::Tame),
                 false,
                 FOOD_PEAK_FLOOR,
-                RUNG_TIMESCALE_UNSCALED,
-                full_crew(pastoral),
-                crate::intensification::NO_BUILD_GEAR,
+                reference_crew(pastoral),
             ),
             0.0
         );
@@ -1829,18 +2412,20 @@ mod tests {
         let ladder = LadderConfig::builtin();
         for key in [RungKey::PlantTended, RungKey::PlantField] {
             assert!(
-                ladder.rung(key).build_decay(RUNG_TIMESCALE_UNSCALED) > 0.0,
+                ladder.rung(key).build_decay(RUNG_COST_UNSCALED) > 0.0,
                 "an abandoned plant improvement bleeds"
             );
         }
         for key in [RungKey::AnimalPastoral, RungKey::AnimalPen] {
             let rung = ladder.rung(key);
             assert_eq!(
-                rung.build.as_ref().and_then(|build| build.decay_per_turn),
+                rung.build
+                    .as_ref()
+                    .and_then(|build| build.decay_fraction_per_turn),
                 None,
                 "the animal branch's meters do not bleed — say so, do not park a zero"
             );
-            assert_eq!(rung.build_decay(RUNG_TIMESCALE_UNSCALED), 0.0);
+            assert_eq!(rung.build_decay(RUNG_COST_UNSCALED), 0.0);
         }
     }
 
@@ -1859,47 +2444,6 @@ mod tests {
         for key in [RungKey::AnimalPastoral, RungKey::AnimalPen] {
             assert_eq!(ladder.rung(key).build_crew_needed(), None);
         }
-    }
-
-    /// **The crew is a multiplier on the accrual, `herded_fraction`'s exact shape.** Full crew builds
-    /// at the stated rate, half a crew takes twice as long, over-crewing buys nothing — and a rung
-    /// with no declared crew is unscaled.
-    #[test]
-    fn build_accrual_scales_with_the_crew_that_showed_up() {
-        let ladder = LadderConfig::builtin();
-        let tended = ladder.rung(RungKey::PlantTended);
-        let crew = tended
-            .build_crew_needed()
-            .expect("the tended rung has a crew");
-        let rate = tended
-            .build
-            .as_ref()
-            .expect("the tended rung builds")
-            .progress_per_turn;
-        let accrual = |workers| {
-            tended.build_accrual(
-                Some(Improvement::Cultivate),
-                true,
-                FOOD_PEAK_FLOOR,
-                RUNG_TIMESCALE_UNSCALED,
-                workers,
-                crate::intensification::NO_BUILD_GEAR,
-            )
-        };
-
-        assert_eq!(accrual(crew), rate, "full crew → the rung's stated rate");
-        assert_eq!(accrual(crew * 2), rate, "over-crewing buys nothing");
-        assert!(
-            (accrual(1) - rate / crew as f32).abs() < 1e-9,
-            "one of {crew} builds at 1/{crew} the rate: {}",
-            accrual(1)
-        );
-        assert_eq!(accrual(0), 0.0, "nobody working, nothing built");
-
-        // A rung with no declared crew is unscaled by it.
-        let pen = ladder.rung(RungKey::AnimalPen);
-        assert_eq!(pen.build_crew_scale(1), FULL_CREW_SCALE);
-        assert_eq!(pen.build_crew_scale(0), FULL_CREW_SCALE);
     }
 
     /// **The published countdown reads without any subtraction**: `0` means the penalty is biting
@@ -1924,14 +2468,42 @@ mod tests {
     fn rejects_a_grace_that_outlasts_its_own_build() {
         let err = reject(|json| {
             let idx = rung_index(json, "plant", "tended");
-            // The build is `1 / 0.04` = 25 turns.
+            // The reference build is `50 / 2` = 25 turns.
             json["rungs"][idx]["build"]["grace_turns"] = (25).into();
         });
         assert_rejects(err, "plant:tended");
     }
 
-    /// A rung whose build wants nobody would accrue at `min(workers / 0, 1)` — never. A rung with no
-    /// crew model says `null`, which is a different statement.
+    /// **The shipped rungs clear the grace bound**, and that is worth pinning positively: the bound
+    /// moved from `1 / progress_per_turn` to `work_cost / reference_output`, so retuning a cost
+    /// silently changes what a grace is allowed to be.
+    #[test]
+    fn every_shipped_grace_is_shorter_than_its_own_reference_build() {
+        let ladder = LadderConfig::builtin();
+        for key in [
+            RungKey::PlantTended,
+            RungKey::PlantField,
+            RungKey::AnimalPastoral,
+            RungKey::AnimalPen,
+        ] {
+            let rung = ladder.rung(key);
+            let turns = build_turns_remaining(
+                rung.build_cost(RUNG_COST_UNSCALED)
+                    .expect("the rung builds"),
+                RUNG_UNSTARTED,
+                reference_accrual(rung),
+            )
+            .expect("a staffed build finishes");
+            assert!(
+                rung.neglect_grace_turns() < turns,
+                "{key:?}: grace {} must be shorter than its {turns}-turn reference build",
+                rung.neglect_grace_turns()
+            );
+        }
+    }
+
+    /// A rung whose build wants nobody states a staffing floor of nobody, which is nonsense. A rung
+    /// with no crew model says `null`, which is a different statement.
     #[test]
     fn rejects_a_build_crew_of_nobody() {
         let err = reject(|json| {
@@ -1941,13 +2513,13 @@ mod tests {
         assert_rejects(err, "plant:field");
     }
 
-    /// `decay_per_turn: 0` and `decay_per_turn: null` would behave identically, so only one of them
-    /// is allowed to mean it — a parked zero reads like a live dial.
+    /// `decay_fraction_per_turn: 0` and `: null` would behave identically, so only one of them is
+    /// allowed to mean it — a parked zero reads like a live dial.
     #[test]
     fn rejects_a_zero_build_decay_in_favour_of_null() {
         let err = reject(|json| {
             let idx = rung_index(json, "plant", "tended");
-            json["rungs"][idx]["build"]["decay_per_turn"] = (0.0).into();
+            json["rungs"][idx]["build"]["decay_fraction_per_turn"] = (0.0).into();
         });
         assert_rejects(err, "plant:tended");
     }
@@ -2049,20 +2621,13 @@ mod tests {
         assert_rejects(err, "plant:wild");
     }
 
+    /// A rung that costs nothing is free the turn any crew touches it — the silent-disable failure
+    /// mode, one axis over from a rate of zero.
     #[test]
-    fn rejects_a_non_building_progress_rate() {
+    fn rejects_a_free_rung() {
         let err = reject(|json| {
             let idx = rung_index(json, "plant", "tended");
-            json["rungs"][idx]["build"]["progress_per_turn"] = (0.0).into();
-        });
-        assert_rejects(err, "plant:tended");
-    }
-
-    #[test]
-    fn rejects_decay_that_outruns_the_build() {
-        let err = reject(|json| {
-            let idx = rung_index(json, "plant", "tended");
-            json["rungs"][idx]["build"]["decay_per_turn"] = (0.04).into();
+            json["rungs"][idx]["build"]["work_cost"] = (0.0).into();
         });
         assert_rejects(err, "plant:tended");
     }
@@ -2071,7 +2636,7 @@ mod tests {
     fn rejects_negative_decay() {
         let err = reject(|json| {
             let idx = rung_index(json, "plant", "tended");
-            json["rungs"][idx]["build"]["decay_per_turn"] = (-0.01).into();
+            json["rungs"][idx]["build"]["decay_fraction_per_turn"] = (-0.01).into();
         });
         assert_rejects(err, "plant:tended");
     }
@@ -2101,8 +2666,41 @@ mod tests {
 
     #[test]
     fn rejects_a_ladder_nobody_could_ever_learn() {
-        let err = reject(|json| json["knowledge"]["progress_per_turn"] = (0.0).into());
+        let err = reject(|json| json["knowledge"]["learn_rate"] = (0.0).into());
         assert_rejects(err, "knowledge");
+    }
+
+    /// **A free lesson is known before it is learned**, so every gate it holds opens on turn 1 — the
+    /// silent-disable failure the cost side inherits from the rate it replaced.
+    #[test]
+    fn rejects_a_free_lesson() {
+        for bad in [0.0, -1.0] {
+            let err = reject(|json| json["knowledge"]["lesson_costs"]["herding"] = (bad).into());
+            assert_rejects(err, "knowledge.lesson_costs[herding]");
+        }
+    }
+
+    /// **Every lesson the sim can teach must be PRICED — a rung's and a bench's alike.** A missing
+    /// entry would pace the lesson off a default nobody chose, which is the parked-`0` failure in a
+    /// new costume, so it is a load failure instead.
+    #[test]
+    fn rejects_a_ladder_that_leaves_a_lesson_unpriced() {
+        // A rung's own lesson…
+        let err = reject(|json| {
+            json["knowledge"]["lesson_costs"]
+                .as_object_mut()
+                .expect("lesson_costs is a map")
+                .remove("penning");
+        });
+        assert_rejects(err, "knowledge.lesson_costs[penning]");
+        // …and a craft, which no rung teaches at all.
+        let err = reject(|json| {
+            json["knowledge"]["lesson_costs"]
+                .as_object_mut()
+                .expect("lesson_costs is a map")
+                .remove("weaving");
+        });
+        assert_rejects(err, "knowledge.lesson_costs[weaving]");
     }
 
     #[test]
@@ -2115,16 +2713,84 @@ mod tests {
         assert_rejects(err, "knowledge");
     }
 
-    /// The shipped pace: ~20 turns of stewardship per lesson, one pair of dials for both webs.
+    /// The shipped pace: ~20 turns of stewardship per lesson, **and every priced lesson is on it**.
+    /// A cost keyed by knowledge could spread them apart silently, so the sweep is over the whole map
+    /// rather than over one exemplar.
     #[test]
     fn the_builtin_ladder_is_learned_at_one_shared_pace() {
-        let knowledge = LadderConfig::builtin().knowledge;
-        assert!(knowledge.progress_per_turn > 0.0);
+        /// The turns of practice a shipped lesson takes at the food peak — this slice's pacing
+        /// proof, since `learn_rate / lesson_cost` reproduces the retired `progress_per_turn` of
+        /// `0.05` exactly.
+        const SHIPPED_LESSON_TURNS: f32 = 20.0;
+        let ladder = LadderConfig::builtin();
+        let knowledge = &ladder.knowledge;
+        assert!(knowledge.learn_rate > 0.0);
         assert!(knowledge.completion_threshold > 0.0 && knowledge.completion_threshold <= 1.0);
-        let turns = knowledge.completion_threshold / knowledge.progress_per_turn;
         assert!(
-            (turns - 20.0).abs() < 1e-3,
-            "a lesson should take ~20 turns of practice, got {turns}"
+            !knowledge.lesson_costs.is_empty(),
+            "the ladder prices lessons"
+        );
+        for (name, cost) in &knowledge.lesson_costs {
+            let turns = knowledge.completion_threshold / (knowledge.learn_rate / cost);
+            assert!(
+                (turns - SHIPPED_LESSON_TURNS).abs() < 1e-3,
+                "{name} should take ~{SHIPPED_LESSON_TURNS} turns of practice, got {turns}"
+            );
+        }
+    }
+
+    /// **A craft is 5 items, and it reads off the SAME cost a turn-worked lesson does** — the two are
+    /// one currency charged on two quanta (`docs/plan_unit_costed_work.md` §4), which is what stops
+    /// the bench and the ladder drifting apart.
+    #[test]
+    fn a_craft_is_learned_in_five_items_at_the_shared_lesson_cost() {
+        /// The items a shipped craft takes — unchanged by the currency move (`0.2` of a normalized
+        /// threshold and `4.0 / 20` are the same five).
+        const SHIPPED_CRAFT_ITEMS: f32 = 5.0;
+        let ladder = LadderConfig::builtin();
+        let knowledge = &ladder.knowledge;
+        for craft in crate::crafting::CRAFTS_WITH_A_DISCOVERY {
+            let per_item = knowledge
+                .ledger_credit(craft, knowledge.craft_lesson_per_item)
+                .expect("validate prices every craft");
+            let items = knowledge.completion_threshold / per_item;
+            assert!(
+                (items - SHIPPED_CRAFT_ITEMS).abs() < 1e-3,
+                "{craft} should be learned in ~{SHIPPED_CRAFT_ITEMS} items, got {items}"
+            );
+        }
+    }
+
+    /// **PRACTICE DOES NOT SCALE WITH HANDS, and work does** — the two-currency rule at the seam
+    /// (`docs/plan_unit_costed_work.md` §2). A lesson is credited once per source per turn, so a
+    /// per-worker rate would let a faction learn ten times faster by piling hands onto one patch.
+    ///
+    /// Asserted as the **asymmetry**, because either half alone reads like an oversight: the build
+    /// seam takes `workers` and moves with it, the lesson seam does not take them at all.
+    #[test]
+    fn a_lesson_is_paid_per_worked_turn_while_a_build_is_paid_per_worker() {
+        let ladder = LadderConfig::builtin();
+        let tended = ladder.rung(RungKey::PlantTended);
+
+        let lesson = |_workers: u32| {
+            tended
+                .knowledge_accrual(FOOD_PEAK_FLOOR, true, &ladder.knowledge)
+                .map(|(_, amount)| amount)
+        };
+        assert_eq!(
+            lesson(1),
+            lesson(50),
+            "fifty hands on one patch learn exactly what one hand does — the seam has no worker \
+             term to give them"
+        );
+        let build = |workers| {
+            tended.build_accrual(tended.verb_improvement(), true, FOOD_PEAK_FLOOR, workers)
+        };
+        assert!(
+            build(50) > build(1),
+            "…while the same fifty hands build fifty times as fast: {} vs {}",
+            build(50),
+            build(1)
         );
     }
 
@@ -2140,7 +2806,10 @@ mod tests {
     #[test]
     fn knowledge_accrual_is_the_rungs_lesson_paced_by_the_floor() {
         let ladder = LadderConfig::builtin();
-        let base = ladder.knowledge.progress_per_turn;
+        let base = ladder
+            .knowledge
+            .ledger_credit("herding", ladder.knowledge.learn_rate)
+            .expect("the ladder prices herding");
         let wild = ladder.rung(RungKey::AnimalWild);
 
         // The normalisation, which is the whole reason the multiplier is divided by the peak: a crew
@@ -2231,51 +2900,56 @@ mod tests {
     /// ([`crate::components::DEFAULT_ESCAPEMENT_FLOOR`]) is the peak, so the ladder's shipped build
     /// lengths are the ones a player who touches nothing gets — the whole arc costs no rebalance at
     /// the default. Asserted for **every** rung with a build, so a new one cannot opt out.
+    ///
+    /// **It is also this slice's own pacing proof.** The costs were chosen so that a rung's reference
+    /// crew at the food peak takes exactly the turns it took before improvements were priced in work
+    /// (`docs/plan_unit_costed_work.md` §3): 25 turns on every shipped rung.
     #[test]
     fn the_food_peak_preserves_every_rungs_stated_build_length() {
         let ladder = LadderConfig::builtin();
-        for key in [
-            RungKey::PlantTended,
-            RungKey::PlantField,
-            RungKey::AnimalPastoral,
-            RungKey::AnimalPen,
+        /// The turns every shipped rung's reference crew takes at the food peak — the pacing this
+        /// slice is neutral against.
+        const REFERENCE_BUILD_TURNS: u32 = 25;
+        // **The animal rungs' reference crews are a CHOICE, not a derivation**, and this is where it
+        // is written down beside the costs it produced: both declare `crew_needed: null` (a herd's
+        // crew comes from its size), so there was no staffing to multiply today's 25 turns by.
+        // `pastoral` takes 2 — it makes the claim rung 2 makes on plants, "you manage the wild
+        // source in place" — and `pen` takes 3, matching the plant rung that also *places* a source.
+        // See `intensification_ladder.json`'s `_comment_costs`.
+        const PASTORAL_REFERENCE_CREW: u32 = 2;
+        const PEN_REFERENCE_CREW: u32 = 3;
+        for (key, crew) in [
+            (
+                RungKey::PlantTended,
+                reference_crew(ladder.rung(RungKey::PlantTended)),
+            ),
+            (
+                RungKey::PlantField,
+                reference_crew(ladder.rung(RungKey::PlantField)),
+            ),
+            (RungKey::AnimalPastoral, PASTORAL_REFERENCE_CREW),
+            (RungKey::AnimalPen, PEN_REFERENCE_CREW),
         ] {
             let rung = ladder.rung(key);
-            let stated = rung
-                .build
-                .as_ref()
-                .expect("every rung in this list builds")
-                .progress_per_turn;
+            let accrual = rung.build_accrual(rung.verb_improvement(), true, FOOD_PEAK_FLOOR, crew);
             assert_eq!(
-                rung.build_accrual(
-                    rung.verb_improvement(),
-                    true,
-                    FOOD_PEAK_FLOOR,
-                    RUNG_TIMESCALE_UNSCALED,
-                    full_crew(rung),
-                    crate::intensification::NO_BUILD_GEAR,
+                accrual,
+                crew as f32 * PER_WORKER_OUTPUT,
+                "{key:?}: a crew at the food peak with no gear is worth exactly its head count — \
+                 the normalisation's whole point"
+            );
+            assert_eq!(
+                build_turns_remaining(
+                    rung.build_cost(RUNG_COST_UNSCALED)
+                        .expect("the rung builds"),
+                    RUNG_UNSTARTED,
+                    accrual,
                 ),
-                stated,
-                "{key:?}: a full crew at the food peak builds at the rung's stated rate — the \
-                 normalisation's whole point"
+                Some(REFERENCE_BUILD_TURNS),
+                "{key:?}: the food peak preserves the shipped {REFERENCE_BUILD_TURNS}-turn build \
+                 at its reference crew of {crew}"
             );
         }
-        // …and the shipped plant rung-2 dial really is the 25-turn Cultivate the docs quote, so the
-        // claim above is anchored to a number a reader can check rather than to itself.
-        let tended = ladder.rung(RungKey::PlantTended);
-        let per_turn = tended.build_accrual(
-            Some(Improvement::Cultivate),
-            true,
-            FOOD_PEAK_FLOOR,
-            RUNG_TIMESCALE_UNSCALED,
-            full_crew(tended),
-            crate::intensification::NO_BUILD_GEAR,
-        );
-        assert_eq!(
-            (RUNG_COMPLETE / per_turn).ceil() as u32,
-            25,
-            "the food peak preserves the 25-turn Cultivate"
-        );
     }
 
     /// **A build rides the same rate the lesson does** — increasing in the floor, with a liveness
@@ -2294,14 +2968,7 @@ mod tests {
         ] {
             let rung = ladder.rung(key);
             let accrual = |floor| {
-                rung.build_accrual(
-                    rung.verb_improvement(),
-                    true,
-                    floor,
-                    RUNG_TIMESCALE_UNSCALED,
-                    full_crew(rung),
-                    crate::intensification::NO_BUILD_GEAR,
-                )
+                rung.build_accrual(rung.verb_improvement(), true, floor, reference_crew(rung))
             };
             // Liveness first: an ordering sweep alone would pass on an accrual that returned zero
             // everywhere, which is exactly what a broken gate looks like.
@@ -2329,45 +2996,42 @@ mod tests {
             // false and nothing is built. Asserted here as the seam's half of it — `eligible = false`
             // is always zero, whatever the floor.
             assert_eq!(
-                rung.build_accrual(
-                    rung.verb_improvement(),
-                    false,
-                    1.0,
-                    RUNG_TIMESCALE_UNSCALED,
-                    full_crew(rung),
-                    crate::intensification::NO_BUILD_GEAR,
-                ),
+                rung.build_accrual(rung.verb_improvement(), false, 1.0, reference_crew(rung),),
                 0.0,
                 "{key:?}: watching a source builds nothing, however restrained the watching"
             );
         }
     }
 
-    /// **`learn_multiplier` scales the ACCRUAL and not the decay** — the asymmetry with `timescale`,
-    /// which both take. Decay happens on turns nobody works the source, so there is no assignment and
-    /// no floor to read; scaling it would multiply by a number that does not exist in that state.
+    /// **`learn_multiplier` scales the ACCRUAL and not the decay** — the asymmetry with the cost
+    /// multiplier, which reaches both. Decay happens on turns nobody works the source, so there is no
+    /// assignment and no floor to read; scaling it would multiply by a number that does not exist in
+    /// that state.
     #[test]
     fn the_floor_scales_the_build_but_never_the_decay() {
         let ladder = LadderConfig::builtin();
         let tended = ladder.rung(RungKey::PlantTended);
-        let stated_decay = tended
-            .build
-            .as_ref()
-            .expect("the tended rung builds")
-            .decay_per_turn
-            .expect("the tended rung bleeds");
+        let build = tended.build.as_ref().expect("the tended rung builds");
+        let stated_bleed = build
+            .decay_fraction_per_turn
+            .expect("the tended rung bleeds")
+            * build.work_cost;
         assert_eq!(
-            tended.build_decay(RUNG_TIMESCALE_UNSCALED),
-            stated_decay,
-            "the decay is the rung's own rate — no floor is folded into it"
+            tended.build_decay(RUNG_COST_UNSCALED),
+            stated_bleed,
+            "the decay is a fraction of the rung's own cost — no floor is folded into it"
         );
-        // The timescale, by contrast, reaches both: that is what keeps a rung's build:decay ratio
-        // invariant per species (`slow to tame, slow to forget`).
-        const HALF_SPEED: f32 = 0.5;
+        // **The cost multiplier reaches BOTH sides**, which is what keeps a rung's build:decay ratio
+        // invariant per source for free (`slow to tame, slow to forget`).
+        const TWICE_THE_WORK: f32 = 2.0;
         assert_eq!(
-            tended.build_decay(HALF_SPEED),
-            stated_decay * HALF_SPEED,
-            "the timescale still dilates the decay — it is the floor that must not"
+            tended.build_decay(TWICE_THE_WORK),
+            stated_bleed * TWICE_THE_WORK,
+            "a source that is twice the job also bleeds twice as slowly, in proportion"
+        );
+        assert_eq!(
+            tended.build_cost(TWICE_THE_WORK),
+            Some(build.work_cost * TWICE_THE_WORK)
         );
     }
 
@@ -2530,5 +3194,48 @@ mod tests {
             json["rungs"].as_array_mut().expect("array").remove(idx);
         });
         assert_rejects(err, "animal:pen");
+    }
+
+    /// **[`RungKey::above`] and the shipped records' own `order` are ONE ladder** — the coded climb a
+    /// projection walks must be the climb the config declares, or `buildTurnsRemaining` would quote a
+    /// rung the config puts somewhere else entirely.
+    ///
+    /// Asserted both ways round: every key with a rung above it names the record at `order + 1` on its
+    /// own branch, and every key answering `None` really is the top of its branch. The second half is
+    /// the liveness clause — a `above` that answered `None` for everything would pass the first alone,
+    /// and would silently turn every projection into "no estimate".
+    #[test]
+    fn the_coded_climb_matches_the_shipped_ladders_own_order() {
+        let ladder = LadderConfig::builtin();
+        for key in RungKey::ALL {
+            let here = ladder.rung(key);
+            let taller = ladder
+                .rungs
+                .iter()
+                .any(|rung| rung.branch == here.branch && rung.order > here.order);
+            match key.above() {
+                Some(next) => {
+                    let next = ladder.rung(next);
+                    assert_eq!(
+                        next.branch,
+                        here.branch,
+                        "{} climbs its own branch",
+                        key.id()
+                    );
+                    assert_eq!(
+                        next.order,
+                        here.order + 1,
+                        "{}'s next rung is the record directly above it",
+                        key.id()
+                    );
+                }
+                None => assert!(
+                    !taller,
+                    "{} answers 'nothing above' while the ladder declares a taller rung on its \
+                     branch",
+                    key.id()
+                ),
+            }
+        }
     }
 }

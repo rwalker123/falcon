@@ -334,7 +334,28 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 row.penCarryPerWorkerBiomass() as f64,
             );
             let _ = entry.insert("scout_vantage_range", row.scoutVantageRange() as f64);
-            let _ = entry.insert("build_rate", row.buildRate() as f64);
+            // **THE BUILD AXIS AT THIS BAND'S LIVE WEAR, IN WORK UNITS** — what one equipped worker
+            // takes off an improvement's cost (neutral `0`, the handling gear's flint tier 8.5), so
+            // spent gear steps back to neutral here the way every other axis does. `buildRate` is
+            // retired and frozen at its neutral `1` on the wire, so it is no longer decoded: a
+            // reader kept on it would quote a capability the kit no longer advertises.
+            let _ = entry.insert("build_work_per_worker", row.buildWorkPerWorker() as f64);
+            // …and **HOW MANY WORKERS THIS KIT CAN ACTUALLY EQUIP for one**, out of what this band
+            // holds — the head count at or above which extra hands take no further work off a job
+            // (`0` = nothing live that helps, which is every row but the handling gear's today).
+            //
+            // **THE TWO TOGETHER ARE THE GEAR TERM, and it is a CLOSED FORM because they ride HERE**:
+            // `gear(w) = min(w, this) × build_work_per_worker`, evaluated against a crew the player
+            // is PROPOSING and against the kit the picker is OFFERING. Both facts behind it — the
+            // units held and each unit's reach — belong to the band's ledger, not to any worked
+            // source, so a rung nobody has started still has a quote and swapping kits re-prices the
+            // whole estimate. The source rows carry `build_work_from_gear`, the RESOLVED contribution
+            // for the crew that worked them this turn, which answers a different question and cannot
+            // move under a stepper.
+            let _ = entry.insert(
+                "build_work_saturating_crew",
+                row.buildWorkSaturatingCrew() as i64,
+            );
             kit_tiers.push(&entry.to_variant());
         }
     }

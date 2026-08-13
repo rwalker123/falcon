@@ -18,6 +18,14 @@ var h
 
 const TAME_CAP_WOULD_BE_HERDERS := 30
 
+## The RETIRED pause note's own stem, and any turn estimate at all — the two needles
+## `herd_tame_stalled` is judged on. Both are LITERALS: the paused format is deleted (a needle
+## recomposed from a live format could only describe whatever the code still says), and the estimate's
+## mark is what both count forms open with, so it finds an estimate without naming a count.
+const RETIRED_PAUSED_NOTE_NEEDLE := "ease off and it resumes"
+
+const TAME_TURN_ESTIMATE_NEEDLE := "≈"
+
 # The Red Deer pen at its settled escapement point (design doc §7, MEASURED from a sim run): the
 # feed the herd demands per turn, and the share of it a broke keeper managed to pay in the starving
 # state. `pen_fed_fraction` < 1 ⇒ the herd is shrinking.
@@ -137,6 +145,7 @@ func _tame_worker_cap_herd_fixture() -> Dictionary:
 func _fully_herded_herd_fixture() -> Dictionary:
 	var fixture := HerdFx.taming_herd_fixture()
 	fixture["domestication"] = 0.9
+	HerdFx.price_animal_build(fixture)
 	HerdFx.set_managed_herders(fixture, 4)
 	fixture["herded_fraction"] = 0.4
 	return fixture
@@ -151,6 +160,7 @@ func _fully_herded_herd_fixture() -> Dictionary:
 func _under_herded_herd_fixture() -> Dictionary:
 	var fixture := _fully_herded_herd_fixture()
 	fixture["domestication"] = 0.98
+	HerdFx.price_animal_build(fixture)
 	HerdFx.set_managed_herders(fixture, 6)
 	fixture["herded_fraction"] = 1.0
 	return fixture
@@ -222,6 +232,7 @@ func _pastoral_herd_fixture() -> Dictionary:
 	var fixture := HerdFx.herd_fixture()
 	fixture["husbandry_ceiling"] = "pastoral"
 	fixture["domestication"] = 0.6
+	HerdFx.price_animal_build(fixture)
 	fixture["tile_info"] = HerdFx.compact_herd_tile_fixture()
 	return fixture
 
@@ -232,6 +243,7 @@ func _pastoral_herd_fixture() -> Dictionary:
 func _overgrazing_herd_fixture() -> Dictionary:
 	var fixture := HerdFx.herd_fixture()
 	fixture["domestication"] = 0.0
+	HerdFx.price_animal_build(fixture)
 	fixture["biomass"] = 2100.0
 	fixture["carrying_capacity"] = 1352.0
 	fixture["graze_range_radius"] = 1
@@ -247,6 +259,7 @@ func _small_game_herd_fixture() -> Dictionary:
 	fixture["species"] = "Rabbit Warren"
 	fixture["size_class"] = "small"
 	fixture["domestication"] = 0.0
+	HerdFx.price_animal_build(fixture)
 	fixture["biomass"] = 140.0
 	fixture["carrying_capacity"] = 190.0
 	fixture["graze_range_radius"] = 0
@@ -287,6 +300,7 @@ func _depleted_corral_herd_fixture() -> Dictionary:
 	fixture["biomass"] = 260.0
 	fixture["ecology_phase"] = "stressed"
 	fixture["corral_progress"] = 0.0
+	HerdFx.price_animal_build(fixture)
 	# Everything scales off the shrunken herd — including the dip, which is a share of its MSY.
 	fixture["per_worker_yield"] = 0.10
 	# Override the inherited ceiling table's two rows this frame reads — Sustain (the extractive
@@ -720,6 +734,22 @@ func run(harness) -> void:
 		Q.compose_commit_button(h._hud._drawercompose._compose_sheet) != null
 			and Q.compose_commit_button(h._hud._drawercompose._compose_sheet).text
 				== HudComposeVocab.ASSIGN_LOCAL_HERD_BUTTON)
+	# **WHAT THE GEAR TOOK OFF THE JOB** (`docs/plan_unit_costed_work.md` §11) — the readout that is
+	# the ONLY way a player can tell a tool is worth carrying to a garden and not to a farm: the
+	# contribution is a fixed number of work units against a job whose size is not. **The ANIMAL web is
+	# where it is judged**, no plant item declaring the stat yet (issue #539), and this herd's keepers
+	# carry the shipped handling gear.
+	#
+	# Judged as a PAIR with the plant tile beside it, because a line rendered unconditionally would
+	# satisfy the positive alone — and the negative is the `> 0` gate's whole contract: a crew that
+	# carries nothing that helps must read no line, never `−0 work`.
+	var corral_drawer: String = h._hud.occupant_detail.text
+	h._assert_hud("a geared animal build states what its keepers took off the job",
+		corral_drawer.contains(HudSelectionVocab.BUILD_GEAR_WORK_ROW_FORMAT
+			% DetailFormat.format_work_units(HerdFx.ANIMAL_BUILD_WORK_FROM_GEAR)))
+	h._assert_hud("…and it states the sim's own turn estimate beside its meter",
+		corral_drawer.contains(
+			HudSelectionVocab.BUILD_TURNS_ROW_FORMAT % HerdFx.ANIMAL_BUILD_TURNS_REMAINING))
 
 	# State 3d-corral-under-herded — the HERDER-DEFICIT cap fix. A composing-Corral herd needs 2 herders
 	# every turn to hold its tameness, but the Corral rung's take/prepare max-useful is 1. The compose
@@ -868,16 +898,36 @@ func run(harness) -> void:
 	# Its picker button wears the `→ +1.20/turn` payoff, above Sustain's `up to +0.90/turn`.
 	await h._save("herd_tame")
 
-	# State 6b-tame-stalled — the "why isn't my Tame progressing?" hint. Taming accrues ONLY while the
-	# herd is Thriving, but is deliberately NOT gated on it (a herd's phase swings as you hunt it), so
-	# the sim just PAUSES the meter. Silence here would recreate exactly the hidden-rule problem this
-	# arc exists to kill, so the drawer says it: what stopped, why, that progress is NOT lost, and the
-	# remedy (ease off — the opposite of "work harder").
+	# State 6b-tame-stalled — the "why isn't my Tame progressing?" state, **RE-FIXTURED ONTO THE THING
+	# THAT ACTUALLY STOPS IT.** It used to stage a non-Thriving herd, because taming was gated on
+	# `EcologyPhase::Thriving` and the drawer said so in a WARN line. `docs/plan_harvest_floor.md` §3.2
+	# replaced that cliff with a rate — the phase PACES a build now and never stops one — so the herd is
+	# still Stressed here (the retired note's own trigger, kept so a regression has something to fire
+	# on) and what stalls the build is the FLOOR: dragged to `FLOOR_MAX`, nothing stands above it, the
+	# sim's work predicate is false and nothing accrues however fast `learn_multiplier` says the crew
+	# would learn. **That floor is the sharpest case on the whole axis**: ×2.00 is the largest
+	# multiplier there is, so a sheet that omitted the predicate quoted its FASTEST estimate here.
 	h._hud._compose.reset_hunt_source()
-	h._show_herd(_taming_stalled_herd_fixture())
-	h._compose_herd(_taming_stalled_herd_fixture(), Spine.COMPOSE_COUNT_UNSET, ForageFx.COMPOSE_FLOOR_UNSET, "tame")
+	var stalled_herd := _taming_stalled_herd_fixture()
+	h._show_herd(stalled_herd)
+	h._compose_herd(stalled_herd, Spine.COMPOSE_COUNT_UNSET, SourceForecast.FLOOR_MAX, "tame")
 	await h._settle()
 	await h._save("herd_tame_stalled")
+	var stalled_face := ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
+		SourceForecast.IMPROVEMENT_TAME)
+	print("ui_preview: tame stalled  face=%s" % stalled_face)
+	# The PRECONDITIONS: the herd really is standing entirely below the composed floor (`_show_herd`
+	# floorifies the fixture, so the stock is read back off the DICT the sheet was handed rather than
+	# off the authored pair), and the phase the retired note keyed off really is non-Thriving.
+	h._assert_hud("nothing stands above a floor at the top of the axis, so the crew is not working the herd",
+		SourceForecast.escapement_room(stalled_herd, HudComposeVocab.BARE_FORECAST_PREFIX,
+			SourceForecast.FLOOR_MAX) <= SourceForecast.BUILD_NO_ESCAPEMENT_ROOM)
+	h._assert_hud("…and the herd is not Thriving, so the retired pause line would have fired",
+		String(stalled_herd["ecology_phase"]) != HudFloraVocab.ECOLOGY_PHASE_THRIVING)
+	h._assert_hud("a stalled Tame quotes NO turns — not the fastest number on the floor axis",
+		not stalled_face.contains(TAME_TURN_ESTIMATE_NEEDLE))
+	h._assert_hud("…and states no PAUSE, the phase gating nothing on this web either",
+		not Q.has_label_containing(h._hud._drawercompose._compose_sheet, RETIRED_PAUSED_NOTE_NEEDLE))
 
 	# TAMING-STARTUP-LAG GUARD — composing an INVESTMENT rung (Tame) on a still-WILD herd must offer the
 	# ownership-INDEPENDENT would-be herder crew, not the 1-worker Tame-prep count. A wild herd's

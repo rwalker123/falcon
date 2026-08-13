@@ -76,7 +76,10 @@ mod tests {
                     attack_max_body_mass: 0.0,
                     dispersion: 1.0,
                     exposure: 1.0,
-                    build_rate: 1.0,
+                    build_rate: RETIRED_BUILD_RATE,
+                    // Carrying nothing takes NOTHING off a build — the additive stat's neutral is
+                    // `0`, not the retired multiplier's `1`.
+                    build_work_per_worker: 0.0,
                     // Carrying nothing is a real answer, and an EMPTY vector is how it is said.
                     item_ids: Vec::new(),
                 },
@@ -1122,6 +1125,173 @@ mod tests {
             role,
             Some(""),
             "an unstated role is empty, never a category"
+        );
+    }
+
+    /// **THE BUILD'S WORK PAIRS AND ITS TURNS ESTIMATE SURVIVE THE WIRE, on both webs.**
+    ///
+    /// Encoded → decoded through the generated reader, because a field appended behind an existing
+    /// one is exactly the shape that silently fails to serialize — and each of these is the number
+    /// the compose sheet quotes a rung's price and finish date from, so an absent one reads as
+    /// "no build" rather than as a missing field.
+    ///
+    /// **`-1` is asserted positively**: it is the "no estimate" sentinel
+    /// ([`NO_BUILD_TURNS_ESTIMATE`]), and a codec that dropped the field would decode the schema
+    /// default — which is the same `-1` — so the live half is asserted beside it.
+    #[test]
+    fn the_build_work_pairs_and_the_turns_estimate_survive_the_wire() {
+        const TAME_DONE: f32 = 18.0;
+        const TAME_COST: f32 = 250.0;
+        const CORRAL_DONE: f32 = 5.0;
+        const CORRAL_COST: f32 = 75.0;
+        const HERD_TURNS: i32 = 12;
+        const CULTIVATION_DONE: f32 = 30.0;
+        const CULTIVATION_COST: f32 = 50.0;
+        const FIELD_DONE: f32 = 0.0;
+        const FIELD_COST: f32 = 75.0;
+
+        let snapshot = WorldSnapshot {
+            herds: vec![HerdTelemetryState {
+                tame_work_done: TAME_DONE,
+                tame_work_cost: TAME_COST,
+                corral_work_done: CORRAL_DONE,
+                corral_work_cost: CORRAL_COST,
+                build_turns_remaining: HERD_TURNS,
+                ..HerdTelemetryState::default()
+            }],
+            forage_patches: vec![ForagePatchState {
+                cultivation_work_done: CULTIVATION_DONE,
+                cultivation_work_cost: CULTIVATION_COST,
+                field_work_done: FIELD_DONE,
+                field_work_cost: FIELD_COST,
+                build_turns_remaining: NO_BUILD_TURNS_ESTIMATE,
+                ..ForagePatchState::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("a decodable snapshot envelope");
+        let subsistence = envelope
+            .payload_as_snapshot()
+            .expect("a snapshot payload")
+            .subsistence()
+            .expect("a subsistence section");
+
+        let herd = subsistence.herds().expect("the herds").get(0);
+        assert_eq!(herd.tameWorkDone(), TAME_DONE);
+        assert_eq!(
+            herd.tameWorkCost(),
+            TAME_COST,
+            "a Tame's price carries the species' own cost multiplier"
+        );
+        assert_eq!(herd.corralWorkDone(), CORRAL_DONE);
+        assert_eq!(herd.corralWorkCost(), CORRAL_COST);
+        assert_eq!(herd.buildTurnsRemaining(), HERD_TURNS);
+
+        let patch = subsistence
+            .foragePatches()
+            .expect("the forage patches")
+            .get(0);
+        assert_eq!(patch.cultivationWorkDone(), CULTIVATION_DONE);
+        assert_eq!(patch.cultivationWorkCost(), CULTIVATION_COST);
+        assert_eq!(
+            patch.fieldWorkDone(),
+            FIELD_DONE,
+            "an unstarted rung banks nothing…"
+        );
+        assert_eq!(
+            patch.fieldWorkCost(),
+            FIELD_COST,
+            "…and still quotes its price, so the sheet can offer it"
+        );
+        assert_eq!(
+            patch.buildTurnsRemaining(),
+            NO_BUILD_TURNS_ESTIMATE,
+            "no build in flight is -1, never 0"
+        );
+    }
+
+    /// **WHAT THE CREW'S TOOLS TOOK OFF THE JOB SURVIVES THE WIRE, on both webs — and it is quoted
+    /// BESIDE the raw price rather than folded into it** (`docs/plan_unit_costed_work.md` §6). That
+    /// separation is the readout: *"your hurdles: −17 work"* only means anything against a
+    /// `workCost` that does not move under the crew's kit.
+    ///
+    /// `0` is asserted positively on the plant row, because it is both the schema default and the
+    /// honest reading for every plant build today — a codec that dropped the field would decode the
+    /// same `0`, so the live half is asserted beside it.
+    #[test]
+    fn the_gears_contribution_to_a_build_survives_the_wire() {
+        const HERD_GEAR_WORK: f32 = 17.0;
+        const HERD_WORK_COST: f32 = 50.0;
+
+        let snapshot = WorldSnapshot {
+            herds: vec![HerdTelemetryState {
+                tame_work_cost: HERD_WORK_COST,
+                build_work_from_gear: HERD_GEAR_WORK,
+                ..HerdTelemetryState::default()
+            }],
+            forage_patches: vec![ForagePatchState::default()],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("a decodable snapshot envelope");
+        let subsistence = envelope
+            .payload_as_snapshot()
+            .expect("a snapshot payload")
+            .subsistence()
+            .expect("a subsistence section");
+
+        let herd = subsistence.herds().expect("the herds").get(0);
+        assert_eq!(herd.buildWorkFromGear(), HERD_GEAR_WORK);
+        assert_eq!(
+            herd.tameWorkCost(),
+            HERD_WORK_COST,
+            "the price stays the RAW job — the gear's share is quoted beside it, never folded in"
+        );
+        assert_eq!(
+            subsistence
+                .foragePatches()
+                .expect("the forage patches")
+                .get(0)
+                .buildWorkFromGear(),
+            0.0,
+            "no plant item declares the stat yet, so a patch honestly takes nothing off"
+        );
+    }
+
+    /// **THE KIT'S PER-WORKER BUILD CONTRIBUTION SURVIVES THE WIRE, and the retired multiplier's
+    /// slot publishes only its neutral.** Both halves matter: a consumer must be able to read the
+    /// successor, and one still reading `buildRate` must not be handed a number in work units — it
+    /// renders that field as a *factor*, so `8.5` would say *"×8.5 build speed"*.
+    #[test]
+    fn the_kits_build_contribution_supersedes_the_retired_multiplier_on_the_wire() {
+        const PER_WORKER: f32 = 8.5;
+        let snapshot = WorldSnapshot {
+            kits: vec![KitOptionState {
+                id: "husbandry".to_string(),
+                build_rate: RETIRED_BUILD_RATE,
+                build_work_per_worker: PER_WORKER,
+                ..KitOptionState::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("a decodable snapshot envelope");
+        let kit = envelope
+            .payload_as_snapshot()
+            .expect("a snapshot payload")
+            .subsistence()
+            .expect("a subsistence section")
+            .kits()
+            .expect("the kit roster")
+            .get(0);
+        assert_eq!(kit.buildWorkPerWorker(), PER_WORKER);
+        assert_eq!(
+            kit.buildRate(),
+            RETIRED_BUILD_RATE,
+            "the retired slot publishes its own neutral, never the successor's number"
         );
     }
 }

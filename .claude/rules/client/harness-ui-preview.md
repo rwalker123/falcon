@@ -197,9 +197,20 @@ one of the two frames the SUPPRESSION rule is judged on, `forage_cultivate_locke
 one: each asserts the ABSENCE of any improvement control, no crop list, and — in the same frame — a
 LIVE teaching line naming the craft being earned, which is what makes the removal a progression
 rather than a hole. The gated control's SHAPE moved to a SOURCE gate that survives
-(`improvement_offered_gated`, re-fixtured onto a Stressed patch with Cultivation known), and
-`forage_sow_locked` pins both halves at once by staging BOTH kinds of reason and asserting the
-ground's refusal leads while the knowledge line appears nowhere.
+(`improvement_offered_gated`, re-fixtured onto a TENDED patch on ground that will never take seed,
+with Seed Selection KNOWN — `Sow`'s site refusal is the only source gate this sheet can still render,
+`Cultivate` gating on knowledge alone and `Corral`'s ownership half being unreachable where only the
+next rung is offered), and `forage_sow_locked` pins both halves at once by staging BOTH kinds of
+reason and asserting the ground's refusal leads while the knowledge line appears nowhere.
+
+**`forage_cultivate_stressed` IS THE POSITIVE HALF OF THAT MOVE, and it was asserting the bug.** No
+rung on either web carries a health gate (`labor-ui.md` → the gate reshuffle's callout), so a Stressed
+patch with Cultivation known OFFERS Cultivate; the frame's four claims are the non-Thriving
+PRECONDITION, the live checkbox, the crop list beside it, and the ABSENCE of the retired ecology
+refusal anywhere on the sheet. The needle for that absence is a chapter LITERAL
+(`RETIRED_PHASE_GATE_NEEDLE`), the vocabulary const having gone with the gate. Sabotage-verified by
+restoring the phase term: exactly those three claims fail — the precondition rightly does not — while
+the gated frame beside them stays green.
 
 **Re-fixture, never re-describe**: a frame whose stated subject stops occurring must get a fixture
 that brings the subject back, since rewriting the comment lowers the bar to whatever the code
@@ -554,11 +565,77 @@ built from the code under test can only agree with itself. **They are the SIM's 
 from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
 payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-**A clean run is 313 frames / 952 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
+**A clean run is 320 frames / 989 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
 three times in one arc and once across a merge, and a running total kept by addition would be wrong
 by now. (The measurement above came back FIVE higher than the 895 recorded before it while the arc
 #527 review added exactly ONE claim — the `Carrying:` mass one. Four `PASS`es had accumulated
 un-recorded, which is the whole reason this line says re-measure.)
+
+**The compose sheet's own turn estimate is worth FIVE frames and TWELVE `PASS`.** Three are one
+A/B plus a drag: `improvement_turns_lone_crew` / `improvement_turns_full_crew` (one patch, one floor,
+crews 1 and 4 — `≈20 turns` against `≈5 turns`) and `improvement_turns_learning_floor` (the same crew
+mid-DRAG at the Learning preset, `≈4 turns`), all three in `chapters/improvements.gd`. **A frame set
+that renders one crew proves nothing here**: the defect was a sheet quoting the sim's committed-crew
+answer, which renders a perfectly plausible number and simply never moves — so the A/B, not either
+half, is the claim, and the negative beside it names the frozen value. The drag is driven through
+`floor_changed(value, committed = false)`, the chart's live half, since only the live-refresh
+registry can make the box follow a gesture that must not rebuild the sheet.
+
+**The GEAR half is a KIT SWAP, and it needs its own frames** — `herd_kit_swap_bare_build` /
+`herd_kit_swap_geared_build` in `chapters/compose_rungs.gd`, one warren at one crew at one floor with
+only the kit picker moving (`≈17 turns` against `≈11`). It lives in that chapter because both gear
+terms ride the kit row and only that chapter stages a roster carrying the handling kit; no plant item
+declares the build stat yet, so the crew A/B's frames exercise the ungeared arm alone. Its
+saturation claims are DRIVEN beside the frames — a crew above the kit's own saturating crew cannot be
+staffed on a frame without putting the assertion at the mercy of the stepper's cap.
+
+**`herd_kit_swap_over_geared` is the BOUNDARY of that same form** — the same warren and kit over a
+band holding a party's worth of hurdles, six armed keepers taking 51 work off a 50-unit Tame, reading
+`50 work, ≈1 turn` rather than the bare `50 work` a withheld estimate leaves. It is the shipped
+start-stock case (`_pen_axis_band` takes the gear's saturating crew as a parameter for it), and the
+frame doubles as the only RENDERED singular clause in the corpus — no other fixture lands a one-turn
+job. Three `PASS`: a precondition that the stepper really staffed the over-geared crew (a clamp below
+it would leave the claims describing an ordinary build), the one-turn clause, and the negative naming
+the bare price. Sabotage-verified by restoring the `BUILD_TURNS_NO_ESTIMATE` return — exactly the
+one-turn claim and its negative fail, the precondition rightly staying green.
+
+Sabotage-verified five ways, each failing a DISJOINT subset: reverting the running face to
+`build_turns_remaining` fails the three crew-A/B claims; building the control outside the live
+registry fails the two drag claims; resolving a FIXED kit instead of the offered one fails the geared
+frame, the two-kits negative and the saturation claim; and dropping the `min` on the head count fails
+the geared frame and both saturation claims while leaving the bare frame green (a kit that arms
+nobody is unaffected by an uncapped head count).
+
+**The estimate's own WORK PREDICATE is a third pair, and one of them is a NEGATIVE frame** —
+`improvement_no_room_plant` (was `improvement_paused_plant`) and `improvement_stressed_advances`, one
+Stressed patch with only the FLOOR moving: above its 22 / 100 stock nothing stands above the floor and
+the face quotes NOTHING; beneath it the same patch reads `≈167 turns`. **The pair is the claim** — a
+lone negative passes on a sheet that stopped quoting turns at all, and a lone positive on one with no
+predicate. The animal half is `herd_tame_stalled`, re-fixtured onto a Stressed herd composed at
+`FLOOR_MAX`, which is the reported case at its sharpest: ×2.00 is the largest multiplier on the axis,
+so an omitted predicate quotes the FASTEST estimate in the game for a build going nowhere. Its
+absence needle is the `≈` both count forms open with, never a specific count, which is what an
+absence claim needs. Two more `PASS` ride the crew A/B for the singular/plural fork
+(`DetailFormat.build_turns_clause`), driven rather than staged — no fixture lands a one-turn job.
+
+Sabotage-verified two ways, DISJOINT: dropping the predicate from `build_turns_at` fails exactly the
+two no-estimate claims (plant and animal) and nothing else; restoring the retired
+`_improvement_paused_note` fails exactly the three pause-line absences (both plant frames and the
+herd). **Those three absences are what the retargeting bought** — `improvement_paused_plant` asserted
+the presence of that line, so the contradiction the review found was captured in this harness as a
+pass.
+
+**The work-costed build readout added SEVEN `PASS` and NO frame** (`docs/plan_unit_costed_work.md`
+§11): five on the plant A/B in `chapters/improvements.gd` and two on `herd_corral` in
+`chapters/herd_graze_pen.gd`. It **moved frames all over the corpus instead**, which is the shape to
+expect from a readout arc — every meter row now states its job's size, so `food_tile`,
+`forage_cultivate`, `herd_corral` and their siblings changed their answer without changing their
+name. The claims and their three disjoint sabotages are in `selection-card.md` → "The build meter
+says WORK".
+
+**Its fixtures DERIVE `work_done` from the fraction they already state** (`BaseFx.price_plant_build`
+/ `HerdFx.price_animal_build`), and every site that re-dials a meter calls one of them — a fixture
+whose percentage and absolute disagree would render the exact confusion the readout exists to remove.
 
 **THE 32 FLORA ICONS MOVED 100 FRAMES, AND THAT IS THE ARC LANDING RATHER THAN A REGRESSION.** Every
 moved frame is one whose card carries a flora basket or the crop picker — plus the states rendered

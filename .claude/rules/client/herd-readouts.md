@@ -148,8 +148,12 @@ paths:
   **Husbandry** row shows "Domesticating N%" while it's being tamed and "🐄 Domesticated"
   (SIGNAL tint via `_husbandry_value_hex`) once fully domesticated. This is the **per-source** half
   of the two-meter split — THIS herd's own meter (see "The Intensification Ladder" below). Progress
-  builds while a band works the herd under the **`Tame`** policy (and pauses, without loss, whenever
-  the herd is not Thriving — surfaced by `_tame_stalled_hint`). **NOT under Sustain**, and there is
+  builds while a band works the herd under the **`Tame`** policy. **There is no health gate**: the
+  ecology phase stopped pacing the build when `docs/plan_harvest_floor.md` §3.2 replaced that cliff
+  with a rate, so a crew pulling hard on a herd tames it *slowly* rather than not at all, in
+  proportion to the floor it holds. What genuinely halts the meter is a crew with **nothing standing
+  above its own floor** — no escapement room, so no work — which is what `_tame_stalled_hint`
+  surfaces. **NOT under Sustain**, and there is
   no `domesticate` command: both were retired by the ladder arc (`docs/plan_intensification_ladder.md`
   §4.1) — taming as a hidden Sustain side effect, with a visible-but-disabled `Corral` beside it, is
   the exact UX problem that arc exists to fix. See `core_sim` Fauna & Wild Game — Domestication /
@@ -210,9 +214,9 @@ paths:
   `native/src/lib.rs herds_to_array`) is true, a **Corral** row shows "🐄 Corralled"
   (SIGNAL tint). The herd end of the intensification ladder — a penned, domesticated herd.
   While the pen is still being built under the Corral policy (`corralProgress`, decoded as
-  `corral_progress`; `0 < p < 1`) the SAME row reports the meter — "Corral: Building 40%" —
-  the animal twin of the tile card's "Cultivation N%". See the Cultivate/Corral investment-rung
-  bullet under **Labor allocation UI**.
+  `corral_progress`; `0 < p < 1`) the SAME row reports the meter — the animal twin of the tile card's
+  Cultivation row. See the Cultivate/Corral investment-rung bullet under **Labor allocation UI**, and
+  "The build meter says WORK" below for what a meter row states now.
 - **The pen is a managed POPULATION** (`docs/plan_corral_managed_population.md`; snapshot
   `HerdTelemetryState.penUpkeep` / `penFedFraction` → `pen_upkeep` / `pen_fed_fraction`): a penned
   herd cannot graze, so its keeper hauls it food every turn, and **an underfed herd shrinks**. Two

@@ -50,6 +50,16 @@ pub const BONE_WORKING_CRAFT: &str = "bone_working";
 /// declares but this cannot resolve is a config typo that would silently make every recipe on it
 /// ungateable and unteachable, so both `materials.json` and `recipes.json` are reconciled against it
 /// at load.
+/// **Every craft the sim has a discovery for, enumerated** — the domain of [`craft_discovery_id`],
+/// named so a caller that must be *exhaustive* over the crafts lists them from here rather than
+/// re-spelling the three names. Its one reader is `LadderConfig::validate`, which insists the ladder
+/// prices every craft a bench can teach.
+///
+/// **Deliberately not derived from `materials.json`** ([`crafts_declared_by`] is that reading): a
+/// material retiring its craft must not quietly retire the *requirement* to price it, and the loaders
+/// already reconcile the roster against this coded set.
+pub const CRAFTS_WITH_A_DISCOVERY: [&str; 3] = [TANNING_CRAFT, WEAVING_CRAFT, BONE_WORKING_CRAFT];
+
 pub fn craft_discovery_id(craft: &str) -> Option<u32> {
     match craft {
         TANNING_CRAFT => Some(TANNING_DISCOVERY_ID),

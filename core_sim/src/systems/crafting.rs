@@ -29,7 +29,7 @@ use crate::{
     },
     crafting::{craft_discovery_id, HAND_WORKING_MATERIAL_EFFICIENCY},
     equipment_config::{EquipmentConfigHandle, EquipmentStat},
-    intensification::{knows, LadderConfigHandle},
+    intensification::{knows, LadderConfigHandle, LadderKnowledge},
     materials_config::{MaterialsConfig, MaterialsConfigHandle},
     orders::FactionId,
     recipes_config::{RecipeDef, RecipesConfigHandle},
@@ -261,7 +261,7 @@ pub fn advance_crafting(
     let recipes = recipes_handle.get();
     let equipment = equipment_handle.get();
     let ladder = ladder_handle.get();
-    let lesson = ladder.knowledge.lesson_per_crafted_item;
+    let practice_per_item = ladder.knowledge.craft_lesson_per_item;
     let knowledge_threshold = ladder.knowledge.completion_threshold;
 
     for (mut cohort, mut bench, mut wear, _) in bands.iter_mut() {
@@ -325,7 +325,13 @@ pub fn advance_crafting(
                 );
             }
         }
-        credit_craft_lesson(&recipe.craft, lesson * ONE_ITEM, faction, &mut discovery);
+        credit_craft_lesson(
+            &recipe.craft,
+            practice_per_item * ONE_ITEM,
+            &ladder.knowledge,
+            faction,
+            &mut discovery,
+        );
 
         bench.items_completed = bench.items_completed.saturating_add(1);
         // **The grade the batch just delivered carries.** It was a readout with no reader until the
@@ -429,15 +435,25 @@ fn whole_units(amount: f32) -> u32 {
 /// **Crafting is the fourth teacher**, and what is being made decides what is learned: the lesson is
 /// the *recipe's* craft, never a fixed track.
 ///
-/// A craft the coded set cannot resolve is skipped rather than panicking; the loaders' cross-config
-/// checks are what make that unreachable.
+/// `practice` is in **practice units** — the same currency a rung's lesson is paid in, one quantum
+/// over (per *item finished* rather than per *turn worked*) — and it becomes ledger progress through
+/// the one [`LadderKnowledge::ledger_credit`] divisor, so a bench and a rung cannot come to disagree
+/// about what a lesson costs.
+///
+/// A craft the coded set cannot resolve — or one the ladder does not price — is skipped rather than
+/// panicking; the loaders' cross-config checks (`LadderConfig::validate`'s lesson-cost coverage among
+/// them) are what make that unreachable.
 fn credit_craft_lesson(
     craft: &str,
-    amount: f32,
+    practice: f32,
+    knowledge: &LadderKnowledge,
     faction: FactionId,
     discovery: &mut DiscoveryProgressLedger,
 ) {
     let Some(id) = craft_discovery_id(craft) else {
+        return;
+    };
+    let Some(amount) = knowledge.ledger_credit(craft, practice) else {
         return;
     };
     discovery.add_progress(faction, id, scalar_from_f32(amount));

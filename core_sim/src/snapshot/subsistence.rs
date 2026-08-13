@@ -2,14 +2,18 @@ use sim_runtime::MaterialPayoff;
 
 use super::*;
 use crate::fauna::{
-    herd_capacity, herd_ecology, net_biomass_delta, reseeding_logistic_regrowth,
-    NO_RETREAT_STAGE_STAY, ONE_UNIT_OF_BIOMASS,
+    classify_ecology_phase, herd_capacity, herd_ecology, net_biomass_delta,
+    reseeding_logistic_regrowth, NO_RETREAT_STAGE_STAY, ONE_UNIT_OF_BIOMASS,
 };
 use crate::forage::{
     field_fodder, forage_per_worker_biomass, patch_ecology, patch_fodder_per_biomass,
     patch_neglect_grace_remaining, patch_provisions_per_biomass, tended_fodder,
 };
-use crate::intensification::NO_BUILD_REMAINING_FRACTION;
+use crate::intensification::{
+    build_fraction, build_work_per_worker_turn, NO_BUILD_GEAR, NO_BUILD_REMAINING_FRACTION,
+    RUNG_COST_UNSCALED,
+};
+use sim_schema::NO_BUILD_TURNS_ESTIMATE;
 
 /// **No animal pays fodder** — the herd half of the per-biomass yield triple is structurally zero,
 /// and stated rather than defaulted so a reader sees it is a fact about animals and not an
@@ -318,34 +322,95 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
             // edge of your sight would hand you a free look at where it is going. `-1` (the existing
             // "no heading" sentinel the client already renders as no arrow) covers both "loitering"
             // and "you cannot see that far", which the client has no reason to distinguish.
-            let next_position = entry
-                .next_position
+            //
+            // **OFF THE LIVE HERD.** `Herd::corral_at` clears `next_pos` in **Population**, after the
+            // display entry was written, so a herd penned this turn published the heading of the roam
+            // its pen had just ended — a migration arrow on an animal that cannot move.
+            let next_position = herd
+                .map(|herd| herd.next_position())
+                .unwrap_or(entry.next_position)
                 .filter(|pos| inputs.herd_is_visible(herd, *pos));
             // The neglect countdown, off the live registry herd (the display `entry` carries no
             // counter). A herd the registry cannot resolve has nothing at risk to report.
             let neglect_grace =
                 herd.and_then(|herd| crate::fauna::herd_neglect_grace_remaining(herd, ladder));
             // **The herd's own ecology — the rung's, not the wild block's.** `herd_ecology` picks
-            // wild / pastoral / pen, and it is the seam `refresh_ecology_phase` classified the
-            // published `ecology_phase` word with, so the bands below cannot describe a different
-            // source than the word does.
+            // wild / pastoral / pen, and it is the seam `refresh_ecology_phase` classifies the
+            // `ecology_phase` word with, so the bands below cannot describe a different source than
+            // the word does. Resolved once and used for the cuts, the sampled curve **and** the word,
+            // which is what makes that agreement structural rather than a convention.
             let ecology = herd.map(|herd| herd_ecology(herd, fauna));
             HerdTelemetryState {
                 id: entry.id.clone(),
                 label: entry.label.clone(),
                 species: entry.species.clone(),
+                // **`x`/`y` stay on the display entry, as a PAIR with the fog gate above.** The gate
+                // decided this row's visibility against `entry.position`, so publishing a different
+                // tile beside it would describe a herd whose presence was judged somewhere else. They
+                // cannot disagree in any case: the only Population-stage writer of `current_pos` is
+                // `Herd::corral_at`, and the pen tile it is handed is `herd.position()` — the hex the
+                // herd already stands on. Ordinary movement happens in `advance_herds`, before the
+                // entry is written.
                 x: entry.position.x,
                 y: entry.position.y,
-                biomass: entry.biomass,
-                route_length: entry.route_length,
+                // **THE STOCK COMES OFF THE LIVE HERD.** Two writers land after the last telemetry
+                // write: `advance_husbandry`'s shed/starve shrink (later in Logistics) and the hunt
+                // take in `advance_labor_allocation` (Population). This is not cosmetic — the client
+                // composes the escapement ceiling as `max(0, B − floor·K) × rate` with `B` from here
+                // and `K` from the live `carrying_capacity` below, so a stale `B` quoted a yield
+                // preview assembled from two different turns, every turn.
+                biomass: herd.map(|herd| herd.biomass).unwrap_or(entry.biomass),
+                // Live for uniformity with the heading it sits beside; a `Herd`'s route is built at
+                // spawn and never rewritten, so this cannot currently differ from the entry's copy.
+                route_length: herd
+                    .map(|herd| herd.route_length() as u32)
+                    .unwrap_or(entry.route_length),
                 next_x: next_position.map(|pos| pos.x as i32).unwrap_or(-1),
                 next_y: next_position.map(|pos| pos.y as i32).unwrap_or(-1),
                 size_class: entry.size_class.clone(),
                 huntable: entry.huntable,
-                ecology_phase: entry.ecology_phase.clone(),
-                domestication: entry.domestication,
-                corralled: entry.corralled,
-                corral_progress: entry.corral_progress,
+                // **THE WORD IS RE-DERIVED AT CAPTURE, from the same stock, capacity and ecology the
+                // row publishes beside it.** The entry's copy was classified in Logistics; the cuts
+                // and `regrowthSamples` next to it come from the live `herd_ecology`, which switches
+                // rung the instant a Tame or Corral completes in Population — so on a completing turn
+                // the published word and the published cuts described *different rungs*. This is the
+                // same classification `Herd::refresh_ecology_phase` makes, through the same two seams,
+                // so it is a restatement of the sim's own call and not a second model.
+                //
+                // **Nothing in the sim gates on `Herd::ecology_phase`** (the rung health gates were
+                // deleted): its only readers are the analytics log line, the display mirror, and the
+                // Telling's `fauna.collapsing_group_count` / `most_collapsed_species`, which sample
+                // the stored word and are untouched here. So re-deriving cannot make the wire
+                // disagree with behaviour — there is no behaviour to disagree with.
+                ecology_phase: match (herd, ecology.as_ref()) {
+                    (Some(herd), Some(ecology)) => {
+                        classify_ecology_phase(herd.biomass, herd_capacity(herd, fauna), ecology)
+                            .as_str()
+                            .to_string()
+                    }
+                    _ => entry.ecology_phase.clone(),
+                },
+                // **THE BUILD METERS COME OFF THE LIVE HERD, NOT THE DISPLAY ENTRY.**
+                // `HerdTelemetry` is written in Startup and Logistics, and the build accrual runs
+                // in `advance_labor_allocation` at **Population** — after both — so `entry`'s copy
+                // of these three is always the meter as of the *previous* turn. That was invisible
+                // while the row said only "Domesticating 96%", and became a self-contradiction once
+                // the live `tameWorkDone`/`tameWorkCost` pair joined it in the same sentence: a
+                // finished Tame published as "50 / 50 work (99%)". Read live, as
+                // `penExtendProgress` below already is. `entry` remains the fallback for the
+                // unreachable "in telemetry, gone from the registry" case, exactly like every other
+                // field here.
+                domestication: herd
+                    .map(|herd| {
+                        build_fraction(herd.domestication_progress, herd.domestication_cost)
+                    })
+                    .unwrap_or(entry.domestication),
+                corralled: herd
+                    .map(|herd| herd.is_corralled())
+                    .unwrap_or(entry.corralled),
+                corral_progress: herd
+                    .map(|herd| build_fraction(herd.corral_progress, herd.corral_cost))
+                    .unwrap_or(entry.corral_progress),
                 per_worker_yield: forecast.per_worker_yield.provisions,
                 // The Corral investment rung's (gross) payoff once penned; the preparing dip is
                 // `hunt_policy_ceilings[stance] × corral_build_fraction` (issue #442).
@@ -608,6 +673,47 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // `assign_labor … hunt <herd> <n>` resolves with no `kit` token. Off the single
                 // `quoted` resolution above, so it names the kit the row's own tiers came from.
                 default_kit_id: quoted.kit_id.clone(),
+                // **THE BUILD, PRICED IN WORK** (`docs/plan_unit_costed_work.md` §8). `work_done` is
+                // the herd's own meter; `work_cost` is what that job costs **on this herd**, resolved
+                // LIVE off the ladder (times the species' `taming_cost_multiplier` for the Tame) and
+                // published **whether or not a build is in flight** — the compose sheet has to quote
+                // the price before the player commits, and the herd's *stamped* cost is `0` until
+                // someone starts. Penning takes no species multiplier: a fence is a fence.
+                tame_work_done: herd.map(|herd| herd.domestication_progress).unwrap_or(0.0),
+                tame_work_cost: ladder
+                    .rung(RungKey::AnimalPastoral)
+                    .build_cost(fauna.taming_cost_multiplier_for(&entry.species))
+                    .unwrap_or(0.0),
+                corral_work_done: herd.map(|herd| herd.corral_progress).unwrap_or(0.0),
+                corral_work_cost: ladder
+                    .rung(RungKey::AnimalPen)
+                    .build_cost(RUNG_COST_UNSCALED)
+                    .unwrap_or(0.0),
+                // **The turns estimate the labor arm stamped this turn** — the running build's, or,
+                // when nothing is being built, the **projection** for the rung this herd would climb
+                // next, so the pair reads "50 work, ≈13 turns" before the player commits. Which
+                // `*WorkCost` it belongs beside is the assignment's own `improvement`, or the next
+                // rung up when that is empty. `-1` only where there is genuinely no answer (penned,
+                // a gate refuses, or a stalled build). The client can derive none of it.
+                build_turns_remaining: herd
+                    .and_then(|herd| herd.build_turns_remaining)
+                    .map_or(NO_BUILD_TURNS_ESTIMATE, |turns| turns as i32),
+                // **What the keepers' tools took off the running build** — quoted beside the RAW
+                // `*WorkCost` above, never folded into it, so a readout can say "your hurdles: −17
+                // work" against a price that does not move under the crew's kit.
+                build_work_from_gear: herd
+                    .map(|herd| herd.build_work_from_gear)
+                    .unwrap_or(NO_BUILD_GEAR),
+                // **The crew-output TERM the compose sheet evaluates its estimate from** (the
+                // boundary rule in `.claude/rules/core_sim/yield-forecast.md`): what one worker banks
+                // per turn. With `*WorkCost` / `*WorkDone` here and the gear pair on the band's own
+                // `kitTiers` row, `turns(workers)` is a closed form the client can evaluate against a
+                // *proposed* crew — which `buildTurnsRemaining` beside it cannot, because it is the
+                // sim's answer for the crew already there.
+                //
+                // **It is the LADDER's term, not a literal.** Published so a second term landing in
+                // `crew_work_output` reaches the client for free.
+                build_work_per_worker_turn: build_work_per_worker_turn(),
             }
         })
         .collect()
@@ -689,7 +795,13 @@ pub(crate) fn snapshot_forage_patches(
             ForagePatchState {
                 x: patch.tile.x,
                 y: patch.tile.y,
-                cultivation_progress: patch.cultivation_progress,
+                // **The wire keeps the 0..1 fraction; the meter is in work units** — divided here
+                // against the patch's OWN stamped cost, so a tended patch reads exactly `1.0`
+                // beside an `is_cultivated` that is already true.
+                cultivation_progress: build_fraction(
+                    patch.cultivation_progress,
+                    patch.cultivation_cost,
+                ),
                 is_cultivated: patch.is_cultivated(),
                 owner: patch.owner.map(|faction| faction.0),
                 biomass: patch.biomass,
@@ -705,7 +817,7 @@ pub(crate) fn snapshot_forage_patches(
                 // Field may stand on ground that was never tended — and its own preparing/payoff
                 // pair. `field_provisions` is the same helper the labor arm pays a Field with, so the
                 // client's "then Y" is the number the sim will hand over.
-                field_progress: patch.field_progress,
+                field_progress: build_fraction(patch.field_progress, patch.field_cost),
                 is_field: patch.is_field(),
                 field_yield: field_provisions(
                     patch,
@@ -769,6 +881,37 @@ pub(crate) fn snapshot_forage_patches(
                     forage_per_worker_biomass(equipped_gather_rate, seasonal),
                     FORECAST_OUTPUT_MULTIPLIER,
                 ),
+                // **THE BUILD, PRICED IN WORK** (`docs/plan_unit_costed_work.md` §8). `work_done` is
+                // the patch's own meter; `work_cost` is what that job costs, resolved LIVE off the
+                // ladder and published **whether or not a build is in flight** — the compose sheet
+                // has to quote the price before the player commits, and the patch's *stamped* cost is
+                // `0` until someone starts. `RUNG_COST_UNSCALED` on both: the only per-source cost
+                // multiplier on the ladder is a species' taming cost, and a plant has no species.
+                cultivation_work_done: patch.cultivation_progress,
+                cultivation_work_cost: ladder
+                    .rung(RungKey::PlantTended)
+                    .build_cost(RUNG_COST_UNSCALED)
+                    .unwrap_or(0.0),
+                field_work_done: patch.field_progress,
+                field_work_cost: ladder
+                    .rung(RungKey::PlantField)
+                    .build_cost(RUNG_COST_UNSCALED)
+                    .unwrap_or(0.0),
+                // **The turns estimate the labor arm stamped this turn** — the running build's, or,
+                // when nothing is being built, the **projection** for the rung this patch would climb
+                // next, so the compose sheet can quote the job before the player commits. Read it
+                // beside the `*WorkCost` for the assignment's own `improvement`, or for the next rung
+                // up when that is empty. `-1` only where there is genuinely no answer (a Field, a
+                // gate that refuses, or a stalled build).
+                build_turns_remaining: patch
+                    .build_turns_remaining
+                    .map_or(NO_BUILD_TURNS_ESTIMATE, |turns| turns as i32),
+                // The plant twin — `NO_BUILD_GEAR` on every plant build today, since no plant item
+                // declares `EquipmentStat::BuildWork` yet (issue #539).
+                build_work_from_gear: patch.build_work_from_gear,
+                // The plant twin — see the herd row for why the estimate's terms ship beside the
+                // sim's own answer.
+                build_work_per_worker_turn: build_work_per_worker_turn(),
                 // **One gatherer's BIOMASS throughput** — `per_worker_biomass_capacity × seasonal`,
                 // the exact term `forage_take`'s worker cap multiplies by the head-count, through the
                 // shared helper so the wire and the take cannot disagree. `0` in a dead season, like

@@ -20,9 +20,10 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 
 use core_sim::{
-    advance_forage_regrowth, FactionId, FaunaConfigHandle, ForageRegistry, HerdRegistry,
-    HerdTelemetry, SimulationConfig, SnapshotHistory, RUNG_COMPLETE,
+    advance_forage_regrowth, advance_herds, FactionId, FaunaConfigHandle, ForageRegistry,
+    HerdRegistry, HerdTelemetry, SimulationConfig, SnapshotHistory,
 };
+use std::sync::Arc;
 
 /// The map every fixture here stands on — the standard seed the rest of the suite quotes against.
 const STANDARD_SEED: u64 = 119_304_647;
@@ -149,7 +150,7 @@ fn a_herds_published_bands_bracket_its_published_phase_at_every_rung() {
                 .iter_mut()
                 .find(|herd| herd.id == id)
                 .expect("the fixture herd");
-            herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+            herd.tame_outright(FactionId(0));
             assert!(herd.is_domesticated(), "the herd stands on rung 2");
         }
         for fraction in SWEPT_STOCK_FRACTIONS {
@@ -219,6 +220,146 @@ fn a_herds_published_bands_bracket_its_published_phase_at_every_rung() {
         "each rung publishes its OWN cuts, read through `herd_ecology`: wild {wild:?}, pastoral \
          {pastoral:?}"
     );
+}
+
+/// **The pastoral cut points this fixture authors, and why it has to author them.** The shipped
+/// `husbandry.pastoral.ecology` block is `{}` — every band falls back to the `EcologyConfig` default,
+/// which is also what the wild block ships — so on the shipped numbers a Tame moves the herd's
+/// ecology *object* without moving its cuts, and no assertion can tell a wild classification from a
+/// pastoral one. The per-rung blocks exist precisely so a rung may carry its own bands
+/// (`fauna::herd_ecology`), so the fixture authors that difference and pins the contract that must
+/// hold once anyone does: **a tamed herd is not judged against wild standards.** A managed flock at a
+/// quarter of its capacity is a healthy flock; a wild herd at a quarter of its range's capacity is a
+/// depleted one.
+const PASTORAL_COLLAPSE_FRACTION: f32 = 0.04;
+const PASTORAL_STRESSED_FRACTION: f32 = 0.10;
+
+/// **The stock the herd is seated at, as a fraction of its `K`** — deliberately *between* the two
+/// rungs' `stressed` cuts (wild `0.40`, pastoral [`PASTORAL_STRESSED_FRACTION`]), because that
+/// interval is the whole of the disagreement: seated anywhere else the two rungs classify the same
+/// stock the same way and the completing turn proves nothing. The fixture asserts it landed there.
+const STOCK_BETWEEN_THE_RUNGS_CUTS: f32 = 0.25;
+
+/// **A rung transition happens in POPULATION, and the phase word was classified in LOGISTICS.**
+///
+/// The word is stamped on the herd by `advance_herds` against the rung it stood on then; the cut
+/// points beside it on the wire, and `regrowthSamples` with them, are read live off `herd_ecology`,
+/// which switches block the instant a Tame or Corral completes. So on a completing turn the row's
+/// word and the row's cuts described *different rungs* — the exact defect this file's other two tests
+/// are structurally unable to see, because they refresh the display telemetry from the registry in
+/// the same instant and then never move the herd again.
+///
+/// This one resolves the turn in stage order — `advance_herds` (Logistics), then the rung transition
+/// (Population), then the capture — which is the only arrangement in which the two halves *can*
+/// disagree. `Herd::tame_outright` is the sim's own accrual against a fabricated cost, so this is the
+/// same state mutation `advance_labor_allocation` makes on the turn a keeper's Tame lands.
+#[test]
+fn a_herds_published_phase_and_cuts_describe_the_same_rung_on_the_turn_it_is_tamed() {
+    let mut app = headless_app();
+    author_distinct_pastoral_bands(&mut app);
+    let id = a_seeded_herd(&app);
+    let viewer = app.world.resource::<core_sim::ViewerFaction>().0;
+
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry
+            .herds
+            .iter_mut()
+            .find(|herd| herd.id == id)
+            .expect("the fixture herd");
+        herd.biomass = herd.carrying_capacity * STOCK_BETWEEN_THE_RUNGS_CUTS;
+    }
+    // **Logistics.** The real pass: it regrows the herd, classifies the word against the rung the
+    // herd stands on *now* (wild), and rebuilds the display telemetry the capture will walk.
+    app.world.run_system_once(advance_herds);
+    // **Population.** The keeper's Tame completes, and with it the herd's ecology block.
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry
+            .herds
+            .iter_mut()
+            .find(|herd| herd.id == id)
+            .expect("the fixture herd survived the Logistics pass");
+        assert!(
+            herd.tame_outright(viewer),
+            "the fixture herd must actually complete its Tame — a herd that never changed rung \
+             cannot exercise a rung transition"
+        );
+    }
+    reveal_herd(&mut app, &id);
+    let snapshot = recapture(&mut app);
+    let row = snapshot
+        .herds
+        .iter()
+        .find(|herd| herd.id == id)
+        .expect("the fixture herd is on the wire");
+
+    // The fixture is only meaningful if the herd landed in the interval the two rungs disagree over.
+    let fraction = row.biomass / row.carrying_capacity;
+    assert!(
+        implied_phase(fraction, WILD_COLLAPSE_FRACTION, WILD_STRESSED_FRACTION)
+            != implied_phase(
+                fraction,
+                PASTORAL_COLLAPSE_FRACTION,
+                PASTORAL_STRESSED_FRACTION
+            ),
+        "the two rungs must classify this stock differently, or the completing turn proves nothing: \
+         {fraction} of K"
+    );
+    // The transition reached the wire: the row publishes the PASTORAL cuts.
+    assert_eq!(
+        (row.collapse_fraction, row.stressed_fraction),
+        (PASTORAL_COLLAPSE_FRACTION, PASTORAL_STRESSED_FRACTION),
+        "a herd tamed this turn publishes its new rung's cut points"
+    );
+    // …and therefore the word beside them must be the new rung's word.
+    assert_bands_bracket_the_phase(
+        "animal (tamed this turn)",
+        row.biomass,
+        row.carrying_capacity,
+        row.collapse_fraction,
+        row.stressed_fraction,
+        &row.ecology_phase,
+    );
+}
+
+/// The shipped **wild** cut points, restated so the fixture can show its two rungs classify the same
+/// stock differently. Read off the config rather than hardcoded would be circular — the point is that
+/// these are the numbers the word *would* have been cut from had it stayed on the Logistics frame.
+const WILD_COLLAPSE_FRACTION: f32 = 0.15;
+const WILD_STRESSED_FRACTION: f32 = 0.40;
+
+/// The band a stock falls in for a given pair of cuts — the same three-way comparison
+/// `assert_bands_bracket_the_phase` makes, factored out so the fixture can ask it of a rung the wire
+/// is *not* publishing.
+fn implied_phase(fraction: f32, collapse_fraction: f32, stressed_fraction: f32) -> &'static str {
+    if fraction < collapse_fraction {
+        "collapsing"
+    } else if fraction < stressed_fraction {
+        "stressed"
+    } else {
+        "thriving"
+    }
+}
+
+/// Give the **pastoral** rung cut points of its own, and check the shipped wild block is what this
+/// fixture assumes it is — a config retune that moved the wild bands would otherwise silently make
+/// the two rungs agree again and hollow the test out.
+fn author_distinct_pastoral_bands(app: &mut App) {
+    let mut config = (*app.world.resource::<FaunaConfigHandle>().get()).clone();
+    assert_eq!(
+        (
+            config.ecology.collapse_fraction,
+            config.ecology.stressed_fraction
+        ),
+        (WILD_COLLAPSE_FRACTION, WILD_STRESSED_FRACTION),
+        "the fixture is written against the shipped wild bands"
+    );
+    config.husbandry.pastoral.ecology.collapse_fraction = PASTORAL_COLLAPSE_FRACTION;
+    config.husbandry.pastoral.ecology.stressed_fraction = PASTORAL_STRESSED_FRACTION;
+    app.world
+        .resource_mut::<FaunaConfigHandle>()
+        .replace(Arc::new(config));
 }
 
 /// The richest in-season patch on the standard map — the same "biggest `K`, deterministic

@@ -4,6 +4,17 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+/// **"No estimate"** — the wire value of `buildTurnsRemaining` on either web when the sim cannot name
+/// a number: the source is at the top of its ladder, the next rung's gates refuse it, no crew is
+/// working the source, or the crew's output is zero and a running build is **stalled**. **It is NOT
+/// "nothing is being built here"** — an unstarted source with a crew on it publishes the projected
+/// turns for the rung it would climb next. It sits outside the `>= 0` range a real estimate lives in,
+/// so the two states cannot be confused — the same convention `next_x`/`next_y` use for "no heading".
+///
+/// It lives here, on the **wire**, because the sentinel is a fact about the published contract rather
+/// than about the sim's arithmetic (`core_sim`'s `build_turns_remaining` answers an `Option<u32>`).
+pub const NO_BUILD_TURNS_ESTIMATE: i32 = -1;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct SedentarizationState {
     pub faction: u32,
@@ -402,6 +413,90 @@ pub struct HerdTelemetryState {
     /// [`Self::pastoral_yield`] reads its provisions from. Appended (append-only).
     #[serde(default)]
     pub pastoral_material: Vec<MaterialPayoff>,
+    /// **The build, PRICED IN WORK** (`docs/plan_unit_costed_work.md` §8). An improvement costs a
+    /// fixed amount of work now, not a fixed number of turns: a crew produces work units per turn
+    /// (head count × floor discipline × kit) and **turns are the output**.
+    ///
+    /// `work_done` is the source's own meter, in work units. `work_cost` is what that job costs **on
+    /// this source**, resolved off the ladder at capture and published **whether or not a build is in
+    /// flight** — that is the point, since the compose sheet must quote the price *before* the player
+    /// commits. The `*_progress` fraction beside it is exactly `work_done / work_cost`. Appended
+    /// (append-only).
+    ///
+    /// The tame pair carries the **species' own** cost multiplier (a Steppe Runner is five times the
+    /// work of a rabbit); the pen pair does not, because penning is a flat job for every species — a
+    /// fence is a fence.
+    #[serde(default)]
+    pub tame_work_done: f32,
+    /// See [`Self::tame_work_done`].
+    #[serde(default)]
+    pub tame_work_cost: f32,
+    /// The rung-3 twin of [`Self::tame_work_done`].
+    #[serde(default)]
+    pub corral_work_done: f32,
+    /// See [`Self::corral_work_done`].
+    #[serde(default)]
+    pub corral_work_cost: f32,
+    /// **How many more turns a build on this source needs**, at the crew, floor and kit that worked
+    /// it this turn — and a **PROJECTION when nothing is being built**, which is by definition the
+    /// state a compose sheet is looking at. With an improvement in flight it counts down the running
+    /// meter; with none it is what the rung this source would climb **next** would take the crew
+    /// currently working it, from the work already banked on that rung. Always meaningful, never
+    /// `-1`-because-unstarted — the same rule `pen_upkeep` follows one field over.
+    ///
+    /// **Which `*_work_cost` it belongs beside** is the assignment's own `improvement`, and the
+    /// **next rung up** when that is empty (`is_cultivated` / `is_field`, `domestication` /
+    /// `corralled`): the pair is read as *"50 work, ≈13 turns"*, so they must name one rung.
+    ///
+    /// [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**, and it means there is genuinely
+    /// no answer: the source is at the top of its ladder, the next rung's own gates refuse it for
+    /// this faction (a projection must never quote a job the command would reject), or the crew's
+    /// output is zero and a running build is **stalled** — a stall has no finite answer, and a huge
+    /// number would read as a promise.
+    ///
+    /// **The client cannot compute this** — it holds neither the crew's output, nor the floor
+    /// multiplier, nor the kit's build rate — so the sim answers, the `pen_feed_upkeep` discipline.
+    /// One field for both of a web's rungs: at most one improvement is ever in flight on one source,
+    /// and at most one rung is ever next. Appended (append-only).
+    #[serde(default = "no_build_turns_estimate")]
+    pub build_turns_remaining: i32,
+    /// **What the crew's TOOLS took off this build**, in work units — the `t` in
+    /// `effective_cost = work_cost − t`
+    /// (`docs/plan_unit_costed_work.md` §6).
+    ///
+    /// **A tool's help lands on the JOB, not on the crew's output**, so `work_done`/`work_cost` above
+    /// stay the **raw** job and this is quoted beside them rather than folded in — a readout says
+    /// *"your hoes: −8 work"* against a price that does not move under it. A multiplier on the crew
+    /// would cancel the cost and save the same *percentage* of turns on a garden and on a farm alike.
+    ///
+    /// **Per equipped worker, summed**: a worker holding a tool contributes its worth, a worker
+    /// without one contributes nothing. `0` = no build in flight, or the crew carries nothing that
+    /// helps — which is every **plant** build today (issue #539). Appended (append-only).
+    #[serde(default)]
+    pub build_work_from_gear: f32,
+    /// **The work ONE worker banks on this source per turn at the food peak**, before the floor
+    /// multiplier and before any gear — `intensification::build_work_per_worker_turn`, today
+    /// `PER_WORKER_OUTPUT` (`1.0`).
+    ///
+    /// **Published rather than left as a client constant** because worker output is deliberately
+    /// written as a **sum of terms** (`docs/plan_unit_costed_work.md` §5) with exactly one term
+    /// today: the day a buff mechanic adds a second, a client hard-coding `1.0` would quote a turn
+    /// count the sim disagrees with, and would need its own change to track it.
+    ///
+    /// **It is the crew-output half of the build's closed form**; the gear half is
+    /// `build_work_per_worker` × `build_work_saturating_crew` on the band's own
+    /// [`crate::state::BandKitTiersState`] row, because a kit's saturation point is a fact about the
+    /// band's ledger and not about any source:
+    ///
+    /// ```text
+    /// gear(w)  = min(w, build_work_saturating_crew) × build_work_per_worker
+    /// turns(w) = ceil((work_cost − work_done − gear(w))
+    ///                 / (w × build_work_per_worker_turn × floor / food_peak))
+    /// ```
+    ///
+    /// Appended (append-only).
+    #[serde(default)]
+    pub build_work_per_worker_turn: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -471,6 +566,13 @@ impl Default for HerdTelemetryState {
             // No material — the ordinary case, and an EMPTY list rather than a row of zeros.
             material_per_biomass: Vec::new(),
             per_worker_material: Vec::new(),
+            tame_work_done: 0.0,
+            tame_work_cost: 0.0,
+            corral_work_done: 0.0,
+            corral_work_cost: 0.0,
+            build_turns_remaining: no_build_turns_estimate(),
+            build_work_from_gear: 0.0,
+            build_work_per_worker_turn: 0.0,
             corral_material: Vec::new(),
             pastoral_material: Vec::new(),
         }
@@ -685,6 +787,94 @@ pub struct ForagePatchState {
     /// honestly **empty in a dead season**. Appended (append-only).
     #[serde(default)]
     pub per_worker_material: Vec<MaterialPayoff>,
+    /// **The build, PRICED IN WORK** (`docs/plan_unit_costed_work.md` §8). An improvement costs a
+    /// fixed amount of work now, not a fixed number of turns: a crew produces work units per turn
+    /// (head count × floor discipline × kit) and **turns are the output**.
+    ///
+    /// `work_done` is the source's own meter, in work units. `work_cost` is what that job costs **on
+    /// this source**, resolved off the ladder at capture and published **whether or not a build is in
+    /// flight** — that is the point, since the compose sheet must quote the price *before* the player
+    /// commits. The `*_progress` fraction beside it is exactly `work_done / work_cost`. Appended
+    /// (append-only).
+    #[serde(default)]
+    pub cultivation_work_done: f32,
+    /// See [`Self::cultivation_work_done`].
+    #[serde(default)]
+    pub cultivation_work_cost: f32,
+    /// The rung-3 twin of [`Self::cultivation_work_done`]. Two rungs keep two pairs, the
+    /// `cultivate_build_fraction` / `sow_build_fraction` rule: independently tunable jobs must not
+    /// share a number.
+    #[serde(default)]
+    pub field_work_done: f32,
+    /// See [`Self::field_work_done`].
+    #[serde(default)]
+    pub field_work_cost: f32,
+    /// **How many more turns a build on this source needs**, at the crew, floor and kit that worked
+    /// it this turn — and a **PROJECTION when nothing is being built**, which is by definition the
+    /// state a compose sheet is looking at. With an improvement in flight it counts down the running
+    /// meter; with none it is what the rung this source would climb **next** would take the crew
+    /// currently working it, from the work already banked on that rung. Always meaningful, never
+    /// `-1`-because-unstarted — the same rule `pen_upkeep` follows one field over.
+    ///
+    /// **Which `*_work_cost` it belongs beside** is the assignment's own `improvement`, and the
+    /// **next rung up** when that is empty (`is_cultivated` / `is_field`, `domestication` /
+    /// `corralled`): the pair is read as *"50 work, ≈13 turns"*, so they must name one rung.
+    ///
+    /// [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**, and it means there is genuinely
+    /// no answer: the source is at the top of its ladder, the next rung's own gates refuse it for
+    /// this faction (a projection must never quote a job the command would reject), or the crew's
+    /// output is zero and a running build is **stalled** — a stall has no finite answer, and a huge
+    /// number would read as a promise.
+    ///
+    /// **The client cannot compute this** — it holds neither the crew's output, nor the floor
+    /// multiplier, nor the kit's build rate — so the sim answers, the `pen_feed_upkeep` discipline.
+    /// One field for both of a web's rungs: at most one improvement is ever in flight on one source,
+    /// and at most one rung is ever next. Appended (append-only).
+    #[serde(default = "no_build_turns_estimate")]
+    pub build_turns_remaining: i32,
+    /// **What the crew's TOOLS took off this build**, in work units — the `t` in
+    /// `effective_cost = work_cost − t`
+    /// (`docs/plan_unit_costed_work.md` §6).
+    ///
+    /// **A tool's help lands on the JOB, not on the crew's output**, so `work_done`/`work_cost` above
+    /// stay the **raw** job and this is quoted beside them rather than folded in — a readout says
+    /// *"your hoes: −8 work"* against a price that does not move under it. A multiplier on the crew
+    /// would cancel the cost and save the same *percentage* of turns on a garden and on a farm alike.
+    ///
+    /// **Per equipped worker, summed**: a worker holding a tool contributes its worth, a worker
+    /// without one contributes nothing. `0` = no build in flight, or the crew carries nothing that
+    /// helps — which is every **plant** build today (issue #539). Appended (append-only).
+    #[serde(default)]
+    pub build_work_from_gear: f32,
+    /// **The work ONE worker banks on this source per turn at the food peak**, before the floor
+    /// multiplier and before any gear — `intensification::build_work_per_worker_turn`, today
+    /// `PER_WORKER_OUTPUT` (`1.0`).
+    ///
+    /// **Published rather than left as a client constant** because worker output is deliberately
+    /// written as a **sum of terms** (`docs/plan_unit_costed_work.md` §5) with exactly one term
+    /// today: the day a buff mechanic adds a second, a client hard-coding `1.0` would quote a turn
+    /// count the sim disagrees with, and would need its own change to track it.
+    ///
+    /// **It is the crew-output half of the build's closed form**; the gear half is
+    /// `build_work_per_worker` × `build_work_saturating_crew` on the band's own
+    /// [`crate::state::BandKitTiersState`] row, because a kit's saturation point is a fact about the
+    /// band's ledger and not about any source:
+    ///
+    /// ```text
+    /// gear(w)  = min(w, build_work_saturating_crew) × build_work_per_worker
+    /// turns(w) = ceil((work_cost − work_done − gear(w))
+    ///                 / (w × build_work_per_worker_turn × floor / food_peak))
+    /// ```
+    ///
+    /// Appended (append-only).
+    #[serde(default)]
+    pub build_work_per_worker_turn: f32,
+}
+
+/// The serde default of a `build_turns_remaining` field — [`crate::NO_BUILD_TURNS_ESTIMATE`], so an
+/// absent value reads as *"no estimate"* rather than as a build finishing this turn.
+fn no_build_turns_estimate() -> i32 {
+    crate::NO_BUILD_TURNS_ESTIMATE
 }
 
 /// **One material a commitment would pay, and how much of it per turn** — a row of
@@ -954,18 +1144,32 @@ pub struct KitOptionState {
     /// (`none` carries nothing and wears nothing), never "unknown".
     #[serde(default)]
     pub item_ids: Vec<String>,
-    /// **How much faster a rung's per-source build meter fills for a party carrying this kit**, at
-    /// the FRESH tier. `1.0` is neutral — a kit declaring nothing that helps changes no build at
-    /// all; the handling gear ships `1.5`.
+    /// **RETIRED — it publishes [`crate::RETIRED_BUILD_RATE`] and nothing else.** It carried a
+    /// *multiplier* on the crew's build output; the stat is now an **additive per-worker contribution
+    /// off the job** ([`Self::build_work_per_worker`] beside it). The slot is held at its neutral
+    /// rather than removed because the FlatBuffers `(deprecated)` keyword drops the accessor and a
+    /// client still calls it.
     ///
-    /// **IT IS WHAT MAKES THE HUSBANDRY KIT APPLICABLE BEFORE A PEN EXISTS.** Its other axis,
+    /// **ITS SUCCESSOR IS WHAT MAKES THE HUSBANDRY KIT APPLICABLE BEFORE A PEN EXISTS**, and that
+    /// argument transfers verbatim. The kit's other axis,
     /// [`Self::pen_carry_per_worker_biomass`], is read on a corralled herd and nowhere else, so a
     /// picker testing that axis alone withholds the kit on the very herd the player is taming —
     /// which is the work hurdles and halters are physically for. A consumer deciding whether to
     /// offer a kit must ask what the kit can change on *this* source across **every** axis it
-    /// declares, never off one hardcoded key.
+    /// declares, never off one hardcoded key — and this is the axis it must now read as
+    /// [`Self::build_work_per_worker`].
     #[serde(default = "multiplier_neutral")]
     pub build_rate: f32,
+    /// **The work units ONE EQUIPPED WORKER carrying this kit takes off a build's cost**
+    /// (`docs/plan_unit_costed_work.md` §6). Neutral `0.0`; the handling gear ships `8.5`.
+    ///
+    /// **It supersedes [`Self::build_rate`]**, which is retired and now publishes only its neutral:
+    /// that stat multiplied the *crew's output*, and a multiplier cancels the job's cost, so it saved
+    /// the same *percentage* of turns on a garden and on a farm alike. This is subtracted from the
+    /// job, so the job's own size decides what it is worth — and it is **summed over the equipped
+    /// workers**, never averaged over the crew.
+    #[serde(default)]
+    pub build_work_per_worker: f32,
 }
 
 /// **Hand-written rather than derived, for the same reason [`HerdTelemetryState`]'s is**: three of
@@ -995,6 +1199,7 @@ impl Default for KitOptionState {
             // the kit does not hold.
             item_ids: Vec::new(),
             build_rate: multiplier_neutral(),
+            build_work_per_worker: 0.0,
         }
     }
 }

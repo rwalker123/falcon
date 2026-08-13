@@ -183,6 +183,48 @@ pub(crate) fn herds_to_array(
         // policy — the animal twin of `ForagePatchState.cultivationProgress`. Read by Hud's herd
         // drawer for the "Corral: Building N%" row.
         let _ = dict.insert("corral_progress", herd.corralProgress());
+        // **THE ANIMAL BUILDS, PRICED IN WORK** (docs/plan_unit_costed_work.md §8). An improvement
+        // costs a fixed number of WORK UNITS and a crew produces work units per turn, so TURNS ARE
+        // THE OUTPUT — which is a statement the two `0..1` meters above structurally cannot make.
+        // `*_work_done / *_work_cost` IS `domestication` / `corral_progress`; the absolutes are what
+        // let a readout say "18 of 50 work", and nothing here may re-derive one pair from the other.
+        //
+        // **THE COST IS PUBLISHED WHETHER OR NOT A BUILD IS IN FLIGHT** — it is the resolved price
+        // of that job on THIS herd (the tame pair carrying the species' own cost multiplier, the pen
+        // pair not: a fence is a fence), which is what lets the compose sheet quote the job BEFORE
+        // the player commits.
+        let _ = dict.insert("tame_work_done", herd.tameWorkDone());
+        let _ = dict.insert("tame_work_cost", herd.tameWorkCost());
+        let _ = dict.insert("corral_work_done", herd.corralWorkDone());
+        let _ = dict.insert("corral_work_cost", herd.corralWorkCost());
+        // HOW MANY MORE TURNS the running build needs, at the crew, floor and kit that worked this
+        // herd. **`-1` IS "NO ESTIMATE" AND MUST RENDER AS NOTHING AT ALL** — a stalled build has no
+        // finite answer, and a `0` in its place is a promise. The client CANNOT compute it (it holds
+        // neither the crew's output, nor the floor multiplier, nor the kit's contribution), so the
+        // sim answers, exactly as it does for `pen_upkeep` and the yield forecast.
+        let _ = dict.insert("build_turns_remaining", herd.buildTurnsRemaining() as i64);
+        // WHAT THE CREW'S TOOLS TOOK OFF THIS BUILD, in work units — the `t` in
+        // `effective_cost = work_cost − t`. `0` = no build in
+        // flight, or the crew carries nothing that helps. It rides BESIDE the raw job rather than
+        // folded into it: the cost above must not move under a tool, or the readout's price would
+        // change every time a hurdle wore out.
+        let _ = dict.insert("build_work_from_gear", herd.buildWorkFromGear());
+        // **THE SOURCE'S HALF OF THE ESTIMATE'S TERMS**, beside the sim's own answer above rather
+        // than instead of it (`.claude/rules/core_sim/yield-forecast.md` → "THE BOUNDARY, stated
+        // once"). `build_turns_remaining` answers for the crew ALREADY working the herd, which is the
+        // right and only thing for a card with no stepper; a sheet with one has to answer for the
+        // crew the player is PROPOSING, and this term is what makes that a closed form:
+        //
+        //   gear(w)  = min(w, <the kit row's `build_work_saturating_crew`>)
+        //              × <that row's `build_work_per_worker`>
+        //   turns(w) = ceil((cost − done − gear(w)) / (w × build_work_per_worker_turn × floor/peak))
+        //
+        // It is READ, never assumed to be the `1.0` it is today: the sim writes worker output as a
+        // sum of terms so a future buff lands there, and a client hard-coding the constant would
+        // quote a number the sim disagrees with. **The GEAR half is not here** — both its terms are
+        // facts about the band's ledger, so they ride the kit row (`dict/population.rs`), which is
+        // what lets a compose sheet re-price the whole estimate when the player picks another kit.
+        let _ = dict.insert("build_work_per_worker_turn", herd.buildWorkPerWorkerTurn());
         // Pre-commit yield forecast (food/turn at the herd's CURRENT biomass, exported at
         // output_multiplier 1.0 — the client scales by the acting band's multiplier):
         //   expected(workers, floor) = min(workers * per_worker_yield * dip, ceiling(floor))
@@ -428,7 +470,16 @@ pub(crate) fn kits_to_array(kits: Vector<'_, ForwardsUOffset<fb::KitOption<'_>>>
             kit.penCarryPerWorkerBiomass() as f64,
         );
         let _ = dict.insert("scout_vantage_range", kit.scoutVantageRange() as f64);
-        let _ = dict.insert("build_rate", kit.buildRate() as f64);
+        // **THE BUILD AXIS, IN WORK UNITS** — what ONE equipped worker takes off an improvement's
+        // cost, summed over the equipped crew. Neutral `0`; the shipped handling gear declares 8.5.
+        //
+        // **IT REPLACES `buildRate`, WHICH IS RETIRED AND NOW FROZEN AT ITS NEUTRAL `1`** — so the
+        // old key is not decoded at all rather than left decoded and always neutral, which would
+        // silently strip the husbandry kit's build clause and withhold the kit from the very herd
+        // the player is taming (`KitRoster.kit_offer` asks this axis FIRST). A multiplier on the
+        // crew cancels the job's cost and so saves the same PERCENTAGE of turns on a garden and on a
+        // farm; subtracted from the job, the job's own size decides what the tool is worth.
+        let _ = dict.insert("build_work_per_worker", kit.buildWorkPerWorker() as f64);
         // What the kit does BESIDES the tiers. `dispersion` multiplies the quarry's own retreat and
         // `exposure` the hunt's injury hazard, both neutral at 1. The two mass bounds say which
         // quarry `attack` above actually applies to — 0 on an end is unbounded — so a picker can
@@ -522,6 +573,26 @@ pub(crate) fn forage_patches_to_array(
         // is no standing crop to take a fraction of, so a bare-ground sow is pure investment);
         // `field_yield` is what the Field pays once sown (2× `tended_yield` on the shipped dials).
         let _ = dict.insert("field_yield", patch.fieldYield());
+        // **THE PLANT BUILDS, PRICED IN WORK** (docs/plan_unit_costed_work.md §8) — the twin of the
+        // herd block above, and the same contract: `*_work_done / *_work_cost` IS the `*_progress`
+        // fraction beside it, the cost is the resolved price of that job on THIS patch and is
+        // published whether or not a build runs, and `build_turns_remaining` of `-1` means NO
+        // ESTIMATE rather than zero. TWO pairs for two rungs, the `cultivate_build_fraction` /
+        // `sow_build_fraction` rule: independently tunable jobs must not share a number. ONE
+        // turns/gear pair for both, because at most one improvement is ever in flight on one source.
+        // MapView cross-refs all six onto `tile_info` (as `patch_*`), like the rest of the payload.
+        let _ = dict.insert("cultivation_work_done", patch.cultivationWorkDone());
+        let _ = dict.insert("cultivation_work_cost", patch.cultivationWorkCost());
+        let _ = dict.insert("field_work_done", patch.fieldWorkDone());
+        let _ = dict.insert("field_work_cost", patch.fieldWorkCost());
+        let _ = dict.insert("build_turns_remaining", patch.buildTurnsRemaining() as i64);
+        let _ = dict.insert("build_work_from_gear", patch.buildWorkFromGear());
+        // The plant twin of the herd block's estimate TERM — see there for why it rides beside
+        // `build_turns_remaining` rather than replacing it, why the figure is read rather than
+        // assumed, and why the gear half is on the kit row instead. Every forage kit's saturating
+        // crew is `0` today (no plant item declares the build stat yet, issue #539), which the closed
+        // form handles as the ungeared case rather than as a missing term.
+        let _ = dict.insert("build_work_per_worker_turn", patch.buildWorkPerWorkerTurn());
         // WHY this ground will not take seed — "" when it will. "too_poor" / "too_dry" /
         // "too_poor_and_too_dry", resolved server-side through the SAME `RungSiteRequirement::refusal`
         // seam the `sow` command gates on. Shipped as an ANSWER rather than a bool because only ~1% of

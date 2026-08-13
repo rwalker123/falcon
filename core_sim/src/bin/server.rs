@@ -4861,7 +4861,7 @@ fn handle_cancel_order(
 /// `1.0` once past a `claim_threshold`. That claim existed to *skip the investment*, which is the
 /// entire decision — the same reason the plant side removed its own claim first. Taming now costs a
 /// real yield dip (the `animal:pastoral` rung's `yield_fraction_while_building × the herd's Sustain
-/// (MSY) ceiling`) and takes `1 / progress_per_turn` turns of sustained work.
+/// (MSY) ceiling`) and takes `work_cost / the crew's output` turns of sustained work.
 ///
 /// Targets a **herd id** (as `domesticate` did) rather than a tile: taming is the verb you reach for
 /// on a *roaming* wild herd, which is identified by who is following it, not by where it stands this
@@ -5091,7 +5091,7 @@ fn crops_named_on_forage_source(
 /// **gone**: it would let the player skip the investment, which is the entire decision. Cultivating
 /// now costs a real yield dip — while preparing, the patch pays only
 /// `cultivation.cultivating_yield_fraction × its Sustain (MSY) ceiling` — and takes
-/// `1 / progress_per_turn` turns of sustained work.
+/// `work_cost / the crew's output` turns of sustained work.
 ///
 /// Gates (via the shared `validate_labor_policy`): the faction must know **Cultivation**, and the
 /// patch must be **Thriving**, not already cultivated, and not another faction's.
@@ -8181,8 +8181,8 @@ mod tests {
     // off the rung record (`unlock_discovery_id`), never a hard-coded id.
     use core_sim::{
         build_headless_app, default_species_for_rung, EcologyPhase, FoodModule, FoodSiteEntry,
-        ForagePatch, CULTIVATION_DISCOVERY_ID, HERDING_DISCOVERY_ID, NO_IMPROVEMENT_UNDERWAY,
-        PENNING_DISCOVERY_ID, RUNG_COMPLETE, SEED_SELECTION_DISCOVERY_ID, SITE_ACCEPTED,
+        ForagePatch, CULTIVATION_DISCOVERY_ID, FABRICATED_BUILD_COST, HERDING_DISCOVERY_ID,
+        NO_IMPROVEMENT_UNDERWAY, PENNING_DISCOVERY_ID, SEED_SELECTION_DISCOVERY_ID, SITE_ACCEPTED,
     };
 
     /// Insert a **Thriving, wild** patch — a valid Cultivate target (there is no early claim any
@@ -8678,14 +8678,20 @@ mod tests {
         let patch = registry
             .patch_mut(coord)
             .expect("the fixture seeded a patch");
-        patch.cultivation_progress = PART_PREPARED_PROGRESS;
+        patch.cultivation_progress = PART_PREPARED_WORK;
+        patch.cultivation_cost = PART_PREPARED_JOB;
         patch.owner = owner;
         patch.ecology_phase = EcologyPhase::Stressed;
     }
 
-    /// Progress a paused build has banked — any value strictly inside `(RUNG_UNSTARTED,
-    /// RUNG_COMPLETE)` works; a mid-build figure reads as the state it represents.
-    const PART_PREPARED_PROGRESS: f32 = 0.5;
+    /// **A paused build's banked work, and the job it is part of** — half of a nominal one-worker
+    /// job, so the pair reads unambiguously as mid-build (`RUNG_UNSTARTED < work < job`) without
+    /// pretending to the ladder's shipped price, which these command-gate tests are not about. Both
+    /// halves are needed: a completion predicate reads `progress >= cost`, so progress alone says
+    /// nothing.
+    const PART_PREPARED_WORK: f32 = FABRICATED_BUILD_COST / 2.0;
+    /// See [`PART_PREPARED_WORK`].
+    const PART_PREPARED_JOB: f32 = FABRICATED_BUILD_COST;
 
     /// **The re-crew case.** A build this faction has underway on a patch that has dropped out of
     /// Thriving still accepts a `Cultivate` assignment — which is what lets the player *ease workers
@@ -8802,7 +8808,8 @@ mod tests {
         {
             let mut registry = thriving.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(coord).unwrap();
-            patch.cultivation_progress = PART_PREPARED_PROGRESS;
+            patch.cultivation_progress = PART_PREPARED_WORK;
+            patch.cultivation_cost = PART_PREPARED_JOB;
             patch.owner = Some(rival);
         }
         grant_cultivation(&mut thriving, faction);
@@ -10101,7 +10108,7 @@ mod tests {
             // gate, not about how a Field gets built.
             let mut registry = app.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(coord).unwrap();
-            patch.field_progress = RUNG_COMPLETE;
+            patch.complete_field(FactionId(0));
             patch.owner = Some(faction);
         }
         grant_seed_selection(&mut app, faction);
@@ -10130,7 +10137,8 @@ mod tests {
         {
             let mut registry = app.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(coord).unwrap();
-            patch.cultivation_progress = 0.5;
+            patch.cultivation_progress = PART_PREPARED_WORK;
+            patch.cultivation_cost = PART_PREPARED_JOB;
             patch.owner = Some(FactionId(1));
         }
         grant_seed_selection(&mut app, faction);
@@ -10300,9 +10308,10 @@ mod tests {
             // **Above Sustain's escapement floor** — at `K/2` exactly a Sustain row is
             // honestly `+0.00`, and a dip on nothing is nothing.
             patch.biomass = patch.carrying_capacity * STOCKED_PATCH_FRACTION;
-            patch.cultivation_progress = 1.0;
-            patch.field_progress = 0.4;
-            patch.owner = Some(FactionId(0));
+            patch.complete_cultivation(FactionId(0));
+            // A Sow underway on top of it, so the row publishes a live rung-3 build fraction.
+            patch.field_progress = PART_PREPARED_WORK;
+            patch.field_cost = PART_PREPARED_JOB;
         }
         recapture_snapshot_in_place(&mut app.world);
         let snapshot = app
@@ -10317,11 +10326,33 @@ mod tests {
             .find(|patch| patch.x == coord.x && patch.y == coord.y)
             .expect("the patch is on the wire");
 
-        // BOTH plant meters ship, independently — the two-meter split the client needs.
+        // BOTH plant meters ship, independently — the two-meter split the client needs. **Each is
+        // still a 0..1 FRACTION**, divided at capture against that patch's own job, even though the
+        // meter behind it now stores absolute work units.
+        const HALF_SOWN: f32 = PART_PREPARED_WORK / PART_PREPARED_JOB;
         assert!((patch.cultivation_progress - 1.0).abs() < 1e-6);
         assert!(patch.is_cultivated);
-        assert!((patch.field_progress - 0.4).abs() < 1e-6);
-        assert!(!patch.is_field, "0.4 is a half-sown field, not a Field");
+        assert!((patch.field_progress - HALF_SOWN).abs() < 1e-6);
+        assert!(!patch.is_field, "a half-sown field is not a Field");
+
+        // **And the WORK pair beside it** — the absolute meter and the job's live price, which is
+        // what lets the UI say "18 of 50 work" and quote a rung before the player commits. The cost
+        // is the LADDER's, not the patch's stamped one: an unstarted rung must still have a price.
+        let cultivate_cost = core_sim::LadderConfig::builtin()
+            .rung(RungKey::PlantTended)
+            .build_cost(core_sim::RUNG_COST_UNSCALED)
+            .expect("the tended rung builds");
+        assert!((patch.cultivation_work_cost - cultivate_cost).abs() < 1e-6);
+        assert!((patch.field_work_done - PART_PREPARED_WORK).abs() < 1e-6);
+        assert!(
+            patch.field_work_cost > 0.0,
+            "a rung nobody has started still quotes its price"
+        );
+        assert_eq!(
+            patch.build_turns_remaining,
+            sim_schema::NO_BUILD_TURNS_ESTIMATE,
+            "no crew is on this fixture patch, so there is no finish date to quote"
+        );
 
         // Sow's pre-commit pair: the dip now, the payoff once sown. On a TENDED patch the dip bites
         // the tended harvest (the rung above is still unbuilt), and the payoff is the Field's rate.
@@ -10408,7 +10439,7 @@ mod tests {
             CORRAL_TEST_BODY_MASS,
         );
         if let Some(faction) = owner {
-            herd.accrue_domestication(faction, RUNG_COMPLETE);
+            herd.tame_outright(faction);
         }
         let id = herd.id.clone();
         app.world.resource_mut::<HerdRegistry>().herds.push(herd);
@@ -10515,7 +10546,7 @@ mod tests {
 
     /// The repurposed `corral`: a faction that knows Penning and owns the domesticated herd on the
     /// tile **sets the Corral improvement** on the band already hunting it. The pen is not built yet — that
-    /// costs `1 / corral_build_progress_per_turn` turns of the reduced Corral take.
+    /// costs `work_cost / the keeper crew's output` turns of the reduced Corral take.
     #[test]
     fn corral_sets_the_corral_policy_on_the_working_band() {
         let mut app = build_headless_app();
@@ -10665,7 +10696,12 @@ mod tests {
             .iter_mut()
             .find(|h| h.id == id)
             .unwrap()
-            .accrue_domestication(owner, 0.2);
+            .accrue_domestication(
+                owner,
+                PART_PREPARED_WORK,
+                PART_PREPARED_JOB,
+                PART_PREPARED_JOB,
+            );
         grant_herding(&mut app, intruder);
         spawn_working_band(
             &mut app,

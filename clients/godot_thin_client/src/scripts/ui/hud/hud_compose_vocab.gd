@@ -360,18 +360,53 @@ const IMPROVEMENT_DONE_LABELS := {
 # beside the take it is meant to be compared against, and the box states nothing but the choice.
 const IMPROVEMENT_OFFER_BARE_FORMAT := "%s %s"
 
+# ---- THE JOB'S PRICE, QUOTED BEFORE THE PLAYER COMMITS (docs/plan_unit_costed_work.md §11) --------
+# **A VERB WITH NO PRICE WAS SURVIVABLE ONLY WHILE EVERY VERB COST THE SAME 25 TURNS.** A rung now
+# declares a fixed size in WORK UNITS and turns are the OUTPUT, so the sheet has to say what this
+# improvement costs on this source and what the crew standing here would take to finish it — or the
+# player picks between rungs whose prices differ by a factor and are nowhere on screen.
+#
+# `workCost` is published whether or not a build is in flight, which is what makes the quote possible
+# pre-commit at all. The turns half is the SIM's estimate and is dropped entirely where it answers
+# "no estimate" — see `SourceForecast.BUILD_TURNS_NO_ESTIMATE`.
+const BUILD_PRICE_WORK_FORMAT := "%s work"
+
+# **THE COUNT AND ITS NOUN, spelled once for BOTH compose faces** — the offered face's price clause
+# and the running face's tail read the same estimate, so a job one turn out must not say `≈1 turns` on
+# one of them. `HudSelectionVocab.BUILD_TURNS_ROW_ONE` is the same pair on the tile card's row; this
+# is the compose sheet's, which carries no `at this crew` tail (the stepper IS on this panel).
+const BUILD_TURNS_COUNT_FORMAT := "≈%d turns"
+
+const BUILD_TURNS_COUNT_ONE := "≈1 turn"
+
+# `50 work, ≈25 turns` — the price with its estimate. Takes the clause ALREADY SPELLED, never a raw
+# count, so the singular can only be decided in one place (`DetailFormat.build_turns_clause`).
+const BUILD_PRICE_TURNS_FORMAT := "%s, %s"
+
+# `🌱 Cultivate this patch — 50 work, ≈25 turns` — the offered checkbox's face with its price. It
+# takes an em-dash rather than the running face's, because the two halves are a NAME and its PRICE
+# rather than a name and a live meter.
+const IMPROVEMENT_OFFER_PRICED_FORMAT := "%s — %s"
+
 ## A GATED rung's whole line: the rung's glyph, then the unmet prerequisite in the gate's own words.
 ## The rung is NOT named here and that is the point — naming it ("Cultivate this patch") reads as an
 ## offer, and this state exists precisely because there is no offer to make yet. The glyph keeps the
 ## improvement axis visible and identifiable without making a promise.
 const IMPROVEMENT_GATED_FORMAT := "%s %s"
 
-# `<glyph> <participle> — 60%` — the running checkbox's face, and the ONLY one it has. The percent
-# comes from the SAME `SourceForecast.improvement_progress` the map badge and the work board read, so
-# the three can never quote different meters. The payoff left this face with the offered one's, for
-# the reason recorded on `IMPROVEMENT_OFFER_BARE_FORMAT`; the meter is what this control uniquely
-# knows, and it keeps the whole of the face.
-const IMPROVEMENT_RUNNING_BARE_FORMAT := "%s %s — %d%%"
+# `<glyph> <participle> 18 / 50 work (42%)` — the running checkbox's face, and the ONLY one it has.
+# The meter comes from `DetailFormat.build_meter_value`, i.e. the same composer the tile card's and
+# the herd drawer's rows use, over the same `SourceForecast.improvement_progress` the map badge and
+# the work board read — so no two surfaces can quote different meters or word them differently. The
+# payoff left this face with the offered one's, for the reason recorded on
+# `IMPROVEMENT_OFFER_BARE_FORMAT`; the meter is what this control uniquely knows.
+const IMPROVEMENT_RUNNING_BARE_FORMAT := "%s %s"
+
+# …and the estimate of what is left, appended where there is one. **It belongs on the FACE rather
+# than in the control's note slot** — those notes are WARN-inked (the pen's zero-payoff warning) and a
+# falling turn count is neither a warning nor a problem; it is the number the player watches drop as
+# they step the crew up one row above. Takes the clause already spelled, like the price format above.
+const IMPROVEMENT_RUNNING_TURNS_FORMAT := "%s — %s"
 
 # **THE DEAL'S ROW KEYS, one per rung** — the label the readout's payoff row wears, naming the STATE
 # the finished rung leaves the source in rather than the verb that gets it there (`ONCE TENDED`, not
@@ -424,15 +459,16 @@ const IMPROVEMENT_ABANDON_HINTS := {
 # different questions ("what does this rung buy?" / "what happens if I stop?") and read as two lines.
 const IMPROVEMENT_TOOLTIP_SEPARATOR := "\n\n"
 
-# WHY THE METER IS NOT MOVING. A build accrues only while its source is Thriving, and that is
-# deliberately NOT a gate on starting it (a source's phase swings as it is worked, so refusing the
-# verb would be un-actionable churn) — the sim just PAUSES the meter, losing nothing. This line is the
-# only thing standing between the player and a hidden rule, so it states the pause, names the cause
-# (the live phase) and names the remedy, which is the opposite of "work harder".
-#
-# It was `TAME_STALLED_HINT_FORMAT`, animal-only, because the plant web had no control to hang it on.
-# Both webs pause identically and both say so now. %s = the source's live `ecology_phase`.
-const IMPROVEMENT_PAUSED_FORMAT := "⚠ Paused — the source is %s, and this only advances while Thriving. Progress is not lost: ease off and it resumes as the source recovers."
+# **THERE IS NO PHASE-KEYED PAUSE LINE, and `IMPROVEMENT_PAUSED_FORMAT` is not coming back.** It read
+# "⚠ Paused — the source is Stressed, and this only advances while Thriving. … ease off and it
+# resumes", which was true of a sim that gated every build on `EcologyPhase::Thriving`.
+# `docs/plan_harvest_floor.md` §3.2 replaced that CLIFF with a RATE — a crew pulling hard on the
+# ground it is clearing builds slowly, in proportion to its escapement floor — so the line rendered a
+# WARN "Paused" beneath a meter the same face showed advancing, and its remedy (ease workers off) was
+# backwards: the FLOOR paces the build, and easing off does not raise it. What the sheet says instead
+# is what it already said better one register up — `SourceForecast.TEACHING_BUILD_ONLY_FORMAT`'s live
+# "Building at ×1.60 — a higher floor builds faster" — and a build that genuinely accrues nothing
+# (nothing standing above the floor) states that by dropping its turn estimate entirely.
 
 # A ZERO PAYOFF IS DATA, NOT A MISSING NUMBER — and it is the single most valuable thing the running
 # control can say. The pen's harvest is constant ESCAPEMENT (take only the biomass standing above

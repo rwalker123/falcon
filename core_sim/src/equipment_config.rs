@@ -69,8 +69,18 @@ use thiserror::Error;
 
 use crate::combat::CombatStats;
 use crate::config_load::{load_config_from_env, ConfigLoadError};
+use crate::intensification::NO_BUILD_GEAR;
 
 pub const BUILTIN_EQUIPMENT_CONFIG: &str = include_str!("data/equipment.json");
+
+/// **A kit that equips NOBODY for a build** — the answer
+/// [`EquipmentConfig::build_work_saturating_crew`] gives for a kit carrying nothing live that helps,
+/// and the published value on every row but the handling gear's today.
+///
+/// Named rather than a bare `0` because it is what makes the client's `min(workers, this) × worth`
+/// self-correcting: a kit that *declares* `BuildWork` and has worn every unit of it out publishes a
+/// positive worth beside a zero crew, and the product is correctly nothing.
+pub const NO_SATURATING_CREW: u32 = 0;
 
 /// **A stat a piece of equipment can set.** The variants are the JSON `stat` keys.
 ///
@@ -122,22 +132,59 @@ pub enum EquipmentStat {
     /// one of them would be a fourth authority over the same line. What wayfinding gear buys is what
     /// an observer can make out once they are there.
     ScoutVantageRange,
-    /// **Multiplies the rate a rung's per-source build meter fills at** — the factor
-    /// [`crate::intensification::RungDef::build_accrual`] applies beside the floor, the species
-    /// timescale and the crew scale. Neutral at `1.0`; the handling gear ships `1.5`.
+    /// **THE WORK UNITS ONE WORKER'S TOOL TAKES OFF A BUILD** — subtracted from the job's cost, not
+    /// multiplied into the crew's output (`docs/plan_unit_costed_work.md` §6). Neutral at **`0.0`**;
+    /// the handling gear's flint tier ships `8.5`.
     ///
-    /// **A multiplier rather than a two-tier rate, and that is what lets a SECOND item declare it.**
-    /// The [`Self::TWO_TIER`] stats find their other side by searching the whole item table and
-    /// taking the first match, so each of them may be declared by exactly one item or the answer
-    /// resolves alphabetically. A build tool for the plant web (issue #539) is a second declarer by
-    /// construction, so the stat has to be the kind a kit resolves as the **max of what its live
-    /// items declare** — the shape `dispersion` and `exposure` already run on.
+    /// # It lands on the JOB, and that is the load-bearing arithmetic
     ///
-    /// **It is deliberately NOT named for husbandry.** Both food webs' rungs read the one build
-    /// seam, so a stat keyed to the animal branch would have to be renamed the day a hoe ships. What
-    /// is animal-only today is the *content* — `husbandry_gear` is the only item declaring it, so
-    /// both plant rungs resolve the neutral `1.0` until an item names them.
-    BuildRate,
+    /// It replaced `BuildRate`, a **multiplier on the crew's output**, and the difference is the
+    /// whole reason this arc exists:
+    ///
+    /// ```text
+    /// on the crew:  turns_bare = cost / (n·w),  turns_geared = cost / (n·(w + h))
+    ///               ratio = w / (w + h)          ← THE COST CANCELS
+    /// on the job:   effective_cost = cost − t,   saving = t / cost
+    /// ```
+    ///
+    /// A multiplier saves the same *percentage* of turns on a garden, a field and a farm alike,
+    /// forever — the intuition a hoe must satisfy (real on a garden, nearly nothing on a farm) is
+    /// unreachable from there. Subtracted from the job, **the job's own size decides**: 8 units is
+    /// 16% of a 50-unit garden and 2.7% of a 300-unit farm, and **the tool never mentions either
+    /// improvement by name**. The fade on a farm is therefore *config's* job — a Farm is born large
+    /// precisely so the hand tools of the era are noise against it — and not a property built into
+    /// the resolution rule.
+    ///
+    /// # PER WORKER, on the seam that already exists
+    ///
+    /// **The tool is wielded**: a worker holding one contributes its worth, a worker without one
+    /// contributes nothing, so the crew's total is `Σ over the crew`. That is not a new rule — it is
+    /// `EquipmentCoverage`'s ("the partly-equipped party"), and `KitCoverage::weighted_rate × head
+    /// count` is exactly that sum. Five hoed workers and five bare answer `5 × worth`, the same shape
+    /// as five sledded hunters and five sledless hauling `5 × 40 + 5 × 12`.
+    ///
+    /// **This answers the question `BuildRate` left open** — whether a build tool wants the covered
+    /// reading the carries take. **Yes.** The old stat was uncovered only because averaging a
+    /// *multiplier* said *bring fewer keepers and the pen goes up faster* (measured: one set of
+    /// hurdles among ten keepers resolved ×1.05 against the ×1.5 declared). A per-worker,
+    /// **cost-side** contribution is a **sum**, not an average, so an un-geared hand adds zero
+    /// instead of diluting.
+    ///
+    /// # Everything else about it
+    ///
+    /// **Not a two-tier rate, and that is what lets a SECOND item declare it.** The
+    /// [`Self::TWO_TIER`] stats find their other side by searching the whole item table and taking
+    /// the first match, so each may be declared by exactly one item or the answer resolves
+    /// alphabetically. A plant build tool (issue #539) is a second declarer by construction, so this
+    /// is the kind a kit resolves as the **max of what its live items declare**
+    /// ([`KitChoice::best_declared`]) — `dispersion`/`exposure`'s shape, under which a spent tool
+    /// steps back to the neutral and two tools that both help do not compound.
+    ///
+    /// **Deliberately NOT named for husbandry.** Both food webs' rungs read the one build seam, so a
+    /// stat keyed to the animal branch would have to be renamed the day a hoe ships. What is
+    /// animal-only today is the *content* — `husbandry_gear` is the only item declaring it, so every
+    /// plant build resolves the neutral `0.0` until an item names them.
+    BuildWork,
     /// **The rate a bench works at with this tool in hand** — the value
     /// `workers × progress_per_worker_turn ×` is multiplied by. Declared **equipped only**; the
     /// unequipped side is the MATERIAL's own [`crate::materials_config::HandWorking::rate`], which
@@ -156,14 +203,19 @@ pub enum EquipmentStat {
 }
 
 impl EquipmentStat {
-    /// The neutral value — what the stat reads when **no** item declares it. Only the multiplier
-    /// stats have one; the tiered stats resolve against a rate the caller already holds, so asking
-    /// for their neutral value is a category error the type refuses to answer.
+    /// The neutral value — what the stat reads when **no** item declares it. Only the stats resolved
+    /// through [`KitChoice::best_declared`] have one; the tiered stats resolve against a rate the
+    /// caller already holds, so asking for their neutral value is a category error the type refuses
+    /// to answer.
+    ///
+    /// **It is not the same number for all three.** `dispersion` and `exposure` are *multipliers*, so
+    /// their neutral is the identity `1.0`; [`Self::BuildWork`] is an **additive contribution** off a
+    /// job's cost, so its neutral is `0.0` — a crew carrying nothing that helps takes nothing off the
+    /// job. Reading either as the other is the mistake this method exists to make impossible.
     pub fn neutral(self) -> Option<f32> {
         match self {
-            EquipmentStat::Dispersion | EquipmentStat::Exposure | EquipmentStat::BuildRate => {
-                Some(1.0)
-            }
+            EquipmentStat::Dispersion | EquipmentStat::Exposure => Some(1.0),
+            EquipmentStat::BuildWork => Some(NO_BUILD_GEAR),
             EquipmentStat::Attack
             | EquipmentStat::HuntCarry
             | EquipmentStat::ForageCarry
@@ -368,18 +420,21 @@ pub enum WearQuantum {
     /// herd is continuous work that shows up only as the meter moving. The meter's own increment is
     /// therefore what a use *is* — the same treatment the two biomass quanta give a take.
     ///
-    /// **Every build totals [`crate::intensification::RUNG_COMPLETE`] of progress, so a build costs
-    /// a FIXED amount of gear** whatever else is true of it. A Steppe Runner's 125-turn `Tame` and a
-    /// rabbit's 25-turn one burn identical hurdles, and a crew building at a shallow floor halves
-    /// its accrual and doubles its turns to arrive at the same total. That invariance is the reason
-    /// to prefer it over a per-worker-turn charge, which would be a clock in a per-use costume and
-    /// would additionally make the gear's cost track a species' `taming_rate` — the same
-    /// species-dependence `equipment.md` rejected for `body_mass` on the learning rate.
+    /// **A BIGGER JOB EATS MORE GEAR, with no per-improvement authoring** — the meter's increment is
+    /// in **work units** (`docs/plan_unit_costed_work.md` §6.3), so a 75-unit Sow burns 1.5× what a
+    /// 50-unit Cultivate does and a Steppe Runner's 250-unit `Tame` burns 5× a rabbit's. The gear's
+    /// cost tracks the **size of the job** rather than a species' *rate*, which is the
+    /// species-dependence `equipment.md` rejects; a crew building at a shallow floor banks less work
+    /// per turn and pays proportionally less for it.
     ///
-    /// The total is **exactly** `RUNG_COMPLETE` because the charge is the source meter's own
-    /// *delta* across the turn's accrual, not the accrual the rung offered: the completing turn is
-    /// billed for the sliver of progress it actually banked, not for the full turn's offer the
-    /// meter clamped away.
+    /// It replaced a normalized meter under which every build totalled `1.0`, so a build cost a fixed
+    /// amount of gear whatever else was true of it — the thing `equipment.md` recorded as impossible.
+    /// The shipped amount was divided by the reference job's cost when the meters inverted, so gear
+    /// life per reference build is exactly unchanged.
+    ///
+    /// The total is **exact** because the charge is the source meter's own *delta* across the turn's
+    /// accrual, not the accrual the rung offered: the completing turn is billed for the sliver of
+    /// progress it actually banked, not for the full turn's offer the meter clamped away.
     ///
     /// **Still not a clock.** A stalled build accrues nothing and pays nothing: a crew below its
     /// rung's knowledge gate, on a source it is not working, holding no build verb at all, or one
@@ -401,10 +456,13 @@ impl WearQuantum {
     /// "biomass" is not a countable event and inventing a per-turn conversion here would need a
     /// forecast of what the band is about to do.
     ///
-    /// **[`Self::BuildProgress`] reads as a count and is not an exception to that.** It is a
-    /// continuous quantum like the biomasses, but its unit is *already* the whole event: a rung
-    /// completes at [`crate::intensification::RUNG_COMPLETE`] `== 1.0`, so one unit of progress is
-    /// one finished build and "builds" is the unit rather than a conversion of it.
+    /// **[`Self::BuildProgress`] is a continuous quantum whose unit is NOT its noun**, and it is the
+    /// one exception here. Its unit is a **work unit** — one worker-turn at the food peak — while a
+    /// player holding a hoe thinks in *builds*, so the readout quotes it against a **named reference
+    /// job**: `crafting.md`'s *"≈12 gardens' worth"*, the garden being the `plant:tended` rung's own
+    /// `work_cost` (`intensification::REFERENCE_BUILD_RUNG`). The conversion lives at the readout
+    /// (`snapshot::crafting::quantum_units_per_noun`), because the reference is a *ladder* fact and
+    /// this table knows nothing about rungs.
     ///
     /// **An item wearing on SEVERAL quanta is quoted on its FIRST** — see
     /// [`ItemDefinition::headline_wear`], which is where that choice is argued.
@@ -416,7 +474,9 @@ impl WearQuantum {
             Self::BiomassCollected => "biomass butchered",
             Self::TileRevealed => "new tiles",
             Self::ItemCrafted => "crafts",
-            Self::BuildProgress => "builds",
+            // **Not "builds"** — the unit is a work unit and a build is many of them, so the
+            // noun names the reference job the readout divides by. See the variant.
+            Self::BuildProgress => "gardens' worth",
         }
     }
 
@@ -431,7 +491,7 @@ impl WearQuantum {
             Self::BiomassCollected => "biomass butchered",
             Self::TileRevealed => "new tile",
             Self::ItemCrafted => "craft",
-            Self::BuildProgress => "build",
+            Self::BuildProgress => "garden's worth",
         }
     }
 }
@@ -1032,7 +1092,7 @@ impl KitChoice {
     ///   inheriting the trap's stand-off for free.
     ///
     /// Neutral when nothing declares it, so a kit of pure carry gear leaves the shipped fight alone.
-    pub fn multiplier(
+    pub fn best_declared(
         &self,
         stat: EquipmentStat,
         wear: &crate::components::BandEquipment,
@@ -1040,7 +1100,7 @@ impl KitChoice {
     ) -> f32 {
         let neutral = stat
             .neutral()
-            .expect("multiplier() is for the neutral-at-1.0 stats");
+            .expect("best_declared() is for the stats that HAVE a neutral");
         self.live_items(wear, config)
             .filter_map(|item| item.effect(stat))
             .map(EffectTier::value)
@@ -1741,21 +1801,90 @@ impl EquipmentConfig {
     /// **How much the quarry's own `wariness` is multiplied by** for a party carrying this kit — see
     /// [`KitChoice::multiplier`] for why it is the maximum of what the live items declare.
     pub fn dispersion(&self, kit: &KitChoice, wear: &crate::components::BandEquipment) -> f32 {
-        kit.multiplier(EquipmentStat::Dispersion, wear, self)
+        kit.best_declared(EquipmentStat::Dispersion, wear, self)
     }
 
-    /// **How much faster a rung's build meter fills** for a crew carrying this kit — the factor
-    /// [`crate::intensification::RungDef::build_accrual`] applies, `1.0` for a kit carrying nothing
-    /// that helps. The maximum of what the live items declare, for
-    /// [`KitChoice::multiplier`]'s reason: two tools that both speed the work do not compound, you
-    /// simply use the better one.
+    /// **The work units ONE WORKER carrying this kit takes off a build's cost** —
+    /// [`EquipmentStat::BuildWork`], [`NO_BUILD_GEAR`] for a kit carrying nothing that helps. The
+    /// maximum of what the live items declare, for [`KitChoice::best_declared`]'s reason: two tools
+    /// that both help do not compound, a worker simply uses the better one.
+    ///
+    /// **PER WORKER, so a caller sums it over the crew** — through
+    /// [`KitCoverage::weighted_rate`] × head count, which is the partly-equipped party's own seam:
+    /// five geared workers and five bare take `5 × worth` off the job, not ten workers' worth and not
+    /// an average.
     ///
     /// **It is resolved off the CREW'S kit, not the band's ownership**, like every other stat here —
-    /// so gear that could have sped a `Tame` and was left behind on another kit speeds nothing, and
+    /// so gear that could have helped a `Tame` and was left behind on another kit helps nothing, and
     /// choosing the handling kit for the climb costs the hunt job whatever that kit does not carry.
     /// That trade is the decision the stat exists to create.
-    pub fn build_rate(&self, kit: &KitChoice, wear: &crate::components::BandEquipment) -> f32 {
-        kit.multiplier(EquipmentStat::BuildRate, wear, self)
+    pub fn build_work_per_worker(
+        &self,
+        kit: &KitChoice,
+        wear: &crate::components::BandEquipment,
+    ) -> f32 {
+        kit.best_declared(EquipmentStat::BuildWork, wear, self)
+    }
+
+    /// **HOW MANY WORKERS THIS KIT CAN ACTUALLY EQUIP FOR A BUILD, out of what the band holds** —
+    /// the head count at or **above** which extra hands take no further work off a job, and the term
+    /// that turns a piecewise-linear resolution into the `min(linear, cap)` form a client can
+    /// evaluate against a *proposed* crew:
+    ///
+    /// ```text
+    /// gear(workers) = min(workers, build_work_saturating_crew) × build_work_per_worker
+    /// ```
+    ///
+    /// # Why a saturation point exists at all
+    ///
+    /// The gear contribution is `Σ over the crews (crew.workers × best_declared(crew's kit))`
+    /// ([`crate::intensification::build_work_from_gear`] over [`KitCoverage::weighted_rate`] × head
+    /// count). Each item covers a **prefix** of the party
+    /// (`min(live units × workers_per_unit, the people brought)`), so adding hands raises the total
+    /// **until every unit is in somebody's hands** and then raises it no further: an eleventh worker
+    /// with ten sets of hurdles between them contributes nothing.
+    ///
+    /// # It is a property of the KIT and the LEDGER — of no source and no crew
+    ///
+    /// Both terms — the units held and each unit's reach — are facts about what the band owns, so
+    /// this rides `PopulationCohortState.kitTiers[]` beside the per-worker worth it caps and is
+    /// answered **per offered kit**. A quote for a kit the player is *considering* therefore gets
+    /// that kit's own saturation point, and a source nobody is working still has one.
+    ///
+    /// # It counts the kit's BEST build tool
+    ///
+    /// [`Self::build_work_per_worker`] is the **maximum** of what the live items declare (a worker
+    /// uses the better tool; two do not compound), so the crew this answers for is the one covered
+    /// by the items declaring that best value. On the shipped roster exactly one item declares
+    /// `BuildWork` at all, so `min(w, this) × worth` **is** the coverage sum — pinned by
+    /// [`the_saturating_crew_reproduces_the_coverage_sum_at_every_crew_size`]. A kit carrying a
+    /// *second*, weaker build tool that reached further would take more off the job than this form
+    /// credits; that test is what makes the day one ships a decision rather than a silent drift.
+    ///
+    /// [`NO_SATURATING_CREW`] where nothing live in the kit helps — including a kit that declares
+    /// `BuildWork` and has worn every unit of it out.
+    pub fn build_work_saturating_crew(
+        &self,
+        kit: &KitChoice,
+        wear: &crate::components::BandEquipment,
+    ) -> u32 {
+        let worth = self.build_work_per_worker(kit, wear);
+        if worth <= NO_BUILD_GEAR {
+            return NO_SATURATING_CREW;
+        }
+        kit.uses
+            .iter()
+            .filter_map(|item| {
+                let live = self.live_item(item, wear)?;
+                // `>=` rather than `==` because `worth` IS one of these values by construction — the
+                // comparison is a "did this item set the maximum" test, not float equality.
+                (live.effect(EquipmentStat::BuildWork)?.value() >= worth).then(|| {
+                    wear.live_units(item, self)
+                        .saturating_mul(live.item.workers_per_unit)
+                })
+            })
+            .max()
+            .unwrap_or(NO_SATURATING_CREW)
     }
 
     /// **The size window this kit's `attack` applies within**, as `(min, max)` body mass — the
@@ -1804,7 +1933,7 @@ impl EquipmentConfig {
     /// **How much the hunt's baseline injury hazard is multiplied by** — `0` for a party whose whole
     /// kit keeps it out of reach of the animal.
     pub fn exposure(&self, kit: &KitChoice, wear: &crate::components::BandEquipment) -> f32 {
-        kit.multiplier(EquipmentStat::Exposure, wear, self)
+        kit.best_declared(EquipmentStat::Exposure, wear, self)
     }
 
     /// **Every tier a kit grants, resolved once, for one `(kit, wear)` pair.**
@@ -1877,7 +2006,7 @@ impl EquipmentConfig {
             attack_max_body_mass: attack_max_body_mass.unwrap_or(UNBOUNDED_BODY_MASS),
             dispersion: self.dispersion(kit, wear),
             exposure: self.exposure(kit, wear),
-            build_rate: self.build_rate(kit, wear),
+            build_work_per_worker: self.build_work_per_worker(kit, wear),
         }
     }
 
@@ -1940,6 +2069,28 @@ impl EquipmentConfig {
                         declared.join(", ")
                     ),
                 });
+            }
+        }
+        // **A tool cannot take a NEGATIVE amount off a job** (`docs/plan_unit_costed_work.md` §9).
+        // `0` is legal and is the neutral — an item may declare the stat and contribute nothing on a
+        // tier that is only a placeholder — but a negative would make the gear *add* work, and an
+        // infinite one would finish every job on the first turn it is worked.
+        for (id, item) in &self.items {
+            for effect in item.every_effect() {
+                if effect.stat != EquipmentStat::BuildWork {
+                    continue;
+                }
+                let value = effect.tier.value();
+                if !value.is_finite() || value < NO_BUILD_GEAR {
+                    return Err(EquipmentConfigError::Invalid {
+                        field: format!("items.{id}.build_work"),
+                        constraint: format!(
+                            "take a finite, non-negative amount of work off a build (>= \
+                             {NO_BUILD_GEAR})"
+                        ),
+                        value: value.to_string(),
+                    });
+                }
             }
         }
         // **The quarry-default margin is a FRACTION, so `0` is legal and negative is not.** `0`
@@ -2577,9 +2728,9 @@ pub struct ResolvedKitTiers {
     pub dispersion: f32,
     /// What this kit multiplies the hunt's baseline injury hazard by. `1.0` is neutral.
     pub exposure: f32,
-    /// What this kit multiplies a rung's build accrual by. `1.0` is neutral — the reading of every
-    /// kit but `husbandry` on the shipped roster.
-    pub build_rate: f32,
+    /// **The work units one worker carrying this kit takes off a build's cost.** [`NO_BUILD_GEAR`]
+    /// (`0.0`) is neutral — the reading of every kit but `husbandry` on the shipped roster.
+    pub build_work_per_worker: f32,
 }
 
 /// **"This end of the attack's mass window is not bounded"** — `0`, which is both the FlatBuffers
@@ -3141,7 +3292,7 @@ mod tests {
     /// because *"the husbandry kit builds faster"* also passes for a resolver that answers the
     /// husbandry kit's number for every kit.
     #[test]
-    fn the_build_rate_is_neutral_unless_a_live_item_declares_it() {
+    fn the_build_work_is_neutral_unless_a_live_item_declares_it() {
         let config = EquipmentConfig::builtin();
         let wear = crate::components::BandEquipment::start_stocked(&config);
         let husbandry = config
@@ -3151,16 +3302,17 @@ mod tests {
             .kit("big_game")
             .expect("the shipped roster carries the stalking kit");
         assert!(
-            config.build_rate(&husbandry, &wear) > 1.0,
-            "the handling kit must declare a build rate above neutral"
+            config.build_work_per_worker(&husbandry, &wear) > NO_BUILD_GEAR,
+            "the handling kit must declare a build contribution above neutral"
         );
         assert_eq!(
-            config.build_rate(&big_game, &wear),
-            1.0,
+            config.build_work_per_worker(&big_game, &wear),
+            NO_BUILD_GEAR,
             "a kit carrying nothing that helps a build must be exactly neutral"
         );
         // **A SPENT ITEM STOPS CONTRIBUTING IT**, the rule every other axis follows: the cliff is
-        // flat-then-step-down, and for a multiplier the step down IS the neutral.
+        // flat-then-step-down, and the step down IS the neutral — `0.0` for an additive
+        // contribution off the job, where it was `1.0` for the multiplier this replaced.
         let mut dry = wear.clone();
         dry.wear_item(
             &config,
@@ -3169,10 +3321,56 @@ mod tests {
             f32::MAX / 2.0,
         );
         assert_eq!(
-            config.build_rate(&husbandry, &dry),
-            1.0,
-            "handling gear that has run dry must build no faster than bare hands"
+            config.build_work_per_worker(&husbandry, &dry),
+            NO_BUILD_GEAR,
+            "handling gear that has run dry must take nothing off the job"
         );
+    }
+
+    /// **THE PUBLISHED PAIR IS THE COVERAGE SUM, at every crew size** — `min(w, saturating crew) ×
+    /// per-worker worth` against `weighted_rate × w`, which is the arithmetic a build actually pays.
+    ///
+    /// The client evaluates the left side against a crew the player is *proposing*, and the sim pays
+    /// the right side for the crew that shows up; this is what says they are one number. It sweeps
+    /// **across** the saturation point rather than testing one crew, because below it the two agree
+    /// for the trivial reason that neither term is capped.
+    ///
+    /// **It is also the guard on the one condition the pair assumes.** The saturating crew counts
+    /// the items declaring the kit's *best* build contribution, so a kit carrying a **second,
+    /// weaker** build tool that reached further would take more off the job than the pair credits.
+    /// No shipped item does — `husbandry_gear` is the only declarer — and this is what makes the day
+    /// one ships a decision (publish the envelope) rather than a silent under-quote.
+    #[test]
+    fn the_saturating_crew_reproduces_the_coverage_sum_at_every_crew_size() {
+        /// One set of hurdles, so the saturation point sits at a single worker and the sweep below
+        /// straddles it.
+        const HELD: u32 = 1;
+        let config = EquipmentConfig::builtin();
+        let wear = crate::components::BandEquipment::start_stocked(&config);
+        let husbandry = config
+            .kit("husbandry")
+            .expect("the shipped roster carries the husbandry kit");
+        let worth = config.build_work_per_worker(&husbandry, &wear);
+        let saturating = config.build_work_saturating_crew(&husbandry, &wear);
+        assert_eq!(
+            saturating, HELD,
+            "fixture: the reference ledger holds one set of handling gear, so one worker saturates \
+             it — got {saturating}"
+        );
+
+        for workers in 0..=6u32 {
+            let published = workers.min(saturating) as f32 * worth;
+            let paid = crate::intensification::build_work_from_gear(
+                config
+                    .coverage(&husbandry, workers as f32, &wear)
+                    .weighted_rate(|kit| config.build_work_per_worker(kit, &wear)),
+                workers,
+            );
+            assert_eq!(
+                published, paid,
+                "at {workers} keepers the published pair must equal what the build is charged"
+            );
+        }
     }
 
     #[test]

@@ -434,6 +434,43 @@ runner fails the run on a caught Rust panic (see the `decode_guard.gd` Key Scrip
 ---
 
 
+## The BUILD, priced in WORK — thirteen key names over sixteen sites, and one the decoder deliberately DROPPED
+
+`docs/plan_unit_costed_work.md` §8. An improvement costs a fixed number of WORK UNITS now and turns
+are the OUTPUT, so `dict/subsistence.rs` decodes the absolutes beside the `0..1` fractions it already
+carried: `cultivation_work_{done,cost}` / `field_work_{done,cost}` on a patch,
+`tame_work_{done,cost}` / `corral_work_{done,cost}` on a herd, plus **three per SOURCE** (at most one
+improvement is ever in flight on one) — `build_turns_remaining` and `build_work_from_gear`, the sim's
+own answer and the resolved gear it already spent, and `build_work_per_worker_turn`, the source's own
+term in the same estimate. **The estimate's GEAR terms are not source fields at all** — see below.
+
+- **`buildTurnsRemaining` is an `i32` and `-1` is its SENTINEL** — "no estimate", for a stalled build
+  or a source nobody works. It is cast `as i64` and published raw; nothing here may substitute a `0`,
+  which the client would render as a build about to land.
+- **`build_work_per_worker_turn` rides BESIDE that answer, never instead of it**, and the decoder must
+  carry both shapes because two client surfaces ask different questions of them: the sheet evaluates
+  `turns(workers)` against a crew the player is proposing, the tile card renders the answer for the
+  crew already there (`.claude/rules/client/labor-ui.md` → "TWO SURFACES ASK DIFFERENT QUESTIONS").
+  **It is decoded rather than assumed to be the `1.0` it is today** — the sim writes worker output as
+  a sum of terms, so a client-side constant would go stale silently the day a second one lands.
+- **The GEAR half rides the KIT ROW** — `build_work_per_worker` / `build_work_saturating_crew` on each
+  `PopulationCohortState.kitTiers[]` entry, decoded in `dict/population.rs`, because both facts behind
+  them are the band's ledger rather than anything about a worked source. That is what lets a rung
+  nobody has started carry a quote at all, and what makes a compose sheet's kit picker re-price the
+  whole estimate. `build_work_from_gear` on the source is the RESOLVED contribution for the crew that
+  worked it this turn — a different question, and not one a stepper can move.
+- **`build_rate` is NO LONGER DECODED, on either kit table** (`KitOption` and the cohort's
+  `BandKitTiers`). The wire keeps the slot frozen at its neutral `1` so a client still compiles, and
+  `buildWorkPerWorker` supersedes it — the work units one equipped worker takes off a build. Leaving
+  the old key decoded is the trap rather than the safe option: every kit then reads "changes no
+  build", which silently strips the husbandry kit's own clause AND withholds it from the herd being
+  tamed (`KitRoster.kit_offer` asks that axis first).
+- **The plant seven are TWO wirings, and the guard is what says so.** A patch does not travel whole:
+  `MapView._tile_info_at` copies it key by key, so every one of them also needs the `patch_`-prefixed
+  cross-ref and a `FOW_DISCOVERED_HIDDEN_KEYS` entry. `tools/patch_crossref_guard.gd` caught exactly
+  that omission on this arc — the decoder emitted all seven and the panel would have read none. (The
+  kit row travels whole, like a herd dict, so the gear pair is one wiring.)
+
 ## The `connections` section, and the eight cohort fields the shipment arc appended
 
 Arc #527. `dict/connections.rs` → `connections_to_array` is the client's FIRST reader of the contact

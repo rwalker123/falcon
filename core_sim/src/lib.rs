@@ -186,9 +186,9 @@ pub use fauna::{
     hunt_haul_workers, hunt_source_yield_preview, hunt_take_bound, hunt_take_workers, pen_upkeep,
     per_hunter_take_biomass, project_arrivals_hunt, project_realized_hunt, quantise_animal_take,
     quarry_default_hunt_kit, repopulate_fauna, resolve_hunt_fight, retreat_seed,
-    spawn_initial_herds, species_requires_denial, stay_fraction, AnimalTake, EcologyPhase,
-    EngagementStop, FightCasualties, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    HerdTelemetryEntry, HuntCrew, HuntDraw, HuntFight, HuntTakeBound, HuntingParty,
+    spawn_initial_herds, species_requires_denial, stay_fraction, would_be_herders_needed,
+    AnimalTake, EcologyPhase, EngagementStop, FightCasualties, Herd, HerdDensityMap, HerdRegistry,
+    HerdTelemetry, HerdTelemetryEntry, HuntCrew, HuntDraw, HuntFight, HuntTakeBound, HuntingParty,
     PartyResolution, PreyDatum, QuarryFight, RoamState, SourceYieldForecast, TakeRange,
     FODDERING_DISCOVERY_ID, FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION,
     NO_DEATHS_TO_REPORT, PENNING_DISCOVERY_ID,
@@ -234,11 +234,12 @@ pub use influencers::{
     InfluencerImpacts, InfluentialId, InfluentialRoster, SupportChannel, BUILTIN_INFLUENCER_CONFIG,
 };
 pub use intensification::{
-    knows, learn_multiplier, load_intensification_ladder_from_env, BuildDips, LadderConfig,
-    LadderConfigHandle, LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef,
-    RungFeeding, RungHarvest, RungKey, RungMovement, RungSiteRequirement, SiteRefusal,
-    BUILTIN_INTENSIFICATION_LADDER, MANAGED_SOURCE_FLOOR, NO_BUILD_GEAR, NO_BUILD_UNDERWAY_DIP,
-    RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED,
+    build_fraction, build_turns_remaining, build_work_per_worker_turn, knows, learn_multiplier,
+    load_intensification_ladder_from_env, BuildDips, LadderConfig, LadderConfigHandle,
+    LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef, RungFeeding, RungHarvest,
+    RungKey, RungMovement, RungSiteRequirement, SiteRefusal, BUILTIN_INTENSIFICATION_LADDER,
+    FABRICATED_BUILD_COST, MANAGED_SOURCE_FLOOR, NO_BUILD_GEAR, NO_BUILD_UNDERWAY_DIP,
+    PER_WORKER_OUTPUT, RUNG_COST_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED,
 };
 pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,

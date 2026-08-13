@@ -281,6 +281,16 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# redacting it keeps ONE rule for the whole patch payload rather than a lone exception.
 	"patch_field_progress", "patch_is_field",
 	"patch_field_yield", "patch_sow_site_refusal",
+	# The two build meters' WORK absolutes and the source's turn/gear pair (`plan_unit_costed_work.md`
+	# §8) travel with the fractions they decompose: they are live build state, and a remembered tile
+	# knows a build's price no better than it knows its progress.
+	"patch_cultivation_work_done", "patch_cultivation_work_cost",
+	"patch_field_work_done", "patch_field_work_cost",
+	"patch_build_turns_remaining", "patch_build_work_from_gear",
+	# The estimate's per-source TERM travels under the same rule as the answer beside it — it is a
+	# figure about a build being worked, and a remembered tile knows no more about that than it knows
+	# the progress. (The gear half of the estimate is not here at all: it rides the band's kit row.)
+	"patch_build_work_per_worker_turn",
 	# THE TILE'S PER-BIOMASS YIELD VECTOR (docs/plan_harvest_floor.md §5) — what one unit of this
 	# patch's standing crop is worth in each account, plus the two investment rungs' non-food payoff
 	# twins. **It replaced the six per-policy row dicts**, which could only answer four floors; the
@@ -2735,6 +2745,31 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		info["patch_field_progress"] = float(patch.get("field_progress", 0.0))
 		info["patch_is_field"] = bool(patch.get("is_field", false))
 		info["patch_field_yield"] = float(patch.get("field_yield", 0.0))
+		# THE BUILD, PRICED IN WORK (docs/plan_unit_costed_work.md §8) — the two plant rungs' absolutes
+		# beside the fractions above, plus the ONE turn estimate and gear saving the source carries (at
+		# most one improvement is ever in flight on one patch). `work_done / work_cost` IS the
+		# `*_progress` fraction; both travel because the tile card and the compose sheet state the
+		# SIZE of the job, which a fraction structurally cannot. The COST rides even on a patch nobody
+		# is building: it is the resolved price of that job here, which is what lets the sheet quote a
+		# rung before the player commits.
+		info["patch_cultivation_work_done"] = float(patch.get("cultivation_work_done", 0.0))
+		info["patch_cultivation_work_cost"] = float(patch.get("cultivation_work_cost", 0.0))
+		info["patch_field_work_done"] = float(patch.get("field_work_done", 0.0))
+		info["patch_field_work_cost"] = float(patch.get("field_work_cost", 0.0))
+		# **`-1` IS "NO ESTIMATE" AND MUST SURVIVE THE COPY AS ITSELF** — a `0` default here would
+		# hand every unworked patch a "this build lands next turn" reading. The int cast is what keeps
+		# the sentinel intact.
+		info["patch_build_turns_remaining"] = int(patch.get(
+			"build_turns_remaining", SourceForecast.BUILD_TURNS_NO_ESTIMATE))
+		info["patch_build_work_from_gear"] = float(patch.get("build_work_from_gear", 0.0))
+		# **THE ESTIMATE'S PER-SOURCE TERM, so the compose sheet can price a crew the player is
+		# PROPOSING.** The turn count above is the sim's answer for the crew already here; this is
+		# what the sheet's stepper and floor slider evaluate `turns(workers)` from — see
+		# `SourceForecast.build_turns_at`, which takes the gear half off the band's kit row. It
+		# defaults to zero work, which that form reads as "no estimate" rather than as a build about
+		# to land.
+		info["patch_build_work_per_worker_turn"] = float(patch.get(
+			"build_work_per_worker_turn", SourceForecast.BUILD_WORK_NONE))
 		# WHY this ground will not take seed ("" = it will). The client cannot re-derive this — it has
 		# neither the per-biome capacity table nor the hydrology — so the sim ships the reason itself.
 		info["patch_sow_site_refusal"] = String(patch.get("sow_site_refusal", ""))

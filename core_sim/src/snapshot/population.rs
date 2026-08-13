@@ -500,7 +500,20 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 // sim collected 12, and a vantage of 2 tiles against a reveal at 1.
                 pen_carry_per_worker_biomass: tiers.pen_carry_per_worker_biomass,
                 scout_vantage_range: tiers.scout_vantage_range,
-                build_rate: tiers.build_rate,
+                // **The retired multiplier's slot, held at its neutral** — the stat is an
+                // additive per-worker contribution now (`buildWorkPerWorker` beside it), and a
+                // number in these units would read as a rate on a field the client renders as one.
+                build_rate: sim_schema::RETIRED_BUILD_RATE,
+                build_work_per_worker: tiers.build_work_per_worker,
+                // **The gear term's other half** — how many of this band's workers this kit could
+                // actually equip for a build, out of what the band holds. Resolved **beside**
+                // `resolve_kit_tiers` rather than inside it, and deliberately: the tiers describe
+                // *what a kit grants a worker* and are quoted over a fresh ledger by
+                // `kit_roster_states`, where a unit count is not a fact about the kit at all. This
+                // is a fact about **this band's ledger**, so it is answered only here.
+                build_work_saturating_crew: kit_levers
+                    .config
+                    .build_work_saturating_crew(&choice, &kit),
             })
         })
         .collect();
