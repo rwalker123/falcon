@@ -419,6 +419,27 @@ impl ForagePatch {
         self.field_retain_bar > RUNG_UNSTARTED && self.field_progress >= self.field_retain_bar
     }
 
+    /// **IS THE CULTIVATION METER FULL?** — `progress >= cost`, the *building vs maintaining* state
+    /// test (`docs/plan_standing_upkeep.md` §2.4) and **not** the same question as
+    /// [`Self::is_cultivated`].
+    ///
+    /// The two came apart when a rung stopped being lost on its first bleed. A patch eroded to 99% of
+    /// its cost is **still tended** (it is above its retention bar) and is **building** (its meter is
+    /// not full), so a `Cultivate` crew may repair it and pays the maintenance rate while doing so.
+    /// Fullness is what the build accrual, the "nothing left to build" test and the supplier test all
+    /// ask; the retention bar is what the ~hundred *is this ground tended* call sites ask.
+    ///
+    /// `cost > RUNG_UNSTARTED` is load-bearing for the reason it always was: a wild patch carries `0`
+    /// in both fields and `0 >= 0` would read every untouched stand as finished.
+    pub fn cultivation_meter_full(&self) -> bool {
+        self.cultivation_cost > RUNG_UNSTARTED && self.cultivation_progress >= self.cultivation_cost
+    }
+
+    /// **IS THE FIELD METER FULL?** — the rung-3 twin of [`Self::cultivation_meter_full`].
+    pub fn field_meter_full(&self) -> bool {
+        self.field_cost > RUNG_UNSTARTED && self.field_progress >= self.field_cost
+    }
+
     /// Is this patch a **completed improvement** — a Field or a tended patch? The single predicate
     /// for "this source is worked, not gathered": its harvest is biomass-based and never overdraws
     /// (`sustainable == actual`, no ⚠) and one worker suffices
@@ -457,7 +478,10 @@ impl ForagePatch {
         effective_cost: f32,
         retain_bar: f32,
     ) -> bool {
-        if self.is_cultivated() {
+        // **The guard is the METER, not the rung** (`Self::cultivation_meter_full`). A tended patch
+        // eroded below its cost is *building* — that shortfall is a repair, and refusing it here
+        // would make erosion a one-way ratchet with no way back up short of losing the rung.
+        if self.cultivation_meter_full() {
             return false;
         }
         if self.owner.is_none() {
@@ -509,7 +533,7 @@ impl ForagePatch {
         effective_cost: f32,
         retain_bar: f32,
     ) -> bool {
-        if self.is_field() {
+        if self.field_meter_full() {
             return false;
         }
         if self.owner.is_none() {
@@ -1790,32 +1814,29 @@ pub fn patch_neglect_grace_remaining(patch: &ForagePatch, ladder: &LadderConfig)
 /// so the demand the sim bleeds against, the demand the player is billed for and the demand the wire
 /// shows can never be three different rungs' answers.
 pub fn patch_upkeep_demand(patch: &ForagePatch, ladder: &LadderConfig) -> f32 {
-    patch_unwinding_rung(patch, ladder).map_or(NO_UPKEEP_DEMAND, |rung| {
-        // **A METER STILL BEING RAISED IS OWED WHAT IT WOULD LOSE, NOT WHAT HOLDING IT COSTS**
-        // (`RungDef::meter_raising_demand`, `docs/plan_standing_upkeep.md` §0). Half-cleared ground
-        // has no stock to hold; it grows back, and a crew clearing at least as fast as it reverts is
-        // holding it. Billing a build against the *holding* demand is what would make a 2-hand Sow
-        // erode while being built, so the turns a rung takes would stop being `work_cost / crew`.
-        if patch_at_risk_is_built(patch) {
-            rung.upkeep_demand(UNSCALED_UPKEEP)
-        } else {
-            rung.meter_raising_demand(UNSCALED_UPKEEP)
-        }
-    })
+    patch_unwinding_rung(patch, ladder)
+        .map_or(NO_UPKEEP_DEMAND, |rung| rung.upkeep_demand(UNSCALED_UPKEEP))
 }
 
-/// **IS THE METER AT RISK ALREADY BUILT?** — which decides *whose* hands the rung is owed
-/// (`docs/plan_standing_upkeep.md` §0/§2.4), and nothing else. `false` for a wild patch too: there is
-/// no meter there, and a rung nobody has started is certainly not finished.
+/// **IS THIS PATCH BUILDING OR MAINTAINING?** — `true` = maintaining
+/// (`docs/plan_standing_upkeep.md` §2.4). A source is **building** below its meter's cost and
+/// **maintaining** at it, and that one state test decides **nothing but who supplies the maintenance
+/// rate**: the build crew below, the band's keeping pool at it. The rate itself is owed either way.
 ///
-/// The two states are read off the same predicates the rest of the sim uses, resolved for whichever
-/// meter [`patch_unwinding_rung`] put at risk — never for the rung the patch *stands* on, or a
-/// half-sown Field would be judged by the tended ground beneath it.
-pub fn patch_at_risk_is_built(patch: &ForagePatch) -> bool {
+/// **It is the METER'S FULLNESS, not the rung's achieved state**, and the two are deliberately
+/// orthogonal. A tended patch whose meter has rotted to 99% is *building* — that 1% is a repair, and
+/// its build crew pays the rate — while remaining, correctly, **tended**: whether the rung is still
+/// held is [`ForagePatch::is_cultivated`]'s retention bar, a separate axis. Folding them together is
+/// what would make a rung's *loss* and a rung's *repair* the same edge.
+///
+/// `false` for a wild patch too: there is no meter there, so there is nothing to maintain. Resolved
+/// for whichever meter [`patch_unwinding_rung`] put at risk — never for the rung the patch *stands*
+/// on, or a half-sown Field would be judged by the tended ground beneath it.
+pub fn patch_is_maintaining(patch: &ForagePatch) -> bool {
     if patch.field_progress > RUNG_UNSTARTED {
-        patch.is_field()
+        patch.field_meter_full()
     } else if patch.cultivation_progress > RUNG_UNSTARTED {
-        patch.is_cultivated()
+        patch.cultivation_meter_full()
     } else {
         false
     }
@@ -1900,11 +1921,13 @@ pub fn patch_upkeep_supply(
         // Nothing built here and nothing being built, so nothing is owed and nothing can be short.
         (None, None) => return NO_UPKEEP_DEMAND,
     };
-    let built = match answering_for {
-        RungKey::PlantField => patch.is_field(),
-        _ => patch.is_cultivated(),
+    // **The state test decides only who supplies** (`patch_is_maintaining`): the meter's *fullness*,
+    // never the rung's achieved state — a tended patch eroded to 99% is being repaired by builders.
+    let maintaining = match answering_for {
+        RungKey::PlantField => patch.field_meter_full(),
+        _ => patch.cultivation_meter_full(),
     };
-    if built {
+    if maintaining {
         maintain_work
     } else if by_verb == Some(answering_for) {
         // The builders answer only for the meter they are actually filling: a crew mid-`Cultivate`
@@ -1932,14 +1955,12 @@ pub fn patch_upkeep_shortfall(patch: &ForagePatch, ladder: &LadderConfig) -> f32
 /// [`patch_upkeep_demand`], `0` on a wild patch. The plant twin of the herd row's, and the readout
 /// that makes the standing cost legible: *"this wants 1, you have 0"*.
 ///
-/// **It is `0` while the at-risk meter is still being built**, because that meter's hands are the
-/// *build's* ([`patch_upkeep_supply`]). Publishing *"this wants 1 keeper"* over a patch mid-Cultivate
-/// would tell the player to staff a job that does not exist yet — and, worse, one the sim would not
-/// credit if they did.
+/// **IT IS PUBLISHED WHILE THE METER IS STILL BEING BUILT TOO**, and there it is the **minimum
+/// viable build crew**: the maintenance rate is owed either way, so a build crew at or below this
+/// count banks nothing (`intensification::net_build_supply`) and the meter holds or rots. One
+/// arithmetic, one sentence — *hands to meet the demand* — whoever is supplying it. It used to read
+/// `0` mid-build, on the since-retired premise that an unfinished meter owed no keeping.
 pub fn patch_upkeep_workers_needed(patch: &ForagePatch, ladder: &LadderConfig) -> u32 {
-    if !patch_at_risk_is_built(patch) {
-        return NO_CREW_ON_THIS_ACTIVITY;
-    }
     patch_unwinding_rung(patch, ladder).map_or(NO_CREW_ON_THIS_ACTIVITY, |rung| {
         rung.upkeep_crew_needed(UNSCALED_UPKEEP)
     })
@@ -1970,6 +1991,11 @@ pub fn advance_cultivation(
         // **HOW SHORT, as a fraction of what was asked** — what the decay actually rides
         // (`crate::intensification::upkeep_shortfall_fraction`). The absolute shortfall still gates
         // the counter, because *any* unmet work is an unmet turn.
+        //
+        // **This covers a BUILD in flight as well as a held rung**, and it is the same subtraction
+        // for both: the maintenance rate is owed either way, and only the supplier moved. A build
+        // crew below the rate leaves a shortfall and the meter goes backwards; one exactly at it
+        // holds; one above it banks the surplus (`RungDef::build_accrual`).
         let shortfall_fraction =
             crate::intensification::upkeep_shortfall_fraction(demand, patch.upkeep_supplied);
         if shortfall <= NO_UPKEEP_DEMAND {
@@ -3693,11 +3719,15 @@ mod tests {
 
         // --- Half-built: owed the CULTIVATE crew, and asks for no keepers. ---------------------
         patch.cultivation_progress = cost / 2.0;
-        assert!(!patch_at_risk_is_built(&patch));
+        assert!(!patch_is_maintaining(&patch));
+        // **THE SAME COUNT ON BOTH SIDES OF COMPLETION** — the maintenance rate is owed while the
+        // meter is being raised too, and only *who supplies it* moves. Mid-build the number reads as
+        // the **minimum viable build crew**: at or below it the meter holds or rots rather than
+        // advancing (`intensification::net_build_supply`).
         assert_eq!(
             patch_upkeep_workers_needed(&patch, &ladder),
-            NO_CREW_ON_THIS_ACTIVITY,
-            "a rung still being raised asks for no keepers — its hands are the build's"
+            demand.ceil() as u32,
+            "hands to meet the rate, whoever is supplying it"
         );
         assert_eq!(
             patch_upkeep_supply(
@@ -3736,7 +3766,7 @@ mod tests {
         // (`RungDef::retention_bar`) — the achieved state and the meter's fullness are two facts.
         patch.cultivation_progress = cost;
         patch.cultivation_retain_bar = ladder.rung(RungKey::PlantTended).retention_bar(cost);
-        assert!(patch_at_risk_is_built(&patch));
+        assert!(patch_is_maintaining(&patch));
         assert_eq!(
             patch_upkeep_workers_needed(&patch, &ladder),
             ladder
@@ -3807,15 +3837,11 @@ mod tests {
         let cost = rung
             .build_cost(RUNG_COST_UNSCALED)
             .expect("the tended rung builds");
-        // **What a meter still being RAISED is owed** — the rung's rot rate, not what holding the
-        // finished rung costs (`RungDef::meter_raising_demand`). Half-cleared ground has no stock to
-        // hold; it only grows back, and a crew clearing at least as fast as it reverts is holding it.
-        let demand = rung.meter_raising_demand(UNSCALED_UPKEEP);
-        assert!(
-            demand < rung.upkeep_demand(UNSCALED_UPKEEP),
-            "fixture: a build must be owed LESS than the finished rung's keeping, or the two dials \
-             are welded again"
-        );
+        // **THE SAME RATE A HELD RUNG OWES** — the maintenance rate never lapses; below the meter's
+        // cost it is simply the **build crew** that supplies it
+        // (`docs/plan_standing_upkeep.md` §2.4). There is no second demand, which is exactly why the
+        // retired `meter_raising_demand` had to go.
+        let demand = rung.upkeep_demand(UNSCALED_UPKEEP);
 
         let mut patch = ForagePatch::new(UVec2::new(1, 1), forage.capacity_for(TEST_BIOME));
         patch.cultivation_cost = cost;

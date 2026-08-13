@@ -208,9 +208,21 @@ there is any pen progress, `animal:pastoral` for any other managed herd.
   plant web's.** A plant meter is continuous, so any shortfall bleeds; a herd loses **whole animals**,
   so a shortfall of less than one animal is not under-containment at all — the same whole-animal
   discipline `quantise_animal_take` imposes on the take.
-- **A METER IS OWED BUILDERS WHILE INCOMPLETE AND KEEPERS ONCE HELD** (`fauna::herd_upkeep_supply`,
-  the twin of `forage::patch_upkeep_supply`). A `Tame` in flight owes its build crew — you cannot be
-  billed to keep a tameness you have not finished earning — and a domesticated herd owes keepers.
+- **A METER IS OWED BUILDERS WHILE INCOMPLETE AND THE BAND'S KEEPING POOL ONCE HELD**
+  (`fauna::herd_upkeep_supply`, the twin of `forage::patch_upkeep_supply`). A `Tame` in flight owes
+  its build crew — you cannot be billed to keep a tameness you have not finished earning — and a
+  domesticated herd owes the pool.
+  - **THE RATE IS THE SAME EITHER WAY, and the two webs answer identically.** Only the supplier moves
+    (`fauna::herd_is_maintaining`, read off the meter's **fullness**). An earlier cut had the animal
+    web owe its whole keeping while a rung was raised — *"the animals are standing there whether or
+    not the fence is up"* — which billed an unfinished `Tame` to a crew that could not pay it, exactly
+    what §0 forbids. It is deleted; there is no per-web exception left.
+  - **SO THE RATE TAXES AN ANIMAL BUILD TOO** (`docs/plan_standing_upkeep.md` §2.4): a `Tame` or
+    `Corral` staffed **at or above** it sheds nothing and advances by the surplus; one **below** it
+    sheds in proportion, exactly as an abandoned rung does, and never finishes. Because the animal
+    rate scales with the flock, **a big herd is dearer to tame in hands as well as in turns** — the
+    crew has to clear `ceil(keeper_load)` before the meter moves at all. Pinned by
+    `fauna_husbandry::a_half_tamed_herd_sheds_only_when_its_build_crew_is_below_the_rate`.
   **The verb names the meter**, so a `Corral` starting on a herd with no pen progress answers for
   `animal:pen` from its first turn: the supply is stamped in Population and read by the *next*
   Logistics pass, so it has to describe the meter that pass will judge.

@@ -659,17 +659,15 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 upkeep_shortfall: herd.map_or(NO_UPKEEP_DEMAND, |herd| {
                     crate::fauna::herd_upkeep_shortfall(herd, fauna, ladder)
                 }),
-                // **The MAINTAIN activity's own `workers_needed`** — hands to meet the demand, in
-                // its own unit, and `0` while the rung is still being **built** (its hands are the
-                // build's). It is the same number as `herders_needed` above for a held rung; the two
-                // fields differ only in that one is the animal web's own long-standing name for it.
-                // The take activity's answer rides `SourceYield::workers_needed`.
+                // **HANDS TO MEET THE DEMAND, whoever is supplying it** — the same number as
+                // `herders_needed` above, and published while the rung is still being **built** too,
+                // where it is the **minimum viable build crew**: the maintenance rate is owed either
+                // way, so a build crew at or below this count banks nothing and the meter holds or
+                // rots (`intensification::net_build_supply`). It read `0` mid-build on the
+                // since-retired premise that an unfinished meter owed no keeping. The take
+                // activity's answer rides `SourceYield::workers_needed`.
                 upkeep_workers_needed: herd.map_or(NO_CREW_ON_THIS_ACTIVITY, |herd| {
-                    if crate::fauna::herd_at_risk_is_built(herd) {
-                        herd_herders_needed(herd, fauna, ladder)
-                    } else {
-                        NO_CREW_ON_THIS_ACTIVITY
-                    }
+                    herd_herders_needed(herd, fauna, ladder)
                 }),
                 // **The neglect countdown**, resolved through the *same* `herd_keeping_rung` seam
                 // `advance_husbandry` gates the shed on, so the wire can never count down a grace

@@ -101,11 +101,24 @@ is resolved over the builders too.
 The arithmetic is then trivial:
 
 ```text
-upkeep_supplied  = this source's share of its band's keeping POOL (§2.5)
-upkeep_shortfall = max(0, upkeep_demand − upkeep_supplied)
-build_work       = build_workers × PER_WORKER_OUTPUT            // − what the crew's gear takes off the job
+supply           = the build crew below the meter's cost, the band's keeping POOL at it (§2.4/§2.5)
+net              = supply − upkeep_demand
+build_work       = max(0, net)                                  // − what the crew's gear takes off the job
 take             = min(take_workers × per_worker_capacity, source_offer)
 ```
+
+> #### `work_cost / crew` IS NOT THE BUILD PACE, and this arc is what changed that
+>
+> The maintenance rate is owed **every turn, while building and while held alike**, so a build crew is
+> paying it too and only its **surplus** is progress: `turns = work_cost / (crew − rate)`. Earlier
+> prose in this file asserted `work_cost / crew`; that identity is gone, deliberately.
+>
+> **A crew at or below the rate never finishes.** It holds the meter exactly where it is, or takes it
+> backwards. That is a real minimum-viable-crew threshold rather than a slow build, and it is sharper
+> than anything else in the game — so `build_turns_remaining` answers **no estimate** at a non-positive
+> net rather than a large number, and `upkeepDemand` / `upkeepWorkersNeeded` publish the threshold on
+> **both** sides of completion so a compose sheet can say *"this crew is below it"* before the player
+> commits.
 
 #### This is what dissolved the dip
 
@@ -166,43 +179,57 @@ sources on that web keeps them.
 channel, because a crew moving is a thing the player has to re-task around and a silent re-allocation
 is only ever discovered later.
 
-### 2.4 THREE DIALS: the demand, the RATE, and the grace — and a rung is not lost on the first dip
+### 2.4 ONE FORMULA: net = supply − rate. And a rung is not lost on the first dip
 
-Meet the demand and the net is zero and the improvement holds. Fall short and it rots — but **how
-fast it rots is its own dial**, not a reading of how much it was short by.
+Meet the rate and the net is zero and the improvement holds. Go over and the surplus is progress. Go
+under and it rots, in proportion to how short you are.
+
+```text
+net = supply − maintenance_rate
+  net > 0  →  the surplus is BUILD PROGRESS
+  net = 0  →  the meter HOLDS exactly where it is
+  net < 0  →  it ROTS: (shortfall / demand) × the rung's own decay rate, past the grace
+```
+
+**The rate is owed ALWAYS.** What the meter's state decides is **only who supplies it**:
+
+| the meter | state | who supplies the rate |
+|---|---|---|
+| **below its cost** | *building* | the **build crew** — surplus above the rate is progress |
+| **at its cost** | *maintaining* | the band's **keeping pool** — surplus does nothing, shortfall rots |
+
+That is one state test and two costs. There is no third concept: an earlier cut of this arc gave an
+unfinished meter its *own* demand (`meter_raising_demand`), which was redundant — it is the same rate
+throughout — and carried a per-web exception with no fact under it. Both are deleted. *You cannot be
+billed to hold something you have not finished building* is answered by **who pays**, never by
+discounting the bill.
+
+**Both webs answer identically.** An unfinished rung on either web is owed the same rate from its
+builders; an under-supplied one decays, which is a **meter bleed** on plants and a **shed** on
+animals. There is no "the animals are standing there whether or not the fence is up" exception.
+
+#### THREE DIALS, because the decay must decouple from the demand
 
 | | question | dial |
 |---|---|---|
-| **demand** | how much work per turn does *holding* this want | `upkeep.work_per_turn` |
+| **demand** | how much work per turn does holding this want | `upkeep.work_per_turn` |
 | **decay rate** | once rotting, *how fast* | `upkeep.meter_decay.per_turn` |
 | **grace** | how long under-supplied before rot begins | `upkeep.grace_turns` |
 
-```text
-shortfall_fraction = shortfall / demand          // 0.0 fully staffed, 1.0 unstaffed
-decay_this_turn    = shortfall_fraction × decay_per_turn       // past the grace
-```
-
-**`shortfall` USED TO BE the decay**, which welded the first two together: raising a demand made the
+**`shortfall` USED TO BE the decay**, which welded the first two: raising a demand made the
 improvement rot faster in exact proportion, so neither number could be retuned. Splitting them is what
 let the plant demands become whole numbers a player can staff exactly — **`plant:tended` 2,
 `plant:field` 4** — while the rot rates stayed precisely where they were (**0.5** and **0.75**, the
 retired `decay_fraction_per_turn`'s own product). The demands moved; the rotting did not.
 
-**The animal web already had this shape**, which is why neither animal rung declares a `meter_decay`:
-its shed is `shortfall_fraction × head count` at the species' own `pen_escape_fraction` /
-`pastoral_escape_fraction`, and those fractions **are** the rate. A second one on the rung would be
-two numbers for one mechanic. Only the shortfall *fraction* is shared.
+**The animal web already had the rate half**, which is why neither animal rung declares a
+`meter_decay`: its shed is `shortfall_fraction × head count` at the species' own
+`pen_escape_fraction` / `pastoral_escape_fraction`, and those fractions **are** the rate. A second one
+on the rung would be two numbers for one mechanic. Only the shortfall *fraction* is shared.
 
 This retires the binary flag. `tended_this_turn` / `tamed_this_turn` and the "is this source worked"
 question go away, and with them the whole class of ruling about whether a lightly-crewed source counts
 as worked.
-
-**A meter still being RAISED is owed what it would lose, not what holding the finished rung costs.**
-Half-cleared ground has no stock to hold — it only grows back — so a crew clearing at least as fast as
-it reverts is holding it. That is what keeps a build's stated pace true once the demands are real
-staffing figures: billing a 2-hand Sow against a Field's 4-work holding demand would erode the meter
-while it was being built. A rung whose penalty is a *shed* answers the same on both sides of
-completion, because the animals are standing there whether or not the fence is up.
 
 #### A RUNG IS NOT LOST THE INSTANT ITS METER DIPS
 
@@ -220,6 +247,10 @@ test rather than a rate**.
 - Shipped at **0.75** on both plant rungs: a completed tended patch survives **28** wholly
   unmaintained turns and a Field **27**, against `grace + 1` — three and two — before, and re-earning
   the rung then costs only the work that rotted.
+- **KEEP IT ORTHOGONAL TO THE STATE TEST.** *Building vs maintaining* is the meter's fullness and
+  decides who pays the rate; *is the rung still achieved* is the retention bar and decides what the
+  ground pays out. A patch at 99% is **building** (a repair, which its build crew may run) and
+  **still tended**. Folding the two would make a rung's loss and a rung's repair the same edge.
 - **No animal rung needs a bar**: `domestication_progress` is monotone-up and a pen is held by a
   stored flag, so no animal rung can be lost by a meter dipping.
 - **A rung's BENEFIT stays binary on the achieved state.** Scaling a rung's payout with its meter is a
@@ -345,6 +376,7 @@ hauling: that work is the upkeep, not a second line beside it.
 | `RungBuild::crew_needed` (a staffing floor) | retired — the player states the build's crew |
 | the `maintain` command + `LaborAssignment::maintain_workers` | the **band-level** `agriculture` / `husbandry` roles and `upkeep_mode` (§2.5) |
 | `progress >= cost` as the LOSS test | `upkeep.meter_decay.retain_fraction` — a rung is earned at its cost and held to a stated fraction of it (§2.4) |
+| `work_cost / crew` as the build pace | `work_cost / (crew − maintenance_rate)` — the rate is a tax on building, and a crew at or below it never finishes (§2.4) |
 | `learn_multiplier(floor)` on the build rate | retired — a build crew is not pulling on the source |
 | `yield_fraction_while_building` (×4 rungs) | retired — the build has its own crew, so what it costs is the hands on it |
 | `pen.upkeep_per_biomass` + the pasture/hay/larder split | the **resource half** of the pen rung's upkeep (hay and larder), with pasture as its **offset** — unchanged in behavior |

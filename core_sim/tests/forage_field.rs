@@ -508,7 +508,12 @@ fn field_build(app: &App) -> (f32, f32) {
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let field = ladder.rung(RungKey::PlantField);
     (
-        field.build_accrual(Some(Improvement::Sow), true, sow_crew(app)),
+        field.build_accrual(
+            Some(Improvement::Sow),
+            true,
+            sow_crew(app),
+            core_sim::UNSCALED_UPKEEP,
+        ),
         // **The feral bleed is the rung's own ROT RATE**, not the demand it goes short by: the two
         // are separate dials (`docs/plan_standing_upkeep.md` §2.4). Numerically the same as the
         // retired `decay_fraction_per_turn × work_cost`, which is why the paces below hold.
@@ -544,10 +549,20 @@ fn unmaintained_field_turns_before_loss(app: &App) -> u32 {
 /// The rung's own `crew_needed` is the staffing the shipped cost was priced against
 /// (`docs/plan_unit_costed_work.md` §3). The one-turn over-crewed build is real and pinned on
 /// purpose by `forage_cultivation::over_crewing_a_build_is_no_longer_capped`.
-fn sow_crew(_app: &App) -> u32 {
-    // The build's crew is the fixture's to state (`docs/plan_standing_upkeep.md` §2.2); three is the
-    // staffing the `plant:field` rung's 75-unit `work_cost` was priced against.
-    3
+fn sow_crew(app: &App) -> u32 {
+    /// The net supply the `plant:field` rung's 75-unit `work_cost` was priced against — the
+    /// staffing this file's paces are all quoted at.
+    const NET_WORKER_TURNS: u32 = 3;
+    // **Plus the rung's maintenance rate**, which the build crew is also paying: the rate is owed
+    // while a meter is being raised and below its cost the builders are who supply it
+    // (`docs/plan_standing_upkeep.md` §2.4). A bare three hands is *below* a Field's four-work rate,
+    // so a fixture staffed there would measure a Sow that goes backwards.
+    app.world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung(RungKey::PlantField)
+        .upkeep_crew_needed(core_sim::UNSCALED_UPKEEP)
+        .saturating_add(NET_WORKER_TURNS)
 }
 
 /// The whole `plant:tended` job, in work units — the completed rung-2 meter's value.
@@ -1095,7 +1110,20 @@ fn an_abandoned_field_goes_feral_and_fully_lapses() {
             .is_field(),
         "a Field stays a Field while its meter erodes toward the retention bar"
     );
-    run_turns_untended(&mut app, 1);
+    // **The bar is crossed when the meter falls BELOW it**, so a meter sitting exactly on it is
+    // still a Field — walk the last turn or two rather than predicting which one it is.
+    for _ in 0..3 {
+        if !app
+            .world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .unwrap()
+            .is_field()
+        {
+            break;
+        }
+        run_turns_untended(&mut app, 1);
+    }
     {
         let registry = app.world.resource::<ForageRegistry>();
         let patch = registry.patch(coord).unwrap();

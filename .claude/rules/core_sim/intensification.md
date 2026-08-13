@@ -522,9 +522,18 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
 > | **grace** | how long under-supplied before rot begins | `RungUpkeep::grace_turns` |
 >
 > ```text
-> shortfall_fraction = shortfall / demand          // 0.0 fully staffed, 1.0 unstaffed
-> decay_this_turn    = shortfall_fraction × decay_per_turn      // past the grace
+> net = supply − demand
+>   net > 0  →  the surplus is BUILD PROGRESS      (`net_build_supply`)
+>   net = 0  →  the meter HOLDS exactly where it is
+>   net < 0  →  it ROTS: (shortfall / demand) × decay_per_turn, past the grace
 > ```
+>
+> **THE RATE IS OWED ALWAYS**, while building and while held alike. What the meter's state decides is
+> **only who supplies it** — the *build crew* below its cost, the band's *keeping pool* at it
+> (`forage::patch_is_maintaining` / `fauna::herd_is_maintaining`, and the state test is the meter's
+> **fullness**, never the rung's achieved state). There is no third concept: an earlier cut gave an
+> unfinished meter its own demand (`meter_raising_demand`), which was the same rate under a second
+> name and carried a per-web exception with no fact under it. Both are deleted.
 >
 > **`shortfall` used to BE the decay**, so raising a demand made the improvement rot faster in exact
 > proportion and neither number could move. Splitting them is what let the plant demands become whole
@@ -538,6 +547,14 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
 > disagree. Only the shortfall **fraction** is shared — `intensification::upkeep_shortfall_fraction`,
 > stated once, applied at each web's own rate.
 
+- **THE MAINTENANCE RATE IS A TAX ON BUILDING, so `work_cost / crew` is NOT the pace.** It is
+  `work_cost / (crew − rate)` (`RungDef::build_accrual` → `net_build_supply`), and **a crew at or
+  below the rate never finishes** — it holds the meter or takes it backwards. That is a
+  minimum-viable-crew threshold rather than a slow build, so `build_turns_remaining` answers **no
+  estimate** at a non-positive net rather than a large number, and the **projection**
+  (`LadderConfig::projected_build_turns`) quotes the net too: a finish date that will never arrive is
+  a promise, not an estimate. `upkeepDemand` and `upkeepWorkersNeeded` publish the threshold on
+  **both** sides of completion so a compose sheet can say *"this crew is below it"*.
 - **ALL FOUR MANAGED RUNGS DECLARE ONE.** `upkeep_demand` is an honest `0` on the two `wild` rungs
   rather than a sentinel — `HerdTelemetryState::pen_upkeep`'s rule.
 - **THE DECAY IS PROPORTIONAL, continuously** (§2.4). Meet the demand and the net is zero and the
@@ -553,14 +570,12 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
     are not on it either. **The verb names the meter** on both webs, so a `Sow` or a `Corral` answers
     for the rung it is starting from its first turn — the supply is stamped in Population and read by
     the next Logistics pass, so it has to describe the meter that pass will judge.
-  - **AND SO DOES WHAT IT IS OWED** (`RungDef::meter_raising_demand`). A meter still being *raised* is
-    owed **what it would lose**, not what holding the finished rung costs: half-cleared ground has no
-    stock to hold, it only grows back, so a crew clearing at least as fast as it reverts is holding
-    it. That is what keeps a build's **stated pace** true — billing a 2-hand Sow against a Field's
-    4-work holding demand would erode the meter *while it was being built*, and the turns a rung takes
-    would stop being `work_cost / crew`. **The animal web answers the same on both sides of
-    completion**, because a rung whose penalty is a *shed* is owed its whole keeping while it is
-    raised: the animals are standing there whether or not the fence is up.
+  - **WHAT IT IS OWED DOES NOT MOVE — only who pays.** The rate is the same on both sides of
+    completion and on both webs; an unfinished meter is simply billed to its **builders**, whose
+    surplus over it is the build's progress. **The state test is the meter's FULLNESS**
+    (`patch_is_maintaining` / `herd_is_maintaining`), deliberately not the rung's achieved state: a
+    tended patch eroded to 99% is *building* — that 1% is a repair its build crew may run — while
+    remaining, correctly, tended.
   - **THE PENALTY DIFFERS BY WEB, and only the penalty does.** A plant meter **bleeds** the shortfall
     (`forage::advance_cultivation`); an animal flock **sheds** the animals the missing hands cannot
     hold (`fauna::advance_husbandry`, `uncontained_overage` = `shortfall_in_loads ×
@@ -609,6 +624,13 @@ before its keepers were assigned. No grace and no rate could fix that, because t
 - **A rung's BENEFIT stays binary on the achieved state.** A half-eroded tended patch pays exactly
   what a full one pays. Scaling a rung's payout with its meter is a real proposal and a much larger
   one; it is deliberately not this.
+- **AND THE BAR IS ORTHOGONAL TO THE BUILDING/MAINTAINING STATE TEST.** *Building vs maintaining* is
+  the meter's fullness and decides **who pays the rate**; *is the rung still achieved* is the bar and
+  decides **what the ground pays out**. A patch at 99% is building and still tended. Folding them
+  would make a rung's loss and a rung's repair the same edge — which is why the accrual guards and the
+  "nothing left to build" test all read fullness (`ForagePatch::cultivation_meter_full` /
+  `field_meter_full`, `Herd::corral_meter_full`), and the hundred *is this ground tended* call sites
+  all read the bar.
 
 #### MAINTENANCE IS A BAND-LEVEL POOL, not a crew on the tile
 

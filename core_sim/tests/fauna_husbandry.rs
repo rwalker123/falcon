@@ -163,8 +163,35 @@ fn keeper_crew(app: &App, herd_id: &str) -> u32 {
     core_sim::would_be_herders_needed(&herd, &fauna, &ladder)
 }
 
+/// **The keeper crew this herd would want at its CARRYING CAPACITY** — the largest the animal
+/// rungs' maintenance rate can grow to while a build runs, since a Thriving herd recovers as it is
+/// worked. See [`spawn_builder`] for why a build fixture must be sized against it.
+fn keeper_crew_at_capacity(app: &App, herd_id: &str) -> u32 {
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let mut herd = herd_of(app, herd_id);
+    // **The capacity a MANAGED herd actually grows to**, not the raw wild field: a herd picks up an
+    // owner on the first accrual and moves onto the pastoral ecology, whose capacity is higher — so
+    // sizing off `carrying_capacity` leaves the crew under the live rate by the time the build is
+    // half done, and the fixture measures a stall.
+    herd.owner = Some(FactionId(0));
+    herd.biomass = core_sim::herd_capacity(&herd, &fauna).max(herd.carrying_capacity);
+    // **The RAW rung reading at that load**, deliberately not `would_be_herders_needed`: that one
+    // prefers the herd's *stabilized* `herders_needed`, which is last turn's count and would ignore
+    // the biomass this helper just set — the whole point of the helper. Taken at the DEARER of the
+    // two managed rungs, so the crew clears the rate on either side of a Corral as well.
+    let load = core_sim::herd_keeper_load(&herd, &fauna);
+    ladder
+        .rung(RungKey::AnimalPastoral)
+        .upkeep_crew_needed(load)
+        .max(ladder.rung(RungKey::AnimalPen).upkeep_crew_needed(load))
+}
+
 /// A band hunting `herd_id` at the food peak while **building** `improvement`, staffed at the herd's
-/// own [`keeper_crew`].
+/// own keeper crew **plus one hand**.
+///
+/// The build's **net** supply is this crew: `spawn_crew_of` adds the maintenance rate the builders
+/// are also paying, so the meter advances at the herd's own keeper crew per turn.
 fn spawn_builder(app: &mut App, herd_id: &str, improvement: Improvement) -> bevy::prelude::Entity {
     let keepers = keeper_crew(app, herd_id);
     spawn_crew_of(
@@ -237,8 +264,17 @@ fn spawn_crew_of(
         .index(pos.x, pos.y)
         .expect("herd tile resolves");
     // **The same crew staffs the build**, which is what this fixture meant when one crew did every
-    // job (`docs/plan_standing_upkeep.md` §2.2).
-    let builders = improvement.map_or(NO_CREW_ON_THIS_ACTIVITY, |_| hunters);
+    // job (`docs/plan_standing_upkeep.md` §2.2) — **plus the maintenance rate it is also paying**.
+    //
+    // The rate is owed while a meter is being raised, and below the meter's cost the *build crew* is
+    // what supplies it (§2.4), so a build staffed at `hunters` alone would net `hunters − rate` and
+    // a small fixture crew nets nothing at all. Adding the rate on top keeps every fixture's **net**
+    // at `hunters`, which is the pace they were all written against. **Measured at the herd's
+    // CARRYING CAPACITY**, because a Thriving herd grows while it is worked and a crew sized against
+    // today's flock slips back under the rate as it recovers.
+    let builders = improvement.map_or(NO_CREW_ON_THIS_ACTIVITY, |_| {
+        hunters.saturating_add(keeper_crew_at_capacity(app, herd_id))
+    });
     // **And the keeping is staffed as generously as the take is.** These fixtures measure *rates* —
     // what a rung pays, how fast a build runs — so the keeping must never be the binding term, and
     // [`HUNT_WORKERS`] is chosen for exactly that reason on the take side. It is also what they got
@@ -262,7 +298,11 @@ fn spawn_crew_of(
                 // rather than at the assignment because several fixtures set the verb *later*
                 // (the full climb sets one per leg), when the pool is already fixed. Idle hands cost
                 // these fixtures nothing: every take is capped by the crew the assignment names.
-                working: scalar_from_f32((hunters + hunters + keepers) as f32),
+                // **Sized to what it actually staffs**: take + build + the keeping role. The build crew
+                // now carries the maintenance rate on top of the stated net, so a band sized at
+                // `hunters` twice over is short and `normalize` trims the build — which is exactly
+                // the stall these fixtures must not measure.
+                working: scalar_from_f32((hunters + builders + keepers) as f32),
                 elders: scalar_zero(),
                 stores: LocalStore::new(),
                 morale: scalar_one(),
@@ -835,29 +875,51 @@ fn turns_to_tame_with(species_key: &str, keepers: u32, cap_turns: u32) -> u32 {
 /// what a Steppe Runner cost. Now the rung owns the mechanic and the species prices it: a quick,
 /// forgiving warren is the rung's own 50 work units; binding a large migratory herd is 250.
 ///
-/// **This asserts the COST ratio and a live turn ordering, not a pair of turn literals.** Turns are
-/// an *output* now (`work_cost / crew output`), so "125 turns" is a statement about a staffing level
-/// rather than about the species — and the two species being compared do not even want the same
-/// crew, since `animals_per_herder` differs. What is invariant is the price: five times the work,
-/// five times the turns **at the same crew**.
+/// **This asserts the COST ratio off the ladder, and a live turn ORDERING beside it.** Turns are an
+/// *output* now, and since the maintenance rate became a tax on building
+/// (`docs/plan_standing_upkeep.md` §2.4) they are `cost / (crew − rate)` rather than `cost / crew` —
+/// so a turn *ratio* is no longer the cost ratio at all: the two species want different keeper loads
+/// (`animals_per_herder` differs), so the same head count leaves each a different **net**. What is
+/// invariant is the price, and that the dearer species really does take longer to reach.
 #[test]
 fn taming_is_a_per_species_cost_on_the_shared_rung() {
-    /// The crew both runs are staffed at, so the turn ratio *is* the cost ratio. Large enough that
-    /// neither rebadged species is under-herded (an under-staffed keeper sheds animals, which would
-    /// confound the measurement), small enough that a 250-unit Tame is not one turn.
+    /// The crew both runs are staffed at. Large enough that neither rebadged species is under-herded
+    /// (an under-staffed keeper sheds animals, which would confound the measurement), small enough
+    /// that a 250-unit Tame is not one turn.
     const SHARED_KEEPERS: u32 = 10;
     /// The multiple `fauna_config.json` declares between the two rows: `taming_cost_multiplier`
     /// 5.0 against 1.0.
-    const STEPPE_RUNNER_IS_THIS_MUCH_MORE_WORK: u32 = 5;
+    const STEPPE_RUNNER_IS_THIS_MUCH_MORE_WORK: f32 = 5.0;
 
+    // **The COST ratio, exactly** — the species prices the rung's own job, which is the whole claim.
+    let (rabbit_cost, runner_cost) = {
+        let app = spawn_world();
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let rung = ladder.rung(RungKey::AnimalPastoral);
+        (
+            rung.build_cost(fauna.taming_cost_multiplier_for("Rabbit Warren"))
+                .expect("the pastoral rung builds"),
+            rung.build_cost(fauna.taming_cost_multiplier_for("Steppe Runners"))
+                .expect("the pastoral rung builds"),
+        )
+    };
+    assert!(
+        (runner_cost - rabbit_cost * STEPPE_RUNNER_IS_THIS_MUCH_MORE_WORK).abs() < 1e-3,
+        "a Steppe Runner is {STEPPE_RUNNER_IS_THIS_MUCH_MORE_WORK}x the work: {rabbit_cost} vs \
+         {runner_cost}"
+    );
+
+    // **And the ordering survives end to end**, which is what says the multiplier actually reaches
+    // the build rather than sitting in config. The *ratio* of turns does not, and asserting one
+    // would be asserting `cost / crew` — the identity this arc changed.
     let rabbit = turns_to_tame_with("rabbit", SHARED_KEEPERS, 60);
     let steppe_runner = turns_to_tame_with("steppe_runner", SHARED_KEEPERS, 300);
 
-    assert_eq!(
-        steppe_runner,
-        rabbit * STEPPE_RUNNER_IS_THIS_MUCH_MORE_WORK,
-        "the same crew on the same herd pays {STEPPE_RUNNER_IS_THIS_MUCH_MORE_WORK}x the turns for \
-         a Steppe Runner: rabbit {rabbit}, steppe runner {steppe_runner}"
+    assert!(
+        steppe_runner > rabbit,
+        "the dearer species takes longer at the same crew: rabbit {rabbit}, steppe runner \
+         {steppe_runner}"
     );
 }
 
@@ -891,13 +953,27 @@ fn an_untamed_herd_quotes_the_tame_it_would_take_on_and_the_quote_halves_with_th
         herd_of(&app, &id).build_turns_remaining
     };
 
+    // **Twice the NET, half the turns.** The maintenance rate comes off a build crew before any of
+    // it is progress (`docs/plan_standing_upkeep.md` §2.4), so doubling the *head count* no longer
+    // halves the job — doubling what is left after the rate does.
+    let rate = {
+        let app = spawn_world();
+        let mut probe = app;
+        let id = prime_thriving_herd(&mut probe);
+        let fauna = probe.world.resource::<FaunaConfigHandle>().get();
+        let ladder = probe.world.resource::<LadderConfigHandle>().get();
+        let herd = herd_of(&probe, &id);
+        ladder
+            .rung(RungKey::AnimalPastoral)
+            .upkeep_crew_needed(core_sim::herd_keeper_load(&herd, &fauna))
+    };
     let quoted =
-        projection(SMALL_CREW, true).expect("a wild herd with a crew on it quotes its Tame");
-    let doubled = projection(SMALL_CREW * 2, true).expect("a bigger crew is still quotable");
+        projection(rate + SMALL_CREW, true).expect("a wild herd with a crew on it quotes its Tame");
+    let doubled = projection(rate + SMALL_CREW * 2, true).expect("a bigger crew is still quotable");
     assert_eq!(
         doubled,
         quoted.div_ceil(2),
-        "twice the keepers, half the turns: {quoted} at {SMALL_CREW}, {doubled} at {}",
+        "twice the net supply, half the turns: {quoted} at {SMALL_CREW}, {doubled} at {}",
         SMALL_CREW * 2
     );
 
@@ -2074,17 +2150,33 @@ fn set_hunt_improvement(
     band: bevy::prelude::Entity,
     improvement: Option<Improvement>,
 ) {
-    let mut allocation = app
-        .world
-        .get_mut::<LaborAllocation>(band)
-        .expect("band exists");
-    let assignment = &mut allocation.assignments[0];
-    assignment.improvement = improvement;
+    let (herd_id, stated) = {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("band exists");
+        let assignment = &mut allocation.assignments[0];
+        assignment.improvement = improvement;
+        let herd_id = match &assignment.target {
+            LaborTarget::Hunt { fauna_id, .. } => fauna_id.clone(),
+            _ => panic!("the climb's band hunts"),
+        };
+        (herd_id, assignment.workers)
+    };
     // **A verb needs a crew** (`docs/plan_standing_upkeep.md` §2.2) — the checkbox this stands in
     // for is `corral <faction> <x> <y> <workers>`, so setting the verb staffs it and clearing it
-    // frees the hands. The whole band builds, which is what this climb meant before the split.
-    assignment.improvement_workers =
-        improvement.map_or(NO_CREW_ON_THIS_ACTIVITY, |_| assignment.workers);
+    // frees the hands. The whole band builds, which is what this climb meant before the split —
+    // **plus the maintenance rate those builders are also paying** (§2.4), or a crew sized at the
+    // herd's own keeper count nets nothing and the leg never completes.
+    let rate = keeper_crew_at_capacity(app, &herd_id);
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("band exists");
+        allocation.assignments[0].improvement_workers =
+            improvement.map_or(NO_CREW_ON_THIS_ACTIVITY, |_| stated.saturating_add(rate));
+    }
     fit_band_to_its_crews(app, band);
 }
 
@@ -2469,7 +2561,7 @@ fn an_unfinished_rung_is_owed_its_builders_and_a_finished_one_its_keepers() {
         herd.domestication_progress = 25.0;
     }
     let herd = herd_of(&app, &id);
-    assert!(!core_sim::herd_at_risk_is_built(&herd));
+    assert!(!core_sim::herd_is_maintaining(&herd));
     assert_eq!(
         core_sim::herd_upkeep_supply(
             &herd,
@@ -2505,7 +2597,7 @@ fn an_unfinished_rung_is_owed_its_builders_and_a_finished_one_its_keepers() {
         herd.tame_outright(FactionId(0));
     }
     let herd = herd_of(&app, &id);
-    assert!(core_sim::herd_at_risk_is_built(&herd));
+    assert!(core_sim::herd_is_maintaining(&herd));
     assert_eq!(
         core_sim::herd_upkeep_supply(
             &herd,
@@ -3209,3 +3301,63 @@ fn the_under_herded_notice_fires_inside_the_grace() {
 /// A fully-staffed `herded_fraction` — the sim's `FULLY_HERDED`, restated because it is
 /// crate-internal.
 const FULLY_HERDED_FIXTURE: f32 = 1.0;
+
+/// **A HALF-TAMED HERD IS OWED THE SAME RATE, AND ITS BUILD CREW IS WHAT SUPPLIES IT** — the animal
+/// half of *the maintenance rate is a tax on building* (`docs/plan_standing_upkeep.md` §2.4), with
+/// **no exception for the animal web**.
+///
+/// The rule the arc briefly carried — *"the animals are standing there whether or not the fence is
+/// up, so an unfinished animal rung owes its whole keeping from the keepers"* — is gone. It made an
+/// unfinished `Tame` billable to a crew that could not pay it, which is exactly what *you cannot be
+/// billed to hold something you have not finished building* forbids. What is true instead is the
+/// same sentence as on the plant web: the rate is owed either way, and below the meter's cost the
+/// **build crew** is who supplies it.
+///
+/// So a `Tame` staffed **at or above** the rate sheds nothing, and one **below** it sheds — which is
+/// the behaviour change this correction makes on the animal side, and it is intended. **Not "any
+/// build crew holds the flock"**: a crew below the rate leaves a shortfall, and the shortfall sheds
+/// in proportion exactly as an unstaffed one does.
+#[test]
+fn a_half_tamed_herd_sheds_only_when_its_build_crew_is_below_the_rate() {
+    let sheds_with = |supplied_fraction: f32| -> bool {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        // Half-tamed: owned, with a real meter under way and nothing finished.
+        {
+            let mut registry = app.world.resource_mut::<HerdRegistry>();
+            let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+            herd.owner = Some(FactionId(0));
+            herd.domestication_cost = A_REAL_TAMING_JOB;
+            herd.domestication_progress = A_REAL_TAMING_JOB / 2.0;
+        }
+        assert!(
+            !core_sim::herd_is_maintaining(&herd_of(&app, &id)),
+            "fixture: a half-filled meter is BUILDING"
+        );
+        let before = herd_of(&app, &id).biomass;
+        // The *builders'* supply, stamped where the labor arm would have written it.
+        seat_keeping(&mut app, &id, supplied_fraction);
+        // Past the rung's grace, so a shortfall genuinely sheds.
+        let grace = neglect_grace(&app, &id);
+        for _ in 0..=grace + 1 {
+            app.world.run_system_once(advance_husbandry);
+            // Re-stamp what the build crew supplies each turn, as the labor arm does.
+            seat_keeping(&mut app, &id, supplied_fraction);
+        }
+        herd_of(&app, &id).biomass < before - 1e-3
+    };
+
+    assert!(
+        !sheds_with(FULLY_HERDED),
+        "a build crew AT the rate holds the flock — nothing leaves"
+    );
+    assert!(
+        sheds_with(NOT_HERDED_FIXTURE),
+        "a build crew below it sheds, exactly as an abandoned rung does — the rate is owed either \
+         way"
+    );
+}
+
+/// The taming job a half-tamed fixture stands on, in work units — a real cost rather than the
+/// one-worker-turn `FABRICATED_BUILD_COST`, so "half built" is a meter with room in it.
+const A_REAL_TAMING_JOB: f32 = 50.0;

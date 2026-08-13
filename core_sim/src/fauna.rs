@@ -803,6 +803,20 @@ impl Herd {
     // (earned via `Tame`, never lost to neglect), and ownership clears only when a managed herd sheds
     // to zero animals (`advance_husbandry`), not when progress reaches zero.
 
+    /// **IS THE PEN METER FULL?** — `corral_progress >= corral_cost`, the *building vs maintaining*
+    /// state test (`docs/plan_standing_upkeep.md` §2.4) and **not** the same question as
+    /// [`Self::is_corralled`], which is the stored fence flag.
+    ///
+    /// The two agree on every herd the sim can reach today (a pen is raised by filling this meter and
+    /// nothing bleeds it), and they are still separate because they answer different questions: the
+    /// meter says *who supplies the maintenance rate*, the flag says *is this herd penned*.
+    ///
+    /// `cost > RUNG_UNSTARTED` is load-bearing for `is_domesticated`'s reason: a wild herd carries
+    /// `0` in both fields and `0 >= 0` would read it as finished.
+    pub fn corral_meter_full(&self) -> bool {
+        self.corral_cost > RUNG_UNSTARTED && self.corral_progress >= self.corral_cost
+    }
+
     /// A **corralled** (penned) herd: fixed at `corralled_at`, doesn't roam, and is paid its keeper
     /// place-local at the higher corral rate. The animal mirror of `ForagePatch::is_cultivated`
     /// gating the tended-patch behaviour.
@@ -3711,13 +3725,19 @@ pub fn herd_keeping_rung<'a>(herd: &Herd, ladder: &'a LadderConfig) -> Option<&'
     })
 }
 
-/// **IS THE METER AT RISK ALREADY BUILT?** — which decides *whose* hands the rung is owed
-/// (`docs/plan_standing_upkeep.md` §0/§2.4), and nothing else. The animal twin of
-/// `forage::patch_at_risk_is_built`: a pen is built when it stands, a pastoral rung when the herd is
-/// tame. `false` for a wild herd, which has no meter at all.
-pub fn herd_at_risk_is_built(herd: &Herd) -> bool {
+/// **IS THIS HERD BUILDING OR MAINTAINING?** — `true` = maintaining, the animal twin of
+/// `forage::patch_is_maintaining` and **the same rule with no exception**
+/// (`docs/plan_standing_upkeep.md` §2.4).
+///
+/// A source is **building** below its meter's cost and **maintaining** at it, and the test decides
+/// **nothing but who supplies the maintenance rate**: the build crew below, the band's `husbandry`
+/// pool at it. The rate is owed either way — *"the animals are standing there whether or not the
+/// fence is up"* was an exception with no fact under it, and it is gone.
+///
+/// `false` for a wild herd, which has no meter at all.
+pub fn herd_is_maintaining(herd: &Herd) -> bool {
     if herd.is_corralled() || herd.corral_progress > RUNG_UNSTARTED {
-        herd.is_corralled()
+        herd.corral_meter_full()
     } else if herd.owner.is_some() {
         herd.is_domesticated()
     } else {
@@ -3781,11 +3801,13 @@ pub fn herd_upkeep_supply(
         // Nothing owned here and nothing being built, so nothing is owed and nothing can be short.
         (None, None) => return NO_UPKEEP_DEMAND,
     };
-    let built = match answering_for {
-        RungKey::AnimalPen => herd.is_corralled(),
+    // **Only who supplies moves** (`herd_is_maintaining`) — the meter's fullness, never the rung's
+    // achieved state.
+    let maintaining = match answering_for {
+        RungKey::AnimalPen => herd.corral_meter_full(),
         _ => herd.is_domesticated(),
     };
-    if built {
+    if maintaining {
         maintain_work
     } else if by_verb == Some(answering_for) {
         build_work
@@ -3801,16 +3823,7 @@ pub fn herd_upkeep_supply(
 /// **THE one definition**, reached by the shed, the labor arm's stamp and the snapshot alike.
 pub fn herd_upkeep_demand(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> f32 {
     herd_keeping_rung(herd, ladder).map_or(NO_UPKEEP_DEMAND, |rung| {
-        // **The animal web answers the same on both sides of completion, and that is the point of
-        // the seam** (`RungDef::meter_raising_demand`): a rung whose penalty is a *shed* is owed its
-        // whole keeping while it is being raised, because the animals are standing there whether or
-        // not the fence is up. Only a rung whose penalty is a meter bleed answers differently.
-        let measure = herd_keeper_load(herd, fauna);
-        if herd_at_risk_is_built(herd) {
-            rung.upkeep_demand(measure)
-        } else {
-            rung.meter_raising_demand(measure)
-        }
+        rung.upkeep_demand(herd_keeper_load(herd, fauna))
     })
 }
 
@@ -3880,16 +3893,17 @@ fn uncontained_overage(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) 
     if body_mass <= 0.0 || herd.biomass <= 0.0 {
         return None;
     }
-    // **Work back into loads, then into animals.** `work_per_load` is the rung's own rate, read at
-    // one load, so a rung that ever quoted a different rate converts correctly rather than silently
-    // assuming `1.0`.
-    let work_per_load = herd_keeping_rung(herd, ladder)?.upkeep_demand(ONE_KEEPER_LOAD);
-    if work_per_load <= NO_UPKEEP_DEMAND {
-        return None;
-    }
-    let shortfall_loads = herd_upkeep_shortfall(herd, fauna, ladder) / work_per_load;
-    let animals_per_herder = fauna.animals_per_herder_for(&herd.species);
-    let overage_animals = (shortfall_loads * animals_per_herder).max(0.0);
+    // **THE SHORTFALL FRACTION, STRAIGHT ONTO THE HEAD COUNT.** `shortfall_in_loads ×
+    // animals_per_herder` *is* `shortfall_fraction × head count` — the loads cancel — so reading the
+    // fraction says the same thing without reconstructing a per-load rate, and it keeps working when
+    // the supplier is a **build crew** rather than the keeping pool (a herd mid-`Tame` is owed the
+    // same rate, from different hands).
+    let fraction = crate::intensification::upkeep_shortfall_fraction(
+        herd_upkeep_demand(herd, fauna, ladder),
+        herd.upkeep_supplied,
+    );
+    let head_count = herd.biomass / body_mass;
+    let overage_animals = (fraction * head_count).max(0.0);
     (overage_animals >= MIN_ESCAPE_ANIMALS).then_some(overage_animals)
 }
 

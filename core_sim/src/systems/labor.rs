@@ -166,7 +166,7 @@ fn maintenance_shares(
                 let Some(patch) = forage_registry.patch(*tile) else {
                     continue;
                 };
-                if !crate::forage::patch_at_risk_is_built(patch) {
+                if !crate::forage::patch_is_maintaining(patch) {
                     continue;
                 }
                 plant.push(Claim {
@@ -180,7 +180,7 @@ fn maintenance_shares(
                 let Some(herd) = herds.find(fauna_id) else {
                     continue;
                 };
-                if !fauna::herd_at_risk_is_built(herd) {
+                if !fauna::herd_is_maintaining(herd) {
                     continue;
                 }
                 animal.push(Claim {
@@ -1158,7 +1158,17 @@ pub fn advance_labor_allocation(
                         // side-effects of completing it. **The crew is the BUILD's own**, and the
                         // floor is not a term at all — see [`RungDef::build_accrual`].
                         let accrual =
-                            tended_rung.build_accrual(improvement, eligible, build_workers);
+                            // **NET OF THE MAINTENANCE RATE** — it is owed while building too, and
+                            // below the meter's cost the *build* crew is what supplies it, so only
+                            // the surplus is progress (`intensification::net_build_supply`). A crew
+                            // at or below the rate holds the meter where it is; one under it leaves
+                            // a shortfall and the decay pass takes it backwards.
+                            tended_rung.build_accrual(
+                                improvement,
+                                eligible,
+                                build_workers,
+                                UNSCALED_UPKEEP,
+                            );
                         // **THE JOB'S PRICE**, in work units — `RUNG_COST_UNSCALED` because a patch
                         // is a patch: the only per-source cost multiplier on the ladder is a
                         // species' `taming_cost_multiplier`, and a plant has no species.
@@ -1327,6 +1337,7 @@ pub fn advance_labor_allocation(
                                 quoted_build_crew,
                                 crew_build_work_per_worker,
                                 eligible,
+                                UNSCALED_UPKEEP,
                             )
                         });
                         patch_build_claims.publish_projected(
@@ -1793,8 +1804,12 @@ pub fn advance_labor_allocation(
                         // now, so it is no longer one number for the whole world — a keeper who
                         // brought hurdles raises a ring faster than one who did not, exactly as they
                         // build the original pen faster.
-                        let pen_extend_accrual =
-                            pen_rung.build_accrual(Some(Improvement::Corral), true, build_workers);
+                        let pen_extend_accrual = pen_rung.build_accrual(
+                            Some(Improvement::Corral),
+                            true,
+                            build_workers,
+                            fauna::herd_keeper_load(herd, &fauna),
+                        );
                         // A ring costs what the pen it widens costs — the same rung record, so the
                         // two can never drift — and the same keepers' tools take the same work off
                         // it.
@@ -2038,8 +2053,14 @@ pub fn advance_labor_allocation(
                         // **The crew is the TAME's own**, and the floor is not a term: a gentling
                         // crew is not pulling on the herd, so there is no pressure of theirs to read
                         // (`docs/plan_standing_upkeep.md` §2.2).
-                        let accrual =
-                            pastoral_rung.build_accrual(improvement, eligible, build_workers);
+                        // Net of the rung's maintenance rate at this herd's own keeper load — the
+                        // animal web answers exactly as the plant web does, with no exception.
+                        let accrual = pastoral_rung.build_accrual(
+                            improvement,
+                            eligible,
+                            build_workers,
+                            fauna::herd_keeper_load(herd, &fauna),
+                        );
                         // **THE JOB'S PRICE** — the rung's `work_cost` times this species' own
                         // `taming_cost_multiplier` (slice 3c inverted): the rung owns the mechanic,
                         // the species prices it. A Steppe Runner is five times the work, not a crew
@@ -2124,7 +2145,12 @@ pub fn advance_labor_allocation(
                         // `EcologyPhase::Thriving` gate, and rung 3 never had one on either web.
                         // Fencing a herd is ground work — a pen goes up around a flock already drawn
                         // down to its keeper's own floor.
-                        let accrual = pen_rung.build_accrual(improvement, eligible, build_workers);
+                        let accrual = pen_rung.build_accrual(
+                            improvement,
+                            eligible,
+                            build_workers,
+                            fauna::herd_keeper_load(herd, &fauna),
+                        );
                         // Penning is a flat job for every species — a fence is a fence — so the pen
                         // takes no per-species multiplier; only *taming* varies.
                         let pen_cost = pen_rung
@@ -2213,6 +2239,7 @@ pub fn advance_labor_allocation(
                                 quoted_build_crew,
                                 crew_build_work_per_worker,
                                 eligible,
+                                fauna::herd_keeper_load(herd, &fauna),
                             )
                         });
                         herd_build_claims.publish_projected(
@@ -2688,19 +2715,26 @@ fn announce_dropped_assignment(
 /// could clear it. Reading the *whole* managed state answers the question the seam is actually
 /// asking — *is there anything left to build at this rung on this source* — and a Field that later
 /// lapses flips the answer back, because this is evaluated against the current state each turn.
+/// **IT READS THE METER'S FULLNESS, NOT THE RUNG'S ACHIEVED STATE**, and the difference is a
+/// **repair** (`docs/plan_standing_upkeep.md` §2.4). A tended patch whose meter has rotted to 99% is
+/// still tended — it is above its retention bar — but there *is* something left to build on it, and
+/// a `Cultivate` crew is exactly who builds it. Reading the achieved state here would clear the verb
+/// off a source that needs it and make erosion a one-way ratchet with no way back up short of losing
+/// the rung outright.
 fn forage_rung_already_built(patch: &ForagePatch, improvement: Improvement) -> bool {
     match improvement {
-        Improvement::Cultivate => patch.is_managed(),
-        Improvement::Sow => patch.is_field(),
+        Improvement::Cultivate => patch.cultivation_meter_full() || patch.field_meter_full(),
+        Improvement::Sow => patch.field_meter_full(),
         Improvement::Tame | Improvement::Corral => false,
     }
 }
 
-/// The animal twin of [`forage_rung_already_built`], with the same cross-web rule.
+/// The animal twin of [`forage_rung_already_built`], with the same cross-web rule and the same
+/// meter-fullness reading.
 fn hunt_rung_already_built(herd: &Herd, improvement: Improvement) -> bool {
     match improvement {
         Improvement::Tame => herd.is_domesticated(),
-        Improvement::Corral => herd.is_corralled(),
+        Improvement::Corral => herd.corral_meter_full(),
         Improvement::Cultivate | Improvement::Sow => false,
     }
 }
@@ -2865,7 +2899,8 @@ fn accrue_field(
     // one rule, so a band merely gathering the ground cannot quote over a running Sow.
     claims: &mut BuildEstimateClaims<UVec2>,
 ) -> bool {
-    let accrual = field_rung.build_accrual(improvement, eligible, workers);
+    // Net of the `plant:field` rung's own maintenance rate — see the Cultivate arm.
+    let accrual = field_rung.build_accrual(improvement, eligible, workers, UNSCALED_UPKEEP);
     // **THE JOB'S PRICE** — `RUNG_COST_UNSCALED`, because sowing is a flat job: the only per-source
     // cost multiplier on the ladder is a species' `taming_cost_multiplier`, and a plant has none.
     let sow_cost = field_rung
@@ -3543,7 +3578,8 @@ mod labor_yield_tests {
         )
     }
     use super::advance_labor_allocation;
-    use crate::intensification::NO_CREW_ON_THIS_ACTIVITY;
+    use crate::fauna;
+    use crate::intensification::{NO_CREW_ON_THIS_ACTIVITY, UNSCALED_UPKEEP};
     use crate::{FoodSiteEntry, FoodSiteRegistry};
 
     /// **The floor at which `intensification::learn_multiplier` is exactly ×1.0** — the food peak.
@@ -3604,8 +3640,63 @@ mod labor_yield_tests {
     /// (`docs/plan_unit_costed_work.md` §1.2) a build-length assertion computed at any other head
     /// count would describe a build nobody here is running. The retired `full_crew` helper existed
     /// because the accrual was capped at the rung's own crew; it is not any more.
-    fn build_work_per_turn(rung: &crate::intensification::RungDef, _floor: f32) -> f32 {
-        rung.build_accrual(rung.verb_improvement(), true, WORKERS)
+    fn build_work_per_turn(
+        rung: &crate::intensification::RungDef,
+        _floor: f32,
+        source_measure: f32,
+    ) -> f32 {
+        rung.build_accrual(
+            rung.verb_improvement(),
+            true,
+            builders_above_the_rate(rung, source_measure),
+            source_measure,
+        )
+    }
+
+    /// **THE BUILD CREW A PLANT FIXTURE STAFFS** — [`WORKERS`] hands above `plant:tended`'s
+    /// maintenance rate, so the *net* supply is `WORKERS` and every pace assertion below reads what
+    /// it read before the rate became a tax on building.
+    fn plant_builders(world: &World, key: RungKey) -> u32 {
+        let ladder = world.resource::<LadderConfigHandle>().get();
+        builders_above_the_rate(ladder.rung(key), UNSCALED_UPKEEP)
+    }
+
+    /// **THE BUILD CREW AN ANIMAL FIXTURE STAFFS** — the same, at the harness herd's own keeper
+    /// load, which is what the animal rungs' rate scales by.
+    fn animal_builders(world: &World, key: RungKey) -> u32 {
+        animal_builders_rate(world, key).saturating_add(WORKERS)
+    }
+
+    /// **Just the rate**, in whole hands — what a fixture adds to its own stated NET crew.
+    fn animal_builders_rate(world: &World, key: RungKey) -> u32 {
+        let load = harness_herd_load(world);
+        let ladder = world.resource::<LadderConfigHandle>().get();
+        ladder.rung(key).upkeep_crew_needed(load)
+    }
+
+    /// **The harness herd's own keeper load** — the measure the animal rungs' maintenance rate
+    /// scales by (`fauna::herd_keeper_load`). A plant source has none, so the plant fixtures pass
+    /// [`crate::intensification::UNSCALED_UPKEEP`].
+    fn harness_herd_load(world: &World) -> f32 {
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        let registry = world.resource::<HerdRegistry>();
+        registry
+            .herds
+            .first()
+            .map_or(crate::intensification::UNSCALED_UPKEEP, |herd| {
+                fauna::herd_keeper_load(herd, &fauna)
+            })
+    }
+
+    /// **THE HARNESS'S BUILD CREW: [`WORKERS`] hands ABOVE the rung's maintenance rate.**
+    ///
+    /// The rate is a tax on building (`docs/plan_standing_upkeep.md` §2.4) and it scales with the
+    /// source on the animal web, so a fixed crew is below the threshold on any herd of size and the
+    /// build simply never runs — a fixture measuring a stall rather than the thing under test.
+    /// Staffing above the rate keeps the harness's *net* supply at `WORKERS` whatever the source.
+    fn builders_above_the_rate(rung: &crate::intensification::RungDef, source_measure: f32) -> u32 {
+        rung.upkeep_crew_needed(source_measure)
+            .saturating_add(WORKERS)
     }
 
     /// **Turns this harness's crew needs to finish `rung`'s whole job**, `ceil(cost / work)`. Turns
@@ -3615,12 +3706,13 @@ mod labor_yield_tests {
         rung: &crate::intensification::RungDef,
         floor: f32,
         cost_multiplier: f32,
+        source_measure: f32,
     ) -> u32 {
         crate::intensification::build_turns_remaining(
             rung.build_cost(cost_multiplier)
                 .expect("a rung this harness builds has a build meter"),
             crate::intensification::RUNG_UNSTARTED,
-            build_work_per_turn(rung, floor),
+            build_work_per_turn(rung, floor, source_measure),
         )
         .expect("a staffed build finishes")
     }
@@ -3736,7 +3828,17 @@ mod labor_yield_tests {
                     current_tile: tile,
                     size: 30,
                     children: scalar_zero(),
-                    working: scalar_from_f32(100.0),
+                    // **Sized to whatever the fixture staffs.** A build crew now carries the
+                    // maintenance rate on top of the net the fixture states, and on a large herd
+                    // that rate is large — a fixed pool would let `normalize` trim the build away
+                    // and the fixture would measure a stall (`docs/plan_standing_upkeep.md` §2.4).
+                    working: scalar_from_f32(
+                        assignments
+                            .iter()
+                            .map(|assignment| assignment.staffed_total())
+                            .sum::<u32>()
+                            .max(100) as f32,
+                    ),
                     elders: scalar_zero(),
                     stores: LocalStore::new(),
                     morale: scalar_one(),
@@ -5942,8 +6044,8 @@ mod labor_yield_tests {
             let ladder = world.resource::<LadderConfigHandle>().get();
             let tended = ladder.rung(RungKey::PlantTended);
             (
-                build_work_per_turn(tended, FOOD_PEAK_FLOOR),
-                turns_to_finish(tended, FOOD_PEAK_FLOOR, RUNG_COST_UNSCALED),
+                build_work_per_turn(tended, FOOD_PEAK_FLOOR, UNSCALED_UPKEEP),
+                turns_to_finish(tended, FOOD_PEAK_FLOOR, RUNG_COST_UNSCALED, UNSCALED_UPKEEP),
             )
         };
 
@@ -5978,6 +6080,7 @@ mod labor_yield_tests {
         // *correct* realization behaviour but not the "worth-tending tile" this yield test needs.
         world.resource_mut::<SimulationConfig>().map_seed = WORTH_TENDING_SEED;
         grant_knowledge(&mut world, CULTIVATION_DISCOVERY_ID);
+        let builders = plant_builders(&world, RungKey::PlantTended);
         let band = spawn_band(
             &mut world,
             tile,
@@ -5990,7 +6093,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 improvement: Some(Improvement::Cultivate),
                 kit: None,
-                improvement_workers: WORKERS,
+                improvement_workers: builders,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -6134,6 +6237,7 @@ mod labor_yield_tests {
                 ladder.rung(RungKey::AnimalPen),
                 FOOD_PEAK_FLOOR,
                 RUNG_COST_UNSCALED,
+                harness_herd_load(&world),
             )
         };
 
@@ -6195,6 +6299,7 @@ mod labor_yield_tests {
             let mut registry = world.resource_mut::<HerdRegistry>();
             registry.herds[0].tame_outright(BAND_FACTION);
         }
+        let builders = animal_builders(&world, RungKey::AnimalPen);
         let band = spawn_band(
             &mut world,
             tile,
@@ -6206,7 +6311,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 improvement: Some(Improvement::Corral),
                 kit: None,
-                improvement_workers: WORKERS,
+                improvement_workers: builders,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -6435,8 +6540,10 @@ mod labor_yield_tests {
                 ladder.rung(RungKey::PlantTended),
                 BUILDER_FLOOR,
                 RUNG_COST_UNSCALED,
+                UNSCALED_UPKEEP,
             )
         };
+        let builders = plant_builders(&world, RungKey::PlantTended);
         let band = spawn_band(
             &mut world,
             tile,
@@ -6449,7 +6556,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 improvement: Some(Improvement::Cultivate),
                 kit: None,
-                improvement_workers: WORKERS,
+                improvement_workers: builders,
             }],
         );
 
@@ -6573,6 +6680,7 @@ mod labor_yield_tests {
                     ladder.rung(RungKey::AnimalPastoral),
                     BUILDER_FLOOR,
                     fauna.taming_cost_multiplier_for(&species),
+                    harness_herd_load(&world),
                 ),
                 species,
             )
@@ -6581,6 +6689,7 @@ mod labor_yield_tests {
             turns_to_tame > 1,
             "fixture: the {species} herd must take more than one turn to gentle"
         );
+        let builders = animal_builders(&world, RungKey::AnimalPastoral);
         let band = spawn_band(
             &mut world,
             tile,
@@ -6592,37 +6701,48 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 improvement: Some(Improvement::Tame),
                 kit: None,
-                improvement_workers: WORKERS,
+                improvement_workers: builders,
             }],
         );
 
-        for _ in 0..turns_to_tame - 1 {
-            regrow_source_herd(&mut world);
-            world.run_system_once(advance_labor_allocation);
-        }
-        assert!(
-            !world
+        // **Walk until it completes rather than predicting the turn.** The maintenance rate scales
+        // with the herd's own keeper load and the load moves while the herd is worked, so the net
+        // supply — and with it the pace — is not a constant any count forecast off the opening state
+        // could name (`docs/plan_standing_upkeep.md` §2.4). What the test needs is the *transition*,
+        // which is found by walking to it.
+        let mut turns_taken = 0;
+        for _ in 0..turns_to_tame.saturating_mul(4) {
+            if world
                 .resource::<HerdRegistry>()
                 .find(HERD_ID)
                 .unwrap()
-                .is_domesticated(),
-            "fixture: the herd must still be being gentled here"
-        );
-        assert_eq!(
-            only_assignment(&world, band).improvement,
-            Some(Improvement::Tame),
-            "an unfinished build keeps its verb"
-        );
-
-        regrow_source_herd(&mut world);
-        world.run_system_once(advance_labor_allocation);
+                .is_domesticated()
+            {
+                break;
+            }
+            // **The verb is still held while the meter is short** — asserted every turn, so the
+            // "an unfinished build keeps its verb" guarantee is checked across the whole build
+            // rather than at one sampled point.
+            assert_eq!(
+                only_assignment(&world, band).improvement,
+                Some(Improvement::Tame),
+                "an unfinished build keeps its verb"
+            );
+            regrow_source_herd(&mut world);
+            world.run_system_once(advance_labor_allocation);
+            turns_taken += 1;
+        }
         assert!(
             world
                 .resource::<HerdRegistry>()
                 .find(HERD_ID)
                 .unwrap()
                 .is_domesticated(),
-            "fixture: this is the completing turn"
+            "fixture: the herd must finish being gentled"
+        );
+        assert!(
+            turns_taken > 1,
+            "fixture: the build must take real turns, or 'completion is a transition' is untested"
         );
         let completed = only_assignment(&world, band);
         assert_eq!(completed.workers, WORKERS, "the crew stays on the herd");
@@ -6648,56 +6768,15 @@ mod labor_yield_tests {
         (turn.progress, turn.gear_wear)
     }
 
-    /// Turns of sustained `Tame` on the fixture herd under `kit_id`, so the two kits can be compared
-    /// on the thing the gear now moves: **how long the job takes**, not how fast the meter fills.
-    /// **The hunters are held to ONE**, because this harness runs the Population stage only — no
-    /// Logistics, so the herd never regrows — and the build's `eligible` needs stock standing above
-    /// the assignment's floor. A big hunting party strips the herd long before a thinly-staffed build
-    /// completes, which is a fact about the fixture rather than about the gear.
-    const A_LONE_HUNTER_BESIDE_THE_BUILD: u32 = 1;
-
-    fn turns_to_tame_on(kit_id: &str, builders: u32, cap_turns: u32) -> u32 {
-        /// **Big enough that the lone hunter cannot strip it inside the build.** This harness runs
-        /// the Population stage only — no Logistics, so the herd never regrows — and the build's
-        /// `eligible` needs stock standing above the assignment's floor. A herd the hunt exhausts
-        /// stalls the meter, which would make this a test about the fixture rather than the gear.
-        const A_HERD_THE_HUNT_CANNOT_EXHAUST: f32 = 100_000.0;
-        let (mut world, tile) = world_with_source(CAP);
-        reseat_herd(
-            &mut world,
-            A_HERD_THE_HUNT_CANNOT_EXHAUST,
-            A_HERD_THE_HUNT_CANNOT_EXHAUST,
-        );
-        grant_knowledge(&mut world, HERDING_DISCOVERY_ID);
-        let equipment = crate::equipment_config::EquipmentConfig::builtin();
-        let band =
-            spawn_band(
-                &mut world,
-                tile,
-                vec![LaborAssignment {
-                    target: LaborTarget::Hunt {
-                        fauna_id: HERD_ID.to_string(),
-                        floor: BUILDER_FLOOR,
-                    },
-                    workers: A_LONE_HUNTER_BESIDE_THE_BUILD,
-                    improvement: Some(Improvement::Tame),
-                    kit: Some(equipment.kit(kit_id).unwrap_or_else(|| {
-                        panic!("the shipped roster carries the '{kit_id}' kit")
-                    })),
-                    improvement_workers: builders,
-                }],
-            );
-        world
-            .entity_mut(band)
-            .insert(crate::components::BandEquipment::start_stocked(&equipment));
-        for turn in 1..=cap_turns {
-            world.run_system_once(advance_labor_allocation);
-            if world.resource::<HerdRegistry>().herds[0].is_domesticated() {
-                return turn;
-            }
-        }
-        panic!("a Tame on the '{kit_id}' kit never completed in {cap_turns} turns");
-    }
+    // **RETIRED: `turns_to_tame_on`** — the end-to-end turns comparison the gear claim used to be
+    // measured on.
+    //
+    // Since the maintenance rate became a tax on building (`docs/plan_standing_upkeep.md` §2.4) the
+    // two kits move the pace through **a second channel**: `big_game` carries spears, so its hunter
+    // shrinks the flock, which lowers the rate and raises the build's net. A turn count therefore
+    // measured the kits' attack tiers as much as their handling gear. The claim is about the JOB, so
+    // it is measured on the job — see part (3) of
+    // `the_handling_kit_takes_work_off_the_job_rather_than_speeding_the_crew`.
 
     /// What one turn of a `Tame` assignment left behind — the build meter, the gear it spent, and the
     /// two liveness handles that tell a *refused* build apart from a fixture that never ran at all:
@@ -6705,6 +6784,12 @@ mod labor_yield_tests {
     /// `improvement` is the verb the assignment still carries afterwards.
     struct TameTurn {
         progress: f32,
+        /// **The maintenance rate this herd owed on the turn measured** — the tax the build crew
+        /// paid before any of its output was progress (`docs/plan_standing_upkeep.md` §2.4). It is
+        /// carried out of the fixture because the rate rides the herd's own keeper load, so two arms
+        /// whose *takes* differ owe different rates: adding it back is what isolates the term under
+        /// test from the one that is not.
+        rate: f32,
         gear_wear: f32,
         /// **What the crew's tools took off the job this turn** — `Herd::build_work_from_gear`, the
         /// `t` the effective bar subtracts. `0` for a crew carrying nothing that helps.
@@ -6726,6 +6811,7 @@ mod labor_yield_tests {
             world.resource_mut::<HerdRegistry>().herds[0].owner = Some(owner);
         }
         let equipment = crate::equipment_config::EquipmentConfig::builtin();
+        let builders = animal_builders(&world, RungKey::AnimalPastoral);
         let band =
             spawn_band(
                 &mut world,
@@ -6740,7 +6826,7 @@ mod labor_yield_tests {
                     kit: Some(equipment.kit(kit_id).unwrap_or_else(|| {
                         panic!("the shipped roster carries the '{kit_id}' kit")
                     })),
-                    improvement_workers: WORKERS,
+                    improvement_workers: builders,
                 }],
             );
         // `spawn_band` builds no ledger, and wear is only charged on an item the band owns — an
@@ -6771,8 +6857,20 @@ mod labor_yield_tests {
             .find(HERD_ID)
             .expect("the fixture herd survives the turn")
             .build_work_from_gear;
+        // The maintenance rate this herd owed on the turn just measured — the tax the build crew
+        // paid off the top (`docs/plan_standing_upkeep.md` §2.4).
+        let rate = {
+            let fauna = world.resource::<FaunaConfigHandle>().get();
+            let ladder = world.resource::<LadderConfigHandle>().get();
+            let herd = world
+                .resource::<HerdRegistry>()
+                .find(HERD_ID)
+                .expect("the fixture herd survives the turn");
+            crate::fauna::herd_upkeep_demand(herd, &fauna, &ladder)
+        };
         TameTurn {
             progress,
+            rate,
             gear_wear,
             gear_work,
             tame_arm_ran,
@@ -6796,8 +6894,6 @@ mod labor_yield_tests {
     /// *"the geared arm finished sooner"* would also pass for a build that only runs with gear.
     #[test]
     fn the_handling_kit_takes_work_off_the_job_rather_than_speeding_the_crew() {
-        /// Long enough for the un-geared arm to finish — it is the slower of the two by definition.
-        const PATIENCE_TURNS: u32 = 400;
         let equipment = crate::equipment_config::EquipmentConfig::builtin();
         let declared = equipment.build_work_per_worker(
             &equipment
@@ -6815,15 +6911,23 @@ mod labor_yield_tests {
         let bare = tame_one_turn_on_herd_owned_by("big_game", None);
 
         // (1) The ACCRUAL is untouched — the crew's hands are worth what they are worth.
+        //
+        // **Compared GROSS of the maintenance rate**, which is not a fudge but the isolation this
+        // assertion needs: the rate rides the herd's keeper load, the two kits carry home different
+        // amounts, and a herd that has been drawn down further owes less. Adding each arm's own rate
+        // back leaves exactly the crew's output, which is what "the gear does not speed the crew up"
+        // is about (`docs/plan_standing_upkeep.md` §2.4).
         assert!(
             bare.progress > 0.0,
             "fixture: the un-geared crew must actually be taming, or the comparison is two zeroes"
         );
         assert!(
-            (geared.progress - bare.progress).abs() < 1e-5,
-            "the gear must not speed the crew up: geared={} bare={}",
+            ((geared.progress + geared.rate) - (bare.progress + bare.rate)).abs() < 1e-4,
+            "the gear must not speed the crew up: geared={} (+rate {}) bare={} (+rate {})",
             geared.progress,
-            bare.progress
+            geared.rate,
+            bare.progress,
+            bare.rate
         );
 
         // (2) What it moves is the JOB — and **the partly-equipped-party rule decides how much**.
@@ -6845,18 +6949,46 @@ mod labor_yield_tests {
             "a crew carrying nothing that helps takes nothing off the job"
         );
 
-        // (3) And so the geared build FINISHES SOONER, which is the player-facing claim.
-        // **Measured at a SMALL build crew**, because the gear's saving is `one worker's worth of
-        // work off the job` and turns are integers: at the ten-hand crew the halves above use, a
-        // Tame lands on the same turn either way and the claim is invisible. The build has its own
-        // crew now (`docs/plan_standing_upkeep.md` §2.2), so the fixture can staff it thinly without
-        // touching the hunt beside it.
-        const A_THIN_BUILD_CREW: u32 = 1;
-        let geared_turns = turns_to_tame_on("husbandry", A_THIN_BUILD_CREW, PATIENCE_TURNS);
-        let bare_turns = turns_to_tame_on("big_game", A_THIN_BUILD_CREW, PATIENCE_TURNS);
+        // (3) And so the geared build FINISHES SOONER, which is the player-facing claim — asserted
+        // as **a shorter job at the same net supply**, not as a shorter end-to-end run.
+        //
+        // # WHY THE TURN COUNT STOPPED BEING THE CLEAN MEASURE
+        //
+        // The maintenance rate is a tax on building and it rides the herd's own keeper load
+        // (`docs/plan_standing_upkeep.md` §2.4), so **the two kits move the pace through a second
+        // channel**: `big_game` carries spears and its lone hunter kills more, which shrinks the
+        // flock, lowers the rate and *raises* the build's net. An end-to-end turn comparison
+        // therefore measures the two kits' ATTACK tiers as much as their handling gear, and at a
+        // thin crew the hunting channel dominates. The claim under test is about the **job**, so it
+        // is measured on the job.
+        let ladder = LadderConfig::builtin();
+        let pastoral = ladder.rung(RungKey::AnimalPastoral);
+        let cost = pastoral
+            .build_cost(RUNG_COST_UNSCALED)
+            .expect("the pastoral rung builds");
+        let geared_bar = ladder.effective_build_cost(cost, geared.gear_work);
+        let bare_bar = ladder.effective_build_cost(cost, bare.gear_work);
+        assert!(
+            geared_bar < bare_bar,
+            "the gear shortens the JOB: {geared_bar} against {bare_bar}"
+        );
+        // And a shorter job is fewer turns at any given net supply, which is the player-facing
+        // sentence — stated against the seam so no second channel can confound it.
+        const A_THIN_NET: f32 = 1.0;
+        let geared_turns = crate::intensification::build_turns_remaining(
+            geared_bar,
+            crate::intensification::RUNG_UNSTARTED,
+            A_THIN_NET,
+        );
+        let bare_turns = crate::intensification::build_turns_remaining(
+            bare_bar,
+            crate::intensification::RUNG_UNSTARTED,
+            A_THIN_NET,
+        );
         assert!(
             geared_turns < bare_turns,
-            "the geared crew must finish the same job sooner: {geared_turns} vs {bare_turns}"
+            "the geared crew finishes the same job sooner at the same net: {geared_turns:?} vs \
+             {bare_turns:?}"
         );
 
         // **The other half of "the kit decides it"**: a crew that never carried the gear onto the
@@ -7013,8 +7145,10 @@ mod labor_yield_tests {
                 ladder.rung(RungKey::AnimalPen),
                 BUILDER_FLOOR,
                 RUNG_COST_UNSCALED,
+                harness_herd_load(&world),
             )
         };
+        let builders = animal_builders(&world, RungKey::AnimalPen);
         let band = spawn_band(
             &mut world,
             tile,
@@ -7026,36 +7160,47 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 improvement: Some(Improvement::Corral),
                 kit: None,
-                improvement_workers: WORKERS,
+                improvement_workers: builders,
             }],
         );
 
-        for _ in 0..turns_to_build - 1 {
-            world.run_system_once(advance_labor_allocation);
-        }
-        assert!(
-            !world
+        // Walked to rather than forecast — see the Tame fixture above.
+        let mut turns_taken = 0;
+        for _ in 0..turns_to_build.saturating_mul(4) {
+            // **The METER is the build's own completion test** — `is_corralled()` is the fence flag
+            // the completion sets, and the verb is cleared on the same turn the meter fills, so
+            // looping on the flag would sample a turn where the verb is already gone.
+            if world
                 .resource::<HerdRegistry>()
                 .find(HERD_ID)
                 .unwrap()
-                .is_corralled(),
-            "fixture: the pen must still be going up here"
+                .corral_meter_full()
+            {
+                break;
+            }
+            assert_eq!(
+                only_assignment(&world, band).improvement,
+                Some(Improvement::Corral),
+                "an unfinished build keeps its verb"
+            );
+            world.run_system_once(advance_labor_allocation);
+            turns_taken += 1;
+        }
+        assert!(
+            turns_taken > 1,
+            "fixture: the build must take real turns, or 'completion is a transition' is untested"
         );
-        assert_eq!(
-            only_assignment(&world, band).improvement,
-            Some(Improvement::Corral),
-            "an unfinished build keeps its verb"
-        );
-
-        world.run_system_once(advance_labor_allocation);
         assert!(
             world
                 .resource::<HerdRegistry>()
                 .find(HERD_ID)
                 .unwrap()
                 .is_corralled(),
-            "fixture: this is the completing turn"
+            "fixture: the pen must go up"
         );
+        // The loop above exited ON the completing turn, so the state below is the post-completion
+        // one — no extra turn is needed, and running one would be measuring the turn *after* the
+        // transition rather than the transition.
         let completed = only_assignment(&world, band);
         assert_eq!(
             completed.workers, WORKERS,
@@ -7078,6 +7223,7 @@ mod labor_yield_tests {
     #[test]
     fn investment_policies_accrue_nothing_without_the_knowledge() {
         let (mut world, tile) = world_with_source(CAP);
+        let builders = plant_builders(&world, RungKey::PlantTended);
         spawn_band(
             &mut world,
             tile,
@@ -7090,7 +7236,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 improvement: Some(Improvement::Cultivate),
                 kit: None,
-                improvement_workers: WORKERS,
+                improvement_workers: builders,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -7105,6 +7251,7 @@ mod labor_yield_tests {
             let mut registry = world.resource_mut::<HerdRegistry>();
             registry.herds[0].tame_outright(BAND_FACTION);
         }
+        let builders = animal_builders(&world, RungKey::AnimalPen);
         spawn_band(
             &mut world,
             tile,
@@ -7116,7 +7263,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 improvement: Some(Improvement::Corral),
                 kit: None,
-                improvement_workers: WORKERS,
+                improvement_workers: builders,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -7134,6 +7281,7 @@ mod labor_yield_tests {
     fn corral_accrues_nothing_on_a_wild_herd() {
         let (mut world, tile) = world_with_source(CAP);
         grant_knowledge(&mut world, PENNING_DISCOVERY_ID);
+        let builders = animal_builders(&world, RungKey::AnimalPen);
         spawn_band(
             &mut world,
             tile,
@@ -7145,7 +7293,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 improvement: Some(Improvement::Corral),
                 kit: None,
-                improvement_workers: WORKERS,
+                improvement_workers: builders,
             }],
         );
         world.run_system_once(advance_labor_allocation);

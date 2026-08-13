@@ -10997,14 +10997,14 @@ mod tests {
             "the fixture patch must stand above the food peak, or its rows describe an empty patch"
         );
         // **The trio describes ONE rung and ONE turn.** This fixture patch carries a part-prepared
-        // Sow, so the rung at risk is `plant:field` — and a meter still being RAISED is owed what it
-        // would lose rather than what holding the finished rung costs
-        // (`RungDef::meter_raising_demand`, `docs/plan_standing_upkeep.md` §0). Nobody is building it
-        // and nobody is keeping it, so the whole of that is unmet and the shortfall is the bleed
-        // `advance_cultivation` will apply.
+        // Sow, so the rung at risk is `plant:field` — and it owes the **same** maintenance rate a
+        // finished Field owes, because the rate never lapses; only who supplies it moves
+        // (`docs/plan_standing_upkeep.md` §2.4). Nobody is building it and nobody is keeping it, so
+        // the whole of that is unmet and the shortfall is the bleed `advance_cultivation` will
+        // apply.
         let field_demand = core_sim::LadderConfig::builtin()
             .rung(RungKey::PlantField)
-            .meter_raising_demand(core_sim::UNSCALED_UPKEEP);
+            .upkeep_demand(core_sim::UNSCALED_UPKEEP);
         assert!(
             field_demand > 0.0,
             "the field rung costs work to hold, or this block asserts three zeroes"
@@ -11019,13 +11019,16 @@ mod tests {
             "…so the whole demand went unmet — a row reading `0` short beside `0` supplied would \
              say nothing is wrong on a patch the sim is reverting"
         );
-        // **And what it would take to stop that — ZERO, because this rung is not BUILT yet.** An
-        // unfinished meter is owed its *builders*, not keepers (`docs/plan_standing_upkeep.md` §2.4),
-        // so quoting "this wants 1 keeper" over a part-sown Field would tell the player to staff a
-        // job that does not exist — and one the sim would not credit if they did.
+        // **And what it would take to stop that — the rate in whole hands, published on BOTH sides
+        // of completion.** The maintenance rate is owed while a meter is being raised too; what the
+        // meter's state decides is only *who supplies it* (`docs/plan_standing_upkeep.md` §2.4). So
+        // over a part-sown Field this number reads as the **minimum viable build crew**: at or below
+        // it the meter holds or rots rather than advancing, which is exactly what the compose sheet
+        // needs to say "this crew is below the threshold".
         assert_eq!(
-            patch.upkeep_workers_needed, 0,
-            "a rung still being raised asks for no keepers"
+            patch.upkeep_workers_needed,
+            field_demand.ceil() as u32,
+            "hands to meet the rate, whoever is supplying it"
         );
         // **Deliberately not compared against `tended_yield`.** Since the harvest floor a stance row
         // is constant escapement — a *stock* — while `tendedYield`/`fieldYield` are long-run rates;

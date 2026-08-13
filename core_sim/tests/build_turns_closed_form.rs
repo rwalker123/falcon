@@ -69,7 +69,14 @@ const KEEPERS: u32 = 6;
 
 /// A herd big enough that its stock stands far above [`BUILDER_FLOOR`], so the crew is working the
 /// source every turn of the fixture.
-const TEST_CAPACITY: f32 = 4_000.0;
+///
+/// **And small enough that its maintenance rate is a hand or two.** The rate scales with the herd's
+/// keeper load and is a **tax on building** (`docs/plan_standing_upkeep.md` §2.4), so a fixture on a
+/// 4,000-head flock has to staff nine extra hands before the meter moves at all — and those hands
+/// carry gear, which then pays the whole job off and collapses every multi-turn quote this file
+/// exists to check. The build's arithmetic is what is under test, so the flock is sized to keep the
+/// rate out of the way of it.
+const TEST_CAPACITY: f32 = 400.0;
 
 /// **The client's own food-peak constant**, restated here because a client holds no config. It must
 /// equal the sim's [`MSY_BIOMASS_FRACTION`] — asserted below, since the two are separate literals in
@@ -162,7 +169,38 @@ enum GearHeld {
 /// what [`GearHeld::APartysWorth`] arms (so the other arm is the linear regime). It is deliberately
 /// **not** [`KEEPERS`]: a build crew that happened to equal the take crew would let a form reading
 /// the wrong one of the two pass.
-const THE_BUILD_CREW: u32 = 2;
+const THE_BUILD_CREW: u32 = 3;
+// **Three, not two, since the maintenance rate became a tax on building**
+// (`docs/plan_standing_upkeep.md` §2.4): the rate is owed while the meter is raised and the build
+// crew is what supplies it, so a crew of two on this fixture's herd nets under a worker-turn and the
+// meter barely moves. Three clears the rate with a hand to spare, which is what a `ceil` check needs.
+
+/// **What a fixture adds to its stated NET build crew** — the herd's maintenance rate in whole
+/// hands, which the build crew is also paying (`docs/plan_standing_upkeep.md` §2.4). A fixture that
+/// stated a bare head count would be measuring `crew − rate`, and on a herd of any size that is
+/// zero: a build that never runs.
+fn rate_in_hands(app: &App, fauna_id: &str) -> u32 {
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
+    let registry = app.world.resource::<HerdRegistry>();
+    let Some(herd) = registry.find(fauna_id) else {
+        return 0;
+    };
+    // **Measured at the herd's CARRYING CAPACITY**, not at its current stock: the rate rides the
+    // keeper load and a Thriving herd grows while it is worked, so a crew sized against today's
+    // flock slips back under the rate mid-build and the fixture measures a stall.
+    let mut herd = herd.clone();
+    herd.biomass = herd.biomass.max(herd.carrying_capacity);
+    let herd = &herd;
+    ladder
+        .rung(core_sim::RungKey::AnimalPastoral)
+        .upkeep_crew_needed(core_sim::herd_keeper_load(herd, &fauna))
+        .max(
+            ladder
+                .rung(core_sim::RungKey::AnimalPen)
+                .upkeep_crew_needed(core_sim::herd_keeper_load(herd, &fauna)),
+        )
+}
 
 /// A resident band of [`KEEPERS`] taming `fauna_id` on the [`HANDLING_KIT`], holding `gear`, with
 /// `builders` of them on the verb.
@@ -194,6 +232,7 @@ fn spawn_keepers_of(
         .resource::<TileRegistry>()
         .index(pos.x, pos.y)
         .expect("the herd's tile resolves");
+    let rate = rate_in_hands(app, fauna_id);
     let equipment = EquipmentConfig::builtin();
     let kit = equipment
         .kit(HANDLING_KIT)
@@ -211,7 +250,9 @@ fn spawn_keepers_of(
                 // so a band of exactly [`KEEPERS`] staffing a build beside them is over-committed
                 // and `LaborAllocation::normalize` trims the build away — leaving a fixture that
                 // measures a job nobody is doing.
-                working: scalar_from_f32((KEEPERS + builders) as f32),
+                // **Sized to what it actually staffs** — both crews carry the rate on top of the net
+                // they state, so a pool sized at the bare counts lets `normalize` trim the build.
+                working: scalar_from_f32((KEEPERS + builders + rate + rate) as f32),
                 elders: scalar_zero(),
                 stores: LocalStore::new(),
                 morale: scalar_one(),
@@ -244,6 +285,9 @@ fn spawn_keepers_of(
                         fauna_id: fauna_id.to_string(),
                         floor: BUILDER_FLOOR,
                     },
+                    // **The crews are stated GROSS here**, and the herd is sized so the maintenance
+                    // rate is a single hand ([`TEST_CAPACITY`]) — so both allocations still clear it
+                    // comfortably and the nets stay multi-turn, which is what a `ceil` check needs.
                     workers: KEEPERS,
                     improvement,
                     kit: Some(kit),
@@ -284,13 +328,18 @@ fn client_turns_estimate(
     // count it multiplies has to be the workers actually doing the job. Handing it the band's
     // gathering crew would price a one-hand build with a large party's tools.
     builders: u32,
+    // **THE MAINTENANCE RATE, off the source's own `upkeepDemand`** — the tax the build crew pays
+    // before any of its output is progress (`docs/plan_standing_upkeep.md` §2.4). Without it the
+    // client's form promises a finish date the crew cannot reach, and at or below the rate it would
+    // quote a huge number where the sim answers *no estimate*.
+    upkeep_demand: f32,
 ) -> Option<u32> {
     let gear = client_gear_term(build_work_per_worker, build_work_saturating_crew, builders);
     // **NO FLOOR TERM.** The build reads the assignment's escapement floor no longer
     // (`docs/plan_standing_upkeep.md` §2.2): a build is staffed in its own right, so the builders
     // are not pulling on the source and there is nothing of theirs for a floor to describe. The
     // client's form loses the factor with the sim's.
-    let work_per_turn = builders as f32 * build_work_per_worker_turn;
+    let work_per_turn = (builders as f32 * build_work_per_worker_turn - upkeep_demand).max(0.0);
     if work_per_turn <= 0.0 {
         return None;
     }
@@ -384,11 +433,13 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
 
         // (1) **THE GEAR TERM** — the two kit-row terms, evaluated at the committed crew, must equal
         // what the sim stamped on the source from that same crew's coverage.
-        let gear = client_gear_term(build_work_per_worker, saturating_crew, THE_BUILD_CREW);
-        assert_eq!(
-            gear, herd.build_work_from_gear,
-            "the kit row's `min({THE_BUILD_CREW}, {saturating_crew}) × {build_work_per_worker}` \
-             must equal the contribution the sim resolved for that same crew"
+        let staffed = THE_BUILD_CREW;
+        let gear = client_gear_term(build_work_per_worker, saturating_crew, staffed);
+        assert!(
+            (gear - herd.build_work_from_gear).abs() < 1e-3,
+            "the kit row's `min({staffed}, {saturating_crew}) × {build_work_per_worker}` must \
+             equal the contribution the sim resolved for that same crew: {gear} vs {}",
+            herd.build_work_from_gear
         );
 
         // (2) **THE TURN COUNT** — the whole form against the sim's own answer.
@@ -398,7 +449,10 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
             build_work_per_worker,
             saturating_crew,
             herd.build_work_per_worker_turn,
-            THE_BUILD_CREW,
+            // **The crew the wire publishes**, which is the net the fixture stated plus the rate it
+            // also pays — the same number `improvementWorkers` carries.
+            staffed,
+            herd.upkeep_demand,
         );
         let published = u32::try_from(herd.build_turns_remaining).ok();
 
@@ -828,6 +882,7 @@ fn a_crew_whose_gear_pays_the_tame_off_is_quoted_one_turn_on_the_wire() {
                 tiers.build_work_saturating_crew,
                 herd.build_work_per_worker_turn,
                 KEEPERS,
+                herd.upkeep_demand,
             ),
             u32::try_from(herd.build_turns_remaining).ok(),
             "the client's form must reproduce the sim's answer in the over-geared regime too"
