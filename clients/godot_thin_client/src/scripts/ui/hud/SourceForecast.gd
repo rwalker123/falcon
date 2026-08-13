@@ -3220,6 +3220,37 @@ static func has_upkeep(state: Dictionary) -> bool:
 static func upkeep_is_short(state: Dictionary) -> bool:
     return float(state.get("shortfall", NO_UPKEEP_DEMAND)) >= UPKEEP_WORK_MIN
 
+## **HOW MANY KEEPERS THIS SOURCE WANTS** — `upkeepWorkersNeeded`, the MAINTAIN activity's own
+## `workers_needed`, read through the one `upkeep_state` reader so the compose sheet's `KEEPERS` row
+## and every warning about it quote one number.
+##
+## **`0` IS A REAL ANSWER AND MEANS *NOBODY IS OWED KEEPERS HERE***, which is two states at once: a
+## wild source with no rung to hold, and a rung still going UP — those hands are the BUILD's
+## (`herd_at_risk_is_built` / `patch_at_risk_is_built` sim-side), which the keeping row states in
+## words rather than as a zero.
+static func keepers_wanted(src: Dictionary, prefix: String) -> int:
+    return int(upkeep_state(src, prefix).get("crew", NO_UPKEEP_CREW))
+
+## **THE ONE UNDER-KEPT TEST** — the source wants keepers and fewer than that are on it.
+##
+## **IT COUNTS THE KEEPING CREW AGAINST THE KEEPING DEMAND, and both halves are the point.** The
+## client used to answer this by comparing a herd's HUNTERS against `herdersNeeded`, from the release
+## when containment was read off the take crew; a source carries three allocations now
+## (`docs/plan_standing_upkeep.md` §2.2) and the sim gates the shed on `upkeep_supplied`, i.e. on the
+## MAINTAIN crew alone. Measured against the take crew the warning was actively misleading in both
+## directions: staffing keepers did not clear it, and staffing hunters did — without stopping the shed.
+##
+## **IT IS A CREW COMPARISON, NEVER `upkeep_is_short`**, deliberately. The shortfall is what the meter
+## DECAYED by last turn, so a warning keyed on it speaks only once animals are already leaving; the
+## crew count is short the turn the player understaffs it, which is the turn the notice has to fire
+## (`.claude/rules/core_sim/husbandry.md` — warning only once they go spends the grace on silence).
+##
+## `assigned_keepers` is the caller's own count of the hands on this source's keeping — pass
+## `HudBandLaborState.assigned_keepers_for` on the animal web.
+static func is_under_kept(src: Dictionary, prefix: String, assigned_keepers: int) -> bool:
+    var wanted := keepers_wanted(src, prefix)
+    return wanted > NO_UPKEEP_CREW and maxi(assigned_keepers, 0) < wanted
+
 ## **HOW MANY TURNS THIS RUNG WOULD TAKE AT A CREW AND A FLOOR THE PLAYER IS PROPOSING** — the ONE
 ## home of the client's turn estimate, and the reason the compose sheet's number moves when the
 ## stepper does.
@@ -3704,7 +3735,7 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
 ## THE `herders_needed > 0` CLAUSE IS THE SIM'S OWN STATEMENT THAT THIS HERD OWES KEEPERS. The field
 ## is ownership-gated (`fauna::herd_herders_needed`), so it goes positive the moment the herd becomes
 ## OWNED — part-way through taming, well before `domestication` reaches completion. The drawer's
-## "Herders: A / N — under-herded" row gates on the SAME field and the SAME `> 0` test, so the two
+## "Keepers: A / N" row is SHOWN on the SAME field and the SAME `> 0` test, so the two
 ## surfaces can no longer disagree: without this clause the sheet's stepper and title said "Hunters"
 ## directly beside a drawer demanding 4 herders every turn.
 ##

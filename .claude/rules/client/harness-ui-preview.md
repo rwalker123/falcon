@@ -565,11 +565,15 @@ built from the code under test can only agree with itself. **They are the SIM's 
 from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
 payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-**A clean run is 320 frames / 989 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
+**A clean run is 320 frames / 997 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
 three times in one arc and once across a merge, and a running total kept by addition would be wrong
 by now. (The measurement above came back FIVE higher than the 895 recorded before it while the arc
 #527 review added exactly ONE claim — the `Carrying:` mass one. Four `PASS`es had accumulated
-un-recorded, which is the whole reason this line says re-measure.)
+un-recorded, which is the whole reason this line says re-measure. It read 989 here and MEASURED 994
+immediately before the keeping-crew fix, which added three and no frame: the third under-kept claim,
+plus two bare `assert`s in `chapters/herd_graze_pen.gd` converted to `_assert_hud` — a bare `assert`
+prints no `PASS` and HALTS the run rather than reporting, which is why the conversion counts as two
+found rather than two added.)
 
 **The compose sheet's own turn estimate is worth FIVE frames and TWELVE `PASS`.** Three are one
 A/B plus a drag: `improvement_turns_lone_crew` / `improvement_turns_full_crew` (one patch, one floor,

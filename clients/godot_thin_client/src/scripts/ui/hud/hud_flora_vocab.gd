@@ -354,13 +354,14 @@ const FLORA_CROP_COMMITTED_HEADER := "Committed crop"
 
 const FLORA_CROP_COMMITTED_HINT := "Already committed — the crop cannot be changed until the patch lapses back to wild."
 
-# Herd drawer "Herders" row — a MANAGED herd's staffing (intensification ladder). A domesticated herd
-# needs `herders_needed` herders every turn to HOLD the herd; understaffed it SHEDS whole animals over
-# its labor capacity into a nearby wild herd (they drift off — tameness leaves with them, it is never
-# decayed; fauna neglect-escape arc). The row makes the deficit visible from the ACTUAL staffed count
-# (`assigned_herders`, never a reconstruction from `herded_fraction`); the under-herded value is
-# WARN-tinted via `DetailFormat.herders_value_hex`, and the shed consequence (`HERDERS_SHED_FORMAT`) is
-# spelled out below it so the player knows the animals are drifting off and how to stop it.
+# Herd drawer "Keepers" row — a MANAGED herd's staffing (intensification ladder). A domesticated herd
+# needs keepers every turn to HOLD the herd; understaffed it SHEDS whole animals over its labor
+# capacity into a nearby wild herd (they drift off — tameness leaves with them, it is never decayed;
+# fauna neglect-escape arc). The row makes the deficit visible from the ACTUAL staffed count
+# (`assigned_keepers` — the MAINTAIN crews, never the hunting one and never a reconstruction from
+# `herded_fraction`); the under-herded value is WARN-tinted via `DetailFormat.herders_value_hex`, and
+# the shed consequence (`HERDERS_SHED_FORMAT`) is spelled out below it so the player knows the animals
+# are drifting off and which crew stops it.
 # (Herd drawer combat-component rows, Predators Phase 0 — the whole `DANGER_*` family lives in
 # `DetailFormat` with `append_danger_component_lines`, its only reader. Strength is NOT danger: a
 # mammoth is deadly to HUNT yet no camp THREAT, so the drawer shows the four RAW components

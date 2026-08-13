@@ -692,11 +692,28 @@ const WORK_ROW_RUNG_PASTORAL_TOOLTIP := "Pastoral herd — tamed, and it keeps t
 
 const WORK_ROW_RUNG_PENNED_TOOLTIP := "Penned herd — corralled, the top animal rung. It eats from your larder every turn."
 
-## The under-contained managed-herd note (fauna neglect-escape arc): fewer herders staffed than the
+## The under-contained managed-herd note (fauna neglect-escape arc): fewer keepers staffed than the
 ## herd needs, so it sheds whole animals into a nearby wild herd. Drives the row's amber stripe + the
-## inspector's WARN line, and rides the same `note` slot as the overstaff note (they never co-occur —
-## one is too-few herders, the other too-many workers).
-const WORK_ROW_UNDER_HERDED_NOTE := "Too few herders — animals are drifting off."
+## inspector's WARN line, and rides the same `note` slot as the overstaff note — which it WINS. The
+## two could not co-occur while containment came off the hunting crew (a herd cannot be short of
+## hunters and overstaffed with them at once); with the crews split they can, and an animal walking
+## off outranks a hunter bringing nothing home.
+##
+## **IT NAMES THE KEEPING CREW, BECAUSE THIS ROW'S `+` IS NOT THE REMEDY**
+## (`docs/plan_standing_upkeep.md` §2.2). Containment used to be read off the HUNTING crew, so the
+## board's own stepper answered the warning and *"Too few herders"* pointed at the control beside it.
+## A source carries three crews now — take, build and **maintain** — and holding a herd is the
+## MAINTAIN allocation, which has its own stepper (`HudComposeVocab.CREW_ROW_MAINTAIN_LABEL`,
+## `KEEPERS`) on the herd's compose sheet and is deliberately out of this stepper's reach
+## (`SourceForecast.source_worker_cap_state` dropped the `herd_crew_floor` that used to raise the take
+## cap to `herdersNeeded`). A warning whose obvious affordance cannot resolve it reads as a bug, so
+## the note names the control that CAN, spelled exactly as that row is labelled.
+const WORK_ROW_UNDER_HERDED_NOTE := "Animals drifting off — staff this herd's KEEPERS."
+
+## …and the row tooltip carries the part the one-line note has no room for: WHY the `+` on this row
+## does not answer the ⚠, and how to reach the crew that does. It is a tooltip rather than a second
+## strip line because `_work_inspector_height` reserves ONE open height for every row.
+const WORK_ROW_UNDER_HERDED_TOOLTIP := "Under-herded — a managed herd is held by its KEEPERS crew, not by its hunters, so this row's + will not stop the drift. Open the herd (Jump to source) and raise its KEEPERS."
 
 const WORK_EMPTY_HINT := ALLOC_NO_SOURCES_HINT
 

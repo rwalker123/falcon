@@ -1745,18 +1745,31 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         var marks := FoodIcons.for_floor_zone(SourceForecast.floor_zone(floor))
         if bool(yld.get("warn", false)):
             marks += " " + HudComposeVocab.OVERHUNT_FLAG
-        # UNDER-CONTAINED managed herd (fauna neglect-escape arc): fewer herders staffed than the herd
+        # UNDER-CONTAINED managed herd (fauna neglect-escape arc): fewer KEEPERS staffed than the herd
         # needs → it sheds whole animals into the wild. Flag it wherever the herd is LISTED, not only in
-        # its drawer, with the established overhunt ⚠. `assigned_herders_for` is the SAME actual/staged
-        # count the herd drawer reads, so the panel and the drawer can never disagree about it.
-        var herders_needed := int(live_herd.get("herders_needed", 0))
-        var under_herded := herders_needed > 0 \
-            and _band_labor.assigned_herders_for(herd_id) < herders_needed
+        # its drawer, with the established overhunt ⚠.
+        # **IT MEASURES THE KEEPING CREW AGAINST THE KEEPING DEMAND** (`docs/plan_standing_upkeep.md`
+        # §2.2) — `SourceForecast.is_under_kept` is the one test, and the herd drawer's `Keepers` row
+        # calls the same one, so the two surfaces cannot disagree. It compared this herd's HUNTERS
+        # against `herdersNeeded` until the three-crew split landed, which made the warning actively
+        # misleading: staffing keepers (the real remedy) left it up, and staffing hunters cleared it
+        # without stopping the shed.
+        # **THE NOTE NAMES THE KEEPING CREW, NOT THIS ROW'S `+`** — the stepper beside it moves the
+        # TAKE crew and no longer reaches the keeper count (see the cap comment above), so the remedy
+        # is the compose sheet's KEEPERS row; `WORK_ROW_UNDER_HERDED_NOTE` carries the instruction
+        # and `WORK_ROW_UNDER_HERDED_TOOLTIP` the reason.
+        var under_herded := SourceForecast.is_under_kept(live_herd,
+            HudComposeVocab.BARE_FORECAST_PREFIX, _band_labor.assigned_keepers_for(herd_id))
         if under_herded:
             if not marks.contains(HudComposeVocab.OVERHUNT_FLAG):
                 marks += " " + HudComposeVocab.OVERHUNT_FLAG
-            if note == "":
-                note = HudWorkVocab.WORK_ROW_UNDER_HERDED_NOTE
+            # **IT TAKES THE SLOT, where it used to yield to whatever was already in it.** The two
+            # notes could not co-occur while containment came off the hunting crew — a herd could not
+            # be short of hunters and overstaffed with them at once — and with the crews split they
+            # can: an overstaffed TAKE crew on a herd nobody keeps is an ordinary state. They are not
+            # equal in weight, so the slot is not first-come: the overstaff note says some hunters
+            # bring nothing home, and this one says the animals are leaving.
+            note = HudWorkVocab.WORK_ROW_UNDER_HERDED_NOTE
         models.append({
             "key": String(key), "kind": kind, "icon": icon, "icon_texture": icon_texture,
             "label": label,
@@ -1793,6 +1806,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "schedule": HudBandLaborState.as_schedule(m.get("arrival_schedule", null)),
             "tooltip": HudFormat.join_tooltip_lines([String(yld.get("tooltip", "")),
                 HudFormat.floor_hint(floor, kind), String(cap.get("note", "")),
+                HudWorkVocab.WORK_ROW_UNDER_HERDED_TOOLTIP if under_herded else "",
                 "" if ready.is_empty() else HudWorkVocab.WORK_ROW_READY_TOOLTIP_FORMAT % HudFormat.policy_face(String(ready.get("policy", ""))),
                 "" if building.is_empty() else HudWorkVocab.WORK_ROW_BUILDING_TOOLTIP_FORMAT % [
                     HudFormat.policy_face(String(building.get("policy", ""))),

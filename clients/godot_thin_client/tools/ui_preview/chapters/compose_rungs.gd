@@ -364,19 +364,23 @@ func run(harness) -> void:
 	h._assert_hud("the reopened sheet quotes the FRESH meter (4% tamed), not the captured 0%",
 		ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
 			HudConst.LABOR_POLICY_TAME).begins_with(fresh_meter))
-	# The HERDERS row is the second witness, and a different field entirely (`herders_needed` 0 -> 4),
+	# The KEEPERS row is the second witness, and a different field entirely (`herders_needed` 0 -> 4),
 	# so the two cannot both pass off one stale-or-fresh dict by coincidence.
 	#
 	# **IT HAS TO BE THE ROW, NOT THE NUMBER.** This searched the drawer OR the sheet for the digit "4"
 	# — which the fresh meter beside it ("Tame — 4%") already contains, so it passed off the very
 	# witness it was meant to be independent of, and would have passed off a coordinate or a yield just
-	# as happily. The Herders row's whole rendered value is the only text that can testify: it names the
+	# as happily. The Keepers row's whole rendered value is the only text that can testify: it names the
 	# demand, and it names it in the row the claim is about. Assigned is READ rather than assumed — this
-	# band hunts a different herd, so the deficit form is what renders, and hardcoding it would pin the
-	# fixture's staffing instead of the herd's demand.
-	h._assert_hud("…and the drawer's herder demand is the live one (4), not the pre-tame 0",
+	# band keeps no herd, so a hardcoded count would pin the fixture's staffing instead of the demand.
+	#
+	# **AND IT IS THE CALM FORM, on a herd part-way through its Tame** (`docs/plan_standing_upkeep.md`
+	# §2.2): the row is SHOWN because the herd is owned and will owe keepers, and it does not warn
+	# because the keeping is still the BUILD crew's — `upkeepWorkersNeeded` is `0` until the rung
+	# stands. The demand it names is the herd's own, which is what this claim is about.
+	h._assert_hud("…and the drawer's keeper demand is the live one (4), not the pre-tame 0",
 		Q.has_label_containing(h._hud.occupant_detail, DetailFormat.herders_label(
-			h._hud._band_labor.assigned_herders_for(REOPEN_HERD_ID), REOPEN_TAMING_HERDERS)))
+			h._hud._band_labor.assigned_keepers_for(REOPEN_HERD_ID), REOPEN_TAMING_HERDERS, false)))
 	h._hud._drawercompose.close_compose_sheet()
 	h._hud._compose.reset_hunt_source()
 	h._hud._compose.set_hunt_floor(SourceForecast.DEFAULT_HARVEST_FLOOR)

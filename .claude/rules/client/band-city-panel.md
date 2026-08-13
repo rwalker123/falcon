@@ -2130,6 +2130,64 @@ the two `key` tiebreaks removed exactly the two total-order assertions fail whil
 green.
 
 
+## The under-herded ⚠ counts the KEEPING crew, and its note names it
+
+A Hunt row whose managed herd is under-kept wears the established `⚠` and a WARN note in its
+inspector strip. **It measures the keepers on the herd against the herd's keeper demand** —
+`SourceForecast.is_under_kept(live_herd, prefix, HudBandLaborState.assigned_keepers_for(herd))`, the
+one test the herd drawer's `Keepers` row also calls — and **the instruction attached to it names the
+compose sheet's `KEEPERS` row** (`HudWorkVocab.WORK_ROW_UNDER_HERDED_NOTE`, *"Animals drifting off —
+staff this herd's KEEPERS."*), with the row TOOLTIP (`WORK_ROW_UNDER_HERDED_TOOLTIP`) stating why the
+stepper on the row does not answer it.
+
+**It used to be true that the row's own `+` was the fix, and the warning used to COUNT that crew.**
+Containment was read off the HUNTING crew, so the board's stepper and the warning moved the same
+number, and `SourceForecast.source_worker_cap_state` raised the take cap to `herdersNeeded` through
+`herd_crew_floor` precisely so the `+` could reach it. A source carries three crews now — take, build
+and **maintain** — holding a herd is the maintain allocation, and that floor is retired
+(`labor-ui.md` → "THE DIP IS RETIRED, and so is `crew_needed`"). So the `+` deliberately stops short
+of the keeper count, and *"Too few herders"* beside it pointed at the one control that cannot resolve
+the warning. **A warning whose obvious affordance does not resolve it reads as a bug**, which is what
+it was reported as.
+
+**The wording was only half of it, and the half left behind was the worse one.** Re-aimed at the
+`KEEPERS` row while still COUNTING hunters, the warning became actively misleading in both
+directions: staffing keepers — the thing the note now told the player to do — left it up, and
+staffing hunters cleared it without stopping the shed. The sim gates the shed on `upkeep_supplied`,
+i.e. the maintain crew alone, so the trigger reads that crew now and the two agree.
+
+- **The note spells `KEEPERS` exactly as the control is labelled**
+  (`HudComposeVocab.CREW_ROW_MAINTAIN_LABEL`), so it is a thing to look for rather than a paraphrase.
+- **The reason goes in the TOOLTIP, not a second strip line.** `_work_inspector_height` reserves ONE
+  open height for every row, so a line added here is paid for by every open inspector; a tooltip
+  costs no layout at all. `build_status_part` is a bare `Label` with no autowrap, so the note's
+  LENGTH is a width budget in the 354px narrow-shell zone — keep a reworded note short, or the strip
+  overruns its clipping host and `band_panel_preview`'s recursive bounds assertion says so.
+- **The herd DRAWER's own line took the same correction** (`DetailFormat.HERDERS_SHED_FORMAT`, now
+  *"…Staff N KEEPERS to hold the herd."*). It is the same stale instruction one surface over, and
+  worse there: that drawer's local hunt sheet labels its TAKE row `Herders`, the exact noun the old
+  sentence used. See `herd-readouts.md` → the Herd staffing bullet.
+- **THE NOTE NOW WINS THE `note` SLOT rather than yielding to whatever was in it.** It shares that
+  slot with the overstaff note, and the two could not co-occur while containment came off the hunting
+  crew — a herd cannot be short of hunters and overstaffed with them at once. With the crews split
+  they can, routinely; they are not equal in weight, so the slot is not first-come.
+- **The demand is `upkeepWorkersNeeded`, NOT `herdersNeeded`, and they differ mid-build.** The
+  keeping is owed to keepers only once the rung STANDS — while a Tame or a Corral is going up those
+  hands are the build crew's and the sim publishes `0` — so a herd mid-Corral raises no keeper
+  warning, which agrees with the compose sheet's own KEEPERS row saying the build's crew holds it.
+  **KNOWN GAP:** a part-built rung with no BUILD crew on it also sheds, and nothing on the board says
+  so — that is a warning about a different crew and no wire field states its shortfall.
+- **The count is the CONFIRMED maintain crew and is deliberately not pending-aware**, unlike the take
+  crew it replaced — see `HudBandLaborState.assigned_keepers_for`: `maintain` REFUSES where
+  `assign_labor` clamps, so an optimistic read would clear a shed warning for an order the sim
+  rejected.
+
+Frames: `band_panel_under_herded`, and the A/B pair `band_panel_keepers_short` /
+`band_panel_keepers_staffed` — one herd, one hunt crew, only the keepers moving. The third claim
+rides with them and is PNG-less, because no picture can carry it: a board with twice the hunters on
+it looks exactly like the short frame.
+
+
 ## The WORK board's rung-ready mark
 
 Issue #412, `docs/plan_worked_source_marks.md` §5 — the panel twin of the map badge.

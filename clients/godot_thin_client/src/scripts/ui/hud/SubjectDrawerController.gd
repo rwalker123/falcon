@@ -600,13 +600,14 @@ func _render_occupant_drawer(from_selection: bool = false) -> void:
             _selection.unit(), _selectioncard.selected_terrain_label(), ctx, false, true,
             _bandpanel.launched_party_denial_view(_selection.unit()))
     elif not _selection.herd().is_empty():
-        # Thread in the ACTUAL herders staffed/staged on this herd (summed across the player's bands,
-        # pending-aware) so the "N / M" staffing readout is right the instant one is assigned — never a
-        # reconstruction from last turn's resolved `herded_fraction` (fauna neglect-escape arc).
+        # Thread in the ACTUAL KEEPERS on this herd (the `maintain` crews, summed across the player's
+        # bands) so the "N / M" staffing readout counts the crew that HOLDS the herd — never a
+        # reconstruction from last turn's resolved `herded_fraction`, and never its hunting crew
+        # (fauna neglect-escape arc, re-aimed by `docs/plan_standing_upkeep.md` §2.2).
         var herd := _selection.herd()
         lines = DetailFormat.herd_summary_lines(
             herd, _band_labor.world_herds(),
-            _band_labor.assigned_herders_for(String(herd.get("id", ""))))
+            _band_labor.assigned_keepers_for(String(herd.get("id", ""))))
     _occupant_detail.text = DetailFormat.detail_bbcode(lines, ctx)
     if is_expedition:
         _build_expedition_panel(_selection.unit())

@@ -142,34 +142,72 @@ func _tame_worker_cap_herd_fixture() -> Dictionary:
 	fixture["herders_needed_if_managed"] = TAME_CAP_WOULD_BE_HERDERS
 	return fixture
 
-## A nearly-tamed herd, FULLY STAFFED — the calm control for the staffing readout, AND the fix for the
-## stale-count bug (fauna neglect-escape arc). `BandFx.band_fixture` has 4 herders (a Hunt assignment) on
-## game_deer_07, and this herd needs 4, so the drawer reads a neutral "Herders: 4 / 4" — from the
-## ACTUAL assigned count, not `herded_fraction`. `herded_fraction` is deliberately left STALE at 0.4
-## (last turn's resolved value): the OLD code reconstructed `round(0.4 · 4) = 2` and wrongly read a
-## self-contradictory "2 / 4 — under-herded", which this frame proves is gone.
+## A TAMED herd, FULLY KEPT — the calm control for the staffing readout, AND the fix for the
+## stale-count bug (fauna neglect-escape arc). `_keeper_band_fixture` puts 4 KEEPERS (the `maintain`
+## crew of a Hunt assignment) on game_deer_07, and this herd wants 4, so the drawer reads a neutral
+## "Keepers: 4 / 4" — from the ACTUAL assigned count, not `herded_fraction`. `herded_fraction` is
+## deliberately left STALE at 0.4 (last turn's resolved value): the OLD code reconstructed
+## `round(0.4 · 4) = 2` and wrongly read a self-contradictory "2 / 4 — under-herded".
+##
+## **ITS TAMING IS COMPLETE, and that is load-bearing** (`docs/plan_standing_upkeep.md` §2.2). The
+## keeping is owed to KEEPERS only once the rung STANDS — while a Tame is going up those hands are the
+## build's, and the sim publishes `upkeepWorkersNeeded 0` — so a part-tamed herd carrying a positive
+## keeper demand is a shape no server can produce, and the frame would be asserting against it.
 func _fully_herded_herd_fixture() -> Dictionary:
 	var fixture := HerdFx.taming_herd_fixture()
-	fixture["domestication"] = 0.9
+	fixture["domestication"] = SourceForecast.DOMESTICATION_COMPLETE
 	HerdFx.price_animal_build(fixture)
 	HerdFx.set_managed_herders(fixture, 4)
+	_set_keeper_upkeep(fixture, 4, KEEPERS_ON_THE_DEER)
 	fixture["herded_fraction"] = 0.4
 	return fixture
 
-## The SAME herd, UNDER-HERDED — animals are drifting off (fauna neglect-escape arc; neglect no longer
-## decays tameness, it sheds whole animals to the wild). The herd now needs 6 herders but `BandFx.band_fixture`
-## only staffs 4, so the drawer reads the amber "Herders: 4 / 6 — under-herded" (the ACTUAL staffed
-## count) plus the muted "Under-herded — animals are drifting off. Staff all 6 herders to hold the herd."
-## line — NEVER the retired "tameness slipping" copy. `herded_fraction` is left STALE at 1.0: the OLD
-## code reconstructed `round(1.0 · 6) = 6` and read a calm "6 / 6" with NO warning at all — the exact
+## The SAME herd, UNDER-KEPT — animals are drifting off (fauna neglect-escape arc; neglect no longer
+## decays tameness, it sheds whole animals to the wild). The herd now wants 6 keepers but the band
+## staffs 4, so the drawer reads the amber "Keepers: 4 / 6 — under-herded" (the ACTUAL staffed count)
+## plus the muted "Under-herded — animals are drifting off. Staff 6 KEEPERS to hold the herd." line —
+## NEVER the retired "tameness slipping" copy. `herded_fraction` is left STALE at 1.0: the OLD code
+## reconstructed `round(1.0 · 6) = 6` and read a calm "6 / 6" with NO warning at all — the exact
 ## stale-reading this fix removes.
 func _under_herded_herd_fixture() -> Dictionary:
 	var fixture := _fully_herded_herd_fixture()
-	fixture["domestication"] = 0.98
-	HerdFx.price_animal_build(fixture)
 	HerdFx.set_managed_herders(fixture, 6)
+	_set_keeper_upkeep(fixture, 6, KEEPERS_ON_THE_DEER)
 	fixture["herded_fraction"] = 1.0
 	return fixture
+
+## The keepers `BandFx.band_fixture`'s Hunt assignment holds on game_deer_07 once this chapter stages
+## the `maintain` crew on it — the number both staffing frames are read against.
+const KEEPERS_ON_THE_DEER := 4
+
+## A hunt crew deliberately ABOVE the under-kept herd's keeper demand (6), for the probe that proves
+## hunters are not counted: at this staffing the retired take-crew trigger reads the herd as fully
+## held while nobody is keeping it at all.
+const HUNTERS_PAST_THE_KEEPERS := 8
+
+## The reference band with a stated KEEPING crew on game_deer_07 — `BandFx.band_fixture` publishes the
+## take crew alone, which is what the two staffing frames used to be read against. `hunters` defaults
+## to the fixture's own count so only the keeping moves between the states that share it.
+func _keeper_band_fixture(keepers: int, hunters: int = -1) -> Dictionary:
+	var band := BandFx.band_fixture().duplicate(true)
+	for entry in band["labor_assignments"]:
+		if entry is Dictionary and String((entry as Dictionary).get("kind", "")) == "hunt":
+			(entry as Dictionary)["maintain_workers"] = keepers
+			if hunters >= 0:
+				(entry as Dictionary)["workers"] = hunters
+	return band
+
+## **THE KEEPING SIDE OF A MANAGED HERD, STATED AS THE SIM STATES IT.** `upkeep_workers_needed` is the
+## MAINTAIN activity's own `workers_needed` and equals `herders_needed` on a rung that STANDS, so the
+## two are set together for the reason `set_managed_herders` sets its pair together: half-setting them
+## renders a herd that owes keepers to a row and owes nobody to the ⚠. The work figures are the same
+## fact in work units (the `animal:pastoral` rung asks 1.0 per keeper-load), so `supplied` follows the
+## crew actually on it and the shortfall falls out.
+func _set_keeper_upkeep(fixture: Dictionary, wanted: int, supplied_by: int) -> void:
+	fixture["upkeep_workers_needed"] = wanted
+	fixture["upkeep_demand"] = float(wanted)
+	fixture["upkeep_supplied"] = float(mini(supplied_by, wanted))
+	fixture["upkeep_shortfall"] = float(maxi(wanted - supplied_by, 0))
 
 ## A PREDATOR (Predators Phase 1a): a Grey Wolf Pack — big, wild-ceiling, carnivore. `prey_sense_radius`
 ## 4 (`> 0`) is BOTH the "this is a predator" signal AND the map ring radius, so the drawer must read
@@ -274,10 +312,11 @@ func _small_game_herd_fixture() -> Dictionary:
 
 ## A composing-Corral herd that needs MORE than one keeper (Grazing 2d-δ herder deficit): the take/prepare
 ## max-useful for the Corral rung is 1 ("one worker suffices to prepare"), but this growing herd needs 2
-## herders EVERY turn to hold its tameness — and it is currently UNDER-herded, because the STATE dials the
-## band's own hunt assignment on this herd down to 1 (the base fixture staffs 4, which would hide the very
-## deficit this frame exists to show). The Herders row reads "1 / 2 — under-herded" off that ACTUAL
-## assignment via `HudBandLaborState.assigned_herders_for`, and the shed consequence line names 2.
+## keepers EVERY turn to hold its tameness. The STATE dials the band's own hunt assignment on this herd
+## down to 1, which is the TAKE crew — **the keeping is a different allocation now**
+## (`docs/plan_standing_upkeep.md` §2.2), so the drawer's `Keepers` row reads the herd's demand against
+## the keepers on it and the frame's own claim is the compose CAP, which is what it has always
+## asserted.
 ## `herded_fraction` is deliberately left STALE at 0.5 and is read NOWHERE in the render path — the same
 ## convention `_fully_herded_fixture` / `_under_herded_fixture` carry, and the reason the old
 ## reconstruct-from-the-fraction reading was retired. The compose
@@ -530,13 +569,14 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("herd_corral_starving")
 
-	# Staffing readout (fauna neglect-escape arc) — the fix for the stale "N of M working" count. The
-	# reference band (`BandFx.band_fixture`) staffs 4 herders on game_deer_07, and the count now comes from
-	# that ACTUAL assignment, never from last turn's resolved `herded_fraction`.
-	# FULLY STAFFED: the herd needs 4 and 4 are on it → a calm "Herders: 4 / 4" (neutral ink), no
+	# Staffing readout (fauna neglect-escape arc) — the fix for the stale "N of M working" count, now
+	# counting the crew that actually HOLDS the herd. The band staffs 4 KEEPERS on game_deer_07 (its
+	# Hunt assignment's `maintain_workers`), and the count comes from that ACTUAL allocation — never
+	# from last turn's resolved `herded_fraction`, and never from the hunters beside them.
+	# FULLY KEPT: the herd wants 4 and 4 are on it → a calm "Keepers: 4 / 4" (neutral ink), no
 	# consequence line. `herded_fraction` is a stale 0.4, so the OLD reconstruction would have read a
 	# self-contradictory "2 / 4 — under-herded" — proving the fix.
-	h._hud._band_labor._player_band = BandFx.band_fixture()
+	h._hud._band_labor._player_band = _keeper_band_fixture(KEEPERS_ON_THE_DEER)
 	h._hud._band_labor._player_bands = []
 	h._show_herd(_fully_herded_herd_fixture())
 	await h._settle()
@@ -544,23 +584,39 @@ func run(harness) -> void:
 	# ASSERT the corrected count: the actual staffed 4 shows, not the stale reconstruction 2.
 	var fully_lines = DetailFormat.herd_summary_lines(
 		_fully_herded_herd_fixture(), h._hud._band_labor.world_herds(),
-		h._hud._band_labor.assigned_herders_for(_fully_herded_herd_fixture()["id"]))
-	assert(_lines_contain(fully_lines, "Herders: 4 / 4"))
-	assert(not _lines_any_contain(fully_lines, "under-herded"))
+		h._hud._band_labor.assigned_keepers_for(_fully_herded_herd_fixture()["id"]))
+	h._assert_hud("a fully-kept herd states its keepers calmly",
+		_lines_contain(fully_lines, "Keepers: 4 / 4")
+		and not _lines_any_contain(fully_lines, "under-herded"))
 
-	# UNDER-HERDED: the herd now needs 6 herders but only 4 are staffed → an amber "Herders: 4 / 6 —
+	# UNDER-KEPT: the herd now wants 6 keepers but only 4 are on it → an amber "Keepers: 4 / 6 —
 	# under-herded" (the ACTUAL count) plus the shed line "Under-herded — animals are drifting off.
-	# Staff all 6 herders to hold the herd." — NOT the retired "tameness slipping" copy. `herded_fraction`
+	# Staff 6 KEEPERS to hold the herd." — NOT the retired "tameness slipping" copy, and NOT the
+	# retired "Staff all N herders", which named the crew that cannot stop the shed. `herded_fraction`
 	# is a stale 1.0, so the OLD reconstruction would have read a calm "6 / 6" with no warning.
 	h._show_herd(_under_herded_herd_fixture())
 	await h._settle()
 	await h._save("herd_under_herded")
 	var under_lines = DetailFormat.herd_summary_lines(
 		_under_herded_herd_fixture(), h._hud._band_labor.world_herds(),
-		h._hud._band_labor.assigned_herders_for(_under_herded_herd_fixture()["id"]))
-	assert(_lines_contain(under_lines, "Herders: 4 / 6 — under-herded"))
-	assert(_lines_any_contain(under_lines, "animals are drifting off"))
-	assert(not _lines_any_contain(under_lines, "slipping"))
+		h._hud._band_labor.assigned_keepers_for(_under_herded_herd_fixture()["id"]))
+	h._assert_hud("an under-kept herd flags the deficit and names the KEEPERS that stop it",
+		_lines_contain(under_lines, "Keepers: 4 / 6 — under-herded")
+		and _lines_any_contain(under_lines, "animals are drifting off")
+		and _lines_any_contain(under_lines, "KEEPERS")
+		and not _lines_any_contain(under_lines, "slipping"))
+	# **THE PAIR THAT PINS WHICH CREW IS COUNTED.** The same herd read against a band whose HUNTERS are
+	# staffed past the keeper demand and whose keeping crew is EMPTY must still flag the shed — the
+	# defect this trigger fix removes, where staffing hunters cleared a warning about the keepers. It
+	# goes through `assigned_keepers_for` rather than a hand-summed count, that reader being the thing
+	# under test.
+	h._hud._band_labor._player_band = _keeper_band_fixture(0, HUNTERS_PAST_THE_KEEPERS)
+	var hunters_only := DetailFormat.herd_summary_lines(
+		_under_herded_herd_fixture(), h._hud._band_labor.world_herds(),
+		h._hud._band_labor.assigned_keepers_for(_under_herded_herd_fixture()["id"]))
+	h._assert_hud("hunters do not hold a herd — a keeperless herd is under-kept however many hunt it",
+		_lines_contain(hunters_only, "Keepers: 0 / 6 — under-herded"))
+	h._hud._band_labor._player_band = BandFx.band_fixture()
 
 	# State 2d-γ self-feeding pen — a radius-2 pen (19 fenced tiles) on lush land: the fenced footprint
 	# grazes the WHOLE feed, so the feed-split reads "Fed by pasture 100% · larder 0.0 food/turn" and the
@@ -757,21 +813,16 @@ func run(harness) -> void:
 		corral_drawer.contains(
 			HudSelectionVocab.BUILD_TURNS_ROW_FORMAT % HerdFx.ANIMAL_BUILD_TURNS_REMAINING))
 
-	# State 3d-corral-under-herded — the HERDER-DEFICIT cap fix. A composing-Corral herd needs 2 herders
-	# every turn to hold its tameness, but the Corral rung's take/prepare max-useful is 1. The compose
-	# stepper's cap must be max(1, herders_needed 2) = 2, so the `+` reaches 2 and the maintenance crew is
-	# staffable (an under-herded corral is otherwise an unwinnable trap). The drawer's Herders row reads
-	# "1 / 2 — under-herded" and the shed consequence line ("animals are drifting off. Staff all 2 herders
-	# to hold the herd." — NEVER the retired "tameness slipping" copy) names 2 — the SAME herders_needed
-	# the cap uses.
-	# Auto-max (a policy click arms the compose hunt autofill) fills the crew to the corrected cap of 2.
+	# State 3d-corral-under-herded — the HERDER-DEFICIT cap frame. A composing-Corral herd needs 2
+	# keepers every turn to hold its tameness, but the Corral rung's take/prepare max-useful is 1.
+	# Auto-max (a policy click arms the compose hunt autofill) fills the crew to the cap, and the claim
+	# below is that the cap REACHES the keeper deficit — see the assertion for why it is an inequality.
 	#
-	# THE STAFFING IS DIALED DOWN FOR THIS STATE ONLY. The drawer's "Herders A / N" row reads the band's
-	# ACTUAL hunt assignment on this herd (`assigned_herders_for`), and the reference band staffs 4 — which
-	# renders a FULLY-herded corral and hides the very shortfall the cap floor exists to fix. The row and
-	# the cap floor have to DISAGREE for the deficit to be visible, so this band staffs 1 against the herd's
-	# requirement of 2; `BandFx.band_fixture()` is restored immediately after the save, since `herd_corral_depleted`
-	# and every state downstream document the reference band's 4.
+	# THE STAFFING IS DIALED DOWN FOR THIS STATE ONLY, and it is the TAKE crew that moves: the reference
+	# band staffs 4 hunters, which saturates the take and hides the shape this frame is about. The
+	# drawer's `Keepers` row is a different allocation entirely and reads 0 here, the reference band
+	# keeping nothing. `BandFx.band_fixture()` is restored immediately after the save, since
+	# `herd_corral_depleted` and every state downstream document the reference band's 4.
 	var under_herded_band := BandFx.band_fixture().duplicate(true)
 	for entry in under_herded_band["labor_assignments"]:
 		if entry is Dictionary and String((entry as Dictionary).get("kind", "")) == "hunt":

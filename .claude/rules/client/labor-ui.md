@@ -2936,6 +2936,17 @@ authority over the number the whole readout exists to make legible.
 the herd drawer both append it — as `Keeping: 1 of 2 work — wants 2 keepers`, plus an `At risk:` row
 whenever the keeping is underpaid.
 
+**`keepers_wanted` / `is_under_kept` sit beside it as the ONE crew-count test over the same reader**,
+and the animal web's two under-kept surfaces both call it: the herd drawer's `Keepers: A / N` row and
+the work board's under-herded ⚠. The crew it counts is
+`HudBandLaborState.assigned_keepers_for(herd)` — the `maintain` crews summed across the player's
+bands — and **not the herd's hunters**, which is what both surfaces measured until the split and is
+the direction the sim never agreed with (`herd_herded_fraction` gates the shed on `upkeep_supplied`).
+**It is a CREW comparison rather than `upkeep_is_short`**, deliberately: the shortfall is what the
+meter decayed by last turn, so a warning keyed on it speaks once animals are already leaving, where
+the crew count is short the turn the player understaffs it. See `band-city-panel.md` → "The
+under-herded ⚠ counts the KEEPING crew".
+
 **THE EDGE IS A CLIFF, WHICH IS WHY THE COUNTDOWN IS ON THE CARD.** A completed meter sits exactly at
 its own cost, so the FIRST bleeding turn drops it below and the rung is **lost** — three unkept turns
 costs a tended patch, two costs a Field. A player who loses a 25-turn investment with no warning reads

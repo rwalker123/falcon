@@ -2172,6 +2172,8 @@ func _ready() -> void:
 	_assert_growth_row_not_merged("compact_tier_probe")
 	await _pin_canvas(PREVIEW_SIZE)
 
+	await _render_keeper_warning_states()
+
 	await _assert_action_registry()
 
 	_assert_herd_field_pairs()
@@ -2898,6 +2900,107 @@ const SCALE_BOUNDS_TOLERANCE := 1.0
 ## A badge to push at the reservation-independence guard. Its VALUE is irrelevant — what is under
 ## test is that pushing one cannot move the strip's cross-axis size.
 const SCALE_BADGE_TEXT := "3"
+
+# ---- THE UNDER-HERDED ⚠ AND THE CREW IT COUNTS (`docs/plan_standing_upkeep.md` §2.2) -------------
+#
+# **THE PAIR IS THE CLAIM, and neither half is worth a frame alone.** A warning that never fires and
+# a warning that never clears both render a perfectly ordinary board; what this pair says is that the
+# ⚠ tracks the KEEPING crew — it is up on a herd nobody keeps, and down on the SAME herd once the
+# keepers are on it, with the hunt crew held fixed across both so nothing else can account for the
+# change.
+#
+# It was measured against the hunters until the three-crew split landed, which made it actively
+# misleading in both directions: staffing keepers (the remedy the note names) left it up, and staffing
+# hunters cleared it without stopping the shed. The third claim below is that second half — the one no
+# frame can carry, since a board with hunters piled on it looks exactly like a board without them.
+#
+# The `short` frame opens the row's INSPECTOR, because that is the only surface the reworded note
+# renders on: the row itself spends the note on its severity stripe alone.
+
+## The keepers the `staffed` half puts on the herd — the herd's own demand, so the ⚠ clears exactly.
+const KEEPER_STATE_KEEPERS := UNDER_HERDED_WORK_HERDERS_NEEDED
+## Hunters staffed on that herd in BOTH halves, deliberately at the keeper demand: under the retired
+## take-crew trigger this alone reads as fully held, so the `short` frame's ⚠ can only come from the
+## keeping crew being empty.
+const KEEPER_STATE_HUNTERS := UNDER_HERDED_WORK_HERDERS_NEEDED
+## …and the crew the third claim piles on, well past the demand: more hunters must not clear a keeper
+## warning at any count.
+const KEEPER_STATE_HUNTERS_PILED_ON := UNDER_HERDED_WORK_HERDERS_NEEDED * 2
+
+func _render_keeper_warning_states() -> void:
+	_set_world_herds(_under_herded_work_herd_fixtures())
+	_push_bands([_keeper_work_band_fixture(0, KEEPER_STATE_HUNTERS)])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	_open_work_inspector_for_herd(UNDER_HERDED_WORK_HERD_ID)
+	await _settle()
+	await _save("band_panel_keepers_short")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_keeper_warning("band_panel_keepers_short", true)
+
+	# THE SAME HERD, THE SAME HUNTERS, THE KEEPING STAFFED. The inspector is left open so the note's
+	# absence is a change in the same surface rather than a surface that stopped rendering.
+	_push_bands([_keeper_work_band_fixture(KEEPER_STATE_KEEPERS, KEEPER_STATE_HUNTERS)])
+	await _settle()
+	await _save("band_panel_keepers_staffed")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_keeper_warning("band_panel_keepers_staffed", false)
+
+	# THE CLAIM NO FRAME CAN CARRY: hunters do not hold a herd. Driven rather than rendered — a board
+	# with twice the hunters on it looks exactly like the `short` frame above.
+	_push_bands([_keeper_work_band_fixture(0, KEEPER_STATE_HUNTERS_PILED_ON)])
+	await _settle()
+	_assert_keeper_warning("keepers_short_with_hunters_piled_on", true)
+	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
+	_push_bands([_band_fixture()])
+	await _settle()
+
+## The under-herded work band with its two crews stated separately. `_under_herded_work_band_fixture`
+## publishes the TAKE crew alone, which is what the ⚠ used to be measured against.
+func _keeper_work_band_fixture(keepers: int, hunters: int) -> Dictionary:
+	var band := _under_herded_work_band_fixture()
+	for entry in band["labor_assignments"]:
+		if entry is Dictionary and String((entry as Dictionary).get("kind", "")) == "hunt":
+			(entry as Dictionary)["workers"] = hunters
+			(entry as Dictionary)["maintain_workers"] = keepers
+	return band
+
+## GUARD: the under-herded ⚠, its note and its instruction, asserted TOGETHER — the flag the row tints
+## from, the amber mark, and (when up) the note naming the KEEPERS. Asserting the flag alone would pass
+## on a row that had stopped rendering either.
+func _assert_keeper_warning(state_name: String, expect_warned: bool) -> void:
+	var band: Dictionary = _hud._band_labor._panel_band
+	var found := false
+	var failures: Array[String] = []
+	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+		var model: Dictionary = model_variant
+		if String(model.get("herd_id", "")) != UNDER_HERDED_WORK_HERD_ID:
+			continue
+		found = true
+		var warned: bool = bool(model.get("under_herded", false))
+		var marks := String(model.get("marks", ""))
+		var note := String(model.get("note", ""))
+		if warned != expect_warned:
+			failures.append("under_herded is %s, expected %s" % [warned, expect_warned])
+		if expect_warned:
+			if not marks.contains(HudComposeVocab.OVERHUNT_FLAG):
+				failures.append("expected the ⚠ mark, got marks %s" % [marks])
+			if note != HudWorkVocab.WORK_ROW_UNDER_HERDED_NOTE:
+				failures.append("expected the KEEPERS note, got %s" % [note])
+		elif note == HudWorkVocab.WORK_ROW_UNDER_HERDED_NOTE:
+			failures.append("the KEEPERS note survived a herd whose keepers are staffed")
+	if not found:
+		_fail("%s — no Hunt work row for %s" % [state_name, UNDER_HERDED_WORK_HERD_ID])
+		return
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — %s the keeper warning is %s" % [
+			state_name, "up with its KEEPERS note" if expect_warned else "down"])
+		return
+	for failure in failures:
+		_fail("%s — %s" % [state_name, failure])
 
 func _render_interface_scale_states() -> void:
 	await _pin_canvas(DOCKROW_CANVAS)
@@ -7027,6 +7130,7 @@ func _under_herded_work_herd_fixtures() -> Array:
 		},
 	}
 	_set_managed_herders(penned, UNDER_HERDED_WORK_HERDERS_NEEDED)
+	_set_keeper_demand(penned, UNDER_HERDED_WORK_HERDERS_NEEDED)
 	return [penned]
 
 ## The band working that Wild Fowl: 2 herders on it (below the crew of 3) and idle workers free, on an
@@ -7060,6 +7164,7 @@ func _herder_floor_herd_fixtures() -> Array:
 		},
 	}
 	_set_managed_herders(fowl, HERDER_FLOOR_HERDERS_NEEDED)
+	_set_keeper_demand(fowl, HERDER_FLOOR_HERDERS_NEEDED)
 	return [fowl]
 
 ## THE INVARIANT AS A TEST — **and the invariant CHANGED with the keeper crew**
@@ -7174,7 +7279,12 @@ func _rung_band_fixture() -> Dictionary:
 		{"kind": "hunt", "workers": 2, "workers_needed": 2, "floor": 0.5,
 			"fauna_id": RUNG_PASTORAL_HERD_ID, "target_x": 70, "target_y": 19,
 			"actual_yield": 1.20, "sustainable_yield": 1.20},
+		# **THE KEEPERS ARE STATED, and that is what keeps this frame's `no ⚠` claim true.** The board's
+		# under-herded ⚠ counts the MAINTAIN crew against the herd's keeper demand
+		# (`docs/plan_standing_upkeep.md` §2.2); a penned herd with hunters and no keepers is a herd
+		# nobody is holding, so it would fly the ⚠ here and compete with the rung mark for the eye.
 		{"kind": "hunt", "workers": RUNG_PENNED_HERDERS, "workers_needed": RUNG_PENNED_HERDERS,
+			"maintain_workers": RUNG_PENNED_HERDERS,
 			"floor": 0.5,
 			"fauna_id": RUNG_PENNED_HERD_ID, "target_x": 69, "target_y": 20,
 			"actual_yield": 5.40, "sustainable_yield": 5.40},
@@ -7205,6 +7315,7 @@ func _rung_herd_fixtures() -> Array:
 		"hunt_policy_ceilings": {"sustain": 5.40},
 	}
 	_set_managed_herders(penned, RUNG_PENNED_HERDERS)
+	_set_keeper_demand(penned, RUNG_PENNED_HERDERS)
 	return [
 		{
 			"id": RUNG_PASTORAL_HERD_ID, "species": "Wild Boar", "x": 70, "y": 19,
@@ -8010,6 +8121,8 @@ func _find_meta_label(node: Node, meta: String) -> RichTextLabel:
 # and, in general, `herders_needed_if_managed >= herders_needed`.
 const HERDERS_NEEDED_KEY := "herders_needed"
 const HERDERS_NEEDED_IF_MANAGED_KEY := "herders_needed_if_managed"
+## The MAINTAIN activity's own `workers_needed` — see `_set_keeper_demand`.
+const UPKEEP_WORKERS_NEEDED_KEY := "upkeep_workers_needed"
 ## Deep-scan bound. Fixtures are trees, but a bound turns a future self-referencing one into a stop
 ## rather than an infinite walk.
 const HERD_SCAN_MAX_DEPTH := 8
@@ -8024,6 +8137,15 @@ var _herd_pair_violations := 0
 func _set_managed_herders(fixture: Dictionary, needed: int) -> void:
 	fixture[HERDERS_NEEDED_KEY] = needed
 	fixture[HERDERS_NEEDED_IF_MANAGED_KEY] = needed
+
+## **THE KEEPING DEMAND, AND IT IS DELIBERATELY NOT PART OF `_set_managed_herders`.**
+## `upkeepWorkersNeeded` is the MAINTAIN activity's own `workers_needed` and equals `herdersNeeded`
+## only on a rung that STANDS — while a Tame or a Corral is going up the sim publishes `0`, those
+## hands being the build crew's (`herd_at_risk_is_built`). This harness stages both shapes, so a
+## helper that set the pair together would give the mid-Corral aurochs a keeper demand no server
+## would, and its work row would fly an under-herded ⚠ for a shed that is not happening.
+func _set_keeper_demand(fixture: Dictionary, wanted: int) -> void:
+	fixture[UPKEEP_WORKERS_NEEDED_KEY] = wanted
 
 ## Walk everything reachable from `subject` and check the pair on every dict that carries either half.
 ## Deliberately a SCAN and not a per-fixture assertion: a guard you have to remember to call for each
