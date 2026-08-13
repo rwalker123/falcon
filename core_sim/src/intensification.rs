@@ -1113,8 +1113,10 @@ impl RungDef {
     /// (`docs/plan_standing_upkeep.md` §2.2): a finished rung that declares an upkeep keeps the crew
     /// that raised it, and one that declares none frees them.
     ///
-    /// `false` on every shipped rung today, so every completion frees its builders — which is
-    /// exactly the behaviour that shipped before the term existed.
+    /// **`true` on all four managed rungs** — `plant:tended`, `plant:field`, `animal:pastoral` and
+    /// `animal:pen` each declare one, so every completed build hands its crew onto the keeping rather
+    /// than freeing it. Only the two `wild` rungs answer `false`, and nothing is ever *built* on
+    /// those, so no completion reaches this asking about one.
     pub fn declares_upkeep(&self) -> bool {
         self.upkeep.is_some()
     }
