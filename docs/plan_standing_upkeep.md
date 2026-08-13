@@ -373,34 +373,83 @@ change is invisible*.
    shortfall penalty; the feed becomes the resource half.
 5. **The client readouts.** What an improvement demands, what the crew supplied, the shortfall, and
    the maintain toggle. Before any tuning.
-6. **The route branch (#532 proper).** Routes as the ladder's third branch, `infrastructure_cost`
+6. **Gear as productivity.** A kit raises what a supplier delivers **per turn** rather than
+   subtracting from the job. Decided because a job is a pile and an upkeep is a rate: subtraction has
+   nothing to subtract from, so the shipped build model needs a second mechanism for upkeep, while one
+   supply expression feeds both — a build divides a pile by it, an upkeep compares a demand against
+   it. What it gives up is the shipped arc's scale-sensitivity (a flat turn saving, so a tool nearly
+   frees a small job); what it gains is that a tool can no longer drive a job to zero, and a hoe fades
+   on a farm by being *insufficient* rather than by arithmetic. **This changes the shipped build
+   model**, not only upkeep.
+7. **Priority as a GENERAL per-source property.** Player-ordered, drag-and-drop, its own column — and
+   deliberately not a maintenance-funding list. The auto-assigner sketch (§6) wants tile priority for
+   its own reasons, and two orderings meaning almost the same thing would drift apart. Pooled
+   maintenance is its **first consumer**, not its owner; the shipped most-invested-first ordering
+   survives as the **tie-break** beneath an explicit rank, which matters because most sources will sit
+   at the default.
+8. **Symmetric partial credit.** A rung's benefit scales with its meter in **both** directions — a
+   half-built field pays half a field, as a decayed one does. Wanted; it is what makes the model
+   coherent both ways, and it removes the last discontinuity: today a build pays nothing for its whole
+   span and then everything at once. **The blast radius is wide but shallow** — the ~100 binary
+   predicates stay (they answer *"has this rung been achieved"*, which still gates the verbs and the
+   knowledge); every *payout* branching on them becomes an interpolation on the meter-over-cost
+   fraction already published. **What to watch:** the total work is unchanged, so the arithmetic of
+   *"is this worth it"* does not move — but the payoff starts on turn one, which softens the
+   commitment considerably. That may be right, given this arc has been about removing cliffs; it
+   should be a deliberate smoothing rather than a discovered one.
+9. **The route branch (#532 proper).** Routes as the ladder's third branch, `infrastructure_cost`
    wired for the first time, traversal-driven progress from supply links, shipments and movement.
-7. **The tuning spread.** Config-only, once the readouts can show it.
+10. **The tuning spread.** Config-only, once the readouts can show it.
 
 Slices 3 and 4 are separable but adjacent; they are kept apart because the two webs' penalties are
 genuinely different code paths (a meter bleed versus a flock shedding), which is where the mechanism
 will actually be tested. Merging them is a merge-time call.
 
+## 5. The allocation layer this arc kept running into
+
+**Leftover work units are a symptom, not the disease.** Every fix for them — bank the surplus, spill
+it into the build, round the demands — patches a mismatch that should not exist: an **indivisible
+supplier** meeting a **per-source demand** wastes whatever it does not spend, and the waste grows as
+gear improves.
+
+Pooling maintenance (§2) fixes it for one activity. The general form is to stop allocating at the
+tile at all: the player states **role pools** and **tile priorities**, and the sim assigns. That is
+not a rewrite — the sim already resolves everything off per-source assignments, so an assigner that
+*produces* those each turn leaves accrual, take, upkeep, decay, forecasts and the wire untouched. The
+assignment layer stops being **authored** and becomes **derived**, which is *"turns are the output"*
+applied one level up.
+
+Three things decide whether it is good: **legibility** (*"why are these suppliers here"*, and the
+more actionable *"these had nothing to do"*); **role-to-kit typing** — roles want to be job-typed
+because kits are, which is why spilling a surplus between activities gets strange; and **churn**,
+which is deliberately **not** being engineered against — it is a problem nobody has observed, and the
+cheap answer is to make reassignment observable so it would be noticed rather than inferred.
+
 ---
 
-## 5. Open items
+## 6. Open items
 
-- **The scale primitives' bounded set.** §2.6 names three (herd size, area/capacity, route
-  length×terrain). Whether those are three primitives or one parameterized one is slice 2's to
-  settle against the code.
-- ~~**Whether production stays a *capacity* or becomes work.**~~ **Settled: it joins the budget, and
-  the capacity survives as a second cap.** Ray: *"it will fall out of the worker count for sure — as
-  you are building, you need to allocate more workers, otherwise your take will be less."* A take
-  cannot fall while building unless building and taking draw on the same pool. What the budget
-  produces is an **effective worker count**, which then meets the existing
-  `per_worker_biomass_capacity` exactly as it does today — so hauling stays a carrying limit and the
-  work model decides how many hands are left to haul with.
-  > **The consequence to watch in playtest:** the retired dip was a flat 0.50, so a building crew
-  > took half. Under the budget a building crew takes **nothing**, and a band that wants both must
-  > staff both. That is a materially harsher early game, and it is the first thing to check.
-- **What the maintain toggle does to a build in flight.** Turning maintenance off while building the
-  next rung is expressible; whether it is meaningful (you are letting the thing you stand on decay
-  while climbing off it) is a play question.
+- **`retain_fraction` is a playtest dial, and it is the one to argue with.** `0.75` on both plant
+  rungs puts a wholly unmaintained improvement at ~27 turns before it is revoked — about a season.
+  `0.5` would give ~53, which reads as *"never lost"* while a rung's benefit is still binary. **It
+  becomes much less load-bearing once §4's symmetric partial credit lands**, because a rung sliding
+  back turns into a fading payout rather than a status you lose — so it is not worth over-tuning now.
+- **The scale primitives' bounded set.** `Flat` and `SourceLoad` ship; a route wants length × terrain
+  (`infrastructure_cost`), which is slice 9's to add. Whether that is a third primitive or a
+  parameterisation of one is a question for the code, not for this doc.
+- **Whether the two keeping pools should split further.** Agriculture and husbandry split because the
+  webs do. A finer split — a herd keeper's kit versus a field tender's — is only meaningful once a kit
+  declares a maintenance contribution, which none does today, so splitting now would invent a
+  distinction nothing can express. It becomes a config-shaped change the moment §4's gear-as-
+  productivity lands.
+
+> **Two items were retired rather than answered, and both are worth recording as such.** *"What the
+> maintain toggle does to a build in flight"* went with the toggle itself — keeping is a band-level
+> pool, so *"stop maintaining this one thing"* is no longer expressible, and that is deliberate. And
+> *"a building crew takes nothing"*, which this section flagged as the first thing to check in play,
+> was true only of the one-budget model it was written under: with the crews stated separately, the
+> gatherers beside a build carry exactly what gatherers carry, and what a build costs is the hands on
+> it. Neither warning survives its mechanism.
 
 ---
 
