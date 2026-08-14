@@ -488,8 +488,30 @@ const OPTIONAL_YIELD_KEYS: Array[String] = [
 	SourceForecast.YIELD_RANGE_LOW_KEY, SourceForecast.YIELD_RANGE_HIGH_KEY,
 ]
 
+## The build crew's key on a wire assignment AND on a merged row — one spelling, because
+## `effective_worker_map` copies it through under the wire's own name so `staffed_total` can read
+## either shape.
+const BUILD_WORKERS_KEY := "improvement_workers"
+
+## **THE HANDS ONE MERGED ROW SPENDS — the take crew AND the builders**, the client's transcription of
+## `LaborAssignment::staffed_total`. A source carries two allocations (`docs/plan_standing_upkeep.md`
+## §2.2) and the sim charges the band for BOTH, so any reader asking *"how much of this band is
+## committed here"* has to sum the pair.
+##
+## **SUMMING `workers` ALONE IS THE DEFECT THIS EXISTS TO MAKE UNSPELLABLE.** `effective_idle` did
+## exactly that, so a band with three builders on a Cultivate reported three idle who did not exist —
+## and every ceiling built on top of it (the role cards' steppers, the pen-extend crew, the bench's
+## `benchable_workers`) offered crews the sim then refused, naming an idle count the player could see
+## on the panel. Reported from play: `3 idle of 18` on a band whose every hand was spent.
+static func staffed_total(entry: Dictionary) -> int:
+	return maxi(int(entry.get("workers", 0)), 0) \
+		+ maxi(int(entry.get(BUILD_WORKERS_KEY, 0)), 0)
+
+## The build crew's key on a wire assignment AND on a merged row — one spelling, because
+## `effective_worker_map` copies it through under the wire's own name so `staffed_total` can read
 ## Confirmed labor assignments overlaid with this band's pending assigns, keyed by source/role.
-## Each value: {kind, workers, x, y, herd_id, policy, pending: bool, + per-source yield fields}.
+## Each value: {kind, workers, improvement_workers, x, y, herd_id, policy, pending: bool, + per-source
+## yield fields}.
 func effective_worker_map(band: Dictionary) -> Dictionary:
 	var merged: Dictionary = {}
 	for a in labor_assignments_of(band):
@@ -499,6 +521,11 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		var key := pending_key(kind, int(a.get("target_x", -1)), int(a.get("target_y", -1)), String(a.get("fauna_id", "")))
 		merged[key] = {
 			"kind": kind, "workers": int(a.get("workers", 0)),
+			# **THE SECOND ALLOCATION TRAVELS WITH THE FIRST** (`docs/plan_standing_upkeep.md` §2.2).
+			# The take crew and the build crew are two fields of ONE assignment and the band pays for
+			# both, so a map that carried only the take let every consumer of it describe a band with
+			# more hands than it has.
+			BUILD_WORKERS_KEY: maxi(int(a.get(BUILD_WORKERS_KEY, 0)), 0),
 			"x": int(a.get("target_x", -1)), "y": int(a.get("target_y", -1)),
 			"herd_id": String(a.get("fauna_id", "")),
 			# WHERE THIS CREW STOPS, as a fraction of the source's capacity — the whole of the harvest
@@ -543,8 +570,15 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 	var pend := pending_assigns_for(int(band.get("entity", -1)))
 	for key in pend:
 		var pd: Dictionary = pend[key]
+		# The builders the edit LEAVES IN PLACE, for the reason the `improvement` below is kept:
+		# `assign_labor` states neither, so a pending TAKE edit that blanked the build crew would make
+		# three staffed builders vanish from the workforce bar and reappear as idle hands for the turn
+		# between the command and its confirmation — the very miscount this map's `staffed_total` fixes.
+		var standing_builders := maxi(
+			int((merged.get(key, {}) as Dictionary).get(BUILD_WORKERS_KEY, 0)), 0)
 		merged[key] = {
 			"kind": String(pd.get("kind", "")), "workers": int(pd.get("workers", 0)),
+			BUILD_WORKERS_KEY: standing_builders,
 			"x": int(pd.get("x", -1)), "y": int(pd.get("y", -1)),
 			"herd_id": String(pd.get("herd_id", "")),
 			"floor": SourceForecast.clamp_floor(
@@ -590,6 +624,11 @@ func forage_effort_at(x: int, y: int, bands: Array = []) -> Dictionary:
 func hunt_effort_on(herd_id: String, bands: Array = []) -> Dictionary:
 	return _effort_on(pending_key(LABOR_KIND_HUNT, -1, -1, herd_id), bands)
 
+## **`workers` HERE IS THE TAKE CREW ALONE, AND THAT IS NOT THE `staffed_total` OMISSION.** Every
+## reader of this answer asks *"is anybody HARVESTING this source"* — the attention producers' unworked
+## rung and under-crewed herd, the tile card's worked mark — and a builder takes nothing, so folding
+## the build crew in would report a patch nobody is gathering as gathered. What a build is doing here
+## is the `improvement` beside it, which those readers have their own use for.
 func _effort_on(key: String, bands: Array = []) -> Dictionary:
 	var workers := 0
 	var improvement := SourceForecast.IMPROVEMENT_NONE
@@ -605,7 +644,15 @@ func _effort_on(key: String, bands: Array = []) -> Dictionary:
 			improvement = String(m.get("improvement", "")).strip_edges().to_lower()
 	return {"workers": workers, "improvement": improvement}
 
-## Optimistic idle = working-age minus the sum of effective worker counts **minus the bench crew**.
+## Optimistic idle = working-age minus **every** hand each effective assignment spends — the take crew
+## AND the builders (`staffed_total`) — minus the bench crew.
+##
+## **THE BUILDERS WERE MISSING AND EVERY CEILING BUILT ON THIS INHERITED IT.** This summed the wire's
+## per-assignment `workers` alone, which is the TAKE crew, so a band with three hands on a Cultivate
+## reported three idle who were already spent — `3 idle of 18` beside `Forage 9 · Hunt 6 · Idle 3`,
+## reported from play. The sim's `LaborAllocation::assigned_total` sums `LaborAssignment::staffed_total`,
+## i.e. `workers + improvement_workers`; this is that same sum, and the disagreement was entirely the
+## client's.
 ##
 ## **A WORKER AT THE BENCH IS ASSIGNED LABOR, AND THE BENCH IS NOT A `LaborTarget`.** A band's people
 ## are spent on the `labor_assignments` this overlays AND on the crafting bench, and a bench crew is
@@ -624,7 +671,7 @@ func effective_idle(band: Dictionary) -> int:
 	var assigned := 0
 	var merged := effective_worker_map(band)
 	for key in merged:
-		assigned += int((merged[key] as Dictionary).get("workers", 0))
+		assigned += staffed_total(merged[key] as Dictionary)
 	return max(0, int(band.get("working_age", 0)) - assigned - bench_workers(band))
 
 ## The crew standing at the band's crafting bench (`PopulationCohortState.bench.workers`) — spent

@@ -846,8 +846,9 @@ const FLORA_CROP_ROW_SPECIES_META := "flora_crop_row_species"
 ## rung, its payoff, its meter and — when gated — its reason); what lives here is the SHAPE the four
 ## states share, so the two webs cannot drift into two different-looking controls:
 ##
-##   OFFERED — an unchecked, enabled `CheckBox` naming the rung and its terms. **The only CHOICE of
-##             the four**, and therefore the only checkbox.
+##   OFFERED — an unchecked, enabled `CheckBox` naming the rung and its terms.
+##   DECLARED — the SAME checkbox, TICKED: a rung the band has declared and has neither builders nor
+##             banked work on. **The other CHOICE**, and the only way back off a declaration.
 ##   GATED   — a **`Label`, not a disabled checkbox**, whose text IS the reason the caller resolved;
 ##             the tooltip is the rung's hint, NOT the reasons. See the const's own note for why the
 ##             greyed-checkbox form was retired.
@@ -868,17 +869,55 @@ const FLORA_CROP_ROW_SPECIES_META := "flora_crop_row_species"
 ## yet, the one state a declaration is still the authority for).
 ##
 ## `notes` render beneath in the hint style — the WARN-amber zero-payoff line when running
-## (`warn_notes` picks the tint), and on a GATED control the SECOND and later gate reasons, the first
-## having become the control's own text. An OFFERED control passes none: an offer with an unmet
-## prerequisite is a GATED one. Returns the whole block, so a caller adds one child.
+## (`warn_notes` picks the tint), the *not started* line on a DECLARED one, and on a GATED control the
+## SECOND and later gate reasons, the first having become the control's own text. An OFFERED control
+## passes none: an offer with an unmet prerequisite is a GATED one. Returns the whole block, so a
+## caller adds one child.
 ##
-## **`warn_face` INKS THE WHOLE FACE AMBER**, and it is for exactly one reading: a turn estimate of
-## `SourceForecast.BUILD_TURNS_NEVER`, the `∞` a crew at or below the maintenance rate earns. A face
-## is one `Label`/`CheckBox` and so takes one colour, so the warning cannot ride the clause alone —
-## which is the honest treatment anyway, since what is wrong is the whole proposition on that line.
+## **`disabled_reason` IS THE ONLY THING THAT DISABLES A BOX**, and it renders beneath as its own hint
+## line. `notes` used to do it implicitly (`disabled = not notes.is_empty()`), which was dead logic —
+## the gated case never reaches this branch — and which would have silently killed the box the moment
+## a live state grew a note of its own, which is exactly what DECLARED does.
+##
+## **`pace` INKS THE WHOLE FACE, AND IT CARRIES THREE STATES RATHER THAN A WARNING FLAG.** It was
+## `warn_face: bool`, which could say only *amber or not*; a build line has to say which of three
+## things the meter is doing — climbing, holding, or losing ground — because those are three different
+## decisions (`SourceForecast.build_pace`, which owns the classification and the reason the client may
+## not derive the sign itself). A face is one `Label`/`CheckBox` and so takes one colour, so the state
+## cannot ride the turns clause alone — which is the honest treatment anyway, since what a losing pace
+## is wrong about is the whole proposition on that line.
+##
+## **A CHECKBOX TAKES ONLY THE TWO STOPPING PACES.** `GROWING`'s green would read as an achievement on
+## a rung nobody has started, so an offer at a finite estimate keeps `apply_checkbox`'s own face colour
+## and only `HOLDING` / `LOSING` override it.
+## It is a `match` rather than a `const` DICTIONARY because a const initializer evaluates at class
+## LOAD, and a table keyed on another `class_name`d script's consts welds this leaf's load order to
+## that script's — the cross-class `const` hazard `hud-modules.md` records.
+static func improvement_pace_color(pace: String, fallback: Color) -> Color:
+    match pace:
+        SourceForecast.BUILD_PACE_GROWING: return HudStyle.HEALTHY
+        SourceForecast.BUILD_PACE_HOLDING: return HudStyle.WARN
+        SourceForecast.BUILD_PACE_LOSING: return HudStyle.DANGER
+    return fallback
+
+## Does a CHECKBOX face re-tint for this pace? The two stopping ones only — see above for why
+## `GROWING` is not one of them.
+static func improvement_pace_stops(pace: String) -> bool:
+    return pace == SourceForecast.BUILD_PACE_HOLDING or pace == SourceForecast.BUILD_PACE_LOSING
+
 const IMPROVEMENT_STATE_OFFERED := "offered"
 const IMPROVEMENT_STATE_RUNNING := "running"
 const IMPROVEMENT_STATE_DONE := "done"
+## **A RUNG DECLARED WITH NOTHING IN FLIGHT — a live, TICKED checkbox.** The declaration stands (the
+## wire carries it, or the player has just clicked it) but there are no builders on it and its meter
+## has never moved, so nothing is being built and the control must not claim otherwise.
+##
+## **IT IS A CHOICE, WHICH IS WHY IT IS A BOX AND NOT THE RUNNING LABEL.** Rendering it as RUNNING was
+## a one-way door: the label carries no toggle, so a player who ticked `cultivate` on a band with no
+## free hands got `Cultivating 0 / 50 work (0%)` with the *not started* warning and **no way to untick
+## it**. Reported from play. Unticking sends the walk-away command the BUILDERS stepper sends —
+## `cultivate <faction> <x> <y> 0` — so the two levers agree by construction.
+const IMPROVEMENT_STATE_DECLARED := "declared"
 ## An offer the source cannot take yet. **A LABEL, not a disabled checkbox** — the control's shape
 ## says whether this is a CHOICE or a FACT, and an unmet prerequisite is a fact. It shipped once as a
 ## greyed checkbox reading "Cultivate this patch · then 0.04 food …" with the reason on a second line
@@ -888,7 +927,8 @@ const IMPROVEMENT_STATE_GATED := "gated"
 
 static func build_improvement_control(improvement: String, state: String, face: String,
         tooltip: String, on_toggle: Callable, notes: Array = [],
-        warn_notes: bool = false, warn_face: bool = false) -> VBoxContainer:
+        warn_notes: bool = false, pace: String = SourceForecast.BUILD_PACE_UNKNOWN,
+        disabled_reason: String = "") -> VBoxContainer:
     var block := VBoxContainer.new()
     block.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     if state == IMPROVEMENT_STATE_RUNNING:
@@ -900,8 +940,11 @@ static func build_improvement_control(improvement: String, state: String, face: 
         running.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
         running.add_theme_font_size_override("font_size",
             HudWorkVocab.POLICY_PICKER_NAME_FONT_SIZE)
+        # **THE STATE OF THE BUILD IS THIS LINE'S COLOUR** — green while the meter climbs, amber while
+        # it holds, red while it loses ground. `SIGNAL` is the fallback for a pace nobody could answer
+        # (no crew, no priced job), which is the neutral live ink this face has always worn.
         running.add_theme_color_override("font_color",
-            HudStyle.WARN if warn_face else HudStyle.SIGNAL)
+            improvement_pace_color(pace, HudStyle.SIGNAL))
         running.set_meta(IMPROVEMENT_CONTROL_META, improvement)
         running.set_meta(IMPROVEMENT_STATE_META, state)
         set_label_tooltip(running, tooltip)
@@ -946,21 +989,27 @@ static func build_improvement_control(improvement: String, state: String, face: 
         # so on this console the unchecked indicator reserves its width and paints nothing — an offer
         # with no control on it. `HudStyle.apply_checkbox` has the whole autopsy.
         HudStyle.apply_checkbox(box)
-        # **THE OFFER IS THE ONE STATE THAT CAN CARRY THE WARNING WITHOUT BEING GATED BY IT.** A crew
+        # **A BOX IS THE ONE STATE THAT CAN CARRY A STOPPING PACE WITHOUT BEING GATED BY IT.** A crew
         # below the maintenance rate makes the job unfinishable, not illegal — the player may staff it
-        # anyway and add hands next turn — so the face goes amber and the box stays live.
+        # anyway and add hands next turn — so the face takes the pace's ink and the box stays live.
         #
         # **AFTER `apply_checkbox`, AND ON EVERY INTERACTION STATE.** That helper writes `font_color`
         # itself (plus hover/pressed/focus), so an override set before it is silently overwritten and
         # one set on `font_color` alone reverts to neutral ink the moment the pointer lands on it.
-        if warn_face:
+        if improvement_pace_stops(pace):
             for slot in CHECKBOX_LIVE_FONT_COLOR_SLOTS:
-                box.add_theme_color_override(slot, HudStyle.WARN)
+                box.add_theme_color_override(slot, improvement_pace_color(pace, HudStyle.WARN))
+        # A DECLARED rung opens TICKED — the declaration stands, and unticking it is the walk-away.
+        # Set BEFORE `toggled` is connected, or seeding the box would fire the handler and un-declare
+        # the very build being rendered.
+        box.button_pressed = state == IMPROVEMENT_STATE_DECLARED
         box.set_meta(IMPROVEMENT_CONTROL_META, improvement)
         box.set_meta(IMPROVEMENT_STATE_META, state)
-        # An OFFERED box is disabled only by an unmet prerequisite. (It is the only state that reaches
-        # this branch now: RUNNING became a Label when `abandon_improvement` retired.)
-        box.disabled = not notes.is_empty()
+        # **A DEAD BOX ALWAYS STATES ITS REASON.** A control the player can click to no effect is worse
+        # than one that is visibly closed, so `disabled_reason` is the ONE way to disable a box, and it
+        # is prepended to the notes below rather than rendered by a branch of its own — that keeps the
+        # reason in the same hint register the rest of the block's lines are in.
+        box.disabled = disabled_reason != ""
         if not box.disabled:
             # `toggled`, not `pressed`: the handler needs the NEW state, and reading `button_pressed`
             # back inside a `pressed` handler is the kind of ordering assumption that silently
@@ -969,6 +1018,8 @@ static func build_improvement_control(improvement: String, state: String, face: 
             box.toggled.connect(func(pressed: bool) -> void:
                 on_toggle.call(improvement if pressed else SourceForecast.IMPROVEMENT_NONE))
         block.add_child(box)
+    if disabled_reason != "":
+        block.add_child(alloc_hint_label(disabled_reason))
     for note in notes:
         var line := alloc_hint_label(String(note))
         if warn_notes:

@@ -336,11 +336,19 @@ func run(harness) -> void:
 	# followed by `%` in the format, so one meter's face can never be a prefix of the other's — `0%`
 	# does not lead `34%` — and the claim is as exact as the `==` was. **The face may close on the
 	# sim's turn estimate now** (`— ≈ N turns`), which is another reason the match stays a prefix.
-	var stale_meter := _tame_meter_face(0.0)
 	var fresh_meter := _tame_meter_face(REOPEN_TAMING_DOMESTICATION)
-	h._assert_hud("precondition: the WILD herd's sheet quotes its own untamed meter",
-		ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
-			HudConst.LABOR_POLICY_TAME).begins_with(stale_meter))
+	# **THE PRECONDITION IS THE ABSENCE OF THE FRESH METER, NOT THE PRESENCE OF A `0%` ONE.** A wild
+	# herd with Tame declared and nobody on it has nothing in flight, so the control is the DECLARED
+	# checkbox and quotes no meter at all — the whole point of that state, and what makes a stale
+	# declaration re-tickable. What the baseline has to establish is only that the sheet is NOT already
+	# quoting the taming herd's 4%, or the claim below would pass by coincidence.
+	h._assert_hud("precondition: the WILD herd's sheet is a DECLARED choice, nothing in flight",
+		String(ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet,
+			HudConst.LABOR_POLICY_TAME).get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
+			== HudWidgets.IMPROVEMENT_STATE_DECLARED)
+	h._assert_hud("…and it quotes no meter at all, least of all the taming herd's",
+		not ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
+			HudConst.LABOR_POLICY_TAME).contains(fresh_meter))
 	# The player closes the sheet and ends the turn. Closing matters: with the sheet OPEN the snapshot's
 	# `refresh_compose_sheet` rebuilds it against `_selection.herd()` and self-heals, which is exactly
 	# why the bug reads as "one turn behind" rather than as a permanent lie.

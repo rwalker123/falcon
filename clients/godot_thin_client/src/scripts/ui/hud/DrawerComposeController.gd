@@ -1059,12 +1059,28 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         on_toggle: Callable, target: VBoxContainer,
         extra_rows: Callable = Callable(), build_crew: int = 0, build_idle: int = 0,
         on_build_crew: Callable = Callable()) -> void:
-    # RUNNING — whatever the METERS say is going up, with `composed` reaching the derivation as a
-    # declaration for a meter at zero. That covers a box the player has just ticked (it reads as
-    # running immediately rather than waiting a turn to stop looking like an offer) AND the two cases
-    # no stored verb can: a rung eroded back below its cost, and a build the player never re-declared.
+    # THE RUNG IN FLIGHT — whatever the METERS say is going up, with `composed` reaching the derivation
+    # as a declaration for a meter at zero. That covers the two cases no stored verb can: a rung eroded
+    # back below its cost, and a build the player never re-declared.
     var source_kind := SourceForecast.source_kind_for_labor(kind)
     var running_verb := SourceForecast.build_verb(source, prefix, source_kind, composed)
+    # **A DECLARATION IS NOT A BUILD, AND THE CONTROL MUST NOT RENDER ONE AS THE OTHER.** A build is
+    # ACTUALLY in flight when there are builders on it or work banked on its meter; a rung with neither
+    # has been *declared* and nothing more. Rendering that as RUNNING was a one-way door — the running
+    # face is a `Label`, so a player who ticked `cultivate` on a band with no free hands got
+    # `Cultivating 0 / 50 work (0%)` and no way back off it. Reported from play.
+    #
+    # It is the DECLARED state instead: the same live checkbox, ticked, whose uncheck is the walk-away
+    # `cultivate <faction> <x> <y> 0` the BUILDERS stepper beneath it sends. The *not started* warning
+    # travels with it and stays useful — a band that SHRINKS sheds its builders while the declaration
+    # stands, which is not a player choice and must still be flagged.
+    if running_verb != SourceForecast.IMPROVEMENT_NONE \
+            and build_crew <= SourceForecast.BUILD_CREW_NONE \
+            and SourceForecast.improvement_progress(source, prefix, running_verb) \
+                <= SourceForecast.BUILD_METER_UNSTARTED:
+        _mount_declared_control(source, prefix, source_kind, running_verb, floor, band, kit_gear,
+            on_toggle, target, extra_rows, build_crew, build_idle, on_build_crew)
+        return
     if running_verb != SourceForecast.IMPROVEMENT_NONE:
         var glyph := FoodIcons.for_policy(running_verb)
         var participle := String(
@@ -1090,17 +1106,19 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         # a build is an empty escapement room, and the honest statement of THAT is the estimate
         # dropping out (`SourceForecast.build_turns_at`'s work predicate), not a note about the phase.
         var notes: Array = []
-        # **…AND THE OTHER NOTE IS THE ONE THIS FACE CANNOT MAKE ON ITS OWN: NOBODY IS ON IT.** At a
-        # builders crew of zero `build_turns_at` answers `BUILD_TURNS_NO_ESTIMATE` — correctly, there
-        # being no crew to estimate for — and the turns clause is simply dropped, so the control read
-        # `🌱 Cultivating 0 / 50 work (0%)` and stopped, which is indistinguishable from a build that
-        # has just begun. It LEADS the notes because it is the loudest thing true of this rung, and it
-        # names which of the two unstaffed states this is: nothing started, or a meter sliding back.
+        # **…AND THE OTHER NOTE IS THE ONE THIS FACE CANNOT MAKE ON ITS OWN: THE METER IS BLEEDING.**
+        # At a builders crew of zero `build_turns_at` answers `BUILD_TURNS_NO_ESTIMATE` — correctly,
+        # there being no crew to estimate for — and the turns clause is simply dropped, so the control
+        # read `🌱 Cultivating 30 / 50 work (60%)` and stopped, which is indistinguishable from a build
+        # somebody is on. It LEADS the notes because it is the loudest thing true of this rung.
+        #
+        # **THE OTHER UNSTAFFED STATE CANNOT REACH THIS BRANCH ANY MORE** — `BUILD_UNSTAFFED_UNSTARTED`
+        # is no crew AND no work banked, i.e. exactly `not in_flight`, so it renders on the DECLARED
+        # checkbox below with its own note. That is what makes the *not started* warning re-tickable
+        # instead of a one-way door.
         var unstaffed := SourceForecast.unstaffed_build_state(
             source, prefix, source_kind, composed, build_crew)
-        if unstaffed == SourceForecast.BUILD_UNSTAFFED_UNSTARTED:
-            notes.append(HudComposeVocab.BUILD_UNSTARTED_NOTE)
-        elif unstaffed == SourceForecast.BUILD_UNSTAFFED_SLIDING:
+        if unstaffed == SourceForecast.BUILD_UNSTAFFED_SLIDING:
             notes.append(HudComposeVocab.BUILD_SLIDING_NOTE)
         var running_face := HudComposeVocab.IMPROVEMENT_RUNNING_BARE_FORMAT % [
             glyph, DetailFormat.build_meter_value(participle,
@@ -1126,28 +1144,21 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         if running_turns != SourceForecast.BUILD_TURNS_NO_ESTIMATE:
             running_face = HudComposeVocab.IMPROVEMENT_RUNNING_TURNS_FORMAT % [
                 running_face, DetailFormat.build_turns_clause(running_turns)]
-        if not deal.is_empty():
-            var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
-            var feed := float(deal["feed"]) * output
-            # **A ZERO PAYOFF UNDER A RUNNING FEED IS A PURE LOSS, and the note that says so has now
-            # outlived two homes for the zero itself.** The pen harvests by constant escapement, so a
-            # herd at or below the MSY point pays 0.00 while still eating feed every turn. It rides
-            # the control's own note slot (WARN-inked, beside the paused line) wherever the number
-            # renders, because it is a warning about the rung the player is committing to.
-            if bool(deal["feed_rung"]) and feed >= SourceForecast.FOOD_FLOW_MIN \
-                    and float(deal["payoff"]) * output < SourceForecast.FOOD_FLOW_MIN:
-                notes.append(HudComposeVocab.IMPROVEMENT_DEAL_DEPLETED_NOTE)
-        # **THE FACE GOES AMBER FOR EITHER OF THE TWO STOPPING READINGS**, and they cannot both fire:
-        # the `∞` is a STAFFED crew that is too small, the unstaffed states are no crew at all
-        # (`SourceForecast.unstaffed_build_state`). What is wrong is the whole proposition on that
-        # line either way, which is what the face's one colour has to say.
-        var running_warns := DetailFormat.build_turns_never(running_turns) \
-            or SourceForecast.build_is_unstaffed(unstaffed)
+        if _rung_pays_nothing_under_its_feed(deal, band):
+            notes.append(HudComposeVocab.IMPROVEMENT_DEAL_DEPLETED_NOTE)
+        # **THE STATE OF THE METER IS THE FACE'S COLOUR, AND IT HAS THREE VALUES** — green while the
+        # surplus is positive and a real turn count is quoted, amber while the crew banks exactly the
+        # rate and holds it at `∞`, red while the rate goes unpaid and the meter loses ground. It
+        # replaced the prose note beside the BUILDERS stepper (`2 work a turn holds it — the surplus is
+        # progress`), which was a sentence doing a colour's job on the line above it.
+        # `SourceForecast.build_pace` owns the classification and the rule that the client reads the
+        # sim's answer rather than deriving the sign of a surplus for itself.
+        var pace := SourceForecast.build_pace(running_turns, unstaffed)
         target.add_child(HudWidgets.build_improvement_control(running_verb,
             HudWidgets.IMPROVEMENT_STATE_RUNNING, running_face,
-            _improvement_running_tooltip(running_verb), on_toggle, notes, true, running_warns))
+            _improvement_running_tooltip(running_verb), on_toggle, notes, true, pace))
         _mount_build_crew_row(target, source, prefix, running_verb, build_crew, build_idle,
-            on_build_crew, running_warns)
+            on_build_crew)
         if extra_rows.is_valid():
             extra_rows.call(running_verb, target)
         return
@@ -1179,19 +1190,13 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
     # floor and kit the player is COMPOSING (the running face above carries why), dropped entirely
     # where that has no finite answer. A rung nobody has started is exactly the state the sim's own
     # estimate cannot speak to: there is no crew on it yet to have been measured.
-    var offer_face := HudComposeVocab.IMPROVEMENT_OFFER_BARE_FORMAT % [
-        FoodIcons.for_policy(rung),
-        String(HudComposeVocab.IMPROVEMENT_OFFER_LABELS.get(rung, rung.capitalize()))]
     # **THE THRESHOLD IS VISIBLE BEFORE THE COMMITMENT, NOT AFTER IT.** A crew at or below this rung's
     # maintenance rate never finishes, so the offer's own price quotes `∞ turns` in the warning ink as
     # the stepper below is dragged past it — the answer arriving while the decision is being made
     # rather than as a blank line once it has been taken.
     var offer_turns := SourceForecast.build_turns_at(
         source, prefix, rung, build_crew, floor, kit_gear)
-    var offer_price := DetailFormat.build_price_clause(
-        SourceForecast.build_work_cost(source, prefix, rung), offer_turns)
-    if offer_price != "":
-        offer_face = HudComposeVocab.IMPROVEMENT_OFFER_PRICED_FORMAT % [offer_face, offer_price]
+    var offer_face := _improvement_offer_face(source, prefix, rung, offer_turns)
     var reasons := RungGates.gate_reasons_for({rung: offer.get("reasons", [])}, rung)
     # **GATED — THE REASON IS THE CONTROL, and the offer text is not shown at all.** This used to
     # render the full offer ("🌱 Cultivate this patch · then 0.04 food · 0.81 fodder") as
@@ -1246,12 +1251,20 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
             # carry one, and dropping the rest would hide half of what the rung costs to unlock.
             reasons.slice(1)))
         return
+    # **A BAND WITH NO FREE HANDS IS OFFERED A DEAD BOX WITH ITS REASON, NEVER A LIVE ONE.** Ticking it
+    # would declare a build the band cannot staff — the state that produced `Cultivating 0 / 50 work
+    # (0%)` with no way back — and the sim refuses the command outright rather than trimming it. The
+    # pool this tests is the SHEET's (`build_idle` = the source's crew pool less the composed take), so
+    # the remedy names both levers: free an idle hand, or take one off the crew above.
+    var offer_blocked := build_idle <= SourceForecast.BUILD_CREW_NONE
     target.add_child(HudWidgets.build_improvement_control(rung,
         HudWidgets.IMPROVEMENT_STATE_OFFERED, offer_face,
         String(HudComposeVocab.IMPROVEMENT_HINTS.get(rung, "")), on_toggle, [], false,
-        DetailFormat.build_turns_never(offer_turns)))
-    _mount_build_crew_row(target, source, prefix, rung, build_crew, build_idle, on_build_crew,
-        DetailFormat.build_turns_never(offer_turns))
+        SourceForecast.build_pace(offer_turns),
+        HudComposeVocab.BUILD_NO_HANDS_REASON if offer_blocked else ""))
+    if offer_blocked:
+        return
+    _mount_build_crew_row(target, source, prefix, rung, build_crew, build_idle, on_build_crew)
     # The crop picker rides an OFFER only: "which crop do I commit this patch to?" is part of
     # committing, so it has no meaning where committing is refused — the gated branch above returns
     # before reaching it.
@@ -1267,48 +1280,111 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
 ## band cannot staff (it does not trim — a quietly-smaller build crew is a commitment the player
 ## believes they made), so the `+` must not offer one.
 ##
-## **AND IT STATES THE THRESHOLD BESIDE THE STEPPER, IN WORK** (`docs/plan_standing_upkeep.md` §2.4).
-## The maintenance rate is owed while the meter is going up too and the builders are what supply it,
-## so a crew whose output does not beat it holds the meter where it is or takes it backwards — a
-## threshold, not a slow build. `SourceForecast.min_build_work` is the QUOTED rung's own published
-## rate, the same term this sheet's closed form subtracts, so the note and the estimate beside it can
-## never sit on opposite sides of one number. Stated HERE rather than only as the face's ∞ because
-## this is the control that answers it: *"this crew is below the threshold"* has to be readable while
-## dragging, not discovered as a missing turn estimate afterwards.
+## **THE THRESHOLD IS A TOOLTIP ON THE ROW'S LABEL NOW, AND IT IS STILL STATED IN WORK**
+## (`docs/plan_standing_upkeep.md` §2.4). The maintenance rate is owed while the meter is going up too
+## and the builders are what supply it, so a crew whose output does not beat it holds the meter where
+## it is or takes it backwards — a threshold, not a slow build. `SourceForecast.min_build_work` is the
+## QUOTED rung's own published rate, the same term this sheet's closed form subtracts, so the
+## threshold and the estimate above it can never sit on opposite sides of one number.
+##
+## **IT WAS A PROSE NOTE BESIDE THE STEPPER AND IT WAS DOING A COLOUR'S JOB.** `2 work a turn holds it
+## — the surplus is progress` sat next to the very line whose INK now says which side of that rate the
+## crew is on (green climbing, amber holding, red losing — `SourceForecast.build_pace`), so the
+## sentence restated a state the reader had already been shown. The rate itself is not lost, which is
+## the whole reason it moved to a tooltip rather than being deleted: *how much work holds this rung* is
+## the number the stepper is being dragged against, and a hover still answers it.
 ##
 ## **IT IS A RATE OF WORK, NOT A HEAD COUNT.** The model is denominated in work units throughout, and
 ## the count it replaced was `upkeepWorkersNeeded` — which reads `0` on a source with no progress,
-## i.e. precisely the pre-commit case this row exists for, so the note fell silent exactly where it
-## was needed. How many hands the rate takes is what the stepper next to it is for.
+## i.e. precisely the pre-commit case this row exists for, so it fell silent exactly where it was
+## needed. How many hands the rate takes is what the stepper next to it is for.
 ##
-## A rung the wire prices no rate on (`NO_UPKEEP_DEMAND`) states no floor — there is no threshold to
-## clear, and a `0 work a turn holds it` reads as a defect.
-##
-## `never` is the face's own `BUILD_TURNS_NEVER` verdict, threaded in rather than re-derived, so the
-## amber here and the `∞` up there are one answer rendered twice.
+## A rung the wire prices no rate on (`NO_UPKEEP_DEMAND`) states no threshold at all — there is nothing
+## to clear, and a `0 work a turn holds it` reads as a defect. The label then carries no tooltip and no
+## `BUILD_WORK_FLOOR_META`, which is the reading a harness gets as `BUILD_WORK_FLOOR_ABSENT`.
 ##
 ## Renders nothing without a live `on_build_crew` — the DONE and GATED states have no build to staff.
 func _mount_build_crew_row(target: VBoxContainer, source: Dictionary, prefix: String,
-        improvement: String, crew: int, idle: int, on_build_crew: Callable, never: bool) -> void:
+        improvement: String, crew: int, idle: int, on_build_crew: Callable) -> void:
     if not on_build_crew.is_valid():
         return
     var row := HBoxContainer.new()
     row.set_meta(HudWidgets.BUILD_CREW_ROW_META, true)
     row.add_theme_constant_override("separation", HudComposeVocab.CREW_ROW_NOTE_SEPARATION)
-    row.add_child(HudWidgets.alloc_section_label(HudComposeVocab.CREW_ROW_BUILD_LABEL))
+    var row_label := HudWidgets.alloc_section_label(HudComposeVocab.CREW_ROW_BUILD_LABEL)
+    var floor_work := SourceForecast.min_build_work(source, prefix, improvement)
+    if floor_work >= SourceForecast.UPKEEP_WORK_MIN:
+        row_label.set_meta(HudWidgets.BUILD_WORK_FLOOR_META, floor_work)
+        # `set_label_tooltip` because a bare `tooltip_text` on a Label is a SILENT no-op.
+        HudWidgets.set_label_tooltip(row_label, HudComposeVocab.CREW_BUILD_FLOOR_TOOLTIP
+            % DetailFormat.format_work_units(floor_work))
+    row.add_child(row_label)
     var stepper := HBoxContainer.new()
     stepper.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     HudWidgets.add_stepper_controls(stepper, crew, crew < idle, on_build_crew)
     row.add_child(stepper)
-    var floor_work := SourceForecast.min_build_work(source, prefix, improvement)
-    if floor_work >= SourceForecast.UPKEEP_WORK_MIN:
-        var note := HudWidgets.alloc_hint_label(HudComposeVocab.CREW_BUILD_FLOOR_FORMAT
-            % DetailFormat.format_work_units(floor_work))
-        note.set_meta(HudWidgets.BUILD_WORK_FLOOR_META, floor_work)
-        if never:
-            note.add_theme_color_override("font_color", HudStyle.WARN)
-        row.add_child(note)
     target.add_child(row)
+
+## **THE DECLARED CONTROL — a rung this band has stated and has neither builders nor banked work on.**
+## The offer's own face (the verb and its price) on a TICKED, live checkbox, over the *not started*
+## warning, over the BUILDERS stepper that is the remedy.
+##
+## **IT IS A CHECKBOX BECAUSE IT IS A CHOICE, and that is the whole repair.** The running Label carries
+## no toggle, so a declaration rendered as RUNNING could not be withdrawn — and unticking here sends
+## the same walk-away the stepper does (`cultivate <faction> <x> <y> 0`), so the two levers cannot
+## disagree.
+##
+## **IT IS NEVER DISABLED, however few hands the band has.** The offer one branch down greys out with
+## no free workers because ticking it would declare an unstaffable build; here the declaration already
+## stands and unticking is exactly what a player with no hands needs to do.
+func _mount_declared_control(source: Dictionary, prefix: String, source_kind: String, rung: String,
+        floor: float, band: Dictionary, kit_gear: Dictionary, on_toggle: Callable,
+        target: VBoxContainer, extra_rows: Callable, build_crew: int, build_idle: int,
+        on_build_crew: Callable) -> void:
+    var turns := SourceForecast.build_turns_at(source, prefix, rung, build_crew, floor, kit_gear)
+    # The *not started* warning LEADS, being the loudest thing true of this rung — and the pen's zero
+    # payoff rides beneath it exactly as it rides a running build's, that note being a warning about
+    # the RUNG the player is committing to rather than about the work in flight.
+    var notes: Array = [HudComposeVocab.BUILD_UNSTARTED_NOTE]
+    if _rung_pays_nothing_under_its_feed(
+            SourceForecast.improvement_forecast(source, source_kind, prefix, floor, rung), band):
+        notes.append(HudComposeVocab.IMPROVEMENT_DEAL_DEPLETED_NOTE)
+    target.add_child(HudWidgets.build_improvement_control(rung,
+        HudWidgets.IMPROVEMENT_STATE_DECLARED, _improvement_offer_face(source, prefix, rung, turns),
+        String(HudComposeVocab.IMPROVEMENT_HINTS.get(rung, "")), on_toggle,
+        notes, true, SourceForecast.build_pace(turns,
+            SourceForecast.BUILD_UNSTAFFED_UNSTARTED)))
+    _mount_build_crew_row(target, source, prefix, rung, build_crew, build_idle, on_build_crew)
+    # The crop picker rides a declared rung exactly as it rides an offer: which crop this patch commits
+    # to is part of the commitment, and the commitment stands.
+    if extra_rows.is_valid():
+        extra_rows.call(rung, target)
+
+## **A ZERO PAYOFF UNDER A RUNNING FEED IS A PURE LOSS, and the note that says so has now outlived
+## three homes for the zero itself.** The pen harvests by constant escapement, so a herd at or below
+## the MSY point pays 0.00 while still eating feed every turn. It is a warning about the RUNG rather
+## than about the work in flight, which is why it rides the DECLARED control as well as the RUNNING
+## one — and why the test is ONE predicate, so those two cannot come to disagree about whether a
+## commitment is a loss.
+func _rung_pays_nothing_under_its_feed(deal: Dictionary, band: Dictionary) -> bool:
+    if deal.is_empty() or not bool(deal["feed_rung"]):
+        return false
+    var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
+    return float(deal["feed"]) * output >= SourceForecast.FOOD_FLOW_MIN \
+        and float(deal["payoff"]) * output < SourceForecast.FOOD_FLOW_MIN
+
+## The verb and its PRICE — the face an unstarted rung wears, whether it is merely OFFERED or already
+## DECLARED. ONE composer, so a rung cannot be priced one way before the box is ticked and another
+## after it.
+func _improvement_offer_face(source: Dictionary, prefix: String, rung: String, turns: int) -> String:
+    var face := HudComposeVocab.IMPROVEMENT_OFFER_BARE_FORMAT % [
+        FoodIcons.for_policy(rung),
+        String(HudComposeVocab.IMPROVEMENT_OFFER_LABELS.get(rung, rung.capitalize()))]
+    var price := DetailFormat.build_price_clause(
+        SourceForecast.build_work_cost(source, prefix, rung), turns)
+    if price == "":
+        return face
+    return HudComposeVocab.IMPROVEMENT_OFFER_PRICED_FORMAT % [face, price]
 
 ## The RUNNING control's tooltip: the rung's own hint — *what does this buy?* — and nothing else.
 ##

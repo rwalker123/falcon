@@ -361,10 +361,20 @@ static func improvement_face(root: Node, improvement: String) -> String:
 ## override is set — an "an override exists" test would pass on the very bug this looks for, which
 ## IS a missing override.
 static func improvement_face_is_warned(root: Node, improvement: String) -> bool:
+	return improvement_face_color(root, improvement) == HudStyle.WARN
+
+## **THE FACE'S RESOLVED INK, for the THREE-state build line** (issue #545 follow-up). The pace is a
+## colour now — green climbing, amber holding, red losing — so a bool reader can only ever ask about
+## one of the three, and the two `∞` states would read alike through it. Callers compare against
+## `HudStyle` directly, so a frame can claim which of the three a build line is in.
+##
+## `Color()` (transparent black, which no face wears) where the control is absent, so a missing
+## control fails a colour claim rather than matching one by accident.
+static func improvement_face_color(root: Node, improvement: String) -> Color:
 	var control := find_improvement_control(root, improvement)
 	if control == null:
-		return false
-	return control.get_theme_color("font_color") == HudStyle.WARN
+		return Color()
+	return control.get_theme_color("font_color")
 
 static func find_improvement_control(root: Node, improvement: String) -> Control:
 	if root == null:
@@ -391,14 +401,20 @@ static func build_crew_row(root: Node) -> Control:
 			return found
 	return null
 
-## **THE WORK-PER-TURN THRESHOLD THE BUILDERS ROW STATES**, read off the note's own meta rather than
-## out of its text: the number is the claim and the wording is not (`SourceForecast.min_build_work`).
-## `BUILD_WORK_FLOOR_ABSENT` where the row states no floor, which is a real answer — a rung whose rate
-## the wire prices at nothing has no threshold to clear.
+## **THE WORK-PER-TURN THRESHOLD THE BUILDERS ROW STATES**, read off the meta rather than out of any
+## text: the number is the claim and the wording is not (`SourceForecast.min_build_work`).
+## `BUILD_WORK_FLOOR_ABSENT` where the row states no threshold, which is a real answer — a rung whose
+## rate the wire prices at nothing has none to clear.
 ##
 ## **IT READS WORK, NOT WORKERS** (issue #545). The meta carried `upkeepWorkersNeeded`, a head count
 ## that reads `0` on a source with no progress — so a harness asserting it was asserting the
-## pre-commit case as an ABSENCE, which is exactly the state the note exists for.
+## pre-commit case as an ABSENCE, which is exactly the state the threshold exists for.
+##
+## **THE META MOVED FROM A NOTE TO THE ROW'S OWN LABEL, and this reader is unchanged by that** — it
+## scans the row's children for whichever one carries it. The visible note is retired (the build line's
+## INK states which side of the rate the crew is on, so the sentence was doing a colour's job) and the
+## rate now rides that label's TOOLTIP; the NUMBER is still asserted here, which is what makes the
+## retirement a re-homing rather than a loss.
 const BUILD_WORK_FLOOR_ABSENT := -1.0
 
 static func build_work_floor(root: Node) -> float:
@@ -410,18 +426,16 @@ static func build_work_floor(root: Node) -> float:
 			return float((child as Control).get_meta(HudWidgets.BUILD_WORK_FLOOR_META))
 	return BUILD_WORK_FLOOR_ABSENT
 
-## Is that threshold note in the WARNING ink — i.e. is this crew on the never-finishes side of it? The
-## colour is the other half of the claim, and it is APPLIED rather than inherited, so it is read as the
-## RESOLVED font colour: `get_theme_color` answers the stock default where no override is set, so an
-## "an override exists" test would pass on the very bug this looks for.
-static func build_crew_floor_warns(root: Node) -> bool:
+## …and the threshold's own WORDING, off that label's tooltip — the reachability half of the
+## re-homing above. `""` where the row states none.
+static func build_work_floor_tooltip(root: Node) -> String:
 	var row := build_crew_row(root)
 	if row == null:
-		return false
+		return ""
 	for child in row.get_children():
-		if child is Label and (child as Label).has_meta(HudWidgets.BUILD_WORK_FLOOR_META):
-			return (child as Label).get_theme_color("font_color") == HudStyle.WARN
-	return false
+		if child is Control and (child as Control).has_meta(HudWidgets.BUILD_WORK_FLOOR_META):
+			return (child as Control).tooltip_text
+	return ""
 
 ## The indented basket rows, in order. They are the only indented rows the LAND drawer emits.
 static func flora_basket_rows(lines: Array[String]) -> Array[String]:

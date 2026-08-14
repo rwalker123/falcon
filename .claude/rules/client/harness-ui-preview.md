@@ -1152,6 +1152,43 @@ pace (`crew − rate`):
 - **The kit-swap counts moved 17/11/9/4 → 25/17/11/6**, the warren's own one-keeper-load rate coming
   off a three-keeper crew. The A/B's claim is untouched: the two kits still differ by the gear alone.
 
-**A clean run is 328 frames / 1040 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
-two new frames and the four new claims account for the delta from the 1033 recorded before them; the
-rest is the re-pointing, which moved claims rather than adding them.
+**A clean run is 331 frames / 1051 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+recorded figure before the DECLARED improvement state was **328 / 1040**, and the frame count moved by
+three against ONE frame added — which is this line's own instruction being earned again: two frames
+had accumulated un-recorded, exactly as four `PASS`es had the time before.
+
+## The improvement control's DECLARED state, and the build line's three inks
+
+One frame (`compose_offer_no_hands`, appended last in `chapters/improvements.gd`) and eleven claims.
+The behaviour is `labor-ui.md`'s — "A DECLARATION IS NOT A BUILD" and "THE BUILD LINE'S STATE IS ITS
+COLOUR"; what belongs here is the shape of the drive and the two re-pointings it forced.
+
+- **`tile_build_unstaffed` gained the three claims that say the door opens both ways** — the control
+  is a `CheckBox` in `IMPROVEMENT_STATE_DECLARED`, it is TICKED, and it is LIVE *on a band whose
+  `effective_idle` is 0*. Three claims rather than one because they are one claim each about the three
+  ways it used to fail: the wrong node type (a `Label` has no toggle), an unticked box (which would
+  read as no declaration at all), and a disabled one (which cannot be undone).
+- **`compose_offer_no_hands` stages a SECOND patch, and that is what makes the pool empty.** The
+  band's every hand is on tile A, so a sheet opened over an UNWORKED tile B has `crew_pool == 0` — the
+  sheet's build pool being the SOURCE's pool less the composed take, not the band's idle count.
+  Re-using tile A would stage a source whose own crew is in the pool and the box would rightly stay
+  live. Five claims: the precondition (`effective_idle == 0`), still OFFERED (refused, not hidden),
+  DISABLED, the reason rendered, and the NEGATIVE that no BUILDERS stepper grows beneath a dead offer.
+- **The three INKS are asserted as a set across three frames**, read as the RESOLVED font colour
+  through `ForageFx.improvement_face_color` — a `Color` reader, because the pace has three states and
+  the two `∞` ones read alike through the warned/not-warned bool it replaced (which survives, written
+  in terms of it). `improvement_turns_lone_crew` is amber-holding and `improvement_turns_full_crew`
+  green-growing, asserted as a PAIR on one frame's claim so a face pinned to either ink fails the
+  other; `improvement_rung_slipped` is the red-losing one.
+- **The retired threshold note is asserted as a RE-HOMING, not a deletion** — the rate still reachable
+  as the BUILDERS label's tooltip (`ForageFx.build_work_floor_tooltip`) and the retired prose absent
+  from every Label on the sheet. `ForageFx.build_work_floor` is unchanged: it scans the row's children
+  for `BUILD_WORK_FLOOR_META`, which moved from the note to the label, so the NUMBER is still asserted
+  off a meta rather than out of a wording. `build_crew_floor_warns` went with the note it read.
+- **TWO EXISTING CLAIMS WERE RE-POINTED, and both were asserting the bug.**
+  `improvement_turns_*`'s *"amber while the crew is under it, and quiet once it is cleared"* was about
+  the deleted note. And `herd_compose_reopen_fresh`'s precondition asserted that a WILD herd with Tame
+  declared and nobody on it quotes a `Taming — 0%` METER — which is the one-way door in miniature. Its
+  claim was never the meter: it is the stale-vs-fresh dict, and the baseline only has to establish
+  that the sheet is not ALREADY quoting the taming herd's 4%. It asserts the DECLARED state and the
+  absence of that meter instead.

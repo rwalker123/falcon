@@ -419,6 +419,17 @@ const WORKFORCE_KEY_HUNT := "Hunt"
 
 const WORKFORCE_KEY_ROLES := "Roles"
 
+## The hands on a source's BUILD (`docs/plan_standing_upkeep.md` §2.2) — the second allocation, which
+## the Forage and Hunt segments deliberately do not absorb. Those two name what a crew TAKES; a builder
+## takes nothing, so folding them in would have a band gathering from a patch nobody is gathering.
+##
+## **It exists for exactly the reason the bench's does, one allocation over.** `effective_idle` nets
+## builders out (they are staffed labor), so without a segment of their own three builders vanished
+## from a bar whose segments are supposed to partition the same `working_age` the header counts
+## against — `Forage 9 · Hunt 6 · Idle 3` accounting for 18 with the builders invisible as well as
+## miscounted.
+const WORKFORCE_KEY_BUILD := "Build"
+
 ## The crafting bench's crew. **The segments PARTITION the workforce**, so the bench needs one of its
 ## own the moment idle stops counting it: netting the crew out of idle without naming it here would
 ## drop those hands off the bar entirely, and the key beneath would no longer add up to the head count
@@ -798,6 +809,11 @@ const WORK_INSPECT_UNASSIGN := "Unassign"
 const WORK_INSPECT_OVERDRAW_LINE := "⚠ Overdraws the source at this policy."
 
 const WORK_INSPECT_ASSIGNED_FORMAT := "%d assigned"
+
+## …and the source's OTHER crew beside it (`docs/plan_standing_upkeep.md` §2.2), rendered only where
+## there are builders on it. A row admitted to the board on its builders alone would otherwise read
+## `0 assigned` with three hands standing on its meter.
+const WORK_INSPECT_BUILDERS_FORMAT := "%d building"
 
 const WORK_INSPECT_SENTENCE_SEPARATOR := " · "
 

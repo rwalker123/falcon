@@ -22,6 +22,11 @@ var h
 ## from a live format could only ever describe whatever the code still says.
 const RETIRED_PAUSED_NOTE_NEEDLE := "ease off and it resumes"
 
+## The RETIRED threshold NOTE's own stem — the prose that sat beside the BUILDERS stepper restating
+## what the build line's colour says. A LITERAL for the reason above: the const is gone, and the rate
+## it carried lives in that row label's tooltip now, which the claim beside this needle reads.
+const RETIRED_BUILD_FLOOR_NEEDLE := "the surplus is progress"
+
 ## **THE FULLY-COMMITTED BAND'S TAKE CREW — the patch's OWN max-useful, not a number picked here.**
 ## The take stepper is capped at `min(pool − builders, max-useful)`, so a crew above this one is
 ## clamped away by the usefulness ceiling and the state stops being about the POOL at all. Reading it
@@ -847,8 +852,12 @@ func run(harness) -> void:
 	var _face_warned_at_lone_crew := ForageFx.improvement_face_is_warned(
 		h._hud._drawercompose._compose_sheet, "cultivate")
 	var _floor_at_lone_crew := ForageFx.build_work_floor(h._hud._drawercompose._compose_sheet)
-	var _floor_warned_at_lone_crew := ForageFx.build_crew_floor_warns(
+	var _floor_tip_at_lone_crew := ForageFx.build_work_floor_tooltip(
 		h._hud._drawercompose._compose_sheet)
+	# The face's INK, as a colour rather than a bool: the pace has three states and the two `∞` ones
+	# would read alike through a warned/not-warned reader.
+	var _face_ink_at_lone_crew := ForageFx.improvement_face_color(
+		h._hud._drawercompose._compose_sheet, "cultivate")
 	h._hud._compose.set_forage_build_count(TURNS_FULL_CREW)
 	h._compose_forage(_seeded_food_tile())
 	await h._settle()
@@ -882,18 +891,31 @@ func run(harness) -> void:
 	# decoration rather than a verdict.
 	h._assert_hud("…and that face is NOT warned — the amber is the verdict, not the control's livery",
 		not _face_was_warned_at_full_crew)
-	# **AND THE THRESHOLD IS ON THE STEPPER, BEFORE EITHER OF THEM, IN WORK** (issue #545). It makes
-	# `∞` actionable rather than merely alarming — it names the rate to beat — and it is read off the
-	# note's own meta rather than its wording. **Work, not hands**: the model is denominated in work
-	# units end to end, and the head count it replaced reads `0` before a build starts.
+	# **AND THE THRESHOLD IS STILL REACHABLE FROM THE STEPPER, IN WORK** (issue #545). It makes `∞`
+	# actionable rather than merely alarming — it names the rate to beat — and it is read off the meta
+	# rather than any wording. **Work, not hands**: the model is denominated in work units end to end,
+	# and the head count it replaced reads `0` before a build starts.
 	h._assert_hud("the BUILDERS row states the WORK that holds the rung (%s), on both sides of it"
 		% TURNS_MIN_BUILD_WORK,
 		is_equal_approx(_floor_at_lone_crew, TURNS_MIN_BUILD_WORK)
 			and is_equal_approx(ForageFx.build_work_floor(h._hud._drawercompose._compose_sheet),
 				TURNS_MIN_BUILD_WORK))
-	h._assert_hud("…amber while the crew is under it, and quiet once it is cleared",
-		_floor_warned_at_lone_crew
-			and not ForageFx.build_crew_floor_warns(h._hud._drawercompose._compose_sheet))
+	# **THE VISIBLE NOTE IS RETIRED AND THE RATE IS A HOVER, so the claim is REACHABILITY.** It was a
+	# sentence beside the stepper (`2 work a turn holds it — the surplus is progress`) doing the job the
+	# build line's own colour does one row up, so it went; the NUMBER did not, which is what the pair of
+	# claims here says — the tooltip names it, and no visible Label repeats it.
+	h._assert_hud("…and the rate is still reachable, as the row label's tooltip",
+		_floor_tip_at_lone_crew.contains(
+			DetailFormat.format_work_units(TURNS_MIN_BUILD_WORK)))
+	h._assert_hud("…while the retired NOTE is on no label anywhere on the sheet",
+		not Q.has_label_containing(h._hud._drawercompose._compose_sheet, RETIRED_BUILD_FLOOR_NEEDLE))
+	# **THE PACE IS A COLOUR, AND THE PAIR IS THE CLAIM.** A lone builder under the rate holds the meter
+	# (amber, `∞`); four clear it and the meter climbs (green, a real count). A face pinned to either
+	# ink passes one half and fails the other, which is what makes this a verdict rather than livery.
+	h._assert_hud("a HOLDING build line is amber and a GROWING one is green",
+		_face_ink_at_lone_crew == HudStyle.WARN
+			and ForageFx.improvement_face_color(h._hud._drawercompose._compose_sheet,
+				"cultivate") == HudStyle.HEALTHY)
 	# The NEGATIVE that names the defect. Both faces reading the same number is exactly what a sheet
 	# quoting the sim's committed-crew answer renders, and it satisfies neither claim above only
 	# because those spell two different counts — this says so directly, and names the frozen value.
@@ -962,6 +984,7 @@ func run(harness) -> void:
 	await _a_declared_build_with_no_builders_says_so()
 	await _an_unstarted_rung_is_priced_at_its_own_rate()
 	await _both_live_meters_get_their_own_row()
+	await _a_band_with_no_free_hands_is_offered_a_dead_box()
 
 ## **THE SHEET IS ONE TRANSACTION OVER A SOURCE'S TWO CREWS, AND IT IS CLAMPED AS ONE.** Reported
 ## from play: a band with every hand on a herd, HUNTERS dropped 4 → 2, and BUILDERS still dead at a
@@ -1085,6 +1108,22 @@ func _a_declared_build_with_no_builders_says_so() -> void:
 	h._assert_hud("…and the compose sheet says the same thing in its own register",
 		Q.has_label_containing(h._hud._drawercompose._compose_sheet,
 			HudComposeVocab.BUILD_UNSTARTED_NOTE))
+	# **AND THE PLAYER CAN GET BACK OFF IT.** The declaration used to render as RUNNING, which is a
+	# `Label`: the box vanished, so a build ticked on a band with no free hands could not be unticked.
+	# Reported from play. It is the DECLARED state now — the same checkbox, TICKED and LIVE — and the
+	# three claims are one claim each about the three ways that used to fail: the wrong node type, an
+	# unticked box that would read as no declaration at all, and a disabled one that cannot be undone.
+	var declared_box = ForageFx.find_improvement_control(
+		h._hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
+	h._assert_hud("a declaration nobody is building is a CHECKBOX, not the running state label",
+		declared_box is CheckBox
+			and String(declared_box.get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
+				== HudWidgets.IMPROVEMENT_STATE_DECLARED)
+	h._assert_hud("…ticked, because the declaration stands",
+		declared_box is CheckBox and (declared_box as CheckBox).button_pressed)
+	h._assert_hud("…and LIVE, so unticking it is the walk-away — even on a band with no free hands",
+		declared_box is CheckBox and not (declared_box as CheckBox).disabled
+			and h._hud._band_labor.effective_idle(band) == 0)
 	# THE NEGATIVE that names the defect: the word a rung nobody is building must not wear anywhere on
 	# the card, in any ink — that word is what read as work in progress.
 	h._assert_hud("…and never a turn count, which is what a started build states and this is not",
@@ -1336,3 +1375,49 @@ func _both_live_meters_get_their_own_row() -> void:
 const BOTH_METERS_FIELD_PROGRESS := 0.12
 
 const BOTH_METERS_FIELD_TURNS := 30
+
+## **A BAND WITH NO FREE HANDS IS OFFERED A DEAD BOX WITH ITS REASON, NEVER A LIVE ONE.** Reported
+## from play: a player ticked `cultivate` on a site their band could not staff, and the sheet went
+## straight to the running state — a `Label`, so there was nothing left to untick. The declaration
+## itself is now re-tickable (`tile_build_unstaffed`), and this is the other half: the click that
+## creates that state is refused BEFORE it happens, with the reason where the offer was.
+##
+## **THE FIXTURE IS A SECOND PATCH, and that is what makes the pool empty.** The band's every hand is
+## on tile A, so a sheet opened over an UNWORKED tile B has `crew_pool == 0` — the sheet's build pool
+## being the SOURCE's pool less the composed take, not the band's idle count. Reusing tile A would
+## stage a source whose own crew is in the pool and the box would rightly stay live.
+func _a_band_with_no_free_hands_is_offered_a_dead_box() -> void:
+	var worked := BaseFx.food_tile_fixture()
+	var band := _fully_committed_forage_band(worked, POOL_TAKE_CREW,
+		SourceForecast.BUILD_CREW_NONE)
+	h._hud._band_labor._player_band = band
+	h._hud._band_labor._player_bands = [band]
+	# A DIFFERENT patch, unworked by this band and carrying no meter of its own — the state a player
+	# reaches by opening the next forage site along.
+	var fresh := BaseFx.unbuilt(BaseFx.food_tile_fixture())
+	fresh["x"] = int(worked["x"]) + 1
+	fresh["y"] = int(worked["y"]) + 1
+	h._hud._compose.reset_forage_source()
+	h._hud.clear_selection()
+	h._show_tile(fresh)
+	h._compose_forage(fresh)
+	await h._settle()
+	await h._save("compose_offer_no_hands")
+	var sheet = h._hud._drawercompose._compose_sheet
+	var box = ForageFx.find_improvement_control(sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
+	# THE PRECONDITION, without which every claim below is about an ordinary band: this band really
+	# has nothing free, so the offer really is unstaffable.
+	h._assert_hud("the band has no idle hands at all — the pool the offer draws on is empty",
+		h._hud._band_labor.effective_idle(band) == 0)
+	h._assert_hud("the rung is still OFFERED — it is refused, not hidden",
+		box is CheckBox
+			and String(box.get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
+				== HudWidgets.IMPROVEMENT_STATE_OFFERED)
+	h._assert_hud("…and DISABLED, so the click that made the un-undoable state cannot happen",
+		box is CheckBox and (box as CheckBox).disabled)
+	h._assert_hud("…with the reason in its own slot, never a dead control that says nothing",
+		Q.has_label_containing(sheet, HudComposeVocab.BUILD_NO_HANDS_REASON))
+	# The NEGATIVE that names what a dead offer must not grow: a BUILDERS stepper for a build nobody
+	# can staff would be the same live-but-useless control one row down.
+	h._assert_hud("…and no BUILDERS stepper beneath it — there is nothing to staff it with",
+		ForageFx.build_crew_row(sheet) == null)

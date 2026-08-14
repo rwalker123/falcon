@@ -491,14 +491,21 @@ stretch, and widening it into that gap would put it over a live HUD column.
   `INK_FAINT`): two bars,
   same shape, different question — *who they are* vs *what they do* — and they must not read as the
   same chart twice.
-  **THE WORKFORCE SEGMENTS PARTITION `working_age`, WHICH IS WHY THE BENCH HAS ONE.** Forage · Hunt ·
-  Roles · **Bench** · Idle, and the head states `n idle of m` off the same
-  `HudBandLaborState.effective_idle` — which nets the crafting bench's crew out, a worker at the bench
-  being assigned labor (`crafting-panel.md` → "The stepper's ceiling"). Without a segment of its own
-  that crew would leave idle and appear nowhere, so the bar would quietly stop adding up to the head
-  beside it. `FactionRollup._build_workforce_block` carries the identical segment for the identical
-  reason — the two bars are one chart at two scales, and a faction total missing a segment the band
-  bar has is the same hole one level up.
+  **THE WORKFORCE SEGMENTS PARTITION `working_age`, WHICH IS WHY THE BENCH AND THE BUILDERS EACH HAVE
+  ONE.** Forage · Hunt · **Build** · Roles · **Bench** · Idle, and the head states `n idle of m` off
+  the same `HudBandLaborState.effective_idle` — which nets BOTH of those crews out: a worker at the
+  bench is assigned labor (`crafting-panel.md` → "The stepper's ceiling"), and a builder is the
+  source's SECOND allocation (`labor-ui.md` → "`effective_idle` SUMS `staffed_total`"). Without a
+  segment of its own each would leave Idle and appear nowhere, so the bar would quietly stop adding up
+  to the head beside it — which is exactly what shipped: `Forage 9 · Hunt 6 · Idle 3` accounting for
+  18 with three builders both miscounted and invisible.
+  **The builders are their own slice rather than folded into Forage or Hunt**: those two name what a
+  crew TAKES, and a builder takes nothing, so folding them in would show a band gathering from a patch
+  nobody is gathering. It draws in `SIGNAL_DEEP` — the live cyan a rung under construction already
+  wears, one step down, so it reads as work-in-flight without competing with the Hunt slice beside it.
+  `FactionRollup._build_workforce_block` carries both segments for the identical reason — the two bars
+  are one chart at two scales, and a faction total missing a segment the band bar has is the same hole
+  one level up.
   **PARTIES ARE A HEADER CLAUSE, NOT A SEGMENT** — `3 idle of 16 · 10 away`
   (`HudWorkVocab.WORKFORCE_AWAY_FORMAT`, shown only when the count is non-zero, tooltipped with what
   "away" means). The sim removes a party's members from the parent band's working-age cohort the turn
@@ -539,6 +546,12 @@ stretch, and widening it into that gap would put it over a live HUD column.
   head is built out of `Label`s rather than BBCode — and, since the head is now the multiplier's ONE
   surface, the only accessor there is (`hex_for_output` went with the vitals row that called it). Vocabulary (`WORK_OUTPUT_FORMAT` /
   `WORK_OUTPUT_TOOLTIP`) is `HudWorkVocab`'s, like every other head item's.
+  **A ROW THE BAND HAS ONLY BUILDERS ON IS STILL A ROW.** The admission test read the TAKE crew alone,
+  so a source with three hands raising its meter and nobody gathering was dropped from the board, from
+  its chip counts and from the WORK tab's badge — the one place a player would look to see what those
+  hands are doing, and the one place the `+` that staffs them lives. `_work_source_models` admits on
+  either crew and carries `build_workers`, which the inspector strip states as a `N building` clause
+  beside the take's `N assigned` (`labor-ui.md` → "`effective_idle` SUMS `staffed_total`").
   **The chips ARE the summary and the filter** (All / 🌿 Foraging n · rate / 🦌 Hunting n · rate / ⚠ k,
   the last hidden at k = 0), replacing collapsible group headers. Both the header total and the chip
   rates state BOTH products, each only when non-zero — see "Work rows and the two hunt products". Rows are ONE line at a fixed

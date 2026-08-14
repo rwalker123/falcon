@@ -2176,6 +2176,8 @@ func _ready() -> void:
 
 	await _render_upkeep_mode_states()
 
+	await _render_builders_segment_state()
+
 	await _assert_action_registry()
 
 	_assert_herd_field_pairs()
@@ -10447,3 +10449,67 @@ func _worst_case_party_fixture() -> Dictionary:
 		],
 	}
 
+
+# ---- THE BUILDERS ARE STAFFED LABOR, AND THE BAND ZONE HAS TO SAY SO ---------------------------
+#
+# **Reported from play: `3 idle of 18` on a band whose every hand was spent, beside
+# `Forage 9 · Hunt 6 · Idle 3` — the builders miscounted AND invisible, one defect wearing two
+# faces.** `HudBandLaborState.effective_idle` summed each assignment's `workers`, which is the TAKE
+# crew alone, where the sim's `LaborAllocation::assigned_total` sums `LaborAssignment::staffed_total`
+# (`workers + improvement_workers`); and the WORKFORCE bar had no segment for the hands idle was
+# netting out.
+#
+# **THE FIXTURE IS THE CLAIM, and its arithmetic is what makes it one**: the reference band's four
+# assignments spend 13 of 16 workers, so putting THREE builders on its forage row takes it to exactly
+# `working_age`. Before the fix the zone read `3 idle of 16` over segments summing to 13; after it,
+# `0 idle of 16` over segments summing to 16. **A band with slack could not say this** — the idle
+# count would merely be wrong by three rather than wrong about whether the band has any hands at all.
+const BUILDERS_SEGMENT_CREW := 3
+
+func _render_builders_segment_state() -> void:
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"band")
+	_push_bands([_builders_band_fixture()])
+	await _settle()
+	await _save("band_panel_builders_segment")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	# **THE PARTITION GUARD IS WHAT PROVES THE SEGMENT EXISTS** — it sums the rendered chips against
+	# `working_age`, so a bar missing the builders fails it by exactly their count, and it asserts the
+	# PEOPLE join in the same breath. Its idle half is asserted beside it, since a bar that partitions
+	# correctly with a wrong idle segment is a different (and reachable) failure.
+	_assert_people_matches_workforce("band_panel_builders_segment")
+	var band: Dictionary = _hud._band_labor._panel_band
+	_assert_band_panel(
+		"band_panel_builders_segment: every hand is spent, so the band reports NO idle workers",
+		_hud._band_labor.effective_idle(band) == 0)
+	var band_zone: Node = _panel._zones.get(BandCityPanel.ZONE_BAND)
+	var segments := _composition_counts(band_zone, HudWorkVocab.ZONE_HEADER_WORKFORCE)
+	_assert_band_panel(
+		"band_panel_builders_segment: the BUILD segment states its %d builders (read %d)" % [
+			BUILDERS_SEGMENT_CREW,
+			int(segments.get(HudWorkVocab.WORKFORCE_KEY_BUILD, -1))],
+		int(segments.get(HudWorkVocab.WORKFORCE_KEY_BUILD, -1)) == BUILDERS_SEGMENT_CREW)
+	# …and the NEGATIVE that keeps the segment a reading rather than livery: the reference band has no
+	# builders and must grow no such segment, the bar's own render-only-when-non-zero rule.
+	_push_bands([_band_fixture()])
+	await _settle()
+	band_zone = _panel._zones.get(BandCityPanel.ZONE_BAND)
+	_assert_band_panel(
+		"…while a band with no build in flight renders no BUILD segment at all",
+		not _composition_counts(band_zone, HudWorkVocab.ZONE_HEADER_WORKFORCE).has(
+			HudWorkVocab.WORKFORCE_KEY_BUILD))
+
+## The reference band with a BUILD crew on the forage row it already works. Only two things move: the
+## row gains its `improvement` / `improvement_workers` pair, and `idle_workers` falls to nothing —
+## which is the sim's own answer for a band whose take crews, roles and builders account for every
+## working-age hand it has.
+func _builders_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["idle_workers"] = 0
+	var rows: Array = band["labor_assignments"]
+	var forage: Dictionary = (rows[0] as Dictionary).duplicate(true)
+	forage["improvement"] = SourceForecast.IMPROVEMENT_CULTIVATE
+	forage["improvement_workers"] = BUILDERS_SEGMENT_CREW
+	rows[0] = forage
+	return band

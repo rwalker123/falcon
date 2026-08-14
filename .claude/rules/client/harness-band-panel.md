@@ -118,7 +118,22 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 240 `assert OK` lines, 341 `: PASS` ones and ZERO `FAIL` ones, over
+**A clean run exits 0 and prints 242 `assert OK` lines, 348 `: PASS` ones and ZERO `FAIL` ones, over
+95 frames.** (It was 240 / 341 / 94 before **`band_panel_builders_segment`** — the BUILDERS segment
+state, whose two `assert OK`s are its own bounds/content-fits pair and whose seven `PASS`es are
+`_assert_people_matches_workforce`'s four plus three of its own. **Its fixture IS the claim**: the
+reference band's four assignments spend 13 of 16 workers, so putting THREE builders on its forage row
+takes it to exactly `working_age` — before the fix the zone read `3 idle of 16` over segments summing
+to 13, and after it `0 idle of 16` over segments summing to 16. **A band with slack could not say
+this**: the idle count would merely be wrong by three rather than wrong about whether the band has any
+hands at all. The partition guard is what does the work — it sums the RENDERED chips against
+`working_age`, so a bar missing the build segment fails by exactly its count — with the segment's own
+count and the NEGATIVE on the reference band (a band with no build in flight grows no such segment,
+the bar's render-only-when-non-zero rule) beside it. The rationale is `labor-ui.md` →
+"`effective_idle` SUMS `staffed_total`". The paragraph below records the figures as they stood before
+it.)
+
+**It was 240 `assert OK` lines, 341 `: PASS` ones and ZERO `FAIL` ones, over
 94 frames.** (It was 236 / 332 / 92 before the KEEPING POOL landed — `docs/plan_standing_upkeep.md`
 §2.5, the arc that took maintenance off the tile. Its two frames are
 `band_panel_upkeep_mode_spread` / `_priority`, worth their two bounds/content-fits `assert OK` pairs

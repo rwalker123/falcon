@@ -2922,11 +2922,49 @@ when that is where the missing hands are standing. `BUILD_BOUND_NOTE_FORMAT` is 
 the build named first; `_forecast_worker_cap` takes the proposed build crew for the WORDING alone,
 the arithmetic being entirely the caller's, since only the caller knows which stepper it is capping.
 
-**Every clamp reads the wire's `idle_workers`, NOT `HudBandLaborState.effective_idle`.** That helper
-sums each assignment's published `workers`, which is the TAKE crew alone, so it would report a band
-mid-Cultivate as having hands it has already committed. `idleWorkers` is `BandWorkforce::idle()` —
-pool minus **every** staffed hand across every activity and role, minus the bench — which is the
-number the refusal is judged against.
+**Every clamp reads the wire's `idle_workers`, NOT `HudBandLaborState.effective_idle`.** The two agree
+about the builders now (see below), but they still answer different questions: the sheet's ceiling is
+judged against a REFUSAL the sim makes, and `idleWorkers` IS `BandWorkforce::idle()` — every staffed
+hand across every activity and role, minus the bench — where `effective_idle` is an OPTIMISTIC answer
+carrying the pending overlay. A ceiling composed from the optimistic one would offer a crew on the
+strength of a command the server has not acknowledged.
+
+### `effective_idle` SUMS `staffed_total`, AND FOR ONE RELEASE IT DID NOT
+
+That helper summed each merged row's `workers` — the TAKE crew alone — so a band with three hands on
+a Cultivate reported three idle who were already spent. Reported from play as **`3 idle of 18` beside
+`Forage 9 · Hunt 6 · Idle 3`**, on a band whose every hand was committed: the builders miscounted AND
+invisible, one defect wearing two faces.
+
+**The sim was never in doubt.** `LaborAllocation::assigned_total` sums
+`LaborAssignment::staffed_total`, which is `workers + improvement_workers`;
+`HudBandLaborState.staffed_total` is that same sum, client-side, and `effective_idle` is written in
+terms of it. What made the disagreement expressible at all was that **`effective_worker_map` did not
+copy `improvement_workers` through**, so no consumer of that map could see a build crew even to sum
+it. It carries the pair now under the wire's own key (`BUILD_WORKERS_KEY`), and the pending overlay
+PRESERVES the confirmed builders it finds — `assign_labor` states neither the declaration nor the
+build crew, so a pending TAKE edit that blanked them would make three staffed builders reappear as
+idle hands for the turn between the command and its confirmation.
+
+**What the miscount cost was every ceiling built on top of it** — the four role cards' steppers, the
+pen-extend crew, `benchable_workers` and so the crafting bench's own — each offering a crew the sim
+then refused, while the panel showed the phantom hands that justified the offer.
+
+**THE SWEEP FOUND THREE MORE CONSUMERS AND ONE DELIBERATE NON-CONSUMER**, and the distinction is the
+useful part:
+
+| consumer | what it was doing | now |
+|---|---|---|
+| `BandPanelController._build_workforce_block` | segments summed to `working_age − builders` | a **`Build`** segment (`HudWorkVocab.WORKFORCE_KEY_BUILD`, `SIGNAL_DEEP`) beside Forage and Hunt |
+| `FactionRollup._build_workforce_block` | the same hole one scale up | the same segment, the two bars being one chart at two scales |
+| `BandPanelController._work_source_models` | admitted a row on `workers > 0`, so a source with ONLY builders left the board, its chips and the WORK tab's badge | admitted on either crew, and the model carries `build_workers` for the inspector's `N building` clause |
+| `HudBandLaborState._effort_on` | sums the take crew alone | **unchanged, deliberately** — its readers ask *"is anybody HARVESTING this"*, and a builder harvests nothing |
+
+**The builders are their own SEGMENT rather than folded into Forage/Hunt**, for the reason the bench's
+is its own: those two name what a crew TAKES, `effective_idle` nets a builder out, and a bar whose
+segments are supposed to partition `working_age` must account for every hand it removes from Idle.
+`band_panel_preview`'s `_assert_people_matches_workforce` is what catches a missing one — it sums the
+RENDERED chips against `working_age`, so a bar short of the build segment fails by exactly its count.
 
 ### Both crews are READABLE, and the sheet opens on them
 
@@ -3171,16 +3209,92 @@ standing verb at `BUILD_CREW_NONE`, and a source with neither a live meter nor a
 nothing at all. `format_abandon_improvement`, `Main._on_hud_improvement`'s empty-improvement branch,
 `IMPROVEMENT_ABANDON_HINTS` and `IMPROVEMENT_TOOLTIP_SEPARATOR` are all deleted.
 
-**THE RUNNING CONTROL IS A `Label` NOW, and the shape rule the GATED state already stated covers three
-of the four.** The control's TYPE says whether this is a CHOICE or a FACT: a `CheckBox` is the OFFER
-and nothing else, and running/done/gated are Labels told apart by `HudWidgets.IMPROVEMENT_STATE_META`
-(added for exactly that, since the type no longer separates them). Running draws in `HudStyle.SIGNAL`
-— live rather than DONE's achieved green.
+**THE RUNNING CONTROL IS A `Label`, and the shape rule the GATED state already stated covers three of
+the five.** The control's TYPE says whether this is a CHOICE or a FACT: a `CheckBox` is a choice
+(OFFERED and DECLARED), and running/done/gated are Labels told apart by
+`HudWidgets.IMPROVEMENT_STATE_META` (added for exactly that, since the type no longer separates them).
+
+### A DECLARATION IS NOT A BUILD, and rendering one as RUNNING was a ONE-WAY DOOR
+
+`build_verb` honours a declaration at a zero meter, and the control took that answer as *running*. So
+a player who ticked `cultivate` on a band with no free hands got a `Label` reading
+**`🌱 Cultivating 0 / 50 work (0%)`** with the *not started* warning under it and **no box left to
+untick** — reported from play. The declaration was expressible and its withdrawal was not.
+
+**The control now asks whether a build is ACTUALLY in flight**, which is the wire's own two facts:
+builders on it (`build_crew > BUILD_CREW_NONE`) or work banked on its meter
+(`improvement_progress > BUILD_METER_UNSTARTED`). Neither ⇒ **`IMPROVEMENT_STATE_DECLARED`**: the
+OFFER's own face (verb and price, through the one `_improvement_offer_face` both states share) on a
+**ticked, live** checkbox, over the *not started* note, over the BUILDERS stepper — with the pen's
+zero-payoff note riding beneath exactly as it rides a running build, that being a warning about the
+RUNG rather than about work in flight, which is why one predicate
+(`_rung_pays_nothing_under_its_feed`) serves both.
+
+- **Unticking is the walk-away the stepper already sends** — `cultivate <faction> <x> <y> 0` through
+  `_emit_improvement` — so the two levers agree by construction rather than by convention.
+- **A DECLARED box is NEVER disabled, however few hands the band has.** The offer one branch down
+  greys out with no free workers *because ticking it would declare an unstaffable build*; here the
+  declaration already stands, and unticking is precisely what a player with no hands needs to do.
+- **The *not started* warning stays reachable and stays useful**: a band that SHRINKS sheds its
+  builders while the declaration stands, which is not a player choice and must still be flagged. It
+  simply renders on a control the player can act on.
+- **`BUILD_UNSTAFFED_UNSTARTED` can no longer reach the RUNNING branch** — it is *no crew and no work*,
+  i.e. exactly `not in_flight` — so that branch's notes carry `BUILD_SLIDING_NOTE` alone. A dead
+  `elif` there would read as a live case.
+
+### A BOX THE BAND CANNOT STAFF IS DISABLED WITH ITS REASON, NOT LEFT LIVE
+
+The click that produced the state above is refused before it happens. An OFFERED control on a sheet
+whose build pool is empty (`build_idle <= BUILD_CREW_NONE`) renders greyed, carrying
+`HudComposeVocab.BUILD_NO_HANDS_REASON`, and mounts **no BUILDERS stepper** — there is nothing to
+staff it with, and a live-but-useless control one row down is the same defect again.
+
+**The pool tested is the SHEET's, not the band's idle count**: `build_idle` is the source's crew pool
+less the composed take, so the reason names both levers — free an idle hand, or take one off the crew
+row above. **`disabled_reason` is now the ONE thing that disables a box.** It was
+`disabled = not notes.is_empty()`, which was dead logic (a gated rung reaches the GATED branch, never
+this one) and which would have silently killed the box the moment a live state grew a note of its own
+— which is exactly what DECLARED does.
 
 **THE UNGATED RULE SURVIVES THE CONTROL IT WAS WRITTEN FOR.** Nothing may withhold the remedy on a
 stalled build — that is when a player reaches for it — so the BUILDERS row is mounted on a RUNNING
-control however loudly the sheet reads, and only an OFFERED box is ever disabled, only on unmet
-prerequisites. `improvement_no_room_plant` is the frame where withholding it would look defensible.
+control however loudly the sheet reads. `improvement_no_room_plant` is the frame where withholding it
+would look defensible.
+
+### THE BUILD LINE'S STATE IS ITS COLOUR, AND THE PROSE THAT SAID IT IS DELETED
+
+`2 work a turn holds it — the surplus is progress` sat beside the BUILDERS stepper, one line under the
+build line whose own ink says which side of that rate the crew is on. It was prose doing a colour's
+job, and it is gone; the state goes on the `Cultivating` / `Domesticating` line itself, three ways:
+
+| pace | net | the face reads | ink |
+|---|---|---|---|
+| `BUILD_PACE_GROWING` | > 0 | a real turn count | `HudStyle.HEALTHY` |
+| `BUILD_PACE_HOLDING` | = 0 | `∞ turns` | `HudStyle.WARN` |
+| `BUILD_PACE_LOSING` | < 0 | `∞ turns` | `HudStyle.DANGER` |
+
+**`SourceForecast.build_pace(turns, unstaffed_state)` is the one classifier, and the discipline is
+that it CLASSIFIES rather than derives.** It reads the sentinel the estimate already answered with and
+the unstaffed state the meters already decided; comparing a composed `work_per_turn` against zero
+would be a second opinion about a number the sim owns — the drift that once quoted `≈50 turns` for a
+build that never moved.
+
+- **`BUILD_TURNS_NEVER` covers both `∞` states today and answers `HOLDING`.** The wire publishes ONE
+  never-finishes sentinel (`sim_schema::BUILD_NEVER_FINISHES`) for a crew at OR under the rate, so the
+  amber is the conservative reading of the pair; the red/yellow split lands when the sim splits the
+  sentinel. **`LOSING` is reachable today only through `BUILD_UNSTAFFED_SLIDING`** — work banked,
+  nobody on it — which is the meters' own answer rather than an arithmetic sign.
+- **A CHECKBOX takes only the two stopping paces** (`HudWidgets.improvement_pace_stops`): green on an
+  unticked offer would read as an achievement on a rung nobody has started.
+- **The RATE is not lost, which is why the note moved rather than being deleted.** It is a tooltip on
+  the BUILDERS row's own label, still in WORK units and still stamped
+  `HudWidgets.BUILD_WORK_FLOOR_META`, so *how much work holds this rung* is one hover away and a
+  harness still asserts the NUMBER rather than a wording.
+
+**Frames**: `improvement_turns_lone_crew` (amber, `∞`) / `improvement_turns_full_crew` (green,
+`≈10 turns`) — one patch, one floor, only the builders moving — and `improvement_rung_slipped` (red,
+the sliding meter). `tile_build_unstaffed` carries the DECLARED checkbox and `compose_offer_no_hands`
+the dead offer with its reason.
 
 **What the retired tooltip said is still true and still differs by web**: unstaffing a plant build
 lets its meter BLEED at the rung's `decay_per_turn` (~100 turns to zero) while an animal meter is KEPT

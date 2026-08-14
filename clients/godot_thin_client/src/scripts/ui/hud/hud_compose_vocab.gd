@@ -143,26 +143,37 @@ const CREW_ROW_BUILD_LABEL := "BUILDERS"
 # The crew row's note separation, beside its label.
 const CREW_ROW_NOTE_SEPARATION := 5
 
-# **THE THRESHOLD, STATED BESIDE THE STEPPER THAT HAS TO CLEAR IT — IN WORK**
+# **THE THRESHOLD, IN WORK — ON THE BUILDERS ROW'S LABEL, AS A TOOLTIP**
 # (`docs/plan_standing_upkeep.md` §2.4). The maintenance rate is owed while the meter is being raised
 # too, and the build crew is what supplies it, so a crew whose output does not beat the rate holds the
 # meter where it is or takes it backwards — a real threshold rather than a slow build. It is published
-# per rung (`SourceForecast.min_build_work`), so the sheet states it BEFORE the player commits rather
-# than leaving them to discover it as an ∞ afterwards.
+# per rung (`SourceForecast.min_build_work`), so the sheet can answer it BEFORE the player commits.
 #
-# **ONE STRING, AND THE INK IS WHAT FORKS** — amber exactly where the face reads `∞`, off the same
-# `DetailFormat.build_turns_never` test, so the threshold note and the estimate can never disagree
-# about which side of it a crew is on. A second wording would be a second opinion.
+# **IT WAS A VISIBLE NOTE AND IT WAS DOING A COLOUR'S JOB.** `2 work a turn holds it — the surplus is
+# progress` rendered beside the stepper, one line under the build line whose INK now states which side
+# of that rate the crew is on — green climbing, amber holding, red losing (`SourceForecast.build_pace`).
+# Prose that restates a state the reader has already been shown is what made the block unreadable, and
+# it is the same lesson the retired `Keeping:` row records one surface over. The RATE is still a fact
+# worth having, so it is a hover rather than a deletion.
 #
 # **IT IS A RATE OF WORK, AND IT REPLACED A HEAD COUNT.** `2 hold it` named the worker as the unit in
 # a model denominated in work units end to end, and the count behind it (`upkeepWorkersNeeded`) reads
-# `0` on a source with no progress — so the note fell silent on exactly the pre-commit quote it exists
-# for. The rate is the fact; how many hands buy it is what the stepper beside this note is for.
+# `0` on a source with no progress — so it fell silent on exactly the pre-commit quote it exists for.
+# The rate is the fact; how many hands buy it is what the stepper beside it is for.
 #
 # **It says HOLD rather than "needs N", because the rate is where the meter STOPS SLIDING, not where
 # it starts advancing** — a crew banking exactly the rate holds the rung and finishes nothing, which
 # `needs N` would promise it does not.
-const CREW_BUILD_FLOOR_FORMAT := "%s work a turn holds it — the surplus is progress"
+const CREW_BUILD_FLOOR_TOOLTIP := "%s work a turn holds this rung — only the surplus is progress."
+
+# **THE REASON A DEAD IMPROVEMENT BOX CARRIES.** Ticking a rung the band cannot staff declares a build
+# that never starts — the sim REFUSES the crew rather than trimming it — so the offer is greyed with
+# this rather than left live for a click that does nothing.
+#
+# **It names BOTH levers, because the sheet's build pool is not the band's idle count**: it is the
+# source's crew pool less the take the player has just composed, so hands are freed either by idling
+# some of the band or by taking some off the crew row above.
+const BUILD_NO_HANDS_REASON := "No free workers to build with — free up idle hands, or take some off the crew above."
 
 # A crew TARGET is a PILL, and the shape is the point: the stepper beside it is a boxed control you
 # operate, a target is a value you can jump to. Its face carries two registers — the COUNT (what you

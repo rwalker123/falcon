@@ -823,10 +823,15 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
     var idle := _band_labor.effective_idle(band)
     var forage_workers := 0
     var hunt_workers := 0
+    # **THE BUILDERS ARE THEIR OWN SEGMENT, ACROSS BOTH WEBS.** A build crew is staffed labor on a
+    # source but it is not taking anything from it, so it belongs in neither the Forage nor the Hunt
+    # slice — and it has to be SOMEWHERE, `effective_idle` having netted it out.
+    var build_workers := 0
     var merged := _band_labor.effective_worker_map(band)
     for key in merged:
         var m: Dictionary = merged[key]
         var workers := int(m.get("workers", 0))
+        build_workers += maxi(int(m.get(HudBandLaborState.BUILD_WORKERS_KEY, 0)), 0)
         match String(m.get("kind", "")):
             SourceForecast.LABOR_KIND_FORAGE: forage_workers += workers
             SourceForecast.LABOR_KIND_HUNT: hunt_workers += workers
@@ -848,6 +853,10 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
     for spec in [
         [HudWorkVocab.WORKFORCE_KEY_FORAGE, forage_workers, HudStyle.HEALTHY],
         [HudWorkVocab.WORKFORCE_KEY_HUNT, hunt_workers, HudStyle.SIGNAL],
+        # …and the builders beside the two takes, because a build is staffed ON one of those sources.
+        # `SIGNAL_DEEP` is the live cyan a rung under construction already wears, one step down, so it
+        # reads as work-in-flight without competing with the Hunt slice it sits next to.
+        [HudWorkVocab.WORKFORCE_KEY_BUILD, build_workers, HudStyle.SIGNAL_DEEP],
         [HudWorkVocab.WORKFORCE_KEY_ROLES, role_workers, HudStyle.VOICE_INK],
         # The bench's crew, between the work and the residual: `effective_idle` nets it out (a worker
         # at the bench is assigned labor), so without a segment of its own it would vanish from a bar
@@ -1804,6 +1813,9 @@ func _work_inspector_sentence(model: Dictionary) -> String:
     parts.append(HudFormat.status_label(FoodIcons.STATUS_PENDING if bool(model.get("pending", false)) \
         else FoodIcons.STATUS_WORKING))
     parts.append(HudWorkVocab.WORK_INSPECT_ASSIGNED_FORMAT % int(model.get("workers", 0)))
+    var builders := int(model.get("build_workers", 0))
+    if builders > 0:
+        parts.append(HudWorkVocab.WORK_INSPECT_BUILDERS_FORMAT % builders)
     return HudWorkVocab.WORK_INSPECT_SENTENCE_SEPARATOR.join(parts)
 
 # ---- work-zone models + state ----------------------------------------------
@@ -1818,10 +1830,16 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         var m: Dictionary = merged[key]
         var kind := String(m.get("kind", "")).strip_edges().to_lower()
         var workers := int(m.get("workers", 0))
+        # **A ROW THE BAND HAS ONLY BUILDERS ON IS STILL A ROW.** The board's admission test read the
+        # TAKE crew alone, so a source with three hands raising its meter and nobody gathering was
+        # dropped from the board, from its chip counts and from the WORK tab's badge — the one place
+        # the player would go to see what those hands are doing, and the one place the `+` that staffs
+        # them lives.
+        var build_workers := maxi(int(m.get(HudBandLaborState.BUILD_WORKERS_KEY, 0)), 0)
         var pending := bool(m.get("pending", false))
         if not (kind == SourceForecast.LABOR_KIND_FORAGE or kind == SourceForecast.LABOR_KIND_HUNT):
             continue
-        if workers <= 0 and not pending:
+        if workers <= 0 and build_workers <= 0 and not pending:
             continue
         var yld := SourceForecast.source_yield_readout(m, kind)
         var x := int(m.get("x", -1))
@@ -1958,6 +1976,10 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "material_rows": yld.get("material_rows", []),
             "has_yield": bool(m.get("has_yield", false)),
             "workers": workers, "pending": pending, "warn": bool(yld.get("warn", false)),
+            # The source's OTHER crew, carried so a row admitted on its builders alone can say who is
+            # standing there — a row reading `0 assigned` with three hands on its meter is the same
+            # miscount the idle counter had, one surface along.
+            "build_workers": build_workers,
             "under_herded": under_herded,
             # The build-crew twin of the flag above — a part-built rung nobody is paying for. Its own
             # key rather than a merged "something is bleeding" bool, because the row TINT wants either

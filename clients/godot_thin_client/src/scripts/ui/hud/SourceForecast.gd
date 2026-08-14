@@ -3268,6 +3268,46 @@ const BUILD_UNSTAFFED_SLIDING := "sliding"
 static func build_is_unstaffed(state: String) -> bool:
     return state == BUILD_UNSTAFFED_UNSTARTED or state == BUILD_UNSTAFFED_SLIDING
 
+## **WHICH WAY THE METER IS MOVING — the three states a build line's INK says**
+## (`docs/plan_standing_upkeep.md` §2.4). A rung's rate is owed every turn while the meter is being
+## raised, so a crew's SURPLUS is the pace and it has a sign:
+##
+## | net | pace | the face reads |
+## |---|---|---|
+## | **> 0** | `BUILD_PACE_GROWING` | a real turn count |
+## | **= 0** | `BUILD_PACE_HOLDING` | `∞` — it holds exactly where it is |
+## | **< 0** | `BUILD_PACE_LOSING` | `∞` — it is going back the way it came |
+##
+## **THE CLIENT DOES NOT DERIVE THE SIGN, and that is the whole discipline of this function.** It
+## classifies the sentinels the estimate already answered with and the unstaffed state the meters
+## already decided; comparing a composed `work_per_turn` against zero would be a second opinion about
+## a number the sim owns, which is the drift that once quoted `≈50 turns` for a build that never moved.
+##
+## **`BUILD_TURNS_NEVER` COVERS BOTH ∞ STATES TODAY, so it answers `HOLDING`.** The wire publishes one
+## never-finishes sentinel (`sim_schema::BUILD_NEVER_FINISHES`) for a crew at OR under the rate, so
+## holding and losing are not distinguishable on it yet; the amber is the conservative reading of the
+## pair and matches what the face has always worn there. `LOSING` is reachable now only through the
+## SLIDING state, which is the meters' own answer rather than an arithmetic sign: work banked, nobody
+## on it, so the rate is being paid by nothing.
+static func build_pace(turns: int, unstaffed_state: String = BUILD_STAFFED) -> String:
+    if unstaffed_state == BUILD_UNSTAFFED_SLIDING:
+        return BUILD_PACE_LOSING
+    if turns == BUILD_TURNS_NEVER:
+        return BUILD_PACE_HOLDING
+    if turns == BUILD_TURNS_NO_ESTIMATE:
+        return BUILD_PACE_UNKNOWN
+    return BUILD_PACE_GROWING
+
+## No answer about the meter's direction — a crew of nobody, a rung the wire prices nothing on, a
+## stalled build. It renders in the neutral live ink, never as a verdict.
+const BUILD_PACE_UNKNOWN := ""
+## The surplus is positive: the meter climbs and the face quotes a real turn count.
+const BUILD_PACE_GROWING := "growing"
+## The crew banks exactly the rate: the meter holds and no finish date is ever reached.
+const BUILD_PACE_HOLDING := "holding"
+## The rate is going unpaid: the meter is losing ground.
+const BUILD_PACE_LOSING := "losing"
+
 ## Is a build in flight on this source at all? The bare question three warnings and the keeping row
 ## ask, named so none of them spells the `!= IMPROVEMENT_NONE` for itself.
 static func build_is_in_flight(src: Dictionary, prefix: String, kind: String,
