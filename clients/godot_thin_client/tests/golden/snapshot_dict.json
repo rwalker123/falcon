@@ -507,8 +507,6 @@
           "species": "forage_patches[0].composition[1].species"
         }
       ],
-      "cultivate_build_fraction": 97.040001,
-      "cultivate_crew_needed": 192,
       "cultivation_progress": 14.53,
       "cultivation_work_cost": 7.12,
       "cultivation_work_done": 106.639999,
@@ -549,12 +547,14 @@
       "per_worker_yield": 54.48,
       "provisions_per_biomass": 5.97,
       "regrowth_samples": {"__packed": "PackedFloat32Array", "len": 11, "items": [64.120003, 37.02, 60.77, 28.27, 25.76, 51.169998, 22.4, 111.809998, 39.91, 108.449997, 53.68]},
-      "sow_build_fraction": 59.139999,
-      "sow_crew_needed": 82,
       "sow_site_refusal": "forage_patches[0].sow_site_refusal",
       "stressed_fraction": 35.610001,
       "tended_fodder": 66.300003,
       "tended_yield": 11.58,
+      "upkeep_demand": 46.18,
+      "upkeep_shortfall": 85.980003,
+      "upkeep_supplied": 28.360001,
+      "upkeep_workers_needed": 99,
       "x": 0,
       "y": 0
     },
@@ -637,8 +637,6 @@
           "species": "forage_patches[1].composition[1].species"
         }
       ],
-      "cultivate_build_fraction": 83.43,
-      "cultivate_crew_needed": 55,
       "cultivation_progress": 85.480003,
       "cultivation_work_cost": 17.809999,
       "cultivation_work_done": 107.940002,
@@ -679,12 +677,14 @@
       "per_worker_yield": 108.360001,
       "provisions_per_biomass": 95.019997,
       "regrowth_samples": {"__packed": "PackedFloat32Array", "len": 11, "items": [50.919998, 94.879997, 68.43, 91.529999, 65.07, 109.040001, 30.07, 62.560001, 26.709999, 53.810001, 78.75]},
-      "sow_build_fraction": 10.17,
-      "sow_crew_needed": 173,
       "sow_site_refusal": "forage_patches[1].sow_site_refusal",
       "stressed_fraction": 11.05,
       "tended_fodder": 52.509998,
       "tended_yield": 86.169998,
+      "upkeep_demand": 10.09,
+      "upkeep_shortfall": 34.380001,
+      "upkeep_supplied": 37.41,
+      "upkeep_workers_needed": 48,
       "x": 1,
       "y": 1
     }
@@ -836,7 +836,6 @@
       "build_work_per_worker_turn": 39.950001,
       "carrying_capacity": 59.91,
       "collapse_fraction": 9.08,
-      "corral_build_fraction": 42.07,
       "corral_material": [
         {
           "amount": 3.27,
@@ -923,9 +922,12 @@
       "species": "herds[0].species",
       "stay_fraction": 26.790001,
       "stressed_fraction": 81.589996,
-      "tame_build_fraction": 71.720001,
       "tame_work_cost": 86.699997,
       "tame_work_done": 60.59,
+      "upkeep_demand": 43.459999,
+      "upkeep_shortfall": 10.37,
+      "upkeep_supplied": 24.889999,
+      "upkeep_workers_needed": 156,
       "x": 0,
       "y": 0
     },
@@ -939,7 +941,6 @@
       "build_work_per_worker_turn": 104.040001,
       "carrying_capacity": 52.919998,
       "collapse_fraction": 77.970001,
-      "corral_build_fraction": 0.28,
       "corral_material": [
         {
           "amount": 37.32,
@@ -1026,9 +1027,12 @@
       "species": "herds[1].species",
       "stay_fraction": 64.949997,
       "stressed_fraction": 10.21,
-      "tame_build_fraction": 59.450001,
       "tame_work_cost": 84.620003,
       "tame_work_done": 10.41,
+      "upkeep_demand": 25.92,
+      "upkeep_shortfall": 8.97,
+      "upkeep_supplied": 47.07,
+      "upkeep_workers_needed": 119,
       "x": 1,
       "y": 1
     }
@@ -2040,6 +2044,7 @@
           "floor": 110.599998,
           "fodder_yield": 46.790001,
           "improvement": "populations[0].labor_assignments[0].improvement",
+          "improvement_workers": 67,
           "kind": "populations[0].labor_assignments[0].kind",
           "kit_id": "populations[0].labor_assignments[0].kit_id",
           "material_yield": [
@@ -2054,6 +2059,7 @@
           ],
           "overdraws": true,
           "realized_yield": 50.82,
+          "species": "populations[0].labor_assignments[0].species",
           "sustainable_yield": 16.4,
           "target_x": 117,
           "target_y": 128,
@@ -2070,6 +2076,7 @@
           "floor": 48.369999,
           "fodder_yield": 0.25,
           "improvement": "populations[0].labor_assignments[1].improvement",
+          "improvement_workers": 180,
           "kind": "populations[0].labor_assignments[1].kind",
           "kit_id": "populations[0].labor_assignments[1].kit_id",
           "material_yield": [
@@ -2084,6 +2091,7 @@
           ],
           "overdraws": true,
           "realized_yield": 67.830002,
+          "species": "populations[0].labor_assignments[1].species",
           "sustainable_yield": 35.830002,
           "target_x": 44,
           "target_y": 33,
@@ -2196,6 +2204,7 @@
       "travel_target_x": 79,
       "travel_target_y": 90,
       "turns_of_food": 62.830002,
+      "upkeep_fund_mode": "populations[0].upkeep_fund_mode",
       "warrior_attack": 62.459999,
       "work_range": 137,
       "working_age": 87
@@ -2600,6 +2609,7 @@
           "floor": 71.43,
           "fodder_yield": 0.66,
           "improvement": "populations[1].labor_assignments[0].improvement",
+          "improvement_workers": 74,
           "kind": "populations[1].labor_assignments[0].kind",
           "kit_id": "populations[1].labor_assignments[0].kit_id",
           "material_yield": [
@@ -2614,6 +2624,7 @@
           ],
           "overdraws": true,
           "realized_yield": 31.379999,
+          "species": "populations[1].labor_assignments[0].species",
           "sustainable_yield": 23.76,
           "target_x": 62,
           "target_y": 51,
@@ -2630,6 +2641,7 @@
           "floor": 95.239998,
           "fodder_yield": 2.93,
           "improvement": "populations[1].labor_assignments[1].improvement",
+          "improvement_workers": 25,
           "kind": "populations[1].labor_assignments[1].kind",
           "kit_id": "populations[1].labor_assignments[1].kit_id",
           "material_yield": [
@@ -2644,6 +2656,7 @@
           ],
           "overdraws": true,
           "realized_yield": 16.93,
+          "species": "populations[1].labor_assignments[1].species",
           "sustainable_yield": 31.49,
           "target_x": 135,
           "target_y": 146,
@@ -2756,6 +2769,7 @@
       "travel_target_x": 128,
       "travel_target_y": 117,
       "turns_of_food": 103.459999,
+      "upkeep_fund_mode": "populations[1].upkeep_fund_mode",
       "warrior_attack": 96.199997,
       "work_range": 176,
       "working_age": 100
