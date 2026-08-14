@@ -552,16 +552,24 @@ pub struct HerdTelemetryState {
     /// ```text
     /// gear(w)  = min(w, build_work_saturating_crew) × build_work_per_worker
     /// turns(w) = ceil((work_cost − work_done − gear(w))
-    ///                 / (w × build_work_per_worker_turn × floor / food_peak − upkeep))
+    ///                 / (w × build_work_per_worker_turn − meter_rot_per_turn))
     /// ```
     ///
-    /// **`upkeep` is the divisor's second term, and it is not optional**: the maintenance rate is
-    /// owed from the first work banked, so a build the player commits to is a rate their keeping pool
-    /// carries forever — the half of the quote the `workCost` beside it cannot state. It is **not**
-    /// netted off the build (`docs/plan_standing_upkeep.md` §4.6a); the closed form nets
-    /// `meterRotPerTurn`, and where the un-netted form
-    /// quotes `work_cost / w` turns. Take it from the `*_upkeep_demand` field of the **same rung**
-    /// the `work_cost` came from.
+    /// **`meter_rot_per_turn` IS THE DIVISOR'S SECOND TERM, and `*_upkeep_demand` IS NOT**
+    /// (`docs/plan_standing_upkeep.md` §4.6a). The maintenance rate is owed to the band's **keeping
+    /// pool** for every meter carrying work, at any fullness, and a build crew supplies none of it —
+    /// so the crew's whole output is progress and netting a *rate* here would price the build against
+    /// a bill it does not pay. What a build can fail to out-run is the ground going backwards under
+    /// it, which is exactly [`Self::meter_rot_per_turn`], and it does not vary with `w`.
+    ///
+    /// **THERE IS NO FLOOR FACTOR.** `learn_multiplier(floor)` came off the build accrual when the
+    /// crews separated — a build crew is not pulling on the source — so the crew term is the head
+    /// count and nothing else. A form still carrying `× floor / food_peak` disagrees with the sim at
+    /// every floor but the food peak.
+    ///
+    /// **`*_upkeep_demand` still belongs beside `*_work_cost`**, as the **standing price** of the
+    /// rung being quoted — what holding it will cost every turn, forever, against the one-off pile
+    /// the `work_cost` names. Read it as the second half of the quote, never as a term of this form.
     ///
     /// Appended (append-only).
     #[serde(default)]
@@ -979,16 +987,24 @@ pub struct ForagePatchState {
     /// ```text
     /// gear(w)  = min(w, build_work_saturating_crew) × build_work_per_worker
     /// turns(w) = ceil((work_cost − work_done − gear(w))
-    ///                 / (w × build_work_per_worker_turn × floor / food_peak − upkeep))
+    ///                 / (w × build_work_per_worker_turn − meter_rot_per_turn))
     /// ```
     ///
-    /// **`upkeep` is the divisor's second term, and it is not optional**: the maintenance rate is
-    /// owed from the first work banked, so a build the player commits to is a rate their keeping pool
-    /// carries forever — the half of the quote the `workCost` beside it cannot state. It is **not**
-    /// netted off the build (`docs/plan_standing_upkeep.md` §4.6a); the closed form nets
-    /// `meterRotPerTurn`, and where the un-netted form
-    /// quotes `work_cost / w` turns. Take it from the `*_upkeep_demand` field of the **same rung**
-    /// the `work_cost` came from.
+    /// **`meter_rot_per_turn` IS THE DIVISOR'S SECOND TERM, and `*_upkeep_demand` IS NOT**
+    /// (`docs/plan_standing_upkeep.md` §4.6a). The maintenance rate is owed to the band's **keeping
+    /// pool** for every meter carrying work, at any fullness, and a build crew supplies none of it —
+    /// so the crew's whole output is progress and netting a *rate* here would price the build against
+    /// a bill it does not pay. What a build can fail to out-run is the ground going backwards under
+    /// it, which is exactly [`Self::meter_rot_per_turn`], and it does not vary with `w`.
+    ///
+    /// **THERE IS NO FLOOR FACTOR.** `learn_multiplier(floor)` came off the build accrual when the
+    /// crews separated — a build crew is not pulling on the source — so the crew term is the head
+    /// count and nothing else. A form still carrying `× floor / food_peak` disagrees with the sim at
+    /// every floor but the food peak.
+    ///
+    /// **`*_upkeep_demand` still belongs beside `*_work_cost`**, as the **standing price** of the
+    /// rung being quoted — what holding it will cost every turn, forever, against the one-off pile
+    /// the `work_cost` names. Read it as the second half of the quote, never as a term of this form.
     ///
     /// Appended (append-only).
     #[serde(default)]
