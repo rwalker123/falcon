@@ -117,8 +117,29 @@ take             = min(take_workers × per_worker_capacity, source_offer)
 > that eats it is the **rot**, not the rate. A meter whose keeping is short loses ground every turn,
 > and builders raising it more slowly than that are losing work already bought. So the three answers
 > stand with a new denominator: `buildTurnsRemaining` reads a count while `build_work > rot`, `-2`
-> (**the meter holds**) at equality, and `-3` (**the meter rots**) below it. `-1` still means there
-> is genuinely no answer.
+> (**the meter holds**) at equality, and `-3` (**the meter rots**) below it.
+>
+> > #### ⛔ AND THE NO-ANSWER BOUNDARY IS **WORK BANKED**, NOT *IS ANYONE STAFFED*
+> >
+> > `-1` used to mean, among other things, *this source is unstaffed, and nobody has promised
+> > anything*. **A meter carrying work has promised something — the player paid for it** — so the
+> > test is now whether anything is banked (or anyone is building), and a rung merely *declared* on an
+> > empty meter is the one that still answers `-1`.
+> >
+> > **Without that move both sentinels are dead on the shipped ladder.** The rot is capped at the
+> > rung's own decay — `0.5` and `0.75` on the plant rungs, structurally **zero** on both animal ones —
+> > while a single builder banks a whole worker-turn, so no staffed crew can ever net `<= 0`. The
+> > states did not vanish with the rate; they moved to **zero builders**, which is exactly where the
+> > model now expects to find them.
+> >
+> > **So `-2` is no longer only a failure.** With no builders and the keeping met it is the player
+> > **parking a half-built improvement** — §2.4's own case — held indefinitely at no risk, and a
+> > surface that marks it with a hazard teaches the player to ignore the mark everywhere else. `-3`
+> > stays unambiguously bad: an abandoned meter, bleeding.
+> >
+> > **The animal web can still stall in a way no countdown term sees**, and that is an *eligibility*
+> > stall rather than a balance one — `husbandry.md` → "THE REGROWTH SUPPRESSION CLOSES A LOOP" owns
+> > it. §4.6b's queue is where a permanently-stalled head entry has to be answered.
 
 #### This is what dissolved the dip
 
@@ -485,14 +506,14 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
 
 ### Next, in order
 
-6. **THE BUILDER POOL AND THE BUILD QUEUE — in TWO landings**, because the first is a model
-   correction the second cannot be built on top of and is worth having on its own.
+6. **THE BUILDER POOL AND THE BUILD QUEUE — in TWO steps, one PR.** The first is a model correction
+   the second cannot be built on the seam of; they land together because neither is playable alone.
 
    **6a — KEEPING HOLDS EVERY METER, AT ANY FULLNESS.** The who-pays test — the meter's own fullness
    — is deleted (§2.4). The keeping pool owes the rate from the first work banked; a build crew
    supplies nothing and only adds. `patch_is_maintaining` / `herd_is_maintaining` go, the build's net
    stops netting the rate off, and the ∞ pair re-aims at the **rot** as the term that eats a build.
-   > **It lands on its own because it is what makes 6b coherent, and it is worth having regardless.**
+   > **It is stated separately because it is worth having regardless, not because it ships alone.**
    > Two states reported from ordinary play are wrong today and neither needs a pool to reach: a
    > half-built meter whose builders left cannot be held by idle keepers, and a held rung that dips
    > below its cost stops being the keeping pool's business at the moment it starts needing it. §2.4
@@ -640,6 +661,16 @@ cheap answer is to make reassignment observable so it would be noticed rather th
   declares a maintenance contribution, which none does today, so splitting now would invent a
   distinction nothing can express. It becomes a config-shaped change the moment §4's gear-as-
   productivity lands.
+- **AN UNKEPT ANIMAL BUILD STALLS PERMANENTLY, and §4.6b's queue has to answer for it.** Measured:
+  a half-tamed herd with an empty `husbandry` role advances for three turns and then freezes — the
+  hunters draw the flock to their floor, the unmet keeping suppresses its regrowth, the escapement
+  room never returns and the `Tame`'s own gate closes. It is not self-correcting and the only remedy
+  is staffing the keeping, which nothing on the build line points at. **The plant web does not have
+  it** (an ungathered patch regrows, so its gate stays open and it publishes an honest `-3`), and the
+  mechanism is `husbandry.md`'s. What makes it §4.6b's problem rather than a curiosity: **a stalled
+  entry at the head of a queue funded all-hands-on-the-head holds every builder the band has**, on a
+  build that can never advance, while everything behind it waits. Whether the queue should pass over
+  an ineligible head, or say loudly that it is stuck, is that slice's to decide.
 - **Whether ALL-HANDS-ON-THE-HEAD is the right funding rule** (§4.6b). Ray: *"that is logical, we
   will have to play test and see how it goes."* The thing to watch is a band with several worthwhile
   builds queued behind one long one, and whether re-ordering feels like a decision or like a chore.

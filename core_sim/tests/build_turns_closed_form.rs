@@ -9,8 +9,12 @@
 //! ```text
 //! gear(w)  = min(w, buildWorkSaturatingCrew) × buildWorkPerWorker
 //! turns(w) = ceil((workCost − workDone − gear(w))
-//!                 / (w × buildWorkPerWorkerTurn × floor / foodPeak))
+//!                 / (w × buildWorkPerWorkerTurn − meterRotPerTurn))
 //! ```
+//!
+//! **The divisor's second term is the ROT and there is no floor factor** — `<rung>UpkeepDemand` is
+//! the keeping pool's bill and is never netted off a build (`docs/plan_standing_upkeep.md` §4.6a),
+//! and `learn_multiplier(floor)` came off the build accrual with the crews' separation.
 //!
 //! **The gear pair rides the band's own `kitTiers` row, not a source row**, because a kit's
 //! saturation point is a fact about the band's ledger: an unstarted rung still has one, and picking
@@ -56,9 +60,10 @@ const UNSCALED_TAMEABLE_SPECIES: &str = "Crag Goats";
 /// arithmetic never exercises.
 const HANDLING_KIT: &str = "husbandry";
 
-/// **The escapement floor the crew holds, and it is deliberately NOT the food peak.**
-/// `learn_multiplier(floor) = floor / MSY_BIOMASS_FRACTION` is `×1.0` at the peak, where a wrong
-/// `floor / foodPeak` term in the client's form would cancel and the equality would pass on
+/// **The escapement floor the crew holds, and it is deliberately NOT the food peak.** The build
+/// carries no floor term at all now, but the *guard against one being re-added* is exactly this:
+/// `learn_multiplier(floor) = floor / MSY_BIOMASS_FRACTION` is `×1.0` at the peak, so a stray
+/// `floor / foodPeak` in either producer would cancel there and the equality would pass on
 /// arithmetic that is wrong everywhere else. Below the peak the herd also stands well above the
 /// floor, so the crew is genuinely working the source.
 const BUILDER_FLOOR: f32 = 0.30;
@@ -70,12 +75,12 @@ const KEEPERS: u32 = 6;
 /// A herd big enough that its stock stands far above [`BUILDER_FLOOR`], so the crew is working the
 /// source every turn of the fixture.
 ///
-/// **And small enough that its maintenance rate is a hand or two.** The rate scales with the herd's
-/// keeper load and is a **tax on building** (`docs/plan_standing_upkeep.md` §2.4), so a fixture on a
-/// 4,000-head flock has to staff nine extra hands before the meter moves at all — and those hands
-/// carry gear, which then pays the whole job off and collapses every multi-turn quote this file
-/// exists to check. The build's arithmetic is what is under test, so the flock is sized to keep the
-/// rate out of the way of it.
+/// **And small enough that its keeping demand is a hand or two.** The demand scales with the herd's
+/// keeper load, so a 4,000-head flock needs a large `husbandry` role before it is held at all — and
+/// on a band sized for that, `LaborAllocation::normalize` has room to shuffle crews the fixture
+/// meant to pin. The build's arithmetic is what is under test, so the flock is sized to keep the
+/// keeping out of the way of it. (The demand is **not** netted off the build —
+/// `docs/plan_standing_upkeep.md` §4.6a — so it does not pace anything here.)
 const TEST_CAPACITY: f32 = 400.0;
 
 /// **The client's own food-peak constant**, restated here because a client holds no config. It must
@@ -170,15 +175,16 @@ enum GearHeld {
 /// **not** [`KEEPERS`]: a build crew that happened to equal the take crew would let a form reading
 /// the wrong one of the two pass.
 const THE_BUILD_CREW: u32 = 3;
-// **Three, not two, since the maintenance rate became a tax on building**
-// (`docs/plan_standing_upkeep.md` §2.4): the rate is owed while the meter is raised and the build
-// crew is what supplies it, so a crew of two on this fixture's herd nets under a worker-turn and the
-// meter barely moves. Three clears the rate with a hand to spare, which is what a `ceil` check needs.
+// **The gear regimes are what fix it**, per the doc above: it must out-number what `OneSet` arms and
+// not out-number what `APartysWorth` does, and it must differ from [`KEEPERS`]. It carried a second
+// reason for one slice — *"three, not two, because the maintenance rate is a tax on building and two
+// nets under a worker-turn"* — and that reason retired with the tax (§4.6a): every hand banks a whole
+// worker-turn now, so only the gear window still constrains the number.
 
-/// **What a fixture adds to its stated NET build crew** — the herd's maintenance rate in whole
-/// hands, which the build crew is also paying (`docs/plan_standing_upkeep.md` §2.4). A fixture that
-/// stated a bare head count would be measuring `crew − rate`, and on a herd of any size that is
-/// zero: a build that never runs.
+/// **The keeping this herd would want, in whole hands** — used only to size the band's *working*
+/// count, so `LaborAllocation::normalize` has headroom and cannot trim the very crews the fixture
+/// states. It pads **no crew**: both allocations below are stated gross, because a build crew pays
+/// none of the rate (`docs/plan_standing_upkeep.md` §4.6a) and `crew − rate` is not the pace.
 fn rate_in_hands(app: &App, fauna_id: &str) -> u32 {
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
     let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
@@ -328,20 +334,21 @@ fn client_turns_estimate(
     // count it multiplies has to be the workers actually doing the job. Handing it the band's
     // gathering crew would price a one-hand build with a large party's tools.
     builders: u32,
-    // **THE MAINTENANCE RATE OF THE RUNG BEING QUOTED**, off the `<rung>UpkeepDemand` beside the
-    // `<rung>WorkCost` this form is pricing — the tax the build crew pays before any of its output
-    // is progress (`docs/plan_standing_upkeep.md` §2.4). Without it the client's form promises a
-    // finish date the crew cannot reach, and at or below the rate it would quote a huge number
-    // where the sim answers *never*. **Not `upkeepDemand`**, which is what the source is billed
-    // today and reads `0` on the unstarted source a compose sheet is by definition looking at.
-    upkeep_demand: f32,
+    // **WHAT THE METER IS LOSING PER TURN**, off `meterRotPerTurn` — the term that eats a build
+    // (`docs/plan_standing_upkeep.md` §4.6a). It is emphatically **not** either `UpkeepDemand`: the
+    // band's keeping pool owes the rate for every meter carrying work whatever the builders do, so
+    // netting a *rate* here would price a build against a bill it does not pay. What a build can
+    // fail to out-run is the ground going backwards under it, and the client cannot derive that —
+    // it holds neither the grace state nor the rung's decay rate.
+    meter_rot_per_turn: f32,
 ) -> Option<u32> {
     let gear = client_gear_term(build_work_per_worker, build_work_saturating_crew, builders);
     // **NO FLOOR TERM.** The build reads the assignment's escapement floor no longer
     // (`docs/plan_standing_upkeep.md` §2.2): a build is staffed in its own right, so the builders
     // are not pulling on the source and there is nothing of theirs for a floor to describe. The
     // client's form loses the factor with the sim's.
-    let work_per_turn = (builders as f32 * build_work_per_worker_turn - upkeep_demand).max(0.0);
+    let work_per_turn =
+        (builders as f32 * build_work_per_worker_turn - meter_rot_per_turn).max(0.0);
     if work_per_turn <= 0.0 {
         return None;
     }
@@ -456,6 +463,14 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
             herd.tame_upkeep_demand, herd.upkeep_demand,
             "a herd raising the pastoral rung is billed exactly what that rung is quoted at"
         );
+        // **AND NEITHER OF THEM IS WHAT THE FORM NETS.** The rot is its own published number and,
+        // on the animal web, an honest `0`: no animal rung declares a `meter_decay`, so nothing
+        // eats an animal build (`docs/plan_standing_upkeep.md` §4.6a). A form that had kept netting
+        // the rate would differ from the sim by exactly `upkeep_demand` per turn.
+        assert_eq!(
+            herd.meter_rot_per_turn, 0.0,
+            "an animal meter cannot rot — its shortfall is paid in animals, not in meter"
+        );
 
         // (2) **THE TURN COUNT** — the whole form against the sim's own answer.
         let quoted = client_turns_estimate(
@@ -467,12 +482,11 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
             // **The crew the wire publishes**, which is the net the fixture stated plus the rate it
             // also pays — the same number `improvementWorkers` carries.
             staffed,
-            // **The QUOTED rung's rate, not the BILLED one.** `upkeepDemand` reads `0` on a source
-            // nobody has started, which is exactly the source a compose sheet is quoting, so the
-            // client's form nets the rung it is pricing. This fixture is mid-build, where the two
-            // are one number — which is why the no-progress case is pinned in
-            // `build_turns_on_the_wire.rs` instead.
-            herd.tame_upkeep_demand,
+            // **THE ROT, not either rate.** On the animal web it is always `0` — neither animal
+            // rung declares a `meter_decay`, because an under-kept flock sheds animals instead — so
+            // this arm also pins that the form nets *nothing* here, which is what makes a Tame's
+            // pace `work_cost / crew`.
+            herd.meter_rot_per_turn,
         );
         let published = u32::try_from(herd.build_turns_remaining).ok();
 
@@ -902,7 +916,7 @@ fn a_crew_whose_gear_pays_the_tame_off_is_quoted_one_turn_on_the_wire() {
                 tiers.build_work_saturating_crew,
                 herd.build_work_per_worker_turn,
                 KEEPERS,
-                herd.tame_upkeep_demand,
+                herd.meter_rot_per_turn,
             ),
             u32::try_from(herd.build_turns_remaining).ok(),
             "the client's form must reproduce the sim's answer in the over-geared regime too"

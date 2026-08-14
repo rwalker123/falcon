@@ -420,8 +420,21 @@ func _queue_source_badge(col: int, row: int, key: String, kind: String, source: 
 			# Asked ONLY where a rung is under way, off the meter `rung_in_progress` has just
 			# resolved — so the plate's warning and its glyph provably describe the same verb, and
 			# this renderer resolves nothing about the ladder for itself.
+			#
+			# **IT ANSWERS THE *NOT STARTED* CASE ALONE NOW** (`docs/plan_standing_upkeep.md` §4.6a).
+			# The other half — work banked and nobody on it — used to be `BUILD_UNSTAFFED_SLIDING`,
+			# an inference that a parked meter must be bleeding; the sim answers that directly, and
+			# `losing` below is where the plate reads its verdict.
 			unstaffed = SourceForecast.unstaffed_build_of(
 				float(building.get("progress", 0.0)), builders)
+	# **AND WHETHER THE METER IS GOING BACKWARDS — read off the WIRE, never re-derived**
+	# (`docs/plan_standing_upkeep.md` §4.6a). `SourceForecast.build_pace` classifies the sim's own
+	# `buildTurnsRemaining`, so the map, the tile card and the compose sheet cannot come to three
+	# different opinions about one meter. It is asked with the BUILDERS, because `BUILD_METER_HOLDS`
+	# covers both a crew treading water and a build parked on purpose — and only the first is news.
+	var losing := false
+	if not building.is_empty() and not source.is_empty():
+		losing = SourceForecast.build_is_losing(source, builders)
 	var center := _view.secondary_slot_center(_view._hex_center(col, row, radius, origin), slot, radius)
 	# One entry per source key: a later band working the same source replaces the earlier queue rather
 	# than stacking a second plate on the same marker.
@@ -435,6 +448,7 @@ func _queue_source_badge(col: int, row: int, key: String, kind: String, source: 
 		"building_glyph": String(building.get("glyph", "")),
 		"building_progress": float(building.get("progress", 0.0)),
 		"unstaffed": unstaffed,
+		"losing": losing,
 	})
 
 ## Render (and drain) the deferred badge batch — the crew count, and the ⌃ chevron when the source can
@@ -460,7 +474,12 @@ func _draw_source_badge(entry: Dictionary) -> void:
 		# **A PERCENT ON A BUILD NOBODY IS STAFFING IMPLIES PROGRESS THAT IS NOT HAPPENING.** The
 		# unstaffed face drops the number entirely (see `BADGE_UNSTAFFED_FORMAT`); the plate still says
 		# WHICH rung is promised here, and stops saying it is being worked.
-		if SourceForecast.build_is_unstaffed(
+		#
+		# **A LOSING METER TAKES THE SAME FACE, and it is the wire's verdict rather than a staffing
+		# guess** (§4.6a). A percent that is falling is the same lie as a percent that is not moving —
+		# but a meter merely PARKED, with its keeping covered, keeps its number, because that number is
+		# honest and the state is a decision rather than a failure.
+		if bool(entry.get("losing", false)) or SourceForecast.build_is_unstaffed(
 				String(entry.get("unstaffed", SourceForecast.BUILD_STAFFED))):
 			rung_text = BADGE_UNSTAFFED_FORMAT % building_glyph
 			rung_color = BADGE_UNSTAFFED_COLOR

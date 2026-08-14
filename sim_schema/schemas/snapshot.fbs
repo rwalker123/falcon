@@ -2129,24 +2129,29 @@ table ForagePatchState {
   // THREE NEGATIVES, THREE FACTS, and they must not be collapsed:
   //
   //   -1  NO ESTIMATE — there genuinely is no answer: this is already a Field, the next rung's own
-  //       site/knowledge/species gates refuse it for this faction, or NO CREW is working the source.
-  //   -2  THE METER HOLDS — a REAL, STAFFED, PRICED build whose net supply is EXACTLY ZERO. The
-  //       maintenance rate is a tax on building (docs/plan_standing_upkeep.md 2.4), and this crew's
-  //       whole output goes on it: nothing is banked, nothing is lost. Render as INFINITY.
-  //   -3  THE METER ROTS — the same build with a NEGATIVE net. The crew is under the rate, so past
-  //       the rung's grace the decay pass bleeds work the player already bought. Render as INFINITY
-  //       too, but NOT the same way as `-2`: holding wastes a turn, rotting destroys progress.
+  //       site/knowledge/species gates refuse it for this faction, or the rung's meter is at ZERO
+  //       with nobody building it (nothing banked and nobody on it has promised nothing).
+  //   -2  THE METER HOLDS — a real, priced build banking EXACTLY what the meter is bleeding, so the
+  //       ground stands still: nothing gained, nothing lost. Render as INFINITY.
+  //   -3  THE METER ROTS — the same build banking LESS than the bleed, so past the rung's grace the
+  //       decay pass takes back work the player already bought. Render as INFINITY too, but NOT the
+  //       same way as `-2`.
   //
-  // THE LAST TWO ARE ANSWERS, NOT THE ABSENCE OF ONE, and they are the ones the player can act on:
-  // add hands. They shipped folded into `-1` for one slice, which rendered as NO LINE AT ALL on the
-  // tile card and the herd drawer — visible only to a compose sheet that redid the comparison
-  // itself — and then as one `-2` for another, which said "never finishes" about a build that was
-  // treading water and one that was losing ground alike.
+  // `-2` IS NOT ONLY A FAILURE, and this is the one a reader gets wrong. With NO BUILDERS and the
+  // keeping met it is the player PARKING a half-built improvement — held indefinitely, at no risk,
+  // which docs/plan_standing_upkeep.md 2.4 exists to make possible. `-3` is the unambiguously bad
+  // one, and it is where the remedy is STAFF THE KEEPING rather than "add builders".
   //
-  // ALL THREE CONDITIONS ON `-2`/`-3` ARE LOAD-BEARING. An UNSTAFFED source reads `-1`: nobody has
-  // promised anything there, and claiming a source with no crew will never finish would fire on
-  // every idle improvement on the map. So does a build whose knowledge/site/species gate refuses it
-  // even with hands on it — it accrues nothing for a reason that is not the staffing.
+  // They shipped folded into `-1` for one slice, which rendered as NO LINE AT ALL on the tile card
+  // and the herd drawer — visible only to a compose sheet that redid the comparison itself — and
+  // then as one `-2` for another, which said "never finishes" about a build treading water and one
+  // losing ground alike.
+  //
+  // THE BOUNDARY IS WORK BANKED, NOT HANDS ON THE JOB (section 4.6a). A meter carrying work has
+  // promised something - the player paid for it - so an UNSTAFFED half-built meter is `-2` or `-3`,
+  // not `-1`. That is not a nicety: both plant rot rates are below one worker-turn, so a STAFFED
+  // build always out-runs its own rot and zero builders is where the two states live. A build whose
+  // gate refuses it still reads `-1` at any staffing and any meter — it is not running at all.
   //
   // THE CLIENT CANNOT COMPUTE THIS. It holds neither the crew's output, nor the floor multiplier,
   // nor the kit's build rate — so the sim answers, exactly as it does for `penFeedUpkeep` and the
@@ -2186,12 +2191,18 @@ table ForagePatchState {
   //
   //   gear(w)  = min(w, buildWorkSaturatingCrew) x buildWorkPerWorker
   //   turns(w) = ceil((workCost - workDone - gear(w))
-  //                   / (w x buildWorkPerWorkerTurn x floor / foodPeak - <rung>UpkeepDemand))
+  //                   / (w x buildWorkPerWorkerTurn - meterRotPerTurn))
   //
-  // THE MAINTENANCE RATE IS THE DIVISOR'S SECOND TERM, and leaving it out is not a rounding error:
-  // a `w` at or below the rate never finishes at all, where the un-netted form quotes `workCost / w`
-  // turns for a meter that will sit at zero forever. Take it from the `<rung>UpkeepDemand` field for
-  // the SAME rung the `workCost` came from.
+  // THE ROT IS THE DIVISOR'S SECOND TERM, and it is NOT `<rung>UpkeepDemand` (see section 4.6a of
+  // docs/plan_standing_upkeep.md): the band's keeping pool owes the maintenance rate for every meter
+  // carrying work whatever the builders do, so netting a RATE here prices the build against a bill it
+  // does not pay. What eats a build is the ground going backwards under it, which is exactly
+  // `meterRotPerTurn`, and it does not vary with `w`.
+  //
+  // THERE IS NO FLOOR FACTOR. `learn_multiplier(floor)` came off the build accrual with the crews'
+  // separation - a build crew is not pulling on the source - so the crew term is the head count and
+  // nothing else. A form still carrying `x floor / foodPeak` disagrees with the sim at every floor
+  // but the food peak.
   //
   // READ IT BESIDE `buildTurnsRemaining`, NEVER INSTEAD OF IT. That field is the sim's answer for
   // the COMMITTED crew and is what a card with no stepper renders; this is a term a sheet WITH a
@@ -2238,14 +2249,15 @@ table ForagePatchState {
   // build that never moves because the crew is under the rate. The price and the outcome were
   // computed against different rungs.
   //
-  // THE RATE IS OWED WHILE BUILDING TOO, so the build's closed form nets it out:
+  // THE RATE IS OWED WHILE BUILDING TOO - BUT IT IS NOT A TAX ON THE BUILD, and the closed form does
+  // NOT net it (docs/plan_standing_upkeep.md section 4.6a). The band's keeping pool owes the rate for
+  // every meter carrying work, at any fullness, and a build crew supplies nothing toward it: the pace
+  // is `work_cost / crew` again. What the closed form nets is `meterRotPerTurn` - what the ground is
+  // losing under the builders - and `buildTurnsRemaining`'s `-2` (the crew banks exactly what the
+  // meter bleeds) / `-3` (it banks less) are struck from that term.
   //
-  //   turns(w) = ceil((workCost - workDone - gear(w))
-  //                   / (w x buildWorkPerWorkerTurn x floor / foodPeak - <rung>UpkeepDemand))
-  //
-  // ...and a `w` whose output does not clear the rate NEVER finishes, which is what
-  // `buildTurnsRemaining` publishes as `-2` (exactly at the rate, the meter holds) or `-3` (under
-  // it, the meter rots).
+  // So what this pair is FOR is the standing bill: what holding the rung will cost the keeping pool
+  // once the build lands, which is a cost the player has to be able to see before committing.
   //
   // ALWAYS MEANINGFUL, NEVER A SENTINEL (the penUpkeep rule): it is the LADDER's rate for that rung,
   // resolved at capture whether or not a build is in flight, exactly as the `*WorkCost` beside it is.
@@ -2257,6 +2269,30 @@ table ForagePatchState {
   // numbers a player can staff exactly).
   cultivationUpkeepDemand:float = 0;
   fieldUpkeepDemand:float = 0;
+  // WHAT THIS PATCH'S AT-RISK METER IS LOSING PER TURN RIGHT NOW, in WORK UNITS (appended,
+  // docs/plan_standing_upkeep.md section 4.6a) - the rung's own `meter_decay.per_turn` scaled by how
+  // short the keeping fell, i.e. exactly what the Logistics decay pass will bleed off the meter.
+  //
+  // ALWAYS MEANINGFUL, NEVER A SENTINEL (the penUpkeep rule). It is `0` when the keeping covers the
+  // demand, when the source is still inside its rung's grace, when nothing is built here, and when
+  // the rung declares no `meter_decay` at all - WHICH IS BOTH ANIMAL RUNGS, whose penalty is the shed
+  // rather than a meter bleed. An animal source therefore always reads `0` here and that is the
+  // model, not a gap.
+  //
+  // WHY IT HAS TO EXIST. The build's closed form nets THIS, not `<rung>UpkeepDemand`: since section
+  // 4.6a a build crew supplies nothing toward the maintenance rate (the band's keeping pool owes it
+  // for every meter carrying work, at any fullness), so what eats a build is the ground going
+  // backwards under it:
+  //
+  //   turns(w) = ceil((workCost - workDone - gear(w))
+  //                   / (w x buildWorkPerWorkerTurn - meterRotPerTurn))
+  //
+  // The rot does NOT vary with the build crew, so it is a constant with respect to the stepper - but
+  // the client cannot compute it (it holds neither the grace state nor the rung's decay rate), so the
+  // sim publishes it. Without it a compose sheet quotes a finishing build where the card beside it
+  // correctly says the meter is losing ground, and `buildTurnsRemaining`'s `-2`/`-3` are struck from
+  // a term the sheet cannot see.
+  meterRotPerTurn:float = 0;
 }
 
 // One STANCE's ceiling on one tile, in every account the tile's basket pays (issue #426). The plant
@@ -3213,12 +3249,18 @@ table HerdTelemetryState {
   // THREE NEGATIVES, THREE FACTS — the same set the plant twin on `ForagePatchState` documents in
   // full:
   //   -1  NO ESTIMATE — already penned, the next rung's ceiling/knowledge/ownership gates refuse it,
-  //       or NO CREW is working the herd.
-  //   -2  THE METER HOLDS — a real, STAFFED, priced build whose net supply is exactly zero: the
-  //       maintenance rate is a tax on building and this crew's whole output goes on it.
-  //   -3  THE METER ROTS — the same build with a negative net, so banked work is being lost.
-  // Render the last two as INFINITY, and not as each other. An unstaffed herd reads `-1`, and so
-  // does one whose gates refuse the build. The client cannot compute any of them.
+  //       or the rung's meter is at ZERO with nobody building it.
+  //   -2  THE METER HOLDS — a real, priced build banking EXACTLY what the meter is bleeding, so the
+  //       ground stands still. With NO builders and the keeping met that is a PARKED improvement,
+  //       held at no risk - not a warning.
+  //   -3  THE METER ROTS — the same build banking less, so banked work is being lost.
+  // Render the last two as INFINITY, and not as each other. The boundary is WORK BANKED rather than
+  // hands, so an unstaffed HALF-BUILT meter answers `-2`/`-3`; `-1` is a meter at zero with nobody
+  // on it, or a gate that refuses. The client cannot compute any of them.
+  //
+  // ON THE ANIMAL WEB `-3` IS UNREACHABLE, and honestly so: neither animal rung declares a
+  // `meter_decay`, so `meterRotPerTurn` is always 0 and nothing eats an animal build - an under-kept
+  // flock pays in ANIMALS instead. See `.claude/rules/core_sim/husbandry.md`.
   buildTurnsRemaining:int = -1;
   // WHAT THE CREW'S TOOLS TOOK OFF THIS BUILD, in work units (appended,
   // docs/plan_unit_costed_work.md section 6) - the `t` in
@@ -3253,12 +3295,18 @@ table HerdTelemetryState {
   //
   //   gear(w)  = min(w, buildWorkSaturatingCrew) x buildWorkPerWorker
   //   turns(w) = ceil((workCost - workDone - gear(w))
-  //                   / (w x buildWorkPerWorkerTurn x floor / foodPeak - <rung>UpkeepDemand))
+  //                   / (w x buildWorkPerWorkerTurn - meterRotPerTurn))
   //
-  // THE MAINTENANCE RATE IS THE DIVISOR'S SECOND TERM, and leaving it out is not a rounding error:
-  // a `w` at or below the rate never finishes at all, where the un-netted form quotes `workCost / w`
-  // turns for a meter that will sit at zero forever. Take it from the `<rung>UpkeepDemand` field for
-  // the SAME rung the `workCost` came from.
+  // THE ROT IS THE DIVISOR'S SECOND TERM, and it is NOT `<rung>UpkeepDemand` (see section 4.6a of
+  // docs/plan_standing_upkeep.md): the band's keeping pool owes the maintenance rate for every meter
+  // carrying work whatever the builders do, so netting a RATE here prices the build against a bill it
+  // does not pay. What eats a build is the ground going backwards under it, which is exactly
+  // `meterRotPerTurn`, and it does not vary with `w`.
+  //
+  // THERE IS NO FLOOR FACTOR. `learn_multiplier(floor)` came off the build accrual with the crews'
+  // separation - a build crew is not pulling on the source - so the crew term is the head count and
+  // nothing else. A form still carrying `x floor / foodPeak` disagrees with the sim at every floor
+  // but the food peak.
   //
   // READ IT BESIDE `buildTurnsRemaining`, NEVER INSTEAD OF IT. That field is the sim's answer for
   // the COMMITTED crew and is what a card with no stepper renders; this is a term a sheet WITH a
@@ -3305,14 +3353,15 @@ table HerdTelemetryState {
   // the player commits to a build that never moves because the crew is under the rate. The price and
   // the outcome were computed against different rungs.
   //
-  // THE RATE IS OWED WHILE BUILDING TOO, so the build's closed form nets it out:
+  // THE RATE IS OWED WHILE BUILDING TOO - BUT IT IS NOT A TAX ON THE BUILD, and the closed form does
+  // NOT net it (docs/plan_standing_upkeep.md section 4.6a). The band's keeping pool owes the rate for
+  // every meter carrying work, at any fullness, and a build crew supplies nothing toward it: the pace
+  // is `work_cost / crew` again. What the closed form nets is `meterRotPerTurn` - what the ground is
+  // losing under the builders - and `buildTurnsRemaining`'s `-2` (the crew banks exactly what the
+  // meter bleeds) / `-3` (it banks less) are struck from that term.
   //
-  //   turns(w) = ceil((workCost - workDone - gear(w))
-  //                   / (w x buildWorkPerWorkerTurn x floor / foodPeak - <rung>UpkeepDemand))
-  //
-  // ...and a `w` whose output does not clear the rate NEVER finishes, which is what
-  // `buildTurnsRemaining` publishes as `-2` (exactly at the rate, the meter holds) or `-3` (under
-  // it, the meter rots).
+  // So what this pair is FOR is the standing bill: what holding the rung will cost the keeping pool
+  // once the build lands, which is a cost the player has to be able to see before committing.
   //
   // ALWAYS MEANINGFUL, NEVER A SENTINEL (the penUpkeep rule): it is the LADDER's rate for that rung,
   // resolved at capture whether or not a build is in flight, exactly as the `*WorkCost` beside it is.
@@ -3325,6 +3374,20 @@ table HerdTelemetryState {
   // herdersNeededIfManaged: a quote must exist before the herd is anyone's.
   tameUpkeepDemand:float = 0;
   corralUpkeepDemand:float = 0;
+  // WHAT THIS HERD'S AT-RISK METER IS LOSING PER TURN RIGHT NOW, in WORK UNITS (appended,
+  // docs/plan_standing_upkeep.md section 4.6a) - the plant twin's field, on the same rule, so a
+  // client's build estimate is one expression across both webs.
+  //
+  // IT IS ALWAYS `0` ON THE SHIPPED LADDER, AND THAT IS NOT AN OMISSION. Neither animal rung declares
+  // a `meter_decay`: an under-kept flock SHEDS ANIMALS at fauna_config's own escape fractions, which
+  // are already the rate, so a second one on the rung would be two numbers for one mechanic. Nothing
+  // eats an animal build - a Tame or Corral with any crew on it publishes a real finish date however
+  // short its keeping is, and the price of that shortfall is paid in animals rather than in meter.
+  // Do not render a missing red here.
+  //
+  // See the ForagePatchState twin for why the field exists at all: the build's closed form nets the
+  // ROT, never `<rung>UpkeepDemand`, and the client cannot derive the rot.
+  meterRotPerTurn:float = 0;
 }
 
 table CommandEventState {

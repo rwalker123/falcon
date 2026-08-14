@@ -241,7 +241,7 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 >
 > ```text
 > gear(w)  = min(w, buildWorkSaturatingCrew) × buildWorkPerWorker      ← the KIT row
-> turns(w) = ceil((workCost − workDone − gear(w)) / (w × buildWorkPerWorkerTurn × floor / foodPeak))
+> turns(w) = ceil((workCost − workDone − gear(w)) / (w × buildWorkPerWorkerTurn − meterRotPerTurn))
 > ```
 >
 > The client draws the curve; the sim states the answer — the same division as the take, one row

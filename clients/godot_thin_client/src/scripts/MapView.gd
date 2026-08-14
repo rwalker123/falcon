@@ -311,6 +311,11 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# state, redacted under the one rule the whole patch payload follows.
 	"patch_upkeep_demand", "patch_upkeep_supplied", "patch_upkeep_shortfall",
 	"patch_upkeep_workers_needed",
+	# …and what that shortfall is COSTING the meter, which is the same fact one step on. The two
+	# per-rung `*_upkeep_demand` figures beside it are deliberately NOT here (they are the ladder's
+	# flat rates, identical on every patch); this one is derived from a shortfall a remembered tile has
+	# no way to observe.
+	"patch_meter_rot_per_turn",
 	# THE NEGLECT GRACE. Live patch state by construction — it counts the turns of upkeep SHORTFALL —
 	# and redacting it is what keeps a remembered tile from counting down a lapse it has no way to
 	# observe.
@@ -2812,12 +2817,21 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# `patch_upkeep_demand` above is `0` on a patch with nothing started, which is what made the
 		# stepper quote a finish date for a build that could never advance.
 		#
-		# **Deliberately NOT in `FOW_DISCOVERED_HIDDEN_KEYS`.** Both plant rungs declare
-		# `scaled_by: flat`, so this is the LADDER's number and reads identically on every patch in
-		# the game — there is no live patch state in it to leak — and keeping it out of the redaction
-		# is what stops the closed form from silently losing its rate term on a remembered tile.
+		# **Deliberately NOT in `FOW_DISCOVERED_HIDDEN_KEYS`, and for ONE reason now.** Both plant rungs
+		# declare `scaled_by: flat`, so this is the LADDER's number and reads identically on every
+		# patch in the game — there is no live patch state in it to leak. The second reason it used to
+		# carry is gone: the closed form no longer reads it at all (`docs/plan_standing_upkeep.md`
+		# §2.4 — the keeping pool owes the rate at every fullness, so a build crew nets the ROT
+		# instead), so redacting it could no longer cost the estimate its term. The surviving reason
+		# stands on its own, and the field is a PRICE on the offered face rather than a term.
 		info["patch_cultivation_upkeep_demand"] = float(patch.get("cultivation_upkeep_demand", 0.0))
 		info["patch_field_upkeep_demand"] = float(patch.get("field_upkeep_demand", 0.0))
+		# **WHAT THE AT-RISK METER IS LOSING PER TURN** — the term the compose sheet's closed form
+		# nets. Unlike the pair above it IS live patch state: it exists only because this band's keeping
+		# pool came up short past the rung's grace, so it is redacted with the shortfall it is derived
+		# from. Nothing is lost by that — a remembered tile's whole build payload is redacted, so the
+		# estimate already answers `BUILD_TURNS_NO_ESTIMATE` there for want of a cost.
+		info["patch_meter_rot_per_turn"] = float(patch.get("meter_rot_per_turn", 0.0))
 		# THE NEGLECT GRACE — the COUNTDOWN to the ground reverting, with its own presence bool.
 		# `has_neglect_grace == false` means nothing is built here to lose (the common case, a wild
 		# patch), and it is what keeps the honest "reverting NOW" zero from reading as "nothing at

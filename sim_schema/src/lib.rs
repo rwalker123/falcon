@@ -1392,6 +1392,56 @@ mod tests {
         );
     }
 
+    /// **THE ROT SURVIVES THE WIRE ON BOTH WEBS, AND IT IS NOT ONE OF THE RATES BESIDE IT** —
+    /// `meterRotPerTurn`, the term a build's closed form nets (`docs/plan_standing_upkeep.md` §4.6a).
+    ///
+    /// **Two distinct values, and both distinct from every upkeep demand on the same row**: the two
+    /// live one field apart on each table, so a codec that wired the new slot to a neighbour would
+    /// pass a fixture that stated one number.
+    #[test]
+    fn the_meter_rot_survives_the_wire_on_both_webs() {
+        const HERD_ROT: f32 = 0.25;
+        const PATCH_ROT: f32 = 0.75;
+        const A_DEMAND: f32 = 4.0;
+
+        let snapshot = WorldSnapshot {
+            herds: vec![HerdTelemetryState {
+                corral_upkeep_demand: A_DEMAND,
+                meter_rot_per_turn: HERD_ROT,
+                ..HerdTelemetryState::default()
+            }],
+            forage_patches: vec![ForagePatchState {
+                field_upkeep_demand: A_DEMAND,
+                meter_rot_per_turn: PATCH_ROT,
+                ..ForagePatchState::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("a decodable snapshot envelope");
+        let subsistence = envelope
+            .payload_as_snapshot()
+            .expect("a snapshot payload")
+            .subsistence()
+            .expect("a subsistence section");
+
+        let herd = subsistence.herds().expect("the herds").get(0);
+        assert_eq!(herd.meterRotPerTurn(), HERD_ROT);
+        assert_eq!(
+            herd.corralUpkeepDemand(),
+            A_DEMAND,
+            "the rate and the rot are different questions and different slots"
+        );
+
+        let patch = subsistence
+            .foragePatches()
+            .expect("the forage patches")
+            .get(0);
+        assert_eq!(patch.meterRotPerTurn(), PATCH_ROT);
+        assert_eq!(patch.fieldUpkeepDemand(), A_DEMAND);
+    }
+
     /// **THE KIT'S PER-WORKER BUILD CONTRIBUTION SURVIVES THE WIRE, and the retired multiplier's
     /// slot publishes only its neutral.** Both halves matter: a consumer must be able to read the
     /// successor, and one still reading `buildRate` must not be handed a number in work units — it

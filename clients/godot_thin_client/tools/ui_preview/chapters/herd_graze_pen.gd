@@ -622,15 +622,16 @@ func run(harness) -> void:
 
 	# **THE MID-BUILD READING, and it is the one a pooled readout gets wrong.** A herd mid-Tame is
 	# billed a non-zero upkeep — its animals are standing there whether or not the rung is finished —
-	# but NO POOL COVERS IT: the sim leaves an unbuilt rung out of the band's keeping pool and credits
-	# its BUILD crew instead. So the `Keeping:` row must say it is being built, and must not quote the
-	# pool or ask for keepers; the `Keepers:` row above it stays calm, the herd owing keepers only
-	# once the rung stands.
+	# and **the band's KEEPING pool is what owes it, at every fullness**
+	# (`docs/plan_standing_upkeep.md` §2.4). That was the one thing this state used to say differently:
+	# the fullness of the meter decided who paid, so a half-built rung was billed to its build crew and
+	# left out of the pool entirely. It is not, and the readout is unchanged by that — what a mid-build
+	# herd whose keeping IS covered has to say is still nothing at all.
 	#
 	# **THE FORK IS THE METER NOW, and that is what this state is really pinning.** It used to be
-	# `upkeep_workers_needed == 0`, and this fixture publishes a POSITIVE count — the minimum viable
-	# build crew — so a row still reading the count would print `the pool covers 4 of 4 work` here and
-	# send the player to raise a role that will never settle this bill.
+	# `upkeep_workers_needed == 0`, and this fixture publishes a POSITIVE count — the keepers this
+	# meter is worth — so a row still reading the count would print `the pool covers 4 of 4 work` here
+	# and restate a bill that is not a decision until it is short.
 	h._show_herd(_mid_tame_herd_fixture())
 	await h._settle()
 	await h._save("herd_keeping_mid_build")
@@ -638,8 +639,9 @@ func run(harness) -> void:
 		_mid_tame_herd_fixture(), h._hud._band_labor.world_herds())
 	# **THE MID-BUILD READING IS THE RUNG ROW'S NOW, and it is a PAIR** (issue #545). The retired
 	# `Keeping:` sentence said *its own crew pays the rate* on a paid build and *this rung is sliding
-	# back* on an unpaid one; a build whose crew is under the rate is exactly what the sim answers
-	# `-2` for, so the row states `∞` and the `At risk:` row beneath it says what the shortfall costs.
+	# back* on an unpaid one; a build whose crew banks less than the meter is losing is exactly what
+	# the sim answers `-2` for, so the row states `∞` and the `At risk:` row beneath it says what the
+	# shortfall costs.
 	# Neither is on a herd whose build IS being paid, which is what makes the silence readable.
 	h._assert_hud("a herd mid-Tame whose build is paid states no shortfall and no keeper bill",
 		not _lines_any_contain(mid_tame_lines, DetailFormat.UPKEEP_RISK_ROW)

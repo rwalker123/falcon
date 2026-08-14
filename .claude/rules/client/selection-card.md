@@ -345,34 +345,66 @@ reads `Cultivation ≈50 turns (0%)` / `🌾 Tended 100%` / `🌾 Tended 92% ⚠
 
 That is what deleting the `Keeping:` row costs, and it is the rule everything above rests on: **a
 failure state that renders bare reads as success.** It is the same trap as the unstaffed build one
-section down, where a calm `0%` was taken for work in progress. So `rung_row_value` forks FIVE ways
-and every one of them leads with `HudSelectionVocab.RUNG_HAZARD_GLYPH`:
+section down, where a calm `0%` was taken for work in progress. So `rung_row_value` forks, and every
+FAILURE state leads with `HudSelectionVocab.RUNG_HAZARD_GLYPH`:
 
 | state | reads | why it is not the one above it |
 |---|---|---|
 | declared, nobody assigned, nothing banked | `⚠ Not started — no builders assigned` | there is no meter to state — `0 / 50 (0%)` is that zero written three ways |
-| work banked, nobody on it | `⚠ Reverting 42%` | the remedy is HANDS, and the plant web is actively losing the work |
-| staffed exactly AT the rung's rate | `⚠ ∞ turns (42%)` | somebody IS on it; the remedy is MORE of them |
-| staffed UNDER it | `⚠ ∞ turns, losing ground (42%)` | same remedy, and the work already bought is going BACK — so it is RED, not amber |
+| **work banked, nobody on it, keeping COVERS it** | **`Held at 42%` — no mark, neutral ink** | **it is a decision, not a failure** (see below) |
+| a crew on it banking exactly the ROT | `⚠ ∞ turns (42%)` | somebody IS on it and their turn is being wasted; the remedy is MORE of them |
+| under the rot, staffed or not | `⚠ ∞ turns, losing ground (42%)` | the work already bought is going BACK — so it is RED, not amber |
 | built, and the keeping pool is short | `🌾 Tended 92% ⚠` | the rung is HELD and slipping, which no build crew fixes |
 
-**A SIXTH STATE EXISTS AND IT IS MARKED TOO** — `⚠ Stalled 42%`, the sim's `-1` on a source with
-builders on it: a rung whose knowledge, site or species gate does not hold, or whose crew stands over
-an empty escapement room. It gets its own word rather than borrowing *Reverting* (which would name
-the wrong remedy) and must not render as a bare percentage, which is the silence this family exists to
-remove.
+> #### ⛔ THE HELD ROW IS THE ONE STATE HERE THAT MUST **NOT** BE MARKED (§4.6a)
+>
+> **Parking a half-built improvement is a legitimate thing to do.** Take the builders off a Cultivate
+> at 50%, leave the band's keeping staffed, and the meter holds there indefinitely — the keeping pool
+> owes an at-risk meter at every fullness (`docs/plan_standing_upkeep.md` §2.4), so nothing is being
+> lost. **Marking it is how a player is taught to ignore the mark**, which costs every other row in
+> this table its meaning; that is this whole section's rule, pointed the other way.
+>
+> **It says `Held` in WORDS rather than `∞ turns`, and so does the COMPOSE FACE** (`build_turns_clause`
+> takes the crew for it). The two `∞` rows are statements about a CREW and there is none here — and the
+> glyph is the larder runway's, shared on the strength of a player learning a mark once and reading it
+> everywhere, so spending it where nothing is wrong teaches that it sometimes means nothing is wrong.
+> The two producers saying the SAME WORD about the same state is what makes the pair trustworthy.
+>
+> **It replaced `⚠ Reverting 42%`, which was this surface's OWN producer of the state.** That row
+> fired on *work banked and nobody on it* — an inference that a parked meter must be bleeding, true
+> only while an unbuilt rung was billed to its build crew. **The wire answers it now**: `-2` where the
+> keeping covers it, `-3` where it does not. The crew is still read, and is not a second opinion — it
+> is the one fact `BUILD_METER_HOLDS` cannot carry, choosing between two wordings of one sentinel.
 
-**THE BUILT ROW'S MARK IS `is_under_kept`, NOT the raw shortfall.** That test additionally requires no
-build in flight, which is what keeps the mark on the row it belongs to: a patch holding a Tended rung
-while a Field goes up is billed for the FIELD, so an unqualified shortfall would light the tended row
-for a bill the Field's builders owe.
+**ONE MORE STATE EXISTS AND IT IS MARKED TOO** — `⚠ Stalled 42%`, the sim's `-1` on a source with
+builders on it: a rung whose knowledge, site or species gate does not hold, or whose crew stands over
+an empty escapement room. It gets its own word, and must not render as a bare percentage, which is the
+silence this family exists to remove. **It reads alike to the HELD row in INK and could not be more
+different in meaning** — *no answer* against *no problem* — which is exactly why the held row spends a
+word on saying so.
+
+**THE BUILT ROW'S MARK IS ROUTED TO THE AT-RISK RUNG** (`SourceForecast.rung_is_under_kept`, §4.6a).
+`is_under_kept` answers for the SOURCE — one pool, one shortfall — and **only one meter on a source is
+ever at risk**: the newest one carrying work, which is what the published shortfall is resolved
+through (`at_risk_rung`, the client's copy of the sim's newest-first walk). A patch mid-Sow is billed
+for the FIELD, so a `⚠` on the tended row beneath would point the player at ground that is fine — and
+a false mark costs every true one its meaning exactly as a missing one does.
+
+**THE ROUTING USED TO BE ACCIDENTAL.** The test carried a `build_is_in_flight` gate, there to keep the
+mark off a source whose bill the BUILDERS owed; the pooled keeping deleted that gate's reason and
+merged the test with `is_unbuilt_and_unpaid`, and with the gate went the routing it had been doing by
+side effect. **It decides which ROW shows a number, never the number** — the same job `build_verb`
+already does for the build verb, off the same table. **And it withholds a mark from a ROW, never the
+fact**: the source-level `At risk:` row still states what the shortfall costs and how long is left.
 
 **THE TINT IS DECIDED ONCE FOR FOUR ROWS, AND IT KEYS ON THE MARK.** `DetailFormat.rung_value_hex` is
 what `cultivation_value_hex` / `field_value_hex` / `husbandry_value_hex` / `corral_value_hex` all
 delegate to — **red on the ROTTING row's own phrase**, amber on the hazard glyph, signal green on the
 rung's own BUILT badge, neutral ink otherwise. Each of those used to guess by substring (`no
 builders`, then `Reverting`, then the badge word), so every new hazard state needed its own guess and
-could ship without its colour. The one case above the rule is the STARVING pen, which is DANGER red
+could ship without its colour. **The HELD row is in no branch at all** and takes the neutral fall-
+through, which is the render: a state that is fine by having no entry cannot acquire a colour by
+someone adding a row. The one case above the rule is the STARVING pen, which is DANGER red
 because the herd is shrinking right now.
 
 **THE ROTTING TEST RUNS FIRST, and that ordering is the whole of it.** That row wears BOTH needles —
@@ -412,7 +444,8 @@ including `HERDERS_SHED_FORMAT`, the one line in the client that says animals ar
 **The four per-rung BUILD VERBS went too** — `Preparing` / `Sowing` / `Domesticating` / `Building`
 each headlined a row that now leads with a number. The compose sheet keeps its own participles
 (`HudComposeVocab.IMPROVEMENT_RUNNING_LABELS`), because a sheet is COMPOSING that verb rather than
-reporting it. `Reverting` survives, owned outright by `HudSelectionVocab.RUNG_REVERTING_FORMAT`.
+reporting it. **`Reverting` went too, in §4.6a** — `HudSelectionVocab.RUNG_HELD_FORMAT` is what a
+parked meter reads now, and the losing half is the rotting row's.
 
 **The FOUR answers `buildTurnsRemaining` publishes all render** — a count is a finish date, `-2` is an
 amber `∞` (`BUILD_METER_HOLDS`, the meter standing still), `-3` a red one saying *losing ground*
@@ -427,14 +460,14 @@ silent only where the row itself does not render. **THE CLIENT DERIVES NONE OF I
 source and a refused gate both reach this reader as `-1`, and re-deriving either would call every idle
 improvement on the map a never-finisher.
 
-**Frames + assertions.** `tile_meter_building` / `tile_meter_reverting` / `tile_meter_never` /
+**Frames + assertions.** `tile_meter_building` / `tile_meter_held` / `tile_meter_never` /
 **`tile_meter_rotting`** / `tile_build_unstaffed` (`chapters/improvements.gd`) carry the plant hazards
 as WORD-AND-TINT markup — ONE patch at ONE meter value, with only the band's assignment and the
 published sentinel moving. The last two of those are judged as a PAIR, since they are one step apart
 and the whole claim is that they read differently.
 `tile_two_meters_live` is the both-rows frame, and its third claim is the SILENCE: a patch whose
 keeping is paid must carry no mark on either row, or the mark means nothing on the states that do.
-`improvement_never_finishes_unstarted` is the compose-sheet repro (see `labor-ui.md`). `herd_corral`
+`improvement_unstarted_standing_price` is the compose-sheet pre-commit quote (see `labor-ui.md`). `herd_corral`
 carries the animal both-rows case with the gear line under the building rung; `herd_under_herded`
 carries hazard 4, the built row's `⚠` beside the shed sentence and the `At risk:` countdown.
 
@@ -462,11 +495,15 @@ information**, exactly as the `∞` one state over is.
 | crew | meter | answer | what it means |
 |---|---|---|---|
 | 0 | 0 | `BUILD_UNSTAFFED_UNSTARTED` | **not started — nobody assigned** |
-| >0, at or under the rate | any | `BUILD_STAFFED`, and `BUILD_TURNS_NEVER` → `∞ turns` | **never finishes at this crew** |
-| 0 | >0 | `BUILD_UNSTAFFED_SLIDING` | **the meter is sliding back** |
+| 0 | >0 | `BUILD_STAFFED` — **the WIRE answers it**, `-2` held or `-3` losing | held on purpose, or losing ground |
+| >0 | any | `BUILD_STAFFED`; the estimate speaks for the pace | somebody is on it |
 
-The middle row is a STAFFED build here, so the `∞` face and this warning can never both fire on one
-rung — which is why the fork is one function rather than four surfaces each deciding for themselves.
+**IT ANSWERS ONE STATE NOW** (§4.6a). `BUILD_UNSTAFFED_SLIDING` read *work banked + nobody on it ⇒
+bleeding*, an INFERENCE that the pooled keeping made wrong half the time — a parked build whose keeping
+is met simply holds. The sim publishes the real fork for zero builders and `build_pace` classifies it,
+so there is one producer of that state and a client-side rot test would be a second opinion about a
+number the sim owns. The one state left cannot collide with the `∞` face, so the fork is still one
+function rather than four surfaces each deciding for themselves.
 `unstaffed_build_of(progress, crew)` is the same fork asked of an ALREADY-RESOLVED rung, for the map
 badge, which has just resolved both through `RungGates.rung_in_progress`.
 
@@ -477,14 +514,18 @@ Four surfaces, and each says it in its own register:
 
 - **The tile card** renders the rung row it used to suppress, valued
   `DetailFormat.BUILD_UNSTARTED_VALUE` (`⚠ Not started — no builders assigned`) in WARN. Above zero
-  the row keeps the words it already had: `building` in `cultivation_label` / `field_label` now means
-  *somebody is on it* rather than *somebody declared it*, so a declared rung with no builders reads
-  `Reverting` exactly as an abandoned one does.
+  the row is the wire's own verdict, and `staffed` (was `building`) chooses only the WORDING of
+  `BUILD_METER_HOLDS`: a crew treading water, or a build parked on purpose.
 - **The herd drawer** takes the rung as a parameter — `herd_summary_lines`' trailing
-  `unstaffed_build` — because a pure producer over one herd dict cannot see the player's labor row.
-- **The compose sheet** puts it in the improvement control's WARN note slot, forked on the meter
-  (`HudComposeVocab.BUILD_UNSTARTED_NOTE` / `BUILD_SLIDING_NOTE`), and inks the face amber through
-  the same `warn_face` the `∞` uses.
+  `unstaffed_build`, and since §4.6a the `build_crew` beside it — because a pure producer over one herd
+  dict cannot see the player's labor row. **On this web `HOLDS` always means parked**: no animal rung
+  declares a `meter_decay`, so an animal meter never goes backwards and no crew can be treading water
+  on one.
+- **The compose sheet** puts it in the improvement control's WARN note slot
+  (`HudComposeVocab.BUILD_UNSTARTED_NOTE`) and inks the face through the same pace the `∞` uses.
+  **`BUILD_SLIDING_NOTE` is retired**: it filled a silence — at zero builders the sheet's own estimate
+  used to drop out — and `build_turns_at` answers at zero now, so the note would restate the line
+  directly above it and would claim a loss on a meter the player parked.
 - **The map badge** drops the percentage for `🌱⚠` in `HudStyle.WARN` — see `overlay-channels.md`.
 
 **The tint is decided ONCE for four rows.** `DetailFormat.BUILD_UNSTAFFED_NEEDLE` is what

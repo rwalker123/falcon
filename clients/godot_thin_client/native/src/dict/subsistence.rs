@@ -390,16 +390,27 @@ pub(crate) fn herds_to_array(
             "upkeep_workers_needed",
             i64::from(herd.upkeepWorkersNeeded()),
         );
-        // **THE PRE-COMMIT RATE, PER RUNG** — what holding THAT rung costs per turn, published
-        // unconditionally exactly as the `*_work_cost` beside it is. `upkeep_demand` above answers
-        // *"what is this herd billed right now"*, which is `0` on a herd with nothing started, so a
-        // compose sheet netting the build crew's output against it quoted a finish date for a build
-        // whose rung can never advance at that crew. These are the ladder's own rates, so the
-        // stepper's closed form subtracts the rate of the rung it is PRICING and price, meter and
-        // rate always name one rung. Both carry this herd's own keeper load (`scaled_by:
-        // source_load`) and are ownership-independent: a quote exists before the herd is anyone's.
+        // **THE STANDING PRICE, PER RUNG** — what holding THAT rung will cost per turn once it stands,
+        // published unconditionally exactly as the `*_work_cost` beside it is. `upkeep_demand` above
+        // answers *"what is this herd billed right now"*, which is `0` on a herd with nothing started,
+        // so it can price no rung the player is about to commit to. These are the ladder's own rates,
+        // picked with the same key table the cost is, so price, meter and rate always name one rung.
+        // Both carry this herd's own keeper load (`scaled_by: source_load`) and are
+        // ownership-independent: a quote exists before the herd is anyone's.
+        //
+        // **A PRICE, NOT A THRESHOLD** (`docs/plan_standing_upkeep.md` §2.4). The compose sheet's
+        // closed form subtracted this while the build crew supplied the rate below the meter's cost;
+        // the band's keeping pool owes it at every fullness now, so the form nets `meter_rot_per_turn`
+        // and this rides the offered face as the second half of the deal.
         let _ = dict.insert("tame_upkeep_demand", herd.tameUpkeepDemand());
         let _ = dict.insert("corral_upkeep_demand", herd.corralUpkeepDemand());
+        // **WHAT THE AT-RISK METER IS LOSING PER TURN** — the term the build's closed form actually
+        // nets (`net = crew work − rot`), per SOURCE rather than per rung. Always meaningful, never a
+        // sentinel: `0` when the keeping covers this herd, when it is inside its rung's grace, and —
+        // structurally — on EVERY animal source, neither animal rung declaring a `meter_decay`
+        // because its penalty is a shed rather than a bleed. It is decoded on this web anyway so the
+        // one client reader (`SourceForecast.meter_rot_per_turn`) serves a patch and a herd alike.
+        let _ = dict.insert("meter_rot_per_turn", herd.meterRotPerTurn());
         // THE NEGLECT GRACE (issue #442) — the animal twin of `ForagePatchState`'s pair. A COUNTDOWN,
         // not a counter: `0` = the shed is biting NOW, `N > 0` = it bites in N more un-herded turns,
         // and a herd whose keepers are present reads the rung's full `grace + 1` ("walk away and you
@@ -815,12 +826,16 @@ pub(crate) fn forage_patches_to_array(
             "upkeep_workers_needed",
             i64::from(patch.upkeepWorkersNeeded()),
         );
-        // **THE PRE-COMMIT RATE, PER RUNG** — the plant twin of the herd block's pair; see there for
-        // why the stepper cannot net against `upkeep_demand`. Both plant rungs declare
-        // `scaled_by: flat`, so these are the ladder's numbers verbatim (2 and 4 work a turn today)
-        // and are the same on every patch in the game.
+        // **THE STANDING PRICE, PER RUNG** — the plant twin of the herd block's pair; see there for
+        // why `upkeep_demand` cannot price a rung nobody has started, and why this is a price rather
+        // than a threshold. Both plant rungs declare `scaled_by: flat`, so these are the ladder's
+        // numbers verbatim (2 and 4 work a turn today) and are the same on every patch in the game.
         let _ = dict.insert("cultivation_upkeep_demand", patch.cultivationUpkeepDemand());
         let _ = dict.insert("field_upkeep_demand", patch.fieldUpkeepDemand());
+        // **WHAT THE AT-RISK METER IS LOSING PER TURN** — the plant twin, and the one web where it is
+        // routinely non-zero: a plant rung's penalty for an unpaid keeping IS a meter bleed. Per
+        // SOURCE, the plant web unwinding newest-first, so it describes whichever meter is at risk.
+        let _ = dict.insert("meter_rot_per_turn", patch.meterRotPerTurn());
         // THE NEGLECT GRACE (issue #442) — how many more un-worked turns this patch can absorb before
         // its improvement starts reverting. A COUNTDOWN, not a counter, so no client does the
         // subtraction: `0` = the ground is reverting RIGHT NOW, `N > 0` = it starts in N more

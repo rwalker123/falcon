@@ -819,15 +819,13 @@ const IMPROVEMENT_STATE_META := "improvement_state"
 const CHECKBOX_LIVE_FONT_COLOR_SLOTS := ["font_color", "font_hover_color", "font_pressed_color",
     "font_hover_pressed_color", "font_focus_color"]
 
-## The BUILD crew stepper's threshold note, as `Control` meta, carrying the WORK RATE it states —
-## `SourceForecast.min_build_work`, the quoted rung's own upkeep demand. A harness reading the label's
-## text would be asserting the wording; this is the number.
-##
-## **IT CARRIES WORK, NOT WORKERS** (it was `BUILD_CREW_FLOOR_META`, an `int` head count). The model is
-## denominated in work units end to end, and the count behind the old meta read `0` before a build
-## starts — so a harness asserting it was asserting the one state the note is most needed in as an
-## absence.
-const BUILD_WORK_FLOOR_META := "build_work_floor"
+## RETIRED — **`BUILD_WORK_FLOOR_META`**, the BUILD crew stepper's threshold as `Control` meta
+## (`docs/plan_standing_upkeep.md` §2.4). It carried the quoted rung's upkeep rate, which a build crew
+## had to beat before any of its output was progress; the keeping pool owes that rate at every
+## fullness now, so **no rung states a build-crew threshold** and there is no number for a harness to
+## read off this row. `SourceForecast.min_build_work` and `HudComposeVocab.CREW_BUILD_FLOOR_TOOLTIP`
+## went with it, and the rate itself is the offered face's STANDING PRICE
+## (`HudComposeVocab.BUILD_PRICE_UPKEEP_FORMAT`).
 
 ## The PLANT a crop-picker row stands for, as `Button` meta — its `FloraShareInfo.species` key, which
 ## is the sim's own id and the very string the row's art is composed from (`FloraSprites`). The
@@ -890,6 +888,16 @@ const FLORA_CROP_ROW_SPECIES_META := "flora_crop_row_species"
 ## **A CHECKBOX TAKES ONLY THE TWO STOPPING PACES.** `GROWING`'s green would read as an achievement on
 ## a rung nobody has started, so an offer at a finite estimate keeps `apply_checkbox`'s own face colour
 ## and only `HOLDING` / `LOSING` override it.
+##
+## **`BUILD_PACE_HELD` IS DELIBERATELY IN NEITHER TABLE, and its absence is the render**
+## (`docs/plan_standing_upkeep.md` §4.6a). A meter parked by the player with its keeping covered is not
+## failing at anything, so it falls through to `fallback` — the live neutral ink — and stops nothing. It
+## is listed nowhere rather than mapped to a neutral colour on purpose: a state that renders by having
+## no entry cannot acquire a warning by someone adding a row.
+##
+## **`BUILD_PACE_UNKNOWN` shares that fall-through and is a different fact** — *no answer* rather than
+## *no problem*. They read alike because there is nothing to say either way; only `build_pace` knows
+## which, and only the tile card's own row spells the difference in words.
 ## It is a `match` rather than a `const` DICTIONARY because a const initializer evaluates at class
 ## LOAD, and a table keyed on another `class_name`d script's consts welds this leaf's load order to
 ## that script's — the cross-class `const` hazard `hud-modules.md` records.
@@ -992,8 +1000,9 @@ static func build_improvement_control(improvement: String, state: String, face: 
         # with no control on it. `HudStyle.apply_checkbox` has the whole autopsy.
         HudStyle.apply_checkbox(box)
         # **A BOX IS THE ONE STATE THAT CAN CARRY A STOPPING PACE WITHOUT BEING GATED BY IT.** A crew
-        # below the maintenance rate makes the job unfinishable, not illegal — the player may staff it
-        # anyway and add hands next turn — so the face takes the pace's ink and the box stays live.
+        # under what the meter is rotting by makes the job unfinishable, not illegal — the player may
+        # staff it anyway and add hands next turn — so the face takes the pace's ink and the box stays
+        # live.
         #
         # **AFTER `apply_checkbox`, AND ON EVERY INTERACTION STATE.** That helper writes `font_color`
         # itself (plus hover/pressed/focus), so an override set before it is silently overwritten and

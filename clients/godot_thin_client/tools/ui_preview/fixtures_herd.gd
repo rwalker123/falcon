@@ -417,7 +417,20 @@ static func price_animal_build(fixture: Dictionary,
 	# can never advance. Both animal rungs quote per keeper-load, so these carry this herd's own load.
 	fixture["tame_upkeep_demand"] = upkeep
 	fixture["corral_upkeep_demand"] = upkeep
+	# **AND THE ROT, WHICH ON THIS WEB IS STRUCTURALLY NOTHING** — see `ANIMAL_METER_ROT` below.
+	fixture["meter_rot_per_turn"] = ANIMAL_METER_ROT
 	return fixture
+
+## **NO ANIMAL RUNG CAN LOSE METER, SO THIS IS A CONSTANT AND NOT A PARAMETER**
+## (`docs/plan_standing_upkeep.md` §2.4). Neither `animal:pastoral` nor `animal:pen` declares a
+## `meter_decay`: their penalty for an unpaid keeping is a **shed** — the flock loses animals — and
+## `domestication_progress` is monotone-up, so an animal meter never goes backwards.
+##
+## It is stated rather than omitted because the build's closed form NETS it (`net = crew work − rot`),
+## so an absent field and a stated nothing are the same arithmetic and only one of them says the
+## nothing is a fact about the web. The consequence worth knowing: on this web every staffed build
+## crew climbs, and the two never-finishing sentinels are unreachable from an animal source.
+const ANIMAL_METER_ROT := 0.0
 
 ## **WHAT HOLDING A TAMED HERD COSTS, PER TURN, IN WORK.** `intensification_ladder.json` declares
 ## `1.0 × source_load` on **both** animal rungs — a penned animal is not less work to mind than an

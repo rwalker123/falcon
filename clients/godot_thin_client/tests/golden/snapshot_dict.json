@@ -533,6 +533,7 @@
           "material_id": "forage_patches[0].material_per_biomass[1].material_id"
         }
       ],
+      "meter_rot_per_turn": 95.080002,
       "neglect_grace_remaining": 181,
       "owner": 114,
       "per_worker_biomass": 110.809998,
@@ -665,6 +666,7 @@
           "material_id": "forage_patches[1].material_per_biomass[1].material_id"
         }
       ],
+      "meter_rot_per_turn": 51.169998,
       "neglect_grace_remaining": 186,
       "owner": 21,
       "per_worker_biomass": 109.980003,
@@ -885,6 +887,7 @@
           "material_id": "herds[0].material_per_biomass[1].material_id"
         }
       ],
+      "meter_rot_per_turn": 36.529999,
       "neglect_grace_remaining": 142,
       "next_x": 68,
       "next_y": 57,
@@ -992,6 +995,7 @@
           "material_id": "herds[1].material_per_biomass[1].material_id"
         }
       ],
+      "meter_rot_per_turn": 45.049999,
       "neglect_grace_remaining": 57,
       "next_x": 1,
       "next_y": 12,

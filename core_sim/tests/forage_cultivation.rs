@@ -249,6 +249,13 @@ fn spawn_forager(
 
 /// **A crew BUILDING the patch, staffed at the rung's own [`build_crew`]** — not at
 /// [`FORAGE_WORKERS`]. See `build_crew` for why the two numbers had to come apart.
+///
+/// **It staffs the band's keeping too**, because since `docs/plan_standing_upkeep.md` §4.6a the
+/// keeping pool owes a meter carrying work from the **first work banked**: a build fixture with the
+/// `agriculture` role empty is not running at its stated pace, it is racing its own rot, and
+/// `turns_to_prepare` — a pure `cost / accrual` — would then over-promise on every caller. A test
+/// that wants an **unkept** build restates the role with `set_maintain_workers(…, 0)`, which is what
+/// `a_kept_cultivate_finishes_in_its_stated_turns_and_an_unkept_one_is_slower` does from both sides.
 fn spawn_builder(
     app: &mut App,
     tile: bevy::prelude::Entity,
@@ -256,18 +263,19 @@ fn spawn_builder(
     improvement: Improvement,
 ) -> bevy::prelude::Entity {
     let crew = build_crew(app);
-    spawn_forager_of(app, tile, patch, Some(improvement), crew)
+    let band = spawn_forager_of(app, tile, patch, Some(improvement), crew);
+    set_maintain_workers(app, band, tended_keeping_crew());
+    band
 }
 
 /// **One keeper** — what either plant rung's sub-worker demand rounds up to
 /// (`the_upkeep_crew_needed_is_the_demand_in_whole_workers`), and therefore the whole cost of holding
 /// a completed improvement.
 ///
-/// **The build fixtures deliberately staff NONE.** A meter still being raised is owed its *builders*,
-/// not its keepers (`docs/plan_standing_upkeep.md` §2.4), so a Cultivate runs at its stated pace with
-/// nobody on the keeping — and the completion hand-off then moves the builders onto it, so a band
-/// never has to think about the transition at all. That is what
-/// `the_reference_crew_finishes_a_cultivate_in_its_stated_turns_with_no_keeper` pins.
+/// **A BUILD FIXTURE HAS TO STAFF IT** (`docs/plan_standing_upkeep.md` §4.6a). The keeping pool owes
+/// a meter carrying work from the first work banked, so a Cultivate with the role empty is racing its
+/// own rot rather than running at its stated pace — which is what
+/// `a_kept_cultivate_finishes_in_its_stated_turns_and_an_unkept_one_is_slower` pins from both sides.
 const A_KEEPER: u32 = 1;
 
 /// [`spawn_forager`] with an explicit head-count — the dip test needs a crew the carry binds.
@@ -425,25 +433,15 @@ fn cultivation_config(app: &App) -> (f32, f32) {
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let tended = ladder.rung(RungKey::PlantTended);
     assert!(
-        tended.build_accrual(
-            Some(Improvement::Cultivate),
-            true,
-            build_crew(app),
-            UNSCALED_UPKEEP
-        ) > 0.0,
-        "the build fixtures must staff a crew ABOVE the maintenance rate, or every pace assertion \
-         below compares nothing to nothing"
+        tended.build_accrual(Some(Improvement::Cultivate), true, build_crew(app)) > 0.0,
+        "the build fixtures must staff a crew, or every pace assertion below compares nothing to \
+         nothing"
     );
     (
         // The crew IS the throughput now (`docs/plan_unit_costed_work.md` §1.2), so this reads at
         // the head count the build fixtures actually staff — computing it at any other would
         // describe a build nobody here is running.
-        tended.build_accrual(
-            Some(Improvement::Cultivate),
-            true,
-            build_crew(app),
-            UNSCALED_UPKEEP,
-        ),
+        tended.build_accrual(Some(Improvement::Cultivate), true, build_crew(app)),
         unmaintained_bleed(tended),
     )
 }
@@ -472,23 +470,20 @@ const WELL_PAST_ANY_GRACE: u16 = 32;
 /// It is a **fixture** number now rather than a config reading, because the player states a build's
 /// crew (`docs/plan_standing_upkeep.md` §2.2) and there is no rung-level staffing left to read.
 ///
-/// # AND IT IS TWO HANDS **ABOVE THE MAINTENANCE RATE**
+/// # AND NOTHING IS ADDED TO IT FOR THE MAINTENANCE RATE
 ///
-/// The rate is a tax on building (§2.4): it is owed while the meter is being raised, and below the
-/// meter's cost the *build crew* is what supplies it. A bare two hands is **exactly** `plant:tended`'s
-/// rate, so it would net zero — the meter would hold, forever, and every pace assertion below would
-/// pass **vacuously** by comparing nothing to nothing. Staffing above the rate keeps the fixture's
-/// *net* at the two worker-turns these tests were written against.
-fn build_crew(app: &App) -> u32 {
-    /// The net supply the build fixtures are paced against — the staffing the shipped `work_cost`
-    /// was priced at.
-    const NET_WORKER_TURNS: u32 = 2;
-    app.world
-        .resource::<LadderConfigHandle>()
-        .get()
-        .rung(RungKey::PlantTended)
-        .upkeep_crew_needed(UNSCALED_UPKEEP)
-        .saturating_add(NET_WORKER_TURNS)
+/// It carried `+ upkeep_crew_needed` for one slice, because the rate was then a tax on building and a
+/// bare two hands netted zero. **A build crew supplies none of the rate**
+/// (`docs/plan_standing_upkeep.md` §4.6a) — the band's keeping pool owes it at any meter fullness —
+/// so two hands bank two worker-turns and the padding was correcting for nothing. Leaving it in would
+/// have meant every pace in this file measured **four** builders while calling it the reference, and
+/// the plant web's pacing-neutrality claim (`50 work / crew 2 = 25 turns`) is exactly the number that
+/// would have gone missing.
+fn build_crew(_app: &App) -> u32 {
+    /// The staffing the shipped `plant:tended` `work_cost` was priced at, so `50 / 2 = 25` turns is
+    /// what this file measures.
+    const THE_REFERENCE_CREW: u32 = 2;
+    THE_REFERENCE_CREW
 }
 
 /// **A FINITE COUNT, OR NOTHING** — the count half of a source's published countdown
@@ -501,10 +496,15 @@ fn published_count(turns: Option<core_sim::BuildTurns>) -> Option<u32> {
     }
 }
 
-/// **THE CREW THAT EXACTLY MEETS `plant:tended`'S MAINTENANCE RATE** — the minimum-viable-build
-/// threshold. At or below it a build banks nothing at all and has no finish date; every net figure
-/// in this file is measured above it (`docs/plan_standing_upkeep.md` §2.4).
-fn tended_rate_crew() -> u32 {
+/// **THE KEEPERS THAT EXACTLY COVER `plant:tended`'S DEMAND** — what a fixture puts on the band's
+/// `agriculture` role so the rung it is testing is **held**, from the first work banked
+/// (`docs/plan_standing_upkeep.md` §4.6a).
+///
+/// It used to be read as the *minimum viable build crew* — the threshold at or below which a build
+/// banked nothing — and that threshold does not exist: a build crew supplies none of the rate, so a
+/// lone builder banks a whole worker-turn on this rung. What the number still is, exactly, is the
+/// keeping's own `workers_needed`.
+fn tended_keeping_crew() -> u32 {
     core_sim::LadderConfig::builtin()
         .rung(RungKey::PlantTended)
         .upkeep_crew_needed(UNSCALED_UPKEEP)
@@ -874,11 +874,14 @@ fn cultivate_accrues_nothing_without_knowledge_or_on_a_stressed_patch() {
     );
 
     // (b) Knowledge, but the patch is Stressed (another band overdrew it): accrual stops, and the
-    // progress already banked is *held* (the crew is still there, so the decay pass spares it).
+    // progress already banked is *held* — **because the band staffs the keeping**. Since §4.6a the
+    // keeping pool owes a meter carrying work from the first work banked, so an unkept fixture would
+    // be measuring the rot rather than the accrual gate under test.
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
     grant_cultivation_knowledge(&mut app, FactionId(0));
-    spawn_builder(&mut app, tile, coord, Improvement::Cultivate);
+    let band = spawn_builder(&mut app, tile, coord, Improvement::Cultivate);
+    set_maintain_workers(&mut app, band, tended_keeping_crew());
     run_turns_with_forage(&mut app, 3);
     let banked = progress_of(&app, coord);
     assert!(banked > 0.0);
@@ -1020,6 +1023,10 @@ fn abandoned_preparation_decays() {
     let (tile, coord) = prime_thriving_patch(&mut app);
     grant_cultivation_knowledge(&mut app, FactionId(0));
     let band = spawn_builder(&mut app, tile, coord, Improvement::Cultivate);
+    // **The band keeps what it is building** (§4.6a), so the neglect counter is at zero when the
+    // band walks away and the grace below is the fresh one the arithmetic assumes. An unkept build
+    // is *already* neglected, and abandoning it would bleed from the first turn.
+    set_maintain_workers(&mut app, band, tended_keeping_crew());
 
     run_turns_with_forage(&mut app, 5);
     let banked = progress_of(&app, coord);
@@ -1029,9 +1036,9 @@ fn abandoned_preparation_decays() {
         cultivate_cost(&app)
     );
 
-    // The `tended_this_turn` flag is a deliberate one-turn-lag signal (Logistics runs before
-    // Population), so the first Logistics pass after the band leaves still sees the flag set from its
-    // last worked turn and spares the patch. Decay bites from the turn after that.
+    // `upkeep_supplied` is a deliberate one-turn-lag signal (Logistics runs before Population), so
+    // the first Logistics pass after the band leaves still reads the keeping it paid on its last
+    // worked turn and spares the patch. Decay bites from the turn after that.
     //
     // **And the rung's `grace_turns` sit on top of that lag**: the neglect counter has to exceed the
     // grace before anything bleeds, so the bleeding turns are `turns − lag − grace`.
@@ -1433,12 +1440,10 @@ fn a_patch_with_no_gatherers_is_still_kept_by_the_bands_pool() {
 /// single worker-turn, so a fixture ladder was the only way to observe a half; the retune made them
 /// whole numbers a player can staff exactly, which is most of what it was for.
 ///
-/// **Measured over exactly ONE bleeding turn, and that bound is the model rather than convenience.**
-/// The keeping pool supplies a source only while its meter is **full** — the instant it dips the
-/// source is *building* again and is owed **builders** (`forage::patch_is_maintaining`,
-/// `docs/plan_standing_upkeep.md` §2.4). So the pool's job is to prevent the first dip; a second
-/// bleeding turn would be measuring a patch the keepers can no longer reach, which the follow-on
-/// assertion pins in its own right.
+/// **Measured over exactly ONE bleeding turn**, so the arithmetic reads directly as the rung's own
+/// rate rather than as a multiple of it. The follow-on assertion is the one §4.6a changed: a meter
+/// that has dipped below its cost is **still the pool's**, where it used to flip back to its
+/// builders at the very moment the keeping started mattering.
 #[test]
 fn a_half_staffed_keeping_bleeds_at_half_the_rungs_rate() {
     /// One past the shipped grace: the first turn the bleed actually bites.
@@ -1490,10 +1495,11 @@ fn a_half_staffed_keeping_bleeds_at_half_the_rungs_rate() {
         "and meeting the demand exactly costs the meter nothing"
     );
 
-    // **AND ONCE IT HAS DIPPED, THE POOL CANNOT REACH IT.** A patch below its meter's cost is
-    // *building*, so it is owed **builders** — the keepers' hands go to the band's other, still-full
-    // sources. This is the sharp edge of "one state test, two costs": the keeping's whole job is to
-    // prevent the first dip, and recovering from one needs a `Cultivate` crew.
+    // **AND A RUNG THAT HAS DIPPED BELOW ITS COST IS STILL THE POOL'S** — the state that used to
+    // switch over to its builders (`docs/plan_standing_upkeep.md` §4.6a). It flipped into *building*
+    // at 99%, so a full keeping pool stopped reaching it at exactly the moment it began needing one,
+    // and topping it back up made it the pool's again — an oscillation with the player's real build
+    // standing still through every cycle.
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
     grant_cultivation_knowledge(&mut app, FactionId(0));
@@ -1507,11 +1513,14 @@ fn a_half_staffed_keeping_bleeds_at_half_the_rungs_rate() {
         patch.cultivation_progress -= bleed;
     }
     let dipped = progress_of(&app, coord);
+    assert!(
+        dipped < cultivate_cost(&app),
+        "fixture: the meter really is below its cost, or there is nothing under test"
+    );
     run_turns_with_forage(&mut app, TURNS);
     assert!(
-        progress_of(&app, coord) < dipped,
-        "a dipped patch is BUILDING: a full keeping pool no longer holds it, because its hands are \
-         the build's — {dipped} to {}",
+        (progress_of(&app, coord) - dipped).abs() < 1e-4,
+        "a full keeping pool holds a DIPPED rung exactly where it is — {dipped} to {}",
         progress_of(&app, coord)
     );
     assert!(
@@ -1520,24 +1529,21 @@ fn a_half_staffed_keeping_bleeds_at_half_the_rungs_rate() {
             .patch(coord)
             .expect("patch")
             .is_cultivated(),
-        "…and it is still TENDED while that happens: the state test and the retention bar are \
-         orthogonal axes"
+        "…and it is still TENDED while it is held: the retention bar is a separate axis"
     );
 }
 
-/// **A BUILD IS NOT A KEEPING — NOBODY MAINTAINS GROUND THAT IS STILL BEING CLEARED.**
+/// **`work_cost / crew` IS THE PACE AGAIN — and what can eat it is the ROT, not the rate**
+/// (`docs/plan_standing_upkeep.md` §4.6a). A build crew supplies nothing toward the maintenance
+/// rate; the band's keeping pool owes it for the meter being raised exactly as it does for a
+/// finished one. So a **kept** Cultivate finishes in exactly its stated turns, and an **unkept** one
+/// takes longer — not because its builders are paying a bill, but because the ground is going
+/// backwards under them past the rung's grace.
 ///
-/// A meter still being raised is owed its **builders**; only a *finished* rung is owed keepers
-/// (`docs/plan_standing_upkeep.md` §2.4, `forage::patch_upkeep_supply`). So a Cultivate runs at its
-/// stated pace — `work_cost / crew` — with **no keeper at all**, and staffing one changes nothing
-/// about the build.
-///
-/// This exists because the arc briefly got it wrong in the other direction: resolving a mid-build
-/// meter's demand as a *maintain* demand billed a crew to hold a tended patch that did not exist
-/// yet, and turned the reference 25-turn Cultivate into 34. Asserted against the ladder's own
-/// arithmetic rather than a literal, so a retune of `work_cost` moves the expectation with the game.
+/// Asserted against the ladder's own arithmetic rather than a literal, so a retune of `work_cost`
+/// moves the expectation with the game.
 #[test]
-fn the_reference_crew_finishes_a_cultivate_in_its_stated_turns_with_no_keeper() {
+fn a_kept_cultivate_finishes_in_its_stated_turns_and_an_unkept_one_is_slower() {
     let stated = turns_to_prepare(&app_free());
     let finished_on = |keepers: u32| -> u32 {
         let mut app = spawn_world();
@@ -1560,16 +1566,23 @@ fn the_reference_crew_finishes_a_cultivate_in_its_stated_turns_with_no_keeper() 
         panic!("the Cultivate never completed within twice its stated {stated} turns");
     };
 
+    let demand_in_hands = app_free()
+        .world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung(RungKey::PlantTended)
+        .upkeep_crew_needed(UNSCALED_UPKEEP);
     assert_eq!(
-        finished_on(NO_CREW_ON_THIS_ACTIVITY),
+        finished_on(demand_in_hands),
         stated,
-        "a build with no keeper finishes in exactly `work_cost / crew` turns — nothing is bleeding \
-         off a meter its own builders are filling"
+        "a KEPT build finishes in exactly `work_cost / crew` turns — the keeping covers the rate \
+         and the builders bank their whole output"
     );
-    assert_eq!(
-        finished_on(A_KEEPER),
-        stated,
-        "…and a keeper standing beside it changes nothing, because the meter is not owed one yet"
+    assert!(
+        finished_on(NO_CREW_ON_THIS_ACTIVITY) > stated,
+        "…and an unkept one is slower, because the meter rots under the builders past the grace: \
+         {} vs {stated}",
+        finished_on(NO_CREW_ON_THIS_ACTIVITY)
     );
 }
 
@@ -1579,10 +1592,11 @@ fn the_reference_crew_finishes_a_cultivate_in_its_stated_turns_with_no_keeper() 
 /// ground grows back over. This is the constraint that rules out the simpler *"only completed rungs
 /// cost anything"*, under which an abandoned investment would sit there untouched forever.
 ///
-/// The system-level pace is pinned by [`abandoned_preparation_decays`]; this pins the **rate** is the
-/// rung's, and that the patch is owed *builders* rather than keepers while it is unfinished.
+/// The system-level pace is pinned by [`abandoned_preparation_decays`]; this pins that the **rate**
+/// is the rung's, and that the patch is billed to the **keeping pool** while it is unfinished — the
+/// half-built meter §4.6a made holdable.
 #[test]
-fn an_abandoned_part_build_is_owed_its_builders_and_bleeds_the_rungs_rate() {
+fn an_abandoned_part_build_is_owed_the_keeping_pool_and_bleeds_the_rungs_rate() {
     let ladder = core_sim::LadderConfig::builtin();
     let rung = ladder.rung(RungKey::PlantTended);
     let cost = rung
@@ -1606,13 +1620,12 @@ fn an_abandoned_part_build_is_owed_its_builders_and_bleeds_the_rungs_rate() {
         .expect("patch")
         .clone();
     assert!(
-        !core_sim::patch_is_maintaining(&patch),
-        "fixture: a half-filled meter is BUILDING, not maintaining"
+        patch.cultivation_progress < patch.cultivation_cost,
+        "fixture: the meter is half-filled, so the rung is NOT finished"
     );
-    // **THE SAME RATE EITHER WAY** — the maintenance rate never lapses; below the meter's cost it is
-    // the *build crew* that supplies it (`docs/plan_standing_upkeep.md` §2.4). So the published
-    // `workers_needed` is the same count on both sides of completion, and mid-build it reads as the
-    // **minimum viable build crew**: at or below it the meter holds or rots rather than advancing.
+    // **THE SAME RATE AND THE SAME SUPPLIER EITHER WAY** — the keeping pool owes a meter carrying
+    // work from the first work banked (`docs/plan_standing_upkeep.md` §4.6a), so the published
+    // `workers_needed` is the same count on both sides of completion and means the same thing.
     assert_eq!(
         core_sim::patch_upkeep_workers_needed(&patch, &ladder),
         demand.ceil() as u32,
@@ -1670,10 +1683,27 @@ fn unstaff_the_gatherers(app: &mut App, band: bevy::prelude::Entity, coord: UVec
 /// (`docs/plan_standing_upkeep.md` §2.5) the keeping is one band-level pool, spread across every
 /// plant source the band works, so a fixture staffs the role rather than the patch.
 fn set_maintain_workers(app: &mut App, band: bevy::prelude::Entity, workers: u32) {
-    app.world
-        .get_mut::<LaborAllocation>(band)
-        .expect("band exists")
-        .add_role_workers(LaborTarget::Agriculture, workers);
+    let headroom = {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("band exists");
+        // **Exactly the headroom this row needs** — what every other row already holds, plus these
+        // keepers. A real `assign_labor` reads the band's own working count and may refuse; a
+        // fixture stating a role outright is not testing that refusal.
+        let headroom = allocation.assigned_total() + workers;
+        allocation.set_assignment(LaborTarget::Agriculture, workers, headroom, None);
+        headroom
+    };
+    // **AND THE BAND HAS TO AFFORD IT**, or `LaborAllocation::normalize` trims the tail — which is
+    // the very keeping role under measurement, leaving a fixture reading a pool nobody staffed.
+    let mut cohort = app
+        .world
+        .get_mut::<PopulationCohort>(band)
+        .expect("band exists");
+    if cohort.working.to_f32() < headroom as f32 {
+        cohort.working = scalar_from_f32(headroom as f32);
+    }
 }
 
 /// **MEASUREMENT HARNESS — what a band pays to HOLD its improvements, and what it loses by not.**
@@ -1861,30 +1891,24 @@ fn over_crewing_a_build_is_no_longer_capped() {
     /// a clamp.
     const OVER_CREWED: u32 = 4;
 
-    // **Measured in NET hands** — above the maintenance rate, which the build crew is also paying
-    // (`docs/plan_standing_upkeep.md` §2.4). A crew at or below the rate banks nothing at all, which
-    // `a_build_crew_at_the_maintenance_rate_holds_the_meter_where_it_is` pins on its own.
-    let rate_crew = app_free()
-        .world
-        .resource::<LadderConfigHandle>()
-        .get()
-        .rung(RungKey::PlantTended)
-        .upkeep_crew_needed(UNSCALED_UPKEEP);
-    let one = progress_after(rate_crew + 1);
+    // **Measured in WHOLE HANDS.** Nothing comes off the top: a build crew supplies nothing toward
+    // the maintenance rate, which the band's keeping pool owes for this meter at any fullness
+    // (`docs/plan_standing_upkeep.md` §4.6a). One turn is measured, so the rot cannot have started
+    // and the reading is the accrual alone.
+    let one = progress_after(1);
     let full = progress_after(crew);
-    let over = progress_after(rate_crew + (crew - rate_crew) * OVER_CREWED);
+    let over = progress_after(crew * OVER_CREWED);
     assert!(
         (one - PER_WORKER_OUTPUT).abs() < 1e-6,
-        "one worker ABOVE the rate banks one worker-turn: {one}"
+        "one worker banks one worker-turn: {one}"
     );
     assert!(
-        (full - (crew - rate_crew) as f32 * PER_WORKER_OUTPUT).abs() < 1e-6,
-        "a crew of {crew} banks its {} net worker-turns: {full}",
-        crew - rate_crew
+        (full - crew as f32 * PER_WORKER_OUTPUT).abs() < 1e-6,
+        "a crew of {crew} banks its {crew} worker-turns: {full}"
     );
     assert!(
-        (over - ((crew - rate_crew) * OVER_CREWED) as f32 * PER_WORKER_OUTPUT).abs() < 1e-6,
-        "and {OVER_CREWED}x the NET crew banks {OVER_CREWED}x the work — there is no cap: {over}"
+        (over - (crew * OVER_CREWED) as f32 * PER_WORKER_OUTPUT).abs() < 1e-6,
+        "and {OVER_CREWED}x the crew banks {OVER_CREWED}x the work — there is no cap: {over}"
     );
 }
 
@@ -1943,21 +1967,20 @@ fn the_build_estimate_is_the_sims_own_and_falls_as_hands_are_added() {
     };
 
     let crew = build_crew(&spawn_world());
-    let rate_crew = tended_rate_crew();
-    // **AT OR BELOW THE MAINTENANCE RATE THERE IS NO ESTIMATE**, and that is the honest answer
-    // rather than a huge number: the crew holds the meter where it is or takes it backwards, so the
-    // job has no finish date at all (`docs/plan_standing_upkeep.md` §2.4).
+    // **ONLY AN EMPTY CREW HAS NO ESTIMATE.** A crew at the rung's own maintenance rate used to be
+    // quoted *never*, because the rate came off its output first; §4.6a deleted that threshold, so
+    // every staffed build has a finish date and the rung's rate is the keeping pool's bill.
     assert_eq!(
-        estimate(rate_crew),
+        estimate(NO_CREW_ON_THIS_ACTIVITY),
         None,
-        "a crew exactly at the rate is quoted no finish date — it will never arrive"
+        "nobody on the job has promised nothing — the one no-answer state"
     );
-    let lightly = estimate(rate_crew + 1).expect("a running build quotes a finish date");
+    let lightly = estimate(1).expect("a running build quotes a finish date");
     let fully = estimate(crew).expect("a running build quotes a finish date");
     assert!(
         fully < lightly,
         "adding hands shortens the same fixed job: {fully} at a crew of {crew} vs {lightly} at one \
-         hand above the rate"
+         hand"
     );
 
     // A crew that has not learned Cultivation cannot be quoted the rung above them — the projection
@@ -2018,16 +2041,15 @@ fn an_unstarted_patch_quotes_the_next_rungs_job_and_the_quote_halves_with_the_cr
          counts down from"
     );
 
-    // **Twice the NET, half the turns.** Doubling the head count does not halve the job any more —
-    // the maintenance rate comes off the top first (`docs/plan_standing_upkeep.md` §2.4).
-    let rate_crew = tended_rate_crew();
-    let doubled_net = rate_crew + (crew - rate_crew) * 2;
-    let doubled = projection(doubled_net).expect("a bigger crew is still quotable");
+    // **Twice the crew, half the turns — restored** (`docs/plan_standing_upkeep.md` §4.6a). It was
+    // briefly twice the *net*, the maintenance rate having come off the top first; a build crew pays
+    // no rate, and on ground nobody has started there is nothing banked and so nothing to rot.
+    let doubled_crew = crew * 2;
+    let doubled = projection(doubled_crew).expect("a bigger crew is still quotable");
     assert_eq!(
         doubled,
         quoted.div_ceil(2),
-        "twice the NET supply, half the turns: {quoted} at a crew of {crew}, {doubled} at \
-         {doubled_net}"
+        "twice the crew, half the turns: {quoted} at a crew of {crew}, {doubled} at {doubled_crew}"
     );
 
     // And a patch nobody is working is quoted nothing — there is no crew to quote at.
@@ -2151,20 +2173,25 @@ fn the_published_neglect_countdown_hits_zero_on_the_turn_the_meter_moves() {
 /// gatherer's *projection of the next rung* landed on top of the running build's countdown and the
 /// tile card quoted turns for a crew that was not building.
 ///
-/// The two answers are held far apart on purpose — a builder of [`build_crew`] hands against a lone
-/// gatherer — so the assertion cannot pass by coincidence, and the gatherer is spawned **second** so
-/// it is the one whose write would win.
+/// The two answers are held far apart on purpose — a builder of [`build_crew`] hands against a
+/// **single** bystander — so the assertion cannot pass by coincidence, and the bystander is spawned
+/// **second** so it is the one whose write would win.
 #[test]
 fn a_running_build_outranks_a_bystanders_projection_on_the_same_patch() {
+    /// One hand on the take and nothing on the build — the slowest projection there is, and
+    /// therefore the loudest disagreement with the builder's countdown.
+    const A_LONE_BYSTANDER: u32 = 1;
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
     grant_cultivation_knowledge(&mut app, FactionId(0));
     let crew = build_crew(&app);
     spawn_forager_of(&mut app, tile, coord, Some(Improvement::Cultivate), crew);
-    // The bystander: same patch, no verb, and a crew **one hand above the maintenance rate** — so
-    // its projection of the very same rung is far longer than the builder's countdown, while still
-    // being a projection at all (at or below the rate there is no finish date to quote).
-    let one_bystander = tended_rate_crew() + 1;
+    // The bystander: same patch, no verb, and **one hand** — so its projection of the very same rung
+    // is far longer than the builder's countdown. It used to be staffed at the rung's rate plus one,
+    // on the retired rule that a crew at or below the rate has no finish date to quote at all; every
+    // staffed crew quotes one now (§4.6a), so the fixture states the smallest crew there is and the
+    // gap between the two answers is the widest it can be.
+    let one_bystander = A_LONE_BYSTANDER;
     spawn_forager_of(&mut app, tile, coord, None, one_bystander);
     run_turns_with_forage(&mut app, 1);
 
@@ -2188,7 +2215,7 @@ fn a_running_build_outranks_a_bystanders_projection_on_the_same_patch() {
         core_sim::build_turns_remaining(
             cost,
             banked,
-            rung.build_accrual(Some(Improvement::Cultivate), true, workers, UNSCALED_UPKEEP),
+            rung.build_accrual(Some(Improvement::Cultivate), true, workers),
         )
         .expect("a staffed build quotes a finish date")
     };
@@ -2347,7 +2374,8 @@ fn spawn_band_keeping_two_patches(
         kit: None,
         improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
     });
-    allocation.add_role_workers(LaborTarget::Agriculture, keepers);
+    let headroom = allocation.assigned_total() + keepers;
+    allocation.set_assignment(LaborTarget::Agriculture, keepers, headroom, None);
     allocation.upkeep_fund_mode = mode;
     band
 }
@@ -2586,25 +2614,160 @@ fn a_completed_tended_patch_survives_many_unmaintained_turns_before_it_is_lost()
 }
 
 // ---------------------------------------------------------------------------------------------
-// THE MAINTENANCE RATE IS A TAX ON BUILDING (`docs/plan_standing_upkeep.md` §2.4)
+// THE ROT IS WHAT EATS A BUILD, NOT THE RATE (`docs/plan_standing_upkeep.md` §4.6a)
 // ---------------------------------------------------------------------------------------------
 
-/// **A CREW EXACTLY AT THE MAINTENANCE RATE HOLDS THE METER WHERE IT IS — one below it ROTS.**
+/// **A HALF-BUILT METER NOBODY IS BUILDING IS HELD BY THE BAND'S KEEPING POOL — EXACTLY**
+/// (`docs/plan_standing_upkeep.md` §4.6a). This is the first of the two states the deleted fullness
+/// test made unreachable, and it was reported from ordinary play: take the builders off a Cultivate
+/// at half its cost and the patch was billed to a crew that is not there, so it bled its full rate
+/// with keepers standing idle in the `agriculture` role and **no command that could aim them at it**.
 ///
-/// The rate is owed **always**, while building and while held alike; what the meter's state decides
-/// is only *who supplies it*. Below its cost that is the **build crew**, so:
-///
-/// ```text
-/// net > 0  →  the surplus is BUILD PROGRESS
-/// net = 0  →  the meter HOLDS exactly where it is
-/// net < 0  →  it ROTS, in proportion to the shortfall
-/// ```
-///
-/// **This is a real minimum-viable-crew threshold rather than a slow build**, which is why it is
-/// asserted at all three points: a model that merely slowed down would show a positive, shrinking
-/// gain at the threshold instead of a flat line, and going backwards below it.
+/// **The liveness half rides in the same test, on the same fixture**, because *"it holds"* also
+/// passes on a meter that cannot move: the identical patch with the role unstaffed bleeds.
 #[test]
-fn a_build_crew_at_the_maintenance_rate_holds_the_meter_where_it_is() {
+fn a_half_built_patch_with_no_builders_is_held_exactly_by_a_staffed_keeping() {
+    /// Past the rung's grace, so the unkept arm is genuinely bleeding rather than forgiven.
+    const TURNS: u32 = 6;
+
+    let progress_over = |keepers: u32| -> (f32, f32) {
+        let mut app = spawn_world();
+        let (tile, coord) = prime_thriving_patch(&mut app);
+        grant_cultivation_knowledge(&mut app, FactionId(0));
+        // **Mid-Cultivate at roughly half its cost, and NOBODY on the build.** The verb is left
+        // unset: the meter carrying progress is the declaration (`forage::patch_build_verb`).
+        let cost = cultivate_cost(&app);
+        {
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(coord).expect("patch");
+            patch.cultivation_progress = cost / 2.0;
+            patch.cultivation_cost = cost;
+            patch.owner = Some(FactionId(0));
+        }
+        let started = progress_of(&app, coord);
+        let band = spawn_forager_of(&mut app, tile, coord, None, FORAGE_WORKERS);
+        set_maintain_workers(&mut app, band, keepers);
+        run_turns_with_forage(&mut app, TURNS);
+        (started, progress_of(&app, coord))
+    };
+
+    let (started, kept) = progress_over(tended_keeping_crew());
+    assert!(
+        (kept - started).abs() < 1e-4,
+        "a staffed keeping holds a half-built meter EXACTLY where it is, turn over turn: \
+         {started} -> {kept}"
+    );
+
+    // …and it is holding because the demand is MET, not because nothing was billed.
+    let mut app = spawn_world();
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    grant_cultivation_knowledge(&mut app, FactionId(0));
+    let cost = cultivate_cost(&app);
+    {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(coord).expect("patch");
+        patch.cultivation_progress = cost / 2.0;
+        patch.cultivation_cost = cost;
+        patch.owner = Some(FactionId(0));
+    }
+    let band = spawn_forager_of(&mut app, tile, coord, None, FORAGE_WORKERS);
+    set_maintain_workers(&mut app, band, tended_keeping_crew());
+    run_turns_with_forage(&mut app, 1);
+    let patch = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("patch");
+    assert!(
+        core_sim::patch_upkeep_demand(patch, &core_sim::LadderConfig::builtin())
+            > core_sim::NO_UPKEEP_DEMAND,
+        "a meter carrying work is BILLED, at any fullness — the pool has something to cover"
+    );
+    assert_eq!(
+        core_sim::patch_upkeep_shortfall(patch, &core_sim::LadderConfig::builtin()),
+        core_sim::NO_UPKEEP_DEMAND,
+        "…and the staffed pool covers it in full: nothing unmet"
+    );
+
+    // **THE LIVENESS HALF.** The same fixture with the role empty bleeds, so the holding above is a
+    // demand being met rather than a meter that cannot move.
+    let (started, unkept) = progress_over(NO_CREW_ON_THIS_ACTIVITY);
+    assert!(
+        unkept < started - 1e-4,
+        "…and with the role unstaffed the same meter loses ground: {started} -> {unkept}"
+    );
+}
+
+/// **A COMPLETED RUNG ERODED BELOW ITS COST IS STILL FUNDED BY THE KEEPING POOL** — the second state
+/// the deleted fullness test made unreachable (`docs/plan_standing_upkeep.md` §4.6a).
+///
+/// A rung eroding to 99% is *below its cost*, so it used to flip into **building** and stop being the
+/// pool's business at the very moment it started needing one — then, topped back up, return to a pool
+/// that was still short and dip again. It oscillates, and under the next slice's queue it would do so
+/// while displacing the build the player actually ordered.
+#[test]
+fn an_eroded_rung_is_still_funded_by_the_keeping_pool() {
+    /// Past the rung's grace, so an unfunded arm would genuinely bleed.
+    const TURNS: u32 = 6;
+
+    let mut app = spawn_world();
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    grant_cultivation_knowledge(&mut app, FactionId(0));
+    seat_tended_patch(&mut app, coord);
+    let band = spawn_forager(&mut app, tile, coord, None);
+    set_maintain_workers(&mut app, band, tended_keeping_crew());
+
+    // One turn's rot off a completed meter, exactly as one short turn would have taken.
+    let (_, bleed) = cultivation_config(&app);
+    {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        registry
+            .patch_mut(coord)
+            .expect("patch")
+            .cultivation_progress -= bleed;
+    }
+    let eroded = progress_of(&app, coord);
+    assert!(
+        eroded < cultivate_cost(&app),
+        "fixture: the meter really is below its cost"
+    );
+
+    run_turns_with_forage(&mut app, TURNS);
+    assert!(
+        (progress_of(&app, coord) - eroded).abs() < 1e-4,
+        "a dipped rung is held by the pool exactly where it is: {eroded} -> {}",
+        progress_of(&app, coord)
+    );
+    assert!(
+        app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .expect("patch")
+            .is_cultivated(),
+        "…and it never stopped being tended: the retention bar is a separate axis"
+    );
+
+    // **And the pool really is what is holding it** — unstaff the role and the same meter slides.
+    set_maintain_workers(&mut app, band, NO_CREW_ON_THIS_ACTIVITY);
+    run_turns_with_forage(&mut app, TURNS);
+    assert!(
+        progress_of(&app, coord) < eroded - 1e-4,
+        "…and with the role empty it loses ground: {eroded} -> {}",
+        progress_of(&app, coord)
+    );
+}
+
+/// **A LONE BUILDER ON A DEAR RUNG STILL BANKS ITS WHOLE TURN.** The maintenance rate used to be
+/// netted off a build's accrual, so a crew at or below it never finished — a minimum-viable-crew
+/// threshold. §4.6a deleted it: the band's keeping pool owes the rate for every meter carrying work,
+/// at any fullness, and a build crew supplies nothing toward it.
+///
+/// **What a build can still fail to out-run is the ROT** — the ground going backwards under it while
+/// the keeping is short — and that is a *countdown* term, asserted on the wire in
+/// `build_turns_on_the_wire.rs`. Here the claim is the meter's: with the keeping met, every staffed
+/// crew climbs, and the pace is linear in the head count with no threshold anywhere in it.
+#[test]
+fn every_staffed_build_crew_climbs_when_the_keeping_is_met() {
     /// Past the rung's grace, so the under-staffed arm is genuinely bleeding rather than forgiven.
     const TURNS: u32 = 6;
 
@@ -2630,57 +2793,65 @@ fn a_build_crew_at_the_maintenance_rate_holds_the_meter_where_it_is() {
             builders,
         );
         set_forage_workers(&mut app, band, builders);
+        // **The keeping is MET**, so the meter is not rotting and what is measured is the build's
+        // own arithmetic. An unkept arm would be measuring the rot, which is the countdown's claim
+        // rather than the meter's.
+        set_maintain_workers(&mut app, band, tended_keeping_crew());
         run_turns_with_forage(&mut app, TURNS);
         (started, progress_of(&app, coord))
     };
 
-    let rate_crew = tended_rate_crew();
+    let rate_crew = tended_keeping_crew();
     assert!(
         rate_crew >= 2,
-        "fixture: the rate must want more than one hand, or 'below it' is unreachable"
+        "fixture: the rung must cost more than one hand to hold, or 'a lone builder is under the \
+         old threshold' is not a case"
     );
 
-    let (started, held) = progress_after(rate_crew);
+    // **ONE HAND — which the retired threshold said banked nothing at all.**
+    let (started, lone) = progress_after(1);
     assert!(
-        (held - started).abs() < 1e-4,
-        "a crew exactly at the rate holds the meter EXACTLY where it is: {started} -> {held}"
+        lone > started,
+        "a lone builder banks its whole turn on a rung that costs {rate_crew} hands to hold: \
+         {started} -> {lone}"
     );
 
-    let (started, rotted) = progress_after(rate_crew - 1);
+    // **And it is LINEAR in the head count**, with no threshold subtracted first: twice the hands
+    // bank twice the work, which `crew − rate` could not satisfy at two staffings at once.
+    let (_, doubled) = progress_after(2);
     assert!(
-        rotted < started,
-        "one hand below the rate and the meter goes BACKWARDS: {started} -> {rotted}"
-    );
-
-    let (started, built) = progress_after(rate_crew + 1);
-    assert!(
-        built > started,
-        "one hand above it and the surplus is progress: {started} -> {built}"
+        ((doubled - started) - (lone - started) * 2.0).abs() < 1e-3,
+        "two builders bank twice what one does: {} vs {}",
+        doubled - started,
+        lone - started
     );
 }
 
-/// **THE BUILD PACE IS `cost / NET`, NOT `cost / crew`** — the identity this arc deliberately
-/// changed. `work_cost / crew` was the arc's own headline while holding cost nothing; the
-/// maintenance rate is a tax on building, so the crew's *surplus* over it is what banks.
+/// **THE BUILD PACE IS `cost / crew` — RESTORED** (`docs/plan_standing_upkeep.md` §4.6a). It was the
+/// arc's own headline while holding cost nothing, then briefly became `cost / (crew − rate)` while
+/// the build crew supplied the maintenance rate. It does not: the keeping pool does, at any meter
+/// fullness, so the crew's whole output is progress again.
 ///
-/// Asserted at several crew sizes so a model that merely subtracted a constant number of *turns*
-/// (rather than taxing the rate) would fail: the two agree at exactly one staffing.
+/// Asserted at several crew sizes, so a model still subtracting anything crew-independent would fail
+/// — the two agree at exactly one staffing.
 #[test]
-fn the_build_pace_is_the_cost_over_the_net_supply() {
-    let rate_crew = tended_rate_crew();
+fn the_build_pace_is_the_cost_over_the_crew() {
     let cost = cultivate_cost(&spawn_world());
 
     let turns_at = |builders: u32| -> u32 {
         let mut app = spawn_world();
         let (tile, coord) = prime_thriving_patch(&mut app);
         grant_cultivation_knowledge(&mut app, FactionId(0));
-        spawn_forager_of(
+        let band = spawn_forager_of(
             &mut app,
             tile,
             coord,
             Some(Improvement::Cultivate),
             builders,
         );
+        // **The keeping is met**, so the pace under measurement is the build's own and not the
+        // rot's — an unkept build is slower for a reason this test is not about.
+        set_maintain_workers(&mut app, band, tended_keeping_crew());
         let mut turns = 0;
         while !app
             .world
@@ -2691,31 +2862,32 @@ fn the_build_pace_is_the_cost_over_the_net_supply() {
         {
             run_turns_with_forage(&mut app, 1);
             turns += 1;
-            assert!(turns < 500, "a build above the rate must finish");
+            assert!(turns < 500, "a staffed build must finish");
         }
         turns
     };
 
-    for over in [1_u32, 2, 5, 10] {
-        let builders = rate_crew + over;
-        let net = over as f32 * PER_WORKER_OUTPUT;
+    for builders in [1_u32, 2, 5, 10] {
+        let work = builders as f32 * PER_WORKER_OUTPUT;
         assert_eq!(
             turns_at(builders),
-            (cost / net).ceil() as u32,
-            "{builders} builders net {net}/turn on a {cost}-unit job"
+            (cost / work).ceil() as u32,
+            "{builders} builders bank {work}/turn on a {cost}-unit job"
         );
     }
 }
 
-/// **A RUNG THAT ERODES BELOW ITS COST IS BUILDING AGAIN — and it is still TENDED while it is.**
+/// **A RUNG THAT ERODES BELOW ITS COST IS STILL TENDED, AND STILL THE KEEPING POOL'S — but a build
+/// crew can repair it.**
 ///
-/// The two axes are orthogonal and must stay so (`docs/plan_standing_upkeep.md` §2.4): *building vs
-/// maintaining* is the meter's **fullness** and decides who pays the rate; *is the rung still
-/// achieved* is the **retention bar** and decides what the ground pays out. A patch at 99% is a
-/// repair job on a tended patch — folding the two would make a rung's loss and a rung's repair the
-/// same edge.
+/// Three facts about one patch at 99%, and none of them is any of the others
+/// (`docs/plan_standing_upkeep.md` §2.4/§4.6a): *is the rung still achieved* is the **retention bar**
+/// and decides what the ground pays out; *is there room on the meter* decides what a repair would
+/// cost; and **who pays the rate no longer moves at all** — the pool holds every meter carrying
+/// work. The retired third axis is what made a one-percent dip its builders' business at the moment
+/// the keeping started mattering.
 #[test]
-fn a_rung_that_erodes_below_its_cost_is_building_again() {
+fn a_rung_that_erodes_below_its_cost_is_still_held_and_can_be_repaired() {
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
     grant_cultivation_knowledge(&mut app, FactionId(0));
@@ -2729,8 +2901,8 @@ fn a_rung_that_erodes_below_its_cost_is_building_again() {
             .expect("patch")
             .clone();
         assert!(
-            core_sim::patch_is_maintaining(&patch),
-            "fixture: a freshly completed rung is MAINTAINING — its meter is full"
+            patch.cultivation_progress >= patch.cultivation_cost,
+            "fixture: a freshly completed rung sits exactly at its own cost"
         );
     }
 
@@ -2751,12 +2923,19 @@ fn a_rung_that_erodes_below_its_cost_is_building_again() {
         .expect("patch")
         .clone();
     assert!(
-        !core_sim::patch_is_maintaining(&patch),
-        "…and one bleed later it is BUILDING: that shortfall is a repair job"
+        patch.cultivation_progress < patch.cultivation_cost,
+        "…and one bleed later there is room on the meter: that shortfall is a repair job"
     );
     assert!(
         patch.is_cultivated(),
         "…while remaining TENDED — the retention bar is a separate axis and is nowhere near"
+    );
+    assert!(
+        core_sim::patch_upkeep_demand(&patch, &core_sim::LadderConfig::builtin())
+            > core_sim::NO_UPKEEP_DEMAND,
+        "…and it is still BILLED, so the keeping pool has something to hold — a dip does not move \
+         who pays the rate (the holding itself is pinned by \
+         `a_half_staffed_keeping_bleeds_at_half_the_rungs_rate`)"
     );
 
     // **And a build crew can actually repair it**, which is the whole point of calling it building:
@@ -2798,6 +2977,9 @@ fn a_rung_completes_erodes_and_repairs_with_no_command_after_the_first() {
 
     // The ONE declaration in this test: a wild patch, whose cultivation meter is at zero.
     let band = spawn_builder(&mut app, tile, coord, Improvement::Cultivate);
+    // **Kept while it is raised** (§4.6a), so the build finishes in its stated turns rather than
+    // fighting the rot — which is a different test's claim.
+    set_maintain_workers(&mut app, band, tended_keeping_crew());
     let build_turns = turns_to_prepare(&app);
     run_turns_with_forage(&mut app, build_turns);
     assert!(
@@ -2870,6 +3052,10 @@ fn a_rung_completes_erodes_and_repairs_with_no_command_after_the_first() {
         );
         allocation.assignments[0].improvement_workers = builders;
     }
+    // **And the keeping goes back on with them** — still hands rather than a declaration. Since
+    // §4.6a the meter is billed while it is raised, so a repair run with the role empty is racing
+    // its own rot and would top out below the cost it is climbing back to.
+    set_maintain_workers(&mut app, band, tended_keeping_crew());
     run_turns_with_forage(&mut app, 1);
     assert!(
         progress_of(&app, coord) > eroded,

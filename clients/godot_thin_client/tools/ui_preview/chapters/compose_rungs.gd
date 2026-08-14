@@ -1276,21 +1276,26 @@ const KIT_SWAP_KEEPERS := 3
 ## What that crew owes on an UNSTARTED Tame under each kit, derived HERE from the fixtures rather
 ## than through the producer under test: the rung costs `HerdFx.ANIMAL_TAME_WORK_COST` (50) with
 ## nothing banked, the floor sits at the food peak (×1.0) and one keeper banks one work unit a turn.
-## **AND THE RUNG'S RATE COMES OFF THE CREW BEFORE ANY OF IT IS PROGRESS** (issue #545): this warren's
-## Tame asks `KIT_SWAP_UPKEEP_PER_TURN` a turn, so three keepers bank `3 − 1 = 2`. The stalking kit
-## arms nobody for a build, so ⌈50 ÷ 2⌉; the handling gear arms two of the three at 8.5 apiece, so
-## ⌈(50 − 17) ÷ 2⌉.
-const KIT_SWAP_TURNS_BARE := 25
+##
+## **NOTHING COMES OFF THE CREW, and slice 6a is what removed the term** (`docs/plan_standing_upkeep.md`
+## §2.4). The rung's rate was netted here — the build crew supplied it while the meter was below its
+## cost — and the keeping pool owes it at every fullness now, so a builder's whole output is progress.
+## What the form nets instead is the meter's ROT, which on this web is structurally nothing
+## (`HerdFx.ANIMAL_METER_ROT`: no animal rung declares a `meter_decay`, their penalty being a shed).
+## So three keepers bank 3: the stalking kit arms nobody for a build, so ⌈50 ÷ 3⌉; the handling gear
+## arms two of the three at 8.5 apiece, so ⌈(50 − 17) ÷ 3⌉. **They read 25 and 17 while the rate was a
+## term**, and the A/B's claim is untouched either way — the two kits still differ by the gear alone.
+const KIT_SWAP_TURNS_BARE := 17
 
-const KIT_SWAP_TURNS_GEARED := 17
+const KIT_SWAP_TURNS_GEARED := 11
 
 ## …and what ONE MORE keeper owes under the handling gear, ⌈(50 − 17) ÷ 4⌉ — the gear term unmoved,
 ## because the fourth keeper finds no hurdles left to carry. Beside it, what a `min` dropped from the
 ## head count would quote that crew instead (`4 × 8.5` off the job, so ⌈16 ÷ 4⌉): stated so the
 ## negative names a number rather than merely differing.
-const KIT_SWAP_TURNS_SATURATED := 11
+const KIT_SWAP_TURNS_SATURATED := 9
 
-const KIT_SWAP_TURNS_UNCAPPED := 6
+const KIT_SWAP_TURNS_UNCAPPED := 4
 
 ## The herd both frames are composed on — a warren, which is the ceiling that keeps the handling kit
 ## OFFERED (a wild-ceiling herd greys it, see `_kit_offer_states`), with its Tame priced and unstarted
@@ -1309,10 +1314,13 @@ const KIT_SWAP_HERD_ID := "game_warren_kitswap"
 const KIT_SWAP_UNSTARTED_TAME := 0.0
 
 ## **THE RUNG'S OWN RATE ON THIS HERD** (issue #545) — `animal:pastoral`'s `1.0 × source_load` over a
-## warren's ONE keeper-load, against the reference herd's two. It is a term of the estimate now
-## (the pace is `crew − rate`), so a warren inheriting the reference herd's 2.0 would be a rate this
-## herd's own size can never produce — and at the three keepers these frames staff it would answer
-## `∞` and there would be no counts to compare.
+## warren's ONE keeper-load, against the reference herd's two. A warren inheriting the reference
+## herd's 2.0 would be quoting a rate this herd's own size can never produce.
+##
+## **IT IS THE OFFERED FACE'S STANDING PRICE NOW, NOT A TERM OF THE PACE**
+## (`docs/plan_standing_upkeep.md` §2.4) — what holding this Tame will cost every turn, quoted beside
+## what building it costs. So it still has to be this herd's own figure, and for a sharper reason than
+## before: the number is on screen.
 const KIT_SWAP_UPKEEP_PER_TURN := 1.0
 
 ## **THE OVER-GEARED CREW, and both halves of it are the fixture's claim.** Six keepers at the handling
@@ -1333,21 +1341,33 @@ const OVER_GEARED_CREWS := 2
 ## cohort's does and nothing here reads as a band with every soul standing free.
 const OVER_GEARED_SPARE_NON_IDLE := 4
 
-## The OFFERED face's price CLAUSE alone — `50 work, ≈17 turns` — composed through the shipped
-## formats, so the assertion pins the count this chapter derived and not the wording.
+## The OFFERED face's price CLAUSE alone — `50 work, ≈17 turns · 1 work a turn to hold` — composed
+## through the shipped formats, so the assertion pins the counts this chapter derived and not the
+## wording.
+##
+## **THE STANDING PRICE IS PART OF THE CLAUSE** (`docs/plan_standing_upkeep.md` §2.4): a rung costs a
+## pile once and a rate forever, and an `ends_with` claim that stopped at the turns would pass on a
+## face that had dropped the half a player is being asked to commit to.
 func _kit_swap_price_clause(turns: int) -> String:
-	return HudComposeVocab.BUILD_PRICE_TURNS_FORMAT % [
+	return _kit_swap_held_price(HudComposeVocab.BUILD_PRICE_TURNS_FORMAT % [
 		HudComposeVocab.BUILD_PRICE_WORK_FORMAT % DetailFormat.format_work_units(
 			HerdFx.ANIMAL_TAME_WORK_COST),
-		HudComposeVocab.BUILD_TURNS_COUNT_FORMAT % turns]
+		HudComposeVocab.BUILD_TURNS_COUNT_FORMAT % turns])
 
-## …and its SINGULAR twin — `50 work, ≈1 turn`. Spelled from the count vocabulary's own singular
-## rather than through `DetailFormat.build_turns_clause`, which is the fork under test.
+## …and its SINGULAR twin — `50 work, ≈1 turn · 1 work a turn to hold`. Spelled from the count
+## vocabulary's own singular rather than through `DetailFormat.build_turns_clause`, which is the fork
+## under test.
 func _kit_swap_price_clause_one() -> String:
-	return HudComposeVocab.BUILD_PRICE_TURNS_FORMAT % [
+	return _kit_swap_held_price(HudComposeVocab.BUILD_PRICE_TURNS_FORMAT % [
 		HudComposeVocab.BUILD_PRICE_WORK_FORMAT % DetailFormat.format_work_units(
 			HerdFx.ANIMAL_TAME_WORK_COST),
-		HudComposeVocab.BUILD_TURNS_COUNT_ONE]
+		HudComposeVocab.BUILD_TURNS_COUNT_ONE])
+
+## The standing half, appended to whichever one-off price its caller composed — this warren's own
+## `KIT_SWAP_UPKEEP_PER_TURN`, stated in WORK.
+func _kit_swap_held_price(price: String) -> String:
+	return HudComposeVocab.BUILD_PRICE_UPKEEP_FORMAT % [price,
+		DetailFormat.format_work_units(KIT_SWAP_UPKEEP_PER_TURN)]
 
 func _kit_swap_turn_estimate_states() -> void:
 	h._hud.update_kit_roster(_offer_roster(), BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,

@@ -127,11 +127,11 @@ const SOW_REFUSAL_FALLBACK := "This ground will not take seed — your people ca
 
 # RETIRED — the Cultivate rung's build verb AND the decaying state's verb (issue #545). Both were
 # headline words on a card row that now leads with a NUMBER: a build states its turn count
-# (`HudSelectionVocab.RUNG_TURNS_FORMAT`) and a rung nobody is building states
-# `RUNG_REVERTING_FORMAT`, which owns the word `Reverting` outright. That word is the SIM's own
-# ("gone feral — untended, the ground is reverting"), so the tile card and the command-feed receipt
-# that fires when the meter finally empties still name the same event, and ONE word still serves both
-# plant rungs — the fact is identical and the ROW's name already says which rung is losing.
+# (`HudSelectionVocab.RUNG_TURNS_FORMAT`), and the word `Reverting` moved to
+# `RUNG_REVERTING_FORMAT` — which has itself since retired (`docs/plan_standing_upkeep.md` §4.6a: a
+# meter nobody is building is HELD where the keeping covers it and LOSING GROUND where it does not,
+# and the wire says which). The command-feed receipt that fires when a meter finally empties still
+# carries the sim's own word for the event; no card row spells it any more.
 
 # Tile card "Field" row — plant RUNG 3, the patch twin of the herd's "Corral" row and the rung above
 # "Cultivation". Its own row (never merged with Cultivation): a patch carries BOTH meters, and a Field

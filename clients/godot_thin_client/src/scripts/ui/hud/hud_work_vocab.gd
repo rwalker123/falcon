@@ -764,34 +764,43 @@ const WORK_ROW_RUNG_PENNED_TOOLTIP := "Penned herd — corralled, the top animal
 ## hunters and overstaffed with them at once); with the crews split they can, and an animal walking
 ## off outranks a hunter bringing nothing home.
 ##
-## **IT NAMES THE BAND'S HUSBANDRY ROLE, BECAUSE THIS ROW'S `+` IS NOT THE REMEDY**
-## (`docs/plan_standing_upkeep.md` §2.5). Containment used to be read off the HUNTING crew, so the
-## board's own stepper answered the warning; then it was a per-source KEEPERS stepper on the herd's
-## compose sheet. **Maintenance has since left the tile**: a managed herd is held from the band's
-## `husbandry` POOL, and what this row is reporting is that the herd's SHARE of that pool did not
-## cover it. So the note names the one control that can move the number — the Husbandry role card in
-## this panel's WORKFORCE zone — and pointing at a per-source keeper stepper would now send the
-## player looking for a control that no longer exists.
+## **THIS SOURCE'S KEEPING CAME UP SHORT — one note, keyed by WEB** (`docs/plan_standing_upkeep.md`
+## §4.6a). Maintenance left the tile: a managed source is held out of the band's `agriculture` or
+## `husbandry` POOL, and what the row reports is that this source's SHARE of that pool did not cover
+## it. So each note names the one control that can move the number — the role card in this panel's
+## WORKFORCE zone — and pointing at a per-source keeper stepper would send the player looking for a
+## control that no longer exists.
+##
+## **IT WAS TWO NOTES AND THE SECOND ONE LIED.** `WORK_ROW_UNBUILT_NOTE` said *"Nobody is building
+## this — staff its BUILDERS"* for a source whose meter was still going up, on the premise that an
+## unbuilt rung was owed its build crew. **One pool owes both now**, at every fullness, so the two
+## states were one state and the builder wording sent the player to the wrong lever. What the merge
+## costs is that the note no longer distinguishes a rung being RAISED from one being HELD — it does
+## not need to, because the player does the same thing either way, and the source's own card still
+## says which on the rung row that carries the meter.
 const WORK_ROW_UNDER_HERDED_NOTE := "Animals drifting off — raise this band's Husbandry role."
 
-## …and the row tooltip carries the part the one-line note has no room for: WHY the `+` on this row
-## does not answer the ⚠, and where the hands that do come from. It is a tooltip rather than a second
-## strip line because `_work_inspector_height` reserves ONE open height for every row.
-const WORK_ROW_UNDER_HERDED_TOOLTIP := "Under-herded — a managed herd is held out of the band's HUSBANDRY pool, not by its hunters, so this row's + will not stop the drift. Raise Husbandry in the WORKFORCE zone, or set the band's keeping split so this herd is funded first."
+## The plant web's twin. The consequence is the ground going back to wild rather than a flock
+## shedding, and the pool is `agriculture` — the same sentence about a different web, which is why the
+## picker below is one function and not a branch at each call site.
+const WORK_ROW_UNDER_KEPT_NOTE := "This ground is slipping — raise this band's Agriculture role."
 
-## **THE OTHER WAY A SOURCE BLEEDS: a half-built rung nobody is building** (`SourceForecast.
-## is_unbuilt_and_unpaid`). An at-risk meter is owed the crew that OWNS it, and a rung still going up
-## owes its BUILDERS — so a Tame whose crew was re-tasked slides back and, on the animal web, sheds
-## animals, while every keeper-shaped reading on the row says nothing is wanted. It is the same
-## silent-loss class as the shed and it wears the same ⚠.
-##
-## It shares the `note` slot with the under-herded note and CANNOT collide with it: that one needs a
-## positive keeper demand and this one needs a zero. The two nouns are the whole point of having both
-## — telling a player to staff KEEPERS on a rung that wants BUILDERS is the mistake this pair exists
-## to stop making.
-const WORK_ROW_UNBUILT_NOTE := "Nobody is building this — staff its BUILDERS."
+## …and the row tooltips carry the part a one-line note has no room for: WHY the `+` on this row does
+## not answer the ⚠, and where the hands that do come from. Tooltips rather than a second strip line
+## because `_work_inspector_height` reserves ONE open height for every row.
+const WORK_ROW_UNDER_HERDED_TOOLTIP := "Under-kept — a managed herd is held out of the band's HUSBANDRY pool, not by its hunters, so this row's + will not stop the drift. It is owed that keeping from the first work banked, so a half-tamed herd is short for the same reason a finished one is. Raise Husbandry in the WORKFORCE zone, or set the band's keeping split so this herd is funded first."
 
-const WORK_ROW_UNBUILT_TOOLTIP := "This rung is part-built and nobody is paying for it, so it slides back toward wild — and a half-tamed herd sheds animals while it does. A rung still going up is owed its BUILD crew, not keepers: open the source (Jump to source) and put BUILDERS on the improvement. The source's own card states what the neglect costs and how many turns are left."
+const WORK_ROW_UNDER_KEPT_TOOLTIP := "Under-kept — an improved patch is held out of the band's AGRICULTURE pool, not by its gatherers, so this row's + will not stop the slide. It is owed that keeping from the first work banked, so a half-cultivated patch is short for the same reason a finished one is. Raise Agriculture in the WORKFORCE zone, or set the band's keeping split so this patch is funded first."
+
+## Which of the pair this row takes, off the row's own labor kind — one picker, so the note and the
+## tooltip can never end up describing two different webs.
+static func under_kept_note(kind: String) -> String:
+    return WORK_ROW_UNDER_HERDED_NOTE if kind == SourceForecast.LABOR_KIND_HUNT \
+        else WORK_ROW_UNDER_KEPT_NOTE
+
+static func under_kept_tooltip(kind: String) -> String:
+    return WORK_ROW_UNDER_HERDED_TOOLTIP if kind == SourceForecast.LABOR_KIND_HUNT \
+        else WORK_ROW_UNDER_KEPT_TOOLTIP
 
 const WORK_EMPTY_HINT := ALLOC_NO_SOURCES_HINT
 

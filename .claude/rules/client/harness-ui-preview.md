@@ -1122,13 +1122,11 @@ Two frames and a re-pointing pass across `chapters/improvements.gd`,
 `chapters/herd_graze_pen.gd` and `chapters/compose_rungs.gd`. The behaviour is `selection-card.md`'s
 and `labor-ui.md`'s; what belongs here is the shape of the drive and the fixture arithmetic it moved.
 
-- **`improvement_never_finishes_unstarted` is the reported repro, and the existing turn A/B
-  structurally cannot reach it.** That pair runs on the reference patch, whose meter is already at
-  60% — so its source-level `upkeepDemand` is live and the old arithmetic happened to be RIGHT there.
-  The defect only shows where nothing is at risk yet, so this state stands up `BaseFx.unbuilt(...)`
-  with one builder and asserts the `∞` **and** the negative that names the number the player acted on
-  (`≈50 turns`), plus the two PRECONDITIONS without which the frame is about some other patch: the
-  source demand really is zero here, and the RUNG's rate really is not.
+- **`improvement_never_finishes_unstarted` was the reported repro, and §4.6a INVERTED it** — it is
+  `improvement_unstarted_standing_price` now. The frame is unchanged (a wild patch, Cultivate
+  declared, one builder) and every claim on it flipped: the rate is not a build term any more, so the
+  honest answer is the `≈50 turns` the frame used to name as the defect, and the `∞` it used to assert
+  is what must now appear nowhere. See "The rate is not a tax on building" below.
 - **`tile_two_meters_live` is the both-rows frame**, and its third claim is the SILENCE — a patch whose
   keeping is paid carries no mark on either row. Its Field meter and turn count are deliberately
   unlike every other build reading in the chapter, so a card rendering one rung's numbers on both rows
@@ -1143,14 +1141,15 @@ and `labor-ui.md`'s; what belongs here is the shape of the drive and the fixture
 `BaseFx.price_plant_build` now sets `patch_cultivation_upkeep_demand` / `patch_field_upkeep_demand`
 and `HerdFx.price_animal_build` takes the animal rate as a PARAMETER — the animal rungs both declare
 `1.0 × source_load`, so a warren's rate is not the reference herd's. With the rate a real term of the
-pace (`crew − rate`):
+pace (`crew − rate`), `improvement_stressed_advances` staffed THREE builders where it staffed one and
+the kit-swap counts moved 17/11/9/4 → 25/17/11/6.
 
-- **`improvement_stressed_advances` staffs THREE builders where it staffed one.** At one hand the
-  honest answer on a `plant:tended` rung is `∞`, which is `improvement_never_finishes_unstarted`'s
-  subject and not this frame's; three keeps its `≈50 turns` and its claim (a build advancing on a
-  non-Thriving source).
-- **The kit-swap counts moved 17/11/9/4 → 25/17/11/6**, the warren's own one-keeper-load rate coming
-  off a three-keeper crew. The A/B's claim is untouched: the two kits still differ by the gear alone.
+**§4.6a UNDID BOTH OF THOSE, WHICH IS WHY THIS BLOCK IS WORTH READING TWICE.** The rate stopped being
+a build term, so the fixtures' rates stopped pacing anything and both re-staffings reverted: the
+stressed frame is back to ONE builder at `≈50 turns`, and the kit-swap counts back to 17/11/9/4. The
+rates themselves stayed — they are the offered face's STANDING PRICE now, quoted rather than
+subtracted — so `price_plant_build` / `price_animal_build` still set them, and the kit-swap clause is
+asserted WITH the standing half (`_kit_swap_held_price`).
 
 **A clean run is 331 frames / 1051 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
 recorded figure before the DECLARED improvement state was **328 / 1040**, and the frame count moved by
@@ -1177,14 +1176,18 @@ COLOUR"; what belongs here is the shape of the drive and the two re-pointings it
 - **The three INKS are asserted as a set across three frames**, read as the RESOLVED font colour
   through `ForageFx.improvement_face_color` — a `Color` reader, because the pace has three states and
   the two `∞` ones read alike through the warned/not-warned bool it replaced (which survives, written
-  in terms of it). `improvement_turns_lone_crew` is amber-holding and `improvement_turns_full_crew`
+  in terms of it). `improvement_turns_lone_crew` is red-losing and `improvement_turns_full_crew`
   green-growing, asserted as a PAIR on one frame's claim so a face pinned to either ink fails the
-  other; `improvement_rung_slipped` is the red-losing one.
-- **The retired threshold note is asserted as a RE-HOMING, not a deletion** — the rate still reachable
-  as the BUILDERS label's tooltip (`ForageFx.build_work_floor_tooltip`) and the retired prose absent
-  from every Label on the sheet. `ForageFx.build_work_floor` is unchanged: it scans the row's children
-  for `BUILD_WORK_FLOOR_META`, which moved from the note to the label, so the NUMBER is still asserted
-  off a meta rather than out of a wording. `build_crew_floor_warns` went with the note it read.
+  other; `improvement_rung_slipped` is the other red one, reached through the SLIDING state rather
+  than through an arithmetic sign.
+- **The retired threshold is now asserted as an outright ABSENCE, on both sides of the A/B**
+  (§4.6a). It was a RE-HOMING for one slice — the rate reachable as the BUILDERS label's tooltip — and
+  the mechanism under it is gone: the keeping pool owes the rate at every fullness, so no rung declares
+  a build-crew bar. `ForageFx.build_work_floor` / `build_work_floor_tooltip` and
+  `BUILD_WORK_FLOOR_ABSENT` are deleted with it, since a scanner for a meta nothing stamps answers
+  `absent` on every sheet in the game — an assertion that cannot fail. The claim is paired with *the
+  row still mounts* (`ForageFx.build_crew_row`), or "states no threshold" passes on a sheet with no
+  BUILDERS row at all.
 - **TWO EXISTING CLAIMS WERE RE-POINTED, and both were asserting the bug.**
   `improvement_turns_*`'s *"amber while the crew is under it, and quiet once it is cleared"* was about
   the deleted note. And `herd_compose_reopen_fresh`'s precondition asserted that a WILD herd with Tame
@@ -1215,7 +1218,8 @@ and `turn-orb.md`'s; what belongs here is the shape of the drive and the re-aimi
   `improvement_face_color` directly.
 - **TWO EXISTING CLAIMS WERE ASSERTING THE FLATTENING.** `improvement_turns_lone_crew`'s pace claim
   read *"a HOLDING build line is amber"* for a crew the chapter's own constant doc already described
-  as a negative net, and `improvement_never_finishes_unstarted`'s ink claim was the same one rung over.
+  as a negative net, and the unstarted repro's ink claim was the same one rung over (that frame has
+  since inverted outright — see below).
   Both name the LOSING red now, and the holding ink's own frame is `tile_meter_never`, on the card,
   where a crew EXACTLY at the rate is staged.
 - **`UNKNOWN_BUILD_TURNS_SENTINEL` moved `-3` → `-4`.** It stood for *whatever the wire grows next*
@@ -1251,4 +1255,75 @@ correctly stays green — a flattened `-3` still reaches the STALLED hazard, whi
 which is why that claim cannot stand in for this one). Removing the tick/seq filter fails exactly the
 ring and recapture claims, the vacuity guard correctly staying green.
 
-**A clean run is 332 frames / 1057 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says.
+**A clean run is 332 frames / 1070 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says.
+
+## The rate is not a tax on building (`docs/plan_standing_upkeep.md` §4.6a)
+
+No frame added, no frame removed, and **one frame renamed because its claim inverted**. The behaviour
+is `labor-ui.md`'s; what belongs here is the fixture arithmetic, which moved in three places.
+
+- **`improvement_never_finishes_unstarted` → `improvement_unstarted_standing_price`.** A wild patch
+  with one builder now reads `≈50 turns` in green: nothing is banked, so nothing can rot, so the whole
+  of that hand's output is progress. Its old positive (`∞`) is its new negative, and its old negative
+  (`≈50 turns`) is its new positive — which is exactly why it was renamed rather than re-worded. A
+  third PRECONDITION rides beside the two it already had: `meter_rot_per_turn` really is zero here. It
+  gains a PNG-less step at the end — the same rung unstaffed back to nobody, so the OFFERED face can
+  be read: **a RUNNING face carries no price at all**, so the standing-price claim can only be made
+  where the rung is still an offer.
+- **The turn A/B is staged on a SHORT-KEPT patch** (`_short_kept_food_tile` — a stated
+  `meter_rot_per_turn` of 2.0 with the `patch_upkeep_shortfall` that explains it). The reference patch
+  rots at nothing and every staffed builder on it climbs, so without the re-staging the lone-crew
+  frame would quote `≈20 turns` in green and the two `∞` claims would have been asserted away. **The
+  subtracted 2.0 is unchanged and its IDENTITY is not** — the counts (10 at four hands, `∞` at one)
+  are the same numbers about a different mechanism, which the fixture's own doc says out loud.
+- **The rot the fixture states is above what any shipped plant rung can bleed** (`plant:tended` 0.5,
+  `plant:field` 0.75, and the animal web zero by construction), so neither `∞` is reachable at a
+  staffed build crew on shipped config. The client must still render both, so the state is staged;
+  whether it is reachable in play is the sim's question.
+- **`HerdFx.ANIMAL_METER_ROT` is a CONSTANT, not a parameter** — no animal rung declares a
+  `meter_decay`, so an animal meter never goes backwards. It is stated rather than omitted because the
+  closed form nets it: an absent field and a stated nothing are the same arithmetic, and only one of
+  them says the nothing is a fact about the web.
+- **`ForageFx.build_work_floor` / `build_work_floor_tooltip` / `BUILD_WORK_FLOOR_ABSENT` are deleted**
+  with the meta they scanned for; the claim they served is an ABSENCE now, paired with *the BUILDERS
+  row still mounts*.
+
+### …and the second landing: a PARKED build is not a failure
+
+The sim's "no answer" boundary moved from *is anyone staffed* to *is there work banked*, so zero
+builders became a reported state rather than a silence. Frame-count neutral again; **one frame renamed
+for the same reason as before, its claim having inverted.**
+
+- **`tile_meter_reverting` → `tile_meter_held`.** Same patch, same 96%, same nobody-on-it — and it
+  reads `Held at 96%` in NEUTRAL ink with **no hazard mark**, where it read `⚠ Reverting 96%` in
+  amber. The negative is asserted beside it (the mark is nowhere on that rung's value), because the
+  whole point is an absence and a positive claim alone cannot see one.
+- **The hazard SET shrank, and the shrink is asserted.** `_hazard_states_all_marked` carried *work
+  banked and nobody on it* as state (2); it now carries the same state as a **`not held.contains(mark)`
+  negative** inside the same conjunction, which is where the set is decided rather than sampled.
+- **The turn A/B is staged at `plant:tended`'s OWN shipped rot (0.5), not a fixture figure.** Both
+  crews outrun it — `≈40 turns` at one hand, `≈6` at four, both GREEN — which is the shipped plant web
+  being honest: no plant rung bleeds faster than one worker banks, so a lone builder is slow rather
+  than doomed. **The two `∞` states are reached at ZERO builders**, PNG-less on the same sheet: red
+  `∞` on the short-kept patch, and the HELD pace asked of the producer for the half that is not a
+  failure.
+- **`build_pace` takes the CREW now**, because one wire value covers two states. The pair is asserted
+  at the producer (`HOLDS` + no crew ⇒ `BUILD_PACE_HELD`, stops nothing; `HOLDS` + a crew ⇒
+  `BUILD_PACE_HOLDING`, stops), since a frame can stage only one of them at a time.
+- **`rung_row_value`'s `building` became `staffed`**, and the harness spells it `STAFFED` /
+  `UNSTAFFED` rather than a bare bool: at a call site `false` says nothing about which of the two
+  `BUILD_METER_HOLDS` readings the row is being asked for.
+- **`band_panel_preview._assert_unbuilt_warning` asserts the MERGED note.** Its row still warns; what
+  changed is that it wears the keeping note rather than a BUILDERS one, and the `unbuilt` model flag it
+  read is gone.
+- **`tile_two_meters_live` gained a PNG-less second reading with the keeping SHORT** — the one shape on
+  which the at-risk mark has a choice of rows, and the shape a mark on the wrong row is invisible in.
+  It asserts the routing at the producer (`at_risk_rung` answers Sow; `rung_is_under_kept` is true for
+  Sow and false for Cultivate) **and** as rendered (the tended row keeps its badge unmarked), plus the
+  third claim that makes the withheld mark safe: the card still carries its `At risk:` row. The
+  negative rides `_hazard_states_all_marked`'s conjunction as state (6), so the SET decides whether a
+  mark means anything rather than one frame sampling it.
+- **The `held` FACE is rendered, not only asserted at the producer.** The A/B's own sheet is recomposed
+  over the kept reference tile — **the same coordinates**, so the composition survives the swap and the
+  only thing that moves is the shortfall — and the face reads `— held` where the short-kept one reads
+  `— ∞ turns` at the identical crew of zero.

@@ -163,12 +163,20 @@ pub struct LaborConfigs<'w> {
 /// that web. Nothing is wasted: the per-source keeper crew this replaced had to round a fractional
 /// demand up to whole workers and threw the remainder away, once per source.
 ///
-/// # ONLY A BUILT RUNG DRAWS FROM IT
+/// # EVERY METER CARRYING WORK DRAWS FROM IT, AT ANY FULLNESS
 ///
-/// A meter still being raised is owed its **builders** (`patch_upkeep_supply` /
-/// `herd_upkeep_supply`), so a source mid-Cultivate contributes no demand and takes no share —
-/// otherwise the pool would fund a rung nobody has finished and the keepers' hands would vanish into
-/// a job that is not theirs.
+/// A source claims a share exactly where it **has a meter at risk** — work banked on the ground that
+/// the decay pass would bleed ([`source_has_a_meter_at_risk`], the one seam that answers it, through
+/// `forage::patch_unwinding_rung` / `fauna::herd_keeping_rung`). A source mid-Cultivate contributes
+/// its demand and takes its share exactly as a finished one does.
+///
+/// **The meter's FULLNESS used to be the test** — a meter still being raised was owed its builders,
+/// so it put nothing into the pool — and deleting it is what §4.6a of
+/// `docs/plan_standing_upkeep.md` is. Two states reported from ordinary play were wrong under it:
+/// a **half-built** meter whose builders left could not be held at all, bleeding its full rate with
+/// keepers idle in the role and no command that could aim them at it; and a **held** rung eroding to
+/// 99% stopped being the pool's business at the very moment it started needing it. The bill now
+/// starts at the **first work banked** and ends with the last.
 ///
 /// # THE PRIORITY ORDER IS TOTAL, BECAUSE A CHECKPOINT HAS TO REPRODUCE IT
 ///
@@ -198,19 +206,23 @@ fn maintenance_shares(
     let mut animal: Vec<Claim> = Vec::new();
     for (index, assignment) in allocation.assignments.iter().enumerate() {
         // **THE TAKE CREW IS NOT A TERM HERE, and that separation is the point** (§2.2). A row's
-        // eligibility is the *source's* answer — `patch_is_maintaining` / `herd_is_maintaining` —
+        // eligibility is the *ground's* answer — *does this source have a meter carrying work* —
         // never how many gatherers happen to be standing on it this turn. Filtering on
         // `assignment.workers` made a band that moved its foragers to a richer patch unable to keep
         // the Field it had just finished: no demand, no share, and a full-rate bleed with idle
         // keepers in the role.
+        //
+        // **It is the same seam the row's own survival is decided by** (`source_has_a_meter_at_risk`),
+        // deliberately: what the pool funds, what the decay pass bleeds and what keeps a band's
+        // holding alive are one question, and a second spelling of it could only drift.
+        if !source_has_a_meter_at_risk(&assignment.target, forage_registry, herds, ladder) {
+            continue;
+        }
         match &assignment.target {
             LaborTarget::Forage { tile, .. } => {
                 let Some(patch) = forage_registry.patch(*tile) else {
                     continue;
                 };
-                if !crate::forage::patch_is_maintaining(patch) {
-                    continue;
-                }
                 plant.push(Claim {
                     index,
                     demand: crate::forage::patch_upkeep_demand(patch, ladder),
@@ -222,9 +234,6 @@ fn maintenance_shares(
                 let Some(herd) = herds.find(fauna_id) else {
                     continue;
                 };
-                if !fauna::herd_is_maintaining(herd) {
-                    continue;
-                }
                 animal.push(Claim {
                     index,
                     demand: fauna::herd_upkeep_demand(herd, fauna, ladder),
@@ -438,7 +447,7 @@ pub fn advance_labor_allocation(
         // Each entry is `(assignment index, the RUNG that was finished)` — the rung is what decides
         // whether the build crew is carried onto that rung's keeping or handed back to the pool
         // (`docs/plan_standing_upkeep.md` §2.2).
-        let mut completed: Vec<(usize, RungKey)> = Vec::new();
+        let mut completed: Vec<usize> = Vec::new();
         // Retained per-source yield telemetry, rebuilt from scratch: one entry per assignment in
         // iteration order, pre-seeded to zero so any arm that `continue`s (out of range, module
         // lost, herd gone) leaves a correct 0-yield row and index alignment is preserved. This also
@@ -500,7 +509,7 @@ pub fn advance_labor_allocation(
             // crew standing on the tile (`docs/plan_standing_upkeep.md` §2.5). It is already work
             // rather than workers, because a share of a pool does not divide into whole people and
             // that indivisibility is exactly the waste the pool retired.
-            let maintain_work = upkeep_shares.get(idx).copied().unwrap_or(NO_UPKEEP_DEMAND);
+            let keeping_share = upkeep_shares.get(idx).copied().unwrap_or(NO_UPKEEP_DEMAND);
             // **THE CREW A PRE-COMMIT QUOTE IS PRICED AT** — the build's own where one is staffed,
             // and otherwise the hands the band already has on the source. The projection answers
             // *"what would my people take to finish this"* for a rung **nobody has started**
@@ -848,9 +857,9 @@ pub fn advance_labor_allocation(
                     // that fans a verb across every band working the source — derives to `None` and
                     // drives nothing. The clear that used to be needed to stop it is gone with the
                     // authority it was cleaning up after.
-                    // **THE STANDING UPKEEP, PAID BY ITS OWN CREW** (`docs/plan_standing_upkeep.md`
-                    // §2.4). What is left over is the shortfall, and the shortfall **is** the decay
-                    // (`RungDef::upkeep_decay`, past the rung's grace).
+                    // **THE STANDING UPKEEP, PAID BY THE BAND'S KEEPING POOL**
+                    // (`docs/plan_standing_upkeep.md` §2.4). What is left over is the shortfall, and
+                    // the shortfall **is** the decay (`RungDef::upkeep_decay`, past the grace).
                     //
                     // **The demand belongs to the rung AT RISK** (`forage::patch_unwinding_rung`) —
                     // the newest meter with progress on it, which is the very meter
@@ -859,11 +868,10 @@ pub fn advance_labor_allocation(
                     // lose. A patch standing on `plant:tended` with a half-built Sow therefore owes
                     // the **field** rung's demand.
                     //
-                    // **And WHICH CREW answers for it depends on whether that meter is finished**
-                    // (`forage::patch_upkeep_supply`): a built rung is owed its **keepers**, one
-                    // still being raised is owed its **builders**. You cannot be billed to hold
-                    // something you have not finished building — charging a mid-build meter the
-                    // maintain demand made a crew pay to keep ground that did not exist yet.
+                    // **THE POOL ANSWERS FOR IT AT ANY FULLNESS** (§4.6a): a meter still being
+                    // raised is billed exactly as a finished one is, and the builders beside it
+                    // supply nothing toward the rate. The retired fullness test is what made a
+                    // half-built patch unholdable by idle keepers.
                     //
                     // **Stamped once per worked source, before the arm branches by rung**, so a
                     // Field's early return cannot skip it — and stamped rather than re-derived at
@@ -882,12 +890,20 @@ pub fn advance_labor_allocation(
                     // a second crew is sowing would overwrite the sowers' supply with its own zero
                     // and revert the very meter they were filling. `advance_cultivation` zeroes it at
                     // the top of every turn, so the sum is always this turn's.
-                    patch.upkeep_supplied += crate::forage::patch_upkeep_supply(
-                        patch,
-                        improvement,
-                        activity_work(build_workers),
-                        maintain_work,
-                    );
+                    patch.upkeep_supplied +=
+                        crate::forage::patch_upkeep_supply(patch, improvement, keeping_share);
+                    // **WHAT THE GROUND IS LOSING UNDER THE BUILDERS** — the bleed the next
+                    // `advance_cultivation` will take off the meter at risk, resolved once here off
+                    // the supply just stamped. It is the **countdown's denominator** (a build crew
+                    // supplies nothing toward the rate, so what eats a build is the rot) and the
+                    // wire's `meterRotPerTurn`, and it is one number precisely so the card, the
+                    // compose sheet and the decay pass cannot disagree. Constant with respect to the
+                    // build crew, which is what lets the sheet re-price a *proposed* crew.
+                    //
+                    // **Not stored**: `upkeep_supplied` and `neglect_turns` are, so the capture
+                    // re-derives the same number through the same seam — and an *unworked* patch,
+                    // which this loop never visits, is then honest rather than reading a stale `0`.
+                    let meter_rot = crate::forage::patch_meter_rot(patch, &ladder);
                     // **THE earn path (§4): practising rung N teaches the knowledge that unlocks rung
                     // N+1.** Driven entirely by the rung the patch *currently stands on* — a wild
                     // patch teaches **Cultivation**, a tended one **Seed Selection** — so the lesson
@@ -1232,27 +1248,20 @@ pub fn advance_labor_allocation(
                         // side-effects of completing it. **The crew is the BUILD's own**, and the
                         // floor is not a term at all — see [`RungDef::build_accrual`].
                         let accrual =
-                            // **NET OF THE MAINTENANCE RATE** — it is owed while building too, and
-                            // below the meter's cost the *build* crew is what supplies it, so only
-                            // the surplus is progress (`intensification::net_build_supply`). A crew
-                            // at or below the rate holds the meter where it is; one under it leaves
-                            // a shortfall and the decay pass takes it backwards.
-                            tended_rung.build_accrual(
-                                improvement,
-                                eligible,
-                                build_workers,
-                                UNSCALED_UPKEEP,
-                            );
-                        // **THE SAME NET, UNFLOORED** — what the countdown is struck from. The
-                        // accrual above is floored because a meter may not be handed a negative
-                        // amount to add; the estimate must see the sign, or *holding at the rate*
-                        // and *rotting below it* are the same published answer
+                            // **THE CREW'S WHOLE OUTPUT** — a build crew supplies nothing toward the
+                            // maintenance rate, which the band's keeping pool owes for this meter at
+                            // any fullness (§4.6a), so the pace is `work_cost / crew` again.
+                            tended_rung.build_accrual(improvement, eligible, build_workers);
+                        // **THE SIGNED TWIN, NET OF THE ROT** — what the countdown is struck from. A
+                        // meter may only be *added* to and the bleed is the decay pass's, so the
+                        // estimate is where the two accounts meet: builders raising a meter more
+                        // slowly than it rots are losing work already bought
                         // (`RungDef::build_balance`).
                         let balance = tended_rung.build_balance(
                             improvement,
                             eligible,
                             build_workers,
-                            UNSCALED_UPKEEP,
+                            meter_rot,
                         );
                         // **THE JOB'S PRICE**, in work units — `RUNG_COST_UNSCALED` because a patch
                         // is a patch: the only per-source cost multiplier on the ladder is a
@@ -1304,11 +1313,13 @@ pub fn advance_labor_allocation(
                                 cultivate_bar,
                                 patch.cultivation_progress,
                                 balance,
-                                // **HOLDING AND ROTTING BOTH NEED A BUILD THAT IS ACTUALLY
-                                // RUNNING.** Hands on the verb *and* the rung's own gate holding —
-                                // a gate that refuses is "no estimate", not "this staffing never
-                                // gets there", because nothing has been promised at all.
-                                build_workers > NO_CREW_ON_THIS_ACTIVITY && eligible,
+                                // **A GATE THAT REFUSES IS "NO ESTIMATE"** — nothing has been
+                                // promised at all, which is not the same as a staffing that never
+                                // gets there. What the *hands* decide is only the empty-meter case:
+                                // work already banked promises as much as a crew does, so a
+                                // half-built meter with nobody on it still answers.
+                                eligible,
+                                build_workers,
                             ),
                             cultivate_gear,
                         );
@@ -1319,7 +1330,7 @@ pub fn advance_labor_allocation(
                             patch.cultivation_progress - progress_before,
                         );
                         if cultivated {
-                            completed.push((idx, RungKey::PlantTended));
+                            completed.push(idx);
                             event_log.push(CommandEventEntry::new(
                                 tick.0,
                                 CommandEventKind::Cultivate,
@@ -1360,9 +1371,10 @@ pub fn advance_labor_allocation(
                             &equipment_cfg,
                             &crew_kit,
                             &mut patch_build_claims,
+                            meter_rot,
                         )
                     {
-                        completed.push((idx, RungKey::PlantField));
+                        completed.push(idx);
                     }
                     // **THE PROJECTION — "what would the next rung take THIS crew?"**
                     // (`docs/plan_unit_costed_work.md` §11). Nothing is being built here, which is by
@@ -1427,7 +1439,12 @@ pub fn advance_labor_allocation(
                                 quoted_build_crew,
                                 crew_build_work_per_worker,
                                 eligible,
-                                UNSCALED_UPKEEP,
+                                // **The SOURCE's live bleed**, not the quoted rung's rate — a build
+                                // crew supplies nothing toward the rate, so what nets off a quote is
+                                // what the ground is losing. On a rung nobody has started there is
+                                // nothing banked and therefore nothing to rot, and the quote is the
+                                // honest `work_cost / crew`.
+                                meter_rot,
                             )
                         });
                         patch_build_claims.publish_projected(
@@ -1621,28 +1638,28 @@ pub fn advance_labor_allocation(
                     let improvement = fauna::herd_build_verb(herd, declared);
                     // **NOTHING LEFT TO BUILD needs no test any more** — see the Forage arm: a
                     // declaration on a finished meter derives to `None` (`fauna::herd_build_verb`).
-                    // **THE STANDING UPKEEP, PAID BY ITS OWN CREW** — the animal twin; see the
-                    // Forage arm for why it is stamped once, here, before the pen's tend branch
-                    // returns. A herd's demand is its **keeper load** (`head count /
+                    // **THE STANDING UPKEEP, PAID BY THE BAND'S KEEPING POOL** — the animal twin;
+                    // see the Forage arm for why it is stamped once, here, before the pen's tend
+                    // branch returns. A herd's demand is its **keeper load** (`head count /
                     // animals_per_herder`) times the rung's rate (`UpkeepScale::SourceLoad`), so a
                     // shepherd's 200 fowl and a cowherd's 12 aurochs are one rate.
                     //
-                    // **Which crew answers for it depends on whether the rung is built**
-                    // (`fauna::herd_upkeep_supply`): a `Tame` or `Corral` in flight is owed its
-                    // **build** crew, a herd being held is owed its **keepers**. And the verb names
-                    // the meter, so a `Corral` starting on a herd with no pen progress answers for
-                    // `animal:pen` from its first turn — the supply is read by the *next* Logistics
-                    // pass, so it has to describe the meter that pass will judge.
+                    // **The pool answers for it at any fullness** (§4.6a) — a `Tame` in flight is
+                    // billed exactly as a tamed herd is, and its builders supply nothing toward the
+                    // rate. The verb still names the meter, so a `Corral` starting on a herd with no
+                    // pen progress answers for `animal:pen` from its first turn: the supply is read
+                    // by the *next* Logistics pass, so it has to describe the meter that pass judges.
                     //
                     // **Accumulated, not assigned** — the demand is per-SOURCE, so the keepers of
                     // every band working this herd sum into one supply and the last band visited
                     // must not speak for all of them. `advance_husbandry` zeroes it once per turn.
-                    herd.upkeep_supplied += fauna::herd_upkeep_supply(
-                        herd,
-                        improvement,
-                        activity_work(build_workers),
-                        maintain_work,
-                    );
+                    herd.upkeep_supplied +=
+                        fauna::herd_upkeep_supply(herd, improvement, keeping_share);
+                    // **WHAT THE METER IS LOSING** — the plant twin's seam, and on the shipped
+                    // ladder always `0`: neither animal rung declares a `meter_decay`, because an
+                    // under-kept flock **sheds animals** instead. So nothing eats an animal build,
+                    // and the countdown below reads the crew's own output. See `fauna::herd_meter_rot`.
+                    let meter_rot = fauna::herd_meter_rot(herd, &fauna, &ladder);
                     // **The steady headline** — the forward-projected average food/turn over the next
                     // `realized_horizon` turns, computed from the herd's PRE-take state (before the pen
                     // feed/harvest or the wild take mutates it), so it equals the assign-time seed
@@ -1907,12 +1924,8 @@ pub fn advance_labor_allocation(
                         // now, so it is no longer one number for the whole world — a keeper who
                         // brought hurdles raises a ring faster than one who did not, exactly as they
                         // build the original pen faster.
-                        let pen_extend_accrual = pen_rung.build_accrual(
-                            Some(Improvement::Corral),
-                            true,
-                            build_workers,
-                            fauna::herd_keeper_load(herd, &fauna),
-                        );
+                        let pen_extend_accrual =
+                            pen_rung.build_accrual(Some(Improvement::Corral), true, build_workers);
                         // A ring costs what the pen it widens costs — the same rung record, so the
                         // two can never drift — and the same keepers' tools take the same work off
                         // it.
@@ -2156,21 +2169,19 @@ pub fn advance_labor_allocation(
                         // **The crew is the TAME's own**, and the floor is not a term: a gentling
                         // crew is not pulling on the herd, so there is no pressure of theirs to read
                         // (`docs/plan_standing_upkeep.md` §2.2).
-                        // Net of the rung's maintenance rate at this herd's own keeper load — the
-                        // animal web answers exactly as the plant web does, with no exception.
-                        let accrual = pastoral_rung.build_accrual(
-                            improvement,
-                            eligible,
-                            build_workers,
-                            fauna::herd_keeper_load(herd, &fauna),
-                        );
-                        // **The countdown's unfloored twin** — the Cultivate arm's rule: the meter
-                        // takes the floored accrual, the estimate takes the sign.
+                        // The crew's whole output: the keeping pool owes this herd's rate at any
+                        // meter fullness, so a `Tame` banks `work_cost / crew` — the animal web
+                        // answers exactly as the plant web does, with no exception (§4.6a).
+                        let accrual =
+                            pastoral_rung.build_accrual(improvement, eligible, build_workers);
+                        // **The countdown's signed twin** — the Cultivate arm's rule, net of the
+                        // meter's rot, which on the animal web is always `0` (no `meter_decay`: an
+                        // under-kept flock sheds animals instead).
                         let balance = pastoral_rung.build_balance(
                             improvement,
                             eligible,
                             build_workers,
-                            fauna::herd_keeper_load(herd, &fauna),
+                            meter_rot,
                         );
                         // **THE JOB'S PRICE** — the rung's `work_cost` times this species' own
                         // `taming_cost_multiplier` (slice 3c inverted): the rung owns the mechanic,
@@ -2210,7 +2221,8 @@ pub fn advance_labor_allocation(
                                 tame_bar,
                                 herd.domestication_progress,
                                 balance,
-                                build_workers > NO_CREW_ON_THIS_ACTIVITY && eligible,
+                                eligible,
+                                build_workers,
                             ),
                             tame_gear,
                         );
@@ -2221,7 +2233,7 @@ pub fn advance_labor_allocation(
                             herd.domestication_progress - progress_before,
                         );
                         if tamed {
-                            completed.push((idx, RungKey::AnimalPastoral));
+                            completed.push(idx);
                             event_log.push(CommandEventEntry::new(
                                 tick.0,
                                 CommandEventKind::Tame,
@@ -2261,19 +2273,10 @@ pub fn advance_labor_allocation(
                         // `EcologyPhase::Thriving` gate, and rung 3 never had one on either web.
                         // Fencing a herd is ground work — a pen goes up around a flock already drawn
                         // down to its keeper's own floor.
-                        let accrual = pen_rung.build_accrual(
-                            improvement,
-                            eligible,
-                            build_workers,
-                            fauna::herd_keeper_load(herd, &fauna),
-                        );
-                        // **The countdown's unfloored twin** — the Cultivate arm's rule.
-                        let balance = pen_rung.build_balance(
-                            improvement,
-                            eligible,
-                            build_workers,
-                            fauna::herd_keeper_load(herd, &fauna),
-                        );
+                        let accrual = pen_rung.build_accrual(improvement, eligible, build_workers);
+                        // **The countdown's signed twin** — the Cultivate arm's rule.
+                        let balance =
+                            pen_rung.build_balance(improvement, eligible, build_workers, meter_rot);
                         // Penning is a flat job for every species — a fence is a fence — so the pen
                         // takes no per-species multiplier; only *taming* varies.
                         let pen_cost = pen_rung
@@ -2297,7 +2300,8 @@ pub fn advance_labor_allocation(
                                 pen_bar,
                                 herd.corral_progress,
                                 balance,
-                                build_workers > NO_CREW_ON_THIS_ACTIVITY && eligible,
+                                eligible,
+                                build_workers,
                             ),
                             pen_gear,
                         );
@@ -2308,7 +2312,7 @@ pub fn advance_labor_allocation(
                             herd.corral_progress - progress_before,
                         );
                         if penned {
-                            completed.push((idx, RungKey::AnimalPen));
+                            completed.push(idx);
                             event_log.push(CommandEventEntry::new(
                                 tick.0,
                                 CommandEventKind::Corral,
@@ -2367,7 +2371,9 @@ pub fn advance_labor_allocation(
                                 quoted_build_crew,
                                 crew_build_work_per_worker,
                                 eligible,
-                                fauna::herd_keeper_load(herd, &fauna),
+                                // The source's live bleed — always `0` on the animal web, whose
+                                // rungs declare no `meter_decay`. See the Forage arm.
+                                meter_rot,
                             )
                         });
                         herd_build_claims.publish_projected(
@@ -2608,20 +2614,21 @@ pub fn advance_labor_allocation(
                 }
             }
         }
-        // **Clear the improvement of every build that completed this turn — AND HAND ITS CREW ON.**
-        // The one seam all four rungs (Cultivate/Sow/Tame/Corral) pass through. There is nothing left
-        // to build on this source, so leaving the verb set would hold hands on a rung that can never
-        // accomplish anything more (issue #420).
+        // **Clear the improvement of every build that completed this turn.** The one seam all four
+        // rungs (Cultivate/Sow/Tame/Corral) pass through. There is nothing left to build on this
+        // source, so leaving the verb set would hold hands on a rung that can never accomplish
+        // anything more (issue #420) — the crew frees to idle.
         //
-        // **A FINISHED RUNG THAT COSTS SOMETHING TO HOLD KEEPS ITS CREW** (`docs/plan_standing_upkeep.md`
-        // §2.2). The turn a pen goes up, the hands that raised it become the hands that keep it —
-        // otherwise a brand-new improvement starts decaying on turn one because nobody noticed it had
-        // begun costing something, which is a punishment for arithmetic the player cannot see. A rung
-        // that declares **no** upkeep frees them instead, back to the idle pool.
+        // **THE HAND-OFF ONTO THE KEEPING ROLE IS RETIRED** (`docs/plan_standing_upkeep.md` §2.3).
+        // It moved a finished build's crew onto its web's `agriculture` / `husbandry` role so that a
+        // brand-new improvement did not start decaying on turn one because nobody noticed it had
+        // begun costing something. **That failure cannot happen now**: the keeping bill starts at
+        // the **first work banked** (§4.6a), not at completion, so a player who built the thing at
+        // all was already paying to hold it. What is left would be the sim quietly moving hands
+        // between two rows the player staffs by hand.
         //
-        // **Either way it is ANNOUNCED**, on the finished verb's own feed channel so a rung's whole
-        // life reads on one line: the crew moving is a thing the player has to re-task around, and a
-        // silent re-allocation is exactly the kind of change that is only discovered later.
+        // **It is ANNOUNCED**, on the finished verb's own feed channel so a rung's whole life reads
+        // on one line: hands coming free is a thing the player re-tasks around.
         //
         // **The STANCE is not touched, and that is the whole point of the two-axis split** (issue
         // #442, `docs/plan_investment_rung_toggle.md` §1). This pass used to *rewrite* `policy` onto
@@ -2636,10 +2643,7 @@ pub fn advance_labor_allocation(
         // pre-commit forecast.
         //
         // **Before the `lapsed` removal below**, which shifts rows and invalidates these indices.
-        // The hands a completion hands to the keeping, applied after the loop — the role's own row
-        // lives in the same `assignments` vec this loop holds a mutable borrow into.
-        let mut carried_to_upkeep: Vec<(LaborTarget, u32)> = Vec::new();
-        for (idx, finished) in &completed {
+        for idx in &completed {
             let Some(assignment) = allocation.assignments.get_mut(*idx) else {
                 continue;
             };
@@ -2647,52 +2651,25 @@ pub fn advance_labor_allocation(
             let crew = assignment.improvement_workers;
             assignment.improvement = None;
             assignment.improvement_workers = NO_CREW_ON_THIS_ACTIVITY;
-            let holds = ladder.rung(*finished).declares_upkeep();
             let source = describe_worked_source(&assignment.target);
-            if holds && crew > NO_CREW_ON_THIS_ACTIVITY {
-                // **Onto the BAND'S standing role, not this source's own keeping**
-                // (`docs/plan_standing_upkeep.md` §2.5): maintenance is a pool per web now, so the
-                // hands that raised this rung join the pool that will hold it. **Added, not
-                // assigned** — a band that already keeps other sources on this web keeps them, and
-                // these builders join them.
-                //
-                // The head count does not move: the crew came off `improvement_workers` on this row
-                // and lands on the role's row, so `assigned_total` is unchanged and no refusal is
-                // owed.
-                carried_to_upkeep.push((RungKey::upkeep_role(*finished), crew));
-            }
-            // A completion with nobody on the verb (another band finished it) has no crew to move,
-            // so there is nothing to announce.
+            // A completion with nobody on the verb (another band finished it) frees nobody, so
+            // there is nothing to announce.
             if crew == NO_CREW_ON_THIS_ACTIVITY {
                 continue;
             }
             let Some(verb) = verb else {
                 continue;
             };
-            let (label, status) = if holds {
-                (
-                    format!(
-                        "{crew} of your {} crew stay on {source} to keep it",
-                        verb.as_str()
-                    ),
-                    "carried_to_upkeep",
-                )
-            } else {
-                (
-                    format!(
-                        "{crew} of your {} crew are free — {source} keeps itself",
-                        verb.as_str()
-                    ),
-                    "freed",
-                )
-            };
             event_log.push(CommandEventEntry::new(
                 tick.0,
                 improvement_feed_channel(verb),
                 faction,
-                label,
+                format!(
+                    "{crew} of your {} crew are free — {source} is built",
+                    verb.as_str()
+                ),
                 Some(format!(
-                    "status={status} action=build_complete improvement={} workers={crew}",
+                    "status=freed action=build_complete improvement={} workers={crew}",
                     verb.as_str()
                 )),
             ));
@@ -2706,12 +2683,6 @@ pub fn advance_labor_allocation(
             yields.remove(idx);
         }
         allocation.last_yields = yields;
-        // **The hand-off lands on the role's row**, after the telemetry is restored — the role may
-        // not be staffed at all yet (the first rung a band finishes on a web is what puts anybody on
-        // that web's keeping), and a row appended here needs its own zero telemetry row beside it.
-        for (role, crew) in carried_to_upkeep {
-            allocation.add_role_workers(role, crew);
-        }
         allocation.last_pen_feed_upkeep = pen_feed_paid;
     }
 }
@@ -3040,12 +3011,15 @@ fn accrue_field(
     // Which crew's estimate this patch publishes when several work it — the Sow arm's share of the
     // one rule, so a band merely gathering the ground cannot quote over a running Sow.
     claims: &mut BuildEstimateClaims<UVec2>,
+    // **What this patch's at-risk meter is bleeding this turn** (`forage::patch_meter_rot`),
+    // resolved once by the caller off the keeping just stamped — see the Cultivate arm.
+    meter_rot: f32,
 ) -> bool {
-    // Net of the `plant:field` rung's own maintenance rate — see the Cultivate arm.
-    let accrual = field_rung.build_accrual(improvement, eligible, workers, UNSCALED_UPKEEP);
-    // **The same net, unfloored** — the meter takes the floored accrual, the countdown takes the
-    // sign, so *holding at the rate* and *rotting below it* stay two answers.
-    let balance = field_rung.build_balance(improvement, eligible, workers, UNSCALED_UPKEEP);
+    // The Sow crew's whole output — the keeping pool owes the rate whatever the builders do.
+    let accrual = field_rung.build_accrual(improvement, eligible, workers);
+    // **The signed twin** — the meter takes the accrual, the countdown takes it net of the rot, so
+    // *holding against the bleed* and *losing to it* stay two answers.
+    let balance = field_rung.build_balance(improvement, eligible, workers, meter_rot);
     // **THE JOB'S PRICE** — `RUNG_COST_UNSCALED`, because sowing is a flat job: the only per-source
     // cost multiplier on the ladder is a species' `taming_cost_multiplier`, and a plant has none.
     let sow_cost = field_rung
@@ -3062,12 +3036,7 @@ fn accrue_field(
             tile,
             &mut patch.build_turns_remaining,
             &mut patch.build_work_from_gear,
-            build_turns_estimate(
-                sow_bar,
-                patch.field_progress,
-                balance,
-                workers > NO_CREW_ON_THIS_ACTIVITY && eligible,
-            ),
+            build_turns_estimate(sow_bar, patch.field_progress, balance, eligible, workers),
             sow_gear,
         );
         return false;
@@ -3094,12 +3063,7 @@ fn accrue_field(
         tile,
         &mut patch.build_turns_remaining,
         &mut patch.build_work_from_gear,
-        build_turns_estimate(
-            sow_bar,
-            patch.field_progress,
-            balance,
-            workers > NO_CREW_ON_THIS_ACTIVITY && eligible,
-        ),
+        build_turns_estimate(sow_bar, patch.field_progress, balance, eligible, workers),
         sow_gear,
     );
     charge_build_wear(
@@ -3790,6 +3754,12 @@ mod labor_yield_tests {
     /// per-worker biomass cap never binds (so a Sustain take is set by the regrowth ceiling).
     const WORKERS: u32 = 10;
 
+    /// **How far a build walk is allowed to run per turn of accrual it needs.** A build's crew is
+    /// its whole throughput, but it accrues only on turns its floor leaves something standing, so a
+    /// walk bounded at the accrual's own turn count would race the harness's take crew. Generous by
+    /// design: it exists to stop a broken fixture looping forever, not to time anything.
+    const WALK_TURNS_PER_BUILD_TURN: u32 = 16;
+
     /// **What THIS harness's crew produces on `rung` in one turn**, in work units — every build
     /// assignment below staffs [`WORKERS`], and since the crew *is* the throughput
     /// (`docs/plan_unit_costed_work.md` §1.2) a build-length assertion computed at any other head
@@ -3803,27 +3773,29 @@ mod labor_yield_tests {
         rung.build_accrual(
             rung.verb_improvement(),
             true,
-            builders_above_the_rate(rung, source_measure),
-            source_measure,
+            the_harness_build_crew(rung, source_measure),
         )
     }
 
-    /// **THE BUILD CREW A PLANT FIXTURE STAFFS** — [`WORKERS`] hands above `plant:tended`'s
-    /// maintenance rate, so the *net* supply is `WORKERS` and every pace assertion below reads what
-    /// it read before the rate became a tax on building.
+    /// **THE BUILD CREW A PLANT FIXTURE STAFFS** — [`WORKERS`] hands plus `plant:tended`'s own keeper
+    /// count, the padding [`builders_above_the_rate`] explains.
     fn plant_builders(world: &World, key: RungKey) -> u32 {
         let ladder = world.resource::<LadderConfigHandle>().get();
-        builders_above_the_rate(ladder.rung(key), UNSCALED_UPKEEP)
+        the_harness_build_crew(ladder.rung(key), UNSCALED_UPKEEP)
     }
 
-    /// **THE BUILD CREW AN ANIMAL FIXTURE STAFFS** — the same, at the harness herd's own keeper
-    /// load, which is what the animal rungs' rate scales by.
-    fn animal_builders(world: &World, key: RungKey) -> u32 {
-        animal_builders_rate(world, key).saturating_add(WORKERS)
+    /// **THE BUILD CREW AN ANIMAL FIXTURE STAFFS** — the same [`WORKERS`] the plant fixtures state,
+    /// with nothing added for the rung's rate. See [`the_harness_build_crew`] for why the padding
+    /// went: a build crew supplies none of the rate (§4.6a), so a head count is a head count on both
+    /// webs. The keeping a fixture staffs beside it is [`the_harness_keeping_crew`].
+    fn animal_builders(_world: &World, _key: RungKey) -> u32 {
+        WORKERS
     }
 
-    /// **Just the rate**, in whole hands — what a fixture adds to its own stated NET crew.
-    fn animal_builders_rate(world: &World, key: RungKey) -> u32 {
+    /// **THE KEEPERS THAT EXACTLY COVER THIS RUNG'S DEMAND** at the harness herd's own load — what a
+    /// fixture puts on the band's `husbandry` role so the meter it is building is **held** while it
+    /// is raised (§4.6a). It padded a build crew until that slice; it staffs the keeping now.
+    fn the_harness_keeping_crew(world: &World, key: RungKey) -> u32 {
         let load = harness_herd_load(world);
         let ladder = world.resource::<LadderConfigHandle>().get();
         ladder.rung(key).upkeep_crew_needed(load)
@@ -3843,15 +3815,18 @@ mod labor_yield_tests {
             })
     }
 
-    /// **THE HARNESS'S BUILD CREW: [`WORKERS`] hands ABOVE the rung's maintenance rate.**
+    /// **THE HARNESS'S BUILD CREW: [`WORKERS`] hands, and nothing added for the rung's rate.**
     ///
-    /// The rate is a tax on building (`docs/plan_standing_upkeep.md` §2.4) and it scales with the
-    /// source on the animal web, so a fixed crew is below the threshold on any herd of size and the
-    /// build simply never runs — a fixture measuring a stall rather than the thing under test.
-    /// Staffing above the rate keeps the harness's *net* supply at `WORKERS` whatever the source.
-    fn builders_above_the_rate(rung: &crate::intensification::RungDef, source_measure: f32) -> u32 {
-        rung.upkeep_crew_needed(source_measure)
-            .saturating_add(WORKERS)
+    /// It carried `+ upkeep_crew_needed` while the rate was a tax on building — a fixed crew fell
+    /// below the threshold on any herd of size and the build never ran. §4.6a deleted that threshold:
+    /// a build crew supplies none of the rate, so the padding was correcting for nothing and only
+    /// made the crew larger than the head count these fixtures state. Every pace assertion divides by
+    /// [`build_work_per_turn`], which reads this same crew.
+    fn the_harness_build_crew(
+        _rung: &crate::intensification::RungDef,
+        _source_measure: f32,
+    ) -> u32 {
+        WORKERS
     }
 
     /// **Turns this harness's crew needs to finish `rung`'s whole job**, `ceil(cost / work)`. Turns
@@ -4599,21 +4574,22 @@ mod labor_yield_tests {
     // (`docs/plan_standing_upkeep.md` §2.2): the take crew answers for the take, and the build's
     // crew is whatever the player typed. What survives of the claim is the test below.
 
-    /// **COMPLETION HANDS THE BUILD'S CREW TO THE KEEPING — or frees it**
-    /// (`docs/plan_standing_upkeep.md` §2.2). The turn a meter fills, the hands that raised the rung
-    /// have finished the thing they were staffed for, and where they go next must not be silent.
+    /// **COMPLETION FREES THE BUILD'S CREW, AND NEVER STAFFS THE KEEPING**
+    /// (`docs/plan_standing_upkeep.md` §2.3). The turn a meter fills, the hands that raised the rung
+    /// have finished the thing they were staffed for and go back to the idle pool.
     ///
-    /// **The carry-over is what stops a brand-new improvement decaying on turn one** because nobody
-    /// noticed it had begun costing something — the same punishment-for-invisible-arithmetic the
-    /// maintain crew exists to prevent.
+    /// **The carry-over onto the web's keeping role is RETIRED.** It existed so that a brand-new
+    /// improvement did not start decaying on turn one because nobody noticed it had begun costing
+    /// something — and §4.6a makes that unreachable: the keeping bill starts at the **first work
+    /// banked**, not at completion, so a player who built the thing at all was already paying to
+    /// hold it. What would be left is the sim moving hands between two rows the player staffs by
+    /// hand.
     ///
-    /// **Asserted on BOTH branches, each against a ladder built for it.** The shipped `plant:tended`
-    /// declares an upkeep since `docs/plan_standing_upkeep.md` §2.4, so the *carry* branch is what a
-    /// campaign sees today and the *free* branch is the one that needs a fixture — the reverse of
-    /// when this test was written. Running one arm on the shipped config either way would assert its
-    /// branch vacuously.
+    /// **Asserted on BOTH `declares_upkeep` branches**, each against a ladder built for it, because
+    /// the retired hand-off forked on exactly that predicate: a rung that costs something to hold
+    /// must free its crew the same way one that costs nothing does.
     #[test]
-    fn a_completed_build_carries_its_crew_onto_the_keeping_or_frees_it() {
+    fn a_completed_build_frees_its_crew_and_never_staffs_the_keeping() {
         const BUILDERS: u32 = 4;
 
         /// `plant:tended` with its `upkeep` block replaced by `value` — `Some(..)` for a rung that
@@ -4697,24 +4673,30 @@ mod labor_yield_tests {
                 row.improvement_workers, NO_CREW_ON_THIS_ACTIVITY,
                 "the finished build lets go of its crew either way: {row:?}"
             );
-            // **Where they went is the BAND'S agriculture role**, not a crew on the tile
-            // (`docs/plan_standing_upkeep.md` §2.5).
+            assert!(
+                row.workers > NO_CREW_ON_THIS_ACTIVITY,
+                "fixture: the row survives with its gatherers, so there were hands on this source \
+                 for a hand-off to have moved: {row:?}"
+            );
+            // **Nobody was moved onto the band's agriculture role** — the retired hand-off's one
+            // destination (`docs/plan_standing_upkeep.md` §2.5).
             (
                 row.improvement_workers,
                 allocation.workers_on(&LaborTarget::Agriculture),
             )
         };
 
-        let (_, kept) = run(std::sync::Arc::new(with_upkeep));
+        let (_, on_keeping) = run(std::sync::Arc::new(with_upkeep));
         assert_eq!(
-            kept, BUILDERS,
-            "a finished rung that costs something to HOLD keeps the crew that raised it"
+            on_keeping, NO_CREW_ON_THIS_ACTIVITY,
+            "a finished rung that costs something to HOLD still frees its crew — the player staffs \
+             the keeping, and the bill started at the first work banked"
         );
 
         let (_, freed) = run(std::sync::Arc::new(without_upkeep));
         assert_eq!(
             freed, NO_CREW_ON_THIS_ACTIVITY,
-            "…and a rung that costs nothing frees them — the animal branch's shape today"
+            "…and so does one that costs nothing: there is one branch now, not two"
         );
     }
 
@@ -6845,28 +6827,45 @@ mod labor_yield_tests {
             "fixture: the {species} herd must take more than one turn to gentle"
         );
         let builders = animal_builders(&world, RungKey::AnimalPastoral);
+        // **THE BAND HAS TO STAFF ITS HUSBANDRY ROLE, and that is §4.6a showing through.** The
+        // keeping pool owes a half-tamed herd's rate from the first work banked, and a herd whose
+        // keeping is wholly unmet does not regrow (`fauna::regrow_biomass` reads
+        // `upkeep_supplied <= 0`) — so an unkept herd pinned at its hunters' floor offers no
+        // escapement room, the build's own gate goes false, and the Tame stalls forever. The
+        // builders used to cover the rate themselves, which is exactly the coupling this slice
+        // deleted; a fixture that wants a build to finish now has to state its keepers.
+        let keepers = the_harness_keeping_crew(&world, RungKey::AnimalPastoral);
         let band = spawn_band(
             &mut world,
             tile,
-            vec![LaborAssignment {
-                target: LaborTarget::Hunt {
-                    fauna_id: HERD_ID.to_string(),
-                    floor: BUILDER_FLOOR,
+            vec![
+                LaborAssignment {
+                    target: LaborTarget::Hunt {
+                        fauna_id: HERD_ID.to_string(),
+                        floor: BUILDER_FLOOR,
+                    },
+                    workers: WORKERS,
+                    improvement: Some(Improvement::Tame),
+                    kit: None,
+                    improvement_workers: builders,
                 },
-                workers: WORKERS,
-                improvement: Some(Improvement::Tame),
-                kit: None,
-                improvement_workers: builders,
-            }],
+                LaborAssignment {
+                    target: LaborTarget::Husbandry,
+                    workers: keepers,
+                    improvement: None,
+                    kit: None,
+                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
+                },
+            ],
         );
 
-        // **Walk until it completes rather than predicting the turn.** The maintenance rate scales
-        // with the herd's own keeper load and the load moves while the herd is worked, so the net
-        // supply — and with it the pace — is not a constant any count forecast off the opening state
-        // could name (`docs/plan_standing_upkeep.md` §2.4). What the test needs is the *transition*,
-        // which is found by walking to it.
+        // **Walk until it completes rather than predicting the turn.** A build banks only on the
+        // turns its crew has something standing above its floor, and this harness's take crew draws
+        // the herd down, so the *elapsed* turns run to several times the `turns_to_tame` the accrual
+        // alone implies. What the test needs is the **transition**, which is found by walking to it;
+        // the bound below is a bound, not a prediction.
         let mut turns_taken = 0;
-        for _ in 0..turns_to_tame.saturating_mul(4) {
+        for _ in 0..turns_to_tame.saturating_mul(WALK_TURNS_PER_BUILD_TURN) {
             if world
                 .resource::<HerdRegistry>()
                 .find(HERD_ID)
@@ -6886,6 +6885,13 @@ mod labor_yield_tests {
             regrow_source_herd(&mut world);
             world.run_system_once(advance_labor_allocation);
             turns_taken += 1;
+            {
+                let h = world.resource::<HerdRegistry>().find(HERD_ID).unwrap();
+                println!(
+                    "DEBUG t={turns_taken} prog={} bio={} cap={}",
+                    h.domestication_progress, h.biomass, h.carrying_capacity
+                );
+            }
         }
         assert!(
             world
@@ -6926,11 +6932,10 @@ mod labor_yield_tests {
     // **RETIRED: `turns_to_tame_on`** — the end-to-end turns comparison the gear claim used to be
     // measured on.
     //
-    // Since the maintenance rate became a tax on building (`docs/plan_standing_upkeep.md` §2.4) the
-    // two kits move the pace through **a second channel**: `big_game` carries spears, so its hunter
-    // shrinks the flock, which lowers the rate and raises the build's net. A turn count therefore
-    // measured the kits' attack tiers as much as their handling gear. The claim is about the JOB, so
-    // it is measured on the job — see part (3) of
+    // The two kits move the pace through **a second channel**: `big_game` carries spears, so its
+    // hunter shrinks the flock, which moves the herd's escapement room and therefore which turns the
+    // build is eligible on at all. A turn count measured the kits' attack tiers as much as their
+    // handling gear. The claim is about the JOB, so it is measured on the job — see part (3) of
     // `the_handling_kit_takes_work_off_the_job_rather_than_speeding_the_crew`.
 
     /// What one turn of a `Tame` assignment left behind — the build meter, the gear it spent, and the
@@ -6939,12 +6944,11 @@ mod labor_yield_tests {
     /// `improvement` is the verb the assignment still carries afterwards.
     struct TameTurn {
         progress: f32,
-        /// **The maintenance rate this herd owed on the turn measured** — the tax the build crew
-        /// paid before any of its output was progress (`docs/plan_standing_upkeep.md` §2.4). It is
-        /// carried out of the fixture because the rate rides the herd's own keeper load, so two arms
-        /// whose *takes* differ owe different rates: adding it back is what isolates the term under
-        /// test from the one that is not.
-        rate: f32,
+        // **RETIRED: `rate`** — the maintenance rate this herd owed on the turn measured. It was
+        // carried out of the fixture so a caller could add it back before comparing two arms, the
+        // rate riding each herd's own keeper load. Since §4.6a it is netted off nothing: a build
+        // crew supplies none of it, so `progress` **is** the crew's output and the two arms are
+        // comparable outright.
         gear_wear: f32,
         /// **What the crew's tools took off the job this turn** — `Herd::build_work_from_gear`, the
         /// `t` the effective bar subtracts. `0` for a crew carrying nothing that helps.
@@ -7012,20 +7016,8 @@ mod labor_yield_tests {
             .find(HERD_ID)
             .expect("the fixture herd survives the turn")
             .build_work_from_gear;
-        // The maintenance rate this herd owed on the turn just measured — the tax the build crew
-        // paid off the top (`docs/plan_standing_upkeep.md` §2.4).
-        let rate = {
-            let fauna = world.resource::<FaunaConfigHandle>().get();
-            let ladder = world.resource::<LadderConfigHandle>().get();
-            let herd = world
-                .resource::<HerdRegistry>()
-                .find(HERD_ID)
-                .expect("the fixture herd survives the turn");
-            crate::fauna::herd_upkeep_demand(herd, &fauna, &ladder)
-        };
         TameTurn {
             progress,
-            rate,
             gear_wear,
             gear_work,
             tame_arm_ran,
@@ -7067,22 +7059,20 @@ mod labor_yield_tests {
 
         // (1) The ACCRUAL is untouched — the crew's hands are worth what they are worth.
         //
-        // **Compared GROSS of the maintenance rate**, which is not a fudge but the isolation this
-        // assertion needs: the rate rides the herd's keeper load, the two kits carry home different
-        // amounts, and a herd that has been drawn down further owes less. Adding each arm's own rate
-        // back leaves exactly the crew's output, which is what "the gear does not speed the crew up"
-        // is about (`docs/plan_standing_upkeep.md` §2.4).
+        // **Compared OUTRIGHT**, with nothing added back. It used to need the maintenance rate
+        // restored to each arm before the two were comparable, because the rate was netted out of
+        // the accrual and rides the herd's own keeper load — and the two kits carry home different
+        // amounts, so the two arms' herds owe different rates. §4.6a took the rate out of the
+        // accrual entirely, so what is left is the crew's output and nothing else.
         assert!(
             bare.progress > 0.0,
             "fixture: the un-geared crew must actually be taming, or the comparison is two zeroes"
         );
         assert!(
-            ((geared.progress + geared.rate) - (bare.progress + bare.rate)).abs() < 1e-4,
-            "the gear must not speed the crew up: geared={} (+rate {}) bare={} (+rate {})",
+            (geared.progress - bare.progress).abs() < 1e-4,
+            "the gear must not speed the crew up: geared={} bare={}",
             geared.progress,
-            geared.rate,
-            bare.progress,
-            bare.rate
+            bare.progress
         );
 
         // (2) What it moves is the JOB — and **the partly-equipped-party rule decides how much**.
@@ -7105,17 +7095,15 @@ mod labor_yield_tests {
         );
 
         // (3) And so the geared build FINISHES SOONER, which is the player-facing claim — asserted
-        // as **a shorter job at the same net supply**, not as a shorter end-to-end run.
+        // as **a shorter job at the same crew output**, not as a shorter end-to-end run.
         //
         // # WHY THE TURN COUNT STOPPED BEING THE CLEAN MEASURE
         //
-        // The maintenance rate is a tax on building and it rides the herd's own keeper load
-        // (`docs/plan_standing_upkeep.md` §2.4), so **the two kits move the pace through a second
-        // channel**: `big_game` carries spears and its lone hunter kills more, which shrinks the
-        // flock, lowers the rate and *raises* the build's net. An end-to-end turn comparison
-        // therefore measures the two kits' ATTACK tiers as much as their handling gear, and at a
-        // thin crew the hunting channel dominates. The claim under test is about the **job**, so it
-        // is measured on the job.
+        // **The two kits move the pace through a second channel**: `big_game` carries spears and its
+        // lone hunter kills more, which shrinks the flock and moves the escapement room the build's
+        // own gate reads. An end-to-end turn comparison therefore measures the two kits' ATTACK tiers
+        // as much as their handling gear, and at a thin crew the hunting channel dominates. The claim
+        // under test is about the **job**, so it is measured on the job.
         let ladder = LadderConfig::builtin();
         let pastoral = ladder.rung(RungKey::AnimalPastoral);
         let cost = pastoral

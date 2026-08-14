@@ -973,6 +973,17 @@ func unstaffed_build_hunt(herd_id: String, bands: Array = []) -> String:
 		func(band: Dictionary) -> String: return improvement_for_hunt(band, herd_id),
 		func(band: Dictionary) -> int: return build_workers_for_hunt(band, herd_id))
 
+## **THE BUILD CREW ON A HERD, FOLDED ACROSS EVERY BAND THAT CAN REACH IT** — the same fold
+## `_unstaffed_build` makes, published on its own because the herd drawer needs the COUNT rather than
+## the derived state (`docs/plan_standing_upkeep.md` §4.6a: `BUILD_METER_HOLDS` is a crew treading
+## water with a crew on it and a build parked on purpose without one).
+func build_crew_hunt(herd_id: String, bands: Array = []) -> int:
+	var builders := 0
+	for band_variant in (bands if not bands.is_empty() else current_player_bands()):
+		if band_variant is Dictionary:
+			builders += build_workers_for_hunt(band_variant, herd_id)
+	return builders
+
 func _unstaffed_build(bands: Array, declared_of: Callable, builders_of: Callable) -> String:
 	var declared := SourceForecast.IMPROVEMENT_NONE
 	var builders := 0

@@ -449,9 +449,12 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # state the old `> 0` gate suppressed entirely while the map drew a `0%` badge over it.
     var cultivate_declared := unstaffed_rung == SourceForecast.IMPROVEMENT_CULTIVATE
     if cultivated or cultivation_progress > DetailFormat.BUILD_METER_EMPTY or cultivate_declared:
-        # **BUILDING MEANS *SOMEBODY IS ON IT*, not merely *somebody declared it*.** The build has its
-        # own crew, so a declaration with no builders leaves the meter bleeding exactly as an
-        # abandoned one does — and wore the filling state's word and ink while doing it.
+        # **STAFFED MEANS *SOMEBODY IS ON IT*, not merely *somebody declared it*.** The build has its
+        # own crew, so a declaration with no builders is not a build in progress — and it wore the
+        # filling state's word and ink while doing so. **It picks the WORDING of one wire sentinel
+        # now** (`docs/plan_standing_upkeep.md` §4.6a): `BUILD_METER_HOLDS` is a crew treading water
+        # with a crew on it and a build parked on purpose without one, and the row must not mark the
+        # second.
         var cultivating := building_rung == SourceForecast.IMPROVEMENT_CULTIVATE \
             and not cultivate_declared
         lines.append("Cultivation: %s" % DetailFormat.rung_row_value(tile_info, prefix,
@@ -624,8 +627,12 @@ func _render_occupant_drawer(from_selection: bool = false) -> void:
         # **THE ONE LABOR FACT THE PURE PRODUCER CANNOT SEE IS THREADED IN**: a rung this faction has
         # declared on the herd and put nobody on, which is what makes the Husbandry / Corral row
         # render at a meter of zero instead of vanishing (`DetailFormat.BUILD_UNSTARTED_VALUE`).
+        # **AND THE BUILD CREW BESIDE IT** (`docs/plan_standing_upkeep.md` §4.6a): the wire's
+        # `BUILD_METER_HOLDS` is a crew treading water with a crew on it and a build parked on purpose
+        # without one, and the producer cannot see which from the herd dict alone.
         lines = DetailFormat.herd_summary_lines(_selection.herd(), _band_labor.world_herds(),
-            _band_labor.unstaffed_build_hunt(String(_selection.herd().get("id", ""))))
+            _band_labor.unstaffed_build_hunt(String(_selection.herd().get("id", ""))),
+            _band_labor.build_crew_hunt(String(_selection.herd().get("id", ""))))
     _occupant_detail.text = DetailFormat.detail_bbcode(lines, ctx)
     if is_expedition:
         _build_expedition_panel(_selection.unit())
