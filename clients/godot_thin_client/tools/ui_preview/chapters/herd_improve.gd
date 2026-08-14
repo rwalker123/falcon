@@ -10,6 +10,7 @@ const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
+const Q := preload("res://tools/ui_preview/node_query.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -51,10 +52,6 @@ const HERD_DIP_FLOOR := 0.30
 # Four hunters carry 3.2 food undipped — one whole 2.4-food body, with change — and 1.6 under the
 # build, which is two thirds of a body: the forced-partial branch, and a third of the kill left behind.
 const HERD_DIP_CREW := 4
-
-# `intensification_ladder.json`, animal:pastoral `yield_fraction_while_building`. The animal rungs dip
-# to a HALF where the plant rungs dip to a quarter — do not carry the plant number across.
-const HERD_DIP_BUILD_FRACTION := 0.5
 
 # The crew this herd WOULD owe once managed (`herders_needed_if_managed`); its ownership-gated twin is
 # 0, because a herd mid-Tame is not owned yet. Under the composed crew, so the investment rung's cap
@@ -101,7 +98,6 @@ func _building_herd_fixture() -> Dictionary:
 		# quantum the sheet divides by cannot disagree with the curve beside it.
 		"food_per_animal": HERD_DIP_BODY_MASS * HERD_DIP_PROVISIONS_PER_BIOMASS,
 		"body_mass": HERD_DIP_BODY_MASS,
-		"tame_build_fraction": HERD_DIP_BUILD_FRACTION,
 		# The pastoral rung's payoff (its own MSY: the pastoral r over this K, through the hunt rate),
 		# so the improvement control states a real deal rather than a zero.
 		"pastoral_yield": 3.6,
@@ -128,11 +124,17 @@ func _building_herd_band_fixture() -> Dictionary:
 ## else about `BandFx.band_fixture` is kept; only the assignment list is replaced, by the single hunt
 ## assignment whose `fauna_id` matches `HerdFx.fully_tamed_herd_fixture`'s and whose policy is the rung the
 ## ceiling pass has since hidden.
+## The BUILD's own crew on that assignment — the animal twin of
+## `BandFx.CULTIVATING_BAND_BUILDERS`, and stated for the same reason: a running build is STAFFED,
+## so a fixture leaving `improvement_workers` at the wire's `0` stages a build nobody is paying for.
+const TAME_STANDING_BUILDERS := 3
+
 func _tame_standing_band_fixture() -> Dictionary:
 	var band := BandFx.band_fixture()
 	band["labor_assignments"] = [{
 		"kind": "hunt", "workers": HerdFx.TAMED_HERD_CREW, "fauna_id": HerdFx.taming_herd_fixture()["id"],
 		"floor": 0.5, "improvement": "tame", "target_x": 70, "target_y": 17,
+		"improvement_workers": TAME_STANDING_BUILDERS,
 		"actual_yield": 0.45, "sustainable_yield": 0.45,
 		"workers_needed": HerdFx.TAMED_HERD_CREW, "overdraws": false,
 	}]
@@ -152,8 +154,14 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("improvement_running_animal")
 	var tame_box = ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "tame")
-	h._assert_hud("a running Tame renders a CHECKED improvement box, as Cultivate does",
-		tame_box is CheckBox and (tame_box as CheckBox).button_pressed)
+	# **A RUNNING BUILD IS A STATE LABEL, as Cultivate is** (`docs/plan_standing_upkeep.md` §2.4). It
+	# was a checked, live `CheckBox` whose uncheck sent `abandon_improvement`; the verb is derived from
+	# the meter now, so there is no stored intent to clear and the control's TYPE says which of the
+	# four states it is in — a checkbox is the OFFER and nothing else.
+	h._assert_hud("a running Tame renders a STATE label, as Cultivate does",
+		tame_box is Label and not (tame_box is CheckBox)
+			and String(tame_box.get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
+				== HudWidgets.IMPROVEMENT_STATE_RUNNING)
 	# **THE SAME PAIR ITS PLANT TWIN CARRIES, on the web that shares the control.** The payoff is off
 	# both sheets' faces and in both readouts; asserting only the absence would pass on a sheet that
 	# had lost the payoff too, which is why the second half names where it went.
@@ -170,15 +178,19 @@ func run(harness) -> void:
 		Readout.improvement_deal_rows(h._hud._drawercompose._compose_sheet) == 1)
 	h._assert_hud("…repeating no magnitude the yields row already states",
 		not Readout.deal_repeats_a_yields_number(h._hud._drawercompose._compose_sheet))
-	# KNOWN LESSON + A BUILD IN FLIGHT, on the animal web: Herding is complete for this faction, so the
-	# aside drops the craft and keeps the build the same multiplier paces. Both halves, for the reason
-	# the plant twin states.
+	# KNOWN LESSON + A BUILD IN FLIGHT, on the animal web: Herding is complete for this faction, and the
+	# BUILDING half that used to survive it retired with the floor's term on the build rate
+	# (`docs/plan_standing_upkeep.md` §2.2). The aside goes silent. Both halves, for the reason the
+	# plant twin states.
 	h._assert_hud("a known lesson is not taught again on the hunt sheet either",
 		not Readout.teaching_line(h._hud._drawercompose._compose_sheet).contains(Readout.TEACHING_LESSON_NEEDLE))
-	h._assert_hud("…while its BUILD half still reads, as it does on the plant sheet",
-		Readout.teaching_line(h._hud._drawercompose._compose_sheet).contains(Readout.TEACHING_BUILD_NEEDLE))
-	h._assert_hud("a running Tame's box is LIVE too — the abandon path is ungated on both webs",
-		tame_box is CheckBox and not (tame_box as CheckBox).disabled)
+	h._assert_hud("…and no BUILD half survives it here either, as on the plant sheet",
+		not Readout.teaching_line(h._hud._drawercompose._compose_sheet).contains(Readout.TEACHING_BUILD_NEEDLE))
+	# **THE BUILDERS STEPPER IS THE LEVER NOW, ON BOTH WEBS**, so what has to be present is the row —
+	# the running control states the meter and the stepper beneath it is the whole of what a player can
+	# change about the build.
+	h._assert_hud("a running Tame mounts its BUILDERS stepper — the lever the uncheck used to be",
+		ForageFx.build_crew_row(h._hud._drawercompose._compose_sheet) != null)
 	# **THE GEAR HALF OF THE ESTIMATE IS THE KIT'S, so its claims live with the kit** — the frames and
 	# the saturation assertions are `chapters/compose_rungs.gd`'s `_kit_swap_turn_estimate_states`,
 	# which is where a roster carrying the handling kit is staged. Nothing here states a gear term:
@@ -188,16 +200,17 @@ func run(harness) -> void:
 	# code the plant model shares none of — a gate added to one web only would leave this sheet
 	# stacking the floor walk under the `ONCE TAMED` row exactly as the reported plant frame did.
 	# Caption AND readings, for the reason the plant twin states.
-	h._assert_hud("a composed Tame's caption keys the dip alone, as the plant web's does",
+	h._assert_hud("a composed Tame's caption states the plain per-turn unit — there is no dip left to key",
 		Readout.yields_header(h._hud._drawercompose._compose_sheet)
-			== SourceForecast.YIELD_ROW_HEADER_WHILE_BUILDING.to_upper())
+			== SourceForecast.YIELD_ROW_HEADER.to_upper())
 	h._assert_hud("…over readings that draw no arrow either",
 		not Readout.yields_show_a_transition(h._hud._drawercompose._compose_sheet))
-	# **THE HERD FORM, which is the one a shared branch gets wrong.** `abandon_improvement` targets by
-	# WEB (`hunt` → herd id) while the SET verbs target by VERB — and `corral` is a herd's rung
-	# addressed by a TILE, so a formatter that reused the set-verb rule would send coordinates here.
-	await h._assert_abandon_emits(SourceForecast.LABOR_KIND_HUNT, HudConst.LABOR_POLICY_TAME,
-		"abandon_improvement %d hunt %s" % [HudConst.PLAYER_FACTION_ID,
+	# **THE HERD FORM, which is the one a shared branch gets wrong.** `tame` targets by VERB — a herd
+	# id — while `corral` is a herd's rung addressed by a TILE, so a formatter that reused one rule for
+	# both would send coordinates here. That split survived `abandon_improvement`'s retirement: walking
+	# away is the same set verb at zero builders, so it is the same targeting question.
+	await h._assert_walk_away_emits(SourceForecast.LABOR_KIND_HUNT, HudConst.LABOR_POLICY_TAME,
+		"tame %d %s 0" % [HudConst.PLAYER_FACTION_ID,
 			String(HerdFx.taming_herd_fixture()["id"])])
 
 	# State 442-tame-done — the animal DONE state, and **THE ONE ASYMMETRY THAT SURVIVES** (spec §4):
@@ -237,148 +250,83 @@ func run(harness) -> void:
 		ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
 			SourceForecast.IMPROVEMENT_CORRAL).contains(UPKEEP_NEEDLE))
 
-	# ---- THE BUILDING HERD: A DIPPED CREW THAT CANNOT CARRY ONE BODY ------------------------------
-	# **THE ANIMAL WEB'S HALF OF THE DEFECT THE PLANT SHEET HAS ALREADY LOST.** `herd_axis_rates`
-	# composed its forecast at the DEFAULT improvement, so every number the local-hunt preview quoted —
-	# the take, the waste split, the animals-per-turn line — was priced as though nobody were building
-	# anything, while the sim pays a gentling crew `workers × per_worker × build_dip`. The worker cap,
-	# the chart and both crew targets beside them already carried the verb, so the sheet disagreed with
-	# the sim AND with itself.
+	# ---- THE BUILDING HERD: THE TAKE THE BUILD DOES **NOT** MOVE ---------------------------------
+	# **THE DIP IS RETIRED, AND THIS PAIR IS THE CLAIM THAT REPLACED IT**
+	# (`docs/plan_standing_upkeep.md` §2.2). A gentling crew used to be paid
+	# `workers x per_worker x build_dip` — one crew doing two jobs, with a fraction standing in for the
+	# conflict. A source carries three independent allocations now, so the hunters beside a Tame carry
+	# exactly what hunters carry and the build costs the hands standing on it.
 	#
-	# It is staged at the ONE regime where the dip is not a scaling: the crew crosses BELOW one body
-	# mass, so `quantise_animal_take`'s `max(1, carryable)` turns the shortfall into a kill it cannot
-	# haul. The two frames are judged as a PAIR — this one and the same herd with no build in flight —
-	# because "every number got smaller" is exactly what a wrong fix produces too.
+	# The two frames are still judged as a PAIR, for the inverse of the old reason: "nothing moved" is
+	# only a claim if the same fixture at the same crew is rendered both ways, and every number below
+	# is recomposed from the herd's own wire terms rather than written down.
 	var dip_herd := ForageFx.floorify(_building_herd_fixture())
 	var prior_dip_band = h._hud._band_labor.player_band()
 	var prior_dip_bands = h._hud._band_labor._player_bands
 	h._hud._band_labor._player_band = _building_herd_band_fixture()
 	h._hud._band_labor._player_bands = [h._hud._band_labor.player_band()]
-	# THE SIM'S OWN COMPOSITION, recomposed from the herd's wire terms rather than written down, so a
-	# fixture that drifts fails these assertions instead of quietly re-baselining them.
-	var dip_fraction := SourceForecast.build_dip(dip_herd, HudComposeVocab.BARE_FORECAST_PREFIX,
-		SourceForecast.IMPROVEMENT_TAME)
 	var dip_fpa := float(dip_herd["food_per_animal"])
 	var dip_ceiling := SourceForecast.escapement_room(dip_herd,
 		HudComposeVocab.BARE_FORECAST_PREFIX, HERD_DIP_FLOOR) \
 		* float(dip_herd["provisions_per_biomass"])
 	var bare_collection := float(HERD_DIP_CREW) * float(dip_herd["per_worker_yield"])
-	var built_collection := bare_collection * dip_fraction
 	var bare_take := HerdFx.hunt_take_oracle(bare_collection, dip_ceiling, dip_fpa)
-	var built_take := HerdFx.hunt_take_oracle(built_collection, dip_ceiling, dip_fpa)
-	# THE NEEDLE IS THE ACCOUNT MAGNITUDE THE ROW STATES. The readout's per-turn readings are accounts
-	# like every other web's — the whole-animal count is the CHART's business above it, and the raid's
-	# whole-trip payload's — so the needle is spelled through `format_magnitude`, exactly as
+	# THE NEEDLE IS THE ACCOUNT MAGNITUDE THE ROW STATES, spelled through `format_magnitude` exactly as
 	# `HudWidgets._yield_reading` spells the number it is aimed at.
 	var bare_face := SourceForecast.format_magnitude(float(bare_take["delivered"]))
-	var built_face := SourceForecast.format_magnitude(float(built_take["delivered"]))
-	var built_killed: float = float(built_take["delivered"]) + float(built_take["wasted"])
-	var built_waste_pct := int(round(float(built_take["wasted"]) / built_killed * 100.0))
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(dip_herd)
 	h._compose_herd(dip_herd, HERD_DIP_CREW, HERD_DIP_FLOOR, SourceForecast.IMPROVEMENT_TAME)
 	await h._settle()
-	await h._save("herd_build_dip")
+	await h._save("herd_build_crew")
 	var dip_sheet = h._hud._drawercompose._compose_sheet
-	# (0) THE FRAME REALLY IS THE REGIME, and without this every assertion below is about an ordinary
-	# hunt: the crew must carry a whole body undipped and less than one under the build, which is the
-	# only place `max(1, carryable)` bites and therefore the only place the waste line can move.
-	h._assert_hud(("the fixture reaches the regime — %d hunters carry a whole %.2f-food body (%.2f) and "
-		+ "the same crew gentling the herd carries %.2f, less than one")
-		% [HERD_DIP_CREW, dip_fpa, bare_collection, built_collection],
-		dip_fraction < SourceForecast.NO_BUILD_DIP and bare_collection >= dip_fpa
-			and built_collection < dip_fpa)
-	# (1) …AND A BUILD REALLY IS IN FLIGHT. A dip with no visible build is the stale-verb defect, a
-	# different bug wearing the same numbers, so the frame states which one it is: a LIVE ticked box.
+	# (1) A BUILD REALLY IS IN FLIGHT — the control in its RUNNING state, not a stale verb, which is
+	# a different bug wearing the same numbers. Read off the state meta rather than the node type: a
+	# running control and a done one are both Labels now, and this claim is about which.
 	var dip_box = ForageFx.find_improvement_control(dip_sheet, SourceForecast.IMPROVEMENT_TAME)
-	h._assert_hud("…and the sheet is visibly BUILDING — a live, ticked Tame, not a stale verb",
-		dip_box is CheckBox and (dip_box as CheckBox).button_pressed)
-	h._assert_hud("…staffed by the composed crew (%d), so the cap is not what the frame measures"
+	h._assert_hud("the sheet is visibly BUILDING — a running Tame, not a stale verb",
+		dip_box != null and String(dip_box.get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
+			== HudWidgets.IMPROVEMENT_STATE_RUNNING)
+	h._assert_hud("…staffed by the composed TAKE crew (%d), which is the crew the take is priced for"
 		% HERD_DIP_CREW, Readout.stepper_value(dip_sheet) == HERD_DIP_CREW)
-	# (2) **THE TAKE IS THE SIM'S DIPPED ONE.** Stated as the sim's own composition of the herd's wire
-	# terms and as a RELATION to the undipped take — never as a literal — so a config retune moves the
-	# fixture rather than the claim. Undipped this crew lands a whole animal a turn; it must not say so
-	# while it is gentling the herd instead.
-	h._assert_hud("the take is the sim's DIPPED one (%s food/turn), not the undipped %s food/turn"
-		% [built_face, bare_face],
-		Readout.yields_text(dip_sheet).contains(built_face)
-			and not Readout.yields_text(dip_sheet).contains(bare_face))
-	h._assert_hud("…and it is strictly under the take the same crew would land hunting (%.2f < %.2f food/turn)"
-		% [float(built_take["delivered"]), float(bare_take["delivered"])],
-		float(built_take["delivered"]) < float(bare_take["delivered"]))
-	# (3) **AND THE WASTE IS WHAT MOVED**, which is the half a scaled-down take cannot produce: the crew
-	# still kills one animal and leaves the part it cannot haul. A build that merely shrank the take
-	# would render no waste note at all.
-	h._assert_hud("…because the dipped crew kills a body it cannot carry — %d%% wasted" % built_waste_pct,
-		built_waste_pct > 0
-			# The readout's small print is UPPERCASED by `HudWidgets._readout_unit_label`, so every
-			# needle aimed at the note/waste labels is raised here. The NUMBER labels beside them are
-			# not, which is why the rate needles above are compared as written.
-			and Readout.yields_text(dip_sheet).contains(
-				(SourceForecast.HUNT_WASTE_NOTE_FORMAT % built_waste_pct).to_upper()))
-	# (4) **THE OVERDRAW GATE WALKS THE CREW THE TAKE IS PRICED FOR.** It was asked at
-	# `IMPROVEMENT_NONE` to match takes that were themselves undipped; with the takes fixed, an undipped
-	# projection walks a crew four times the one being quoted. This herd's regrowth sits BETWEEN the two
-	# carries, so the two answers genuinely differ here and the argument is load-bearing rather than
-	# decorative.
-	h._assert_hud("the overdraw gate walks the DIPPED crew — this herd grows under it, though it falls under the undipped one",
-		not SourceForecast.take_draws_down(dip_herd, SourceForecast.SOURCE_KIND_HERD,
-				HudComposeVocab.BARE_FORECAST_PREFIX, HERD_DIP_FLOOR, HERD_DIP_CREW,
-				SourceForecast.IMPROVEMENT_TAME)
-			and SourceForecast.take_draws_down(dip_herd, SourceForecast.SOURCE_KIND_HERD,
-				HudComposeVocab.BARE_FORECAST_PREFIX, HERD_DIP_FLOOR, HERD_DIP_CREW,
-				SourceForecast.IMPROVEMENT_NONE))
-	h._assert_hud("…so the row reads renewable rather than flagging a drawdown this crew is not committing",
-		Readout.yields_text(dip_sheet).contains(SourceForecast.YIELD_RENEWABLE_NOTE.to_upper())
-			and not Readout.yields_text(dip_sheet).contains(
-				HudComposeVocab.LOCAL_HUNT_OVERDRAW_NOTE.to_upper()))
-	# (5) THE CREW ROW SAYS IT. Every number above follows from a half carry, and the sheet has to say
-	# so somewhere — the plant web's rule, on the animal sheet's own dip.
-	h._assert_hud("a live build states its half carry on the crew row",
-		Readout.crew_row_dip_note(dip_sheet).contains(
-			str(HudFormat.progress_percent(HERD_DIP_BUILD_FRACTION))))
-	# (6) **THE CREW TARGETS AND THE WORKER CAP WERE ALREADY RIGHT — MEASURED, NOT ASSUMED.** They read
-	# `forecast_inputs` through the chart model, which the builder has always handed the composed verb,
-	# so they divide by the DIPPED carry. Pinned both ways: the rendered target is the dipped answer AND
-	# it differs from the undipped one, without which the claim would pass on a sheet that ignored the
-	# dip entirely.
-	var dip_carry := SourceForecast.per_worker_biomass(dip_herd,
-		HudComposeVocab.BARE_FORECAST_PREFIX) * dip_fraction
-	var dip_samples := SourceForecast.regrowth_samples(dip_herd,
-		HudComposeVocab.BARE_FORECAST_PREFIX)
-	# This herd publishes no `engageRate` — it predates the engagement stage — so both recompositions
-	# state `NO_ENGAGEMENT_STAGE` and the reach arm drops out, leaving the claim about the DIP alone.
-	var dip_hold := SourceForecast.crew_to_hold(dip_samples, HERD_DIP_FLOOR, dip_carry,
-		HERD_DIP_BODY_MASS, SourceForecast.NO_ENGAGEMENT_STAGE, dip_fraction,
-		SourceForecast.STAY_FRACTION_NONE_BREAKS_OFF)
-	var bare_hold := SourceForecast.crew_to_hold(dip_samples, HERD_DIP_FLOOR,
-		dip_carry / dip_fraction, HERD_DIP_BODY_MASS, SourceForecast.NO_ENGAGEMENT_STAGE,
-		SourceForecast.NO_BUILD_DIP, SourceForecast.STAY_FRACTION_NONE_BREAKS_OFF)
-	h._assert_hud("the *hold it after* target divides by the DIPPED carry (%d, against %d undipped)"
-		% [dip_hold, bare_hold],
-		Readout.crew_target_count(dip_sheet, HudWidgets.CREW_TARGET_HOLD) == dip_hold
-			and dip_hold != bare_hold)
+	# (2) **THE TAKE IS THE UNDIPPED ONE.** Four hunters land the whole body they would land with no
+	# build running at all — that is what "the build has its own crew" MEANS at the readout.
+	h._assert_hud("the take is the plain one (%s food/turn) — the build takes nothing off it" % bare_face,
+		Readout.yields_text(dip_sheet).contains(bare_face))
+	# (3) **THE BUILD STATES ITS OWN CREW, ON ITS OWN CONTROL.** The stepper is the second allocation;
+	# without it the verb would carry no count and the sim would be told to staff nobody.
+	h._assert_hud("…and the build carries a crew row of its own beneath the verb",
+		Q.find_meta_node(dip_sheet, HudWidgets.BUILD_CREW_ROW_META) != null)
+	# (4) **AND THE CREW ROW CLAIMS NO CARRY PENALTY.** The retired note read
+	# "— building this rung, each carries 50% as much"; a sheet that still said so would be describing
+	# arithmetic the sim no longer does.
+	h._assert_hud("the crew row states the plain label alone, with no carry penalty beside it",
+		not Readout.crew_row_label(dip_sheet).contains("%"))
 
-	# State herd_build_dip_none — THE SAME HERD WITH NO BUILD IN FLIGHT, and the half that proves the
-	# first is not simply a sheet scaled down. Nothing about the animal moves: the crew lands a whole
-	# body again, wastes nothing, and the ⚠ comes back — because four hunters really do out-carry this
-	# herd's regrowth when they are hunting it rather than gentling it.
+	# State herd_build_crew_none — THE SAME HERD AT THE SAME CREW WITH NO BUILD IN FLIGHT. Under the
+	# dip this frame was the control that proved the take had moved; it is now the control that proves
+	# it did NOT, which is the same pair asked the opposite question.
 	h._hud._compose.set_hunt_improvement(SourceForecast.IMPROVEMENT_NONE)
 	h._hud._compose.set_hunt_count(HERD_DIP_CREW)
 	h._hud._drawercompose.open_herd_compose(dip_herd)
 	await h._settle()
-	await h._save("herd_build_dip_none")
+	await h._save("herd_build_crew_none")
 	var bare_sheet = h._hud._drawercompose._compose_sheet
-	h._assert_hud("no build in flight, no dip claimed on the crew row",
-		Readout.crew_row_dip_note(bare_sheet) == "")
-	h._assert_hud("…the same crew lands the whole body again (%s food/turn)" % bare_face,
-		Readout.yields_text(bare_sheet).contains(bare_face)
-			and not Readout.yields_text(bare_sheet).contains(built_face))
-	h._assert_hud("…wasting nothing, so the waste note is a claim about the BUILD and not about the herd",
-		float(bare_take["wasted"]) == 0.0
-			and not Readout.yields_text(bare_sheet).contains(HUNT_WASTE_NEEDLE.to_upper()))
-	h._assert_hud("…and the ⚠ returns: hunting, this crew really does draw the herd down",
-		Readout.yields_text(bare_sheet).contains(HudComposeVocab.LOCAL_HUNT_OVERDRAW_NOTE.to_upper()))
+	h._assert_hud("the same crew lands the same %s food/turn with no build running" % bare_face,
+		Readout.yields_text(bare_sheet).contains(bare_face))
+	# **THE TWO SHEETS AGREE ON THE TAKE, WHICH A `contains` PAIR ALONE CANNOT SAY.** Compared as
+	# rendered text rather than as two recompositions of one oracle: an implementation that dipped one
+	# side would satisfy both `contains` claims above if the dip happened to round to the same face.
+	h._assert_hud("…and the two readouts state the SAME take, which is the whole of the claim",
+		Readout.yields_text(bare_sheet) == Readout.yields_text(dip_sheet))
+	# (5) **THE OVERDRAW GATE WALKS ONE CREW NOW.** It used to have to carry the verb so the projection
+	# and the take stayed in step; with nothing to keep in step, the same crew at the same floor gets
+	# the same answer whether or not a rung is going up.
+	h._assert_hud("the overdraw gate answers the same for the same crew, build or no build",
+		SourceForecast.take_draws_down(dip_herd, SourceForecast.SOURCE_KIND_HERD,
+			HudComposeVocab.BARE_FORECAST_PREFIX, HERD_DIP_FLOOR, HERD_DIP_CREW)
+			== SourceForecast.take_draws_down(dip_herd, SourceForecast.SOURCE_KIND_HERD,
+				HudComposeVocab.BARE_FORECAST_PREFIX, HERD_DIP_FLOOR, HERD_DIP_CREW))
 	h._hud._band_labor._player_band = prior_dip_band
 	h._hud._band_labor._player_bands = prior_dip_bands
 	h._hud._compose.reset_hunt_source()   # the states after this one open on their own herd

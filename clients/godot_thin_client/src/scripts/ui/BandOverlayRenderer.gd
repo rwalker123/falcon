@@ -120,6 +120,15 @@ const BADGE_BUILDING_COLOR := Color(0.122, 0.612, 0.557, 1.0)  # HudStyle.SIGNAL
 # could start this", and the work has started. The percent is the whole point — it is what moves every
 # turn, and the only number that answers "how much longer?".
 const BADGE_BUILDING_FORMAT := "%s%d%% "
+# **THE THIRD FACE: a rung declared with nobody on it.** It keeps the verb glyph and puts a `⚠` where
+# the percentage would go, because the percentage is precisely the lie — a `0%` plate over a build the
+# player staffed with nobody is pixel-identical to one they started this turn. There is no number to
+# put here: nothing is moving, which is the whole message.
+const BADGE_UNSTAFFED_FORMAT := "%s⚠ "
+# Amber, and this is the one rung face that earns it. `BADGE_READY_COLOR`'s note explains why an
+# OPPORTUNITY must never be amber; an unstaffed commitment is not an opportunity — it is the trouble
+# channel's own subject, and it wears the `HudStyle.WARN` the overdraw and under-herded marks do.
+const BADGE_UNSTAFFED_COLOR := Color(0.965, 0.706, 0.278, 1.0)  # HudStyle.WARN
 const BADGE_BORDER_WIDTH := 1.2
 const BADGE_BORDER_IDLE := Color(0.149, 0.212, 0.235, 1.0)  # HudStyle.LINE
 # Hunted herds: a thin band→herd link for the SELECTED band (the herd can sit well outside the
@@ -248,6 +257,10 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 	# marker would be a lie about a single number. Keyed by the source's own slot key, the same identity
 	# the ring docks to.
 	var crew: Dictionary = {}
+	# **AND THE BUILD CREW IS AGGREGATED THE SAME WAY, because "nobody is building this" is a claim
+	# about the SOURCE and not about one band's row.** One band's declaration with no builders is
+	# covered by another band's builders on the same rung, so the badge asks the summed count.
+	var builders: Dictionary = {}
 	for unit_variant in _view.units:
 		if not (unit_variant is Dictionary):
 			continue
@@ -288,7 +301,8 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 						# an escapement FLOOR (`expedition_floor`), which the rung answers never read.
 						_draw_worked_mark(qcol, qrow, qkey, HUNT_WORKED_COLOR, selected, radius, origin)
 						_queue_source_badge(qcol, qrow, qkey, LABOR_KIND_HUNT, qherd,
-							SourceForecast.IMPROVEMENT_NONE, int(crew[qkey]), radius, origin)
+							SourceForecast.IMPROVEMENT_NONE, int(crew[qkey]), radius, origin,
+							int(builders.get(qkey, 0)))
 						_note_if_hidden(qkey, Vector2i(qx, qrow), LABOR_KIND_HUNT, qherd,
 							SourceForecast.IMPROVEMENT_NONE, false)
 			# A party carries no `labor_assignments` of its own; its one source is the quarry above.
@@ -308,10 +322,12 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 				var tcol := eff_col + _view._wrapped_col_delta(band_col, tx)
 				var fkey := _view.secondary_food_key(tx, trow)
 				crew[fkey] = int(crew.get(fkey, 0)) + int(entry.get("workers", 0))
+				builders[fkey] = int(builders.get(fkey, 0)) + int(entry.get("improvement_workers", 0))
 				_draw_worked_mark(tcol, trow, fkey, FORAGE_WORKED_COLOR, selected, radius, origin)
 				_queue_source_badge(tcol, trow, fkey, LABOR_KIND_FORAGE,
 					_view.forage_patch_lookup.get(Vector2i(tx, trow), {}),
-					String(entry.get("improvement", "")), int(crew[fkey]), radius, origin)
+					String(entry.get("improvement", "")), int(crew[fkey]), radius, origin,
+					int(builders[fkey]))
 				_note_if_hidden(fkey, Vector2i(tx, trow), LABOR_KIND_FORAGE,
 					_view.forage_patch_lookup.get(Vector2i(tx, trow), {}),
 					String(entry.get("improvement", "")), bool(entry.get("overdraws", false)))
@@ -330,9 +346,11 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 				var hcol := eff_col + _view._wrapped_col_delta(band_col, hx)
 				var hkey := _view.secondary_herd_key(herd_id)
 				crew[hkey] = int(crew.get(hkey, 0)) + int(entry.get("workers", 0))
+				builders[hkey] = int(builders.get(hkey, 0)) + int(entry.get("improvement_workers", 0))
 				_draw_worked_mark(hcol, hrow, hkey, HUNT_WORKED_COLOR, selected, radius, origin)
 				_queue_source_badge(hcol, hrow, hkey, LABOR_KIND_HUNT, herd,
-					String(entry.get("improvement", "")), int(crew[hkey]), radius, origin)
+					String(entry.get("improvement", "")), int(crew[hkey]), radius, origin,
+					int(builders[hkey]))
 				_note_if_hidden(hkey, Vector2i(hx, hrow), LABOR_KIND_HUNT, herd,
 					String(entry.get("improvement", "")), bool(entry.get("overdraws", false)))
 
@@ -381,8 +399,11 @@ func _label_anchor(col: int, row: int, key: String, radius: float, origin: Vecto
 ## Skipped entirely when the source's marker did not draw (`slot_of == -1`: overflowed past the visible
 ## cap, or LOD-suppressed at far zoom). What the chip hides is the chip's job to report, not a badge's
 ## to draw somewhere arbitrary.
+## `builders` is this source's BUILD crew, summed across bands — see `_draw_source_badge` for why a
+## rung under way has to know it.
 func _queue_source_badge(col: int, row: int, key: String, kind: String, source: Dictionary,
-		improvement: String, crew: int, radius: float, origin: Vector2) -> void:
+		improvement: String, crew: int, radius: float, origin: Vector2,
+		builders: int = 0) -> void:
 	var slot := _view.secondary_slot_of(key)
 	if slot < 0:
 		return
@@ -390,10 +411,17 @@ func _queue_source_badge(col: int, row: int, key: String, kind: String, source: 
 	# the verb already in flight, and `rung_in_progress` answers only for that verb.
 	var ready: Dictionary = {}
 	var building: Dictionary = {}
+	var unstaffed := SourceForecast.BUILD_STAFFED
 	if not source.is_empty():
 		building = RungGates.rung_in_progress(kind, source, improvement)
 		if building.is_empty():
 			ready = RungGates.next_rung_ready(kind, source, improvement, _view.faction_knowledge)
+		else:
+			# Asked ONLY where a rung is under way, off the meter `rung_in_progress` has just
+			# resolved — so the plate's warning and its glyph provably describe the same verb, and
+			# this renderer resolves nothing about the ladder for itself.
+			unstaffed = SourceForecast.unstaffed_build_of(
+				float(building.get("progress", 0.0)), builders)
 	var center := _view.secondary_slot_center(_view._hex_center(col, row, radius, origin), slot, radius)
 	# One entry per source key: a later band working the same source replaces the earlier queue rather
 	# than stacking a second plate on the same marker.
@@ -406,6 +434,7 @@ func _queue_source_badge(col: int, row: int, key: String, kind: String, source: 
 		"ready_glyph": String(ready.get("glyph", "")),
 		"building_glyph": String(building.get("glyph", "")),
 		"building_progress": float(building.get("progress", 0.0)),
+		"unstaffed": unstaffed,
 	})
 
 ## Render (and drain) the deferred badge batch — the crew count, and the ⌃ chevron when the source can
@@ -428,9 +457,17 @@ func _draw_source_badge(entry: Dictionary) -> void:
 	var rung_color := BADGE_READY_COLOR
 	var building_glyph := String(entry.get("building_glyph", ""))
 	if building_glyph != "":
-		rung_text = BADGE_BUILDING_FORMAT % [building_glyph,
-			int(round(float(entry.get("building_progress", 0.0)) * HudConst.PROGRESS_PERCENT_SCALE))]
-		rung_color = BADGE_BUILDING_COLOR
+		# **A PERCENT ON A BUILD NOBODY IS STAFFING IMPLIES PROGRESS THAT IS NOT HAPPENING.** The
+		# unstaffed face drops the number entirely (see `BADGE_UNSTAFFED_FORMAT`); the plate still says
+		# WHICH rung is promised here, and stops saying it is being worked.
+		if SourceForecast.build_is_unstaffed(
+				String(entry.get("unstaffed", SourceForecast.BUILD_STAFFED))):
+			rung_text = BADGE_UNSTAFFED_FORMAT % building_glyph
+			rung_color = BADGE_UNSTAFFED_COLOR
+		else:
+			rung_text = BADGE_BUILDING_FORMAT % [building_glyph,
+				int(round(float(entry.get("building_progress", 0.0)) * HudConst.PROGRESS_PERCENT_SCALE))]
+			rung_color = BADGE_BUILDING_COLOR
 	elif ready_glyph != "":
 		rung_text = "%s%s " % [BADGE_READY_CHEVRON, ready_glyph]
 	var text := rung_text + crew_text

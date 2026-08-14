@@ -106,6 +106,45 @@ paths:
   `turn_orb_unworked_rung`, whose fixture carries a WORKED patch as a negative control precisely so a
   roster read that sees no crews fails the row COUNT.
 
+  - **`crew_handoff`** (**info**, NON-locating, `_crew_handoff_attention`) — a build finished this turn
+    and its crew MOVED: onto the finished rung's keeping if that rung declares an upkeep, back to the
+    idle pool if it does not (`docs/plan_standing_upkeep.md` §2.3). **It is an attention row because of
+    WHEN it has to be read**: the sim announces it on the feed, which is a log, and the whole point of
+    the hand-off is that the player can re-task those hands *before ending the turn*.
+    **INFO, not warn** — nothing is wrong; a build finished, which is the good news, and the row hands
+    back a decision rather than reporting a loss. It sorts below every real problem.
+    **The label is the SIM's own sentence, verbatim** (*"3 of your cultivate crew stay on (31, 18) to
+    keep it"*): the sim knows which rung finished, how many hands moved and where they went, and a
+    second phrasing here would drift from the feed's. The detail is the client's own *what to do about
+    it* clause, forked on `status=carried_to_upkeep` vs `status=freed`.
+    **It is fed by the COMMAND STREAM, not the roster** — `Hud.ingest_command_events` also hands the
+    array to `AttentionController.ingest_command_events(events, turn)`, which keeps the matching rows
+    until the turn changes. Held rather than read live because `Main` dispatches `command_events` and
+    `populations` separately and the attention array is rebuilt from the populations pass: a producer
+    reading the event array directly would answer empty on every frame but one, and the rows would
+    flicker away mid-turn — exactly when the player is deciding what to do with those hands.
+    **THE FRAME IS NOT THE FILTER — THE EVENT'S OWN `tick` IS, and `seq` is the other half.** This
+    producer is a WINDOW on one turn, and it went in reading every row on whatever array the frame
+    brought. `command_events` is per-frame HISTORY whose SHAPE varies by frame kind, so that had two
+    concrete failure modes: a **full snapshot** — the initial connect, or the resync answer to a
+    dropped delta — carries the whole `command_events_retention_turns` ring, which re-dated twenty
+    turns of hand-offs to now and flooded the orb; and a **mid-tick recapture delta** re-ships every
+    row since the turn baseline, announcing this turn's hand-offs twice. So a row joins the window
+    only if its own `tick` is the turn the window describes, and only if its `seq` has not been taken
+    for that turn (`0` being the unsequenced sentinel, admitted rather than dropped — the tick filter
+    already bounds the set). **The two filters answer different questions** — WHICH TURN, and SEEN
+    ALREADY — and neither substitutes for the other. `Main`'s dispatch comment said re-ingesting a
+    ring was harmless because *"both consumers accumulate and de-duplicate"*; this was a **third**
+    consumer that did neither, and that comment now names all three and what each does instead.
+    **Non-locating AND affordance-less**, which is a third state beside `Jump →` and `Open ▸`. The
+    event names its source in words and carries no coordinates, so a jump would be a guess; and a
+    turn may finish several builds, so there is no ONE panel the row could open either. It therefore
+    wears **no label at all** — `HudAttentionVocab.ATTENTION_KINDS_WITH_A_PANEL` is the allowlist
+    `TurnOrb` renders `Open ▸` from, and `crew_handoff` is deliberately not on it. An `Open ▸` that
+    does nothing when pressed is a promise the row cannot keep; the detail says where those hands
+    are in words instead (*"they are idle — the band's work board has them"*). Capped at
+    `ATTENTION_HANDOFF_MAX_ROWS` with an overflow row, for the off-screen-popover reason.
+
   The fourth (`_awaiting_orders_attention`) runs over the **EXPEDITIONS** split out of that loop:
   - **`awaiting_orders`** (warn) — an expedition in `ExpeditionPhase::Awaiting`: parked at its
     objective, burning provisions, doing nothing until the player acts. Structurally the same class

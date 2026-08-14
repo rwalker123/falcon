@@ -675,6 +675,10 @@ static func _build_workforce_block(labor: HudBandLaborState) -> VBoxContainer:
     var idle := 0
     var forage_workers := 0
     var hunt_workers := 0
+    # The BUILD crews, for the reason the band zone's own bar carries them: `effective_idle` nets a
+    # builder out, so a faction total without this segment loses those hands off a bar that partitions
+    # the same `working_age` the header sums.
+    var build_workers := 0
     var role_workers := 0
     var party_workers := 0
     var bench_workers := 0
@@ -691,6 +695,7 @@ static func _build_workforce_block(labor: HudBandLaborState) -> VBoxContainer:
         for key in merged:
             var model: Dictionary = merged[key]
             var workers := int(model.get("workers", 0))
+            build_workers += maxi(int(model.get(HudBandLaborState.BUILD_WORKERS_KEY, 0)), 0)
             match String(model.get("kind", "")):
                 SourceForecast.LABOR_KIND_FORAGE: forage_workers += workers
                 SourceForecast.LABOR_KIND_HUNT: hunt_workers += workers
@@ -702,6 +707,7 @@ static func _build_workforce_block(labor: HudBandLaborState) -> VBoxContainer:
     for spec in [
         [HudWorkVocab.WORKFORCE_KEY_FORAGE, forage_workers, HudStyle.HEALTHY],
         [HudWorkVocab.WORKFORCE_KEY_HUNT, hunt_workers, HudStyle.SIGNAL],
+        [HudWorkVocab.WORKFORCE_KEY_BUILD, build_workers, HudStyle.SIGNAL_DEEP],
         [HudWorkVocab.WORKFORCE_KEY_ROLES, role_workers, HudStyle.VOICE_INK],
         # Party crews are NOT a segment here either — the sim removes them from the parent band's
         # `working_age` on launch, so they sit outside the denominator these segments partition.

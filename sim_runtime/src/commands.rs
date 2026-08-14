@@ -117,43 +117,68 @@ pub enum CommandPayload {
     Tame {
         faction_id: u32,
         herd_id: String,
+        /// **The BUILD's own crew** — hands on this verb, independent of the take crew `assign_labor`
+        /// set (`docs/plan_standing_upkeep.md` §2.2). No cap; `0` stops the
+        /// build without clearing its meter.
+        workers: u32,
     },
     Cultivate {
         faction_id: u32,
         target_x: u32,
         target_y: u32,
+        /// **The BUILD's own crew** — hands on this verb, independent of the take crew `assign_labor`
+        /// set (`docs/plan_standing_upkeep.md` §2.2). No cap; `0` stops the
+        /// build without clearing its meter.
+        workers: u32,
     },
     Sow {
         faction_id: u32,
         target_x: u32,
         target_y: u32,
+        /// **The BUILD's own crew** — hands on this verb, independent of the take crew `assign_labor`
+        /// set (`docs/plan_standing_upkeep.md` §2.2). No cap; `0` stops the
+        /// build without clearing its meter.
+        workers: u32,
     },
     Corral {
         faction_id: u32,
         target_x: u32,
         target_y: u32,
+        /// **The BUILD's own crew** — hands on this verb, independent of the take crew `assign_labor`
+        /// set (`docs/plan_standing_upkeep.md` §2.2). No cap; `0` stops the
+        /// build without clearing its meter.
+        workers: u32,
     },
-    /// **Abandon a running improvement** — clear the build verb off every band of `faction_id`
-    /// working the named source, leaving the harvest stance and the crew untouched (issue #442).
+    // **RETIRED: `AbandonImprovement`** — "clear the build verb off every band working this source".
+    //
+    // The build verb is **derived from the meter** now (`forage::patch_build_verb` /
+    // `fauna::herd_build_verb`, `docs/plan_standing_upkeep.md` §2.4): a source with progress on a
+    // meter is building that rung, and the stored verb is only a declaration for a meter at **zero**.
+    // A command that cleared a derived value would either do nothing or fight the derivation, and
+    // both are worse than not having it. **The commitment is the hands** — a player walks away by
+    // unstaffing the builders (`cultivate <faction> <x> <y> 0`). Proto field 46 is reserved.
+    /// **Say how a band splits a maintenance pool it cannot stretch**
+    /// (`docs/plan_standing_upkeep.md` §2.5) — `"spread"` (everything degrades a little) or
+    /// `"priority"` (fund sources completely, most-invested first).
     ///
-    /// The one command that passes `None` where `Cultivate`/`Sow`/`Tame`/`Corral` pass a verb. It is
-    /// **ungated**: abandonment is not a rung transition, and a *stalled* build on unhealthy ground is
-    /// exactly when a player reaches for it. It does not zero the meter — each web's existing
-    /// unworked-source rule takes over (see `AbandonImprovementCommand` in `command.proto`).
-    ///
-    /// Names a **source**, not a verb: `kind` is `"forage"` (uses `target_x`/`target_y`) or `"hunt"`
-    /// (uses `fauna_id`), because at most one improvement is ever in flight on a source.
-    AbandonImprovement {
+    /// It replaces the retired `Maintain`, which put hands on **one source's** keeping. Maintenance
+    /// is a band-level standing role now (`assign_labor <faction> <band> agriculture|husbandry
+    /// <workers>`), so what is left to decide is not *where the hands go* but *what happens when
+    /// there are not enough of them* — and that is one decision per band, not one per source.
+    UpkeepMode {
         faction_id: u32,
-        kind: String,
-        target_x: u32,
-        target_y: u32,
-        fauna_id: String,
+        band_id: u64,
+        /// The mode token; anything the sim does not know is refused by name rather than guessed at.
+        mode: String,
     },
     ExtendPen {
         faction_id: u32,
         target_x: u32,
         target_y: u32,
+        /// **The ring's own crew** — a ring rides the same `animal:pen` rung as the pen it widens,
+        /// so it staffs the same build allocation and draws on the same finite band
+        /// (`docs/plan_standing_upkeep.md` §2.2).
+        workers: u32,
     },
     /// **Put a recipe on a band's crafting bench.** The crew is the player's to name — see
     /// [`BENCH_CREW_UNSPECIFIED`].
@@ -907,40 +932,42 @@ impl CommandEnvelope {
             CommandPayload::Tame {
                 faction_id,
                 herd_id,
+                workers,
             } => pb::command_envelope::Command::Tame(pb::TameCommand {
                 faction_id: *faction_id,
                 herd_id: herd_id.clone(),
+                workers: *workers,
             }),
             CommandPayload::Cultivate {
                 faction_id,
                 target_x,
                 target_y,
+                workers,
             } => pb::command_envelope::Command::Cultivate(pb::CultivateCommand {
                 faction_id: *faction_id,
                 target_x: *target_x,
                 target_y: *target_y,
+                workers: *workers,
             }),
             CommandPayload::Sow {
                 faction_id,
                 target_x,
                 target_y,
+                workers,
             } => pb::command_envelope::Command::Sow(pb::SowCommand {
                 faction_id: *faction_id,
                 target_x: *target_x,
                 target_y: *target_y,
+                workers: *workers,
             }),
-            CommandPayload::AbandonImprovement {
+            CommandPayload::UpkeepMode {
                 faction_id,
-                kind,
-                target_x,
-                target_y,
-                fauna_id,
-            } => pb::command_envelope::Command::AbandonImprovement(pb::AbandonImprovementCommand {
+                band_id,
+                mode,
+            } => pb::command_envelope::Command::UpkeepMode(pb::UpkeepModeCommand {
                 faction_id: *faction_id,
-                kind: kind.clone(),
-                target_x: *target_x,
-                target_y: *target_y,
-                fauna_id: fauna_id.clone(),
+                band_id: *band_id,
+                mode: mode.clone(),
             }),
             CommandPayload::SetBench {
                 faction_id,
@@ -973,19 +1000,23 @@ impl CommandEnvelope {
                 faction_id,
                 target_x,
                 target_y,
+                workers,
             } => pb::command_envelope::Command::Corral(pb::CorralCommand {
                 faction_id: *faction_id,
                 target_x: *target_x,
                 target_y: *target_y,
+                workers: *workers,
             }),
             CommandPayload::ExtendPen {
                 faction_id,
                 target_x,
                 target_y,
+                workers,
             } => pb::command_envelope::Command::ExtendPen(pb::ExtendPenCommand {
                 faction_id: *faction_id,
                 target_x: *target_x,
                 target_y: *target_y,
+                workers: *workers,
             }),
             CommandPayload::AnswerFork {
                 faction_id,
@@ -1347,31 +1378,31 @@ impl CommandEnvelope {
             pb::command_envelope::Command::Tame(cmd) => CommandPayload::Tame {
                 faction_id: cmd.faction_id,
                 herd_id: cmd.herd_id,
+                workers: cmd.workers,
             },
             pb::command_envelope::Command::Cultivate(cmd) => CommandPayload::Cultivate {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
+                workers: cmd.workers,
             },
             pb::command_envelope::Command::Sow(cmd) => CommandPayload::Sow {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
+                workers: cmd.workers,
             },
             pb::command_envelope::Command::Corral(cmd) => CommandPayload::Corral {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
+                workers: cmd.workers,
             },
-            pb::command_envelope::Command::AbandonImprovement(cmd) => {
-                CommandPayload::AbandonImprovement {
-                    faction_id: cmd.faction_id,
-                    kind: cmd.kind,
-                    target_x: cmd.target_x,
-                    target_y: cmd.target_y,
-                    fauna_id: cmd.fauna_id,
-                }
-            }
+            pb::command_envelope::Command::UpkeepMode(cmd) => CommandPayload::UpkeepMode {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+                mode: cmd.mode,
+            },
             pb::command_envelope::Command::SetBench(cmd) => CommandPayload::SetBench {
                 faction_id: cmd.faction_id,
                 band_id: cmd.band_id,
@@ -1391,6 +1422,7 @@ impl CommandEnvelope {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
+                workers: cmd.workers,
             },
             pb::command_envelope::Command::AnswerFork(cmd) => CommandPayload::AnswerFork {
                 faction_id: cmd.faction_id,

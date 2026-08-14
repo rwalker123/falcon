@@ -11,6 +11,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
 
 use core_sim::hunt_escapement_ceiling;
+use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     advance_herds, advance_husbandry, advance_labor_allocation, scalar_from_f32, scalar_one,
     scalar_zero, spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
@@ -190,6 +191,7 @@ fn spawn_hunter(
                     workers: HUNT_WORKERS,
                     improvement: None,
                     kit: None,
+                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },

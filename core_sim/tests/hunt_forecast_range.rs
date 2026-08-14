@@ -57,13 +57,14 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 
+use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     advance_labor_allocation, build_headless_app, herd_hunt_yield, hunt_take,
     recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_herds,
     CombatConfig, CombatConfigHandle, FactionId, FaunaConfigHandle, GenerationId, HerdRegistry,
     HuntDraw, HuntingParty, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
-    LadderConfigHandle, LocalStore, MoraleCause, PopulationCohort, ResidentBand, SnapshotHistory,
-    TileRegistry, NO_IMPROVEMENT_UNDERWAY,
+    LocalStore, MoraleCause, PopulationCohort, ResidentBand, SnapshotHistory, TileRegistry,
+    NO_IMPROVEMENT_UNDERWAY,
 };
 
 /// A stock far above anything a crew can take, so the escapement floor never binds and the *fight*
@@ -216,6 +217,8 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
                     workers: CREW,
                     improvement: NO_IMPROVEMENT_UNDERWAY,
                     kit: None,
+                    improvement_workers: NO_IMPROVEMENT_UNDERWAY
+                        .map_or(NO_CREW_ON_THIS_ACTIVITY, |_| CREW),
                 }],
                 ..Default::default()
             },
@@ -229,7 +232,6 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
 fn seed_the_forecast(app: &mut App, band: bevy::prelude::Entity, fauna_id: &str, floor: f32) {
     let seeded = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
-        let ladder = app.world.resource::<LadderConfigHandle>().get();
         let labor = app.world.resource::<LaborConfigHandle>().get();
         let combat = app.world.resource::<CombatConfigHandle>().get();
         let registry = app.world.resource::<HerdRegistry>();
@@ -237,13 +239,11 @@ fn seed_the_forecast(app: &mut App, band: bevy::prelude::Entity, fauna_id: &str,
         core_sim::hunt_source_yield_preview(
             herd,
             &fauna,
-            &ladder,
             equipped_haul_rate(),
             &party_at(&combat),
             CONTENT_BAND_OUTPUT_MULTIPLIER,
             CREW,
             floor,
-            NO_IMPROVEMENT_UNDERWAY,
             labor.yield_average_horizon_turns,
             labor.arrivals_horizon_turns,
             combat.forecast_range_sigmas,
@@ -443,7 +443,6 @@ fn the_range_widens_with_a_stochastic_fight_and_contains_the_take_across_many_se
     );
 
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
-    let ladder = app.world.resource::<LadderConfigHandle>().get();
 
     let combat = app.world.resource::<CombatConfigHandle>().get();
     let party = party_at(&combat);
@@ -461,11 +460,9 @@ fn the_range_widens_with_a_stochastic_fight_and_contains_the_take_across_many_se
             &mut quarry,
             CREW,
             FOOD_PEAK,
-            NO_IMPROVEMENT_UNDERWAY,
             equipped_haul_rate(),
             &party,
             &fauna,
-            &ladder,
             // A resident band eats/banks its whole take, exactly as the Hunt labor arm passes.
             f32::INFINITY,
             HuntDraw::Seeded(u64::from(seed)),
@@ -759,20 +756,17 @@ fn the_exported_terms_compose_the_gate_and_the_forecast_agrees() {
     const ABOVE_THE_ONE_TURN_THRESHOLD: u32 = 80;
     let quote = |party: HuntingParty, workers: u32| {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
-        let ladder = app.world.resource::<LadderConfigHandle>().get();
         let labor = app.world.resource::<LaborConfigHandle>().get();
         let combat = app.world.resource::<CombatConfigHandle>().get();
         let registry = app.world.resource::<HerdRegistry>();
         core_sim::hunt_source_yield_preview(
             registry.find(&id).expect("the herd is on the map"),
             &fauna,
-            &ladder,
             equipped_haul_rate(),
             &retuned(party, &combat),
             CONTENT_BAND_OUTPUT_MULTIPLIER,
             workers,
             FOOD_PEAK,
-            NO_IMPROVEMENT_UNDERWAY,
             labor.yield_average_horizon_turns,
             labor.arrivals_horizon_turns,
             combat.forecast_range_sigmas,
@@ -917,6 +911,8 @@ fn a_gather_reports_a_point_and_pays_it() {
                         workers: CREW,
                         improvement: NO_IMPROVEMENT_UNDERWAY,
                         kit: None,
+                        improvement_workers: NO_IMPROVEMENT_UNDERWAY
+                            .map_or(NO_CREW_ON_THIS_ACTIVITY, |_| CREW),
                     }],
                     ..Default::default()
                 },
@@ -928,7 +924,6 @@ fn a_gather_reports_a_point_and_pays_it() {
     let seeded_row = {
         let labor = app.world.resource::<LaborConfigHandle>().get();
         let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
-        let ladder = app.world.resource::<LadderConfigHandle>().get();
         let map_seed = app.world.resource::<core_sim::SimulationConfig>().map_seed;
         let ground = app.world.get::<core_sim::Tile>(tile).expect("the tile");
         let composition = core_sim::tile_flora_composition(&flora, &labor.forage, ground, map_seed);
@@ -943,13 +938,11 @@ fn a_gather_reports_a_point_and_pays_it() {
             &labor.forage,
             &flora,
             equipped_gather_rate(),
-            &ladder,
             equipped_gather_rate(),
             seasonal,
             CONTENT_BAND_OUTPUT_MULTIPLIER,
             CREW,
             FOOD_PEAK,
-            NO_IMPROVEMENT_UNDERWAY,
             labor.yield_average_horizon_turns,
             labor.arrivals_horizon_turns,
             // Deliberately WIDER than the shipped lever: a plant range must be a point because the

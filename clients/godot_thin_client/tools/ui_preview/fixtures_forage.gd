@@ -52,7 +52,7 @@ const FIXTURE_PLANT_PER_WORKER_BIOMASS := 8.0
 const FIXTURE_ANIMAL_PER_WORKER_BIOMASS := 40.0
 
 # ---- THE STALE-VERB PATCH: the played tile, at the SHIPPED numbers ------------------------------
-# Reported from play, and the reason `SourceForecast.live_improvement` exists. Every constant here is
+# Reported from play, and the reason `SourceForecast.build_verb` retires a spent declaration. Every constant here is
 # a shipped config value rather than a fixture convenience, because the defect is only visible at the
 # proportions a live patch has: `crew_to_hold` divides a regrowth the LAND owns by a carry the CREW
 # owns, so the 4× a stale build dip puts on the crew shows up as a crew target 3× too large, and a
@@ -80,8 +80,6 @@ const STALE_VERB_FOOD_PER_BIOMASS := 0.03325
 # per-material vector on the composition entry, not a rate on the patch.)
 # The plant rungs' `yield_fraction_while_building` (`intensification_ladder.json`) — the factor that
 # must NOT ride a crew whose build has already landed.
-
-const STALE_VERB_BUILD_FRACTION := 0.25
 # Two throughputs are "the same" when they agree to within the resolution the panel states a rate at.
 
 ## Rewrite one source dict IN PLACE. `prefix` is "" for a raw herd / wire patch, `patch_` for the
@@ -295,18 +293,21 @@ const ZERO_CREW := 0
 ## 15)", which stopped being true when the cap learned about the dip (#442): a BUILDING crew is capped
 ## on `stance × 0.25`, so Sustain clamps to 2 (the build crew) and Deplete to 3. Both frames still show
 ## the ceiling binding — that is what the clamp guarantees — and the pair still differs only by stance.
-# **LABOUR-BOUND UNDER BOTH FLOORS, deliberately.** The build term is floor-independent only where
-# the crew is the binding side, so this sits under the food-peak ceiling's dipped crew count
-# (0.96 / (0.32 x 0.25) = 12). Fifteen was chosen when the dip rode the CEILING and the frame's claim
-# was the opposite one; at 15 the peak's ceiling binds and the two floors' build terms differ.
+# **LABOUR-BOUND UNDER BOTH FLOORS, deliberately.** It sits under the food-peak ceiling's crew count
+# (0.96 / 0.32 = 3 with the dip retired), so the crew is the binding side at both floors.
 
-const IMPROVEMENT_STANCE_FRAME_FORAGERS := 8
+const IMPROVEMENT_STANCE_FRAME_FORAGERS := 2
 
 ## **THE SIM'S OWN `workers_needed` FOR A CULTIVATING CREW ON THE REFERENCE PATCH.** Its derivation from
 ## the ladder's and the fixture's numbers is on `BandFx.cultivating_forage_band_fixture`, which ships it on the
 ## wire; `improvement_build_crew` asserts the compose cap equals what the sheet READS BACK off that
 ## assignment, so the control is the sim's published answer rather than a number the harness chose twice.
-const CULTIVATE_SIM_WORKERS_NEEDED := 12
+##
+## **IT FELL FROM 12 TO 3 WITH THE DIP** (`docs/plan_standing_upkeep.md` §2.2). Under the dip the take
+## crew was inverted out of a QUARTER carry, so saturating the same ceiling took four times the hands
+## — and `workers_needed` then blended that count with the rung's `crew_needed`. Both terms are
+## retired: the count is `ceil(0.96 / 0.32)` and the build's hands are their own allocation.
+const CULTIVATE_SIM_WORKERS_NEEDED := 3
 
 ## A CROP-PICKER ROW by the plant it names. A row's face is `<name> <share>% · <payoff>×`, whose share
 ## and payoff digits are the fixture's business and change whenever a basket is retuned, so the row is
@@ -351,6 +352,41 @@ static func improvement_face(root: Node, improvement: String) -> String:
 		return (control as Label).text
 	return ""
 
+## **IS THE CONTROL'S FACE IN A STOPPING INK?** — the other half of the `∞` claim, and the half a text
+## assertion structurally cannot make: the larder's runway draws the same glyph in NEUTRAL ink for the
+## opposite news, so what says which way a build's `∞` points is the colour.
+##
+## **BOTH STOPPING INKS COUNT, and asking only about the amber was a real trap.** The wire spells two
+## never-finishing sentinels — the meter HOLDS at the rate, the meter ROTS under it — and the client
+## paints them amber and red (`HudWidgets.improvement_pace_stops`, whose pair this is). A reader
+## hard-wired to `WARN` therefore FAILS on the redder, worse half of the very claim it exists to make,
+## which is exactly what happened the day `BUILD_METER_ROTS` was honoured: the lone-builder frames
+## quote a NEGATIVE net and had been reading amber only because the client flattened the two.
+##
+## Where a frame means one specific ink, it compares `improvement_face_color` directly — that is the
+## reader for *which* of the three, and this one is for *is this face a stop at all*.
+##
+## Read as the RESOLVED font colour off whichever node the state uses (`Label` for running, done and
+## gated; `CheckBox` for the offer), because `get_theme_color` answers the stock default where no
+## override is set — an "an override exists" test would pass on the very bug this looks for, which
+## IS a missing override.
+static func improvement_face_stops(root: Node, improvement: String) -> bool:
+	var ink := improvement_face_color(root, improvement)
+	return ink == HudStyle.WARN or ink == HudStyle.DANGER
+
+## **THE FACE'S RESOLVED INK, for the THREE-state build line** (issue #545 follow-up). The pace is a
+## colour now — green climbing, amber holding, red losing — so a bool reader can only ever ask about
+## one of the three, and the two `∞` states would read alike through it. Callers compare against
+## `HudStyle` directly, so a frame can claim which of the three a build line is in.
+##
+## `Color()` (transparent black, which no face wears) where the control is absent, so a missing
+## control fails a colour claim rather than matching one by accident.
+static func improvement_face_color(root: Node, improvement: String) -> Color:
+	var control := find_improvement_control(root, improvement)
+	if control == null:
+		return Color()
+	return control.get_theme_color("font_color")
+
 static func find_improvement_control(root: Node, improvement: String) -> Control:
 	if root == null:
 		return null
@@ -362,6 +398,55 @@ static func find_improvement_control(root: Node, improvement: String) -> Control
 		if found != null:
 			return found
 	return null
+
+## The BUILDERS row — the build crew's stepper and the threshold note beside it. `null` where the
+## control mounts none (the DONE and GATED states have no build to staff).
+static func build_crew_row(root: Node) -> Control:
+	if root == null:
+		return null
+	if root is Control and (root as Control).has_meta(HudWidgets.BUILD_CREW_ROW_META):
+		return root as Control
+	for child in root.get_children():
+		var found := build_crew_row(child)
+		if found != null:
+			return found
+	return null
+
+## **THE WORK-PER-TURN THRESHOLD THE BUILDERS ROW STATES**, read off the meta rather than out of any
+## text: the number is the claim and the wording is not (`SourceForecast.min_build_work`).
+## `BUILD_WORK_FLOOR_ABSENT` where the row states no threshold, which is a real answer — a rung whose
+## rate the wire prices at nothing has none to clear.
+##
+## **IT READS WORK, NOT WORKERS** (issue #545). The meta carried `upkeepWorkersNeeded`, a head count
+## that reads `0` on a source with no progress — so a harness asserting it was asserting the
+## pre-commit case as an ABSENCE, which is exactly the state the threshold exists for.
+##
+## **THE META MOVED FROM A NOTE TO THE ROW'S OWN LABEL, and this reader is unchanged by that** — it
+## scans the row's children for whichever one carries it. The visible note is retired (the build line's
+## INK states which side of the rate the crew is on, so the sentence was doing a colour's job) and the
+## rate now rides that label's TOOLTIP; the NUMBER is still asserted here, which is what makes the
+## retirement a re-homing rather than a loss.
+const BUILD_WORK_FLOOR_ABSENT := -1.0
+
+static func build_work_floor(root: Node) -> float:
+	var row := build_crew_row(root)
+	if row == null:
+		return BUILD_WORK_FLOOR_ABSENT
+	for child in row.get_children():
+		if child is Control and (child as Control).has_meta(HudWidgets.BUILD_WORK_FLOOR_META):
+			return float((child as Control).get_meta(HudWidgets.BUILD_WORK_FLOOR_META))
+	return BUILD_WORK_FLOOR_ABSENT
+
+## …and the threshold's own WORDING, off that label's tooltip — the reachability half of the
+## re-homing above. `""` where the row states none.
+static func build_work_floor_tooltip(root: Node) -> String:
+	var row := build_crew_row(root)
+	if row == null:
+		return ""
+	for child in row.get_children():
+		if child is Control and (child as Control).has_meta(HudWidgets.BUILD_WORK_FLOOR_META):
+			return (child as Control).tooltip_text
+	return ""
 
 ## The indented basket rows, in order. They are the only indented rows the LAND drawer emits.
 static func flora_basket_rows(lines: Array[String]) -> Array[String]:
@@ -573,12 +658,6 @@ const THREE_ROLE_GRAZE_CAPACITY := 130.0
 ## forecast pair is deliberately asymmetric with Cultivate's: `ceiling_sow` is ~0 because a sown
 ## patch has no standing crop to take a fraction of (a bare-ground sow is PURE investment), and
 ## `field_yield` is 2× the tended yield — the payoff that makes the ladder's top plant rung worth it.
-## SOW'S BUILD DIP, as the wire's own FRACTION of the food-peak ceiling — `0.02 / 0.96`, i.e. the
-## near-zero absolute dip this fixture's docstring describes over `food_tile_fixture`'s own Sustain
-## ceiling. A sown patch has no standing crop to take a fraction of, so a bare-ground sow is PURE
-## investment: that asymmetry against Cultivate's quarter is rung 3's whole bargain, and it is what
-## the readout's `without the build` row is measured against on a Sow sheet.
-const SOW_BUILD_FRACTION := 0.02 / 0.96
 
 static func sowable_tile_fixture() -> Dictionary:
 	var tile := BaseFx.food_tile_fixture()
@@ -594,16 +673,15 @@ static func sowable_tile_fixture() -> Dictionary:
 	tile["site_name"] = ""
 	# The ground answers the site requirement: rich enough AND watered. No refusal.
 	tile["patch_sow_site_refusal"] = ""
-	# **THE FRACTION IS STATED OUTRIGHT, NOT VIA `patch_ceiling_sow`, AND THAT IS A REPAIR.**
-	# `seed_forage_rows` converts the authoring shorthand only `if not tile.has(<fraction key>)` — and
-	# `food_tile_fixture()` has already run it once, writing `patch_sow_build_fraction = 0.0` off its own
-	# `patch_ceiling_sow` of 0 and ERASING the shorthand key. A layered fixture restating the shorthand
-	# is therefore ignored on the re-seed, so this patch carried a build fraction of ZERO,
-	# `improvement_forecast` answered `{}` for Sow, and the whole rung quoted no deal on any frame: no
-	# payoff row, no `without the build` row, and a bare face before those rows existed. The docstring's
-	# own escape hatch — "a fixture that states a fraction outright wins" — is what closes it.
-	tile["patch_sow_build_fraction"] = SOW_BUILD_FRACTION
+	# **WHAT MAKES THE SOW RUNG QUOTABLE IS ITS PRICE, NOT A DIP** (`docs/plan_standing_upkeep.md`
+	# §2.2). `improvement_forecast` declines a rung the wire prices no job for on this source, so the
+	# Field's own `work_cost` is what has to be present for the deal to render — `food_tile_fixture`
+	# already states it. The retired `patch_sow_build_fraction` used to be that gate, and a fixture
+	# that left it at zero silently quoted no deal at all on any Sow frame.
 	tile["patch_field_yield"] = 2.40
+	# A FIELD is dearer to keep than the tended ground under it — the ladder's own claim about a
+	# higher rung, stated on the rung the sheet is offering.
+	tile["patch_upkeep_demand"] = BaseFx.PLANT_FIELD_UPKEEP_PER_TURN
 	return BaseFx.seed_forage_rows(tile)
 
 ## A patch mid-SOW: the rung-3 build meter is running, so the Field row reads "Sowing 45%". It sits

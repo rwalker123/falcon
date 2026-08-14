@@ -204,10 +204,20 @@ func _assert_compose_order_parity(forage_key: String, hunt_key: String) -> void:
 		% [forage_key, hunt_key], have_both)
 	if not have_both:
 		return
-	var forage_spine: Array = h._compose_spines[forage_key]
-	var hunt_spine: Array = h._compose_spines[hunt_key]
+	# **THE SOURCE-CONDITIONAL ROWS COME OUT FIRST** (`docs/plan_standing_upkeep.md` §2.2). The keeping
+	# row renders iff the source has a rung that can be lost — a Tended Patch does, a wild herd does
+	# not — so leaving it in would turn a fact about the two FIXTURES into a claim about the two webs'
+	# grammar, which is the one thing this assertion exists to be.
+	var forage_spine: Array = _spine_grammar(h._compose_spines[forage_key])
+	var hunt_spine: Array = _spine_grammar(h._compose_spines[hunt_key])
 	h._assert_hud(("the forage and local-hunt sheets read in the SAME control order — forage %s, hunt %s"
 		% [str(forage_spine), str(hunt_spine)]), forage_spine == hunt_spine)
+
+## A captured spine with its source-conditional rows dropped — what is left is the sheet's GRAMMAR,
+## which is what the two webs must share.
+func _spine_grammar(spine: Array) -> Array:
+	return spine.filter(func(tag: Variant) -> bool:
+		return not Spine.COMPOSE_SPINE_SOURCE_CONDITIONAL.has(String(tag)))
 
 ## Two player bands (multi-band split is deferred, but the assign controls' band-picker must
 ## handle N). Different idle_workers so switching the dropdown visibly re-caps the worker
@@ -587,12 +597,13 @@ func _pelt_only_wolf_herd() -> Dictionary:
 		# them. Corral above Tame, so the ladder still reads as ascending in the account it pays.
 		"pastoral_yield": 0.0,
 		"corral_yield": 0.0,
-		# The two rungs' BUILD DIPS, without which `improvement_forecast` declines to quote the deal at
-		# all (`fraction <= 0` is the wire saying it does not describe this rung on this source) and
-		# the payoff below would be asserted against a `{}`. Real fractions, so the frame exercises the
+		# **THE TWO RUNGS' BUILD PRICES, without which `improvement_forecast` declines to quote the
+		# deal at all** and the payoff below would be asserted against a `{}`. A cost of zero is the
+		# wire saying it prices no such job on this source (`docs/plan_standing_upkeep.md` §2.2 — the
+		# retired dip fraction used to be this gate), so the frame states real ones and exercises the
 		# quotable path rather than the refusal one.
-		"tame_build_fraction": 0.25,
-		"corral_build_fraction": 0.25,
+		"tame_work_cost": HerdFx.ANIMAL_TAME_WORK_COST,
+		"corral_work_cost": HerdFx.ANIMAL_CORRAL_WORK_COST,
 		"pastoral_material": [
 			{"material_id": WOLF_MATERIAL_ID, "amount": WOLF_PASTORAL_HIDE},
 		],
@@ -1327,13 +1338,13 @@ func run(harness) -> void:
 	# claim, so a fixture that stops rising fails nothing while a gate that stops agreeing fails here.
 	var bound_model := SourceForecast.floor_chart_model(fowl_reaching,
 		SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX,
-		SourceForecast.FLOOR_FOOD_PEAK, FOWL_HUNTERS, SourceForecast.IMPROVEMENT_NONE, "hunters",
+		SourceForecast.FLOOR_FOOD_PEAK, FOWL_HUNTERS, "hunters",
 		LESSON_NOT_YET_LEARNED)
 	var verdict_falls: bool = float(bound_model["settled_fraction"]) \
 		< float(bound_model["stock_fraction"]) - SourceForecast.STOCK_FRACTION_EPSILON
 	var gate_falls := SourceForecast.take_draws_down(fowl_reaching,
 		SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX,
-		SourceForecast.FLOOR_FOOD_PEAK, FOWL_HUNTERS, SourceForecast.IMPROVEMENT_NONE)
+		SourceForecast.FLOOR_FOOD_PEAK, FOWL_HUNTERS)
 	# The precondition, without which the equality is satisfied by two blind answers agreeing: the
 	# CARRY-ONLY walk (`project_stock`'s unbounded default — the pre-fix reading) must say the opposite.
 	var carry_only_walk := SourceForecast.project_stock(
@@ -1566,11 +1577,10 @@ func run(harness) -> void:
 	# on "fauna" or on "floor == 0" would pass the herd line below and fail the patch line under it.
 	var strip_crew := 64
 	var stripped_herd := SourceForecast.floor_chart_model(allee_herd, SourceForecast.SOURCE_KIND_HERD,
-		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_MIN, strip_crew,
-		SourceForecast.IMPROVEMENT_NONE, "hunters", LESSON_NOT_YET_LEARNED)
+		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_MIN, strip_crew, "hunters", LESSON_NOT_YET_LEARNED)
 	var stripped_patch = SourceForecast.floor_chart_model(h._floor_chart_drawn_patch,
 		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
-		SourceForecast.FLOOR_MIN, strip_crew, SourceForecast.IMPROVEMENT_NONE, "foragers",
+		SourceForecast.FLOOR_MIN, strip_crew, "foragers",
 		LESSON_NOT_YET_LEARNED)
 	var stripped_herd_text := String((stripped_herd.get("verdict", {}) as Dictionary).get("text", ""))
 	var stripped_patch_text = String((stripped_patch.get("verdict", {}) as Dictionary).get("text", ""))
@@ -1588,8 +1598,7 @@ func run(harness) -> void:
 	# case a web branch gets wrong, and the only one of the three that can see the difference.
 	var held_herd := SourceForecast.floor_chart_model(
 		ForageFx.floorify(HerdFx.grazing_healthy_herd_fixture()), SourceForecast.SOURCE_KIND_HERD,
-		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK, strip_crew,
-		SourceForecast.IMPROVEMENT_NONE, "hunters", LESSON_NOT_YET_LEARNED)
+		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK, strip_crew, "hunters", LESSON_NOT_YET_LEARNED)
 	var held_herd_text := String((held_herd.get("verdict", {}) as Dictionary).get("text", ""))
 	h._assert_hud("a HERD that still regrows at its floor keeps the clause — it is the growth, not the web",
 		held_herd_text.contains("Reaches the floor") and held_herd_text.contains("grows back"))
@@ -2543,7 +2552,7 @@ func _cadence_herd() -> Dictionary:
 ## rather than read back off the producer under test.
 func _boar_brought_down(workers: int) -> float:
 	return SourceForecast.animals_stayed(
-		SourceForecast.animals_engaged(workers, BOAR_ENGAGE_RATE, SourceForecast.NO_BUILD_DIP),
+		SourceForecast.animals_engaged(workers, BOAR_ENGAGE_RATE),
 		BOAR_STAY_FRACTION)
 
 ## The producer's delivered take for one crew, at the food peak with no build in flight.
@@ -2736,14 +2745,12 @@ func _retreat_crew_patch(stay: float) -> Dictionary:
 ## The stepper's own ceiling for a source, through the two real layers the sheet uses.
 func _source_worker_cap(src: Dictionary, kind: String) -> int:
 	return SourceForecast.max_useful_workers(SourceForecast.forecast_inputs(
-		src, kind, HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK,
-		SourceForecast.IMPROVEMENT_NONE))
+		src, kind, HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK))
 
 ## The two crew-target pills a hunt sheet renders, off the chart model that renders them.
 func _herd_crew_targets(herd: Dictionary) -> Dictionary:
 	var model := SourceForecast.floor_chart_model(herd, SourceForecast.SOURCE_KIND_HERD,
-		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK, RETREAT_CHART_CREW,
-		SourceForecast.IMPROVEMENT_NONE, "hunters", LESSON_NOT_YET_LEARNED)
+		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK, RETREAT_CHART_CREW, "hunters", LESSON_NOT_YET_LEARNED)
 	return {
 		"clear": int(model.get("crew_to_clear", SourceForecast.NO_CREW_ANSWER)),
 		"hold": int(model.get("crew_to_hold", SourceForecast.NO_CREW_ANSWER)),
@@ -2757,11 +2764,10 @@ func _retreat_crew_assertions() -> void:
 	# The RAW-REACH sizing, restated here rather than asked of the layer under test: the engagement
 	# crew the cap used to be floored on, with the retreat term left out.
 	var speared_forecast := SourceForecast.forecast_inputs(speared, SourceForecast.SOURCE_KIND_HERD,
-		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK,
-		SourceForecast.IMPROVEMENT_NONE)
+		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK)
 	var raw_engage := SourceForecast.engage_workers(float(speared_forecast["axis_ceiling"]),
 		float(speared_forecast["axis_per_animal"]), float(speared_forecast["engage_rate"]),
-		float(speared_forecast["dip"]), SourceForecast.STAY_FRACTION_NONE_BREAKS_OFF)
+		SourceForecast.STAY_FRACTION_NONE_BREAKS_OFF)
 
 	# (0) THE FRAME REALLY STAGES THE DISAGREEMENT. Without it the claim below is satisfied by any
 	#     herd whose two arms happen to coincide, and says nothing about the defect.

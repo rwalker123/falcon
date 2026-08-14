@@ -184,7 +184,7 @@ branches on mission:
 >   above `0` strips the herd to it and stops, on this path and the resident band's alike.
 > - **A raid is ENGAGEMENT-BOUNDED exactly as a resident band is** (`docs/plan_hunt_through_combat.md`
 >   §1; §10 exempts only the pen). `expedition_take_biomass` resolves the party's reach
->   (`fauna::animals_engaged`, at the identity build dip — a detached party builds nothing) and the
+>   (`fauna::animals_engaged`, which carries no build term at all since the dip retired) and the
 >   quarry's retreat (`fauna::animals_that_stay`, under the caller's `fauna::HuntDraw` — a per-event
 >   seed live, a quantile in a forecast) and hands the count to **the**
 >   quantiser, which also retired its hand-rolled copy of the `max(1, carryable)` arithmetic. The bound
@@ -380,16 +380,16 @@ branches on mission:
   name a verb at all, so the launch token is parsed as one and a word of any kind is refused by the
   ordinary parse rather than by a membership test. Their history is worth keeping: both this launch
   gate and `hunt_expedition_floor`'s unreachable investment arm were hand-written verb lists, and both
-  had rotted (the gate silently accepted `tame`, which then took a plausible pastoral-dip ceiling).
+  had rotted (the gate silently accepted `tame`, which then took a plausible pastoral ceiling).
   Guarded by `server::tests::send_hunt_expedition_rejects_a_floor_outside_the_dial`.
 - **Shared take helpers** (`fauna.rs`): **`hunt_escapement_ceiling(floor, biomass, carrying_capacity)`**
   is THE take ceiling on the animal web — `max(0, B − floor·K)`, the stock standing above the
   assignment's or mission's floor — and `quantise_animal_take` rounds it to whole animals. It takes
   **no ecology, no `FaunaConfig`, no `improvement` and no ladder**, which is what makes the take
   `r`-independent structurally rather than by convention; see "The hunt policy axis" in `fauna.md`.
-  **The build dip is NOT a term here** — it multiplies the crew, so this signature has nowhere to put
-  it (`docs/plan_harvest_floor.md` §3.1). The `improvement`/`ladder` parameters this file used to list
-  are exactly what slice 3 removed.
+  **A build is not a term here or anywhere else on the take**: it has its own crew
+  (`docs/plan_standing_upkeep.md` §2.2), so there is nothing for this signature to put. The
+  `improvement`/`ladder` parameters this file used to list are exactly what slice 3 removed.
   The expedition keeps its own `credit` accumulator for the *party's* processing throughput
   (`expedition_take_biomass`), which is a different quantity from the retired resident bank.
   **`HuntYield::apply(take, output_multiplier)`** (via `FaunaConfig::hunt_yield_for`, which retired the global `hunt_provisions`) is the single per-species biomass→food conversion (an
@@ -592,21 +592,21 @@ question asked:
   > the exact failure the field exists to prevent.
 - `HerdTelemetryState.{provisionsPerBiomass, fodderPerBiomass}` — the **BAND /
   local-hunt** terms, from which the client composes the ceiling at **any** floor:
-  `max(0, B − floor·K) × rate`. **UNDIPPED** — `<rung>BuildFraction` belongs to the CREW term, not to
-  this, and a client that folds it in here discounts a build twice (the shipped GDScript composes
-  ceilings undipped; see `labor-ui.md`). `huntPolicyCeilings` is a retired
+  `max(0, B − floor·K) × rate`. **THERE IS NO BUILD TERM ANYWHERE IN IT** — a build is staffed in
+  its own right (`docs/plan_standing_upkeep.md` §2.2), so neither this nor the crew term beside it
+  carries one; the `*BuildFraction` fields that used to are `(deprecated)`.
+  `huntPolicyCeilings` is a retired
   `(deprecated)` slot: four rows cannot answer a continuous dial (`yield-forecast.md` → "the sim
   exports the answer" and its one narrow exception). A herd below a floor composes `0` for it, which
-  is the escapement rule rather than a special case. The dip still ships as
-  `tameBuildFraction` / `corralBuildFraction` (see "Pre-commit Yield Forecast"). **Formerly sourced by
+  is the escapement rule rather than a special case. **Formerly sourced by
   projecting the herd's `fauna::hunt_forecast`** (`SourceYieldForecast::ceiling_for`) —
   the **only** wire representation of a herd's per-policy ceilings (the scalar
   `ceilingSustain`/…/`ceilingCorral` twins, which carried literally the same numbers, are now retired
   `(deprecated)` slots), and the take path pays exactly them
-  (forecast == actual). That also makes `Corral` **phase-correct for free**: the
-  the `animal:pen` rung's `yield_fraction_while_building × MSY` dip while the pen is being built, and the **full corral yield**
+  (forecast == actual). That also makes `Corral` **phase-correct for free**: the ordinary hunt
+  ceiling while the pen is being built by its own crew, and the **full corral yield**
   once `is_corralled()` (a penned herd forecasts as `SourceYieldForecast::tended` — every ceiling is
-  its managed yield, one keeper suffices). There is **no expedition ceiling field** — the retired
+  its managed yield). There is **no expedition ceiling field** — the retired
   `expeditionProvisionsPerTurn` was exactly the "one number that means a flow for Sustain and a stock
   for Surplus/Deplete" design smell the estimate table replaces.
 - `PopulationCohortState.huntPerWorkerProvisions:float` (one hunter's

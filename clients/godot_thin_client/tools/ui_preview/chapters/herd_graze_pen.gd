@@ -16,6 +16,12 @@ const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
 
+## The phrase every take-cap note is built around (`SourceForecast.MAX_USEFUL_NOTE_FORMAT`), so the
+## pair below can be compared as WHOLE NOTES rather than by asking twice whether one number is
+## present: two `contains` claims are satisfied by two different notes, and "the verb moved nothing"
+## is a claim about the note being the same one.
+const TAKE_CAP_NOTE_NEEDLE := "useful here"
+
 const TAME_CAP_WOULD_BE_HERDERS := 30
 
 ## The RETIRED pause note's own stem, and any turn estimate at all — the two needles
@@ -136,34 +142,81 @@ func _tame_worker_cap_herd_fixture() -> Dictionary:
 	fixture["herders_needed_if_managed"] = TAME_CAP_WOULD_BE_HERDERS
 	return fixture
 
-## A nearly-tamed herd, FULLY STAFFED — the calm control for the staffing readout, AND the fix for the
-## stale-count bug (fauna neglect-escape arc). `BandFx.band_fixture` has 4 herders (a Hunt assignment) on
-## game_deer_07, and this herd needs 4, so the drawer reads a neutral "Herders: 4 / 4" — from the
-## ACTUAL assigned count, not `herded_fraction`. `herded_fraction` is deliberately left STALE at 0.4
-## (last turn's resolved value): the OLD code reconstructed `round(0.4 · 4) = 2` and wrongly read a
-## self-contradictory "2 / 4 — under-herded", which this frame proves is gone.
+## A TAMED herd the band's HUSBANDRY POOL covers — the calm control for the keeping readout. The row
+## states the herd's DEMAND (`Keepers: 4`) and says where the hands come from, because maintenance
+## left the tile (`docs/plan_standing_upkeep.md` §2.5): no crew is assigned to a herd any more, so
+## there is no staffed count to state and none to reconstruct. `herded_fraction` is deliberately left
+## STALE at 0.4 (last turn's resolved value) to keep the guard against reading it live.
+##
+## **ITS TAMING IS COMPLETE, and that is load-bearing.** The keeping is owed only once the rung
+## STANDS — while a Tame is going up those hands are the build's, and the sim publishes
+## `upkeepWorkersNeeded 0` — so a part-tamed herd carrying a positive keeper demand is a shape no
+## server can produce, and the frame would be asserting against it.
 func _fully_herded_herd_fixture() -> Dictionary:
 	var fixture := HerdFx.taming_herd_fixture()
-	fixture["domestication"] = 0.9
+	fixture["domestication"] = SourceForecast.DOMESTICATION_COMPLETE
 	HerdFx.price_animal_build(fixture)
 	HerdFx.set_managed_herders(fixture, 4)
+	_set_keeper_upkeep(fixture, 4, POOL_COVERS_IT)
 	fixture["herded_fraction"] = 0.4
 	return fixture
 
-## The SAME herd, UNDER-HERDED — animals are drifting off (fauna neglect-escape arc; neglect no longer
-## decays tameness, it sheds whole animals to the wild). The herd now needs 6 herders but `BandFx.band_fixture`
-## only staffs 4, so the drawer reads the amber "Herders: 4 / 6 — under-herded" (the ACTUAL staffed
-## count) plus the muted "Under-herded — animals are drifting off. Staff all 6 herders to hold the herd."
-## line — NEVER the retired "tameness slipping" copy. `herded_fraction` is left STALE at 1.0: the OLD
-## code reconstructed `round(1.0 · 6) = 6` and read a calm "6 / 6" with NO warning at all — the exact
-## stale-reading this fix removes.
+## The SAME herd, UNDER-KEPT — its share of the pool did not cover it, so animals are drifting off
+## (the shed is the animal web's shortfall penalty). The herd wants 6 keepers' worth and the pool paid
+## 4, so the drawer reads the amber `Keepers: 6 — under-herded, the Husbandry pool is short here`
+## plus the shed line naming the band's Husbandry role — NEVER the retired "tameness slipping" copy,
+## and never the retired per-source `KEEPERS` stepper, which no longer exists.
 func _under_herded_herd_fixture() -> Dictionary:
 	var fixture := _fully_herded_herd_fixture()
-	fixture["domestication"] = 0.98
-	HerdFx.price_animal_build(fixture)
 	HerdFx.set_managed_herders(fixture, 6)
+	_set_keeper_upkeep(fixture, 6, POOL_SHARE_ON_THE_DEER)
 	fixture["herded_fraction"] = 1.0
 	return fixture
+
+## **THE SAME HERD MID-TAME, which is owed BUILDERS and not keepers** (§2.4). Its meter is still going
+## up, so the sim bills it the animal web's whole keeping (the animals are standing there whether or
+## not the rung is finished) while publishing `upkeepWorkersNeeded 0` — a positive demand no pool
+## covers. The readout must therefore say it is being BUILT rather than quoting the pool at it.
+## `set_managed_herders` still states a positive `herders_needed`: a herd is owned from the moment the
+## Tame starts, so the `Keepers:` row is shown and must stay CALM.
+func _mid_tame_herd_fixture() -> Dictionary:
+	var fixture := HerdFx.taming_herd_fixture()
+	HerdFx.price_animal_build(fixture)
+	HerdFx.set_managed_herders(fixture, 4)
+	# **THE COUNT SHIPS ON BOTH SIDES OF COMPLETION NOW** (`docs/plan_standing_upkeep.md` §2.4). It
+	# was pinned to `0` here, which was the wire's own answer while an unfinished meter was held to
+	# owe no keeping; mid-build it is the MINIMUM VIABLE BUILD CREW, so a fixture still stating zero
+	# would stage a source the shipped sim cannot produce and prove the row against it.
+	fixture["upkeep_workers_needed"] = MID_TAME_UPKEEP_DEMAND
+	fixture["upkeep_demand"] = float(MID_TAME_UPKEEP_DEMAND)
+	fixture["upkeep_supplied"] = float(MID_TAME_UPKEEP_DEMAND)
+	fixture["upkeep_shortfall"] = 0.0
+	return fixture
+
+## `supplied_by` for a herd the pool covers in full — a sentinel above any demand this chapter
+## states, so `_set_keeper_upkeep` clamps it to the demand and the shortfall is zero by construction.
+const POOL_COVERS_IT := 99
+
+## …and the WORK the pool actually put on the under-kept deer, two short of its six.
+const POOL_SHARE_ON_THE_DEER := 4
+
+## What a herd mid-Tame is billed: its whole keeping, answered by its BUILD crew — and, at the
+## shipped one-work-unit-per-worker output, the same number in hands. It is what the row's
+## `worth N builders` clause quotes, so the fixture states one figure and the assertion composes
+## the sentence from it rather than from a literal.
+const MID_TAME_UPKEEP_DEMAND := 4
+
+## **THE KEEPING SIDE OF A MANAGED HERD, STATED AS THE SIM STATES IT.** `upkeep_workers_needed` is what
+## this herd's keeping is worth in hands and equals `herders_needed` on a rung that STANDS, so the two
+## are set together for the reason `set_managed_herders` sets its pair together: half-setting them
+## renders a herd that owes keepers to a row and owes nobody to the ⚠. The work figures are the same
+## fact in work units (the `animal:pastoral` rung asks 1.0 per keeper-load), so `supplied_by` is this
+## herd's SHARE OF THE BAND'S POOL and the shortfall falls out.
+func _set_keeper_upkeep(fixture: Dictionary, wanted: int, supplied_by: int) -> void:
+	fixture["upkeep_workers_needed"] = wanted
+	fixture["upkeep_demand"] = float(wanted)
+	fixture["upkeep_supplied"] = float(mini(supplied_by, wanted))
+	fixture["upkeep_shortfall"] = float(maxi(wanted - supplied_by, 0))
 
 ## A PREDATOR (Predators Phase 1a): a Grey Wolf Pack — big, wild-ceiling, carnivore. `prey_sense_radius`
 ## 4 (`> 0`) is BOTH the "this is a predator" signal AND the map ring radius, so the drawer must read
@@ -268,10 +321,11 @@ func _small_game_herd_fixture() -> Dictionary:
 
 ## A composing-Corral herd that needs MORE than one keeper (Grazing 2d-δ herder deficit): the take/prepare
 ## max-useful for the Corral rung is 1 ("one worker suffices to prepare"), but this growing herd needs 2
-## herders EVERY turn to hold its tameness — and it is currently UNDER-herded, because the STATE dials the
-## band's own hunt assignment on this herd down to 1 (the base fixture staffs 4, which would hide the very
-## deficit this frame exists to show). The Herders row reads "1 / 2 — under-herded" off that ACTUAL
-## assignment via `HudBandLaborState.assigned_herders_for`, and the shed consequence line names 2.
+## keepers EVERY turn to hold its tameness. The STATE dials the band's own hunt assignment on this herd
+## down to 1, which is the TAKE crew — **the keeping is a different allocation now**
+## (`docs/plan_standing_upkeep.md` §2.2), so the drawer's `Keepers` row reads the herd's demand against
+## the keepers on it and the frame's own claim is the compose CAP, which is what it has always
+## asserted.
 ## `herded_fraction` is deliberately left STALE at 0.5 and is read NOWHERE in the render path — the same
 ## convention `_fully_herded_fixture` / `_under_herded_fixture` carry, and the reason the old
 ## reconstruct-from-the-fraction reading was retired. The compose
@@ -524,37 +578,87 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("herd_corral_starving")
 
-	# Staffing readout (fauna neglect-escape arc) — the fix for the stale "N of M working" count. The
-	# reference band (`BandFx.band_fixture`) staffs 4 herders on game_deer_07, and the count now comes from
-	# that ACTUAL assignment, never from last turn's resolved `herded_fraction`.
-	# FULLY STAFFED: the herd needs 4 and 4 are on it → a calm "Herders: 4 / 4" (neutral ink), no
-	# consequence line. `herded_fraction` is a stale 0.4, so the OLD reconstruction would have read a
-	# self-contradictory "2 / 4 — under-herded" — proving the fix.
-	h._hud._band_labor._player_band = BandFx.band_fixture()
-	h._hud._band_labor._player_bands = []
+	# Keeping readout (`docs/plan_standing_upkeep.md` §2.5) — a managed herd is held out of its band's
+	# HUSBANDRY POOL, so the row states this herd's DEMAND and which side of the pool's shortfall it
+	# landed on. There is no per-herd keeper crew to count and none to reconstruct from last turn's
+	# resolved `herded_fraction`, which is left stale on both fixtures to keep that guard live.
+	# COVERED: the pool paid this herd's whole demand → and since issue #545 that renders as NOTHING.
+	# The standing `Keepers:` / `Keeping:` pair is retired; a rung being paid for says so by carrying no
+	# mark and no `At risk:` row, which is what makes the marked states legible.
 	h._show_herd(_fully_herded_herd_fixture())
 	await h._settle()
 	await h._save("herd_fully_herded")
-	# ASSERT the corrected count: the actual staffed 4 shows, not the stale reconstruction 2.
 	var fully_lines = DetailFormat.herd_summary_lines(
-		_fully_herded_herd_fixture(), h._hud._band_labor.world_herds(),
-		h._hud._band_labor.assigned_herders_for(_fully_herded_herd_fixture()["id"]))
-	assert(_lines_contain(fully_lines, "Herders: 4 / 4"))
-	assert(not _lines_any_contain(fully_lines, "under-herded"))
+		_fully_herded_herd_fixture(), h._hud._band_labor.world_herds())
+	# **THE SILENCE IS THE CLAIM, AND IT NEEDS ITS RUNG ROW BESIDE IT** — a producer that had stopped
+	# emitting the herd's ladder rows entirely would satisfy every negative here, so the positive is
+	# that the Husbandry row IS rendered and is bare.
+	h._assert_hud("a covered herd states its rung and nothing else — no mark, no bill, no risk row",
+		_lines_any_contain(fully_lines, DetailFormat.HUSBANDRY_BUILT_WORD)
+		and not _lines_any_contain(fully_lines, HudSelectionVocab.RUNG_HAZARD_GLYPH)
+		and not _lines_any_contain(fully_lines, DetailFormat.UPKEEP_RISK_ROW)
+		and not _lines_any_contain(fully_lines, "drawn from the band"))
 
-	# UNDER-HERDED: the herd now needs 6 herders but only 4 are staffed → an amber "Herders: 4 / 6 —
-	# under-herded" (the ACTUAL count) plus the shed line "Under-herded — animals are drifting off.
-	# Staff all 6 herders to hold the herd." — NOT the retired "tameness slipping" copy. `herded_fraction`
-	# is a stale 1.0, so the OLD reconstruction would have read a calm "6 / 6" with no warning.
+	# SHORT: the herd wants 6 keepers' worth and the pool paid 4 → the ⚠ on its own Husbandry row, the
+	# `At risk:` row pricing the shortfall, and the shed line naming the band's Husbandry role and the
+	# head count — NOT the retired "tameness slipping" copy, and NOT the retired per-source `KEEPERS`
+	# stepper, which no longer exists to be staffed.
 	h._show_herd(_under_herded_herd_fixture())
 	await h._settle()
 	await h._save("herd_under_herded")
 	var under_lines = DetailFormat.herd_summary_lines(
-		_under_herded_herd_fixture(), h._hud._band_labor.world_herds(),
-		h._hud._band_labor.assigned_herders_for(_under_herded_herd_fixture()["id"]))
-	assert(_lines_contain(under_lines, "Herders: 4 / 6 — under-herded"))
-	assert(_lines_any_contain(under_lines, "animals are drifting off"))
-	assert(not _lines_any_contain(under_lines, "slipping"))
+		_under_herded_herd_fixture(), h._hud._band_labor.world_herds())
+	# **THE `Keepers:` ROW IS RETIRED and the HAZARD is what carries the news** (issue #545). It
+	# stated a standing demand every turn on a herd where nothing was wrong, said the same number the
+	# `Keeping:` row beside it said, and neither could be read; what a player needs from a head count
+	# is only ever *am I short*, which is the shed sentence and the rung row's own mark.
+	h._assert_hud("an under-kept herd flags the deficit and names the Husbandry role that stops it",
+		_lines_any_contain(under_lines, "animals are drifting off")
+		and _lines_any_contain(under_lines, "Husbandry")
+		and not _lines_any_contain(under_lines, "slipping"))
+	h._assert_hud("…and the standing keeper/keeping bill is gone from the drawer entirely",
+		not _lines_any_contain(under_lines, "drawn from the band")
+		and not _lines_any_contain(under_lines, "the pool covers"))
+
+	# **THE MID-BUILD READING, and it is the one a pooled readout gets wrong.** A herd mid-Tame is
+	# billed a non-zero upkeep — its animals are standing there whether or not the rung is finished —
+	# but NO POOL COVERS IT: the sim leaves an unbuilt rung out of the band's keeping pool and credits
+	# its BUILD crew instead. So the `Keeping:` row must say it is being built, and must not quote the
+	# pool or ask for keepers; the `Keepers:` row above it stays calm, the herd owing keepers only
+	# once the rung stands.
+	#
+	# **THE FORK IS THE METER NOW, and that is what this state is really pinning.** It used to be
+	# `upkeep_workers_needed == 0`, and this fixture publishes a POSITIVE count — the minimum viable
+	# build crew — so a row still reading the count would print `the pool covers 4 of 4 work` here and
+	# send the player to raise a role that will never settle this bill.
+	h._show_herd(_mid_tame_herd_fixture())
+	await h._settle()
+	await h._save("herd_keeping_mid_build")
+	var mid_tame_lines := DetailFormat.herd_summary_lines(
+		_mid_tame_herd_fixture(), h._hud._band_labor.world_herds())
+	# **THE MID-BUILD READING IS THE RUNG ROW'S NOW, and it is a PAIR** (issue #545). The retired
+	# `Keeping:` sentence said *its own crew pays the rate* on a paid build and *this rung is sliding
+	# back* on an unpaid one; a build whose crew is under the rate is exactly what the sim answers
+	# `-2` for, so the row states `∞` and the `At risk:` row beneath it says what the shortfall costs.
+	# Neither is on a herd whose build IS being paid, which is what makes the silence readable.
+	h._assert_hud("a herd mid-Tame whose build is paid states no shortfall and no keeper bill",
+		not _lines_any_contain(mid_tame_lines, DetailFormat.UPKEEP_RISK_ROW)
+		and not _lines_any_contain(mid_tame_lines, "the pool covers")
+		and not _lines_any_contain(mid_tame_lines, "under-herded"))
+	# …and the WARNING half of the same fork, which the row above cannot make: the identical herd with
+	# the same demand, its rate going UNPAID. Only the shortfall separates them, so a producer that
+	# had stopped reading it renders the same lines in both states and passes whichever is asserted
+	# alone.
+	var unpaid_tame := _mid_tame_herd_fixture()
+	unpaid_tame["upkeep_supplied"] = 0.0
+	unpaid_tame["upkeep_shortfall"] = float(MID_TAME_UPKEEP_DEMAND)
+	unpaid_tame["build_turns_remaining"] = SourceForecast.BUILD_TURNS_HOLDS
+	var unpaid_lines := DetailFormat.herd_summary_lines(
+		unpaid_tame, h._hud._band_labor.world_herds())
+	h._assert_hud("…while the same build going UNPAID is marked on its rung row AND priced at risk",
+		_lines_any_contain(unpaid_lines, HudSelectionVocab.RUNG_HAZARD_GLYPH)
+		and _lines_any_contain(unpaid_lines, DetailFormat.UPKEEP_RISK_ROW)
+		and not _lines_any_contain(unpaid_lines, "the pool covers"))
 
 	# State 2d-γ self-feeding pen — a radius-2 pen (19 fenced tiles) on lush land: the fenced footprint
 	# grazes the WHOLE feed, so the feed-split reads "Fed by pasture 100% · larder 0.0 food/turn" and the
@@ -747,25 +851,25 @@ func run(harness) -> void:
 	h._assert_hud("a geared animal build states what its keepers took off the job",
 		corral_drawer.contains(HudSelectionVocab.BUILD_GEAR_WORK_ROW_FORMAT
 			% DetailFormat.format_work_units(HerdFx.ANIMAL_BUILD_WORK_FROM_GEAR)))
-	h._assert_hud("…and it states the sim's own turn estimate beside its meter",
-		corral_drawer.contains(
-			HudSelectionVocab.BUILD_TURNS_ROW_FORMAT % HerdFx.ANIMAL_BUILD_TURNS_REMAINING))
+	# **THE TURN COUNT IS THE ROW ITSELF NOW** (issue #545), not an indented line under a meter
+	# restating the same job in work units — so the needle is the Corral row's own rendered value, with
+	# the meter following the count as context.
+	h._assert_hud("…and the Corral row LEADS with the sim's own turn estimate",
+		corral_drawer.contains(HudSelectionVocab.RUNG_TURNS_FORMAT % [
+			HerdFx.ANIMAL_BUILD_TURNS_REMAINING,
+			HudFormat.progress_percent(float(
+				HerdFx.corral_ready_herd_fixture().get("corral_progress", 0.0)))]))
 
-	# State 3d-corral-under-herded — the HERDER-DEFICIT cap fix. A composing-Corral herd needs 2 herders
-	# every turn to hold its tameness, but the Corral rung's take/prepare max-useful is 1. The compose
-	# stepper's cap must be max(1, herders_needed 2) = 2, so the `+` reaches 2 and the maintenance crew is
-	# staffable (an under-herded corral is otherwise an unwinnable trap). The drawer's Herders row reads
-	# "1 / 2 — under-herded" and the shed consequence line ("animals are drifting off. Staff all 2 herders
-	# to hold the herd." — NEVER the retired "tameness slipping" copy) names 2 — the SAME herders_needed
-	# the cap uses.
-	# Auto-max (a policy click arms the compose hunt autofill) fills the crew to the corrected cap of 2.
+	# State 3d-corral-under-herded — the HERDER-DEFICIT cap frame. A composing-Corral herd needs 2
+	# keepers every turn to hold its tameness, but the Corral rung's take/prepare max-useful is 1.
+	# Auto-max (a policy click arms the compose hunt autofill) fills the crew to the cap, and the claim
+	# below is that the cap REACHES the keeper deficit — see the assertion for why it is an inequality.
 	#
-	# THE STAFFING IS DIALED DOWN FOR THIS STATE ONLY. The drawer's "Herders A / N" row reads the band's
-	# ACTUAL hunt assignment on this herd (`assigned_herders_for`), and the reference band staffs 4 — which
-	# renders a FULLY-herded corral and hides the very shortfall the cap floor exists to fix. The row and
-	# the cap floor have to DISAGREE for the deficit to be visible, so this band staffs 1 against the herd's
-	# requirement of 2; `BandFx.band_fixture()` is restored immediately after the save, since `herd_corral_depleted`
-	# and every state downstream document the reference band's 4.
+	# THE STAFFING IS DIALED DOWN FOR THIS STATE ONLY, and it is the TAKE crew that moves: the reference
+	# band staffs 4 hunters, which saturates the take and hides the shape this frame is about. The
+	# drawer's `Keepers` row is a different allocation entirely and reads 0 here, the reference band
+	# keeping nothing. `BandFx.band_fixture()` is restored immediately after the save, since
+	# `herd_corral_depleted` and every state downstream document the reference band's 4.
 	var under_herded_band := BandFx.band_fixture().duplicate(true)
 	for entry in under_herded_band["labor_assignments"]:
 		if entry is Dictionary and String((entry as Dictionary).get("kind", "")) == "hunt":
@@ -871,7 +975,7 @@ func run(harness) -> void:
 			HudFloraVocab.KNOWLEDGE_TRACK_PENNING), TWO_METER_PENNING))
 	h._assert_hud("…and THIS HERD's own progress lives in its own drawer's Husbandry row",
 		Q.has_label_containing(h._hud.occupant_detail,
-			DetailFormat.husbandry_label(DetailFormat.HUSBANDRY_PROGRESS_COMPLETE)))
+			DetailFormat.husbandry_built_label()))
 	h._assert_hud("…and no knowledge percent leaks into the drawer, where it would read as a stat of the animal",
 		not Q.has_label_containing(h._hud.occupant_detail,
 			String(FactionReadouts.KNOWLEDGE_TRACK_LABELS[HudFloraVocab.KNOWLEDGE_TRACK_PENNING])))
@@ -929,11 +1033,15 @@ func run(harness) -> void:
 	h._assert_hud("…and states no PAUSE, the phase gating nothing on this web either",
 		not Q.has_label_containing(h._hud._drawercompose._compose_sheet, RETIRED_PAUSED_NOTE_NEEDLE))
 
-	# TAMING-STARTUP-LAG GUARD — composing an INVESTMENT rung (Tame) on a still-WILD herd must offer the
-	# ownership-INDEPENDENT would-be herder crew, not the 1-worker Tame-prep count. A wild herd's
-	# `herders_needed` is ownership-gated to 0, so the take/prepare max-useful (1) used to pin the cap at 1;
-	# the player could staff only 1, the herd became owned next turn needing 3, and read under-herded. The
-	# fix floors the LOCAL-hunt cap on `herders_needed_if_managed` (3) for investment rungs only.
+	# **THE KEEPER CREW IS NOT A TERM IN THE TAKE CAP** (`docs/plan_standing_upkeep.md` §2.2), and this
+	# pair is what pins it. The cap used to be FLOORED on a managed herd's `herdersNeeded` (and, for an
+	# investment rung on a still-wild herd, on the ownership-independent `herdersNeededIfManaged`),
+	# because one crew both hunted the animals and held them. The keeping is a BAND-WIDE POOL now
+	# (§2.5) — its own role card, its own hands — so a hunt stepper raised to a keeper count would be
+	# staffing the take against a bill the band's Husbandry role owes.
+	#
+	# **The pair is the claim**: the same herd at the same floor, composed WITH a Tame and WITHOUT one,
+	# must cap identically — a verb moves no take-side number any more.
 	h._hud.update_intensification([{
 		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
 	}])
@@ -947,28 +1055,27 @@ func run(harness) -> void:
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(_tame_worker_cap_herd_fixture())
 	# Tame is DIALED IN through `_compose_herd`, which survives the source-change re-seed — see its doc.
-	h._compose_herd(_tame_worker_cap_herd_fixture(), Spine.COMPOSE_COUNT_UNSET, ForageFx.COMPOSE_FLOOR_UNSET, "tame")
+	# The FLOOR is stated on both halves of the pair, so the only thing differing between them is the
+	# verb — an unset floor would let the re-seed pick one and the comparison would be about that.
+	h._compose_herd(_tame_worker_cap_herd_fixture(), Spine.COMPOSE_COUNT_UNSET,
+		SourceForecast.FLOOR_FOOD_PEAK, "tame")
 	await h._settle()
 	await h._save("herd_tame_worker_cap")
-	# Tame floors the cap on the would-be crew (10), NOT the Tame-prep useful (1): the sheet's max-useful
-	# note reads "max 10 workers useful here". Pre-fix it read "max 1 worker useful here" (floored on the
-	# ownership-gated herders_needed 0).
-	h._assert_hud("Tame offers the full would-be herder crew (max %d), not the 1-worker prep count"
+	var tame_cap_note := Q.label_containing(h._hud._drawercompose._compose_sheet, TAKE_CAP_NOTE_NEEDLE)
+	h._assert_hud("a composed Tame states a take cap at all (\"%s\")" % tame_cap_note,
+		tame_cap_note != "")
+	h._assert_hud("…and it is NOT the would-be herder crew (%d) — that keeping is the band POOL's"
 		% TAME_CAP_WOULD_BE_HERDERS,
-		Q.has_label_containing(h._hud._drawercompose._compose_sheet,
-			"max %d workers useful" % TAME_CAP_WOULD_BE_HERDERS))
-	h._assert_hud("…and not the pre-fix 1-worker cap",
-		not Q.has_label_containing(h._hud._drawercompose._compose_sheet, "max 1 worker useful"))
-	# COMPANION — the EXTRACTIVE Sustain rung manages nothing, so it needs no herders: its cap is
-	# take-useful only (Sustain 1.50 ÷ 0.30 = 5), and the would-be crew (3) must NOT leak into it.
+		not tame_cap_note.contains("max %d workers useful" % TAME_CAP_WOULD_BE_HERDERS))
+	# COMPANION — the SAME herd at the SAME floor with NO verb composed. Its cap must be the identical
+	# take-useful count: the take is what the stepper is for, and a build beside it moves nothing.
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(_tame_worker_cap_herd_fixture())
 	h._compose_herd(_tame_worker_cap_herd_fixture(), Spine.COMPOSE_COUNT_UNSET, SourceForecast.FLOOR_FOOD_PEAK)
 	await h._settle()
 	await h._save("herd_tame_worker_cap_sustain")
-	h._assert_hud("Sustain caps on its own take-useful (max 7), floored at 0",
-		Q.has_label_containing(h._hud._drawercompose._compose_sheet, "max 7 workers useful"))
-	h._assert_hud("…the would-be herder crew (%d) does not leak into an extractive rung"
-		% TAME_CAP_WOULD_BE_HERDERS,
-		not Q.has_label_containing(h._hud._drawercompose._compose_sheet,
-			"max %d workers useful" % TAME_CAP_WOULD_BE_HERDERS))
+	var bare_cap_note := Q.label_containing(h._hud._drawercompose._compose_sheet, TAKE_CAP_NOTE_NEEDLE)
+	h._assert_hud("an extractive compose caps on its own take-useful (max 7), floored at 0",
+		bare_cap_note.contains("max 7 workers useful"))
+	h._assert_hud("…and the composed Tame read the SAME cap, so the verb moves no take-side number",
+		tame_cap_note == bare_cap_note)

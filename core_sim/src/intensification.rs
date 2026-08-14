@@ -14,14 +14,25 @@
 //! rung up the ladder be a *bigger job* than the one below it, and what makes a build finish sooner as
 //! the faction improves.
 //!
+//! **THE PLAYER SPLITS THE BAND, and the sim splits nothing** (`docs/plan_standing_upkeep.md` §2.2).
+//! A source carries a **take** crew and a **build** crew, each a number the player typed, and the
+//! keeping is a band-level pool beside them; all three draw on one finite band, so the competition
+//! between them is visible in the allocation rather than derived from a fraction. That is what
+//! **dissolved the investment dip** — `yield_fraction_while_building` said *"this crew is preparing
+//! ground, not gathering"*, which is true of a **shared** crew and of nothing else.
+//!
+//! What the build's own output is net of is the rung's standing [`RungUpkeep`]: the rate is owed
+//! every turn, while building and while holding alike, so only a build crew's **surplus** above it is
+//! progress and a crew at or below the rate never finishes.
+//!
 //! This module is the **data + the seam**, not a second copy of the rules:
 //! - [`LadderConfig`] (`data/intensification_ladder.json`) holds one [`RungDef`] record per rung —
 //!   the links (verb, unlock/earns knowledge, previous rung, husbandry ceiling) and the build dials.
 //!   Adding a rung that recombines existing primitives is a one-record edit.
-//! - [`RungDef::build_accrual`] / [`RungDef::build_cost`] / [`RungDef::build_decay`] /
-//!   [`RungDef::yield_fraction_while_building`]
-//!   are **the** build seam. Both tracks call them instead of reaching for their own bespoke
-//!   accrue/cost/decay/dip levers, so the plant and animal ladders can never drift apart numerically.
+//! - [`RungDef::build_accrual`] / [`RungDef::build_cost`] / [`RungDef::build_decay`] are **the**
+//!   build seam, and [`RungDef::upkeep_demand`] / [`RungDef::upkeep_decay`] the **standing-cost**
+//!   one beside it. Both tracks call them instead of reaching for their own bespoke
+//!   accrue/cost/decay levers, so the plant and animal ladders can never drift apart numerically.
 //!   The per-source *state* stays where it lives (`ForagePatch::cultivation_progress`,
 //!   `Herd::domestication_progress`, `Herd::corral_progress`, each beside a stored companion **cost**)
 //!   — the engine supplies the amounts, the source owns its meter and the side-effects of completing
@@ -106,50 +117,19 @@ pub const FABRICATED_BUILD_COST: f32 = PER_WORKER_OUTPUT;
 /// if that ever stopped being true.
 pub const NO_NEGLECT_GRACE: u32 = 0;
 
-/// **A crew of nobody** — the rejected value of [`RungBuild::crew_needed`]. A staffing *floor* of
-/// nobody is nonsense; a rung with no crew model of its own says `null`.
-pub const NO_CREW: u32 = 0;
-
-/// **No improvement is being built on this source**, so its build contributes no crew demand and
-/// [`source_crew_needed`] collapses to the take-side count — the pre-crew-axis behaviour, verbatim.
-/// Also what a rung whose web sizes its crew off the *source* rather than the rung reports (both
-/// animal rungs — see [`RungDef::build_crew_needed`]).
-pub const NO_BUILD_CREW: u32 = 0;
-
-/// **THE crew a worked source demands: `max(standing crew, take crew)`** — one crew that can cover
-/// its busiest job, and the single definition **both** the resolved turn (`advance_labor_allocation`)
-/// and the assign-time seed (`forage::forage_source_yield_preview` /
-/// `fauna::hunt_source_yield_preview`, through `fauna::forecast_source_yield`) report through. It
-/// lives here, on the rung engine, because the *standing* half is a rung's own
-/// [`RungDef::build_crew_needed`] on the plant web and a herd's `herders_needed` on the animal one —
-/// neither module can own a rule the other must obey.
-///
-/// **The two halves are different units and neither dominates**, which is why this is a `max` and not
-/// a sum or a pick:
-///
-/// ```text
-/// herding = per HEAD     — one herder minds 12 aurochs   (animals_per_herder)
-/// hauling = per BIOMASS  — one hauler carries 40 biomass  (per_worker_biomass_capacity)
-/// building = per RUNG    — a Cultivate wants 2 pairs of hands whatever the patch pays
-/// ```
-///
-/// A shepherd minds ~300 sheep and could not carry three of them; an aurochs herder minds 12 head
-/// (960 biomass) but hauls 40. `+` would be two separate teams; `max` is one crew sized by whichever
-/// job binds.
-///
-/// **Reporting only one half made the UI contradict itself.** On the animal web, the herder count
-/// alone read `workersNeeded: 1` beside `wastedYield: 0.80` — *drop workers* and *add workers*, at
-/// the same time, on the same row. On the plant web, a crew *preparing* a patch is paid the
-/// investment dip, so inverting that (dipped) take gave `workers_needed = 1` where the same patch's
-/// wild Sustain gather wants 2: the panel asked for **fewer** people to do **more** work, and flagged
-/// the second worker as overstaffing.
-///
-/// **Wild hunting is untouched by construction**: a wild herd isn't yours to maintain, so
-/// `fauna::herd_herders_needed` is [`NO_CREW`] and this collapses to the take-side count — the
-/// shipped behaviour, verbatim. (`hunt = reach + carry`; `harvest = maintain + take`.)
-pub fn source_crew_needed(standing_crew: u32, take_workers: u32) -> u32 {
-    standing_crew.max(take_workers)
-}
+// **RETIRED: `source_crew_needed(standing_crew, take_workers)`** — `max(standing, take)`, the one
+// blended head count a source published.
+//
+// It existed because one crew did every job on a source, so *"how many people does this want"* had
+// to reconcile a herding count, a hauling count and a build's staffing floor into a single number,
+// and reporting only one half made the UI contradict itself (`workersNeeded: 1` beside
+// `wastedYield: 0.80` — *drop workers* and *add workers*, on the same row).
+//
+// **The player states each activity's crew now** (`docs/plan_standing_upkeep.md` §2.2), so the
+// question is asked per activity and each answer is in its own unit: hands to meet the upkeep
+// (`ceil(upkeep_demand / PER_WORKER_OUTPUT)`), hands to haul the offer (`fauna::hunt_take_workers` /
+// `workers_needed_for_take`). A `max` across units was always the compromise a single allocation
+// forced.
 
 /// **How many more turns of neglect this source can absorb before the penalty bites** —
 /// `(grace_turns + 1) - neglect_turns`, floored at zero, and THE one place that arithmetic lives so
@@ -227,13 +207,6 @@ pub fn build_work_per_worker_turn() -> f32 {
     PER_WORKER_OUTPUT
 }
 
-/// **WHAT A CREW OF `workers` PRODUCES IN ONE TURN**, before the floor and the kit scale it — the
-/// first term of [`RungDef::build_accrual`], and [`build_work_per_worker_turn`] summed over the
-/// crew.
-fn crew_work_output(workers: u32) -> f32 {
-    workers as f32 * build_work_per_worker_turn()
-}
-
 /// **WHAT THE CREW'S TOOLS TAKE OFF THE JOB** — `Σ over the crew`, which
 /// [`crate::equipment_config::KitCoverage::weighted_rate`] × head count already is
 /// (`docs/plan_unit_costed_work.md` §6.2).
@@ -244,6 +217,13 @@ fn crew_work_output(workers: u32) -> f32 {
 /// (*bring fewer keepers and the pen goes up faster*). `per_worker` is
 /// [`crate::equipment_config::EquipmentConfig::build_work_per_worker`] resolved through the crew's
 /// coverage, so a partly-equipped party gets exactly the share it carries.
+///
+/// **`workers` IS THE BUILD'S OWN CREW**, never the band's crew on the source
+/// (`docs/plan_standing_upkeep.md` §2.2). `per_worker` is a **rate per worker**, so the count it
+/// multiplies has to be the workers actually doing the job — and since
+/// [`LadderConfig::effective_build_cost`] is deliberately unfloored, pairing a band-wide count with a
+/// one-hand build would let a single builder beside a large gathering crew pay a whole job off
+/// outright. That became reachable the moment the two crews split.
 ///
 /// Floored at [`NO_BUILD_GEAR`] so a config that somehow named a negative contribution cannot *add*
 /// work to a job — `EquipmentConfig::validate` rejects one, and this is the arithmetic's own guard.
@@ -304,6 +284,81 @@ pub fn build_turns_remaining(cost: f32, done: f32, work_this_turn: f32) -> Optio
     Some((remaining / work_this_turn).ceil() as u32)
 }
 
+/// **WHAT A SOURCE'S BUILD COUNTDOWN SAYS — FOUR ANSWERS, NOT TWO.**
+///
+/// [`build_turns_remaining`] is the arithmetic and answers `Option<u32>`; this is what the *source*
+/// stores and the wire publishes, because *"there is no answer"*, *"the meter is standing still"*
+/// and *"the meter is going backwards"* are different facts and were being collapsed into one
+/// sentinel — first all three into `-1`, then the last two into `-2`.
+///
+/// | this enum | wire | what it means |
+/// |---|---|---|
+/// | `Some(Turns(n))` | `n` | a real finish date |
+/// | `Some(Holding)` | [`sim_schema::BUILD_METER_HOLDS`] | **the meter holds exactly where it is** |
+/// | `Some(Rotting)` | [`sim_schema::BUILD_METER_ROTS`] | **the meter is going backwards** |
+/// | `None` | [`sim_schema::NO_BUILD_TURNS_ESTIMATE`] | there is genuinely no answer |
+///
+/// # WHY THE TWO NON-FINISHING STATES ARE NOT ONE
+///
+/// The maintenance rate is a tax on building (`docs/plan_standing_upkeep.md` §2.4), so a crew at or
+/// below it never finishes. That is **actionable and permanent** — a standing fact about a staffing
+/// the player has already committed — where the no-answer state is a transient absence of
+/// information; folded into one sentinel it rendered as *no line at all* on the tile card and the
+/// herd drawer, visible only to a compose sheet that happened to redo the comparison itself.
+///
+/// **But "never finishes" was itself two pieces of news**, and they cost the player differently:
+/// exactly at the rate the crew's whole output is spent on maintenance, so the meter **holds** and
+/// the turn is merely wasted; **below** it there is a shortfall, and past the rung's grace the decay
+/// pass bleeds work the player already bought. The mirror of [`net_build_supply`]'s own three-line
+/// table — *grows / holds / rots* — which is the vocabulary this enum deliberately reuses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildTurns {
+    /// `ceil((cost − done) / net)` at the crew that is on it.
+    Turns(u32),
+    /// **A real, staffed, priced build whose net supply is exactly zero.** All three conditions are
+    /// load-bearing: an *unstaffed* source has promised nothing and reads `None`, or every idle
+    /// improvement on the map would claim it will never finish.
+    Holding,
+    /// **The same build with a negative net** — the crew is under the rung's maintenance rate, so
+    /// what it does not supply is a shortfall and the decay pass takes the meter backwards.
+    Rotting,
+}
+
+/// **THE COUNTDOWN A SOURCE PUBLISHES** — [`build_turns_remaining`]'s arithmetic, with the two states
+/// it cannot see folded in: whether anybody is actually on the job, and which side of the maintenance
+/// rate they fall on.
+///
+/// `balance` is the **signed** net ([`RungDef::build_balance`]), not the floored one
+/// [`net_build_supply`] hands a meter: the floor is what a meter may *add*, and it maps *holding* and
+/// *rotting* onto the same `0.0`, which is exactly the distinction this function exists to publish.
+///
+/// `staffed` is *"is this a real build crew"* — hands on the verb, or the hands a projection is being
+/// quoted at — **and the rung's own gates holding**. A non-positive balance with no such crew is
+/// `None`, because nobody has promised anything there.
+pub fn build_turns_estimate(
+    cost: f32,
+    done: f32,
+    balance: f32,
+    staffed: bool,
+) -> Option<BuildTurns> {
+    match build_turns_remaining(cost, done, balance) {
+        Some(turns) => Some(BuildTurns::Turns(turns)),
+        None if !staffed => None,
+        None if balance < BUILD_BALANCE_HOLDS => Some(BuildTurns::Rotting),
+        None => Some(BuildTurns::Holding),
+    }
+}
+
+/// **THE BALANCE AT WHICH A METER NEITHER GROWS NOR ROTS** — a crew whose whole output goes on the
+/// rung's maintenance rate, so `supply − demand` is exactly this.
+///
+/// It is the boundary [`BuildTurns::Holding`] and [`BuildTurns::Rotting`] are split on, and it is
+/// named separately from [`NO_BUILD_PROGRESS`] — which is the same number — because the two are
+/// different statements about it: that one is a **floor** on what a meter may add, this one is the
+/// **cut point** between two published answers. A reader that borrowed the floor's name here would
+/// be asserting the rot case away.
+pub const BUILD_BALANCE_HOLDS: f32 = 0.0;
+
 /// **THE ANSWER FOR A BAR A WORKING CREW IS ALREADY AT OR PAST** — one turn, because a build with no
 /// work left to do completes on the first turn anybody works it.
 ///
@@ -311,20 +366,6 @@ pub fn build_turns_remaining(cost: f32, done: f32, work_this_turn: f32) -> Optio
 /// value: this is *"there is nothing left to wait for"*, which is a real answer, and deliberately
 /// **not** [`NO_BUILD_TURNS_ESTIMATE`], which means *"there is no answer"*.
 pub const BUILD_FINISHES_IN_ONE_TURN: u32 = 1;
-
-/// **The floor a build on a RUNG-3 MANAGED source passes** — the food peak, so [`learn_multiplier`]
-/// is exactly `×1.0`.
-///
-/// A Field and a penned herd are *yours*: their take is `managed_production` at **every** floor
-/// (`SourceYieldForecast::managed`), so the assignment's floor is inert there and there is no
-/// pressure the crew actually chose. Reading the dial anyway would scale a keeper's learning by a
-/// number that changed nothing about what they took. Two builds are in that state — `ExtendPen`
-/// (which rides a corralled herd's tend branch) and a Field's own harvest — and both climb at the
-/// rung's stated pace instead.
-///
-/// Named rather than spelled `MSY_BIOMASS_FRACTION` at the call sites so the *reason* travels with
-/// the value: this is "the floor axis has collapsed here", not "the food peak happens to be right".
-pub const MANAGED_SOURCE_FLOOR: f32 = crate::fauna::MSY_BIOMASS_FRACTION;
 
 /// **The cost multiplier of a source that costs exactly what its rung declares.** Passed by every
 /// caller with no per-source multiplier to apply (the plant `tended` patch, the plant `field`, the
@@ -362,85 +403,237 @@ pub const NO_BUILD_GEAR: f32 = 0.0;
 /// the rung rather than carrying its own copy of the number.
 pub const REFERENCE_BUILD_RUNG: RungKey = RungKey::PlantTended;
 
-/// **The yield dip of an assignment that is building nothing** — the identity, so a pure harvest pays
-/// its stance's whole ceiling. Named rather than a bare `1.0` at [`LadderConfig::build_dip`]'s `None`
-/// arm, where the number says nothing about which multiplier is being declined.
-pub const NO_BUILD_UNDERWAY_DIP: f32 = 1.0;
+/// **The crew the grace bound measures a build against** — one worker, which is the **longest**
+/// that build can take and therefore the loosest the bound can be. A guard that catches a grace
+/// swallowing its own build must err toward permitting, not toward rejecting a config nobody could
+/// have known was wrong.
+pub const SOLE_BUILDER: u32 = 1;
 
-/// **The dip a source with NOTHING LEFT TO BUILD publishes on the wire** — a Field, a penned herd.
-/// `snapshot.fbs` documents a build fraction as `0 < f < 1`, so this sits deliberately *outside*
-/// that range and means *"this rung is not on offer here"*; the client's compose sheet already
-/// declines to quote a deal on a non-positive fraction
-/// (`SourceForecast.gd::improvement_forecast`), so the sentinel needs no client change to be read
-/// correctly. Publishing the identity `1.0` instead said two false things at once: that a finished
-/// source's build costs nothing, and that it is still available.
-///
-/// **It is a WIRE value, never a multiplier.** [`BuildDips::of`] still answers
-/// [`NO_BUILD_UNDERWAY_DIP`] for a rung there is nothing to build, because a ceiling scaled by `0`
-/// would pay a managed source's crew nothing.
-pub const NO_BUILD_REMAINING_FRACTION: f32 = 0.0;
+/// **A rung that declares no standing upkeep** — what its `upkeep_demand` answers, and what a crew
+/// with no maintenance allocation supplies. On the shipped ladder that is the two **wild** rungs and
+/// nothing else: land nobody improved costs nobody anything to hold. All four managed rungs declare
+/// an upkeep.
+pub const NO_UPKEEP_DEMAND: f32 = 0.0;
 
-/// **One food web's two build dips**, carried on a `fauna::SourceYieldForecast` so a forecast can
-/// price a build without holding the ladder — the pre-commit twin of [`LadderConfig::build_dip`].
+/// **A shortfall that costs the meter nothing** — what [`RungDef::upkeep_decay`] answers for a rung
+/// with no upkeep, and for one still inside its grace. Named for the same reason
+/// [`NO_NEGLECT_GRACE`] is: a bare `0.0` at a decay site reads as *"the meter is fine"* when the
+/// question asked was *"how much did neglect cost it"*.
+pub const NO_UPKEEP_DECAY: f32 = 0.0;
+
+/// **A SOURCE THAT IS FULLY STAFFED** — the shortfall fraction of a demand that is entirely met, and
+/// of a rung that demands nothing at all. Named because [`upkeep_shortfall_fraction`]'s `0` is a
+/// *statement* ("these hands are all there") rather than the absence of an answer.
+pub const FULLY_SUPPLIED: f32 = 0.0;
+
+/// **A SOURCE NOBODY IS HOLDING** — the shortfall fraction of a demand nothing was supplied against,
+/// and therefore the multiplier at which a rung bleeds its whole [`RungMeterDecay::per_turn`].
+pub const WHOLLY_UNSUPPLIED: f32 = 1.0;
+
+/// **NOBODY IS ON THIS ACTIVITY** — the crew of an assignment that is building nothing, or keeping
+/// nothing. It is the shipped default of both `LaborAssignment::improvement_workers` and
+/// `LaborAssignment::maintain_workers`, and it is how a player says *"stop maintaining this"*: there
+/// is no toggle, there is a **number**, and zero is the whole of what "off" means.
+pub const NO_CREW_ON_THIS_ACTIVITY: u32 = 0;
+
+/// **THE WORK A CREW ON ONE ACTIVITY PRODUCES IN ONE TURN** — `workers × PER_WORKER_OUTPUT`, and the
+/// arithmetic that replaced the retired one-pool work budget
+/// (`docs/plan_standing_upkeep.md` §2.2).
 ///
-/// Two slots, not four, because the improvements are **kind-exclusive**: a plant source is only ever
-/// asked about `Cultivate`/`Sow` and an animal one about `Tame`/`Corral`, so "rung 2" and "rung 3"
-/// name the pair unambiguously for whichever branch the source belongs to.
+/// # THE PLAYER STATES THE SPLIT — there is nothing to derive
 ///
-/// **A slot is `None` when the source has nothing left to build there** — the rung-3 managed shape
-/// ([`crate::fauna::SourceYieldForecast::managed`]). That state has to be *representable*: it is not
-/// the same fact as "the dip happens to be 1.0", and the wire distinguishes them
-/// ([`NO_BUILD_REMAINING_FRACTION`]).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct BuildDips {
-    /// The rung-2 verb's `yield_fraction_while_building` (`Cultivate` on plants, `Tame` on animals),
-    /// or `None` when this source has nothing left to build at that rung.
-    pub rung_two: Option<f32>,
-    /// The rung-3 verb's (`Sow` on plants, `Corral` on animals), same convention.
-    pub rung_three: Option<f32>,
+/// A source carries up to **three independent allocations** from a band — a **take** crew
+/// (`assign_labor`), a **build** crew (the improvement verb) and a **maintain** crew (the `maintain`
+/// command). They draw on the same finite band, so competing for hands is the opportunity cost, and
+/// it is **visible in the numbers the player typed** rather than buried in a fraction or in a
+/// priority order they cannot see:
+///
+/// ```text
+/// upkeep_supplied  = maintain_workers × PER_WORKER_OUTPUT
+/// upkeep_shortfall = max(0, upkeep_demand − upkeep_supplied)   // → decay, past grace
+/// build_work       = build_workers × PER_WORKER_OUTPUT         // − what the crew's gear takes off the job
+/// take             = min(take_workers × per_worker_capacity, source_offer)
+/// ```
+///
+/// **There is no cap on any of them**, exactly as there is none on a build's crew: fifty hands may
+/// keep a pen and fifty more may widen it, and the constraint is what those hands are not doing
+/// elsewhere.
+///
+/// # What this retired, and why the retirement is a simplification
+///
+/// The predecessor was one pool per crew-turn with a fixed priority order (upkeep → build →
+/// production) and a derived take. It bought the dip's retirement, which **stands** — but it also
+/// had to answer *"what share of one crew's turn reaches the take"*, and that question has a
+/// degenerate `0/0` answer at a floor of zero (`learn_multiplier(0.0)` is `0`), plus a hard-coded
+/// ordering the player could neither see nor state. Three allocations answer it by not asking.
+pub fn activity_work(workers: u32) -> f32 {
+    workers as f32 * build_work_per_worker_turn()
 }
 
-impl Default for BuildDips {
-    /// A default-constructed forecast offers no build — matching [`BuildDips::NOTHING_LEFT_TO_BUILD`].
-    /// (`SourceYieldForecast` derives `Default` for its test fixtures.)
-    fn default() -> Self {
-        Self::NOTHING_LEFT_TO_BUILD
+/// **WHAT A BUILD CREW ACTUALLY BANKS, AFTER THE MAINTENANCE RATE IS PAID** — `max(0, supply −
+/// rate)` (`docs/plan_standing_upkeep.md` §2.4).
+///
+/// # THE RATE IS OWED ALWAYS; ONLY WHO SUPPLIES IT MOVES
+///
+/// A source is **building** below its meter's cost and **maintaining** at it, and that one state
+/// test decides nothing but the supplier — the build crew below, the band's keeping pool at. The
+/// rate itself never lapses, so a build crew is paying it too, and what is left over is progress:
+///
+/// ```text
+/// net > 0  →  the surplus is BUILD PROGRESS
+/// net = 0  →  the meter HOLDS exactly where it is
+/// net < 0  →  it ROTS, in proportion to the shortfall (`upkeep_shortfall_fraction`)
+/// ```
+///
+/// **The floor at zero is not a clamp, it is the boundary between two accounts.** A negative net is
+/// the *rot*, and the rot is the decay pass's to apply off the same stored supply — this seam only
+/// answers the build's half, so it must not hand a caller a negative amount to add to a meter.
+///
+/// **The COUNTDOWN reads the unfloored twin** ([`RungDef::build_balance`]), because the floor is what
+/// erases the difference between the middle line and the bottom one above.
+pub fn net_build_supply(supply: f32, maintenance_rate: f32) -> f32 {
+    (supply - maintenance_rate).max(NO_BUILD_PROGRESS)
+}
+
+/// **A BUILD THAT BANKS NOTHING THIS TURN** — the answer for a crew at or below the maintenance rate,
+/// which holds the meter where it is rather than advancing it. Named because a bare `0.0` at
+/// [`net_build_supply`]'s floor reads as *"no crew"* when the case that matters is *"a crew that is
+/// not enough"*.
+pub const NO_BUILD_PROGRESS: f32 = 0.0;
+
+/// **NOTHING IS IN PLAY ON THIS RUNG** — [`RungDef::build_balance`]'s answer where the crew is not
+/// building this rung at all: it has nothing to build, its gates refuse, or the verb names another
+/// rung. Neither growing nor rotting, because there is no build to describe.
+///
+/// Distinct from [`NO_BUILD_PROGRESS`] in the same way [`BUILD_BALANCE_HOLDS`] is: that is a real
+/// crew that exactly pays the rate, this is the absence of a build. Nothing acts on it — every
+/// caller reaching a non-positive balance is already gated by `staffed` — and it is named so that
+/// absence cannot be misread as the holding case if one ever does.
+pub const NO_BUILD_BALANCE: f32 = 0.0;
+
+/// **WHAT THE RUNG'S STANDING DEMAND LEAVES UNMET**, in work units — `max(0, demand − supplied)`,
+/// and therefore exactly what [`RungDef::upkeep_decay`] bleeds off the meter past the grace
+/// (`docs/plan_standing_upkeep.md` §2.4).
+///
+/// Stated here rather than at the two webs' call sites so *"shortfall is the decay"* is one
+/// subtraction with one home — the same discipline [`RungDef::build_cost`] and
+/// [`RungDef::build_decay`] already follow.
+pub fn upkeep_shortfall(demand: f32, supplied: f32) -> f32 {
+    (demand - supplied).max(NO_UPKEEP_DEMAND)
+}
+
+/// **HOW SHORT YOU ARE, AS A FRACTION OF WHAT WAS ASKED** — `shortfall / demand`, clamped to
+/// `0..=1`. [`FULLY_SUPPLIED`] with every hand on it, [`WHOLLY_UNSUPPLIED`] with none.
+///
+/// # THE DECAY RIDES THIS, NOT THE SHORTFALL ITSELF
+///
+/// *Shortfall was the decay* welded two questions together — **how much work does holding this
+/// want** and **how fast does it rot when you stop** — so raising a demand made the thing rot faster
+/// in exact proportion and neither number could be retuned without moving the other. A rung states
+/// them separately now: the demand is [`RungUpkeep::work_per_turn`], the rate is
+/// [`RungMeterDecay::per_turn`], and *this* is what couples them —
+///
+/// ```text
+/// decay_this_turn = shortfall_fraction × decay_per_turn      // past the grace
+/// ```
+///
+/// **It is the shape the animal web already had.** A herd's shed is `shortfall_in_loads ×
+/// animals_per_herder`, which is exactly this fraction times the head count, taken at the species'
+/// own escape fraction — so the fraction is stated once here and each web supplies its own rate.
+///
+/// A demand of nothing is [`FULLY_SUPPLIED`]: a rung with no upkeep is not "wholly unheld", it is
+/// unbilled.
+pub fn upkeep_shortfall_fraction(demand: f32, supplied: f32) -> f32 {
+    if demand <= NO_UPKEEP_DEMAND {
+        return FULLY_SUPPLIED;
     }
+    (upkeep_shortfall(demand, supplied) / demand).clamp(FULLY_SUPPLIED, WHOLLY_UNSUPPLIED)
 }
 
-impl BuildDips {
-    /// **Nothing left to build** — the value a rung-3 managed source carries (a Field, a penned
-    /// herd): its policy axis has collapsed onto one managed number, and quoting a dip on it would
-    /// price a build that cannot be started.
-    pub const NOTHING_LEFT_TO_BUILD: Self = Self {
-        rung_two: None,
-        rung_three: None,
-    };
+/// **HOW A BAND SPLITS ITS MAINTENANCE POOL WHEN IT CANNOT COVER EVERYTHING** — a per-band player
+/// option (`docs/plan_standing_upkeep.md` §2.5), because the two answers are both defensible and the
+/// choice between them is a real one.
+///
+/// It rides [`crate::components::LaborAllocation`], so it is `SimState` and a checkpoint restores
+/// the allocation it produced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UpkeepFundMode {
+    /// **Everything degrades a little** — each source is funded in proportion to its demand, so a
+    /// band at 60% of its total holds every source at 60%. The default, because it is what an
+    /// unstated policy means: nobody is singled out.
+    #[default]
+    Spread,
+    /// **Fund sources completely until the pool runs out, most-invested first** — the biggest
+    /// investments stay whole and the marginal ones rot. Ordering is the caller's
+    /// ([`distribute_upkeep_pool`] funds in slice order) and is total and deterministic, so a
+    /// checkpoint restores the same allocation.
+    Priority,
+}
 
-    /// Read one branch's pair off the ladder.
-    pub fn for_branch(ladder: &LadderConfig, branch: RungBranch) -> Self {
-        let (rung_two, rung_three) = match branch {
-            RungBranch::Plant => (Improvement::Cultivate, Improvement::Sow),
-            RungBranch::Animal => (Improvement::Tame, Improvement::Corral),
-        };
-        Self {
-            rung_two: Some(ladder.build_dip(Some(rung_two))),
-            rung_three: Some(ladder.build_dip(Some(rung_three))),
+impl UpkeepFundMode {
+    /// Stable config/command/wire token — the [`RungBranch::as_str`] convention.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            UpkeepFundMode::Spread => "spread",
+            UpkeepFundMode::Priority => "priority",
         }
     }
 
-    /// The dip an assignment carrying `improvement` multiplies its stance's ceiling by —
-    /// [`NO_BUILD_UNDERWAY_DIP`] when it is building nothing, and equally when the rung it names has
-    /// nothing left to build (a crew standing on a finished source is harvesting, not preparing).
-    pub fn of(self, improvement: Option<Improvement>) -> f32 {
-        match improvement {
-            None => NO_BUILD_UNDERWAY_DIP,
-            Some(Improvement::Cultivate | Improvement::Tame) => {
-                self.rung_two.unwrap_or(NO_BUILD_UNDERWAY_DIP)
+    /// Parse a command/wire token. `None` for anything else, which the caller reports rather than
+    /// guessing at — the `maintain`-grammar discipline that an unknown token fails loudly.
+    pub fn from_token(token: &str) -> Option<Self> {
+        match token {
+            "spread" => Some(UpkeepFundMode::Spread),
+            "priority" => Some(UpkeepFundMode::Priority),
+            _ => None,
+        }
+    }
+}
+
+/// **WHAT EACH SOURCE GETS OUT OF THE BAND'S POOL** — one share per demand, in the order given, and
+/// **never more than the pool** (`docs/plan_standing_upkeep.md` §2.5).
+///
+/// # A POOL HAS NO LEFTOVER BY CONSTRUCTION
+///
+/// The predecessor was a per-source keeper crew, and an indivisible supplier meeting a per-source
+/// demand **wastes whatever it does not spend**: a demand of `1.5` staffed by two hands throws half
+/// a worker away, and the waste grows as gear makes a hand worth more. One pool against the summed
+/// demand cannot waste anything — every unit either meets a demand or is still in the pool.
+///
+/// **The two modes are the player's** ([`UpkeepFundMode`]):
+/// - [`UpkeepFundMode::Spread`] scales every demand by the same `pool / total` coverage.
+/// - [`UpkeepFundMode::Priority`] walks the slice in order, paying each demand **in full** until the
+///   pool runs out. The **caller owns the order** — most-invested first, tie-broken on a stable
+///   per-web key — because "most invested" is a per-web reading (a patch's stamped meter cost, a
+///   herd's) and the ladder has no business knowing either. What the ladder owns is that the order it
+///   is handed is the order it funds.
+pub fn distribute_upkeep_pool(pool: f32, demands: &[f32], mode: UpkeepFundMode) -> Vec<f32> {
+    let pool = pool.max(NO_UPKEEP_DEMAND);
+    match mode {
+        UpkeepFundMode::Spread => {
+            let total: f32 = demands
+                .iter()
+                .map(|demand| demand.max(NO_UPKEEP_DEMAND))
+                .sum();
+            if total <= NO_UPKEEP_DEMAND {
+                return vec![NO_UPKEEP_DEMAND; demands.len()];
             }
-            Some(Improvement::Sow | Improvement::Corral) => {
-                self.rung_three.unwrap_or(NO_BUILD_UNDERWAY_DIP)
-            }
+            let coverage = (pool / total).min(WHOLLY_UNSUPPLIED);
+            demands
+                .iter()
+                .map(|demand| demand.max(NO_UPKEEP_DEMAND) * coverage)
+                .collect()
+        }
+        UpkeepFundMode::Priority => {
+            let mut left = pool;
+            demands
+                .iter()
+                .map(|demand| {
+                    let share = demand.max(NO_UPKEEP_DEMAND).min(left);
+                    left -= share;
+                    share
+                })
+                .collect()
         }
     }
 }
@@ -517,6 +710,35 @@ impl RungKey {
             RungKey::PlantField => "field",
             RungKey::AnimalPastoral => "pastoral",
             RungKey::AnimalPen => "pen",
+        }
+    }
+
+    /// **THE RUNG A VERB BUILDS** — the key half of [`LadderConfig::rung_for`], so a caller that
+    /// needs to *name* the rung an improvement climbs (rather than read its dials) does not pair a
+    /// verb with a `RungKey` by hand. The completion hand-off asks it: *which rung did this crew just
+    /// finish, and does it cost anything to hold?*
+    ///
+    /// Exhaustive, like [`Improvement::valid_for_forage`](crate::components::Improvement) — a new
+    /// verb fails to compile until someone states which rung it builds.
+    pub fn built_by(improvement: Improvement) -> Self {
+        match improvement {
+            Improvement::Cultivate => RungKey::PlantTended,
+            Improvement::Sow => RungKey::PlantField,
+            Improvement::Tame => RungKey::AnimalPastoral,
+            Improvement::Corral => RungKey::AnimalPen,
+        }
+    }
+
+    /// **WHICH STANDING ROLE KEEPS THIS RUNG** — the band-level pool its upkeep draws from
+    /// (`docs/plan_standing_upkeep.md` §2.5): the **agriculture** role for the plant web, the
+    /// **husbandry** role for the animal one.
+    ///
+    /// It is a reading of [`Self::branch`] rather than a second table, because the split *is* the two
+    /// webs' existing split — the roles were not a new axis, they are the ladders'.
+    pub fn upkeep_role(self) -> crate::components::LaborTarget {
+        match self.branch() {
+            RungBranch::Plant => crate::components::LaborTarget::Agriculture,
+            RungBranch::Animal => crate::components::LaborTarget::Husbandry,
         }
     }
 
@@ -740,76 +962,184 @@ pub struct RungBuild {
     /// *bigger* by declaring the crew *worse*. Validated finite and `> 0` — a zero would silently
     /// make the rung free.
     pub work_cost: f32,
-    /// **The fraction of this rung's own cost bled per turn nobody works the source** — "walk away
-    /// and the cleared ground grows back over". `0.01` is ~100 turns to fully lapse *whatever the job
-    /// costs*, which is why it is a fraction rather than an absolute: the build:decay ratio stays a
-    /// per-rung ratio when the cost spread lands (§3.2). [`RungDef::build_decay`] turns it into
-    /// absolute work units. Validated `0 < decay_fraction_per_turn < 1`: a rung that bled its whole
-    /// cost in a turn could never complete.
+    /// **The neglect GRACE — the UN-WORKED-BUILD trigger, which is now the ANIMAL branch's alone.**
+    /// How many consecutive turns a source may go un-worked before this rung's neglect penalty
+    /// starts. The penalty applies only while the source's `neglect_turns` counter is **strictly
+    /// greater** than this, so `0` restores the old no-grace behaviour and `n` forgives exactly `n`
+    /// unworked turns. An animal rung sheds animals over its labor capacity
+    /// (`fauna::advance_husbandry`); the rung the source stands on owns the number, which is the
+    /// point of it being per-rung — *a fence stands for years*, so `animal:pastoral` and `animal:pen`
+    /// want different answers.
     ///
-    /// **`None` = this rung's meter does not bleed at all**, and that is the animal branch's whole
-    /// story: `domestication_progress` is monotone-up (neglect sheds *animals*, never tameness —
-    /// `docs/plan_fauna_neglect_escape.md` §2.1) and a pen is lost outright with the herd that bled
-    /// out, so neither animal rung has a decaying meter. Both used to carry a number here
-    /// (`pastoral` `0.01`, `pen` `0.0`) that **nothing read** — [`RungDef::build_decay`]'s only
-    /// production call sites are `forage::advance_cultivation`'s two plant rungs — so the record
-    /// documented a mechanic that does not exist. Absent states the truth and cannot be mistaken for
-    /// a live dial.
+    /// **`None` = this rung's neglect is not counted in un-worked turns**, which is the whole plant
+    /// branch: a plant rung's penalty is its **upkeep shortfall**
+    /// (`docs/plan_standing_upkeep.md` §2.4), so its grace is [`RungUpkeep::grace_turns`] and a
+    /// second number here would be a dial nothing reads. Absent states that, exactly as the retired
+    /// `decay_fraction_per_turn` did — a parked value reads like a live dial.
     ///
-    /// **That bound holds per-source too, and it is checked exactly once here.** A per-source cost
-    /// multiplier ([`RungDef::build_cost`]) scales the cost, and [`RungDef::build_decay`] reads the
-    /// decay off that same scaled cost — so the ratio is invariant for free and no per-species
-    /// restatement of this bound is needed, only that the multiplier itself is positive and finite
-    /// (which the roster that owns it, `FaunaConfig::validate`, enforces).
+    /// Validated when present: `< work_cost / PER_WORKER_OUTPUT` — the grace may not outlast the
+    /// build itself. A longer grace makes neglect free over the whole span it took to raise the rung,
+    /// which is how a penalty evaporates silently (the `site_requirement`-that-requires-nothing
+    /// failure, in the time axis).
     #[serde(default)]
-    pub decay_fraction_per_turn: Option<f32>,
-    /// **The neglect GRACE** — how many consecutive turns a source may go un-worked before this
-    /// rung's neglect penalty starts. The penalty applies only while the source's `neglect_turns`
-    /// counter is **strictly greater** than this, so `0` restores the old no-grace behaviour and `n`
-    /// forgives exactly `n` unworked turns.
+    pub grace_turns: Option<u32>,
+}
+
+// **RETIRED: `RungBuild::decay_fraction_per_turn`** — the fraction of a rung's own cost bled per turn
+// nobody worked the source (`0.01` on both plant rungs, `null` on both animal ones).
+//
+// **SHORTFALL IS THE DECAY** (`docs/plan_standing_upkeep.md` §2.4): what an improvement loses is
+// exactly the work nobody supplied toward its [`RungUpkeep`], so a second dial saying *how fast it
+// forgets* is a second answer to a question the upkeep already answers. Two numbers described one
+// mechanic, and they could disagree — a rung could bleed faster than its own upkeep cost to hold,
+// which is a source you are better off abandoning than keeping. [`RungDef::build_decay`] went with
+// it; the plant branch's two call sites now read [`RungDef::upkeep_decay`].
+
+// **RETIRED: `RungBuild::crew_needed`** — a per-rung staffing *floor* on the source's published
+// `workers_needed`.
+//
+// It existed because a source's worker cap was inverted out of its **take**, and a crew building
+// paid a dipped take, so committing to a 25-turn Cultivate made the panel ask for *one* forager
+// where the same wild patch asks for two. **The player states each activity's crew now**
+// (`docs/plan_standing_upkeep.md` §2.2): there is no blended head count left for a floor to raise,
+// and `workers_needed` is answered per activity from the work model — hands to meet the upkeep,
+// hands to haul the offer. A rung-level constant would be a number nothing reads.
+
+/// **What SCALES a rung's standing upkeep** — the bounded coded set
+/// `docs/plan_standing_upkeep.md` §2.6 calls for, and the same "config over coded primitives" idiom
+/// [`RungBehavior`] already uses for `movement` / `feeding` / `harvest`.
+///
+/// An upkeep cannot be a flat per-rung number, because what makes a thing expensive to *hold* differs
+/// by what it is: a pen scales with the herd it holds, a farm with the area it works, a route with
+/// its length and the terrain it crosses. So a rung declares a **rate** plus **what scales it**,
+/// chosen from here — adding a primitive is coding one thing once, after which using it is a config
+/// edit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpkeepScale {
+    /// **The rate as declared** — the demand does not vary with the source. What a rung whose cost is
+    /// the *thing existing* rather than the thing's size says.
+    Flat,
+    /// **× the source's own LOAD reading, in whatever unit the rung quotes its rate in.** The
+    /// animal rungs quote **per keeper-load** — `head count / animals_per_herder` — which is what
+    /// lets one rate say *a shepherd minds 300 sheep and a cowherd 80 cattle*: the species owns the
+    /// ratio, the rung owns the rate. Linear in the source either way, which is the pen's shape:
+    /// twice the animals, twice the keeping.
     ///
-    /// **One lever, both webs, per rung** — because the two webs' penalties differ in kind but not in
-    /// trigger: a plant rung bleeds its build meter (`forage::advance_cultivation`), an animal rung
-    /// sheds animals over its labor capacity (`fauna::advance_husbandry`). The rung the source stands
-    /// on owns the number, which is the point of it being per-rung: *a weeded patch reverts in a
-    /// season, a fence stands for years*, so `plant:tended` and `animal:pen` want different answers
-    /// and the two webs are not even monotone in the same direction.
+    /// **It is deliberately NOT "head count".** A per-*head* rate would say "one keeper per 100 fowl
+    /// but one per 2 boar" and invent a 45-herder steppe megaherd that is a pure artifact of the
+    /// unit — the measurement error `animals_per_herder` exists to prevent, restated one level up.
+    /// The caller supplies the reading (`fauna::herd_keeper_loads`), so the species' own ratio is
+    /// folded in before the ladder ever sees it and there is still exactly one definition of it.
+    SourceLoad,
+}
+
+impl UpkeepScale {
+    /// Stable config key, used in validation messages — the [`RungBranch::as_str`] convention.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            UpkeepScale::Flat => "flat",
+            UpkeepScale::SourceLoad => "source_load",
+        }
+    }
+
+    /// **The scale term this primitive reads**, given the source's own measure. `source_measure` is
+    /// the load reading for [`Self::SourceLoad`] and is ignored by [`Self::Flat`], which is why the
+    /// caller may pass anything — including [`UNSCALED_UPKEEP`] — for a rung it has not resolved.
+    pub fn factor(self, source_measure: f32) -> f32 {
+        match self {
+            UpkeepScale::Flat => UNSCALED_UPKEEP,
+            UpkeepScale::SourceLoad => source_measure.max(0.0),
+        }
+    }
+}
+
+/// **The scale term of a source that costs exactly what its rung declares** — the identity, passed by
+/// every caller with no per-source measure to apply (and read by [`UpkeepScale::Flat`] whatever it is
+/// handed). The upkeep twin of [`RUNG_COST_UNSCALED`].
+pub const UNSCALED_UPKEEP: f32 = 1.0;
+
+/// **WHAT IT COSTS TO HOLD THIS RUNG** — the *rate* half of the ladder, beside `build`'s *pile*
+/// (`docs/plan_standing_upkeep.md` §2.1). Both are in work units; the build is a fixed job you finish
+/// once, this is work you must supply **every turn** or the improvement slides back down.
+///
+/// **`upkeep: null` means this rung has no standing cost** — the two **wild** rungs on the shipped
+/// ladder, where there is nothing built to hold. The whole block is optional for the same reason
+/// [`RungBuild::decay_fraction_per_turn`] is: a parked `0` says "no upkeep" while reading like a live
+/// dial, so the config states the absence by being absent.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct RungUpkeep {
+    /// **THE STANDING DEMAND, IN WORK UNITS PER TURN**, before [`Self::scaled_by`] scales it. One
+    /// unit is one worker-turn at the food peak with no gear ([`PER_WORKER_OUTPUT`]) — the same
+    /// currency [`RungBuild::work_cost`] is quoted in, deliberately, so *"what does it cost to hold
+    /// this"* has one answer in one unit whichever rung is asked.
     ///
-    /// Validated `< work_cost / reference_output` — the grace may not outlast the build itself, where
-    /// the reference build is the one the rung's own [`Self::crew_needed`] (or one worker, where it
-    /// declares none) runs at the food peak. A longer grace makes neglect free over the whole span it
-    /// took to raise the rung, which is how a penalty evaporates silently (the
-    /// `site_requirement`-that-requires-nothing failure, in the time axis).
+    /// Validated finite and `> 0` when the block is present. A parked `0` is rejected for exactly the
+    /// reason a parked `decay_fraction_per_turn: 0` is: it means *"no upkeep"* while reading like a
+    /// live dial, and the config already has a way to say that — `upkeep: null`.
+    pub work_per_turn: f32,
+    /// **What multiplies the rate** ([`UpkeepScale`]) — the generic piece, so a rung that recombines
+    /// existing primitives is pure config.
+    pub scaled_by: UpkeepScale,
+    /// **WHAT AN UNMET DEMAND DOES TO THIS RUNG'S METER** ([`RungMeterDecay`]) — the rate it rots at
+    /// and the point below which the rung is revoked.
+    ///
+    /// **`null` means this rung's penalty is not a meter bleed**, which is both animal rungs: an
+    /// under-kept flock **sheds animals** at the husbandry config's own
+    /// `pen_escape_fraction` / `pastoral_escape_fraction`, and a second rate here would be a
+    /// duplicate of those — two numbers for one mechanic, free to disagree. The shortfall *fraction*
+    /// is shared ([`upkeep_shortfall_fraction`]); only the rate each web applies it at differs.
+    #[serde(default)]
+    pub meter_decay: Option<RungMeterDecay>,
+    /// **The upkeep GRACE** — consecutive turns of shortfall forgiven before decay begins. Exactly
+    /// [`RungBuild::grace_turns`]'s meaning, on the upkeep's own trigger: the penalty applies while
+    /// the source's shortfall counter is **strictly greater** than this.
+    ///
+    /// It is the rung's own number rather than a reading of the build's because the two answer
+    /// different questions — *how long may a build sit un-worked* and *how long may a standing cost go
+    /// unpaid* — and a rung is free to be forgiving about one and strict about the other.
     pub grace_turns: u32,
-    /// **THE STAFFING FLOOR ON THE SOURCE'S WORKER CAP** — a build cannot make a source want *fewer*
-    /// people than gathering it does. Without that floor the cap came only from the harvest
-    /// (`ceil(ceiling / per_worker)`), and the ceiling during a build is the **dip** — so committing
-    /// to a 25-turn improvement made the compose sheet ask for *one* forager where the same wild
-    /// patch under Sustain asks for two. The animal web has always had this floor
-    /// (`fauna::herd_herders_needed`); this is the plant twin of it. Read through
-    /// [`source_crew_needed`], so it can only ever *raise* a count.
+}
+
+/// **WHAT AN UNMET DEMAND COSTS A RUNG WHOSE PENALTY IS A METER BLEED** — the third and fourth
+/// dials of the standing upkeep, beside the demand and the grace
+/// (`docs/plan_standing_upkeep.md` §2.4).
+///
+/// # THE RATE IS NOT THE DEMAND
+///
+/// *Shortfall was the decay*: a patch short by `0.75` work lost `0.75` off its meter. That welded
+/// **how much work holding this wants** to **how fast it rots when you stop**, so the demand could
+/// never be retuned — raising it made the improvement rot faster in exact proportion, and lowering
+/// it made neglect cheaper. Splitting them is what lets `plant:field` ask for four hands a turn and
+/// still rot at the three-quarters of a work unit it always rotted at.
+///
+/// # AND THE RUNG IS NOT LOST THE INSTANT ITS METER DIPS
+///
+/// A completed meter sits **exactly at its own cost**, so under a `progress >= cost` predicate the
+/// first bleed of any size revoked the rung: finish a Cultivate and the patch could be out of
+/// *tended* before its keepers were assigned, which no grace and no rate could fix because the loss
+/// was a **threshold test**. [`Self::retain_fraction`] is that threshold, moved down to a stated
+/// point and made scale-free.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct RungMeterDecay {
+    /// **WHAT A WHOLLY UNMAINTAINED RUNG LOSES EVERY TURN**, in work units — the rate the shortfall
+    /// fraction scales. A rung staffed at half its demand loses half this.
     ///
-    /// **It has ONE job now, not two.** It used to scale the accrual as well
-    /// (`min(workers / crew_needed, 1)`), which capped a build at the rung's stated rate and made
-    /// over-crewing worthless. Under the work model a crew's output *is* its head count
-    /// ([`RungDef::build_accrual`]) and there is no cap: fifty workers finish a Cultivate in a turn,
-    /// and the constraint is opportunity cost across systems rather than a rule forbidding a play
-    /// style (`docs/plan_unit_costed_work.md` §1.2).
+    /// Validated finite and `> 0`: a rate of zero says *"this rung never rots"*, which the config
+    /// already says by declaring no `meter_decay` at all.
+    pub per_turn: f32,
+    /// **HOW FAR THE METER MAY ERODE BEFORE THE RUNG IS REVOKED**, as a fraction of that rung's own
+    /// stamped cost. `0.75` = *"a tended patch stays tended while its meter is at least
+    /// three-quarters full"*.
     ///
-    /// **`None` = this rung's build has no crew model of its own**, which is where both animal rungs
-    /// stand: a herd's crew is derived from its *size* (`herders_needed(biomass, body_mass,
-    /// animals_per_herder)`), not declared by the rung, so a rung-level constant there would be a
-    /// number nothing reads. Validated `!= Some(0)` — a staffing floor of nobody is nonsense.
-    #[serde(default)]
-    pub crew_needed: Option<u32>,
-    /// **The investment cost.** While the meter is filling, the source's take ceiling is only this
-    /// fraction of the **selected stance's** ceiling — the crew is preparing, not harvesting. It rode
-    /// the Sustain (MSY) ceiling until issue #442, when the build verb stopped *being* the stance; a
-    /// fraction of a sustainable draw is still sustainable, so a Sustain builder keeps its source
-    /// healthy, and a Deplete builder's dip rides a draw-down and undermines its own meter (§2.2).
-    /// Validated `0 < f < 1`: at `0` the rung would starve its builders, at `>= 1` it would cost
-    /// nothing and the whole "investment with a time horizon" decision would evaporate.
-    pub yield_fraction_while_building: f32,
+    /// **A fraction rather than an amount, so it survives a cost retune** — the bar is stamped onto
+    /// the source when the rung completes ([`RungDef::retention_bar`]), exactly as the job's cost is,
+    /// so a later retune moves the price without revoking a rung the player has already paid for.
+    ///
+    /// **The rung is still EARNED at `progress >= cost`.** Only losing it moves. Validated finite and
+    /// in `0.0..=1.0`: above `1.0` would revoke a rung the turn it completed, and `1.0` itself is the
+    /// pre-arc behaviour, stated rather than stumbled into.
+    pub retain_fraction: f32,
 }
 
 /// **One rung of one ladder** — the record §5 promises: the links and the dials, no logic.
@@ -865,6 +1195,10 @@ pub struct RungDef {
     pub site_requirement: Option<RungSiteRequirement>,
     /// The build meter's dials, or `None` for a rung with nothing to build.
     pub build: Option<RungBuild>,
+    /// **What it costs to HOLD this rung, per turn** ([`RungUpkeep`]). `None` = this rung has no
+    /// standing cost — the two **wild** rungs, and only those: all four managed rungs declare one.
+    #[serde(default)]
+    pub upkeep: Option<RungUpkeep>,
     /// The coded primitives this rung recombines. **Not read yet.**
     pub behavior: RungBehavior,
 }
@@ -961,39 +1295,60 @@ impl RungDef {
         self.earns_discovery_id().map(|lesson| (lesson, amount))
     }
 
-    /// **The build seam — the accrual side. THE WORK UNITS THIS CREW PRODUCES THIS TURN**, not a
-    /// fraction of anything: `crew output × learn_multiplier(floor)` when `improvement`
-    /// **is** the rung's verb *and* the caller's rung-specific gates hold (`eligible` — knows the
-    /// unlock knowledge, the crew is actually working the source, the species' ceiling allows it, the
-    /// faction owns it), otherwise `0`.
+    /// **The build seam — the accrual side. THE WORK UNITS THIS BUILD CREW PRODUCES THIS TURN**, not
+    /// a fraction of anything: [`net_build_supply`] of [`activity_work`]`(workers)` when
+    /// `improvement` **is** the rung's verb *and* the caller's rung-specific gates hold (`eligible` —
+    /// knows the unlock knowledge, the species' ceiling allows it, the faction owns it), otherwise
+    /// `0`.
+    ///
+    /// # THE MAINTENANCE RATE IS A TAX ON BUILDING
+    ///
+    /// **`work_cost / crew` is NOT the pace, and was never going to be once holding cost anything.**
+    /// The rate is owed every turn, while building and while held alike; below the meter's cost the
+    /// **build crew** is what supplies it, so only the surplus above it is progress:
+    ///
+    /// ```text
+    /// net = builders × PER_WORKER_OUTPUT − upkeep_demand
+    /// turns = work_cost / net
+    /// ```
+    ///
+    /// **A crew at or below the rate never finishes** — it holds the meter exactly where it is, or
+    /// goes backwards. That is a real minimum-viable-crew threshold rather than a slow build, and it
+    /// is why [`build_turns_remaining`] answers *no estimate* rather than a large number at a
+    /// non-positive net: a finish date that will never arrive is a promise, not an estimate.
+    /// `upkeepDemand` and `upkeepWorkersNeeded` publish the threshold so a compose sheet can say
+    /// *"this crew is below it"* before the player commits.
     ///
     /// The caller adds it to the source's own meter and completes the rung when the meter reaches
     /// [`RungDef::build_cost`]. **Turns are the output, not an input** — the same fixed job finishes
-    /// sooner as the faction puts more hands, a shallower floor or better tools on it, which is the
-    /// progression statement the normalized meter could not make.
+    /// sooner as the faction puts more hands or better tools on it, which is the progression
+    /// statement the normalized meter could not make.
     ///
-    /// # `workers` — the crew IS the throughput, and there is no cap
+    /// # `workers` is the BUILD's OWN CREW, and there is no cap
     ///
-    /// A worker is worth [`PER_WORKER_OUTPUT`], so `n` workers produce `n` units a turn and a Cultivate
-    /// staffed at fifty finishes in a turn. That is allowed: the constraint is opportunity cost across
-    /// systems, not a rule forbidding a play style (`docs/plan_unit_costed_work.md` §1.2). The retired
-    /// `crew_scale` (`min(workers / crew_needed, 1)`) is what capped it;
-    /// [`RungBuild::crew_needed`] survives as the **staffing floor** alone.
+    /// `LaborAssignment::improvement_workers`, named by the improvement verb — **not** the take crew
+    /// this build rides beside (`docs/plan_standing_upkeep.md` §2.2). A worker is worth
+    /// [`PER_WORKER_OUTPUT`], so `n` workers produce `n` units a turn and a Cultivate staffed at
+    /// fifty finishes in a turn. That is allowed: the constraint is opportunity cost across systems,
+    /// not a rule forbidding a play style (`docs/plan_unit_costed_work.md` §1.2).
     ///
     /// A rung with **no verb** (`verb: null`) or **no build** is never driven: it returns `0` — which
     /// is what keeps the `wild` rungs (nothing to build) out of the engine.
     ///
-    /// # `floor` — building rides the same rate learning does
+    /// # THE FLOOR IS NOT HERE ANY MORE, and its removal is the point of the separate crew
     ///
-    /// [`learn_multiplier`] scales this by `floor / MSY_BIOMASS_FRACTION`, so a crew that leaves more
-    /// standing builds faster and one stripping the ground barely builds at all. **That is what
-    /// replaced the `Thriving` gate** on both webs: a build no longer *stops* when the source gets
-    /// thin, it *slows* in proportion to how hard the crew is pulling — a rate where there was a
-    /// cliff, with no lapse state to hold progress across.
+    /// [`learn_multiplier`] used to scale this, on the rule *"a crew pulling hard on the source it is
+    /// improving builds slowly"*. **That rule was written when ONE crew did both jobs.** With the
+    /// build staffed in its own right the build crew is not pulling anything — and a build crew on a
+    /// source nobody is harvesting has **no floor to read at all**, so the term would have to be
+    /// invented from a default nobody chose. The floor stays where it still means something:
+    /// [`RungDef::knowledge_accrual`], where *how much you leave standing shapes what you learn*.
     ///
-    /// It is applied here and **not** to [`RungDef::build_decay`] — see [`learn_multiplier`].
+    /// **The shipped pace is unchanged**, because `learn_multiplier` is exactly `×1.0` at the food
+    /// peak, which is the floor a fresh assignment gets. Only sub-peak floors build faster now
+    /// (`the_food_peak_preserves_every_rungs_stated_build_length` is the proof).
     ///
-    /// # THE GEAR IS NOT HERE, and that is the shape of §6
+    /// # THE GEAR IS NOT HERE EITHER, and that is the shape of §6
     ///
     /// A tool's help lands on the **job**, not on the crew's output: it takes work units off the cost
     /// ([`LadderConfig::effective_build_cost`]), because a multiplier on the crew cancels the cost
@@ -1004,16 +1359,60 @@ impl RungDef {
         &self,
         improvement: Option<Improvement>,
         eligible: bool,
-        floor: f32,
         workers: u32,
+        source_measure: f32,
     ) -> f32 {
-        if self.build.is_none() {
-            return 0.0;
-        }
+        self.build_terms(improvement, eligible, workers, source_measure)
+            .map_or(NO_BUILD_PROGRESS, |(supply, rate)| {
+                net_build_supply(supply, rate)
+            })
+    }
+
+    /// **THE SAME SUBTRACTION, SIGNED** — what [`build_accrual`](Self::build_accrual) floors at
+    /// [`NO_BUILD_PROGRESS`] before handing it to a meter. `supply − demand`, with nothing under it.
+    ///
+    /// # THE FLOOR IS RIGHT FOR A METER AND WRONG FOR A COUNTDOWN
+    ///
+    /// A meter must never be handed a negative amount to add — the rot is the decay pass's, off the
+    /// same stored supply ([`net_build_supply`]). But the floor maps *"the crew exactly pays the
+    /// rate"* and *"the crew is under it"* onto one `0.0`, and those are the two facts
+    /// [`BuildTurns::Holding`] and [`BuildTurns::Rotting`] exist to tell apart: holding wastes the
+    /// crew's turn, rotting destroys work already bought. So the countdown reads this and the meter
+    /// reads the floored twin, off **one** gate and **one** subtraction.
+    ///
+    /// [`NO_BUILD_BALANCE`] for a rung this crew is not building at all — nothing is in play, and
+    /// every caller that could act on the value is already gated by `staffed`.
+    pub fn build_balance(
+        &self,
+        improvement: Option<Improvement>,
+        eligible: bool,
+        workers: u32,
+        source_measure: f32,
+    ) -> f32 {
+        self.build_terms(improvement, eligible, workers, source_measure)
+            .map_or(NO_BUILD_BALANCE, |(supply, rate)| supply - rate)
+    }
+
+    /// **THE TWO TERMS OF A BUILD CREW'S TURN** — what the crew supplies, and what the rung charges
+    /// to hold itself — or `None` when this rung is not the one this crew is building: it has
+    /// nothing to build, the caller's gates refuse it, or the assignment's verb names a different
+    /// rung.
+    ///
+    /// One gate for the two readings above, so [`build_accrual`](Self::build_accrual) and
+    /// [`build_balance`](Self::build_balance) cannot come to disagree about *whether* a build is
+    /// running while agreeing about its arithmetic.
+    fn build_terms(
+        &self,
+        improvement: Option<Improvement>,
+        eligible: bool,
+        workers: u32,
+        source_measure: f32,
+    ) -> Option<(f32, f32)> {
+        self.build.as_ref()?;
         if !eligible || improvement.is_none() || self.verb_improvement() != improvement {
-            return 0.0;
+            return None;
         }
-        crew_work_output(workers) * learn_multiplier(floor)
+        Some((activity_work(workers), self.upkeep_demand(source_measure)))
     }
 
     /// **The build seam — the cost side. WHAT THIS JOB COSTS ON THIS SOURCE**, in work units:
@@ -1029,71 +1428,150 @@ impl RungDef {
             .map(|build| build.work_cost * cost_multiplier)
     }
 
-    /// **The build seam — the decay side. ABSOLUTE WORK UNITS bled on a turn nobody works the
-    /// source**: `decay_fraction_per_turn × work_cost × cost_multiplier`. `0` for a rung whose meter
-    /// does not bleed (`decay_fraction_per_turn: null` — the whole animal branch) or that has nothing
-    /// to build.
-    ///
-    /// **The per-source cost multiplier reaches the decay as well as the cost, and that is
-    /// load-bearing** — it is what [`RUNG_COST_UNSCALED`]'s predecessor achieved by dilating a
-    /// timescale. Because both sides read the *same* scaled cost, a rung's build:decay ratio is
-    /// invariant under any per-source multiplier **for free**: a beast that takes a lifetime to gentle
-    /// does not go feral in a season, and no per-species restatement of
-    /// [`RungBuild::decay_fraction_per_turn`]'s bound is needed. Moot on the animal branch today
-    /// (both animal rungs declare `null`), but it is the rule that keeps a future decaying rung
-    /// correct.
-    ///
-    /// **It takes no `floor` and no GEAR, and both asymmetries with the accrual are deliberate.**
-    /// Decay is what happens on a turn nobody works the source: there is no assignment, so there is
-    /// no floor — and no crew, so no kit. It therefore bleeds a fraction of the **raw** job, never of
-    /// the tooled-down [`LadderConfig::effective_build_cost`]: better tools make a build arrive
-    /// sooner, they do not make an abandoned one forget more slowly. See [`learn_multiplier`].
-    pub fn build_decay(&self, cost_multiplier: f32) -> f32 {
-        self.build.as_ref().map_or(0.0, |build| {
-            build
-                .decay_fraction_per_turn
-                .map_or(0.0, |fraction| fraction * build.work_cost * cost_multiplier)
-        })
-    }
-
     /// **The build seam — the neglect grace.** How many consecutive un-worked turns this rung
     /// forgives before its neglect penalty starts biting ([`RungBuild::grace_turns`]).
-    /// [`NO_NEGLECT_GRACE`] for a rung with no build — a source with nothing built on it has nothing
-    /// to be forgiven for, and the callers only reach this for a rung whose meter (or flock) is
-    /// actually at risk.
+    /// [`NO_NEGLECT_GRACE`] for a rung with no build, and for one that counts no un-worked turns at
+    /// all — the whole plant branch, whose penalty is an upkeep shortfall and whose grace is
+    /// therefore [`Self::upkeep_grace_turns`].
     ///
-    /// Unlike the accrual/decay pair this takes **no `timescale`**: the grace is a count of *turns a
-    /// crew was absent*, not an amount of progress, and a species that is slow to tame is not thereby
-    /// slower to notice its keepers have gone.
+    /// Unlike the accrual this takes **no `timescale`**: the grace is a count of *turns a crew was
+    /// absent*, not an amount of progress, and a species that is slow to tame is not thereby slower
+    /// to notice its keepers have gone.
     pub fn neglect_grace_turns(&self) -> u32 {
         self.build
             .as_ref()
-            .map_or(NO_NEGLECT_GRACE, |build| build.grace_turns)
+            .and_then(|build| build.grace_turns)
+            .unwrap_or(NO_NEGLECT_GRACE)
     }
 
-    /// **The build seam — the crew demand.** The crew this rung's build wants
-    /// ([`RungBuild::crew_needed`]), or `None` for a rung with no build, or one whose web derives its
-    /// crew from the source rather than the rung (both animal rungs — see the field's doc).
+    /// **The upkeep seam — the crew that MEETS the demand**, in whole workers:
+    /// `ceil(upkeep_demand / PER_WORKER_OUTPUT)`. This is the `workers_needed` the maintain activity
+    /// publishes (`docs/plan_standing_upkeep.md` §2.2) — *"hands to keep this standing"*, in its own
+    /// unit, beside the take's *"hands to haul the offer"*.
     ///
-    /// Read by the forecast as a **floor** on the source's worker cap, so a build never asks for
-    /// fewer hands than the harvest it replaced.
-    pub fn build_crew_needed(&self) -> Option<u32> {
-        self.build.as_ref().and_then(|build| build.crew_needed)
+    /// `0` for a rung that declares no upkeep — the two **wild** rungs: nobody is needed to hold
+    /// something that costs nothing to hold.
+    pub fn upkeep_crew_needed(&self, source_measure: f32) -> u32 {
+        let demand = self.upkeep_demand(source_measure);
+        if demand <= NO_UPKEEP_DEMAND {
+            return NO_CREW_ON_THIS_ACTIVITY;
+        }
+        (demand / PER_WORKER_OUTPUT).ceil() as u32
     }
 
-    /// **The build seam — the investment dip.** The fraction of the source's **selected stance's**
-    /// ceiling it pays while this rung is being built. `None` for a rung with no build — a caller
-    /// with no dip to apply must not silently substitute one.
+    // **RETIRED: `yield_fraction_while_building()`** — the investment dip, `0.50` on all four rungs
+    // that declared a build. It said *"this crew is preparing ground, not gathering"*, which is true
+    // of a **shared** crew and of nothing else; the player names the build's own crew now
+    // (`docs/plan_standing_upkeep.md` §2.2), so what a build costs is the people who are clearing
+    // instead and the gatherers beside them are untouched. Four magic numbers retired with it, along
+    // with a term nobody ever chose — the plant web sat at `0.25` for years purely because that was
+    // the pre-move constant's value.
+
+    /// **The upkeep seam — WHAT THIS RUNG DEMANDS EVERY TURN**, in work units:
+    /// `work_per_turn × scaled_by(source_measure)`. [`NO_UPKEEP_DEMAND`] for a rung that declares
+    /// none — the two **wild** rungs, where a crew's whole output reaches its take because there is
+    /// nothing standing on the ground to hold. On the four managed rungs the term is live, and it is
+    /// charged **while building as well as while holding**: the builders pay it out of their own
+    /// output, so a crew at or below the rate never finishes.
     ///
-    /// It rode the **Sustain** ceiling until issue #442, because a build verb *was* the policy and a
-    /// builder could therefore not be in any other stance. With the axes split the same fraction
-    /// multiplies whichever stance the player holds — the identical formula with the constant
-    /// removed — which is what makes a Deplete-while-building self-punishing without a gate
-    /// (`docs/plan_investment_rung_toggle.md` §2.2).
-    pub fn yield_fraction_while_building(&self) -> Option<f32> {
-        self.build
+    /// `source_measure` is the source's own scale reading — a herd's head count for
+    /// [`UpkeepScale::SourceLoad`], ignored by [`UpkeepScale::Flat`], so a caller with nothing to
+    /// measure passes [`UNSCALED_UPKEEP`]. It is the exact twin of [`Self::build_cost`]'s
+    /// `cost_multiplier`: the rung owns the mechanic, the source is priced.
+    pub fn upkeep_demand(&self, source_measure: f32) -> f32 {
+        self.upkeep.as_ref().map_or(NO_UPKEEP_DEMAND, |upkeep| {
+            upkeep.work_per_turn * upkeep.scaled_by.factor(source_measure)
+        })
+    }
+
+    /// **Does this rung cost anything to HOLD?** — the question the build's completion hand-off asks
+    /// (`docs/plan_standing_upkeep.md` §2.2): a finished rung that declares an upkeep keeps the crew
+    /// that raised it, and one that declares none frees them.
+    ///
+    /// **`true` on all four managed rungs** — `plant:tended`, `plant:field`, `animal:pastoral` and
+    /// `animal:pen` each declare one, so every completed build hands its crew onto the keeping rather
+    /// than freeing it. Only the two `wild` rungs answer `false`, and nothing is ever *built* on
+    /// those, so no completion reaches this asking about one.
+    pub fn declares_upkeep(&self) -> bool {
+        self.upkeep.is_some()
+    }
+
+    /// **The upkeep seam — the grace.** Consecutive turns of shortfall this rung forgives before its
+    /// decay starts ([`RungUpkeep::grace_turns`]). [`NO_NEGLECT_GRACE`] for a rung with no upkeep —
+    /// there is no unmet demand to forgive.
+    pub fn upkeep_grace_turns(&self) -> u32 {
+        self.upkeep
             .as_ref()
-            .map(|build| build.yield_fraction_while_building)
+            .map_or(NO_NEGLECT_GRACE, |upkeep| upkeep.grace_turns)
+    }
+
+    /// **THE UPKEEP SEAM — THE DECAY IS PROPORTIONAL TO HOW SHORT YOU ARE, AT THIS RUNG'S OWN
+    /// RATE** (`docs/plan_standing_upkeep.md` §2.4):
+    ///
+    /// ```text
+    /// decay_this_turn = shortfall_fraction × meter_decay.per_turn
+    /// ```
+    ///
+    /// once the shortfall has outlasted this rung's own [`RungUpkeep::grace_turns`].
+    ///
+    /// **It is continuous, and that is the whole point.** Half the hands a source needs means it
+    /// slides at half rate — not at the full neglect rate and not at nothing. The binary *"is this
+    /// source worked"* flag could not express that, which is why a crew half the size a source needed
+    /// used to count as fully worked.
+    ///
+    /// **The RATE is the rung's, not the demand's.** *Shortfall was the decay* until this arc, which
+    /// meant the demand and the rot rate were one number wearing two hats: retuning the demand
+    /// silently retuned the rot. They are separate dials now, and the plant demands moved from
+    /// `0.5`/`0.75` to `2`/`4` with the rot rate held exactly where it was
+    /// ([`upkeep_shortfall_fraction`]).
+    ///
+    /// `shortfall_turns` is the source's **consecutive** unmet-demand counter, read on the same
+    /// convention as [`neglect_grace_remaining`]: the decay applies while it is **strictly greater**
+    /// than the grace, so `grace_turns: 0` bleeds on the first unmet turn.
+    ///
+    /// [`NO_UPKEEP_DECAY`] for a rung with no upkeep, for one whose penalty is not a meter bleed
+    /// (both animal rungs — their flock sheds instead), and for one still inside its grace.
+    pub fn upkeep_decay(&self, shortfall_fraction: f32, shortfall_turns: u16) -> f32 {
+        let Some(upkeep) = self.upkeep.as_ref() else {
+            return NO_UPKEEP_DECAY;
+        };
+        let Some(decay) = upkeep.meter_decay.as_ref() else {
+            return NO_UPKEEP_DECAY;
+        };
+        if u32::from(shortfall_turns) <= upkeep.grace_turns {
+            return NO_UPKEEP_DECAY;
+        }
+        (shortfall_fraction.clamp(FULLY_SUPPLIED, WHOLLY_UNSUPPLIED) * decay.per_turn)
+            .max(NO_UPKEEP_DECAY)
+    }
+
+    // **RETIRED: `meter_raising_demand`** — "what an unfinished meter is owed", as distinct from what
+    // holding the finished rung costs.
+    //
+    // **There was never a second demand.** The maintenance rate is owed *always*, while building and
+    // while held alike (`docs/plan_standing_upkeep.md` §2.4); what the meter decides is only **who
+    // supplies it** — the build crew below its cost, the band's keeping pool at it. A second concept
+    // for the same rate could only ever drift from the first, and the per-web split it carried (a
+    // plant meter owed its rot rate, an animal one owed its whole keeping) was an exception with no
+    // fact under it: *you cannot be billed to hold something you have not finished building* is
+    // answered by who pays, not by discounting the bill.
+
+    /// **THE BAR THIS RUNG IS HELD AT ONCE IT IS EARNED** — `retain_fraction × cost`, the point the
+    /// meter may erode to before the rung is revoked (`docs/plan_standing_upkeep.md` §2.4).
+    ///
+    /// **The caller stamps it onto the source at completion**, beside the job's own cost, so the
+    /// predicates that ask *"is this patch tended"* need no config in scope — the reason
+    /// `is_cultivated()` can stay a method on the patch across its hundred call sites. It also makes
+    /// the bar survive a retune of the rung's price, exactly as the stamped cost does.
+    ///
+    /// A rung with no `meter_decay` (or no upkeep at all) is held at its **whole** cost, which is the
+    /// pre-arc predicate stated rather than special-cased: nothing bleeds it, so the bar is never
+    /// tested.
+    pub fn retention_bar(&self, cost: f32) -> f32 {
+        self.upkeep
+            .as_ref()
+            .and_then(|upkeep| upkeep.meter_decay.as_ref())
+            .map_or(cost, |decay| cost * decay.retain_fraction)
     }
 }
 
@@ -1255,12 +1733,7 @@ impl LadderConfig {
     /// with a `RungKey` by hand. The inverse of [`RungDef::verb_improvement`], and total by
     /// construction: every verb names exactly one rung of exactly one branch.
     pub fn rung_for(&self, improvement: Improvement) -> &RungDef {
-        self.rung(match improvement {
-            Improvement::Cultivate => RungKey::PlantTended,
-            Improvement::Sow => RungKey::PlantField,
-            Improvement::Tame => RungKey::AnimalPastoral,
-            Improvement::Corral => RungKey::AnimalPen,
-        })
+        self.rung(RungKey::built_by(improvement))
     }
 
     /// **THE BAR A GEARED CREW'S METER MUST REACH** — `cost − t`, where `t` is
@@ -1309,24 +1782,38 @@ impl LadderConfig {
     /// `None` — no estimate — for a rung with nothing to build, a gate that refuses, or a crew that
     /// produces nothing. A meter already past the bar — including a bar the crew's **gear** pays off
     /// outright — is [`BUILD_FINISHES_IN_ONE_TURN`], not `None`: it is an answer.
-    // The rung, its per-source price, its meter, and the three things a crew brings (hands, floor,
-    // kit) are all genuinely inputs — the same list `build_accrual` + `build_cost` +
-    // `effective_build_cost` take between them.
+    // The rung, its per-source price, its meter, and the two things a build crew brings (hands, kit)
+    // are all genuinely inputs — the same list `build_accrual` + `build_cost` +
+    // `effective_build_cost` take between them. The **floor** left this list with the floor's term in
+    // `build_accrual`: a build crew is not pulling on the source, so there is nothing for it to read.
     #[allow(clippy::too_many_arguments)]
     pub fn projected_build_turns(
         &self,
         rung: &RungDef,
         cost_multiplier: f32,
         banked: f32,
-        floor: f32,
         workers: u32,
         gear_per_worker: f32,
         eligible: bool,
-    ) -> Option<u32> {
+        source_measure: f32,
+    ) -> Option<BuildTurns> {
         let cost = rung.build_cost(cost_multiplier)?;
         let bar = self.effective_build_cost(cost, build_work_from_gear(gear_per_worker, workers));
-        let accrual = rung.build_accrual(rung.verb_improvement(), eligible, floor, workers);
-        build_turns_remaining(bar, banked, accrual)
+        // **Quoted at the NET**, exactly as the live stamp is: the maintenance rate is a tax on
+        // building, so a projection off the raw crew would promise a finish date the crew cannot
+        // reach — and at or below the rate `build_turns_remaining` refuses to answer at all. The
+        // **signed** net, so a quote can say which side of the rate the proposed crew falls on.
+        let balance =
+            rung.build_balance(rung.verb_improvement(), eligible, workers, source_measure);
+        // **A quoted crew that cannot clear the rate never gets there** — the same standing fact a
+        // running build states, so a projection says so rather than withholding the line. `workers`
+        // is what the quote is priced at, so it is also what "staffed" means here.
+        build_turns_estimate(
+            bar,
+            banked,
+            balance,
+            workers > NO_CREW_ON_THIS_ACTIVITY && eligible,
+        )
     }
 
     /// **The reference job every build-quantum readout is quoted against**, in work units — the
@@ -1336,37 +1823,6 @@ impl LadderConfig {
         self.rung(REFERENCE_BUILD_RUNG)
             .build_cost(RUNG_COST_UNSCALED)
             .expect("the reference rung is an investment — it has a build meter")
-    }
-
-    /// **THE dip multiplier an assignment's ceiling carries** (`docs/plan_investment_rung_toggle.md`
-    /// §2.2): the building rung's `yield_fraction_while_building`, or the identity
-    /// [`NO_BUILD_UNDERWAY_DIP`] when the crew is only harvesting.
-    ///
-    /// One lookup for both webs, so the plant and animal take paths cannot apply the dip differently
-    /// — and so the *stance* it multiplies is entirely the caller's business, which is what generalised
-    /// the dip off its hardcoded Sustain base.
-    pub fn build_dip(&self, improvement: Option<Improvement>) -> f32 {
-        improvement.map_or(NO_BUILD_UNDERWAY_DIP, |improvement| {
-            self.rung_for(improvement)
-                .yield_fraction_while_building()
-                .expect("a rung a verb builds is an investment — it has a build meter")
-        })
-    }
-
-    /// **THE standing crew an assignment's build demands** — the building rung's
-    /// [`RungDef::build_crew_needed`], or [`NO_BUILD_CREW`] when the crew is only harvesting, or when
-    /// the rung declares no crew (both animal rungs, whose web sizes a crew off the *herd*).
-    ///
-    /// One lookup for both webs and for both halves of the yield row — the resolved turn and the
-    /// assign-time seed — so a freshly-composed assignment cannot report a different crew from the
-    /// turn that resolves it. It is the exact shape of [`Self::build_dip`], and for the same reason:
-    /// the number belongs to the rung the verb builds, so no call site should pair a verb with a
-    /// `RungKey` by hand. Read as the **standing** half of [`source_crew_needed`], so it can only
-    /// ever *raise* a source's `workers_needed`.
-    pub fn build_crew(&self, improvement: Option<Improvement>) -> u32 {
-        improvement
-            .and_then(|improvement| self.rung_for(improvement).build_crew_needed())
-            .unwrap_or(NO_BUILD_CREW)
     }
 
     /// A rung by branch + id, if it exists.
@@ -1409,6 +1865,7 @@ impl LadderConfig {
             self.validate_sequence(rung, &where_)?;
             validate_links(rung, &where_)?;
             validate_build(rung, &where_)?;
+            validate_upkeep(rung, &where_)?;
             validate_site_requirement(rung, &where_)?;
         }
 
@@ -1688,72 +2145,102 @@ fn validate_build(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError>
             value: format!("work_cost = {}", build.work_cost),
         });
     }
-    if let Some(fraction) = build.decay_fraction_per_turn {
-        if !fraction.is_finite() || fraction <= 0.0 || fraction >= 1.0 {
-            return Err(LadderConfigError::Invalid {
-                field: where_.to_string(),
-                constraint:
-                    "bleed a strict fraction of its own cost per turn (0 < f < 1) — a rung \
-                             that bleeds its whole cost in a turn can never survive one turn of \
-                             neglect, and a rung that does not bleed at all says so with \
-                             `decay_fraction_per_turn: null` rather than a `0` that reads like a \
-                             live dial"
-                        .to_string(),
-                value: format!("decay_fraction_per_turn = {fraction}"),
-            });
-        }
-    }
     // The grace may not outlast the build itself: forgive neglect for longer than it took to raise
     // the rung and the penalty never fires within the span anyone would notice — the mechanic
     // evaporates without a word, which is the failure every bound in this function guards against.
     //
-    // **The reference build is the rung's own crew at the food peak.** Turns are an output now, so
-    // "how long does this rung take" has no single answer — it depends on the hands put on it. The
-    // rung's declared `crew_needed` is the staffing this job was priced against; a rung that declares
-    // none (both animal rungs, whose crew comes from the herd) is measured against one worker, which
-    // is the most forgiving reading and therefore the safe one for a bound.
-    let reference_output = build.crew_needed.unwrap_or(1) as f32 * PER_WORKER_OUTPUT;
+    // **The reference build is ONE WORKER.** Turns are an output, so "how long does this rung take"
+    // has no single answer — it depends on the hands put on it — and a bound needs one anyway. A
+    // single worker is the **most forgiving** reading (the longest possible build, so the loosest
+    // possible bound), which is the safe direction for a guard whose job is to catch a grace that
+    // swallows the whole build. It read `crew_needed.unwrap_or(1)` until the rung stopped declaring a
+    // crew at all (`docs/plan_standing_upkeep.md` §2.2); the bound loosened and every shipped rung
+    // still clears it by an order of magnitude (`the_shipped_graces_clear_the_loosened_bound`).
+    let reference_output = SOLE_BUILDER as f32 * PER_WORKER_OUTPUT;
     let build_turns = build.work_cost / reference_output;
-    if (build.grace_turns as f32) >= build_turns {
-        return Err(LadderConfigError::Invalid {
-            field: where_.to_string(),
-            constraint: "forgive fewer turns of neglect than the rung takes to build at its own \
-                         crew — a grace that outlasts its own build makes walking away free, \
-                         silently"
-                .to_string(),
-            value: format!(
-                "grace_turns = {} against a {build_turns}-turn build (work_cost = {} at a \
-                 reference output of {reference_output}/turn)",
-                build.grace_turns, build.work_cost
-            ),
-        });
-    }
-    if build.crew_needed == Some(NO_CREW) {
-        return Err(LadderConfigError::Invalid {
-            field: where_.to_string(),
-            constraint: "ask for at least one worker, or say `crew_needed: null` — `crew_needed` \
-                         is the staffing FLOOR on the source's worker cap, and a floor of nobody is \
-                         nonsense; a `0` that means \"no crew model\" is indistinguishable from one \
-                         that means \"nobody need turn up\""
-                .to_string(),
-            value: "crew_needed = 0".to_string(),
-        });
-    }
-    if !build.yield_fraction_while_building.is_finite()
-        || build.yield_fraction_while_building <= 0.0
-        || build.yield_fraction_while_building >= 1.0
-    {
-        return Err(LadderConfigError::Invalid {
-            field: where_.to_string(),
-            constraint:
-                "dip the yield while building to a strict fraction of MSY (0 < f < 1) — at \
-                         0 the crew starves, at 1 intensifying costs nothing"
+    if let Some(grace) = build.grace_turns {
+        if (grace as f32) >= build_turns {
+            return Err(LadderConfigError::Invalid {
+                field: where_.to_string(),
+                constraint: "forgive fewer turns of neglect than the rung takes to build at its \
+                             own crew — a grace that outlasts its own build makes walking away \
+                             free, silently"
                     .to_string(),
-            value: format!(
-                "yield_fraction_while_building = {}",
-                build.yield_fraction_while_building
-            ),
+                value: format!(
+                    "grace_turns = {grace} against a {build_turns}-turn build (work_cost = {} at a \
+                     reference output of {reference_output}/turn)",
+                    build.work_cost
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// **The upkeep block's bounds** — stated here, beside the build's, because
+/// [`LadderConfig::validate`] already owns every ladder bound and a rate that describes both webs
+/// belongs to the ladder.
+fn validate_upkeep(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError> {
+    let Some(upkeep) = rung.upkeep.as_ref() else {
+        return Ok(());
+    };
+    if !upkeep.work_per_turn.is_finite() || upkeep.work_per_turn <= 0.0 {
+        return Err(LadderConfigError::Invalid {
+            field: where_.to_string(),
+            constraint: "demand a positive, finite amount of work per turn — a rung that costs \
+                         nothing to hold says so with `upkeep: null` rather than a `0` that reads \
+                         like a live dial, exactly as `decay_fraction_per_turn` does"
+                .to_string(),
+            value: format!("upkeep.work_per_turn = {}", upkeep.work_per_turn),
         });
+    }
+    if let Some(decay) = upkeep.meter_decay.as_ref() {
+        if !decay.per_turn.is_finite() || decay.per_turn <= 0.0 {
+            return Err(LadderConfigError::Invalid {
+                field: where_.to_string(),
+                constraint: "rot at a positive, finite rate — a rung that never rots says so by \
+                             declaring no `meter_decay` at all, rather than with a `0` that reads \
+                             like a live dial"
+                    .to_string(),
+                value: format!("upkeep.meter_decay.per_turn = {}", decay.per_turn),
+            });
+        }
+        if !decay.retain_fraction.is_finite()
+            || !(FULLY_SUPPLIED..=WHOLLY_UNSUPPLIED).contains(&decay.retain_fraction)
+        {
+            return Err(LadderConfigError::Invalid {
+                field: where_.to_string(),
+                constraint: "hold the rung at a fraction of its own cost within 0..=1 — above 1 \
+                             revokes the rung on the turn it completes, which is the very defect \
+                             the retention bar exists to fix"
+                    .to_string(),
+                value: format!(
+                    "upkeep.meter_decay.retain_fraction = {}",
+                    decay.retain_fraction
+                ),
+            });
+        }
+    }
+    // **The upkeep's grace may not outlast the rung's own build either**, and for the identical
+    // reason the build's bound exists: forgive shortfall for longer than it took to raise the rung
+    // and holding it is free over the whole span anyone would notice. The reference build is again
+    // [`SOLE_BUILDER`], the most forgiving reading. A rung with an upkeep and no build (a route, in a
+    // later slice) has no span to compare against, so it is unbounded here.
+    if let Some(build) = rung.build.as_ref() {
+        let build_turns = build.work_cost / (SOLE_BUILDER as f32 * PER_WORKER_OUTPUT);
+        if (upkeep.grace_turns as f32) >= build_turns {
+            return Err(LadderConfigError::Invalid {
+                field: where_.to_string(),
+                constraint: "forgive fewer turns of shortfall than the rung takes to build — an \
+                             upkeep grace that outlasts its own build makes holding the rung free, \
+                             silently"
+                    .to_string(),
+                value: format!(
+                    "upkeep.grace_turns = {} against a {build_turns}-turn build",
+                    upkeep.grace_turns
+                ),
+            });
+        }
     }
     Ok(())
 }
@@ -1868,21 +2355,37 @@ mod tests {
     use super::*;
     use serde_json::Value;
 
-    /// **The reference crew of a rung that declares none** — one worker, i.e. the crew the shipped
-    /// animal rungs' costs were quoted against in the config comment. Named so that no bare `1`
-    /// implies the test picked a staffing level for a reason of its own.
-    const UNSCALED_CREW: u32 = 1;
-
     /// **The floor at which [`learn_multiplier`] is exactly ×1.0** — the food peak. Every accrual
     /// assertion that is *not about the floor* passes it, so the call reads the crew's own output
     /// rather than a floor's fraction of it. That is the normalisation's whole point: the 25-turn
     /// Cultivate is still 25 turns here.
     const FOOD_PEAK_FLOOR: f32 = crate::fauna::MSY_BIOMASS_FRACTION;
 
-    /// Every accrual assertion below staffs the build to the rung's **reference** crew, so a
-    /// build-length assertion reads the number the config comment quotes.
+    /// **Two hands** — the shipped `plant:tended` crew, and the crew every budget assertion that is
+    /// *not about the head count* passes, so a share reads as a share rather than as a rounding of
+    /// one worker.
+    const A_CREW_OF_TWO: u32 = 2;
+
+    /// **THE MINIMUM VIABLE CREW, PLUS ONE HAND** — the staffing every accrual assertion below
+    /// uses, so a build-length assertion still reads the rung's `work_cost` directly in turns.
+    ///
+    /// **The maintenance rate is a tax on building** (`docs/plan_standing_upkeep.md` §2.4): it is
+    /// owed while the meter is being raised too, and below its cost the *build crew* is what
+    /// supplies it. So a lone worker is **below the threshold on every managed rung** and banks
+    /// nothing at all — a probe of a build that never runs. One hand above the rate nets exactly
+    /// [`PER_WORKER_OUTPUT`], which is the reading these assertions were written against, and it
+    /// puts the threshold itself into the harness rather than leaving it implicit.
     fn reference_crew(rung: &RungDef) -> u32 {
-        rung.build_crew_needed().unwrap_or(UNSCALED_CREW)
+        rung.upkeep_crew_needed(UNSCALED_UPKEEP)
+            .saturating_add(SOLE_BUILDER)
+    }
+
+    /// **WHAT A CREW OF `workers` ACTUALLY BANKS ON THIS RUNG** — `crew output − the maintenance
+    /// rate`, which is what `build_accrual` answers since the rate became a tax on building
+    /// (`docs/plan_standing_upkeep.md` §2.4). Stated once here so every assertion below reads the
+    /// model rather than restating the subtraction.
+    fn expected_net(rung: &RungDef, workers: u32) -> f32 {
+        net_build_supply(activity_work(workers), rung.upkeep_demand(UNSCALED_UPKEEP))
     }
 
     /// **What one turn of the reference crew at the food peak with no gear produces** — the accrual
@@ -1891,8 +2394,8 @@ mod tests {
         rung.build_accrual(
             rung.verb_improvement(),
             true,
-            FOOD_PEAK_FLOOR,
             reference_crew(rung),
+            UNSCALED_UPKEEP,
         )
     }
 
@@ -1973,13 +2476,23 @@ mod tests {
         assert_eq!(pastoral.unlock_discovery_id(), Some(HERDING_DISCOVERY_ID));
         assert_eq!(pastoral.earns_discovery_id(), Some(PENNING_DISCOVERY_ID));
         assert_eq!(pastoral.ceiling_required, Some(HusbandryCeiling::Pastoral));
-        // Taming now costs yield, like every other rung — the `domesticate` early-claim that let a
-        // player skip this investment is gone.
+        // Taming still costs hands, like every other rung — the `domesticate` early-claim that let
+        // a player skip this investment is gone. It costs them **outright** now rather than through a
+        // declared dip: the `tame` verb takes a crew, and those hands are not hunting.
         assert!(
-            pastoral
-                .yield_fraction_while_building()
-                .is_some_and(|dip| dip > 0.0 && dip < 1.0),
-            "the pastoral rung is an investment — it must dip the take while building"
+            pastoral.build.is_some(),
+            "the pastoral rung is an investment — it has a build meter to staff"
+        );
+        assert_eq!(
+            pastoral.build_accrual(
+                Some(Improvement::Tame),
+                true,
+                A_CREW_OF_TWO,
+                UNSCALED_UPKEEP
+            ),
+            expected_net(pastoral, A_CREW_OF_TWO),
+            "…and its crew's output goes into that meter, less the maintenance rate it is also \
+             paying — the rate is owed while building too"
         );
 
         // Animal rung 3 — the shipped Corral investment, fenced only by a `pen`-ceiling species and,
@@ -2017,39 +2530,35 @@ mod tests {
         let tended = ladder.rung(RungKey::PlantTended);
         let build = tended.build.as_ref().expect("tended rung builds");
 
-        // The crew IS the throughput now: `crew` workers at the food peak with no gear produce
-        // `crew × PER_WORKER_OUTPUT` work units.
-        let crew = build.crew_needed.expect("the tended rung declares a crew");
+        // The crew IS the throughput now — less the maintenance rate, which the build crew supplies
+        // while the meter is below its cost (`net_build_supply`).
+        let crew = A_CREW_OF_TWO + tended.upkeep_crew_needed(UNSCALED_UPKEEP);
         assert_eq!(
-            tended.build_accrual(Some(Improvement::Cultivate), true, FOOD_PEAK_FLOOR, crew,),
-            crew as f32 * PER_WORKER_OUTPUT
+            tended.build_accrual(Some(Improvement::Cultivate), true, crew, UNSCALED_UPKEEP),
+            expected_net(tended, crew)
         );
         // Wrong verb → nothing, even though the crew is working the patch.
         assert_eq!(
-            tended.build_accrual(Some(Improvement::Sow), true, FOOD_PEAK_FLOOR, crew,),
+            tended.build_accrual(Some(Improvement::Sow), true, crew, UNSCALED_UPKEEP),
             0.0
         );
         // No improvement at all → nothing. A crew that is only harvesting builds nothing, whatever
         // its stance.
-        assert_eq!(tended.build_accrual(None, true, FOOD_PEAK_FLOOR, crew), 0.0);
+        assert_eq!(tended.build_accrual(None, true, crew, UNSCALED_UPKEEP), 0.0);
         // Right verb, gate lapsed → nothing accrues (progress is neither lost nor advanced).
         assert_eq!(
-            tended.build_accrual(Some(Improvement::Cultivate), false, FOOD_PEAK_FLOOR, crew,),
+            tended.build_accrual(Some(Improvement::Cultivate), false, crew, UNSCALED_UPKEEP),
             0.0
         );
-        // The cost is the job, and the decay is a fraction OF that job — both in absolute units.
+        // The cost is the job, in absolute units.
         assert_eq!(tended.build_cost(RUNG_COST_UNSCALED), Some(build.work_cost));
-        assert_eq!(
-            tended.build_decay(RUNG_COST_UNSCALED),
-            build
-                .decay_fraction_per_turn
-                .expect("the tended rung bleeds")
-                * build.work_cost
-        );
-        assert_eq!(
-            tended.yield_fraction_while_building(),
-            Some(build.yield_fraction_while_building)
-        );
+        // **The rung declares a standing upkeep**, and it is what a fully unmaintained patch bleeds:
+        // shortfall IS the decay (`docs/plan_standing_upkeep.md` §2.4), so there is no second dial.
+        assert!(tended.upkeep_demand(UNSCALED_UPKEEP) > NO_UPKEEP_DEMAND);
+        // **Its neglect is counted in SHORTFALL turns, not un-worked ones**, so the build's own
+        // grace is absent rather than parked at a value nothing reads.
+        assert_eq!(build.grace_turns, None);
+        assert!(tended.upkeep_grace_turns() > NO_NEGLECT_GRACE);
     }
 
     /// **A bigger crew finishes the same job sooner, with no cap** — the arc's whole claim at the
@@ -2067,27 +2576,47 @@ mod tests {
         ] {
             let rung = ladder.rung(key);
             let work = |workers| {
-                rung.build_accrual(rung.verb_improvement(), true, FOOD_PEAK_FLOOR, workers)
+                rung.build_accrual(rung.verb_improvement(), true, workers, UNSCALED_UPKEEP)
             };
+            let threshold = rung.upkeep_crew_needed(UNSCALED_UPKEEP);
             assert_eq!(work(0), 0.0, "{key:?}: nobody working, nothing built");
+            // **AT the maintenance rate the meter HOLDS — it does not advance.** That is the
+            // minimum-viable-crew threshold the tax creates, and it is a real failure mode rather
+            // than a slow build.
             assert_eq!(
-                work(1),
+                work(threshold),
+                NO_BUILD_PROGRESS,
+                "{key:?}: a crew exactly at the maintenance rate banks nothing"
+            );
+            assert_eq!(
+                work(threshold + 1),
                 PER_WORKER_OUTPUT,
-                "{key:?}: one worker is worth one worker-turn"
+                "{key:?}: one worker ABOVE the rate is worth one worker-turn"
             );
             assert_eq!(
                 work(20),
-                20.0 * PER_WORKER_OUTPUT,
-                "{key:?}: twenty hands produce twenty units — there is no crew cap"
+                expected_net(rung, 20),
+                "{key:?}: twenty hands produce twenty units less the rate — there is no crew cap"
             );
             // Turns are the OUTPUT: the same fixed cost, twice the crew, half the turns.
             let cost = rung
                 .build_cost(RUNG_COST_UNSCALED)
                 .expect("the rung builds");
+            // **Turns are the output — of the NET, not of the head count.** Doubling the *net*
+            // supply halves the turns; doubling the raw crew does not, because the maintenance rate
+            // is subtracted first (`docs/plan_standing_upkeep.md` §2.4).
             assert_eq!(
-                build_turns_remaining(cost, RUNG_UNSTARTED, work(2)),
-                build_turns_remaining(cost, RUNG_UNSTARTED, work(1)).map(|turns| turns.div_ceil(2)),
-                "{key:?}: doubling the crew halves the turns"
+                build_turns_remaining(cost, RUNG_UNSTARTED, work(threshold + 2)),
+                build_turns_remaining(cost, RUNG_UNSTARTED, work(threshold + 1))
+                    .map(|turns| turns.div_ceil(2)),
+                "{key:?}: doubling the net supply halves the turns"
+            );
+            // **And at or below the threshold there is NO ESTIMATE**, never a large number: a finish
+            // date that will never arrive reads as a promise.
+            assert_eq!(
+                build_turns_remaining(cost, RUNG_UNSTARTED, work(threshold)),
+                None,
+                "{key:?}: a crew that cannot clear the maintenance rate has no finish date"
             );
         }
     }
@@ -2162,8 +2691,13 @@ mod tests {
         let cost = pastoral
             .build_cost(RUNG_COST_UNSCALED)
             .expect("the pastoral rung builds");
+        // **The gear is resolved at the reference KEEPERS, and the crew is staffed above the rate.**
+        // The calibration is about what `husbandry_gear` is worth *in units of the job* (17), which
+        // the maintenance tax does not touch; what it would touch is the crew's net supply, so the
+        // build is quoted at the same 2 worker-turns of net it was priced against.
+        let staffed = KEEPERS + pastoral.upkeep_crew_needed(UNSCALED_UPKEEP);
         let accrual =
-            pastoral.build_accrual(pastoral.verb_improvement(), true, FOOD_PEAK_FLOOR, KEEPERS);
+            pastoral.build_accrual(pastoral.verb_improvement(), true, staffed, UNSCALED_UPKEEP);
         let bar = ladder.effective_build_cost(cost, build_work_from_gear(PER_WORKER, KEEPERS));
         assert_eq!(
             build_turns_remaining(bar, RUNG_UNSTARTED, accrual),
@@ -2244,10 +2778,10 @@ mod tests {
                 pastoral,
                 UNSCALED_SPECIES,
                 RUNG_UNSTARTED,
-                FOOD_PEAK_FLOOR,
                 keepers,
                 PER_WORKER,
                 true,
+                UNSCALED_UPKEEP,
             )
         };
 
@@ -2259,17 +2793,34 @@ mod tests {
         );
         assert_eq!(
             quote(over_geared),
-            Some(BUILD_FINISHES_IN_ONE_TURN),
+            Some(BuildTurns::Turns(BUILD_FINISHES_IN_ONE_TURN)),
             "gear that pays the job off outright finishes it on the first worked turn"
+        );
+        // **And a crew EXACTLY at the maintenance rate is quoted HOLDING, not silence** — a
+        // projection states the same standing fact a running build does. The *rotting* half is
+        // unreachable on this rung with whole hands (its demand is `1.0`, so the only staffing
+        // under the rate is no staffing at all, which is `None` by design); the plant web's
+        // demand of `2.0` is where that arm is pinned — `build_turns_on_the_wire.rs`.
+        assert_eq!(
+            quote(pastoral.upkeep_crew_needed(UNSCALED_UPKEEP)),
+            Some(BuildTurns::Holding),
+            "a quoted crew that exactly pays the rate holds the meter — and says so"
         );
 
         // And the quote is monotone into that floor rather than falling off it: each added hand
-        // shortens the job until it cannot be shortened further.
-        let mut previous = quote(1).expect("one keeper is still quotable");
-        for keepers in 2..=over_geared {
-            let turns = quote(keepers).unwrap_or_else(|| {
-                panic!("a crew of {keepers} must be quotable — it is working the herd")
-            });
+        // shortens the job until it cannot be shortened further. **Measured from the first crew that
+        // clears the maintenance rate** — below it there is no quote at all, by design.
+        let threshold = pastoral.upkeep_crew_needed(UNSCALED_UPKEEP);
+        let first = threshold + 1;
+        let finite = |keepers: u32| -> u32 {
+            match quote(keepers) {
+                Some(BuildTurns::Turns(turns)) => turns,
+                other => panic!("a crew of {keepers} above the rate must quote a count: {other:?}"),
+            }
+        };
+        let mut previous = finite(first);
+        for keepers in (first + 1)..=over_geared {
+            let turns = finite(keepers);
             assert!(
                 turns <= previous,
                 "adding a hand must never lengthen the quote: {turns} at {keepers} vs {previous}"
@@ -2295,27 +2846,13 @@ mod tests {
                 Some(Improvement::Corral),
             ] {
                 assert_eq!(
-                    wild.build_accrual(improvement, true, FOOD_PEAK_FLOOR, reference_crew(wild),),
+                    wild.build_accrual(improvement, true, reference_crew(wild), UNSCALED_UPKEEP),
                     0.0
                 );
             }
             assert_eq!(wild.build_cost(RUNG_COST_UNSCALED), None);
-            assert_eq!(wild.build_decay(RUNG_COST_UNSCALED), 0.0);
-            assert_eq!(wild.yield_fraction_while_building(), None);
+            assert_eq!(wild.upkeep_demand(UNSCALED_UPKEEP), NO_UPKEEP_DEMAND);
         }
-    }
-
-    /// **A rung may not bleed its whole cost in a turn** — the shape the old "decay must be slower
-    /// than the build" bound takes once decay is a *fraction of the job* rather than a rate against
-    /// another rate. At `1.0` a rung would lose everything the first unworked turn, which is a rung
-    /// nobody could hold rather than one nobody could build.
-    #[test]
-    fn rejects_a_decay_that_bleeds_the_whole_job_in_a_turn() {
-        let err = reject(|json| {
-            let idx = rung_index(json, "plant", "tended");
-            json["rungs"][idx]["build"]["decay_fraction_per_turn"] = (1.0).into();
-        });
-        assert_rejects(err, "plant:tended");
     }
 
     /// **Sustain is not a taming verb** — the §4.1 de-conflation, asserted at the engine seam: the
@@ -2331,10 +2868,10 @@ mod tests {
             pastoral.build_accrual(
                 Some(Improvement::Tame),
                 true,
-                FOOD_PEAK_FLOOR,
                 reference_crew(pastoral),
+                UNSCALED_UPKEEP
             ),
-            reference_crew(pastoral) as f32 * PER_WORKER_OUTPUT
+            expected_net(pastoral, reference_crew(pastoral))
         );
         assert_eq!(
             pastoral.build_cost(RUNG_COST_UNSCALED),
@@ -2350,8 +2887,8 @@ mod tests {
                 pastoral.build_accrual(
                     improvement,
                     true,
-                    FOOD_PEAK_FLOOR,
                     reference_crew(pastoral),
+                    UNSCALED_UPKEEP
                 ),
                 0.0,
                 "{improvement:?} must not tame a herd — only Tame does"
@@ -2362,8 +2899,8 @@ mod tests {
             pastoral.build_accrual(
                 Some(Improvement::Tame),
                 false,
-                FOOD_PEAK_FLOOR,
                 reference_crew(pastoral),
+                UNSCALED_UPKEEP
             ),
             0.0
         );
@@ -2378,10 +2915,13 @@ mod tests {
     #[test]
     fn the_neglect_grace_is_per_rung_and_the_two_webs_disagree_about_its_direction() {
         let ladder = LadderConfig::builtin();
-        let tended = ladder.rung(RungKey::PlantTended).neglect_grace_turns();
-        let field = ladder.rung(RungKey::PlantField).neglect_grace_turns();
-        let pastoral = ladder.rung(RungKey::AnimalPastoral).neglect_grace_turns();
-        let pen = ladder.rung(RungKey::AnimalPen).neglect_grace_turns();
+        // **Every branch is asked on the one trigger there is** — consecutive turns of unmet
+        // upkeep (`docs/plan_standing_upkeep.md` §2.4). The penalties still differ in kind (a plant
+        // meter bleeds, an animal flock sheds); the grace that gates them does not.
+        let tended = ladder.rung(RungKey::PlantTended).upkeep_grace_turns();
+        let field = ladder.rung(RungKey::PlantField).upkeep_grace_turns();
+        let pastoral = ladder.rung(RungKey::AnimalPastoral).upkeep_grace_turns();
+        let pen = ladder.rung(RungKey::AnimalPen).upkeep_grace_turns();
 
         assert!(
             field < tended,
@@ -2397,54 +2937,94 @@ mod tests {
                 "every buildable rung forgives something"
             );
         }
-        // A rung with nothing built on it has nothing to forgive.
+        // A rung with nothing built on it has nothing to forgive, on either trigger.
         for key in [RungKey::PlantWild, RungKey::AnimalWild] {
             assert_eq!(ladder.rung(key).neglect_grace_turns(), NO_NEGLECT_GRACE);
+            assert_eq!(ladder.rung(key).upkeep_grace_turns(), NO_NEGLECT_GRACE);
         }
-    }
-
-    /// **The animal branch's `decay_per_turn` is GONE, not zeroed** — it was a validated dial that
-    /// nothing read (`build_decay`'s only production call sites are the two plant rungs), documenting
-    /// a tameness-bleed the neglect-escape arc deleted. `null` states that; a `0` would read like a
-    /// live dial that happened to be parked.
-    #[test]
-    fn only_the_plant_rungs_declare_a_build_decay() {
-        let ladder = LadderConfig::builtin();
-        for key in [RungKey::PlantTended, RungKey::PlantField] {
-            assert!(
-                ladder.rung(key).build_decay(RUNG_COST_UNSCALED) > 0.0,
-                "an abandoned plant improvement bleeds"
-            );
-        }
-        for key in [RungKey::AnimalPastoral, RungKey::AnimalPen] {
-            let rung = ladder.rung(key);
+        // **No shipped rung counts un-worked BUILD turns any more** — the trigger the plant branch
+        // retired in slice 3 and the animal branch in slice 4.
+        for key in RungKey::ALL {
             assert_eq!(
-                rung.build
-                    .as_ref()
-                    .and_then(|build| build.decay_fraction_per_turn),
-                None,
-                "the animal branch's meters do not bleed — say so, do not park a zero"
+                ladder.rung(key).neglect_grace_turns(),
+                NO_NEGLECT_GRACE,
+                "{}:{} still declares a build grace",
+                key.branch().as_str(),
+                key.id()
             );
-            assert_eq!(rung.build_decay(RUNG_COST_UNSCALED), 0.0);
         }
     }
 
-    /// **Only the plant rungs declare a build crew**, because the animal web sizes a crew off the
-    /// *herd* (`fauna::herders_needed`) rather than off the rung — and a `Cultivate` must want at
-    /// least as many hands as it takes to gather the same ground, which is the defect the dial fixes.
+    /// **EVERY BUILT RUNG COSTS WORK TO HOLD, and every one counts SHORTFALL turns**
+    /// (`docs/plan_standing_upkeep.md` §2.4). The two halves are one statement: a rung with a
+    /// standing cost is one whose neglect is measured as unmet demand, so `build.grace_turns` — the
+    /// *un-worked-build* trigger — is `null` on all four and the live grace is the upkeep's.
+    ///
+    /// The two webs pay the penalty in different currencies (a plant meter bleeds, an animal flock
+    /// sheds) and quote the rate in different units (`flat` per patch, `source_load` per keeper-load),
+    /// which is exactly what the scale term exists to express — but *what* is owed, and *when* it
+    /// starts costing, is now one mechanism for both.
+    ///
+    /// Its predecessor asserted a split about the retired `decay_fraction_per_turn`, which the upkeep
+    /// replaced outright: two dials described one mechanic and could disagree, giving a rung that
+    /// bled faster than it cost to hold.
     #[test]
-    fn the_plant_rungs_declare_a_build_crew_and_the_animal_rungs_do_not() {
+    fn every_built_rung_declares_a_standing_upkeep_and_none_counts_unworked_turns() {
         let ladder = LadderConfig::builtin();
-        for key in [RungKey::PlantTended, RungKey::PlantField] {
+        for key in [
+            RungKey::PlantTended,
+            RungKey::PlantField,
+            RungKey::AnimalPastoral,
+            RungKey::AnimalPen,
+        ] {
+            let rung = ladder.rung(key);
             assert!(
-                ladder.rung(key).build_crew_needed().is_some_and(|c| c > 1),
-                "a plant build wants a real crew, not one pair of hands"
+                rung.declares_upkeep()
+                    && rung.upkeep_demand(A_TWENTY_HEAD_FLOCK) > NO_UPKEEP_DEMAND,
+                "{}:{} costs work to hold",
+                key.branch().as_str(),
+                key.id()
+            );
+            assert!(
+                rung.upkeep_grace_turns() > NO_NEGLECT_GRACE,
+                "{}:{} forgives some shortfall before the penalty bites",
+                key.branch().as_str(),
+                key.id()
+            );
+            assert_eq!(
+                rung.build.as_ref().and_then(|build| build.grace_turns),
+                None,
+                "{}:{} counts shortfall turns, so the build's own grace would be a second number \
+                 nothing reads",
+                key.branch().as_str(),
+                key.id()
             );
         }
-        for key in [RungKey::AnimalPastoral, RungKey::AnimalPen] {
-            assert_eq!(ladder.rung(key).build_crew_needed(), None);
-        }
+        // **The scale term is where the two webs differ**, and that is the whole of the difference:
+        // a patch is one tile (`flat`), a herd is as many keeper-loads as it has animals.
+        assert_eq!(
+            ladder
+                .rung(RungKey::PlantTended)
+                .upkeep
+                .as_ref()
+                .map(|upkeep| upkeep.scaled_by),
+            Some(UpkeepScale::Flat)
+        );
+        assert_eq!(
+            ladder
+                .rung(RungKey::AnimalPen)
+                .upkeep
+                .as_ref()
+                .map(|upkeep| upkeep.scaled_by),
+            Some(UpkeepScale::SourceLoad)
+        );
     }
+
+    // **RETIRED: `the_plant_rungs_declare_a_build_crew_and_the_animal_rungs_do_not`** — the two
+    // plant rungs declared a `crew_needed` and the two animal ones did not, because a herd's crew
+    // came from its size. **No rung declares one now** (`docs/plan_standing_upkeep.md` §2.2): the
+    // player states a build's staffing, so there is no rung-level number left to be asymmetric
+    // about.
 
     /// **The published countdown reads without any subtraction**: `0` means the penalty is biting
     /// *now*, `N > 0` means it starts in `N` more un-worked turns, and a source nobody has neglected
@@ -2468,8 +3048,10 @@ mod tests {
     fn rejects_a_grace_that_outlasts_its_own_build() {
         let err = reject(|json| {
             let idx = rung_index(json, "plant", "tended");
-            // The reference build is `50 / 2` = 25 turns.
-            json["rungs"][idx]["build"]["grace_turns"] = (25).into();
+            // The reference build is one builder against a 50-unit job — 50 turns — since the rung
+            // stopped declaring a crew to measure it at (`docs/plan_standing_upkeep.md` §2.2). The
+            // bound loosened; a grace of 50 still swallows the whole build.
+            json["rungs"][idx]["build"]["grace_turns"] = (50).into();
         });
         assert_rejects(err, "plant:tended");
     }
@@ -2502,27 +3084,17 @@ mod tests {
         }
     }
 
-    /// A rung whose build wants nobody states a staffing floor of nobody, which is nonsense. A rung
-    /// with no crew model says `null`, which is a different statement.
-    #[test]
-    fn rejects_a_build_crew_of_nobody() {
-        let err = reject(|json| {
-            let idx = rung_index(json, "plant", "field");
-            json["rungs"][idx]["build"]["crew_needed"] = (0).into();
-        });
-        assert_rejects(err, "plant:field");
-    }
+    // **RETIRED: `rejects_a_build_crew_of_nobody`** — the bound on `crew_needed`, which retired with
+    // the field (`docs/plan_standing_upkeep.md` §2.2): the player states a build's staffing, so there
+    // is no rung-level floor left to be zero.
 
-    /// `decay_fraction_per_turn: 0` and `: null` would behave identically, so only one of them is
-    /// allowed to mean it — a parked zero reads like a live dial.
-    #[test]
-    fn rejects_a_zero_build_decay_in_favour_of_null() {
-        let err = reject(|json| {
-            let idx = rung_index(json, "plant", "tended");
-            json["rungs"][idx]["build"]["decay_fraction_per_turn"] = (0.0).into();
-        });
-        assert_rejects(err, "plant:tended");
-    }
+    // **RETIRED with the dial they bounded: `rejects_a_decay_that_bleeds_the_whole_job_in_a_turn`,
+    // `rejects_a_zero_build_decay_in_favour_of_null` and `rejects_negative_decay`** — all three
+    // guarded `RungBuild::decay_fraction_per_turn`, which the upkeep replaced outright
+    // (`docs/plan_standing_upkeep.md` §2.4). What an improvement loses is now what its keepers did
+    // not supply, so the guards that matter are the upkeep's own: a positive finite rate
+    // (`rejects_an_upkeep_of_nothing`) and a grace that cannot outlast the build
+    // (`rejects_an_upkeep_grace_that_outlasts_its_own_build`).
 
     #[test]
     fn rejects_a_duplicate_rung_id() {
@@ -2632,31 +3204,596 @@ mod tests {
         assert_rejects(err, "plant:tended");
     }
 
+    // **RETIRED: `rejects_a_free_investment` / `rejects_a_starving_investment`** — the two bounds on
+    // `yield_fraction_while_building` (`0 < f < 1`). The dial is gone: an investment's cost is the
+    // crew's whole turn now, which is neither free nor tunable, so there is no fraction left to bound.
+    // What replaced them is the upkeep block's own bound below, guarding the same failure mode (a
+    // number that reads like a live dial while meaning "no cost at all").
+
+    /// **A parked `0` upkeep is rejected in favour of `null`** — the exact rule
+    /// `decay_fraction_per_turn` follows, and for the exact reason: `work_per_turn: 0` means *"this
+    /// rung costs nothing to hold"* while **reading** like a dial someone chose, which is how
+    /// `animal:pastoral`'s dead `0.01` decay survived for slices documenting a mechanic the sim did
+    /// not have.
     #[test]
-    fn rejects_negative_decay() {
+    fn rejects_a_parked_zero_upkeep_in_favour_of_null() {
+        let err = reject(|json| {
+            let idx = rung_index(json, "animal", "pen");
+            json["rungs"][idx]["upkeep"] = serde_json::json!({
+                "work_per_turn": 0.0,
+                "scaled_by": "flat",
+                "grace_turns": 0,
+            });
+        });
+        assert_rejects(err, "animal:pen");
+    }
+
+    /// **A negative upkeep would PAY the crew for holding the thing.** Same bound, other side.
+    #[test]
+    fn rejects_a_negative_upkeep() {
+        let err = reject(|json| {
+            let idx = rung_index(json, "animal", "pen");
+            json["rungs"][idx]["upkeep"] = serde_json::json!({
+                "work_per_turn": -1.0,
+                "scaled_by": "source_load",
+                "grace_turns": 2,
+            });
+        });
+        assert_rejects(err, "animal:pen");
+    }
+
+    /// **`scaled_by` must name a coded primitive** — the `behavior` idiom, where an unknown token is
+    /// a parse failure rather than a silent default. A scale nobody coded would otherwise resolve to
+    /// whatever `serde` fell back to, which is a demand nobody chose.
+    #[test]
+    fn rejects_an_unknown_upkeep_scale() {
+        let err = reject(|json| {
+            let idx = rung_index(json, "animal", "pen");
+            json["rungs"][idx]["upkeep"] = serde_json::json!({
+                "work_per_turn": 1.0,
+                "scaled_by": "route_length",
+                "grace_turns": 0,
+            });
+        });
+        assert!(
+            matches!(err, LadderConfigError::Parse(_)),
+            "an unknown scale primitive must fail the PARSE, not resolve to a default: {err:?}"
+        );
+    }
+
+    /// **A RUNG WITH NOTHING BUILT ON IT COSTS NOTHING TO HOLD**, on both webs — the honest zero
+    /// rather than a sentinel. The two plant rungs are the only shipped records that declare an
+    /// upkeep (`only_the_plant_rungs_declare_a_standing_upkeep` pins that split); what this asserts
+    /// is the floor of the model, which no later slice may move: you cannot be billed for a wild
+    /// stand or a wild herd.
+    #[test]
+    fn a_wild_rung_costs_nothing_to_hold() {
+        let ladder = LadderConfig::builtin();
+        for key in [RungKey::PlantWild, RungKey::AnimalWild] {
+            let rung = ladder.rung(key);
+            assert!(
+                rung.upkeep.is_none(),
+                "{}:{} declares an upkeep — there is nothing built there to hold",
+                key.branch().as_str(),
+                key.id()
+            );
+            assert_eq!(
+                rung.upkeep_demand(UNSCALED_UPKEEP),
+                NO_UPKEEP_DEMAND,
+                "…so its demand is the honest zero"
+            );
+            assert_eq!(
+                rung.upkeep_crew_needed(UNSCALED_UPKEEP),
+                NO_CREW_ON_THIS_ACTIVITY,
+                "…and nobody is needed to keep it"
+            );
+        }
+    }
+
+    /// **AN UPKEEP GRACE MAY NOT OUTLAST THE RUNG'S OWN BUILD**, the twin of the build grace's bound
+    /// and for the identical reason: forgive shortfall for longer than it took to raise the rung and
+    /// holding it is free over the whole span anyone would notice. The reference is one builder, the
+    /// most forgiving reading.
+    #[test]
+    fn rejects_an_upkeep_grace_that_outlasts_its_own_build() {
         let err = reject(|json| {
             let idx = rung_index(json, "plant", "tended");
-            json["rungs"][idx]["build"]["decay_fraction_per_turn"] = (-0.01).into();
+            // The tended rung is 50 work units, i.e. 50 turns at one builder.
+            json["rungs"][idx]["upkeep"]["grace_turns"] = (50).into();
         });
         assert_rejects(err, "plant:tended");
     }
 
+    // ---- The three allocations, and the work each produces -----------------------------------
+
+    /// **A herd big enough to want real keeping**, in head — the scale term
+    /// [`UpkeepScale::SourceLoad`] reads. Chosen well above one so a scaled demand cannot be mistaken
+    /// for a flat one.
+    const A_TWENTY_HEAD_FLOCK: f32 = 20.0;
+
+    /// **A standing demand of one worker-turn**, so a crew of two covers it with a hand to spare and
+    /// a crew of one covers it exactly — the two readings a shortfall test needs either side of.
+    const A_DEMAND_OF_ONE_WORKER_TURN: f32 = 1.0;
+
+    /// **THE PLAYER STATES THE SPLIT** (`docs/plan_standing_upkeep.md` §2.2). Each activity's crew
+    /// produces its own work directly — no pool, no priority order, no derived share — so the three
+    /// numbers are independent and each is exactly `workers × PER_WORKER_OUTPUT`.
     #[test]
-    fn rejects_a_free_investment() {
-        let err = reject(|json| {
-            let idx = rung_index(json, "animal", "pen");
-            json["rungs"][idx]["build"]["yield_fraction_while_building"] = (1.0).into();
-        });
-        assert_rejects(err, "animal:pen");
+    fn each_activitys_crew_produces_its_own_work() {
+        assert_eq!(
+            activity_work(A_CREW_OF_TWO),
+            A_CREW_OF_TWO as f32 * PER_WORKER_OUTPUT
+        );
+        assert_eq!(
+            activity_work(NO_CREW_ON_THIS_ACTIVITY),
+            NO_UPKEEP_DEMAND,
+            "nobody on an activity produces nothing for it — which is the whole of 'off'"
+        );
+        // **It does not read the floor**, and that is the change: a build crew is not pulling on the
+        // source, and a source nobody is harvesting has no floor for them to read.
+        let ladder = LadderConfig::builtin();
+        let rung = ladder.rung(RungKey::PlantTended);
+        // Above the rung's maintenance rate, or the assertion would be that zero equals zero.
+        let a_crew_above_the_rate = rung
+            .upkeep_crew_needed(UNSCALED_UPKEEP)
+            .saturating_add(A_CREW_OF_TWO);
+        #[allow(non_snake_case)]
+        let A_CREW_ABOVE_THE_RATE = a_crew_above_the_rate;
+        for floor in [STRIP_IT_BARE_FLOOR, 0.15, FOOD_PEAK_FLOOR, 0.8, 1.0] {
+            assert_eq!(
+                rung.build_accrual(
+                    Some(Improvement::Cultivate),
+                    true,
+                    A_CREW_ABOVE_THE_RATE,
+                    UNSCALED_UPKEEP
+                ),
+                expected_net(rung, A_CREW_ABOVE_THE_RATE),
+                "the build banks the same net whatever floor the gatherers hold ({floor})"
+            );
+        }
     }
 
+    /// **THE FLOOR CAME OFF THE BUILD RATE, AND THE SHIPPED PACE IS UNCHANGED.** `learn_multiplier`
+    /// is exactly `×1.0` at the food peak — the floor a fresh assignment gets — so every rung's
+    /// stated build length is what it was; only sub-peak floors build faster now.
+    ///
+    /// **This is the slice's own proof**, and it is asserted against the retired arithmetic rather
+    /// than against a remembered number: `crew × PER_WORKER_OUTPUT × learn_multiplier(peak)` is what
+    /// the accrual used to be, and it must still equal what it is.
     #[test]
-    fn rejects_a_starving_investment() {
-        let err = reject(|json| {
-            let idx = rung_index(json, "animal", "pen");
-            json["rungs"][idx]["build"]["yield_fraction_while_building"] = (0.0).into();
+    fn taking_the_floor_off_the_build_rate_is_pacing_neutral_at_the_food_peak() {
+        assert_eq!(
+            learn_multiplier(FOOD_PEAK_FLOOR),
+            1.0,
+            "the premise: the food peak is the multiplier's identity"
+        );
+        let ladder = LadderConfig::builtin();
+        for key in RungKey::ALL {
+            let rung = ladder.rung(key);
+            let Some(verb) = rung.verb_improvement() else {
+                continue;
+            };
+            // **Quoted above the maintenance rate**, which the retired arithmetic did not have to
+            // account for: the *floor's* removal is what this proof is about, and a crew below the
+            // rate banks nothing for a reason that has nothing to do with the floor.
+            let threshold = rung.upkeep_crew_needed(UNSCALED_UPKEEP);
+            for over in [SOLE_BUILDER, A_CREW_OF_TWO, 10] {
+                let crew = threshold + over;
+                let now = rung.build_accrual(Some(verb), true, crew, UNSCALED_UPKEEP);
+                // The retired arithmetic, with the rate this arc added netted out of it — so what
+                // is being compared is still only the floor's term.
+                let before = net_build_supply(
+                    crew as f32 * PER_WORKER_OUTPUT * learn_multiplier(FOOD_PEAK_FLOOR),
+                    rung.upkeep_demand(UNSCALED_UPKEEP),
+                );
+                assert_eq!(
+                    now,
+                    before,
+                    "{}:{} at {crew} builders must bank what it banked at the food peak",
+                    key.branch().as_str(),
+                    key.id()
+                );
+            }
+        }
+    }
+
+    /// **A crew that leaves nothing standing** — `learn_multiplier(0.0)` is `0`. It used to zero the
+    /// build; it is now a knowledge term only, so a stripping *gatherer* beside a builder no longer
+    /// stalls the build.
+    const STRIP_IT_BARE_FLOOR: f32 = 0.0;
+
+    /// **THE UPKEEP IS COVERED BY ITS OWN CREW, AND WHAT IS LEFT IS THE SHORTFALL** (§2.4). No
+    /// ordering, no pool: `supplied = maintain_workers × PER_WORKER_OUTPUT`, and the rest goes unmet.
+    #[test]
+    fn the_maintain_crew_covers_the_demand_and_the_rest_is_shortfall() {
+        // Two keepers against a one-worker-turn demand: covered, with a hand to spare.
+        let supplied = activity_work(A_CREW_OF_TWO);
+        assert_eq!(
+            upkeep_shortfall(A_DEMAND_OF_ONE_WORKER_TURN, supplied),
+            NO_UPKEEP_DEMAND,
+            "a demand more than met leaves NOTHING short — never a negative, which would read as \
+             the source paying its keepers"
+        );
+        // Nobody on the keeping: the whole demand goes unmet, which is the whole of "stop
+        // maintaining this".
+        assert_eq!(
+            upkeep_shortfall(
+                A_DEMAND_OF_ONE_WORKER_TURN,
+                activity_work(NO_CREW_ON_THIS_ACTIVITY)
+            ),
+            A_DEMAND_OF_ONE_WORKER_TURN,
+            "assigning zero keepers is how a player says 'let it go' — the demand still stands"
+        );
+        // Half-staffed: it slides at half rate, which is the continuity the retired binary
+        // `tended_this_turn` flag could not express.
+        const A_DEMAND_OF_TWO_WORKER_TURNS: f32 = 2.0;
+        assert_eq!(
+            upkeep_shortfall(A_DEMAND_OF_TWO_WORKER_TURNS, activity_work(SOLE_BUILDER)),
+            A_DEMAND_OF_ONE_WORKER_TURN
+        );
+    }
+
+    /// **THE THREE ALLOCATIONS ARE INDEPENDENT.** Staffing a build takes nothing from the take, and
+    /// staffing the keeping takes nothing from either — the competition is for *hands*, which the
+    /// band's own pool expresses, not for a share of one crew's turn.
+    #[test]
+    fn the_three_allocations_do_not_scale_one_another() {
+        let ladder = LadderConfig::builtin();
+        let rung = ladder.rung(RungKey::PlantTended);
+        const A_BIG_BUILD_CREW: u32 = 50;
+        assert_eq!(
+            rung.build_accrual(
+                Some(Improvement::Cultivate),
+                true,
+                A_BIG_BUILD_CREW,
+                UNSCALED_UPKEEP
+            ),
+            expected_net(rung, A_BIG_BUILD_CREW),
+            "there is no cap on a build's crew: fifty hands finish a Cultivate in a turn, less the \
+             rate they are also paying"
+        );
+        // And the upkeep's crew is priced by the same unit, so a reader can add the two and get the
+        // band's real commitment to this source.
+        assert_eq!(
+            activity_work(A_BIG_BUILD_CREW) / A_BIG_BUILD_CREW as f32,
+            PER_WORKER_OUTPUT,
+            "one worker is worth one work unit on every activity — one currency, three claims"
+        );
+    }
+
+    /// **HANDS TO MEET THE DEMAND** — the maintain activity's own `workers_needed`, and `0` for a
+    /// rung that costs nothing to hold.
+    ///
+    /// **THE SHIPPED PLANT DEMANDS ARE WHOLE NUMBERS** (`2` and `4`), which is what the retune bought:
+    /// a player can staff a tended patch *exactly*, where the retired sub-worker demands (`0.5` /
+    /// `0.75`) rounded up to one hand and threw the rest of that hand away — the waste the band-level
+    /// pool now has no way to create.
+    #[test]
+    fn the_upkeep_crew_needed_is_the_demand_in_whole_workers() {
+        let ladder = LadderConfig::builtin();
+        for key in RungKey::ALL {
+            let rung = ladder.rung(key);
+            let demand = rung.upkeep_demand(UNSCALED_UPKEEP);
+            let expected = if rung.declares_upkeep() {
+                demand.ceil() as u32
+            } else {
+                NO_CREW_ON_THIS_ACTIVITY
+            };
+            assert_eq!(
+                rung.upkeep_crew_needed(UNSCALED_UPKEEP),
+                expected,
+                "{}:{} — nobody is needed to hold something that costs nothing to hold, and a rung \
+                 that does asks for its demand in whole hands",
+                key.branch().as_str(),
+                key.id()
+            );
+        }
+        // A fractional demand still wants a whole worker — you cannot send half a keeper.
+        const HALF_A_WORKER_TURN: f32 = 0.5;
+        let rung = rung_with_upkeep(HALF_A_WORKER_TURN, UpkeepScale::Flat, NO_NEGLECT_GRACE);
+        assert_eq!(rung.upkeep_crew_needed(UNSCALED_UPKEEP), 1);
+        let per_head = rung_with_upkeep(
+            HALF_A_WORKER_TURN,
+            UpkeepScale::SourceLoad,
+            NO_NEGLECT_GRACE,
+        );
+        assert_eq!(per_head.upkeep_crew_needed(A_TWENTY_HEAD_FLOCK), 10);
+    }
+
+    /// **THE SHIPPED GRACES CLEAR THE LOOSENED BOUND.** `grace_turns < work_cost / reference_output`
+    /// lost its `crew_needed` divisor when the rung stopped declaring a crew, so the reference is one
+    /// builder and the bound got *looser*. Confirmed rather than assumed, and by an order of
+    /// magnitude on every rung.
+    #[test]
+    fn the_shipped_graces_clear_the_loosened_bound() {
+        let ladder = LadderConfig::builtin();
+        for key in RungKey::ALL {
+            let rung = ladder.rung(key);
+            let Some(build) = rung.build.as_ref() else {
+                continue;
+            };
+            let turns_at_one_builder = build.work_cost / (SOLE_BUILDER as f32 * PER_WORKER_OUTPUT);
+            // **Whichever trigger the rung counts on** — the build's un-worked turns (the animal
+            // branch) or the upkeep's shortfall turns (the plant branch) — the bound is the same and
+            // both are checked, so neither branch can grow a grace that outlasts its own build.
+            for grace in [
+                build.grace_turns,
+                rung.upkeep.as_ref().map(|u| u.grace_turns),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                assert!(
+                    (grace as f32) < turns_at_one_builder,
+                    "{}:{} forgives {grace} turns against a {turns_at_one_builder}-turn \
+                     one-builder job",
+                    key.branch().as_str(),
+                    key.id(),
+                );
+            }
+        }
+    }
+
+    /// **THE DECAY IS THE SHORTFALL FRACTION AT THE RUNG'S OWN RATE, past the upkeep's own grace**
+    /// (§2.4) — three dials answering three questions, where *shortfall was the decay* welded the
+    /// demand to the rot rate and made either one unretunable.
+    #[test]
+    fn the_upkeep_decay_is_the_shortfall_fraction_at_the_rungs_own_rate() {
+        const GRACE: u32 = 2;
+        /// A rot rate deliberately unequal to the demand beside it — the whole point of the split is
+        /// that the two are different numbers, and a fixture that made them equal would pass against
+        /// the retired *shortfall is the decay* arithmetic too.
+        const ROT_PER_TURN: f32 = 0.25;
+        let rung = rung_with_meter_decay(
+            A_DEMAND_OF_ONE_WORKER_TURN,
+            UpkeepScale::Flat,
+            GRACE,
+            ROT_PER_TURN,
+            A_HALF_FULL_RETENTION_BAR,
+        );
+        for turns in 0..=GRACE as u16 {
+            assert_eq!(
+                rung.upkeep_decay(WHOLLY_UNSUPPLIED, turns),
+                NO_UPKEEP_DECAY,
+                "a grace of {GRACE} forgives turn {turns}"
+            );
+        }
+        assert_eq!(
+            rung.upkeep_decay(WHOLLY_UNSUPPLIED, GRACE as u16 + 1),
+            ROT_PER_TURN,
+            "…and the turn after it, a wholly unmaintained rung loses its own stated rate — never \
+             the demand it went short by"
+        );
+        // **Proportional, which is the other half of the split**: half the hands, half the rot.
+        assert_eq!(
+            rung.upkeep_decay(WHOLLY_UNSUPPLIED / 2.0, GRACE as u16 + 1),
+            ROT_PER_TURN / 2.0,
+            "half short is half the rot"
+        );
+        assert_eq!(
+            rung.upkeep_decay(FULLY_SUPPLIED, u16::MAX),
+            NO_UPKEEP_DECAY,
+            "and a fully staffed rung loses nothing however long it has been staffed"
+        );
+        // A rung with no upkeep has nothing to bleed, whatever it is handed.
+        assert_eq!(
+            LadderConfig::builtin()
+                .rung(RungKey::PlantWild)
+                .upkeep_decay(WHOLLY_UNSUPPLIED, u16::MAX),
+            NO_UPKEEP_DECAY
+        );
+        // **And neither does a rung whose penalty is not a meter bleed** — both animal rungs, whose
+        // flock sheds at the husbandry config's own escape fractions instead. A second rate here
+        // would be two numbers for one mechanic.
+        for key in [RungKey::AnimalPastoral, RungKey::AnimalPen] {
+            assert_eq!(
+                LadderConfig::builtin()
+                    .rung(key)
+                    .upkeep_decay(WHOLLY_UNSUPPLIED, u16::MAX),
+                NO_UPKEEP_DECAY,
+                "{}:{} sheds animals rather than bleeding a meter",
+                key.branch().as_str(),
+                key.id()
+            );
+        }
+    }
+
+    /// **THE RETENTION BAR IS A FRACTION OF THE RUNG'S OWN COST, and a rung that never rots is held
+    /// at the whole of it** — the pre-arc predicate, stated rather than special-cased.
+    #[test]
+    fn the_retention_bar_is_the_rungs_own_fraction_of_the_job() {
+        const A_JOB: f32 = 40.0;
+        let rots = rung_with_meter_decay(
+            A_DEMAND_OF_ONE_WORKER_TURN,
+            UpkeepScale::Flat,
+            NO_NEGLECT_GRACE,
+            A_DEMAND_OF_ONE_WORKER_TURN,
+            A_HALF_FULL_RETENTION_BAR,
+        );
+        assert_eq!(rots.retention_bar(A_JOB), A_JOB * A_HALF_FULL_RETENTION_BAR);
+        assert_eq!(
+            rung_with_upkeep(A_DEMAND_OF_ONE_WORKER_TURN, UpkeepScale::Flat, 0)
+                .retention_bar(A_JOB),
+            A_JOB,
+            "a rung whose meter never bleeds is held at its whole cost — nothing tests the bar"
+        );
+        // And so is a rung with no upkeep at all.
+        assert_eq!(
+            LadderConfig::builtin()
+                .rung(RungKey::PlantWild)
+                .retention_bar(A_JOB),
+            A_JOB
+        );
+    }
+
+    /// **A POOL HAS NO LEFTOVER, UNDER EITHER MODE** (§2.5) — and that is the whole reason
+    /// maintenance left the tile. An indivisible per-source supplier wastes whatever it does not
+    /// spend, once per source, and the waste grows as gear makes a hand worth more.
+    #[test]
+    fn a_short_pool_is_spent_whole_under_both_modes() {
+        /// Three demands that do not divide evenly into the pool, so a mode that rounded anywhere
+        /// would leave a remainder this test can see.
+        const DEMANDS: [f32; 3] = [2.0, 4.0, 1.0];
+        /// Well under the `7.0` those demands total.
+        const SHORT_POOL: f32 = 3.0;
+
+        for mode in [UpkeepFundMode::Spread, UpkeepFundMode::Priority] {
+            let shares = distribute_upkeep_pool(SHORT_POOL, &DEMANDS, mode);
+            let spent: f32 = shares.iter().sum();
+            assert!(
+                (spent - SHORT_POOL).abs() < 1e-6,
+                "{mode:?}: the whole pool is spent — {shares:?} sums to {spent}"
+            );
+            for (share, demand) in shares.iter().zip(DEMANDS) {
+                assert!(
+                    *share <= demand + 1e-6,
+                    "{mode:?}: no source is funded past what it asked for — {share} against {demand}"
+                );
+            }
+        }
+    }
+
+    /// **THE TWO MODES ANSWER DIFFERENTLY, and each answers what it is named for** (§2.5).
+    #[test]
+    fn spread_degrades_everything_and_priority_funds_in_order() {
+        const DEMANDS: [f32; 3] = [2.0, 4.0, 1.0];
+        /// Exactly half of the `7.0` total, so `spread`'s coverage is a clean one-half.
+        const HALF_THE_TOTAL: f32 = 3.5;
+
+        let spread = distribute_upkeep_pool(HALF_THE_TOTAL, &DEMANDS, UpkeepFundMode::Spread);
+        for (share, demand) in spread.iter().zip(DEMANDS) {
+            assert!(
+                (share - demand / 2.0).abs() < 1e-6,
+                "spread holds every source at the same coverage — {share} against {demand}"
+            );
+        }
+
+        // **Priority funds in SLICE ORDER**, which is the caller's *most-invested first* ordering:
+        // the ladder owns the arithmetic and the web owns the ranking, because "most invested" is a
+        // per-web reading of a stamped meter cost.
+        let priority = distribute_upkeep_pool(HALF_THE_TOTAL, &DEMANDS, UpkeepFundMode::Priority);
+        assert_eq!(priority[0], DEMANDS[0], "the first claim is met in full");
+        assert!(
+            (priority[1] - (HALF_THE_TOTAL - DEMANDS[0])).abs() < 1e-6,
+            "the second takes what is left — {}",
+            priority[1]
+        );
+        assert_eq!(
+            priority[2], 0.0,
+            "and the marginal one rots, which is what the mode is for"
+        );
+    }
+
+    /// **A pool that covers the total funds everything, and an EMPTY pool funds nothing** — the two
+    /// ends, so neither mode can be right only in the middle.
+    #[test]
+    fn a_sufficient_pool_funds_every_source_and_an_empty_one_funds_none() {
+        const DEMANDS: [f32; 3] = [2.0, 4.0, 1.0];
+        const TOTAL: f32 = 7.0;
+
+        for mode in [UpkeepFundMode::Spread, UpkeepFundMode::Priority] {
+            let full = distribute_upkeep_pool(TOTAL, &DEMANDS, mode);
+            for (share, demand) in full.iter().zip(DEMANDS) {
+                assert!(
+                    (share - demand).abs() < 1e-6,
+                    "{mode:?}: a pool that covers the sum meets every demand"
+                );
+            }
+            // And a pool bigger than the sum still funds no more than the sum — the leftover stays
+            // in the pool rather than being poured into a source that did not ask for it.
+            let ample = distribute_upkeep_pool(TOTAL * 2.0, &DEMANDS, mode);
+            assert!(ample.iter().sum::<f32>() <= TOTAL + 1e-6);
+
+            let empty = distribute_upkeep_pool(NO_UPKEEP_DEMAND, &DEMANDS, mode);
+            assert!(
+                empty.iter().all(|share| *share == NO_UPKEEP_DEMAND),
+                "{mode:?}: nobody on the role means nobody is held"
+            );
+        }
+    }
+
+    /// **The mode round-trips its command/wire token, and an unknown one is refused rather than
+    /// guessed at** — silently reading a typo as the default would leave a player believing they had
+    /// protected their Field.
+    #[test]
+    fn the_fund_mode_round_trips_its_token_and_refuses_an_unknown_one() {
+        for mode in [UpkeepFundMode::Spread, UpkeepFundMode::Priority] {
+            assert_eq!(UpkeepFundMode::from_token(mode.as_str()), Some(mode));
+        }
+        assert_eq!(UpkeepFundMode::from_token("sideways"), None);
+        assert_eq!(
+            UpkeepFundMode::default(),
+            UpkeepFundMode::Spread,
+            "an unstated policy singles nobody out"
+        );
+    }
+
+    /// **The scale term is the generic piece** (§2.6) — `flat` states the rate, `source_load`
+    /// multiplies it by the source's own size.
+    #[test]
+    fn the_upkeep_scale_reads_the_sources_own_measure() {
+        let flat = rung_with_upkeep(A_DEMAND_OF_ONE_WORKER_TURN, UpkeepScale::Flat, 0);
+        assert_eq!(
+            flat.upkeep_demand(A_TWENTY_HEAD_FLOCK),
+            A_DEMAND_OF_ONE_WORKER_TURN,
+            "a flat rate ignores whatever measure it is handed"
+        );
+        let per_head = rung_with_upkeep(A_DEMAND_OF_ONE_WORKER_TURN, UpkeepScale::SourceLoad, 0);
+        assert_eq!(
+            per_head.upkeep_demand(A_TWENTY_HEAD_FLOCK),
+            A_DEMAND_OF_ONE_WORKER_TURN * A_TWENTY_HEAD_FLOCK,
+            "twice the animals, twice the keeping"
+        );
+    }
+
+    /// The shipped `animal:pen` record with an `upkeep` block bolted on — the fixture the upkeep
+    /// seam's tests judge, so they exercise a **parsed** record rather than a hand-built struct that
+    /// could drift from the config's own shape.
+    fn rung_with_upkeep(work_per_turn: f32, scaled_by: UpkeepScale, grace_turns: u32) -> RungDef {
+        rung_with_optional_meter_decay(work_per_turn, scaled_by, grace_turns, None)
+    }
+
+    /// **Half a meter's worth** — the retention bar these fixtures hold a rung at, chosen well clear
+    /// of both `0` and `1` so a bar read as either endpoint fails rather than coincides.
+    const A_HALF_FULL_RETENTION_BAR: f32 = 0.5;
+
+    /// The same fixture with a `meter_decay` block — a rung whose penalty *is* a meter bleed, which
+    /// no animal rung is and which is therefore the shape the plant web ships.
+    fn rung_with_meter_decay(
+        work_per_turn: f32,
+        scaled_by: UpkeepScale,
+        grace_turns: u32,
+        per_turn: f32,
+        retain_fraction: f32,
+    ) -> RungDef {
+        rung_with_optional_meter_decay(
+            work_per_turn,
+            scaled_by,
+            grace_turns,
+            Some(serde_json::json!({
+                "per_turn": per_turn,
+                "retain_fraction": retain_fraction,
+            })),
+        )
+    }
+
+    fn rung_with_optional_meter_decay(
+        work_per_turn: f32,
+        scaled_by: UpkeepScale,
+        grace_turns: u32,
+        meter_decay: Option<serde_json::Value>,
+    ) -> RungDef {
+        let mut json: serde_json::Value =
+            serde_json::from_str(BUILTIN_INTENSIFICATION_LADDER).expect("the builtin parses");
+        let idx = rung_index(&json, "animal", "pen");
+        json["rungs"][idx]["upkeep"] = serde_json::json!({
+            "work_per_turn": work_per_turn,
+            "scaled_by": scaled_by.as_str(),
+            "grace_turns": grace_turns,
+            "meter_decay": meter_decay,
         });
-        assert_rejects(err, "animal:pen");
+        let ladder = LadderConfig::from_json_str(&json.to_string()).expect("the fixture is valid");
+        ladder.rung(RungKey::AnimalPen).clone()
     }
 
     // --- The ladder's knowledge dials. These bounds (and their rejection tests) **moved here from
@@ -2784,7 +3921,7 @@ mod tests {
              term to give them"
         );
         let build = |workers| {
-            tended.build_accrual(tended.verb_improvement(), true, FOOD_PEAK_FLOOR, workers)
+            tended.build_accrual(tended.verb_improvement(), true, workers, UNSCALED_UPKEEP)
         };
         assert!(
             build(50) > build(1),
@@ -2910,33 +4047,39 @@ mod tests {
         /// The turns every shipped rung's reference crew takes at the food peak — the pacing this
         /// slice is neutral against.
         const REFERENCE_BUILD_TURNS: u32 = 25;
-        // **The animal rungs' reference crews are a CHOICE, not a derivation**, and this is where it
-        // is written down beside the costs it produced: both declare `crew_needed: null` (a herd's
-        // crew comes from its size), so there was no staffing to multiply today's 25 turns by.
-        // `pastoral` takes 2 — it makes the claim rung 2 makes on plants, "you manage the wild
-        // source in place" — and `pen` takes 3, matching the plant rung that also *places* a source.
-        // See `intensification_ladder.json`'s `_comment_costs`.
+        // **EVERY reference crew is a FIXTURE now, not a config reading.** No rung declares a crew
+        // — the player states a build's staffing (`docs/plan_standing_upkeep.md` §2.2) — so this
+        // test names the staffings the shipped `work_cost`s were priced against. `pastoral` takes 2
+        // (the claim rung 2 makes on plants: "you manage the wild source in place") and `pen` 3,
+        // matching the plant rung that also *places* a source. See `intensification_ladder.json`'s
+        // `_comment_costs`.
         const PASTORAL_REFERENCE_CREW: u32 = 2;
         const PEN_REFERENCE_CREW: u32 = 3;
+        /// The plant rungs' reference crews, the two that used to be the `crew_needed` the ladder
+        /// declared: `tended` was priced against the two hands its patch's wild Sustain gather
+        /// wants, `field` against three.
+        const TENDED_REFERENCE_CREW: u32 = 2;
+        const FIELD_REFERENCE_CREW: u32 = 3;
         for (key, crew) in [
-            (
-                RungKey::PlantTended,
-                reference_crew(ladder.rung(RungKey::PlantTended)),
-            ),
-            (
-                RungKey::PlantField,
-                reference_crew(ladder.rung(RungKey::PlantField)),
-            ),
+            (RungKey::PlantTended, TENDED_REFERENCE_CREW),
+            (RungKey::PlantField, FIELD_REFERENCE_CREW),
             (RungKey::AnimalPastoral, PASTORAL_REFERENCE_CREW),
             (RungKey::AnimalPen, PEN_REFERENCE_CREW),
         ] {
             let rung = ladder.rung(key);
-            let accrual = rung.build_accrual(rung.verb_improvement(), true, FOOD_PEAK_FLOOR, crew);
+            // **THE REFERENCE CREW IS NOW THE REFERENCE CREW *ABOVE THE RATE*.** The maintenance
+            // rate is a tax on building (`docs/plan_standing_upkeep.md` §2.4), so the staffing that
+            // banks the reference `crew` worker-turns of *progress* is `crew` hands **plus** the
+            // hands the rate takes. The stated build length is preserved against the net, which is
+            // the only reading that ever paced anything.
+            let staffed = crew + rung.upkeep_crew_needed(UNSCALED_UPKEEP);
+            let accrual =
+                rung.build_accrual(rung.verb_improvement(), true, staffed, UNSCALED_UPKEEP);
             assert_eq!(
                 accrual,
                 crew as f32 * PER_WORKER_OUTPUT,
-                "{key:?}: a crew at the food peak with no gear is worth exactly its head count — \
-                 the normalisation's whole point"
+                "{key:?}: a crew at the food peak with no gear nets exactly its head count above \
+                 the maintenance rate — the normalisation's whole point"
             );
             assert_eq!(
                 build_turns_remaining(
@@ -2952,13 +4095,18 @@ mod tests {
         }
     }
 
-    /// **A build rides the same rate the lesson does** — increasing in the floor, with a liveness
-    /// bound beside the ordering, and degenerate at both ends. The build twin of
-    /// `knowledge_accrual_is_the_rungs_lesson_paced_by_the_floor`, and what replaced the
-    /// `EcologyPhase::Thriving` gate on both webs (`docs/plan_harvest_floor.md` §3.2): a crew pulling
-    /// hard on the source it is improving builds *slowly*, not *not at all*.
+    /// **A BUILD DOES NOT READ THE FLOOR AT ALL** — the same crew banks the same work whatever the
+    /// gatherers beside them are doing (`docs/plan_standing_upkeep.md` §2.2).
+    ///
+    /// It replaced `a_deeper_floor_builds_slower_and_stripping_builds_nothing`, which pinned
+    /// `learn_multiplier` on the accrual — the rate that replaced the `EcologyPhase::Thriving` gate
+    /// (`docs/plan_harvest_floor.md` §3.2) on the rule *"a crew pulling hard on the source it is
+    /// improving builds slowly"*. **That rule was written when one crew did both jobs.** With the
+    /// build staffed in its own right the builders are not pulling anything, and a build crew on a
+    /// source nobody is harvesting has no floor to read. The rate survives on
+    /// [`RungDef::knowledge_accrual`], where restraint still shapes what is learned.
     #[test]
-    fn a_deeper_floor_builds_slower_and_stripping_builds_nothing() {
+    fn a_build_banks_the_same_work_at_every_floor() {
         let ladder = LadderConfig::builtin();
         for key in [
             RungKey::PlantTended,
@@ -2967,71 +4115,67 @@ mod tests {
             RungKey::AnimalPen,
         ] {
             let rung = ladder.rung(key);
-            let accrual = |floor| {
-                rung.build_accrual(rung.verb_improvement(), true, floor, reference_crew(rung))
-            };
-            // Liveness first: an ordering sweep alone would pass on an accrual that returned zero
+            let crew = reference_crew(rung);
+            let banked = rung.build_accrual(rung.verb_improvement(), true, crew, UNSCALED_UPKEEP);
+            // Liveness first: an invariance sweep alone would pass on an accrual that returned zero
             // everywhere, which is exactly what a broken gate looks like.
-            assert!(
-                accrual(FOOD_PEAK_FLOOR) > 0.0,
-                "{key:?} must actually build at the food peak"
-            );
-            let mut previous = 0.0_f32;
-            for floor in [0.1_f32, 0.25, FOOD_PEAK_FLOOR, 0.75, 1.0] {
-                let built = accrual(floor);
-                assert!(
-                    built > previous,
-                    "{key:?}: floor {floor} must build faster than the floor below it ({built} vs \
-                     {previous})"
-                );
-                previous = built;
-            }
+            assert!(banked > 0.0, "{key:?} must actually build");
             assert_eq!(
-                accrual(STRIP_IT_BARE),
-                0.0,
-                "{key:?}: a crew stripping the source it is improving builds nothing"
+                banked,
+                expected_net(rung, crew),
+                "{key:?}: a build crew banks its head count LESS the maintenance rate it is also \
+                 paying"
             );
+            // **The floor cannot reach it: `build_accrual` does not take one.** What a *gatherer*
+            // beside them holds is asserted end-to-end by
+            // `a_build_in_flight_leaves_the_take_row_alone`; here the seam's own signature is the
+            // guarantee, and the pacing it preserves is
+            // `taking_the_floor_off_the_build_rate_is_pacing_neutral_at_the_food_peak`.
+            //
+            // The two ends the retired rate was degenerate at — `1.0` (watching) and `0`
+            // (stripping) — are therefore no longer build states at all. `STRIP_IT_BARE` survives
+            // as the knowledge path's degenerate end.
+            let _ = STRIP_IT_BARE;
             // The **other** degenerate end is the caller's, not this seam's: at `floor = 1.0` the
             // rate is its highest but nothing stands above the floor, so the caller's `eligible` is
             // false and nothing is built. Asserted here as the seam's half of it — `eligible = false`
             // is always zero, whatever the floor.
             assert_eq!(
-                rung.build_accrual(rung.verb_improvement(), false, 1.0, reference_crew(rung),),
+                rung.build_accrual(
+                    rung.verb_improvement(),
+                    false,
+                    reference_crew(rung),
+                    UNSCALED_UPKEEP
+                ),
                 0.0,
                 "{key:?}: watching a source builds nothing, however restrained the watching"
             );
         }
     }
 
-    /// **`learn_multiplier` scales the ACCRUAL and not the decay** — the asymmetry with the cost
-    /// multiplier, which reaches both. Decay happens on turns nobody works the source, so there is no
-    /// assignment and no floor to read; scaling it would multiply by a number that does not exist in
-    /// that state.
+    /// **THE DECAY DOES NOT READ THE SOURCE'S COST MULTIPLIER, AND SINCE §2.4 IT CANNOT.** A bleed
+    /// used to be a fraction of the rung's own `work_cost`, so it rode `cost_multiplier` and a rung's
+    /// build:decay ratio stayed invariant per source for free. Shortfall is the decay now: what an
+    /// improvement loses is what its **keepers** did not supply, which is a fact about the crew and
+    /// the rung, not about how big the job was. A Steppe Runner is five times the work to tame and
+    /// forgets at whatever rate its own upkeep names — the two are simply different questions.
     #[test]
-    fn the_floor_scales_the_build_but_never_the_decay() {
+    fn the_cost_multiplier_prices_the_job_and_never_the_upkeep() {
         let ladder = LadderConfig::builtin();
         let tended = ladder.rung(RungKey::PlantTended);
         let build = tended.build.as_ref().expect("the tended rung builds");
-        let stated_bleed = build
-            .decay_fraction_per_turn
-            .expect("the tended rung bleeds")
-            * build.work_cost;
-        assert_eq!(
-            tended.build_decay(RUNG_COST_UNSCALED),
-            stated_bleed,
-            "the decay is a fraction of the rung's own cost — no floor is folded into it"
-        );
-        // **The cost multiplier reaches BOTH sides**, which is what keeps a rung's build:decay ratio
-        // invariant per source for free (`slow to tame, slow to forget`).
         const TWICE_THE_WORK: f32 = 2.0;
         assert_eq!(
-            tended.build_decay(TWICE_THE_WORK),
-            stated_bleed * TWICE_THE_WORK,
-            "a source that is twice the job also bleeds twice as slowly, in proportion"
-        );
-        assert_eq!(
             tended.build_cost(TWICE_THE_WORK),
-            Some(build.work_cost * TWICE_THE_WORK)
+            Some(build.work_cost * TWICE_THE_WORK),
+            "the multiplier is the source's own nature, and it prices the JOB"
+        );
+        // The upkeep seam takes a `source_measure`, not a cost multiplier, and `flat` ignores it —
+        // so nothing about the size of the build reaches what it costs to hold.
+        assert_eq!(
+            tended.upkeep_demand(UNSCALED_UPKEEP),
+            tended.upkeep_demand(TWICE_THE_WORK),
+            "a `flat` upkeep is the cost of the thing existing, whatever the job cost to raise"
         );
     }
 

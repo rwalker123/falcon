@@ -488,8 +488,30 @@ const OPTIONAL_YIELD_KEYS: Array[String] = [
 	SourceForecast.YIELD_RANGE_LOW_KEY, SourceForecast.YIELD_RANGE_HIGH_KEY,
 ]
 
+## The build crew's key on a wire assignment AND on a merged row — one spelling, because
+## `effective_worker_map` copies it through under the wire's own name so `staffed_total` can read
+## either shape.
+const BUILD_WORKERS_KEY := "improvement_workers"
+
+## **THE HANDS ONE MERGED ROW SPENDS — the take crew AND the builders**, the client's transcription of
+## `LaborAssignment::staffed_total`. A source carries two allocations (`docs/plan_standing_upkeep.md`
+## §2.2) and the sim charges the band for BOTH, so any reader asking *"how much of this band is
+## committed here"* has to sum the pair.
+##
+## **SUMMING `workers` ALONE IS THE DEFECT THIS EXISTS TO MAKE UNSPELLABLE.** `effective_idle` did
+## exactly that, so a band with three builders on a Cultivate reported three idle who did not exist —
+## and every ceiling built on top of it (the role cards' steppers, the pen-extend crew, the bench's
+## `benchable_workers`) offered crews the sim then refused, naming an idle count the player could see
+## on the panel. Reported from play: `3 idle of 18` on a band whose every hand was spent.
+static func staffed_total(entry: Dictionary) -> int:
+	return maxi(int(entry.get("workers", 0)), 0) \
+		+ maxi(int(entry.get(BUILD_WORKERS_KEY, 0)), 0)
+
+## The build crew's key on a wire assignment AND on a merged row — one spelling, because
+## `effective_worker_map` copies it through under the wire's own name so `staffed_total` can read
 ## Confirmed labor assignments overlaid with this band's pending assigns, keyed by source/role.
-## Each value: {kind, workers, x, y, herd_id, policy, pending: bool, + per-source yield fields}.
+## Each value: {kind, workers, improvement_workers, x, y, herd_id, policy, pending: bool, + per-source
+## yield fields}.
 func effective_worker_map(band: Dictionary) -> Dictionary:
 	var merged: Dictionary = {}
 	for a in labor_assignments_of(band):
@@ -499,6 +521,11 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		var key := pending_key(kind, int(a.get("target_x", -1)), int(a.get("target_y", -1)), String(a.get("fauna_id", "")))
 		merged[key] = {
 			"kind": kind, "workers": int(a.get("workers", 0)),
+			# **THE SECOND ALLOCATION TRAVELS WITH THE FIRST** (`docs/plan_standing_upkeep.md` §2.2).
+			# The take crew and the build crew are two fields of ONE assignment and the band pays for
+			# both, so a map that carried only the take let every consumer of it describe a band with
+			# more hands than it has.
+			BUILD_WORKERS_KEY: maxi(int(a.get(BUILD_WORKERS_KEY, 0)), 0),
 			"x": int(a.get("target_x", -1)), "y": int(a.get("target_y", -1)),
 			"herd_id": String(a.get("fauna_id", "")),
 			# WHERE THIS CREW STOPS, as a fraction of the source's capacity — the whole of the harvest
@@ -543,8 +570,15 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 	var pend := pending_assigns_for(int(band.get("entity", -1)))
 	for key in pend:
 		var pd: Dictionary = pend[key]
+		# The builders the edit LEAVES IN PLACE, for the reason the `improvement` below is kept:
+		# `assign_labor` states neither, so a pending TAKE edit that blanked the build crew would make
+		# three staffed builders vanish from the workforce bar and reappear as idle hands for the turn
+		# between the command and its confirmation — the very miscount this map's `staffed_total` fixes.
+		var standing_builders := maxi(
+			int((merged.get(key, {}) as Dictionary).get(BUILD_WORKERS_KEY, 0)), 0)
 		merged[key] = {
 			"kind": String(pd.get("kind", "")), "workers": int(pd.get("workers", 0)),
+			BUILD_WORKERS_KEY: standing_builders,
 			"x": int(pd.get("x", -1)), "y": int(pd.get("y", -1)),
 			"herd_id": String(pd.get("herd_id", "")),
 			"floor": SourceForecast.clamp_floor(
@@ -590,6 +624,11 @@ func forage_effort_at(x: int, y: int, bands: Array = []) -> Dictionary:
 func hunt_effort_on(herd_id: String, bands: Array = []) -> Dictionary:
 	return _effort_on(pending_key(LABOR_KIND_HUNT, -1, -1, herd_id), bands)
 
+## **`workers` HERE IS THE TAKE CREW ALONE, AND THAT IS NOT THE `staffed_total` OMISSION.** Every
+## reader of this answer asks *"is anybody HARVESTING this source"* — the attention producers' unworked
+## rung and under-crewed herd, the tile card's worked mark — and a builder takes nothing, so folding
+## the build crew in would report a patch nobody is gathering as gathered. What a build is doing here
+## is the `improvement` beside it, which those readers have their own use for.
 func _effort_on(key: String, bands: Array = []) -> Dictionary:
 	var workers := 0
 	var improvement := SourceForecast.IMPROVEMENT_NONE
@@ -605,7 +644,15 @@ func _effort_on(key: String, bands: Array = []) -> Dictionary:
 			improvement = String(m.get("improvement", "")).strip_edges().to_lower()
 	return {"workers": workers, "improvement": improvement}
 
-## Optimistic idle = working-age minus the sum of effective worker counts **minus the bench crew**.
+## Optimistic idle = working-age minus **every** hand each effective assignment spends — the take crew
+## AND the builders (`staffed_total`) — minus the bench crew.
+##
+## **THE BUILDERS WERE MISSING AND EVERY CEILING BUILT ON THIS INHERITED IT.** This summed the wire's
+## per-assignment `workers` alone, which is the TAKE crew, so a band with three hands on a Cultivate
+## reported three idle who were already spent — `3 idle of 18` beside `Forage 9 · Hunt 6 · Idle 3`,
+## reported from play. The sim's `LaborAllocation::assigned_total` sums `LaborAssignment::staffed_total`,
+## i.e. `workers + improvement_workers`; this is that same sum, and the disagreement was entirely the
+## client's.
 ##
 ## **A WORKER AT THE BENCH IS ASSIGNED LABOR, AND THE BENCH IS NOT A `LaborTarget`.** A band's people
 ## are spent on the `labor_assignments` this overlays AND on the crafting bench, and a bench crew is
@@ -624,7 +671,7 @@ func effective_idle(band: Dictionary) -> int:
 	var assigned := 0
 	var merged := effective_worker_map(band)
 	for key in merged:
-		assigned += int((merged[key] as Dictionary).get("workers", 0))
+		assigned += staffed_total(merged[key] as Dictionary)
 	return max(0, int(band.get("working_age", 0)) - assigned - bench_workers(band))
 
 ## The crew standing at the band's crafting bench (`PopulationCohortState.bench.workers`) — spent
@@ -663,21 +710,70 @@ func effective_hunt_workers(band: Dictionary, herd_id: String) -> int:
 		return int((pend[key] as Dictionary).get("workers", 0))
 	return workers_for_hunt(band, herd_id)
 
-## Total herders actually assigned to a herd, summed across every player band and overlaying pending
-## (staged) edits so a just-staffed herder counts IMMEDIATELY — before the turn resolves. A managed
-## herd's local crew ride `Hunt` assignments (the policy is Corral/Sustain), so this sums the hunt
-## workers targeting `herd_id`. This is the ACTUAL staffing the herd drawer + the work panel read
-## against `herders_needed`; it deliberately does NOT reconstruct from last turn's resolved
-## `herded_fraction`, which lags a turn and produced the self-contradictory "5 needed · only 2 of 5
-## working" the instant after the player assigned a herder (fauna neglect-escape arc).
-func assigned_herders_for(herd_id: String) -> int:
-	if herd_id == "":
-		return 0
-	var total := 0
-	for band in current_player_bands():
-		if band is Dictionary:
-			total += effective_hunt_workers(band, herd_id)
-	return total
+## **WHAT ONE BAND'S KEEPING POOL IS BEING ASKED FOR, AND WHAT IT COVERED** — the band-level sum, per
+## WEB, of the per-source upkeep the wire already publishes (`docs/plan_standing_upkeep.md` §2.5).
+## `{demand, supplied, shortfall}` in work units, all three summed and none of them derived from the
+## other two.
+##
+## **IT REPLACED `assigned_keepers_for`, and the replacement is not cosmetic.** That reader summed the
+## per-source `maintain` crews, which no longer exist: maintenance is a band-level role and each
+## source is paid a SHARE of the pool. A headcount is therefore no longer available per source, and
+## the pool's own state is the only thing that answers *"is this band keeping what it holds"*.
+##
+## **THE SUM IS OVER THE SOURCES THE SIM ITSELF FUNDS.** A row with nobody on the take is skipped
+## exactly as `systems::labor::maintenance_shares` skips it — its supply is never stamped, so counting
+## its demand would show a shortfall the sim is not charging anybody for. A source whose at-risk meter
+## is still being BUILT contributes its demand too, deliberately: the sim leaves it out of the pool
+## (its builders answer for it), but its published `upkeepShortfall` is still what that meter bleeds,
+## and a band summary that hid it would go quiet on a walked-away build.
+##
+## `kind` is `LABOR_KIND_FORAGE` for the agriculture pool and `LABOR_KIND_HUNT` for the husbandry one
+## — the two webs' own labor kinds, so the caller never invents a third vocabulary for the split.
+func upkeep_pool_state(band: Dictionary, kind: String) -> Dictionary:
+	var demand := 0.0
+	var supplied := 0.0
+	var shortfall := 0.0
+	for entry in labor_assignments_of(band):
+		if not (entry is Dictionary):
+			continue
+		var assignment: Dictionary = entry
+		if String(assignment.get("kind", "")).to_lower() != kind:
+			continue
+		if int(assignment.get("workers", 0)) <= 0:
+			continue
+		var source := _upkeep_source_for(assignment, kind)
+		if source.is_empty():
+			continue
+		var state := SourceForecast.upkeep_state(source, HudComposeVocab.BARE_FORECAST_PREFIX)
+		demand += float(state.get("demand", SourceForecast.NO_UPKEEP_DEMAND))
+		supplied += float(state.get("supplied", SourceForecast.NO_UPKEEP_DEMAND))
+		shortfall += float(state.get("shortfall", SourceForecast.NO_UPKEEP_DEMAND))
+	return {"demand": demand, "supplied": supplied, "shortfall": shortfall}
+
+## **WHICH WAY THIS BAND SPLITS A POOL IT CANNOT STRETCH** — `PopulationCohortState.upkeepFundMode`,
+## normalized to one of the two tokens `upkeep_mode` takes.
+##
+## **AN EMPTY VALUE READS AS `spread`, and that is the sim's own rule**: empty is only ever a frame
+## the sim did not write, and an unstated policy singles nobody out. Anything unrecognised reads the
+## same way rather than being echoed back — the control that renders this offers exactly two choices,
+## so a third token would light neither and leave the band looking unset.
+func upkeep_fund_mode(band: Dictionary) -> String:
+	var mode := String(band.get("upkeep_fund_mode", "")).strip_edges().to_lower()
+	return mode if mode == HudConst.UPKEEP_FUND_MODE_PRIORITY else HudConst.UPKEEP_FUND_MODE_SPREAD
+
+## The LIVE source dict one assignment row points at — the patch under a forage row, the world herd
+## under a hunt row. `{}` where the snapshot does not carry it (a patch outside the ingested lookup,
+## a herd that has gone), which the caller skips: an absent source states no upkeep, and inventing a
+## zero for it would read as *"this band is keeping everything"*.
+##
+## **A HERD IS RESOLVED BY ID AND NEVER BY THE ROW'S TARGET TILE**, herds migrating; the patch is
+## resolved by tile, a patch being fixed. Same split every other reader of these two makes.
+func _upkeep_source_for(assignment: Dictionary, kind: String) -> Dictionary:
+	if kind == LABOR_KIND_HUNT:
+		return find_world_herd(String(assignment.get("fauna_id", "")))
+	var tile := Vector2i(int(assignment.get("target_x", -1)), int(assignment.get("target_y", -1)))
+	var patch: Variant = forage_patch_lookup().get(tile, {})
+	return patch if patch is Dictionary else {}
 
 ## Effective worker count on a band-wide ROLE (scout/warrior), overlaying any pending value — the
 ## role twin of `effective_forage_workers` / `effective_hunt_workers`. Roles key by kind alone (one
@@ -798,11 +894,95 @@ func _validated_improvement(assignment: Dictionary, web: Array) -> String:
 	var improvement := String(assignment.get("improvement", "")).strip_edges().to_lower()
 	return improvement if improvement in web else SourceForecast.IMPROVEMENT_NONE
 
-## Max workers a band can commit to ONE source: its idle workers plus any it already has on that
-## source (the assign REPLACES that count, so re-editing an existing assignment isn't capped below its
-## current staffing). Reduces to `idle_workers` for a fresh source.
-func assignable_hunt_workers(band: Dictionary, herd_id: String) -> int:
-	return int(band.get("idle_workers", 0)) + workers_for_hunt(band, herd_id)
+## **THE OTHER CREW THIS BAND HAS ON A SOURCE** (`docs/plan_standing_upkeep.md` §2.2) — the hands on
+## the BUILD, beside `workers_for_*`'s take crew. Both ship on the assignment now; until they did, the
+## client could SEND a build crew and never read one back, which is what forced the compose sheet to
+## seed its stepper at nobody.
+##
+## **THERE IS NO `maintain_workers_for_*` TWIN** (§2.5). Maintenance left the tile: the wire's
+## `maintainWorkers` slot is deprecated and the keeping is a band-level role, so a per-source keeper
+## count is a question with no answer. What a source gets is a SHARE of the pool, read through
+## `SourceForecast.upkeep_state`.
+##
+## **`0` IS A REAL READING AND IS THE COMMON ONE** — no verb in flight genuinely means no builders. It
+## must never be treated as "unknown" and replaced by a seed: doing so would put phantom hands on
+## every unbuilt source in the game.
+func build_workers_for_forage(band: Dictionary, x: int, y: int) -> int:
+	return maxi(int(forage_assignment_of(band, x, y).get("improvement_workers", 0)), 0)
 
-func assignable_forage_workers(band: Dictionary, x: int, y: int) -> int:
-	return int(band.get("idle_workers", 0)) + workers_for_forage(band, x, y)
+func build_workers_for_hunt(band: Dictionary, herd_id: String) -> int:
+	return maxi(int(hunt_assignment_of(band, herd_id).get("improvement_workers", 0)), 0)
+
+## **THE CROP THIS BAND ASKED FOR ON A PATCH** — the player's stated SELECTION, which is not the same
+## question as `ForagePatchState.committedSpecies`.
+##
+## The patch's field is what the GROUND is committed to and is only set once a crew has worked it; this
+## one exists from the moment the player chose, so it is the only answer available on a sheet reopened
+## over ground nobody has worked yet. `""` = *"pick the tile's dominant legal plant for me"*, which is
+## a real instruction rather than an absent one.
+func species_for_forage(band: Dictionary, x: int, y: int) -> String:
+	return String(forage_assignment_of(band, x, y).get("species", "")).strip_edges()
+
+## **THE HANDS ONE COMPOSE SHEET MAY SPEND — idle, plus EVERY crew this band has committed on THIS
+## source.** The sheet edits a source's take and its build together and commits them as one
+## transaction, so it is clamped as one: each stepper's ceiling is this pool minus what the OTHER
+## stepper currently proposes (`DrawerComposeController`), which is what makes two hands dropped off
+## the take available to the builders in the same gesture rather than a commit-and-reopen later.
+##
+## **IT REPLACED A PAIR OF PER-ACTIVITY CEILINGS, and the pair is what the bug was.** `idle + this
+## source's take` and `idle + this source's builders` are each the ceiling the sim judges ONE command
+## against (`LaborAllocation::idle_for` gives back only the activity being restated), and read on
+## their own they are correct; read side by side on a sheet that edits both, they describe a band with
+## more hands than it has in one direction and fewer in the other. A fully-allocated band's BUILDERS
+## stepper sat dead at `0` no matter what the player did to the take beside it.
+##
+## It reads the published `idleWorkers` — `BandWorkforce::idle()`, every committed hand netted out,
+## the bench included — rather than `effective_idle`, which sums the wire's per-assignment `workers`
+## and so counts only the TAKE crews.
+func source_crew_pool_hunt(band: Dictionary, herd_id: String) -> int:
+	return maxi(int(band.get("idle_workers", 0)) + workers_for_hunt(band, herd_id)
+		+ build_workers_for_hunt(band, herd_id), 0)
+
+func source_crew_pool_forage(band: Dictionary, x: int, y: int) -> int:
+	return maxi(int(band.get("idle_workers", 0)) + workers_for_forage(band, x, y)
+		+ build_workers_for_forage(band, x, y), 0)
+
+## **A RUNG THIS FACTION HAS DECLARED AND PUT NOBODY ON** — the declared verb when every band working
+## the source has zero builders on it, `IMPROVEMENT_NONE` otherwise. The client half of the
+## declared-but-unstaffed readout (`SourceForecast.unstaffed_build_state` decides which of the two
+## unstaffed states it is; this only answers *is anybody building it*).
+##
+## **IT IS READ OFF THE CONFIRMED WIRE ROW ALONE, and that is not an oversight.** The declaration and
+## the crew are two fields of ONE `LaborAssignment`, so reading them from one row is the only way the
+## pair can describe one moment. The optimistic overlay carries a declaration but no build crew
+## (`assign_labor` never states one), so a pending-aware read would report *declared, nobody on it* for
+## the turn after a player committed a build WITH builders — a warning fired at exactly the person who
+## did the right thing. Silence for one snapshot is the honest degrade: this is a standing fact, and it
+## renders from the frame the sim confirms it.
+##
+## **FOLDED ACROSS EVERY BAND, because a source several bands can reach may be built by any of them.**
+## The verb is the first non-empty declaration (at most one rung is ever in flight on one source); the
+## crew is the SUM, so one band's builders cover another band's bare declaration.
+func unstaffed_build_forage(x: int, y: int, bands: Array = []) -> String:
+	return _unstaffed_build(bands,
+		func(band: Dictionary) -> String: return improvement_for_forage(band, x, y),
+		func(band: Dictionary) -> int: return build_workers_for_forage(band, x, y))
+
+func unstaffed_build_hunt(herd_id: String, bands: Array = []) -> String:
+	return _unstaffed_build(bands,
+		func(band: Dictionary) -> String: return improvement_for_hunt(band, herd_id),
+		func(band: Dictionary) -> int: return build_workers_for_hunt(band, herd_id))
+
+func _unstaffed_build(bands: Array, declared_of: Callable, builders_of: Callable) -> String:
+	var declared := SourceForecast.IMPROVEMENT_NONE
+	var builders := 0
+	for band_variant in (bands if not bands.is_empty() else current_player_bands()):
+		if not (band_variant is Dictionary):
+			continue
+		var band: Dictionary = band_variant
+		if declared == SourceForecast.IMPROVEMENT_NONE:
+			declared = String(declared_of.call(band))
+		builders += int(builders_of.call(band))
+	if builders > SourceForecast.BUILD_CREW_NONE:
+		return SourceForecast.IMPROVEMENT_NONE
+	return declared

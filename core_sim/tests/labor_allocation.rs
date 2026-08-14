@@ -38,6 +38,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
+use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     advance_herds, advance_labor_allocation, available_workers, scalar_from_f32, scalar_one,
     scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world, CommandEventKind,
@@ -48,7 +49,6 @@ use core_sim::{
     MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, Tile, TileRegistry, WellbeingConfigHandle, FOOD,
-    NO_IMPROVEMENT_UNDERWAY,
 };
 
 fn spawn_world() -> App {
@@ -169,6 +169,7 @@ fn forage_alloc_policy(tile: UVec2, workers: u32, policy: f32) -> LaborAllocatio
             workers,
             improvement: None,
             kit: None,
+            improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
         }],
         ..Default::default()
     }
@@ -317,6 +318,7 @@ fn sustain_hunt_below_regrowth_lets_herd_grow() {
                 workers: 1,
                 improvement: None,
                 kit: None,
+                improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             ..Default::default()
         },
@@ -405,6 +407,7 @@ fn a_hunt_actual_pulses_while_realized_holds_the_steady_average() {
                 workers: 2,
                 improvement: None,
                 kit: None,
+                improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             ..Default::default()
         },
@@ -545,6 +548,7 @@ fn a_drawn_down_hunt_realized_drifts_smoothly_never_sawtooths() {
                 workers: 4,
                 improvement: None,
                 kit: None,
+                improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             ..Default::default()
         },
@@ -619,6 +623,7 @@ fn hunt_lapses_beyond_leash() {
                 workers: 3,
                 improvement: None,
                 kit: None,
+                improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             ..Default::default()
         },
@@ -970,6 +975,7 @@ fn stage_hunt(
                 workers,
                 improvement: None,
                 kit: None,
+                improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             ..Default::default()
         },
@@ -1079,7 +1085,6 @@ fn the_schedule_total_matches_the_realized_average_over_the_horizon() {
     let (id, _band) = stage_hunt(&mut app, 200.0, 0.2, 30.0, 100.0, 4);
 
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
-    let ladder = app.world.resource::<LadderConfigHandle>().get();
     let labor = app.world.resource::<LaborConfigHandle>().get();
     let registry = app.world.resource::<HerdRegistry>();
     let herd = registry.find(&id).expect("the staged herd is live");
@@ -1090,25 +1095,21 @@ fn the_schedule_total_matches_the_realized_average_over_the_horizon() {
     let realized = core_sim::project_realized_hunt(
         herd,
         &fauna,
-        &ladder,
         per_worker,
         &core_sim::HuntingParty::builtin_equipped(),
         1.0,
         4,
         0.5,
-        NO_IMPROVEMENT_UNDERWAY,
         horizon,
     );
     let schedule = core_sim::project_arrivals_hunt(
         herd,
         &fauna,
-        &ladder,
         per_worker,
         &core_sim::HuntingParty::builtin_equipped(),
         1.0,
         4,
         0.5,
-        NO_IMPROVEMENT_UNDERWAY,
         horizon,
     );
 
@@ -1140,13 +1141,11 @@ fn a_spent_source_schedules_nothing() {
     let schedule = core_sim::project_arrivals_hunt(
         app.world.resource::<HerdRegistry>().find(&id).unwrap(),
         &app.world.resource::<FaunaConfigHandle>().get(),
-        &app.world.resource::<LadderConfigHandle>().get(),
         equipped_haul_rate(),
         &core_sim::HuntingParty::builtin_equipped(),
         1.0,
         4,
         0.5,
-        NO_IMPROVEMENT_UNDERWAY,
         labor.arrivals_horizon_turns,
     );
     assert_eq!(
@@ -1195,6 +1194,7 @@ fn a_trimmed_assignment_is_announced_and_names_the_lost_build() {
         workers: 3,
         improvement: Some(core_sim::Improvement::Tame),
         kit: None,
+        improvement_workers: 3,
     });
     let band = spawn_band(&mut app, patch_tile, 3, allocation);
 

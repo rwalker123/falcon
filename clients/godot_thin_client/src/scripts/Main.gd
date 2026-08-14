@@ -284,6 +284,8 @@ func _ready() -> void:
             hud.connect("split_band_requested", Callable(self, "_on_hud_split_band"))
         if hud.has_signal("extend_pen_requested") and not hud.is_connected("extend_pen_requested", Callable(self, "_on_hud_extend_pen")):
             hud.connect("extend_pen_requested", Callable(self, "_on_hud_extend_pen"))
+        if hud.has_signal("upkeep_mode_requested") and not hud.is_connected("upkeep_mode_requested", Callable(self, "_on_hud_upkeep_mode")):
+            hud.connect("upkeep_mode_requested", Callable(self, "_on_hud_upkeep_mode"))
         if hud.has_signal("improvement_requested") and not hud.is_connected("improvement_requested", Callable(self, "_on_hud_improvement")):
             hud.connect("improvement_requested", Callable(self, "_on_hud_improvement"))
         if hud.has_signal("set_bench_requested") and not hud.is_connected("set_bench_requested", Callable(self, "_on_hud_set_bench")):
@@ -639,10 +641,16 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     if snapshot.has("populations") and SnapshotSections.changed(snapshot, "populations"):
         _hud_invoke("update_band_alerts", [snapshot["populations"]])
     # `command_events` is PER-FRAME HISTORY, never reconstructible: a delta carries only the rows
-    # appended since the baseline, a full snapshot carries the whole retained ring. Both consumers
-    # (the Telling, and the event dock) accumulate and de-duplicate, so re-ingesting a full
-    # snapshot's ring is harmless. (The Telling is deliberately NOT reset on a full frame — it keeps
-    # its own scrolled-off history and de-dupes on a signature, not on `seq`.)
+    # appended since the baseline, a full snapshot carries the whole retained ring.
+    #
+    # **THERE ARE THREE CONSUMERS AND EACH DEFENDS ITSELF DIFFERENTLY; re-ingesting a full ring is
+    # harmless only because every one of them does.** The Telling and the event dock ACCUMULATE and
+    # de-duplicate — the Telling deliberately NOT reset on a full frame, keeping its own scrolled-off
+    # history and de-duping on a signature rather than on `seq`; the dock resets and de-dupes on `seq`.
+    # The THIRD is the turn orb's crew-hand-off producer (`AttentionController.ingest_command_events`),
+    # which does neither: it is a WINDOW on one turn, so it filters on the event's own `tick` and
+    # de-duplicates on `seq` itself. It went in reading every matching row on the array, which turned a
+    # resync's twenty-turn ring into twenty turns of hand-offs all dated today.
     if snapshot.has("command_events") and SnapshotSections.changed(snapshot, "command_events"):
         _hud_invoke("ingest_command_events", [snapshot["command_events"]])
     # The dock's four per-frame steps are one seam, because their ORDER is the contract and stating
@@ -926,13 +934,19 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
                 "message": "Assign %d hunter%s to %s, leaving %s standing." % [
                     workers, "" if workers == 1 else "s", herd_id, _floor_percent_text(payload)],
             }
-        "scout", "warrior":
+        "scout", "warrior", "agriculture", "husbandry":
             # **A BAND-WIDE ROLE CARRIES THE KIT TOKEN TOO, and it is the only optional token these
-            # two rows take.** They have no tile, no herd, no floor and no species — the sim ignores
-            # every one of those on a Scout or Warrior target — but `kit_job()` answers for all four
+            # rows take.** They have no tile, no herd, no floor and no species — the sim ignores
+            # every one of those on a role target — but `kit_job()` answers for all four
             # roles now, so `assign_labor … scout 3 kit none` is a real selection rather than a token
             # dropped on the floor. Same `_kit_token` omission rule as the other two branches, so a
             # player who never opened the role card's picker emits the line they always did.
+            #
+            # **THE TWO KEEPING ROLES RIDE THE SAME BRANCH** (`docs/plan_standing_upkeep.md` §2.5).
+            # `agriculture` and `husbandry` are band-wide standing roles in exactly the grammar
+            # scout and warrior use, so a branch of their own would be the same line typed twice.
+            # They send no kit today — the role cards mount no picker, the wire naming no default
+            # kit for either job — and `_kit_token` omits an empty selection.
             return {
                 "line": "assign_labor %d %d %s %d%s" % [
                     faction, band_id, kind, workers, _kit_token(payload)],
@@ -1184,17 +1198,24 @@ static func format_split_band(payload: Dictionary) -> Dictionary:
         "message": "Form a new band.",
     }
 
-## `extend_pen <faction> <x> <y>` targets the pen's ANCHOR TILE, so it names no band at all — it is
-## here for company, not because it carries a band handle.
+## `extend_pen <faction> <x> <y> <workers>` targets the pen's ANCHOR TILE, so it names no band at all
+## — it is here for company, not because it carries a band handle.
+##
+## **THE CREW IS A REQUIRED POSITIONAL** (`docs/plan_standing_upkeep.md` §2.2): a ring rides the same
+## `animal:pen` rung as the pen it widens, so it staffs the same build allocation and draws on the
+## same finite band. The sim REFUSES a count the band cannot staff, naming the idle hands, which is
+## why the sheet clamps its stepper before this is ever built.
 static func format_extend_pen(payload: Dictionary) -> Dictionary:
     var faction := int(payload.get("faction", PLAYER_FACTION_ID))
     var x := int(payload.get("x", -1))
     var y := int(payload.get("y", -1))
     if x < 0 or y < 0:
         return {}
+    var workers: int = max(0, int(payload.get("workers", 0)))
     return {
-        "line": "extend_pen %d %d %d" % [faction, x, y],
-        "message": "Extend pen at (%d, %d)." % [x, y],
+        "line": "extend_pen %d %d %d %d" % [faction, x, y, workers],
+        "message": "Extend pen at (%d, %d) with %d worker%s." % [
+            x, y, workers, "" if workers == 1 else "s"],
     }
 
 ## **THE SECOND AXIS's commands** (issue #442): `cultivate <faction> <x> <y>` / `sow <faction> <x> <y>`
@@ -1212,21 +1233,27 @@ static func format_improvement(payload: Dictionary) -> Dictionary:
     if improvement == "":
         return {}
     var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    # **THE BUILD'S OWN CREW, a required trailing positional on all four verbs**
+    # (`docs/plan_standing_upkeep.md` §2.2). It is what makes the build an allocation the player
+    # states rather than a rider on the take crew, and the sim REFUSES a count the band cannot staff.
+    var workers: int = max(0, int(payload.get("workers", 0)))
     if improvement in IMPROVEMENT_HERD_TARGETED:
         var herd_id := String(payload.get("herd_id", "")).strip_edges()
         if herd_id == "":
             return {}
         return {
-            "line": "%s %d %s" % [improvement, faction, herd_id],
-            "message": "%s %s." % [improvement.capitalize(), herd_id],
+            "line": "%s %d %s %d" % [improvement, faction, herd_id, workers],
+            "message": "%s %s with %d worker%s." % [
+                improvement.capitalize(), herd_id, workers, "" if workers == 1 else "s"],
         }
     var x := int(payload.get("x", -1))
     var y := int(payload.get("y", -1))
     if x < 0 or y < 0:
         return {}
     return {
-        "line": "%s %d %d %d" % [improvement, faction, x, y],
-        "message": "%s (%d, %d)." % [improvement.capitalize(), x, y],
+        "line": "%s %d %d %d %d" % [improvement, faction, x, y, workers],
+        "message": "%s (%d, %d) with %d worker%s." % [
+            improvement.capitalize(), x, y, workers, "" if workers == 1 else "s"],
     }
 
 ## **`set_bench <faction_id> <band_id> recipe <recipe_id>`** — put a recipe on a band's crafting bench
@@ -1285,39 +1312,40 @@ static func format_bench_crew(payload: Dictionary) -> Dictionary:
         "message": "Put %d crafter%s on the bench." % [workers, "" if workers == 1 else "s"],
     }
 
-## **`abandon_improvement <faction> forage <x> <y>` / `abandon_improvement <faction> hunt <herd_id>`**
-## — the command that stops a build (issue #442). Alias `abandon`.
+## **RETIRED — `abandon_improvement` and its builder** (`docs/plan_standing_upkeep.md` §2.4). It
+## existed to clear an assignment's STORED improvement, back when that field was the commitment; the
+## build verb is DERIVED from the meter now, so there is no stored authority left to clear and a
+## command that cleared a derived value would either do nothing or fight the derivation.
 ##
-## **IT NAMES A SOURCE, NOT A VERB, AND THAT IS WHY IT IS ITS OWN BUILDER.** At most one improvement
-## is ever in flight on a source, so naming the source names the thing being abandoned — and the
-## targeting rule that follows is the WEB's (`forage` → tile, `hunt` → herd), not the verb's. The set
-## verbs above target by VERB (`tame` names a herd; `cultivate`/`sow`/`corral` name a tile), and
-## `corral` is the case that proves the two rules genuinely differ: it is a HERD's rung addressed by
-## the pen's PLACE, so a shared branch would send `abandon_improvement <f> <x> <y>` for a herd.
+## **Walking away is `cultivate <faction> <x> <y> 0`** — the same set verb that started the build,
+## with its crew at zero — so `format_improvement` above is the only builder either direction needs.
+## Its proto field is reserved and the server's text parser refuses the retired form outright, so a
+## stale client gets an error rather than a no-op it would read as success.
 ##
-## **Always allowed.** The server gates it on nothing — no knowledge, no ceiling, no site, no
-## `Thriving` — because abandoning a STALLED build is the case it exists for. The only rejections are
-## an unknown kind and a source building nothing, neither of which this can produce.
-static func format_abandon_improvement(payload: Dictionary) -> Dictionary:
+## **`upkeep_mode <faction> <band_id> spread|priority`** — how one band splits a keeping POOL it
+## cannot stretch (`docs/plan_standing_upkeep.md` §2.5).
+##
+## **IT IS WHAT IS LEFT OF THE RETIRED `maintain`.** Maintenance left the tile: the keeping is two
+## band-level standing roles now (`assign_labor … agriculture|husbandry <workers>`), so *where the
+## hands go* is no longer a decision — the pool covers the whole web. What remains is what happens
+## when the pool falls short of the summed demand, and both answers are defensible.
+##
+## **THE MODE IS NEVER GUESSED AT.** The sim owns the set of modes and refuses an unknown one by
+## name; this builder declines an empty one rather than substituting the default, because sending
+## `spread` for a control that failed to state itself would silently re-fund a band the player had
+## put on `priority`. The grammar is CLOSED at three positional tokens.
+static func format_upkeep_mode(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return {}
+    var mode := String(payload.get("mode", "")).strip_edges().to_lower()
+    if mode == "":
+        return {}
     var faction := int(payload.get("faction", PLAYER_FACTION_ID))
-    var kind := String(payload.get("kind", "")).strip_edges().to_lower()
-    if kind == SourceForecast.LABOR_KIND_HUNT:
-        var herd_id := String(payload.get("herd_id", "")).strip_edges()
-        if herd_id == "":
-            return {}
-        return {
-            "line": "abandon_improvement %d %s %s" % [faction, kind, herd_id],
-            "message": "Stop improving %s." % herd_id,
-        }
-    if kind != SourceForecast.LABOR_KIND_FORAGE:
-        return {}
-    var x := int(payload.get("x", -1))
-    var y := int(payload.get("y", -1))
-    if x < 0 or y < 0:
-        return {}
     return {
-        "line": "abandon_improvement %d %s %d %d" % [faction, kind, x, y],
-        "message": "Stop improving (%d, %d)." % [x, y],
+        "line": "upkeep_mode %d %d %s" % [faction, band_id, mode],
+        "message": HudWorkVocab.UPKEEP_MODE_COMMAND_MESSAGES.get(mode,
+            HudWorkVocab.UPKEEP_MODE_COMMAND_MESSAGE_FALLBACK % mode),
     }
 
 ## Send whatever a `format_*` builder produced, or nothing at all when it declined.
@@ -1365,18 +1393,19 @@ func _on_hud_send_trade_expedition(payload: Dictionary) -> void:
 func _on_hud_extend_pen(payload: Dictionary) -> void:
     _send_formatted_command(format_extend_pen(payload))
 
-## Commit — or abandon — an improvement on a source the band already works (the second axis, issue
+## Commit an improvement, and its CREW, on a source the band already works (the second axis, issue
 ## #442). Sent immediately after the `assign_labor` that guarantees the crew is there.
 ##
-## An EMPTY `improvement` is the abandon: `""` is the wire's own spelling of "building nothing", so
-## the compose state, the payload and this branch all read one value rather than a parallel flag. The
-## two commands keep separate builders because they target their source by different rules — see
-## `format_abandon_improvement`.
+## **There is no abandon branch any more** (`docs/plan_standing_upkeep.md` §2.4). The verb carries a
+## worker count, so `<verb> … 0` is how a player walks away, and an EMPTY `improvement` now means only
+## *there is nothing here to state* — `format_improvement` answers `{}` for it and nothing is sent.
 func _on_hud_improvement(payload: Dictionary) -> void:
-    if String(payload.get("improvement", "")).strip_edges() == "":
-        _send_formatted_command(format_abandon_improvement(payload))
-        return
     _send_formatted_command(format_improvement(payload))
+
+## Say how this band splits a keeping pool it cannot stretch. Sent on its own — the fund mode is a
+## standing policy on the band's allocation, not part of any source's commit.
+func _on_hud_upkeep_mode(payload: Dictionary) -> void:
+    _send_formatted_command(format_upkeep_mode(payload))
 
 ## Stage a recipe on the band's bench (Materials & Crafting). The player staffs the bench, so this
 ## sends the recipe alone and the crew stays where it was until the stepper moves it.

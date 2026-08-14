@@ -45,6 +45,14 @@ const DISTANCE_RAID_TURNS := [9, 7, 6, 6, 6, 6, 6, 6]
 # tiles a turn, so the round trip is ceil(2 × 8 / 2), and the boar's own 2-party cell fills in 8
 # hunting turns (`BOAR_RAID_TURNS[1]`). 16 total, inside the band's 20-turn warn line.
 
+## **WHAT HOLDING A BUILT PEN COSTS, PER TURN, IN WORK** — `intensification_ladder.json`'s
+## `animal:pen` upkeep (`1.0` per keeper-load) over this herd's two loads. Its supplied half is ONE
+## keeper's worth, so the fixture sits at a live shortfall: half the bill unmet, which is exactly the
+## state the keeping row exists to warn about.
+const ANIMAL_PEN_UPKEEP_DEMAND := 2.0
+
+const ANIMAL_PEN_UPKEEP_SUPPLIED := 1.0
+
 const PEN_UPKEEP_RED_DEER := 1.74
 
 const PEN_FED_STARVING := 0.40
@@ -384,9 +392,13 @@ const ANIMAL_BUILD_WORK_FROM_GEAR := 17.0
 ## Price a herd's two rungs in WORK, deriving each meter's `work_done` from the fraction the fixture
 ## already states — so a fixture that re-dials a meter cannot end up with a percentage and an
 ## absolute that disagree, which is the one thing this readout exists to make visible.
+## `upkeep` is the rung RATE both animal rungs quote, and it is a PARAMETER because the rate scales
+## with the herd's own keeper load: the reference herd is two loads, a warren is one. A fixture whose
+## load differs states it rather than inheriting a rate its own size would never produce.
 static func price_animal_build(fixture: Dictionary,
 		turns: int = ANIMAL_BUILD_TURNS_REMAINING,
-		gear: float = ANIMAL_BUILD_WORK_FROM_GEAR) -> Dictionary:
+		gear: float = ANIMAL_BUILD_WORK_FROM_GEAR,
+		upkeep: float = ANIMAL_TAME_UPKEEP_DEMAND) -> Dictionary:
 	fixture["tame_work_cost"] = ANIMAL_TAME_WORK_COST
 	fixture["tame_work_done"] = \
 		float(fixture.get("domestication", 0.0)) * ANIMAL_TAME_WORK_COST
@@ -399,7 +411,20 @@ static func price_animal_build(fixture: Dictionary,
 	# per-worker output is stated rather than assumed. The gear half is not here: it is the BAND's
 	# ledger, so it rides `BandFx.kit_tiers_rows`.
 	fixture["build_work_per_worker_turn"] = BaseFx.BUILD_WORK_PER_WORKER_TURN
+	# **THE PER-RUNG RATE, PUBLISHED UNCONDITIONALLY BESIDE THE PER-RUNG COST** — the plant twin's own
+	# note says why `upkeep_demand` cannot serve: it is what the herd is BILLED today, so a herd with
+	# nothing started reads `0` and a sheet netting against it quotes a finish date on a rung its crew
+	# can never advance. Both animal rungs quote per keeper-load, so these carry this herd's own load.
+	fixture["tame_upkeep_demand"] = upkeep
+	fixture["corral_upkeep_demand"] = upkeep
 	return fixture
+
+## **WHAT HOLDING A TAMED HERD COSTS, PER TURN, IN WORK.** `intensification_ladder.json` declares
+## `1.0 × source_load` on **both** animal rungs — a penned animal is not less work to mind than an
+## unfenced one, and what the fence buys is GRACE, not rate — so this is the pen's own figure by
+## construction rather than by coincidence, over the reference herd's two keeper-loads. Spelled as an
+## alias so a retune of one animal rung cannot silently leave the other behind.
+const ANIMAL_TAME_UPKEEP_DEMAND := ANIMAL_PEN_UPKEEP_DEMAND
 
 ## The world's herd list (Main pushes snapshot["herds"]). Named because the turn-orb starving-pen
 ## state swaps in its own list and must restore this one.
@@ -516,12 +541,15 @@ static func herd_fixture() -> Dictionary:
 			"deplete": 2.70,
 			"eradicate": 4.50,
 		},
-		# **THE TWO BUILD DIPS, AS FRACTIONS** (issue #442) — they were `tame` / `corral` ROWS of the
-		# list above, each the 0.23 a builder took because Sustain (0.90) was the only stance a builder
-		# could hold. 0.23 / 0.90 is that same dip stated as the factor it always was, and it now
-		# multiplies WHICHEVER stance the crew holds: a Deplete builder takes 2.70 x 0.256 = 0.69.
-		"tame_build_fraction": 0.23 / 0.90,
-		"corral_build_fraction": 0.23 / 0.90,
+		# **THE STANDING UPKEEP** (`docs/plan_standing_upkeep.md` §2). The animal rungs quote their
+		# rate per KEEPER-LOAD (`head count / animals_per_herder`), which is what lets one number say
+		# *a shepherd minds 300 sheep and a cowherd 80*. This reference herd is WILD, so nothing is
+		# built on it, nothing is owed, and the pair below reads the honest zero rather than a
+		# sentinel — the same reading `has_neglect_grace: false` states one field along.
+		"upkeep_demand": 0.0,
+		"upkeep_supplied": 0.0,
+		"upkeep_shortfall": 0.0,
+		"upkeep_workers_needed": 0,
 		"tile_info": BaseFx.food_tile_fixture(),
 	})
 
@@ -672,6 +700,21 @@ static func domesticated_herd_fixture() -> Dictionary:
 	fixture["pen_larder_bill"] = PEN_UPKEEP_RED_DEER
 	fixture["pen_hay_food"] = 0.0
 	fixture["pen_extend_progress"] = 0.0
+	# **THE STANDING UPKEEP, UNDERPAID** (`docs/plan_standing_upkeep.md` §2, §2.4). The `animal:pen`
+	# rung asks `1.0` work per KEEPER-LOAD and this herd is two loads over; one keeper is on it, so
+	# half the bill goes unmet — and the shortfall IS the decay, so the drawer must say the rung is
+	# being lost and how long it has. It is the ANIMAL web's copy of the reading the plant card makes,
+	# and the one fixture in the corpus that renders the warning rather than the reassurance.
+	fixture["upkeep_demand"] = ANIMAL_PEN_UPKEEP_DEMAND
+	fixture["upkeep_supplied"] = ANIMAL_PEN_UPKEEP_SUPPLIED
+	fixture["upkeep_shortfall"] = ANIMAL_PEN_UPKEEP_DEMAND - ANIMAL_PEN_UPKEEP_SUPPLIED
+	# `ceil(2 / 1)` — two keepers meet the whole bill, against the one that is on it.
+	fixture["upkeep_workers_needed"] = 2
+	# The `animal:pen` rung's own `upkeep.grace_turns` (6), counted down by four turns of shortfall —
+	# so the row reads "lost in 2 turns" rather than the full grace, which is the state a player has
+	# to be able to see coming.
+	fixture["has_neglect_grace"] = true
+	fixture["neglect_grace_remaining"] = 2
 	# Compact NON-food tile_info (like the hunt-distance herd) so the tile card stays short and
 	# the drawer's Husbandry + Corral rows land in-frame rather than below the dock scroll fold.
 	fixture["tile_info"] = {

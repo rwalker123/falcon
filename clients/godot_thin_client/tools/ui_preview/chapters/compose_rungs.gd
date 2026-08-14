@@ -336,11 +336,19 @@ func run(harness) -> void:
 	# followed by `%` in the format, so one meter's face can never be a prefix of the other's — `0%`
 	# does not lead `34%` — and the claim is as exact as the `==` was. **The face may close on the
 	# sim's turn estimate now** (`— ≈ N turns`), which is another reason the match stays a prefix.
-	var stale_meter := _tame_meter_face(0.0)
 	var fresh_meter := _tame_meter_face(REOPEN_TAMING_DOMESTICATION)
-	h._assert_hud("precondition: the WILD herd's sheet quotes its own untamed meter",
-		ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
-			HudConst.LABOR_POLICY_TAME).begins_with(stale_meter))
+	# **THE PRECONDITION IS THE ABSENCE OF THE FRESH METER, NOT THE PRESENCE OF A `0%` ONE.** A wild
+	# herd with Tame declared and nobody on it has nothing in flight, so the control is the DECLARED
+	# checkbox and quotes no meter at all — the whole point of that state, and what makes a stale
+	# declaration re-tickable. What the baseline has to establish is only that the sheet is NOT already
+	# quoting the taming herd's 4%, or the claim below would pass by coincidence.
+	h._assert_hud("precondition: the WILD herd's sheet is a DECLARED choice, nothing in flight",
+		String(ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet,
+			HudConst.LABOR_POLICY_TAME).get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
+			== HudWidgets.IMPROVEMENT_STATE_DECLARED)
+	h._assert_hud("…and it quotes no meter at all, least of all the taming herd's",
+		not ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
+			HudConst.LABOR_POLICY_TAME).contains(fresh_meter))
 	# The player closes the sheet and ends the turn. Closing matters: with the sheet OPEN the snapshot's
 	# `refresh_compose_sheet` rebuilds it against `_selection.herd()` and self-heals, which is exactly
 	# why the bug reads as "one turn behind" rather than as a permanent lie.
@@ -364,19 +372,18 @@ func run(harness) -> void:
 	h._assert_hud("the reopened sheet quotes the FRESH meter (4% tamed), not the captured 0%",
 		ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
 			HudConst.LABOR_POLICY_TAME).begins_with(fresh_meter))
-	# The HERDERS row is the second witness, and a different field entirely (`herders_needed` 0 -> 4),
-	# so the two cannot both pass off one stale-or-fresh dict by coincidence.
+	# **THE SECOND WITNESS IS THE BUTTON'S NOUN, asserted above** — a different field entirely
+	# (`herders_needed` 0 → 4, through `SourceForecast.is_managed_hunt_source`), so the two cannot both
+	# pass off one stale-or-fresh dict by coincidence.
 	#
-	# **IT HAS TO BE THE ROW, NOT THE NUMBER.** This searched the drawer OR the sheet for the digit "4"
-	# — which the fresh meter beside it ("Tame — 4%") already contains, so it passed off the very
-	# witness it was meant to be independent of, and would have passed off a coordinate or a yield just
-	# as happily. The Herders row's whole rendered value is the only text that can testify: it names the
-	# demand, and it names it in the row the claim is about. Assigned is READ rather than assumed — this
-	# band hunts a different herd, so the deficit form is what renders, and hardcoding it would pin the
-	# fixture's staffing instead of the herd's demand.
-	h._assert_hud("…and the drawer's herder demand is the live one (4), not the pre-tame 0",
-		Q.has_label_containing(h._hud.occupant_detail, DetailFormat.herders_label(
-			h._hud._band_labor.assigned_herders_for(REOPEN_HERD_ID), REOPEN_TAMING_HERDERS)))
+	# **IT WAS THE `Keepers:` ROW, AND THAT ROW IS RETIRED** (issue #545). It stated a standing demand
+	# every turn on a herd where nothing was wrong, beside a `Keeping:` row saying the same number
+	# again, and reported from play neither could be read. What a head count is FOR is *am I short*,
+	# which the shed sentence and the rung row's own ⚠ now carry — so this asserts the retirement
+	# instead, on the one drawer in the corpus where a calm keeper demand used to render.
+	h._assert_hud("…and the drawer states no standing keeper bill at all — that row is retired",
+		not Q.has_label_containing(h._hud.occupant_detail, "drawn from the band")
+			and not Q.has_label_containing(h._hud.occupant_detail, "the pool covers"))
 	h._hud._drawercompose.close_compose_sheet()
 	h._hud._compose.reset_hunt_source()
 	h._hud._compose.set_hunt_floor(SourceForecast.DEFAULT_HARVEST_FLOOR)
@@ -432,8 +439,14 @@ func run(harness) -> void:
 			(HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT % HudComposeVocab.HUNT_CREW_LABEL.to_lower()).to_upper()))
 	# The independent half: the STEPPER names itself from the axis the sheet re-seeded, so reading that
 	# axis back proves the header agrees with the stepper rather than the two being wrong together.
-	h._assert_hud("…and the stepper it agrees with is built on THIS herd's own (empty) improvement axis",
-		h._hud._compose.hunt_improvement() == SourceForecast.IMPROVEMENT_NONE
+	#
+	# **THE AXIS IS THIS HERD'S OWN `Tame`, NOT AN EMPTY SLOT**, and the difference is the derivation
+	# (`docs/plan_standing_upkeep.md` §2.4): the wild fixture is 40% tamed, and a meter between zero
+	# and its cost IS a build in flight whoever declared it. What the claim has always been about is
+	# that the slot carries THIS herd's answer rather than the pen-ready herd's leftover `Corral`, so
+	# it is stated that way rather than as an emptiness the model no longer has.
+	h._assert_hud("…and the stepper it agrees with is built on THIS herd's own improvement axis",
+		h._hud._compose.hunt_improvement() == SourceForecast.IMPROVEMENT_TAME
 		and Readout.crew_row_label(h._hud._drawercompose._compose_sheet)
 			== HudComposeVocab.HUNT_CREW_LABEL.to_upper())
 	h._hud._drawercompose.close_compose_sheet()
@@ -1263,19 +1276,21 @@ const KIT_SWAP_KEEPERS := 3
 ## What that crew owes on an UNSTARTED Tame under each kit, derived HERE from the fixtures rather
 ## than through the producer under test: the rung costs `HerdFx.ANIMAL_TAME_WORK_COST` (50) with
 ## nothing banked, the floor sits at the food peak (×1.0) and one keeper banks one work unit a turn.
-## The stalking kit arms nobody for a build, so ⌈50 ÷ 3⌉; the handling gear arms two of the three at
-## 8.5 apiece, so ⌈(50 − 17) ÷ 3⌉.
-const KIT_SWAP_TURNS_BARE := 17
+## **AND THE RUNG'S RATE COMES OFF THE CREW BEFORE ANY OF IT IS PROGRESS** (issue #545): this warren's
+## Tame asks `KIT_SWAP_UPKEEP_PER_TURN` a turn, so three keepers bank `3 − 1 = 2`. The stalking kit
+## arms nobody for a build, so ⌈50 ÷ 2⌉; the handling gear arms two of the three at 8.5 apiece, so
+## ⌈(50 − 17) ÷ 2⌉.
+const KIT_SWAP_TURNS_BARE := 25
 
-const KIT_SWAP_TURNS_GEARED := 11
+const KIT_SWAP_TURNS_GEARED := 17
 
 ## …and what ONE MORE keeper owes under the handling gear, ⌈(50 − 17) ÷ 4⌉ — the gear term unmoved,
 ## because the fourth keeper finds no hurdles left to carry. Beside it, what a `min` dropped from the
 ## head count would quote that crew instead (`4 × 8.5` off the job, so ⌈16 ÷ 4⌉): stated so the
 ## negative names a number rather than merely differing.
-const KIT_SWAP_TURNS_SATURATED := 9
+const KIT_SWAP_TURNS_SATURATED := 11
 
-const KIT_SWAP_TURNS_UNCAPPED := 4
+const KIT_SWAP_TURNS_UNCAPPED := 6
 
 ## The herd both frames are composed on — a warren, which is the ceiling that keeps the handling kit
 ## OFFERED (a wild-ceiling herd greys it, see `_kit_offer_states`), with its Tame priced and unstarted
@@ -1284,13 +1299,21 @@ func _kit_swap_herd() -> Dictionary:
 	var herd := _offer_quarry(KIT_SWAP_HERD_ID, "Rabbit Warren", "small", OFFER_RABBIT_BODY_MASS,
 		OFFER_RABBIT_DEFENSE, SourceForecast.HUSBANDRY_CEILING_PEN)
 	herd["domestication"] = KIT_SWAP_UNSTARTED_TAME
-	return HerdFx.price_animal_build(herd)
+	return HerdFx.price_animal_build(herd, HerdFx.ANIMAL_BUILD_TURNS_REMAINING,
+		HerdFx.ANIMAL_BUILD_WORK_FROM_GEAR, KIT_SWAP_UPKEEP_PER_TURN)
 
 const KIT_SWAP_HERD_ID := "game_warren_kitswap"
 
 ## Nothing banked on the Tame, so the quote is the whole job and the two frames differ by the gear
 ## alone rather than by where a part-built meter happened to stand.
 const KIT_SWAP_UNSTARTED_TAME := 0.0
+
+## **THE RUNG'S OWN RATE ON THIS HERD** (issue #545) — `animal:pastoral`'s `1.0 × source_load` over a
+## warren's ONE keeper-load, against the reference herd's two. It is a term of the estimate now
+## (the pace is `crew − rate`), so a warren inheriting the reference herd's 2.0 would be a rate this
+## herd's own size can never produce — and at the three keepers these frames staff it would answer
+## `∞` and there would be no counts to compare.
+const KIT_SWAP_UPKEEP_PER_TURN := 1.0
 
 ## **THE OVER-GEARED CREW, and both halves of it are the fixture's claim.** Six keepers at the handling
 ## gear's 8.5 apiece take 51 work off a 50-unit Tame — the shipped start-stock case, a band holding 26
@@ -1301,6 +1324,14 @@ const KIT_SWAP_UNSTARTED_TAME := 0.0
 const OVER_GEARED_KEEPERS := 6
 
 const OVER_GEARED_ARMS_CREW := OVER_GEARED_KEEPERS
+
+## The band this state stands up has to field `OVER_GEARED_KEEPERS` on BOTH of the sheet's crews at
+## once — the take and the build — since they draw on one pool.
+const OVER_GEARED_CREWS := 2
+
+## Hands the fixture keeps OUT of the idle pool, so `working_age > idle_workers` the way a real
+## cohort's does and nothing here reads as a band with every soul standing free.
+const OVER_GEARED_SPARE_NON_IDLE := 4
 
 ## The OFFERED face's price CLAUSE alone — `50 work, ≈17 turns` — composed through the shipped
 ## formats, so the assertion pins the count this chapter derived and not the wording.
@@ -1339,6 +1370,11 @@ func _kit_swap_turn_estimate_states() -> void:
 	h._show_herd(warren)
 	h._compose_herd(warren, KIT_SWAP_KEEPERS, SourceForecast.FLOOR_FOOD_PEAK)
 	h._hud._compose.set_hunt_kit_id(BandFx.KIT_ID_BIG_GAME)
+	# **THE ESTIMATE IS QUOTED AT THE BUILD'S OWN CREW** (`docs/plan_standing_upkeep.md` §2.2), so the
+	# frames dial the builders rather than the take crew — and dial them AFTER the first open, the
+	# `_compose_herd` re-open contract, since a source change re-seeds the composition. The gear term
+	# is resolved over these same hands, which is the whole of what the kit swap moves.
+	h._hud._compose.set_hunt_build_count(KIT_SWAP_KEEPERS)
 	h._compose_herd(warren)
 	await h._settle()
 	await h._save("herd_kit_swap_bare_build")
@@ -1383,6 +1419,15 @@ func _kit_swap_turn_estimate_states() -> void:
 	# hands and watch it drop* — the estimate fell 25 → 13 → 4 → 2 → nothing — while the tile card beside
 	# it, reading the sim's own answer, said `≈1 turn at this crew`.
 	var stocked := _pen_axis_band(BandFx.hunt_preview_local_band(), false, OVER_GEARED_ARMS_CREW)
+	# **AND HANDS FOR BOTH CREWS, because the sheet's two steppers share ONE pool** — the take is
+	# capped at `pool − builders` and the build at `pool − take`
+	# (`HudBandLaborState.source_crew_pool_hunt`). The shared fixture's ten idle workers cannot field
+	# six hunters AND six keepers, so the take stepper clamped to four and the state below stopped
+	# being about an over-geared BUILD at all. Staged rather than worked around: this frame's claim is
+	# that six armed keepers pay a 50-unit Tame off outright, and a band that cannot field six of them
+	# beside its hunters is not the band that claim is about.
+	stocked["idle_workers"] = OVER_GEARED_KEEPERS * OVER_GEARED_CREWS
+	stocked["working_age"] = int(stocked["idle_workers"]) + OVER_GEARED_SPARE_NON_IDLE
 	h._hud._band_labor._player_band = stocked
 	h._hud._band_labor._player_bands = [stocked]
 	h._hud._compose.reset_hunt_source()
@@ -1390,6 +1435,9 @@ func _kit_swap_turn_estimate_states() -> void:
 	h._show_herd(stocked_warren)
 	h._compose_herd(stocked_warren, OVER_GEARED_KEEPERS, SourceForecast.FLOOR_FOOD_PEAK)
 	h._hud._compose.set_hunt_kit_id(HUSBANDRY_KIT_ID)
+	# The BUILD's crew, dialled after the open — see (a) above. The gear is resolved over these hands,
+	# so the "gear alone pays the job off" regime is a claim about the BUILDERS' coverage.
+	h._hud._compose.set_hunt_build_count(OVER_GEARED_KEEPERS)
 	h._compose_herd(stocked_warren)
 	await h._settle()
 	await h._save("herd_kit_swap_over_geared")

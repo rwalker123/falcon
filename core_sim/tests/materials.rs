@@ -10,6 +10,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::Entity;
 use bevy::MinimalPlugins;
 
+use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     advance_labor_allocation, balance_supply_networks, build_headless_app, scalar_from_f32,
     scalar_one, scalar_zero, spawn_initial_herds, spawn_initial_world, BandId, BandKey,
@@ -186,6 +187,7 @@ fn hunt_and_read_hide(floor: f32) -> (Scalar, Option<f32>, f32) {
                     workers: HUNT_WORKERS,
                     improvement: None,
                     kit: None,
+                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },

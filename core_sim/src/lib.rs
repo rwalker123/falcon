@@ -106,7 +106,7 @@ pub use combat_config::{
     BUILTIN_COMBAT_CONFIG,
 };
 pub use components::{
-    available_workers, floor_is_valid, floor_overdraws, raid_is_recurring, BandBench,
+    available_workers, floor_is_valid, floor_overdraws, raid_is_recurring, ActivityCrew, BandBench,
     BandEquipment, BandId, BandTravel, BandWorkforce, BatchGrade, DeathCause,
     DemographicFlowAccumulator, DrawnInputs, DrawnMaterial, ElementKind, EquipmentBatch,
     Expedition, ExpeditionMission, ExpeditionPhase, Improvement, KnowledgeFragment,
@@ -180,18 +180,19 @@ pub use expedition_config::{
 pub use fauna::{
     advance_herd_grazing, advance_herds, advance_husbandry, advance_predation, animals_affordable,
     animals_engaged, animals_that_stay, build_prey_index, carnivore_k_at, escapement_ceiling,
-    forecast_expected_take, forecast_take_range, herd_capacity, herd_default_hunt_kit,
-    herd_ecology, herd_herders_needed, herd_hunt_yield, herd_past_recovery, herd_quarry_fight,
-    herded_fraction, herders_needed, hunt_engage_workers, hunt_escapement_ceiling,
-    hunt_haul_workers, hunt_source_yield_preview, hunt_take_bound, hunt_take_workers, pen_upkeep,
-    per_hunter_take_biomass, project_arrivals_hunt, project_realized_hunt, quantise_animal_take,
-    quarry_default_hunt_kit, repopulate_fauna, resolve_hunt_fight, retreat_seed,
-    spawn_initial_herds, species_requires_denial, stay_fraction, would_be_herders_needed,
-    AnimalTake, EcologyPhase, EngagementStop, FightCasualties, Herd, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, HerdTelemetryEntry, HuntCrew, HuntDraw, HuntFight, HuntTakeBound, HuntingParty,
-    PartyResolution, PreyDatum, QuarryFight, RoamState, SourceYieldForecast, TakeRange,
-    FODDERING_DISCOVERY_ID, FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION,
-    NO_DEATHS_TO_REPORT, PENNING_DISCOVERY_ID,
+    forecast_expected_take, forecast_take_range, herd_build_verb, herd_capacity,
+    herd_default_hunt_kit, herd_ecology, herd_herded_fraction, herd_herders_needed,
+    herd_hunt_yield, herd_is_maintaining, herd_keeper_load, herd_keeper_loads, herd_past_recovery,
+    herd_quarry_fight, herd_upkeep_demand, herd_upkeep_shortfall, herd_upkeep_supply,
+    hunt_engage_workers, hunt_escapement_ceiling, hunt_haul_workers, hunt_source_yield_preview,
+    hunt_take_bound, hunt_take_workers, pen_upkeep, per_hunter_take_biomass, project_arrivals_hunt,
+    project_realized_hunt, quantise_animal_take, quarry_default_hunt_kit, repopulate_fauna,
+    resolve_hunt_fight, retreat_seed, spawn_initial_herds, species_requires_denial, stay_fraction,
+    would_be_herders_needed, AnimalTake, EcologyPhase, EngagementStop, FightCasualties, Herd,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, HerdTelemetryEntry, HuntCrew, HuntDraw, HuntFight,
+    HuntTakeBound, HuntingParty, PartyResolution, PreyDatum, QuarryFight, RoamState,
+    SourceYieldForecast, TakeRange, FODDERING_DISCOVERY_ID, FULLY_HERDED, HERDING_DISCOVERY_ID,
+    MSY_BIOMASS_FRACTION, NO_DEATHS_TO_REPORT, ONE_KEEPER_LOAD, PENNING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle,
@@ -210,13 +211,15 @@ pub use food::{
 pub use forage::{
     advance_cultivation, advance_forage_regrowth, commit_fodder_payoff, commit_material_payoff,
     commit_payoff, commit_yield_ratio, composition_for_rung, default_species_for_rung,
-    forage_per_worker_biomass, forage_provisions, forage_source_yield_preview, patch_composition,
-    patch_material_yields, patch_provisions_per_biomass, patch_species_quality,
-    project_arrivals_forage, project_realized_forage, resolve_committed_species, rung_payoff,
-    rung_site_refusal, spawn_initial_forage, species_is_legal_here, tended_take_fodder,
-    tile_flora_composition, tile_forage_capacity, tile_is_fresh_watered, wild_payoff, ForagePatch,
-    ForageRegistry, SpeciesRefusal, CANNOT_CLIMB_RATIO, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON,
-    SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET,
+    forage_per_worker_biomass, forage_provisions, forage_source_yield_preview, patch_build_verb,
+    patch_composition, patch_is_maintaining, patch_material_yields, patch_provisions_per_biomass,
+    patch_species_quality, patch_upkeep_demand, patch_upkeep_shortfall,
+    patch_upkeep_workers_needed, project_arrivals_forage, project_realized_forage,
+    resolve_committed_species, rung_payoff, rung_site_refusal, spawn_initial_forage,
+    species_is_legal_here, tended_take_fodder, tile_flora_composition, tile_forage_capacity,
+    tile_is_fresh_watered, wild_payoff, ForagePatch, ForageRegistry, SpeciesRefusal,
+    CANNOT_CLIMB_RATIO, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
+    WHOLE_BASKET,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use graze::{advance_graze_regrowth, spawn_initial_graze, GrazePatch, GrazeRegistry};
@@ -234,12 +237,15 @@ pub use influencers::{
     InfluencerImpacts, InfluentialId, InfluentialRoster, SupportChannel, BUILTIN_INFLUENCER_CONFIG,
 };
 pub use intensification::{
-    build_fraction, build_turns_remaining, build_work_per_worker_turn, knows, learn_multiplier,
-    load_intensification_ladder_from_env, BuildDips, LadderConfig, LadderConfigHandle,
-    LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef, RungFeeding, RungHarvest,
-    RungKey, RungMovement, RungSiteRequirement, SiteRefusal, BUILTIN_INTENSIFICATION_LADDER,
-    FABRICATED_BUILD_COST, MANAGED_SOURCE_FLOOR, NO_BUILD_GEAR, NO_BUILD_UNDERWAY_DIP,
-    PER_WORKER_OUTPUT, RUNG_COST_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED,
+    activity_work, build_fraction, build_turns_estimate, build_turns_remaining,
+    build_work_per_worker_turn, distribute_upkeep_pool, knows, learn_multiplier,
+    load_intensification_ladder_from_env, upkeep_shortfall, upkeep_shortfall_fraction, BuildTurns,
+    LadderConfig, LadderConfigHandle, LadderConfigMetadata, RungBehavior, RungBranch, RungBuild,
+    RungDef, RungFeeding, RungHarvest, RungKey, RungMeterDecay, RungMovement, RungSiteRequirement,
+    RungUpkeep, SiteRefusal, UpkeepFundMode, UpkeepScale, BUILTIN_INTENSIFICATION_LADDER,
+    FABRICATED_BUILD_COST, FULLY_SUPPLIED, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY,
+    NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
+    SITE_ACCEPTED, UNSCALED_UPKEEP, WHOLLY_UNSUPPLIED,
 };
 pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,
@@ -351,9 +357,10 @@ pub use systems::{
     advance_predator_raids, advance_tick, bench_tiers, denial_forecast, expedition_returned_event,
     expedition_take_provisions, fold_party_into_band, hunt_per_worker_provisions,
     hunt_report_event, hunt_take, hunt_trip_forecast, output_multiplier, party_owes_a_report,
-    simulate_power, split_band_from_parent, split_refusals, BenchTiers, DenialForecast,
-    DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast, MigrationKnowledgeEvent,
-    PowerSimParams, SplitBand, SplitRefusal, SplitRefusals, TradeDiffusionEvent,
+    simulate_power, source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers,
+    DenialForecast, DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast,
+    MigrationKnowledgeEvent, PowerSimParams, SplitBand, SplitRefusal, SplitRefusals,
+    TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,

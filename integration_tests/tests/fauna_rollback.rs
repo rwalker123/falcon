@@ -178,7 +178,7 @@ fn under_herded_edge_state_rewinds_on_rollback() {
         herd.owner = Some(FactionId(0));
         herd.domestication_progress = core_sim::FABRICATED_BUILD_COST;
         herd.domestication_cost = core_sim::FABRICATED_BUILD_COST;
-        herd.herded_fraction = 0.0; // no herders → it will shed
+        herd.upkeep_supplied = 0.0; // no keepers → it will shed
         herd.under_herded = false;
         herd.id.clone()
     };

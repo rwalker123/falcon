@@ -28,6 +28,7 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 
+use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     advance_herds, advance_labor_allocation, build_fraction, build_headless_app,
     recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero, BandEquipment,
@@ -68,7 +69,14 @@ const KEEPERS: u32 = 6;
 
 /// A herd big enough that its stock stands far above [`BUILDER_FLOOR`], so the crew is working the
 /// source every turn of the fixture.
-const TEST_CAPACITY: f32 = 4_000.0;
+///
+/// **And small enough that its maintenance rate is a hand or two.** The rate scales with the herd's
+/// keeper load and is a **tax on building** (`docs/plan_standing_upkeep.md` §2.4), so a fixture on a
+/// 4,000-head flock has to staff nine extra hands before the meter moves at all — and those hands
+/// carry gear, which then pays the whole job off and collapses every multi-turn quote this file
+/// exists to check. The build's arithmetic is what is under test, so the flock is sized to keep the
+/// rate out of the way of it.
+const TEST_CAPACITY: f32 = 400.0;
 
 /// **The client's own food-peak constant**, restated here because a client holds no config. It must
 /// equal the sim's [`MSY_BIOMASS_FRACTION`] — asserted below, since the two are separate literals in
@@ -153,31 +161,78 @@ enum GearHeld {
     APartysWorth,
 }
 
-/// A resident band of [`KEEPERS`] taming `fauna_id` on the [`HANDLING_KIT`], holding `gear`.
+/// **The crew the closed-form fixture staffs its build at**, and every term of the estimate is
+/// quoted at it — the work banked per turn *and* the gear taken off the job
+/// (`docs/plan_standing_upkeep.md` §2.2). Three things pin the number and it cannot move freely:
+/// it is small enough that the shipped job takes several turns (so `ceil` is exercised), **above**
+/// what [`GearHeld::OneSet`] arms (so the saturation `min` binds in that arm), and **at or below**
+/// what [`GearHeld::APartysWorth`] arms (so the other arm is the linear regime). It is deliberately
+/// **not** [`KEEPERS`]: a build crew that happened to equal the take crew would let a form reading
+/// the wrong one of the two pass.
+const THE_BUILD_CREW: u32 = 3;
+// **Three, not two, since the maintenance rate became a tax on building**
+// (`docs/plan_standing_upkeep.md` §2.4): the rate is owed while the meter is raised and the build
+// crew is what supplies it, so a crew of two on this fixture's herd nets under a worker-turn and the
+// meter barely moves. Three clears the rate with a hand to spare, which is what a `ceil` check needs.
+
+/// **What a fixture adds to its stated NET build crew** — the herd's maintenance rate in whole
+/// hands, which the build crew is also paying (`docs/plan_standing_upkeep.md` §2.4). A fixture that
+/// stated a bare head count would be measuring `crew − rate`, and on a herd of any size that is
+/// zero: a build that never runs.
+fn rate_in_hands(app: &App, fauna_id: &str) -> u32 {
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
+    let registry = app.world.resource::<HerdRegistry>();
+    let Some(herd) = registry.find(fauna_id) else {
+        return 0;
+    };
+    // **Measured at the herd's CARRYING CAPACITY**, not at its current stock: the rate rides the
+    // keeper load and a Thriving herd grows while it is worked, so a crew sized against today's
+    // flock slips back under the rate mid-build and the fixture measures a stall.
+    let mut herd = herd.clone();
+    herd.biomass = herd.biomass.max(herd.carrying_capacity);
+    let herd = &herd;
+    ladder
+        .rung(core_sim::RungKey::AnimalPastoral)
+        .upkeep_crew_needed(core_sim::herd_keeper_load(herd, &fauna))
+        .max(
+            ladder
+                .rung(core_sim::RungKey::AnimalPen)
+                .upkeep_crew_needed(core_sim::herd_keeper_load(herd, &fauna)),
+        )
+}
+
+/// A resident band of [`KEEPERS`] taming `fauna_id` on the [`HANDLING_KIT`], holding `gear`, with
+/// `builders` of them on the verb.
 fn spawn_taming_keepers(
     app: &mut App,
     pos: UVec2,
     fauna_id: &str,
     gear: GearHeld,
+    builders: u32,
 ) -> bevy::prelude::Entity {
-    spawn_keepers(app, pos, fauna_id, gear, Some(Improvement::Tame))
+    spawn_keepers_of(app, pos, fauna_id, gear, Some(Improvement::Tame), builders)
 }
 
 /// The same band under a **stated** improvement — `None` is the crew that is hunting and *deciding*,
 /// which is the state the compose sheet is by definition looking at and where the wire publishes a
 /// projection rather than a running countdown.
-fn spawn_keepers(
+fn spawn_keepers_of(
     app: &mut App,
     pos: UVec2,
     fauna_id: &str,
     gear: GearHeld,
     improvement: Option<Improvement>,
+    // **The BUILD's own crew** — the hands on the verb, now that the player states them
+    // (`docs/plan_standing_upkeep.md` §2.2). The gear stamp and the turns quote both read it.
+    builders: u32,
 ) -> bevy::prelude::Entity {
     let tile = app
         .world
         .resource::<TileRegistry>()
         .index(pos.x, pos.y)
         .expect("the herd's tile resolves");
+    let rate = rate_in_hands(app, fauna_id);
     let equipment = EquipmentConfig::builtin();
     let kit = equipment
         .kit(HANDLING_KIT)
@@ -190,7 +245,14 @@ fn spawn_keepers(
                 last_fertility_factors: Default::default(),
                 size: 200,
                 children: scalar_zero(),
-                working: scalar_from_f32(KEEPERS as f32),
+                // **THE BAND MUST BE ABLE TO AFFORD BOTH CREWS.** The take and the build are
+                // separate allocations drawing on one pool (`docs/plan_standing_upkeep.md` §2.2),
+                // so a band of exactly [`KEEPERS`] staffing a build beside them is over-committed
+                // and `LaborAllocation::normalize` trims the build away — leaving a fixture that
+                // measures a job nobody is doing.
+                // **Sized to what it actually staffs** — both crews carry the rate on top of the net
+                // they state, so a pool sized at the bare counts lets `normalize` trim the build.
+                working: scalar_from_f32((KEEPERS + builders + rate + rate) as f32),
                 elders: scalar_zero(),
                 stores: LocalStore::new(),
                 morale: scalar_one(),
@@ -223,9 +285,17 @@ fn spawn_keepers(
                         fauna_id: fauna_id.to_string(),
                         floor: BUILDER_FLOOR,
                     },
+                    // **The crews are stated GROSS here**, and the herd is sized so the maintenance
+                    // rate is a single hand ([`TEST_CAPACITY`]) — so both allocations still clear it
+                    // comfortably and the nets stay multi-turn, which is what a `ceil` check needs.
                     workers: KEEPERS,
                     improvement,
                     kit: Some(kit),
+                    // **The build is staffed by the same keepers**, which is what this fixture meant
+                    // when one crew did both jobs (`docs/plan_standing_upkeep.md` §2.2). The
+                    // published turns estimate and the gear stamp are both quoted at the BUILD's
+                    // crew, so the two have to agree for a closed-form check to mean anything.
+                    improvement_workers: improvement.map_or(NO_CREW_ON_THIS_ACTIVITY, |_| builders),
                 }],
                 ..Default::default()
             },
@@ -252,12 +322,26 @@ fn client_turns_estimate(
     build_work_per_worker: f32,
     build_work_saturating_crew: u32,
     build_work_per_worker_turn: f32,
-    workers: u32,
-    floor: f32,
+    // **THE BUILD'S OWN CREW, and it is the ONLY crew in this form**
+    // (`docs/plan_standing_upkeep.md` §2.2). Both terms are quoted at it: the work banked per turn,
+    // and the gear taken off the job — `build_work_per_worker` is a **rate per worker**, so the
+    // count it multiplies has to be the workers actually doing the job. Handing it the band's
+    // gathering crew would price a one-hand build with a large party's tools.
+    builders: u32,
+    // **THE MAINTENANCE RATE OF THE RUNG BEING QUOTED**, off the `<rung>UpkeepDemand` beside the
+    // `<rung>WorkCost` this form is pricing — the tax the build crew pays before any of its output
+    // is progress (`docs/plan_standing_upkeep.md` §2.4). Without it the client's form promises a
+    // finish date the crew cannot reach, and at or below the rate it would quote a huge number
+    // where the sim answers *never*. **Not `upkeepDemand`**, which is what the source is billed
+    // today and reads `0` on the unstarted source a compose sheet is by definition looking at.
+    upkeep_demand: f32,
 ) -> Option<u32> {
-    let gear = client_gear_term(build_work_per_worker, build_work_saturating_crew, workers);
-    let work_per_turn =
-        workers as f32 * build_work_per_worker_turn * (floor / CLIENT_FLOOR_FOOD_PEAK);
+    let gear = client_gear_term(build_work_per_worker, build_work_saturating_crew, builders);
+    // **NO FLOOR TERM.** The build reads the assignment's escapement floor no longer
+    // (`docs/plan_standing_upkeep.md` §2.2): a build is staffed in its own right, so the builders
+    // are not pulling on the source and there is nothing of theirs for a floor to describe. The
+    // client's form loses the factor with the sim's.
+    let work_per_turn = (builders as f32 * build_work_per_worker_turn - upkeep_demand).max(0.0);
     if work_per_turn <= 0.0 {
         return None;
     }
@@ -296,7 +380,9 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
 
     for gear in [GearHeld::OneSet, GearHeld::APartysWorth] {
         let (mut app, id, pos) = world_with_a_tameable_herd();
-        let keepers = spawn_taming_keepers(&mut app, pos, &id, gear);
+        // The build's own crew, smaller than the party beside it — the gear stamp reads the
+        // BUILD's crew now, so this is the count both halves of the form are judged at.
+        let keepers = spawn_taming_keepers(&mut app, pos, &id, gear, THE_BUILD_CREW);
         app.world.run_system_once(advance_herds);
         app.world.run_system_once(advance_labor_allocation);
         recapture_snapshot_in_place(&mut app.world);
@@ -341,7 +427,7 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
             "fixture: the handling kit must publish a build contribution and a crew above zero, got \
              per-worker {build_work_per_worker} crew {saturating_crew}"
         );
-        if saturating_crew < KEEPERS {
+        if saturating_crew < THE_BUILD_CREW {
             saw_saturated = true;
         } else {
             saw_linear = true;
@@ -349,11 +435,26 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
 
         // (1) **THE GEAR TERM** — the two kit-row terms, evaluated at the committed crew, must equal
         // what the sim stamped on the source from that same crew's coverage.
-        let gear = client_gear_term(build_work_per_worker, saturating_crew, KEEPERS);
+        let staffed = THE_BUILD_CREW;
+        let gear = client_gear_term(build_work_per_worker, saturating_crew, staffed);
+        assert!(
+            (gear - herd.build_work_from_gear).abs() < 1e-3,
+            "the kit row's `min({staffed}, {saturating_crew}) × {build_work_per_worker}` must \
+             equal the contribution the sim resolved for that same crew: {gear} vs {}",
+            herd.build_work_from_gear
+        );
+
+        // (1b) **AND THE TWO UPKEEP READOUTS ARE ONE NUMBER ON A SOURCE MID-BUILD.** They answer
+        // different questions — what this herd is *billed* now, and what the rung being *quoted*
+        // costs to hold — and here those are the same rung, so a drift between the two seams would
+        // show up as a disagreement the client's form below would silently inherit.
+        assert!(
+            herd.upkeep_demand > 0.0,
+            "fixture: a mid-Tame herd owes its rung's rate, or this equality is vacuous"
+        );
         assert_eq!(
-            gear, herd.build_work_from_gear,
-            "the kit row's `min({KEEPERS}, {saturating_crew}) × {build_work_per_worker}` must equal \
-             the contribution the sim resolved for that same crew"
+            herd.tame_upkeep_demand, herd.upkeep_demand,
+            "a herd raising the pastoral rung is billed exactly what that rung is quoted at"
         );
 
         // (2) **THE TURN COUNT** — the whole form against the sim's own answer.
@@ -363,8 +464,15 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
             build_work_per_worker,
             saturating_crew,
             herd.build_work_per_worker_turn,
-            KEEPERS,
-            BUILDER_FLOOR,
+            // **The crew the wire publishes**, which is the net the fixture stated plus the rate it
+            // also pays — the same number `improvementWorkers` carries.
+            staffed,
+            // **The QUOTED rung's rate, not the BILLED one.** `upkeepDemand` reads `0` on a source
+            // nobody has started, which is exactly the source a compose sheet is quoting, so the
+            // client's form nets the rung it is pricing. This fixture is mid-build, where the two
+            // are one number — which is why the no-progress case is pinned in
+            // `build_turns_on_the_wire.rs` instead.
+            herd.tame_upkeep_demand,
         );
         let published = u32::try_from(herd.build_turns_remaining).ok();
 
@@ -377,20 +485,117 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
             quoted, published,
             "the client's closed form must reproduce the sim's own answer at the committed crew: \
              cost {} done {} gear/worker {build_work_per_worker} crew {saturating_crew} \
-             per-worker-turn {} staffed {KEEPERS} floor {BUILDER_FLOOR}",
+             per-worker-turn {} builders {THE_BUILD_CREW}",
             herd.tame_work_cost, herd.tame_work_done, herd.build_work_per_worker_turn,
         );
     }
 
     assert!(
         saw_saturated,
-        "fixture: one arm must hold LESS gear than it has hands, or the saturation never binds and \
+        "fixture: one arm must arm FEWER hands than the build staffs, or the saturation never \
+         binds and \
          a form without the `min` would pass"
     );
     assert!(
         saw_linear,
         "fixture: one arm must hold a unit per hand, or saturation is the only regime under test"
     );
+}
+
+/// **THE GEAR OFFSET IS QUOTED AT THE BUILD'S CREW, NOT THE BAND'S CREW ON THE SOURCE**
+/// (`docs/plan_standing_upkeep.md` §2.2).
+///
+/// `buildWorkPerWorker` is a **rate per worker**, so the count it multiplies has to be the workers
+/// actually doing the job. Reading the take crew instead was reachable the moment the two crews
+/// came apart, and — since `LadderConfig::effective_build_cost` is deliberately unfloored — it let a
+/// **single** builder standing beside a large gathering party take that whole party's tools off the
+/// job, in the worst case paying a rung off outright on its first turn.
+///
+/// Asserted on three things at once, because each fails independently:
+/// 1. the stamp **scales with the build crew** — one builder takes one worker's worth off the job;
+/// 2. it **saturates** at the units the band actually holds, so a builder with no gear left to pick
+///    up adds nothing further; and
+/// 3. it **does not move when only the take crew moves** — the negative control, and the one a form
+///    reading the wrong crew fails.
+#[test]
+fn the_gear_offset_scales_with_the_build_crew_and_ignores_the_take_crew() {
+    // `GearHeld::OneSet` is the band's reference ledger: it arms a **prefix** of the party, so the
+    // saturation point sits well below the crews swept here and both regimes are exercised.
+    let saturating = gear_stamped_for(GearHeld::OneSet, KEEPERS, SOLE_BUILDER);
+    assert!(
+        saturating > NO_GEAR_AT_ALL,
+        "fixture: one set of handling gear must take something off the job, or every arm below is \
+         a comparison of zeroes"
+    );
+
+    // (1) Two builders take more off the job than one — up to the point the gear runs out.
+    let two_builders = gear_stamped_for(GearHeld::APartysWorth, KEEPERS, TWO_BUILDERS);
+    let one_builder = gear_stamped_for(GearHeld::APartysWorth, KEEPERS, SOLE_BUILDER);
+    assert!(
+        two_builders > one_builder,
+        "the offset must scale with the BUILD crew (one {one_builder}, two {two_builders})"
+    );
+
+    // (2) …and saturates: with one set of gear between them, a second builder finds nothing to
+    // pick up, so the offset is the same as one builder's.
+    assert_eq!(
+        gear_stamped_for(GearHeld::OneSet, KEEPERS, TWO_BUILDERS),
+        gear_stamped_for(GearHeld::OneSet, KEEPERS, SOLE_BUILDER),
+        "the saturating prefix binds against the BUILD crew — an unarmed builder takes nothing \
+         further off the job"
+    );
+
+    // (3) The negative control: hold the build crew and double the party gathering beside it. A
+    // stamp resolved at the take crew would move here; the shipped one must not.
+    assert_eq!(
+        gear_stamped_for(GearHeld::APartysWorth, KEEPERS, TWO_BUILDERS),
+        gear_stamped_for(GearHeld::APartysWorth, KEEPERS * 2, TWO_BUILDERS),
+        "the gathering crew beside a build is not holding the build's tools"
+    );
+}
+
+/// **One builder** — the smallest crew a build can have, and the one that makes reading the *take*
+/// crew instead most obviously wrong.
+const SOLE_BUILDER: u32 = 1;
+/// Two, so "scales with the build crew" is a comparison rather than a single reading.
+const TWO_BUILDERS: u32 = 2;
+/// What a crew carrying nothing that helps takes off a job — `intensification::NO_BUILD_GEAR`.
+const NO_GEAR_AT_ALL: f32 = 0.0;
+
+/// Resolve one turn of a `Tame` with `take` hands gathering and `builders` on the verb, and answer
+/// the `buildWorkFromGear` the sim stamped on the herd.
+fn gear_stamped_for(gear: GearHeld, take: u32, builders: u32) -> f32 {
+    let (mut app, id, pos) = world_with_a_tameable_herd();
+    let keepers = spawn_taming_keepers(&mut app, pos, &id, gear, builders);
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(keepers)
+            .expect("the keeper band keeps its allocation");
+        allocation.assignments[0].workers = take;
+    }
+    // The band has to afford both crews, or `normalize` trims the build away and the arm measures
+    // a job nobody is doing (`docs/plan_standing_upkeep.md` §2.2).
+    app.world
+        .get_mut::<PopulationCohort>(keepers)
+        .expect("the keeper band is a cohort")
+        .working = scalar_from_f32((take + builders) as f32);
+    app.world.run_system_once(advance_herds);
+    app.world.run_system_once(advance_labor_allocation);
+    recapture_snapshot_in_place(&mut app.world);
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    snapshot
+        .herds
+        .iter()
+        .find(|row| row.id == id)
+        .expect("the watched herd is on the wire")
+        .build_work_from_gear
 }
 
 /// A watchdog on the fixture's climb of both animal rungs, **not a model number**: at the shipped
@@ -415,11 +620,15 @@ fn set_improvement(app: &mut App, band: bevy::prelude::Entity, improvement: Impr
     let mut allocation = band
         .get_mut::<LaborAllocation>()
         .expect("the keeper band keeps its allocation across the completed build");
-    allocation
+    let assignment = allocation
         .assignments
         .first_mut()
-        .expect("the keeper band keeps its one assignment")
-        .improvement = Some(improvement);
+        .expect("the keeper band keeps its one assignment");
+    assignment.improvement = Some(improvement);
+    // **A verb needs a crew** (`docs/plan_standing_upkeep.md` §2.2): completion frees the previous
+    // build's hands, so re-staffing the next rung is part of setting it — exactly what the
+    // `corral` command does.
+    assignment.improvement_workers = KEEPERS;
 }
 
 /// **TWO FIELDS DESCRIBING ONE METER MUST AGREE IN THE FRAME THEY SHIP IN.**
@@ -443,7 +652,7 @@ fn a_herds_published_build_meters_agree_with_their_work_pairs_on_the_turn_they_c
     app.world
         .resource_mut::<DiscoveryProgressLedger>()
         .add_progress(FactionId(0), PENNING_DISCOVERY_ID, scalar_one());
-    let keepers = spawn_taming_keepers(&mut app, pos, &id, GearHeld::APartysWorth);
+    let keepers = spawn_taming_keepers(&mut app, pos, &id, GearHeld::APartysWorth, KEEPERS);
 
     let mut tamed_on = None;
     let mut penned_on = None;
@@ -627,7 +836,14 @@ fn client_floor_food_peak() -> f32 {
 fn a_crew_whose_gear_pays_the_tame_off_is_quoted_one_turn_on_the_wire() {
     for improvement in [None, Some(Improvement::Tame)] {
         let (mut app, id, pos) = world_with_a_herd_of(UNSCALED_TAMEABLE_SPECIES);
-        let keepers = spawn_keepers(&mut app, pos, &id, GearHeld::APartysWorth, improvement);
+        let keepers = spawn_keepers_of(
+            &mut app,
+            pos,
+            &id,
+            GearHeld::APartysWorth,
+            improvement,
+            KEEPERS,
+        );
         app.world.run_system_once(advance_herds);
         app.world.run_system_once(advance_labor_allocation);
         recapture_snapshot_in_place(&mut app.world);
@@ -686,7 +902,7 @@ fn a_crew_whose_gear_pays_the_tame_off_is_quoted_one_turn_on_the_wire() {
                 tiers.build_work_saturating_crew,
                 herd.build_work_per_worker_turn,
                 KEEPERS,
-                BUILDER_FLOOR,
+                herd.tame_upkeep_demand,
             ),
             u32::try_from(herd.build_turns_remaining).ok(),
             "the client's form must reproduce the sim's answer in the over-geared regime too"

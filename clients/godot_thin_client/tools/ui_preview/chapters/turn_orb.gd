@@ -259,6 +259,106 @@ func _neglect_patches_fixture() -> Array:
 			"has_neglect_grace": true, "neglect_grace_remaining": NEGLECT_GRACE_FULL},
 	]
 
+## ---- THE CREW HAND-OFF INGEST (Producer 8) -----------------------------------------------------
+## The turn the hand-off fixtures are stamped for, and one well inside the sim's retention window
+## behind it. `command_events` is per-frame HISTORY: a delta carries the rows appended since the
+## client's cursor, a FULL snapshot carries the whole retained ring — so both ticks arrive in one
+## array on every connect and on every resync, and only the event's own `tick` tells them apart.
+const HANDOFF_TURN := 61
+
+const HANDOFF_OLD_TURN := HANDOFF_TURN - 9
+
+## Two hand-offs really did happen this turn, and they are DIFFERENT rows (one crew carried onto the
+## rung's keeping, one freed), so a producer that de-duplicated on the wrong thing collapses them.
+const HANDOFF_ROWS_THIS_TURN := 2
+
+## The sim's own `status=` / `action=` detail shapes, spelled out here rather than composed through
+## `AttentionController`'s own tokens: an expectation built from the code under test can only agree
+## with itself. Copied from `systems::labor`'s completion pass.
+const HANDOFF_DETAIL_CARRIED := "status=carried_to_upkeep action=build_complete improvement=cultivate workers=3"
+
+const HANDOFF_DETAIL_FREED := "status=freed action=build_complete improvement=corral workers=2"
+
+## A full snapshot's ring, in the shape the decoder hands over: this turn's two hand-offs plus older
+## ones the retention window still holds, each carrying its own `tick` and its own monotonic `seq`.
+## The old rows are hand-offs in every other respect — same action token, same status tokens — because
+## a filter that keyed on anything but the tick would let them through.
+func _handoff_ring_fixture() -> Array:
+	return [
+		{"tick": HANDOFF_OLD_TURN, "seq": 401, "kind": "cultivate",
+			"label": "4 of your cultivate crew stay on (12, 8) to keep it",
+			"detail": HANDOFF_DETAIL_CARRIED},
+		{"tick": HANDOFF_OLD_TURN + 3, "seq": 402, "kind": "corral",
+			"label": "1 of your corral crew are free — Red Deer keeps itself",
+			"detail": HANDOFF_DETAIL_FREED},
+		{"tick": HANDOFF_TURN, "seq": 403, "kind": "cultivate",
+			"label": "3 of your cultivate crew stay on (31, 18) to keep it",
+			"detail": HANDOFF_DETAIL_CARRIED},
+		{"tick": HANDOFF_TURN, "seq": 404, "kind": "corral",
+			"label": "2 of your corral crew are free — Wild Boar keeps itself",
+			"detail": HANDOFF_DETAIL_FREED},
+	]
+
+## Just this turn's two rows — what a mid-tick RECAPTURE delta re-ships, every row since the turn's
+## baseline, at their own unchanged `seq`s.
+func _handoff_recapture_fixture() -> Array:
+	var ring := _handoff_ring_fixture()
+	return [ring[2], ring[3]]
+
+## How many hand-off rows the producer would put on the orb right now.
+func _handoff_row_count() -> int:
+	var rows := 0
+	for item_variant in h._hud._attention.build_band_attention([], []):
+		var item: Dictionary = item_variant
+		if String(item.get("kind", "")) == HudAttentionVocab.ATTENTION_KIND_CREW_HANDOFF:
+			rows += 1
+	return rows
+
+## **THE INGEST IS A WINDOW ON ONE TURN, AND IT HAS TO SURVIVE BOTH FRAME SHAPES.** It read EVERY row
+## whose detail carried the action token, off whatever array the frame happened to bring — so a full
+## snapshot re-dated the last twenty turns of hand-offs to now and flooded the orb, and a recapture
+## delta announced this turn's twice. Two filters, two questions (WHICH TURN, and SEEN ALREADY), and
+## neither substitutes for the other: the ring exercises the first, the recapture the second.
+##
+## The rows are capped at `ATTENTION_HANDOFF_MAX_ROWS` with an overflow row, so the fixture's older
+## rows are chosen to push the count PAST that cap — a flood that stayed under it would be counted
+## correctly and still be wrong.
+func _assert_handoff_ingest_windows_on_one_turn() -> void:
+	var prior_turn: int = h._hud._band_labor.current_turn()
+	h._hud._band_labor.set_turn(HANDOFF_TURN)
+	h._hud._attention.ingest_command_events(_handoff_ring_fixture(), HANDOFF_TURN)
+	var after_ring := _handoff_row_count()
+	h._assert_hud(
+		"a full snapshot's whole retained ring announces only THIS turn's hand-offs (got %d, want %d)"
+			% [after_ring, HANDOFF_ROWS_THIS_TURN],
+		after_ring == HANDOFF_ROWS_THIS_TURN)
+	# **THE RECAPTURE, on top of the ring the client has already taken.** Same turn, same `seq`s, so
+	# nothing new has happened and the count must not move. Asserted AFTER the ring rather than on a
+	# clean slate, because that is the live order — a delta always lands on an already-ingested turn.
+	h._hud._attention.ingest_command_events(_handoff_recapture_fixture(), HANDOFF_TURN)
+	var after_recapture := _handoff_row_count()
+	h._assert_hud(
+		"…and a mid-tick recapture re-shipping them announces each ONCE (got %d, want %d)"
+			% [after_recapture, HANDOFF_ROWS_THIS_TURN],
+		after_recapture == HANDOFF_ROWS_THIS_TURN)
+	# THE VACUITY GUARD, and it is not decorative: both claims above are satisfied by a producer that
+	# has stopped ingesting hand-offs at all. Advancing the turn drops the window and the SAME rows,
+	# re-stamped for the new turn, must be announced again.
+	h._hud._band_labor.set_turn(HANDOFF_TURN + 1)
+	var re_stamped := _handoff_recapture_fixture()
+	for row_variant in re_stamped:
+		(row_variant as Dictionary)["tick"] = HANDOFF_TURN + 1
+	h._hud._attention.ingest_command_events(re_stamped, HANDOFF_TURN + 1)
+	var after_next_turn := _handoff_row_count()
+	h._assert_hud("…and the next turn's own hand-offs are still announced (got %d, want %d)"
+		% [after_next_turn, HANDOFF_ROWS_THIS_TURN],
+		after_next_turn == HANDOFF_ROWS_THIS_TURN)
+	# **RESTORE, and the CLEAR only happens on a turn CHANGE** — an empty array ingested against the
+	# turn already held leaves the window exactly as it was, which would leak three rows into every
+	# state after this one.
+	h._hud._band_labor.set_turn(prior_turn)
+	h._hud._attention.ingest_command_events([], prior_turn)
+
 func run(harness) -> void:
 	h = harness
 
@@ -600,3 +700,10 @@ func run(harness) -> void:
 	_set_forage_patches([])              # restore: no patches for the states below
 	h._set_world_herds(HerdFx.world_herds_fixture())   # restore the shared world-herd list
 	h._hud.turn_orb.set_attention([])
+
+	# ---- THE CREW HAND-OFF INGEST IS A WINDOW ON ONE TURN (Producer 8) -----------------------------
+	# **PNG-LESS AND DRIVEN, because a picture cannot make either claim.** Both failures render a
+	# perfectly ordinary popover — the rows are correctly shaped, correctly worded and correctly
+	# inked; there are simply too many of them, and only counting says so. So the producer is asked
+	# directly, over an events array in each of the two shapes the wire really delivers.
+	_assert_handoff_ingest_windows_on_one_turn()

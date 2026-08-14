@@ -565,21 +565,93 @@ built from the code under test can only agree with itself. **They are the SIM's 
 from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
 payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-**A clean run is 320 frames / 989 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
+### The compose sheet's SHARED POOL, its reset on close, and the unstaffed build
+
+Four frames and twenty `PASS` in `chapters/improvements.gd`, appended last — the two playtest bugs
+and their readouts. The behaviour is `labor-ui.md`'s and `selection-card.md`'s; what belongs here is
+the shape of the drive.
+
+- **`compose_pool_take_full` / `compose_pool_take_freed` are an A/B on ONE band, and the PRECONDITION
+  is `idle_workers == 0`.** With spare hands both steppers are live for reasons that have nothing to
+  do with each other, so the state would pass against the per-activity ceilings it exists to replace.
+  The take crew is `ForageFx.CULTIVATE_SIM_WORKERS_NEEDED` — the patch's OWN max-useful, read off the
+  sim's published count rather than picked — because a crew above it is clamped away by the
+  usefulness ceiling and the state stops being about the pool at all.
+- **The ceiling is finished by PRESSING the builders `+`**, so the clamp in the sheet's own handler is
+  what answers rather than a model write. **Each press rebuilds the controls and `queue_free`s the old
+  row, which stays in the tree until the frame ends** — so the settle between presses is load-bearing:
+  without it the second press lands on the freed row and the count never moves.
+  `Readout.build_crew_value` / `build_crew_can_add` / `build_crew_plus` are the readers that reach it
+  (`Readout.stepper_value` takes the FIRST `−` on the sheet, which is the take crew's).
+- **`compose_reopen_reseeds` drives the close through the real path** (`close_compose_sheet` → the
+  sheet's `closed` → `_on_compose_sheet_closed`), because the reset rides that signal; poking
+  `ComposeState` would assert the harness's own write. The PAIR is the claim — the edit must be
+  visible while the sheet is open, or "it shows the live crew on reopen" passes on a sheet that never
+  took the edit.
+- **`tile_build_unstaffed`'s map and herd claims are DRIVEN** — a badge is drawn to a canvas and no
+  assertion reads a glyph back off one, and `herd_summary_lines` is pure. Each group is a pair or a
+  triple, "always warn" passing any lone positive.
+
+**One existing state was re-pointed**: `forage_crop_picker_sow` dialled its rung before the first
+open, which `_show_tile`'s close now re-seeds away — the plant twin of the trap `_compose_herd`'s
+docstring records. Open, dial, re-open.
+
+**And ONE fixture had to grow hands**: `herd_kit_swap_over_geared` staged six hunters AND six keepers
+on a band of ten idle, which the shared pool correctly refuses (the take clamped to four and the state
+stopped being about an over-geared BUILD). Staged rather than worked around — that frame's claim is
+about six armed keepers, and a band that cannot field six beside its hunters is not the band the claim
+is about.
+
+**A clean run is 328 frames / 1033 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
 three times in one arc and once across a merge, and a running total kept by addition would be wrong
 by now. (The measurement above came back FIVE higher than the 895 recorded before it while the arc
 #527 review added exactly ONE claim — the `Carrying:` mass one. Four `PASS`es had accumulated
-un-recorded, which is the whole reason this line says re-measure.)
+un-recorded, which is the whole reason this line says re-measure. It read 989 here and MEASURED 994
+immediately before the keeping-crew fix, which added three and no frame: the third under-kept claim,
+plus two bare `assert`s in `chapters/herd_graze_pen.gd` converted to `_assert_hud` — a bare `assert`
+prints no `PASS` and HALTS the run rather than reporting, which is why the conversion counts as two
+found rather than two added.)
+
+**THE KEEPING POOL (`docs/plan_standing_upkeep.md` §2.5) ADDED ONE FRAME AND MOVED CLAIMS RATHER THAN
+GAINING THEM** — the measurement above came back two frames and one `PASS` off the recorded 320 / 997
+while this arc added one frame and net-zero claims, which is this line's own instruction being earned
+again. `herd_keeping_mid_build` is the new one (a herd mid-Tame; its claim has since inverted with the
+`Keeping:` row's retirement — a build that IS being paid states nothing at all) and
+`forage_no_food_basket`'s neighbour `forage_reopened_crews` kept its name while its subject shrank
+from three crews to two — its keeping-stepper claims went with the stepper, replaced by ONE
+structural claim that the sheet mounts exactly one untagged stepper. The under-kept pair's third
+claim likewise moved from *"hunters do not hold a herd"* to *"a herd mid-build is not asking the pool
+for keepers"*, since the first is now true by construction: no crew on a source can reach the
+keeping.
 
 **The compose sheet's own turn estimate is worth FIVE frames and TWELVE `PASS`.** Three are one
 A/B plus a drag: `improvement_turns_lone_crew` / `improvement_turns_full_crew` (one patch, one floor,
-crews 1 and 4 — `≈20 turns` against `≈5 turns`) and `improvement_turns_learning_floor` (the same crew
-mid-DRAG at the Learning preset, `≈4 turns`), all three in `chapters/improvements.gd`. **A frame set
+**BUILD** crews 1 and 4 — `≈20 turns` against `≈5 turns`) and `improvement_turns_learning_floor` (the
+same crew mid-DRAG at the Learning preset), all three in `chapters/improvements.gd`.
+**THE STEPPER THE A/B MOVES IS THE BUILD'S** (`docs/plan_standing_upkeep.md` §2.2) — the take crew no
+longer prices a build at all — and it is dialled AFTER the first open, the `_compose_herd` re-open
+contract in the forage web's form: a source change re-seeds the composition, so a build crew set
+before the sheet opens on that tile is thrown away and the face renders with no clause at all.
+**The drag frame's claim INVERTED with the floor's retirement**: it used to assert a deeper floor
+quoted a FASTER build (`learn_multiplier` scaled the accrual); a build crew is not pulling on the
+source, so the same builders now read the SAME estimate at both floors, and the non-vacuity companion
+is the take beneath it, which does still follow the dial. **A frame set
 that renders one crew proves nothing here**: the defect was a sheet quoting the sim's committed-crew
 answer, which renders a perfectly plausible number and simply never moves — so the A/B, not either
 half, is the claim, and the negative beside it names the frozen value. The drag is driven through
 `floor_changed(value, committed = false)`, the chart's live half, since only the live-refresh
 registry can make the box follow a gesture that must not rebuild the sheet.
+
+**`forage_reopened_crews` IS THE FRAME THAT PROVES ALL THREE CREWS ARE READABLE.** A band with
+`idle_workers == 0` whose every hand is on ONE patch — 4 gatherers, 3 builders, 2 keepers, three
+distinct counts so a seed that read the wrong field lands on a number the assertion names — reopened
+on that patch's sheet. It was unreachable while `improvementWorkers` / `maintainWorkers` were
+write-only: the steppers could only clamp at `idle`, so they opened at nobody with a maximum of
+nobody. Six `PASS`: the regime itself (`idle == 0`, without which every claim below is about an
+ordinary band), one per stepper opening on its own crew, the keeping stepper reaching PAST its seed
+at zero idle, the keeping row stating `you have 2 of 3` off the wire, and the composed crop surviving
+the reopen over ground with no `committed_species` at all — the case where the assignment's `species`
+is the only record of what the player chose. In `chapters/forage_accounts.gd`.
 
 **The GEAR half is a KIT SWAP, and it needs its own frames** — `herd_kit_swap_bare_build` /
 `herd_kit_swap_geared_build` in `chapters/compose_rungs.gd`, one warren at one crew at one floor with
@@ -1042,3 +1114,141 @@ came from, and the wrong one renders no rows rather than wrong ones. It is judge
 turn frame above, and the accumulator is ZEROED rather than left behind, because a client rendering
 whichever term is non-zero would otherwise pass both. Sabotage-verified: pointing the rows back at
 the accumulating pair fails exactly these two and nothing else in the run.
+
+
+## The one-row rung readout, and the never-finishes repro (issue #545)
+
+Two frames and a re-pointing pass across `chapters/improvements.gd`,
+`chapters/herd_graze_pen.gd` and `chapters/compose_rungs.gd`. The behaviour is `selection-card.md`'s
+and `labor-ui.md`'s; what belongs here is the shape of the drive and the fixture arithmetic it moved.
+
+- **`improvement_never_finishes_unstarted` is the reported repro, and the existing turn A/B
+  structurally cannot reach it.** That pair runs on the reference patch, whose meter is already at
+  60% — so its source-level `upkeepDemand` is live and the old arithmetic happened to be RIGHT there.
+  The defect only shows where nothing is at risk yet, so this state stands up `BaseFx.unbuilt(...)`
+  with one builder and asserts the `∞` **and** the negative that names the number the player acted on
+  (`≈50 turns`), plus the two PRECONDITIONS without which the frame is about some other patch: the
+  source demand really is zero here, and the RUNG's rate really is not.
+- **`tile_two_meters_live` is the both-rows frame**, and its third claim is the SILENCE — a patch whose
+  keeping is paid carries no mark on either row. Its Field meter and turn count are deliberately
+  unlike every other build reading in the chapter, so a card rendering one rung's numbers on both rows
+  cannot pass.
+- **The five hazard states are asked of the PRODUCER as one conjunction** (`_hazard_states_all_marked`),
+  because two of them render in states no frame stages and the claim is about the SET.
+- **`_meter_value_markup` became `_rung_value_markup`**, and the needle is now the whole rendered value
+  rather than a verb: the card states `≈11 turns (96%)` where it stated `Preparing 48 / 50 work (96%)`,
+  so a needle built from a build verb would be asserting a readout that no longer exists.
+
+**THE FIXTURES GREW THE RUNGS' OWN RATES, AND TWO STATES HAD TO BE RE-STAFFED FOR IT.**
+`BaseFx.price_plant_build` now sets `patch_cultivation_upkeep_demand` / `patch_field_upkeep_demand`
+and `HerdFx.price_animal_build` takes the animal rate as a PARAMETER — the animal rungs both declare
+`1.0 × source_load`, so a warren's rate is not the reference herd's. With the rate a real term of the
+pace (`crew − rate`):
+
+- **`improvement_stressed_advances` staffs THREE builders where it staffed one.** At one hand the
+  honest answer on a `plant:tended` rung is `∞`, which is `improvement_never_finishes_unstarted`'s
+  subject and not this frame's; three keeps its `≈50 turns` and its claim (a build advancing on a
+  non-Thriving source).
+- **The kit-swap counts moved 17/11/9/4 → 25/17/11/6**, the warren's own one-keeper-load rate coming
+  off a three-keeper crew. The A/B's claim is untouched: the two kits still differ by the gear alone.
+
+**A clean run is 331 frames / 1051 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+recorded figure before the DECLARED improvement state was **328 / 1040**, and the frame count moved by
+three against ONE frame added — which is this line's own instruction being earned again: two frames
+had accumulated un-recorded, exactly as four `PASS`es had the time before.
+
+## The improvement control's DECLARED state, and the build line's three inks
+
+One frame (`compose_offer_no_hands`, appended last in `chapters/improvements.gd`) and eleven claims.
+The behaviour is `labor-ui.md`'s — "A DECLARATION IS NOT A BUILD" and "THE BUILD LINE'S STATE IS ITS
+COLOUR"; what belongs here is the shape of the drive and the two re-pointings it forced.
+
+- **`tile_build_unstaffed` gained the three claims that say the door opens both ways** — the control
+  is a `CheckBox` in `IMPROVEMENT_STATE_DECLARED`, it is TICKED, and it is LIVE *on a band whose
+  `effective_idle` is 0*. Three claims rather than one because they are one claim each about the three
+  ways it used to fail: the wrong node type (a `Label` has no toggle), an unticked box (which would
+  read as no declaration at all), and a disabled one (which cannot be undone).
+- **`compose_offer_no_hands` stages a SECOND patch, and that is what makes the pool empty.** The
+  band's every hand is on tile A, so a sheet opened over an UNWORKED tile B has `crew_pool == 0` — the
+  sheet's build pool being the SOURCE's pool less the composed take, not the band's idle count.
+  Re-using tile A would stage a source whose own crew is in the pool and the box would rightly stay
+  live. Five claims: the precondition (`effective_idle == 0`), still OFFERED (refused, not hidden),
+  DISABLED, the reason rendered, and the NEGATIVE that no BUILDERS stepper grows beneath a dead offer.
+- **The three INKS are asserted as a set across three frames**, read as the RESOLVED font colour
+  through `ForageFx.improvement_face_color` — a `Color` reader, because the pace has three states and
+  the two `∞` ones read alike through the warned/not-warned bool it replaced (which survives, written
+  in terms of it). `improvement_turns_lone_crew` is amber-holding and `improvement_turns_full_crew`
+  green-growing, asserted as a PAIR on one frame's claim so a face pinned to either ink fails the
+  other; `improvement_rung_slipped` is the red-losing one.
+- **The retired threshold note is asserted as a RE-HOMING, not a deletion** — the rate still reachable
+  as the BUILDERS label's tooltip (`ForageFx.build_work_floor_tooltip`) and the retired prose absent
+  from every Label on the sheet. `ForageFx.build_work_floor` is unchanged: it scans the row's children
+  for `BUILD_WORK_FLOOR_META`, which moved from the note to the label, so the NUMBER is still asserted
+  off a meta rather than out of a wording. `build_crew_floor_warns` went with the note it read.
+- **TWO EXISTING CLAIMS WERE RE-POINTED, and both were asserting the bug.**
+  `improvement_turns_*`'s *"amber while the crew is under it, and quiet once it is cleared"* was about
+  the deleted note. And `herd_compose_reopen_fresh`'s precondition asserted that a WILD herd with Tame
+  declared and nobody on it quotes a `Taming — 0%` METER — which is the one-way door in miniature. Its
+  claim was never the meter: it is the stale-vs-fresh dict, and the baseline only has to establish
+  that the sheet is not ALREADY quoting the taming herd's 4%. It asserts the DECLARED state and the
+  absence of that meter instead.
+
+## The rotting build sentinel, and the hand-off window (PR #557 review)
+
+One frame and eight `PASS` across two chapters, for the two client-side defects the sim's
+`BUILD_METER_ROTS` split and the crew-hand-off producer left behind. The behaviour is `labor-ui.md`'s
+and `turn-orb.md`'s; what belongs here is the shape of the drive and the re-aiming it forced.
+
+- **`tile_meter_rotting` is the fourth answer on the tile card**, appended straight after
+  `tile_meter_never`, and it is judged **against** it rather than alone: the two are one step apart on
+  the same patch at the same meter, and the whole claim is that they read DIFFERENTLY — same `∞`, same
+  hazard mark, different words and different INK. Two claims, and the second is the one that would
+  have caught the bug: the positive alone passes on a card rendering BOTH rows, so the holding row's
+  exact value must be ABSENT from this frame.
+- **The claim is word-AND-tint markup, and the tint is the half that was missing.** Both states lead
+  with `RUNG_HAZARD_GLYPH`, so a claim about the mark passes on a rotting build painted amber.
+- **`ForageFx.improvement_face_is_warned` became `improvement_face_stops`** and now answers for BOTH
+  stopping inks. Hard-wired to `WARN` it FAILED on the redder, worse half of the claim it exists to
+  make — which is exactly what happened when the sentinel was honoured, because the lone-builder A/B
+  frames quote a NEGATIVE net (one hand against `plant:tended`'s 2 work) and had only ever read amber
+  because the client flattened the two answers. Where a frame means one specific ink it compares
+  `improvement_face_color` directly.
+- **TWO EXISTING CLAIMS WERE ASSERTING THE FLATTENING.** `improvement_turns_lone_crew`'s pace claim
+  read *"a HOLDING build line is amber"* for a crew the chapter's own constant doc already described
+  as a negative net, and `improvement_never_finishes_unstarted`'s ink claim was the same one rung over.
+  Both name the LOSING red now, and the holding ink's own frame is `tile_meter_never`, on the card,
+  where a crew EXACTLY at the rate is staged.
+- **`UNKNOWN_BUILD_TURNS_SENTINEL` moved `-3` → `-4`.** It stood for *whatever the wire grows next*
+  and the wire grew it, so the harness was holding the client's failure to follow in place, green. **A
+  sentinel-is-unknown claim has to be re-aimed the day the schema spells that value**; it is one past
+  the last one defined, and it moves again the next time the schema grows.
+
+**The hand-off block is PNG-LESS and DRIVEN** (`chapters/turn_orb.gd`, appended last), because both
+failures render a perfectly ordinary popover — correctly shaped, worded and inked rows, just too many
+of them, and only counting says so. The producer is asked directly
+(`AttentionController.build_band_attention([], [])`, counting `crew_handoff` rows) over an events
+array in each of the two shapes the wire really delivers:
+
+| fixture | the failure only IT reaches |
+|---|---|
+| the full snapshot's whole retained RING — this turn's two hand-offs plus older ones | a producer with no `tick` filter re-dates the retention window to now |
+| the mid-tick RECAPTURE, re-shipping this turn's rows at their own `seq`s | a producer with no `seq` set announces each one twice |
+| the same rows re-stamped for the NEXT turn | the vacuity guard — both claims above pass on a producer that has stopped ingesting at all |
+
+**The old rows are hand-offs in every other respect** — same action token, same status tokens — so a
+filter keyed on anything but the tick lets them through; and they are chosen to push the count PAST
+`ATTENTION_HANDOFF_MAX_ROWS`, a flood that stayed under the cap being counted correctly and still
+wrong. **The details are spelled as chapter constants**, copied from `systems::labor`'s completion
+pass, the `_assert_horizon_floor_is_the_whole_trip` rule: an expectation composed through
+`AttentionController`'s own tokens can only agree with itself.
+
+**The restore is load-bearing** — the window is cleared on a turn CHANGE, so an empty array ingested
+against the turn already held leaves it exactly as it was and leaks three rows into every state after.
+
+**Sabotage-verified, disjointly.** Restoring the old flattening in `build_turns_remaining` fails
+exactly the rotting frame's DANGER-ink claim and nothing else in the run (the hazard-mark conjunction
+correctly stays green — a flattened `-3` still reaches the STALLED hazard, which carries the mark,
+which is why that claim cannot stand in for this one). Removing the tick/seq filter fails exactly the
+ring and recapture claims, the vacuity guard correctly staying green.
+
+**A clean run is 332 frames / 1057 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says.

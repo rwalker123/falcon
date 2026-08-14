@@ -725,10 +725,15 @@ const READOUT_LOCKED_ACCOUNT_META := "readout_locked_account"
 ## and passes without ever reaching the stepper.
 const CREW_ROW_LABEL_META := "crew_row_label"
 
-## The crew row's BUILD-DIP note, as `Control` meta — its own, because it must be assertable by
-## ABSENCE as well as by presence ("no build in flight, so no dip is claimed"), and the row label
-## beside it renders either way.
-const CREW_ROW_DIP_META := "crew_row_dip"
+## **THE KEEPING ROW'S TWO METAS ARE RETIRED** (`docs/plan_standing_upkeep.md` §2.5).
+## `CREW_ROW_MAINTAIN_META` and `MAINTAIN_VERDICT_META` tagged a stepper and a verdict on a row that
+## no longer exists: maintenance left the tile, so neither compose sheet composes a keeping crew and
+## there is nothing here for a harness to find. What a source's keeping costs is stated by
+## `DetailFormat.at_risk_lines` on the land card and the herd drawer.
+
+## The BUILD crew's stepper row, as `Control` meta — the second of a source's two allocations, mounted
+## on the improvement control that states the verb it staffs.
+const BUILD_CREW_ROW_META := "build_crew_row"
 
 ## The VERDICT line, as `Control` meta — value is the severity (`SourceForecast.VERDICT_*`), which is
 ## the assertable half: the sentence carries turn counts and percentages that move with the fixture.
@@ -794,12 +799,35 @@ const MISSION_LAUNCH_META := "mission_launch"
 ## ever confirm the string it already assumed. Identity is the only stable handle.
 const COMPOSE_COMMIT_META := "compose_commit"
 
-## The improvement CONTROL's checkbox, as `Control` meta — the stable handle on the second axis, for
-## the same reason `POLICY_RUNG_META` is the stable handle on a rung. Its value is the IMPROVEMENT key
-## (`"cultivate"` / `"sow"` / `"tame"` / `"corral"`), so a harness can assert both which rung is
-## offered and, from the node's own type, which of the three states it is in: a `CheckBox` is offered
-## or running (`button_pressed` tells them apart) and a `Label` is done.
+## The improvement CONTROL's node, as `Control` meta — the stable handle on the second axis, for the
+## same reason `POLICY_RUNG_META` is the stable handle on a rung. Its value is the IMPROVEMENT key
+## (`"cultivate"` / `"sow"` / `"tame"` / `"corral"`), so a harness can assert which rung the control
+## names; **the node's TYPE says whether it is a CHOICE or a FACT** — a `CheckBox` is the one OFFERED
+## state, and a `Label` is every state that has already been decided (running, done, gated), told
+## apart by `IMPROVEMENT_STATE_META`.
 const IMPROVEMENT_CONTROL_META := "improvement"
+
+## …and WHICH of the four states that control is in, as `Control` meta. It exists because the type no
+## longer separates them: RUNNING stopped being a checkbox when `abandon_improvement` retired, so
+## `Label` alone spans three states. Its value is one of the `IMPROVEMENT_STATE_*` consts.
+const IMPROVEMENT_STATE_META := "improvement_state"
+
+## **EVERY FONT-COLOUR SLOT A LIVE CHECKBOX DRAWS ITS FACE IN.** `HudStyle.apply_checkbox` writes all
+## of them, so a caller re-tinting a face has to write all of them too or the colour flickers back to
+## neutral under the pointer. The DISABLED slot is deliberately absent: a greyed box is stating that
+## the offer is closed, which outranks anything the tint would add.
+const CHECKBOX_LIVE_FONT_COLOR_SLOTS := ["font_color", "font_hover_color", "font_pressed_color",
+    "font_hover_pressed_color", "font_focus_color"]
+
+## The BUILD crew stepper's threshold note, as `Control` meta, carrying the WORK RATE it states —
+## `SourceForecast.min_build_work`, the quoted rung's own upkeep demand. A harness reading the label's
+## text would be asserting the wording; this is the number.
+##
+## **IT CARRIES WORK, NOT WORKERS** (it was `BUILD_CREW_FLOOR_META`, an `int` head count). The model is
+## denominated in work units end to end, and the count behind the old meta read `0` before a build
+## starts — so a harness asserting it was asserting the one state the note is most needed in as an
+## absence.
+const BUILD_WORK_FLOOR_META := "build_work_floor"
 
 ## The PLANT a crop-picker row stands for, as `Button` meta — its `FloraShareInfo.species` key, which
 ## is the sim's own id and the very string the row's art is composed from (`FloraSprites`). The
@@ -819,29 +847,79 @@ const FLORA_CROP_ROW_SPECIES_META := "flora_crop_row_species"
 ## states share, so the two webs cannot drift into two different-looking controls:
 ##
 ##   OFFERED — an unchecked, enabled `CheckBox` naming the rung and its terms.
+##   DECLARED — the SAME checkbox, TICKED: a rung the band has declared and has neither builders nor
+##             banked work on. **The other CHOICE**, and the only way back off a declaration.
 ##   GATED   — a **`Label`, not a disabled checkbox**, whose text IS the reason the caller resolved;
 ##             the tooltip is the rung's hint, NOT the reasons. See the const's own note for why the
 ##             greyed-checkbox form was retired.
-##   RUNNING — a checked, **LIVE** `CheckBox`: unchecking abandons the build (`abandon_improvement`).
+##   RUNNING — a `Label` too, in SIGNAL ink: a build in flight is a FACT the meters state, not an
+##             intent the player holds.
 ##   DONE    — a plain `Label`. Nothing to uncheck, nothing to clear.
 ##
-## **UNCHECKING IS NEVER GATED, AND THAT IS LOAD-BEARING.** The abandon path asks for no knowledge, no
-## ceiling, no site and pointedly no `Thriving` check, because abandoning a STALLED build is exactly
-## when a player reaches for it — so `notes` on a RUNNING control (the WARN pause line) must NOT
-## disable it, which is why the `disabled` rule below tests the state and not just the notes. A
-## condition that greys a running box is a bug, not a safeguard.
+## **RUNNING STOPPED BEING A CHECKBOX WITH `abandon_improvement`** (`docs/plan_standing_upkeep.md`
+## §2.4). Unchecking it sent that command, which existed to clear a STORED verb; the verb is derived
+## from the meter now, so there is nothing left for an uncheck to clear and a command that cleared a
+## derived value would either do nothing or fight the derivation. **Walking away is unstaffing the
+## builders** — `cultivate <faction> <x> <y> 0`, the same control that started the build — so the
+## lever moved to the BUILDERS stepper beneath this block, and the shape rule the GATED state already
+## states now covers three of the four: the control's TYPE says whether this is a CHOICE or a FACT.
 ##
-## `on_toggle` is called with **the improvement's NEW value** — the rung's key when a box is checked,
-## `IMPROVEMENT_NONE` when one is unchecked — so a caller writes the value it is given rather than
-## re-deriving the direction from the control's state.
+## `on_toggle` is called with **the improvement's NEW value** — the rung's key when the OFFERED box is
+## checked, `IMPROVEMENT_NONE` when it is unchecked (which un-declares a build that has banked no work
+## yet, the one state a declaration is still the authority for).
 ##
-## `notes` render beneath in the hint style — the WARN-amber pause line when running (`warn_notes`
-## picks the tint), and on a GATED control the SECOND and later gate reasons, the first having become
-## the control's own text. An OFFERED control passes none: an offer with an unmet prerequisite is a
-## GATED one. Returns the whole block, so a caller adds one child.
+## `notes` render beneath in the hint style — the WARN-amber zero-payoff line when running
+## (`warn_notes` picks the tint), the *not started* line on a DECLARED one, and on a GATED control the
+## SECOND and later gate reasons, the first having become the control's own text. An OFFERED control
+## passes none: an offer with an unmet prerequisite is a GATED one. Returns the whole block, so a
+## caller adds one child.
+##
+## **`disabled_reason` IS THE ONLY THING THAT DISABLES A BOX**, and it renders beneath as its own hint
+## line. `notes` used to do it implicitly (`disabled = not notes.is_empty()`), which was dead logic —
+## the gated case never reaches this branch — and which would have silently killed the box the moment
+## a live state grew a note of its own, which is exactly what DECLARED does.
+##
+## **`pace` INKS THE WHOLE FACE, AND IT CARRIES THREE STATES RATHER THAN A WARNING FLAG.** It was
+## `warn_face: bool`, which could say only *amber or not*; a build line has to say which of three
+## things the meter is doing — climbing, holding, or losing ground — because those are three different
+## decisions (`SourceForecast.build_pace`, which owns the classification and the reason the client may
+## not derive the sign itself). A face is one `Label`/`CheckBox` and so takes one colour, so the state
+## cannot ride the turns clause alone — which is the honest treatment anyway, since what a losing pace
+## is wrong about is the whole proposition on that line.
+##
+## **A CHECKBOX TAKES ONLY THE TWO STOPPING PACES.** `GROWING`'s green would read as an achievement on
+## a rung nobody has started, so an offer at a finite estimate keeps `apply_checkbox`'s own face colour
+## and only `HOLDING` / `LOSING` override it.
+## It is a `match` rather than a `const` DICTIONARY because a const initializer evaluates at class
+## LOAD, and a table keyed on another `class_name`d script's consts welds this leaf's load order to
+## that script's — the cross-class `const` hazard `hud-modules.md` records.
+static func improvement_pace_color(pace: String, fallback: Color) -> Color:
+    match pace:
+        SourceForecast.BUILD_PACE_GROWING: return HudStyle.HEALTHY
+        SourceForecast.BUILD_PACE_HOLDING: return HudStyle.WARN
+        SourceForecast.BUILD_PACE_LOSING: return HudStyle.DANGER
+    return fallback
+
+## Does a CHECKBOX face re-tint for this pace? The two stopping ones only — see above for why
+## `GROWING` is not one of them.
+static func improvement_pace_stops(pace: String) -> bool:
+    return pace == SourceForecast.BUILD_PACE_HOLDING or pace == SourceForecast.BUILD_PACE_LOSING
+
 const IMPROVEMENT_STATE_OFFERED := "offered"
 const IMPROVEMENT_STATE_RUNNING := "running"
 const IMPROVEMENT_STATE_DONE := "done"
+## **A RUNG DECLARED WITH NOTHING IN FLIGHT — a live, TICKED checkbox.** The declaration stands (the
+## wire carries it, or the player has just clicked it) but there are no builders on it and its meter
+## has never moved, so nothing is being built and the control must not claim otherwise.
+##
+## **IT IS A CHOICE, WHICH IS WHY IT IS A BOX AND NOT THE RUNNING LABEL.** Rendering it as RUNNING was
+## a one-way door: the label carries no toggle, so a player who ticked `cultivate` on a band with no
+## free hands got `Cultivating 0 / 50 work (0%)` with the *not started* warning and **no way to untick
+## it**. Reported from play. Unticking sends what the BUILDERS stepper sends —
+## `cultivate <faction> <x> <y> 0` — so the two levers agree by construction. **Both take the hands
+## off and neither withdraws the declaration**, which has no clearing command today
+## (`labor-ui.md` → "RETIRED — `abandon_improvement`").
+const IMPROVEMENT_STATE_DECLARED := "declared"
 ## An offer the source cannot take yet. **A LABEL, not a disabled checkbox** — the control's shape
 ## says whether this is a CHOICE or a FACT, and an unmet prerequisite is a fact. It shipped once as a
 ## greyed checkbox reading "Cultivate this patch · then 0.04 food …" with the reason on a second line
@@ -851,10 +929,29 @@ const IMPROVEMENT_STATE_GATED := "gated"
 
 static func build_improvement_control(improvement: String, state: String, face: String,
         tooltip: String, on_toggle: Callable, notes: Array = [],
-        warn_notes: bool = false) -> VBoxContainer:
+        warn_notes: bool = false, pace: String = SourceForecast.BUILD_PACE_UNKNOWN,
+        disabled_reason: String = "") -> VBoxContainer:
     var block := VBoxContainer.new()
     block.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    if state == IMPROVEMENT_STATE_GATED:
+    if state == IMPROVEMENT_STATE_RUNNING:
+        # A STATE, not a choice — the DONE treatment in the live ink rather than the achieved green,
+        # since the meter is still going up. `set_label_tooltip` because a bare `tooltip_text` on a
+        # Label is a SILENT no-op.
+        var running := Label.new()
+        running.text = face
+        running.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+        running.add_theme_font_size_override("font_size",
+            HudWorkVocab.POLICY_PICKER_NAME_FONT_SIZE)
+        # **THE STATE OF THE BUILD IS THIS LINE'S COLOUR** — green while the meter climbs, amber while
+        # it holds, red while it loses ground. `SIGNAL` is the fallback for a pace nobody could answer
+        # (no crew, no priced job), which is the neutral live ink this face has always worn.
+        running.add_theme_color_override("font_color",
+            improvement_pace_color(pace, HudStyle.SIGNAL))
+        running.set_meta(IMPROVEMENT_CONTROL_META, improvement)
+        running.set_meta(IMPROVEMENT_STATE_META, state)
+        set_label_tooltip(running, tooltip)
+        block.add_child(running)
+    elif state == IMPROVEMENT_STATE_GATED:
         # Same Label treatment as DONE — both are states rather than choices — but in the muted ink a
         # prerequisite deserves rather than DONE's HEALTHY, which would read as an achievement.
         var locked := Label.new()
@@ -864,6 +961,7 @@ static func build_improvement_control(improvement: String, state: String, face: 
         locked.add_theme_font_size_override("font_size",
             HudWorkVocab.POLICY_PICKER_NAME_FONT_SIZE)
         locked.set_meta(IMPROVEMENT_CONTROL_META, improvement)
+        locked.set_meta(IMPROVEMENT_STATE_META, state)
         set_label_tooltip(locked, tooltip)
         block.add_child(locked)
     elif state == IMPROVEMENT_STATE_DONE:
@@ -881,6 +979,7 @@ static func build_improvement_control(improvement: String, state: String, face: 
             HudWorkVocab.POLICY_PICKER_NAME_FONT_SIZE)
         done.add_theme_color_override("font_color", HudStyle.HEALTHY)
         done.set_meta(IMPROVEMENT_CONTROL_META, improvement)
+        done.set_meta(IMPROVEMENT_STATE_META, state)
         set_label_tooltip(done, tooltip)
         block.add_child(done)
     else:
@@ -892,12 +991,27 @@ static func build_improvement_control(improvement: String, state: String, face: 
         # so on this console the unchecked indicator reserves its width and paints nothing — an offer
         # with no control on it. `HudStyle.apply_checkbox` has the whole autopsy.
         HudStyle.apply_checkbox(box)
+        # **A BOX IS THE ONE STATE THAT CAN CARRY A STOPPING PACE WITHOUT BEING GATED BY IT.** A crew
+        # below the maintenance rate makes the job unfinishable, not illegal — the player may staff it
+        # anyway and add hands next turn — so the face takes the pace's ink and the box stays live.
+        #
+        # **AFTER `apply_checkbox`, AND ON EVERY INTERACTION STATE.** That helper writes `font_color`
+        # itself (plus hover/pressed/focus), so an override set before it is silently overwritten and
+        # one set on `font_color` alone reverts to neutral ink the moment the pointer lands on it.
+        if improvement_pace_stops(pace):
+            for slot in CHECKBOX_LIVE_FONT_COLOR_SLOTS:
+                box.add_theme_color_override(slot, improvement_pace_color(pace, HudStyle.WARN))
+        # A DECLARED rung opens TICKED — the declaration stands, and unticking it unstaffs the rung.
+        # Set BEFORE `toggled` is connected, or seeding the box would fire the handler and un-declare
+        # the very build being rendered.
+        box.button_pressed = state == IMPROVEMENT_STATE_DECLARED
         box.set_meta(IMPROVEMENT_CONTROL_META, improvement)
-        var running := state == IMPROVEMENT_STATE_RUNNING
-        box.button_pressed = running
-        # ONLY an OFFERED box is ever disabled, and only by an unmet prerequisite. A RUNNING one stays
-        # live however loudly its notes read — see the ungated-abandon rule above.
-        box.disabled = not running and not notes.is_empty()
+        box.set_meta(IMPROVEMENT_STATE_META, state)
+        # **A DEAD BOX ALWAYS STATES ITS REASON.** A control the player can click to no effect is worse
+        # than one that is visibly closed, so `disabled_reason` is the ONE way to disable a box, and it
+        # is prepended to the notes below rather than rendered by a branch of its own — that keeps the
+        # reason in the same hint register the rest of the block's lines are in.
+        box.disabled = disabled_reason != ""
         if not box.disabled:
             # `toggled`, not `pressed`: the handler needs the NEW state, and reading `button_pressed`
             # back inside a `pressed` handler is the kind of ordering assumption that silently
@@ -906,6 +1020,8 @@ static func build_improvement_control(improvement: String, state: String, face: 
             box.toggled.connect(func(pressed: bool) -> void:
                 on_toggle.call(improvement if pressed else SourceForecast.IMPROVEMENT_NONE))
         block.add_child(box)
+    if disabled_reason != "":
+        block.add_child(alloc_hint_label(disabled_reason))
     for note in notes:
         var line := alloc_hint_label(String(note))
         if warn_notes:
@@ -1246,23 +1362,6 @@ static func build_crew_targets(model: Dictionary, workers: int, on_pick: Callabl
             HudStyle.button_font_color("primary" if selected else "ghost", btn.disabled)))
     return row
 
-## **THE CREW ROW'S BUILD-DIP NOTE** — *"— while building, each carries 25% as much"*, the one line
-## that makes the two targets beside it arithmetic rather than magic. `dip` is
-## `SourceForecast.floor_chart_model`'s own `build_dip`, so the note and the targets are divided by
-## one number by construction; `null` (no note at all) at the identity, because a crew that is only
-## gathering carries a full load and saying so would be noise on every non-building sheet.
-##
-## It wears the row label's exact treatment — `INK_FAINT` at the section-label size — but is NOT
-## uppercased: it is a sentence about the row, not a second row-label.
-static func build_crew_dip_note(dip: float) -> Label:
-    if dip >= SourceForecast.NO_BUILD_DIP:
-        return null
-    var note := Label.new()
-    note.text = HudComposeVocab.CREW_BUILD_DIP_NOTE_FORMAT % HudFormat.progress_percent(dip)
-    note.set_meta(CREW_ROW_DIP_META, true)
-    note.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-    note.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
-    return note
 
 ## ONE crew-target pill: an empty-`text` Button under a two-Label face, the horizontal twin of
 ## `_policy_rung_cell` and for the same structural reason — two font sizes cannot live in one
@@ -1371,26 +1470,20 @@ static func build_readout_box(parent: Container) -> VBoxContainer:
 ## `header` OVERRIDES that caption for a caller whose readings are not a per-turn rate at all — the
 ## raid's whole-trip payload, which has no `/turn` and no holding state to arrow toward.
 ##
-## `while_building` is the OTHER key a per-turn caption can carry: these readings are the DIPPED
-## take. It is a FLAG rather than a second header string, and that is the whole point — the caption is
-## resolved in ONE place (`SourceForecast.yield_row_header`) over that flag and the `has_after` this
-## function is the only place that knows, so the caption and the marks under it cannot be composed
-## separately. A caller that composed its own caption did exactly that once: the `while building`
-## string replaced `now → after` and left the row's arrow unkeyed.
-##
-## **A BUILDING ROW CARRIES NO ARROW TO KEY.** The floor walk is suppressed at the yield model while a
-## build is composed, so `has_after` is false whenever `while_building` is true and the resolver has
-## three states rather than four. `has_after` is still read here rather than assumed, because it is
-## the ROWS that decide it and a widget that inferred it from the flag would be a second opinion.
+## **THE `while_building` KEY IS RETIRED WITH THE DIP** (`docs/plan_standing_upkeep.md` §2.2). It said
+## *these readings are the DIPPED take*; a build has its own crew now, so the readings are the plain
+## take whether or not a rung is going up. `has_after` is the only fact left that can key the caption,
+## and it is read from the ROWS here — the one place that knows — so the caption and the marks under
+## it cannot be composed separately.
 static func build_yields_row(rows: Array, number_tint: Color, note: String, note_tint: Color,
-        waste: String, header: String = "", while_building: bool = false) -> VBoxContainer:
+        waste: String, header: String = "") -> VBoxContainer:
     var block := VBoxContainer.new()
     block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     block.add_theme_constant_override("separation", HudComposeVocab.READOUT_YIELD_V_SEPARATION)
     var has_after := rows.any(func(row: Dictionary) -> bool:
         return row.has(SourceForecast.YIELD_ROW_AFTER))
     var caption := header if header != "" \
-        else SourceForecast.yield_row_header(while_building, has_after)
+        else SourceForecast.yield_row_header(has_after)
     block.add_child(alloc_section_label(caption))
     var flow := HFlowContainer.new()
     flow.set_meta(YIELDS_ROW_META, true)

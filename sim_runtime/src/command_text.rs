@@ -127,25 +127,25 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         verb: "tame",
         aliases: &[],
         summary: "Set the Tame improvement on the bands hunting a wild herd (their harvest stance is left alone): an investment that pays a reduced take while the herd is gentled, then makes it pastoral livestock (needs Herding knowledge, earned by Sustain hunting, and a species that can be domesticated).",
-        usage: "tame <faction_id> <herd_id>",
+        usage: "tame <faction_id> <herd_id> <workers>",
     },
     CommandVerbHelp {
         verb: "cultivate",
         aliases: &[],
         summary: "Set the Cultivate improvement on the bands foraging a Thriving patch (their harvest stance is left alone): an investment that pays a reduced yield while the crop is prepared, then a higher tended yield (needs Cultivation knowledge, earned by Sustain foraging).",
-        usage: "cultivate <faction_id> <x> <y>",
+        usage: "cultivate <faction_id> <x> <y> <workers>",
     },
     CommandVerbHelp {
         verb: "sow",
         aliases: &[],
         summary: "Set the Sow improvement on the bands foraging a tile (their harvest stance is left alone): an investment that builds a Field, out-yielding a tended patch. It PLACES the source — even ground with no forage site on it will take seed — but only where the land is ALREADY very fertile and near fresh water (the river valleys, ~1% of the map): rung 3 can carry seed, not water or fertilizer. Needs Seed Selection knowledge, earned by working tended patches.",
-        usage: "sow <faction_id> <x> <y>",
+        usage: "sow <faction_id> <x> <y> <workers>",
     },
     CommandVerbHelp {
-        verb: "abandon_improvement",
-        aliases: &["abandon"],
-        summary: "Abandon the improvement a band is building on a source: the crew keeps working it under the harvest stance you chose, and stops paying the build dip. Always allowed — abandoning a STALLED build is exactly when you want it. Accumulated progress is not zeroed; it is left to whatever the source does when nobody is improving it (a plant meter bleeds away, an animal meter is kept).",
-        usage: "abandon_improvement <faction_id> forage <x> <y> | abandon_improvement <faction_id> hunt <herd_id>",
+        verb: "upkeep_mode",
+        aliases: &[],
+        summary: "Say how one band splits its MAINTENANCE POOL when it cannot cover everything it holds. Maintenance is a band-level standing role, not a per-source crew: staff it with `assign_labor <faction> <band> agriculture <n>` for the plant web and `husbandry <n>` for the animal one, and the band's demand is the SUM over every tended patch, Field, tamed herd and pen it works. When the pool falls short, 'spread' funds every source in proportion to its demand so EVERYTHING degrades a little, and 'priority' funds sources COMPLETELY until the pool runs out, MOST-INVESTED FIRST, so the biggest investments stay whole and the marginal ones rot. Defaults to spread. An unknown mode is refused by name.",
+        usage: "upkeep_mode <faction_id> <band_id> spread|priority",
     },
     CommandVerbHelp {
         verb: "set_bench",
@@ -169,13 +169,13 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         verb: "corral",
         aliases: &[],
         summary: "Set the Corral improvement on the bands hunting your domesticated herd at a tile (their harvest stance is left alone): an investment that pays a reduced take while the pen is built, then pins the herd there (needs Penning knowledge, earned by working herds you have already TAMED — Herding gates tame, not corral).",
-        usage: "corral <faction_id> <x> <y>",
+        usage: "corral <faction_id> <x> <y> <workers>",
     },
     CommandVerbHelp {
         verb: "extend_pen",
         aliases: &[],
-        summary: "Grow the fenced footprint of your built pen at a tile by one ring: the keeper works it off over ~25 turns at a reduced take, then the pen grazes more land (a ring rides the same rung as the pen, so it needs Penning too — plus an owned penned herd and room below the pen-radius max).",
-        usage: "extend_pen <faction_id> <x> <y>",
+        summary: "Grow the fenced footprint of your built pen at a tile by one ring, worked off by the crew you name: a ring rides the same animal:pen rung as the pen it widens, so it costs the same work and claims hands from the same band as the gathering and the keeping. Needs Penning, an owned penned herd, a band already keeping it, and room below the pen-radius max.",
+        usage: "extend_pen <faction_id> <x> <y> <workers>",
     },
     CommandVerbHelp {
         verb: "answer_fork",
@@ -192,8 +192,8 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "assign_labor",
         aliases: &[],
-        summary: "Set the worker count for one labor target on a band (0 unassigns; clamps to idle).",
-        usage: "assign_labor <faction_id> <band> forage <x> <y> [floor] [species] <workers> [kit <id>] | hunt <herd_id> [floor] <workers> [kit <id>] | scout <workers> | warrior <workers>",
+        summary: "Set the worker count for one labor target on a band (0 unassigns; clamps to idle). Besides the worked sources and scout/warrior there are two MAINTENANCE roles: 'agriculture' keeps every tended patch and Field this band works, 'husbandry' every tamed herd and pen. Each is a POOL measured against the SUM of what the band holds on that web, so nothing is wasted on a demand that does not divide into whole workers; short of the sum, the split follows the band's upkeep_mode. Zero is how you stop maintaining a whole web.",
+        usage: "assign_labor <faction_id> <band> forage <x> <y> [floor] [species] <workers> [kit <id>] | hunt <herd_id> [floor] <workers> [kit <id>] | scout <workers> | warrior <workers> | agriculture <workers> | husbandry <workers>",
     },
     CommandVerbHelp {
         verb: "move_band",
@@ -747,9 +747,13 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let herd_id = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("herd_id"))?;
+            let crew_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("workers"))?;
             Ok(CommandPayload::Tame {
                 faction_id: parse_u32(faction_str, "tame faction")?,
                 herd_id: herd_id.to_string(),
+                workers: parse_u32(crew_str, "tame workers")?,
             })
         }
         "cultivate" => {
@@ -762,10 +766,14 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let y_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            let crew_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("workers"))?;
             Ok(CommandPayload::Cultivate {
                 faction_id: parse_u32(faction_str, "cultivate faction")?,
                 target_x: parse_u32(x_str, "cultivate target_x")?,
                 target_y: parse_u32(y_str, "cultivate target_y")?,
+                workers: parse_u32(crew_str, "cultivate workers")?,
             })
         }
         "sow" => {
@@ -778,58 +786,35 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let y_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            let crew_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("workers"))?;
             Ok(CommandPayload::Sow {
                 faction_id: parse_u32(faction_str, "sow faction")?,
                 target_x: parse_u32(x_str, "sow target_x")?,
                 target_y: parse_u32(y_str, "sow target_y")?,
+                workers: parse_u32(crew_str, "sow workers")?,
             })
         }
-        "abandon_improvement" | "abandon" => {
+        "upkeep_mode" => {
             let faction_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("faction_id"))?;
-            let faction_id = parse_u32(faction_str, "abandon_improvement faction")?;
-            let kind = parts
+            let band_str = parts
                 .next()
-                .ok_or(CommandParseError::MissingArgument("kind"))?
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let mode = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("mode"))?
                 .to_ascii_lowercase();
-            // The source is named the way its web names it: a patch by tile, a herd by id — so the
-            // `kind` decides the arity, and an unknown one has no arity to read. **It fails closed
-            // here**, matching `assign_labor`'s identical `forage`/`hunt` grammar and `cancel_order`:
-            // the server does reject an unknown kind, but only *asynchronously* in the feed, and a
-            // catch-all forage arm turns a typo into either the wrong diagnosis
-            // (`abandon_improvement 1 foo` reporting a missing `target_x`) or a command that parses
-            // and is rejected somewhere else entirely.
-            match kind.as_str() {
-                "hunt" => {
-                    let fauna_id = parts
-                        .next()
-                        .ok_or(CommandParseError::MissingArgument("fauna_id"))?;
-                    Ok(CommandPayload::AbandonImprovement {
-                        faction_id,
-                        kind,
-                        target_x: 0,
-                        target_y: 0,
-                        fauna_id: fauna_id.to_string(),
-                    })
-                }
-                "forage" => {
-                    let x_str = parts
-                        .next()
-                        .ok_or(CommandParseError::MissingArgument("target_x"))?;
-                    let y_str = parts
-                        .next()
-                        .ok_or(CommandParseError::MissingArgument("target_y"))?;
-                    Ok(CommandPayload::AbandonImprovement {
-                        faction_id,
-                        kind,
-                        target_x: parse_u32(x_str, "abandon_improvement target_x")?,
-                        target_y: parse_u32(y_str, "abandon_improvement target_y")?,
-                        fauna_id: String::new(),
-                    })
-                }
-                _ => Err(CommandParseError::UnexpectedToken(kind)),
+            if let Some(extra) = parts.next() {
+                return Err(CommandParseError::UnexpectedToken(extra.to_string()));
             }
+            Ok(CommandPayload::UpkeepMode {
+                faction_id: parse_u32(faction_str, "upkeep_mode faction")?,
+                band_id: parse_u64(band_str, "upkeep_mode band_id")?,
+                mode,
+            })
         }
         "set_bench" => {
             let faction_str = parts
@@ -901,10 +886,14 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let y_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            let crew_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("workers"))?;
             Ok(CommandPayload::Corral {
                 faction_id: parse_u32(faction_str, "corral faction")?,
                 target_x: parse_u32(x_str, "corral target_x")?,
                 target_y: parse_u32(y_str, "corral target_y")?,
+                workers: parse_u32(crew_str, "corral workers")?,
             })
         }
         "extend_pen" => {
@@ -917,10 +906,14 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let y_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            let crew_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("workers"))?;
             Ok(CommandPayload::ExtendPen {
                 faction_id: parse_u32(faction_str, "extend_pen faction")?,
                 target_x: parse_u32(x_str, "extend_pen target_x")?,
                 target_y: parse_u32(y_str, "extend_pen target_y")?,
+                workers: parse_u32(crew_str, "extend_pen workers")?,
             })
         }
         "cancel_order" => {
@@ -1056,7 +1049,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                         None,
                     )
                 }
-                "scout" | "warrior" => {
+                "scout" | "warrior" | "agriculture" | "husbandry" => {
                     let w = parts
                         .next()
                         .ok_or(CommandParseError::MissingArgument("workers"))?;
@@ -1839,10 +1832,11 @@ mod tests {
     #[test]
     fn parse_tame_command() {
         assert_eq!(
-            parse_command_line("tame 0 game_deer_07").unwrap(),
+            parse_command_line("tame 0 game_deer_07 4").unwrap(),
             CommandPayload::Tame {
                 faction_id: 0,
                 herd_id: "game_deer_07".to_string(),
+                workers: 4,
             }
         );
         // herd_id is required.
@@ -1963,17 +1957,23 @@ mod tests {
     #[test]
     fn parse_cultivate_command() {
         assert_eq!(
-            parse_command_line("cultivate 0 7 3").unwrap(),
+            parse_command_line("cultivate 0 7 3 4").unwrap(),
             CommandPayload::Cultivate {
                 faction_id: 0,
                 target_x: 7,
                 target_y: 3,
+                workers: 4,
             }
         );
-        // Both coordinates are required.
+        // Both coordinates are required, and so is the build's crew — a verb with no crew names
+        // no decision, and guessing one would staff a build the player did not staff.
         assert!(matches!(
             parse_command_line("cultivate 0 7"),
             Err(CommandParseError::MissingArgument("target_y"))
+        ));
+        assert!(matches!(
+            parse_command_line("cultivate 0 7 3"),
+            Err(CommandParseError::MissingArgument("workers"))
         ));
     }
 
@@ -1982,50 +1982,70 @@ mod tests {
     #[test]
     fn parse_sow_command() {
         assert_eq!(
-            parse_command_line("sow 0 7 3").unwrap(),
+            parse_command_line("sow 0 7 3 4").unwrap(),
             CommandPayload::Sow {
                 faction_id: 0,
                 target_x: 7,
                 target_y: 3,
+                workers: 4,
             }
         );
-        // Both coordinates are required.
+        // Both coordinates are required, and so is the build's crew — a verb with no crew names
+        // no decision, and guessing one would staff a build the player did not staff.
         assert!(matches!(
             parse_command_line("sow 0 7"),
             Err(CommandParseError::MissingArgument("target_y"))
+        ));
+        assert!(matches!(
+            parse_command_line("sow 0 7 3"),
+            Err(CommandParseError::MissingArgument("workers"))
         ));
     }
 
     #[test]
     fn parse_corral_command() {
         assert_eq!(
-            parse_command_line("corral 0 7 3").unwrap(),
+            parse_command_line("corral 0 7 3 4").unwrap(),
             CommandPayload::Corral {
                 faction_id: 0,
                 target_x: 7,
                 target_y: 3,
+                workers: 4,
             }
         );
-        // Both coordinates are required.
+        // Both coordinates are required, and so is the build's crew — a verb with no crew names
+        // no decision, and guessing one would staff a build the player did not staff.
         assert!(matches!(
             parse_command_line("corral 0 7"),
             Err(CommandParseError::MissingArgument("target_y"))
         ));
+        assert!(matches!(
+            parse_command_line("corral 0 7 3"),
+            Err(CommandParseError::MissingArgument("workers"))
+        ));
     }
 
+    /// A ring rides the same `animal:pen` rung as the pen it widens, so it takes a crew on the same
+    /// grammar as the four improvement verbs (`docs/plan_standing_upkeep.md` §2.2) — and, like them,
+    /// refuses to guess one.
     #[test]
     fn parse_extend_pen_command() {
         assert_eq!(
-            parse_command_line("extend_pen 0 7 3").unwrap(),
+            parse_command_line("extend_pen 0 7 3 4").unwrap(),
             CommandPayload::ExtendPen {
                 faction_id: 0,
                 target_x: 7,
                 target_y: 3,
+                workers: 4,
             }
         );
         assert!(matches!(
             parse_command_line("extend_pen 0 7"),
             Err(CommandParseError::MissingArgument("target_y"))
+        ));
+        assert!(matches!(
+            parse_command_line("extend_pen 0 7 3"),
+            Err(CommandParseError::MissingArgument("workers"))
         ));
     }
 
@@ -2484,45 +2504,65 @@ mod tests {
         ));
     }
 
-    /// **Both source kinds parse at their own arity** — the control for the rejection below, so that
-    /// test cannot pass by the verb being broken outright.
+    /// **A RETIRED VERB IS REFUSED, not silently accepted.** `abandon_improvement` is gone with the
+    /// stored-verb authority it cleared (`docs/plan_standing_upkeep.md` §2.4) — the build verb is
+    /// derived from the meter, so there is nothing for it to clear. A stale client sending it gets an
+    /// error rather than a no-op it would read as success.
     #[test]
-    fn parse_abandon_improvement_reads_each_webs_arity() {
+    fn parse_refuses_the_retired_abandon_improvement() {
+        for line in [
+            "abandon_improvement 1 forage 4 7",
+            "abandon 1 hunt game_test",
+        ] {
+            assert!(
+                parse_command_line(line).is_err(),
+                "the retired verb must not parse: {line}"
+            );
+        }
+    }
+
+    /// **`upkeep_mode` names a BAND and a MODE, and nothing else** — maintenance is a band-level
+    /// standing role (`docs/plan_standing_upkeep.md` §2.5), so there is no source in this grammar at
+    /// all. It is the successor to the retired `maintain`, whose per-source crew is now staffed
+    /// through `assign_labor … agriculture|husbandry <workers>`.
+    #[test]
+    fn parse_upkeep_mode_reads_the_band_and_the_mode() {
         assert_eq!(
-            parse_command_line("abandon_improvement 1 forage 4 7").unwrap(),
-            CommandPayload::AbandonImprovement {
+            parse_command_line("upkeep_mode 1 7 priority").unwrap(),
+            CommandPayload::UpkeepMode {
                 faction_id: 1,
-                kind: "forage".to_string(),
-                target_x: 4,
-                target_y: 7,
-                fauna_id: String::new(),
+                band_id: 7,
+                mode: "priority".to_string(),
             }
         );
+        // Case-folded, like every other token language in this parser.
         assert_eq!(
-            parse_command_line("abandon 1 hunt game_test").unwrap(),
-            CommandPayload::AbandonImprovement {
+            parse_command_line("upkeep_mode 1 7 SPREAD").unwrap(),
+            CommandPayload::UpkeepMode {
                 faction_id: 1,
-                kind: "hunt".to_string(),
-                target_x: 0,
-                target_y: 0,
-                fauna_id: "game_test".to_string(),
+                band_id: 7,
+                mode: "spread".to_string(),
             }
         );
     }
 
-    /// Fail closed on an unknown source kind, exactly as `assign_labor`'s identical `forage`/`hunt`
-    /// grammar does. A catch-all forage arm read the tile arity for *any* token, so a typo either
-    /// reported an argument unrelated to the mistake (`... 1 foo` -> "missing argument: target_x") or
-    /// parsed clean at four tokens and was rejected asynchronously in the feed.
+    /// **The MODE is not validated here, and the arity is.** Which modes exist is the sim's to say —
+    /// it refuses an unknown one by name, exactly as it refuses an unknown kit — but a missing or
+    /// extra token is a typo, and a parser that guessed at one would apply a mode the player never
+    /// typed.
     #[test]
-    fn parse_abandon_improvement_rejects_an_unknown_source_kind() {
+    fn parse_upkeep_mode_takes_any_token_but_exactly_three() {
         assert!(matches!(
-            parse_command_line("abandon_improvement 1 foo"),
-            Err(CommandParseError::UnexpectedToken(token)) if token == "foo"
+            parse_command_line("upkeep_mode 1 7 sideways"),
+            Ok(CommandPayload::UpkeepMode { .. })
         ));
         assert!(matches!(
-            parse_command_line("abandon_improvement 1 foo 4 7"),
-            Err(CommandParseError::UnexpectedToken(token)) if token == "foo"
+            parse_command_line("upkeep_mode 1 7"),
+            Err(CommandParseError::MissingArgument("mode"))
+        ));
+        assert!(matches!(
+            parse_command_line("upkeep_mode 1 7 spread extra"),
+            Err(CommandParseError::UnexpectedToken(_))
         ));
     }
 

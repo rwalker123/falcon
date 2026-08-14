@@ -1174,6 +1174,21 @@ table PopulationCohortState {
   // transferSent between two TURN frames, and renders these.
   transferReceivedTurn:float = 0;
   transferSentTurn:float = 0;
+  // --- HOW THIS BAND SPLITS A MAINTENANCE POOL IT CANNOT STRETCH (appended last) ----------------
+  // docs/plan_standing_upkeep.md 2.5. Maintenance is a band-level standing role now - `agriculture`
+  // for the plant web, `husbandry` for the animal one - and each role's hands are a POOL measured
+  // against the SUM of what the band holds on that web. When the pool cannot cover the sum, this
+  // says which of the two defensible answers the player chose:
+  //
+  //   "spread"    - proportional to demand, so EVERYTHING degrades a little. The default: it is what
+  //                 an unstated policy means, since nobody is singled out.
+  //   "priority"  - fund sources COMPLETELY until the pool runs out, MOST-INVESTED FIRST, so the
+  //                 biggest investments stay whole and the marginal ones rot.
+  //
+  // A STRING rather than an enum for the reason the take policy is one: a third mode needs no schema
+  // change. Set with `upkeep_mode <faction> <band> spread|priority`. Empty is only ever a frame the
+  // sim did not write; read it as "spread".
+  upkeepFundMode:string;
 }
 
 // What ONE kit would grant ONE band at its current wear - a row of
@@ -1471,6 +1486,49 @@ table LaborAssignment {
   // species. The number a player decides on is the herd row's materialPerBiomass /
   // perWorkerMaterial, which are rates and need no take.
   materialYield:[MaterialPayoff];
+  // --- THE BUILD'S OWN CREW (appended last, docs/plan_standing_upkeep.md 2.2) -------------------
+  // `workers` above is the TAKE crew. This is the other allocation a source carries: the hands on
+  // the BUILD (the improvement verb's own crew). Two independent numbers on one source, drawing on
+  // one finite band, which is what makes competing for hands the opportunity cost and makes it
+  // visible in what the player typed.
+  //
+  // THE CLIENT CANNOT DERIVE IT, and without it the build allocation is WRITE-ONLY from its side: it
+  // can send `cultivate ... <workers>` and never read back what a band already has. Two things broke
+  // on that. A compose sheet clamps its steppers to the band's IDLE workers (the sim refuses an
+  // over-staffed command), so a fully-allocated band showed a maximum of 0 and the player could not
+  // RE-STATE a crew they already had - only take it to zero, a trap with no way out. And a sheet
+  // reopened on a source with 2 builders read `0`.
+  //
+  // With it the clamp becomes the honest `idle + this source's own build crew`, and the steppers
+  // seed at what the band actually has.
+  //
+  // 0 IS A REAL VALUE and it is the common one: no verb in flight means no builders.
+  improvementWorkers:uint = 0;
+  // RETIRED: `maintainWorkers`, the per-source KEEPER crew. MAINTENANCE LEFT THE TILE
+  // (docs/plan_standing_upkeep.md 2.5). An indivisible supplier meeting a per-source demand wastes
+  // whatever it does not spend, and the waste grows as gear makes a hand worth more; a band-level
+  // POOL against the summed demand has no leftover by construction. The keeping is now two BAND-WIDE
+  // STANDING ROLES - `agriculture` (the plant web) and `husbandry` (the animal one) - which arrive as
+  // ordinary rows in this very list, kind="agriculture"/"husbandry", hands in `workers`, exactly like
+  // scout and warrior. The slot stays because FlatBuffers field ids are positional.
+  //
+  // What survives PER SOURCE is the readout: upkeepDemand / upkeepSupplied / upkeepShortfall, where
+  // `supplied` is now that source's SHARE OF THE POOL. Those three stopped answering "did you staff
+  // this one" and started answering "where is my pooled shortfall landing".
+  maintainWorkers:uint = 0 (deprecated);
+  // --- THE CROP THIS CREW ASKED FOR (appended last, docs/plan_flora_roster.md 4.2) --------------
+  // Which named plant a Forage assignment wants its Cultivate/Sow to commit the patch to — a
+  // flora_config.json species key, or "" for "pick the tile's dominant legal plant for me". "" on
+  // every non-Forage row.
+  //
+  // THE THIRD WRITE-ONLY FIELD, and it is here for the other two's reason: the client can SEND a
+  // species with `assign_labor` and could not read back the one a band already carries. The patch's
+  // own `ForagePatchState.committedSpecies` is a DIFFERENT fact — what the GROUND is committed to,
+  // which is only set once a crew has actually worked it and is cleared when both meters lapse. This
+  // is the player's stated intent, which exists before any of that and rides the rollback record so
+  // a rewind restores the selection they made rather than a re-picked one. A compose sheet reopened
+  // on a patch nobody has worked yet has no other way to show the crop it is about to plant.
+  species:string;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -1859,29 +1917,18 @@ table ForagePatchState {
   // be quoted as one per-turn number, so there is no replacement scalar here.
   fieldTrade:float (deprecated);
   fieldFodder:float = 0;
-  // --- THE BUILD DIPS, AS FRACTIONS (appended, issue #442) ---------------------------------------
-  // Each plant investment rung's `yield_fraction_while_building` (0 < f < 1) — the factor a crew's
-  // take is multiplied by while it builds that rung.
+  // --- THE BUILD DIPS: RETIRED (docs/plan_standing_upkeep.md section 2.2) ------------------------
+  // Each plant investment rung's `yield_fraction_while_building`, the factor a crew's take was
+  // multiplied by while it built that rung.
   //
-  // THE DIP IS NO LONGER A CEILING ROW. It used to ride `foragePolicyCeilings` as a fifth and sixth
-  // row (`cultivate`, `sow`), each the fraction applied to the SUSTAIN ceiling — correct only while
-  // a build verb WAS the policy, so a builder could hold no other stance. Now the improvement is its
-  // own axis, so the dip is the fraction and the client applies it to whichever stance row is
-  // selected:
-  //   preparing(stance, rung) = foragePolicyCeilings[stance] × <rung>BuildFraction
-  // and `foragePolicyCeilings` is exactly the four stance rows.
-  //
-  // The two rungs keep two numbers because their dials are independently tunable; folding them onto
-  // one would pass every forecast==actual test by today's coincidence (both 0.25) and lie the moment
-  // either is retuned.
-  //
-  // `0` (the default) means NOTHING LEFT TO BUILD at that rung — a Field publishes it on both — and
-  // is deliberately outside the `0 < f < 1` range a real dip lives in, so the two states cannot be
-  // confused. It used to publish the identity `1.0` there, which said the build was free AND still
-  // on offer. Consumers must treat a non-positive fraction as "this rung is not offerable here" and
-  // quote no deal, never as a `× 0` dip.
-  cultivateBuildFraction:float = 0;
-  sowBuildFraction:float = 0;
+  // THE DIP DISSOLVED INTO THE WORK BUDGET. It said "this crew is preparing ground, not gathering",
+  // which is a work-budget conflict hardcoded as a fraction; a crew-turn is ONE POOL, so work spent
+  // on the build is work not spent on the take, and a building crew now simply takes NOTHING. There
+  // is no factor left to publish: the client reads `preparing(stance, rung) = 0` from the model
+  // rather than from a number. Deprecated rather than deleted because FlatBuffers field ids are
+  // POSITIONAL — removing one renumbers every field after it.
+  cultivateBuildFraction:float (deprecated);
+  sowBuildFraction:float (deprecated);
   // --- THE NEGLECT GRACE (appended) --------------------------------------------------------------
   // How many more turns nobody may work this patch before its improvement starts reverting. The sim
   // now forgives a rung's `grace_turns` of consecutive neglect before the feral bleed begins, so a
@@ -1901,23 +1948,18 @@ table ForagePatchState {
   // patch carrying both reports the Field's grace.
   hasNeglectGrace:bool = false;
   neglectGraceRemaining:uint = 0;
-  // --- THE BUILD CREW (appended) ------------------------------------------------------------------
-  // The crew each plant investment rung's build actually wants (`crew_needed` on the ladder). Two
-  // things ride it, and both were wrong without it:
-  //   1. It FLOORS the compose sheet's worker cap. The cap is otherwise `ceil(ceiling / perWorker)`,
-  //      and while a build runs the ceiling is the DIP — so committing to a 25-turn improvement asked
-  //      for FEWER people than gathering the same ground. Compose:
-  //        maxUsefulWorkers(stance, rung) = max(ceil(ceiling / perWorker), <rung>CrewNeeded)
-  //      This is exactly what `herdersNeeded` already does for a managed herd.
-  //   2. Build progress SCALES with it: the rung accrues at `progress_per_turn ×
-  //      min(workers / crewNeeded, 1)`, so "25 turns" means "25 turns at full crew" and an
-  //      under-crewed build takes proportionally longer.
-  // `0` = this rung declares no crew (nothing to floor, nothing scaled) — today only reachable on the
-  // animal rungs, whose crew comes from the herd's size instead. Two fields for the two rungs, the
-  // `cultivateBuildFraction`/`sowBuildFraction` rule: independently tunable dials must not share a
-  // number.
-  cultivateCrewNeeded:uint = 0;
-  sowCrewNeeded:uint = 0;
+  // --- THE BUILD CREW: RETIRED (docs/plan_standing_upkeep.md section 2.2) -------------------------
+  // The crew each plant investment rung's build wanted (`crew_needed` on the ladder). It FLOORED the
+  // compose sheet's worker cap, because the cap was inverted out of the TAKE and a building crew was
+  // paid a dipped take — so committing to a 25-turn improvement asked for FEWER people than gathering
+  // the same ground.
+  //
+  // THE PLAYER STATES THE BUILD'S CREW NOW: `cultivate|sow|tame|corral <faction> <target...>
+  // <workers>` names it outright, so there is no blended count for a rung-level floor to raise and no
+  // number for the sim to guess. Deprecated rather than deleted because FlatBuffers field ids are
+  // POSITIONAL - removing one renumbers every field after it.
+  cultivateCrewNeeded:uint (deprecated);
+  sowCrewNeeded:uint (deprecated);
   // --- THE PER-BIOMASS YIELD VECTOR (appended, docs/plan_harvest_floor.md §5) --------------------
   // What ONE UNIT of this source's standing stock is worth, in each account, at the rates the sim
   // actually pays with. With `biomass` (B) and `carryingCapacity` (K) already on this table, the
@@ -2084,10 +2126,27 @@ table ForagePatchState {
   // (`isCultivated`/`isField`) when that is empty — the pair reads "50 work, ~25 turns", so they
   // must name one rung.
   //
-  // `-1` = NO ESTIMATE, and only where there genuinely is none: this is already a Field, the next
-  // rung's own site/knowledge/species gates refuse it for this faction, no crew is working the
-  // patch, or the crew's output is zero and a running build is STALLED (a stall has no finite
-  // answer, and a huge number would read as a promise).
+  // THREE NEGATIVES, THREE FACTS, and they must not be collapsed:
+  //
+  //   -1  NO ESTIMATE — there genuinely is no answer: this is already a Field, the next rung's own
+  //       site/knowledge/species gates refuse it for this faction, or NO CREW is working the source.
+  //   -2  THE METER HOLDS — a REAL, STAFFED, PRICED build whose net supply is EXACTLY ZERO. The
+  //       maintenance rate is a tax on building (docs/plan_standing_upkeep.md 2.4), and this crew's
+  //       whole output goes on it: nothing is banked, nothing is lost. Render as INFINITY.
+  //   -3  THE METER ROTS — the same build with a NEGATIVE net. The crew is under the rate, so past
+  //       the rung's grace the decay pass bleeds work the player already bought. Render as INFINITY
+  //       too, but NOT the same way as `-2`: holding wastes a turn, rotting destroys progress.
+  //
+  // THE LAST TWO ARE ANSWERS, NOT THE ABSENCE OF ONE, and they are the ones the player can act on:
+  // add hands. They shipped folded into `-1` for one slice, which rendered as NO LINE AT ALL on the
+  // tile card and the herd drawer — visible only to a compose sheet that redid the comparison
+  // itself — and then as one `-2` for another, which said "never finishes" about a build that was
+  // treading water and one that was losing ground alike.
+  //
+  // ALL THREE CONDITIONS ON `-2`/`-3` ARE LOAD-BEARING. An UNSTAFFED source reads `-1`: nobody has
+  // promised anything there, and claiming a source with no crew will never finish would fire on
+  // every idle improvement on the map. So does a build whose knowledge/site/species gate refuses it
+  // even with hands on it — it accrues nothing for a reason that is not the staffing.
   //
   // THE CLIENT CANNOT COMPUTE THIS. It holds neither the crew's output, nor the floor multiplier,
   // nor the kit's build rate — so the sim answers, exactly as it does for `penFeedUpkeep` and the
@@ -2127,12 +2186,77 @@ table ForagePatchState {
   //
   //   gear(w)  = min(w, buildWorkSaturatingCrew) x buildWorkPerWorker
   //   turns(w) = ceil((workCost - workDone - gear(w))
-  //                   / (w x buildWorkPerWorkerTurn x floor / foodPeak))
+  //                   / (w x buildWorkPerWorkerTurn x floor / foodPeak - <rung>UpkeepDemand))
+  //
+  // THE MAINTENANCE RATE IS THE DIVISOR'S SECOND TERM, and leaving it out is not a rounding error:
+  // a `w` at or below the rate never finishes at all, where the un-netted form quotes `workCost / w`
+  // turns for a meter that will sit at zero forever. Take it from the `<rung>UpkeepDemand` field for
+  // the SAME rung the `workCost` came from.
   //
   // READ IT BESIDE `buildTurnsRemaining`, NEVER INSTEAD OF IT. That field is the sim's answer for
   // the COMMITTED crew and is what a card with no stepper renders; this is a term a sheet WITH a
   // stepper evaluates. The two agree at the committed crew and floor by construction.
   buildWorkPerWorkerTurn:float = 0;
+  // --- THE STANDING UPKEEP (appended, docs/plan_standing_upkeep.md section 2) --------------------
+  // What it costs to HOLD this patch at the rung it stands on, in WORK UNITS - the RATE half of
+  // the ladder, beside the build's PILE. All three are published rather than two, because the sim
+  // answers and the client does zero arithmetic (the penFeedUpkeep discipline).
+  //
+  //   upkeepDemand    = what the rung demands this turn. Follows penUpkeep's rule: it is ALWAYS
+  //                     MEANINGFUL, never a sentinel - for a rung that declares no upkeep it is
+  //                     honestly 0. It resolves through the rung this source STANDS ON or is
+  //                     RAISING, so a source nobody has started reads 0 - see the
+  //                     `<rung>UpkeepDemand` pair below for the number a PRE-COMMIT quote wants.
+  //   upkeepSupplied  = what the crew actually paid toward it out of this turn's work budget.
+  //   upkeepShortfall = what went unmet - and therefore EXACTLY what the improvement decays by,
+  //                     once the shortfall outlasts the rung's own grace. Shortfall IS the decay
+  //                     (section 2.4): half the hands means it slides at half rate, not at the full
+  //                     neglect rate and not at nothing.
+  //
+  //   upkeepWorkersNeeded = hands to MEET the demand, ceil(demand / PER_WORKER_OUTPUT). The maintain
+  //                     activity's own workers_needed, in its own unit, beside the take activity's
+  //                     (SourceYield.workersNeeded = hands to haul the offer). A blended count across
+  //                     units is what a single worker allocation forced; each activity answers for
+  //                     itself now.
+  //
+  // THERE IS NO `maintain` FLAG. "Stop maintaining this" is ASSIGNING ZERO WORKERS
+  // (maintain <faction> <source...> 0) - a boolean beside a crew count would be a second way to say
+  // what the number already says, and the two could disagree.
+  upkeepDemand:float = 0;
+  upkeepSupplied:float = 0;
+  upkeepShortfall:float = 0;
+  upkeepWorkersNeeded:uint = 0;
+  // WHAT EACH RUNG COSTS TO HOLD, PER TURN (appended, docs/plan_standing_upkeep.md section 2) - the
+  // RATE half of the same quote `cultivationWorkCost`/`fieldWorkCost` give the PILE half of, and read
+  // beside them by the SAME rung-picking rule (the assignment's `improvement`, or the next rung up
+  // when that is empty).
+  //
+  // WHY IT IS NOT `upkeepDemand` ABOVE. That field answers "what is this patch BILLED right now", and
+  // it resolves through the AT-RISK rung - the newest meter carrying progress. A wild patch has
+  // progress on neither meter, so it publishes an honest `0` - and a compose sheet quoting a
+  // Cultivate off it subtracts nothing, promises `workCost / crew` turns, and the player commits to a
+  // build that never moves because the crew is under the rate. The price and the outcome were
+  // computed against different rungs.
+  //
+  // THE RATE IS OWED WHILE BUILDING TOO, so the build's closed form nets it out:
+  //
+  //   turns(w) = ceil((workCost - workDone - gear(w))
+  //                   / (w x buildWorkPerWorkerTurn x floor / foodPeak - <rung>UpkeepDemand))
+  //
+  // ...and a `w` whose output does not clear the rate NEVER finishes, which is what
+  // `buildTurnsRemaining` publishes as `-2` (exactly at the rate, the meter holds) or `-3` (under
+  // it, the meter rots).
+  //
+  // ALWAYS MEANINGFUL, NEVER A SENTINEL (the penUpkeep rule): it is the LADDER's rate for that rung,
+  // resolved at capture whether or not a build is in flight, exactly as the `*WorkCost` beside it is.
+  // On a patch mid-build it equals `upkeepDemand`; on an unstarted one it is the number that field
+  // cannot yet give. `0` only where the rung declares no upkeep.
+  //
+  // NEITHER SCALES WITH ANYTHING, because a patch is ONE TILE: both plant rungs declare
+  // `scaled_by: flat`, so the rate is what the ladder states (2 and 4 work per turn today - whole
+  // numbers a player can staff exactly).
+  cultivationUpkeepDemand:float = 0;
+  fieldUpkeepDemand:float = 0;
 }
 
 // One STANCE's ceiling on one tile, in every account the tile's basket pays (issue #426). The plant
@@ -2796,15 +2920,11 @@ table HerdTelemetryState {
   // RETIRED (arc #527) with the trade-goods axis.
   pastoralTrade:float (deprecated);
   corralTrade:float (deprecated);
-  // --- THE BUILD DIPS, AS FRACTIONS (appended, issue #442) --- the animal twins of
-  // `ForagePatchState.cultivateBuildFraction`/`sowBuildFraction`; see there for why the dip stopped
-  // being a `huntPolicyCeilings` row. `huntPolicyCeilings` is now exactly the four stance rows, and
-  //   preparing(stance, rung) = huntPolicyCeilings[stance] × <rung>BuildFraction
-  // is the "Preparing +X" the compose sheet renders beside `pastoralYield` / `corralYield`'s "→ +Y".
-  // `0` = NOTHING LEFT TO BUILD at that rung (a penned herd publishes it on both) — see the
-  // `ForagePatchState` twins for why the sentinel sits outside the `0 < f < 1` dip range.
-  tameBuildFraction:float = 0;
-  corralBuildFraction:float = 0;
+  // --- THE BUILD DIPS: RETIRED --- the animal twins of
+  // `ForagePatchState.cultivateBuildFraction`/`sowBuildFraction`; see there for why the dip
+  // dissolved into the work budget and why the slots stay rather than being deleted.
+  tameBuildFraction:float (deprecated);
+  corralBuildFraction:float (deprecated);
   // --- THE NEGLECT GRACE (appended) --- the animal twin of `ForagePatchState`'s pair; see there for
   // the countdown's exact reading and why the bool is not optional to check. The penalty it counts
   // down to is the SHED (animals over the keepers' labor capacity drift into the wild web), not a
@@ -3088,9 +3208,17 @@ table HerdTelemetryState {
   // that worked it this turn — and A PROJECTION WHEN NOTHING IS BEING BUILT, so the compose sheet
   // can quote the job before the player commits. Read it beside the `*WorkCost` for the
   // assignment's own `improvement`, or for the next rung up (`domestication`/`corralled`) when that
-  // is empty. `-1` = NO ESTIMATE, and only where there genuinely is none: already penned, the next
-  // rung's ceiling/knowledge/ownership gates refuse it, no crew is working the herd, or a stalled
-  // build. The client cannot compute it; see the plant twin on `ForagePatchState`.
+  // is empty.
+  //
+  // THREE NEGATIVES, THREE FACTS — the same set the plant twin on `ForagePatchState` documents in
+  // full:
+  //   -1  NO ESTIMATE — already penned, the next rung's ceiling/knowledge/ownership gates refuse it,
+  //       or NO CREW is working the herd.
+  //   -2  THE METER HOLDS — a real, STAFFED, priced build whose net supply is exactly zero: the
+  //       maintenance rate is a tax on building and this crew's whole output goes on it.
+  //   -3  THE METER ROTS — the same build with a negative net, so banked work is being lost.
+  // Render the last two as INFINITY, and not as each other. An unstaffed herd reads `-1`, and so
+  // does one whose gates refuse the build. The client cannot compute any of them.
   buildTurnsRemaining:int = -1;
   // WHAT THE CREW'S TOOLS TOOK OFF THIS BUILD, in work units (appended,
   // docs/plan_unit_costed_work.md section 6) - the `t` in
@@ -3125,12 +3253,78 @@ table HerdTelemetryState {
   //
   //   gear(w)  = min(w, buildWorkSaturatingCrew) x buildWorkPerWorker
   //   turns(w) = ceil((workCost - workDone - gear(w))
-  //                   / (w x buildWorkPerWorkerTurn x floor / foodPeak))
+  //                   / (w x buildWorkPerWorkerTurn x floor / foodPeak - <rung>UpkeepDemand))
+  //
+  // THE MAINTENANCE RATE IS THE DIVISOR'S SECOND TERM, and leaving it out is not a rounding error:
+  // a `w` at or below the rate never finishes at all, where the un-netted form quotes `workCost / w`
+  // turns for a meter that will sit at zero forever. Take it from the `<rung>UpkeepDemand` field for
+  // the SAME rung the `workCost` came from.
   //
   // READ IT BESIDE `buildTurnsRemaining`, NEVER INSTEAD OF IT. That field is the sim's answer for
   // the COMMITTED crew and is what a card with no stepper renders; this is a term a sheet WITH a
   // stepper evaluates. The two agree at the committed crew and floor by construction.
   buildWorkPerWorkerTurn:float = 0;
+  // --- THE STANDING UPKEEP (appended, docs/plan_standing_upkeep.md section 2) --------------------
+  // What it costs to HOLD this herd at the rung it stands on, in WORK UNITS - the RATE half of
+  // the ladder, beside the build's PILE. All three are published rather than two, because the sim
+  // answers and the client does zero arithmetic (the penFeedUpkeep discipline).
+  //
+  //   upkeepDemand    = what the rung demands this turn. Follows penUpkeep's rule: it is ALWAYS
+  //                     MEANINGFUL, never a sentinel - for a rung that declares no upkeep it is
+  //                     honestly 0. It resolves through the rung this source STANDS ON or is
+  //                     RAISING, so a source nobody has started reads 0 - see the
+  //                     `<rung>UpkeepDemand` pair below for the number a PRE-COMMIT quote wants.
+  //   upkeepSupplied  = what the crew actually paid toward it out of this turn's work budget.
+  //   upkeepShortfall = what went unmet - and therefore EXACTLY what the improvement decays by,
+  //                     once the shortfall outlasts the rung's own grace. Shortfall IS the decay
+  //                     (section 2.4): half the hands means it slides at half rate, not at the full
+  //                     neglect rate and not at nothing.
+  //
+  //   upkeepWorkersNeeded = hands to MEET the demand, ceil(demand / PER_WORKER_OUTPUT). The maintain
+  //                     activity's own workers_needed, in its own unit, beside the take activity's
+  //                     (SourceYield.workersNeeded = hands to haul the offer). A blended count across
+  //                     units is what a single worker allocation forced; each activity answers for
+  //                     itself now.
+  //
+  // THERE IS NO `maintain` FLAG. "Stop maintaining this" is ASSIGNING ZERO WORKERS
+  // (maintain <faction> <source...> 0) - a boolean beside a crew count would be a second way to say
+  // what the number already says, and the two could disagree.
+  upkeepDemand:float = 0;
+  upkeepSupplied:float = 0;
+  upkeepShortfall:float = 0;
+  upkeepWorkersNeeded:uint = 0;
+  // WHAT EACH RUNG COSTS TO HOLD, PER TURN (appended, docs/plan_standing_upkeep.md section 2) - the
+  // RATE half of the same quote `tameWorkCost`/`corralWorkCost` give the PILE half of, and read
+  // beside them by the SAME rung-picking rule (the assignment's `improvement`, or the next rung up
+  // when that is empty).
+  //
+  // WHY IT IS NOT `upkeepDemand` ABOVE. That field answers "what is this herd BILLED right now", and
+  // it resolves through the KEEPING rung - the one this herd stands on or is raising. A herd nobody
+  // has started taming is standing on no managed rung at all, so it publishes an honest `0` - and a
+  // compose sheet quoting the Tame off it subtracts nothing, promises `workCost / crew` turns, and
+  // the player commits to a build that never moves because the crew is under the rate. The price and
+  // the outcome were computed against different rungs.
+  //
+  // THE RATE IS OWED WHILE BUILDING TOO, so the build's closed form nets it out:
+  //
+  //   turns(w) = ceil((workCost - workDone - gear(w))
+  //                   / (w x buildWorkPerWorkerTurn x floor / foodPeak - <rung>UpkeepDemand))
+  //
+  // ...and a `w` whose output does not clear the rate NEVER finishes, which is what
+  // `buildTurnsRemaining` publishes as `-2` (exactly at the rate, the meter holds) or `-3` (under
+  // it, the meter rots).
+  //
+  // ALWAYS MEANINGFUL, NEVER A SENTINEL (the penUpkeep rule): it is the LADDER's rate for that rung,
+  // resolved at capture whether or not a build is in flight, exactly as the `*WorkCost` beside it is.
+  // On a herd mid-build it equals `upkeepDemand`; on an unstarted one it is the number that field
+  // cannot yet give. `0` only where the rung declares no upkeep.
+  //
+  // BOTH CARRY THIS HERD'S OWN KEEPER LOAD, because both animal rungs quote `work_per_turn` per
+  // keeper-load (`scaled_by: source_load`) - so the rate says "a shepherd minds 300 sheep and a
+  // cowherd 80 cattle" rather than naming a head count. The load is OWNERSHIP-INDEPENDENT, like
+  // herdersNeededIfManaged: a quote must exist before the herd is anyone's.
+  tameUpkeepDemand:float = 0;
+  corralUpkeepDemand:float = 0;
 }
 
 table CommandEventState {

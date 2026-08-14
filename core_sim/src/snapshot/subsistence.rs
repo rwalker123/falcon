@@ -10,10 +10,23 @@ use crate::forage::{
     patch_neglect_grace_remaining, patch_provisions_per_biomass, tended_fodder,
 };
 use crate::intensification::{
-    build_fraction, build_work_per_worker_turn, NO_BUILD_GEAR, NO_BUILD_REMAINING_FRACTION,
-    RUNG_COST_UNSCALED,
+    build_fraction, build_work_per_worker_turn, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY,
+    NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, UNSCALED_UPKEEP,
 };
-use sim_schema::NO_BUILD_TURNS_ESTIMATE;
+use sim_schema::{BUILD_METER_HOLDS, BUILD_METER_ROTS, NO_BUILD_TURNS_ESTIMATE};
+
+/// **THE COUNTDOWN, ON THE WIRE** — the one place `BuildTurns` becomes an `i32`, so the plant and the
+/// animal web cannot come to publish the same state as two different numbers.
+///
+/// The `None` case is the caller's (`map_or`'s default), because it is the *absence* of an estimate
+/// rather than a variant of one.
+fn published_build_turns(turns: crate::intensification::BuildTurns) -> i32 {
+    match turns {
+        crate::intensification::BuildTurns::Turns(count) => count as i32,
+        crate::intensification::BuildTurns::Holding => BUILD_METER_HOLDS,
+        crate::intensification::BuildTurns::Rotting => BUILD_METER_ROTS,
+    }
+}
 
 /// **No animal pays fodder** — the herd half of the per-biomass yield triple is structurally zero,
 /// and stated rather than defaulted so a reader sees it is a fact about animals and not an
@@ -25,12 +38,6 @@ const NO_ANIMAL_PAYS_FODDER: f32 = 0.0;
 /// scalars, and it deliberately reuses the "biting now" value rather than inventing a sentinel the
 /// client could mistake for a real countdown.
 const NO_NEGLECT_REMAINING: u32 = 0;
-
-/// **The crew a rung that declares none publishes.** Unreachable on the plant branch today (both
-/// plant rungs state a `crew_needed`), but the wire must say something, and `0` is the schema's own
-/// "this rung declares no crew" reading — never a fabricated `1`, which would floor the worker cap at
-/// a number nobody chose.
-const NO_RUNG_CREW: u32 = 0;
 
 /// **The wire's finite reading of "this source has no engagement stage"** — a **pen** (a penned animal
 /// is not stalked) and a species the roster cannot resolve, both of which
@@ -310,7 +317,6 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     hunt_forecast(
                         herd,
                         fauna,
-                        ladder,
                         equipped_haul_rate,
                         party,
                         FORECAST_OUTPUT_MULTIPLIER,
@@ -552,16 +558,17 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // (`food_per_animal / sustainable_yield`), already converted the same way every other
                 // yield field is.
                 food_per_animal: forecast.body_mass_yield.provisions,
-                // Herd staffing — the herders a MANAGED herd owes this turn to hold its tameness (0 for
-                // a wild/unmanaged herd, per `herd_herders_needed`), and how well it is staffed
-                // (`Herd::herded_fraction`, the labor system's per-turn write; `FULLY_HERDED` for a herd
-                // that needs nobody or a vanished one). Split out so the client can distinguish an
-                // under-HERDING shortfall from the assignment's blended `workers_needed`.
+                // Herd staffing — the keepers a MANAGED herd owes this turn (0 for a wild/unmanaged
+                // one, per `herd_herders_needed`) and how well it is kept. Both resolve through the
+                // ladder's `upkeep` now (`docs/plan_standing_upkeep.md` §2.4): the count is the
+                // rung's `upkeep_crew_needed` at this herd's keeper load, and the ratio is derived
+                // from the one stored supply, so the published pair and the shed the sim applies can
+                // never describe different staffings.
                 herders_needed: herd
-                    .map(|herd| herd_herders_needed(herd, fauna))
+                    .map(|herd| herd_herders_needed(herd, fauna, ladder))
                     .unwrap_or(0),
                 herded_fraction: herd
-                    .map(|herd| herd.herded_fraction)
+                    .map(|herd| crate::fauna::herd_herded_fraction(herd, fauna, ladder))
                     .unwrap_or(FULLY_HERDED),
                 // The Tame rung's payoff — the pastoral twin of `corral_yield`: what a Sustain hunt
                 // pays once this herd is tamed (the pastoral MSY), so the client can quote Tame's
@@ -644,25 +651,37 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // A `wild`-ceiling species (mammoth/deer) never tames, so `would_be_herders_needed`
                 // returns 0; the same helper the labor arm reads while a build runs — one seam.
                 herders_needed_if_managed: herd
-                    .map(|herd| would_be_herders_needed(herd, fauna))
+                    .map(|herd| would_be_herders_needed(herd, fauna, ladder))
                     .unwrap_or(0),
-                // **The two animal build dips, as the fractions they are** (issue #442). They used to
-                // be extra `hunt_policy_ceilings` rows, each stating the dip against Sustain alone;
-                // the dip now multiplies whichever stance the crew holds, so the wire carries the
-                // factor and the client applies it to the selected row. Read off the *same*
-                // `SourceYieldForecast::build_dips` the take path prices a build with.
-                //
-                // A **penned** herd has nothing left to build, and says so with the out-of-range
-                // `NO_BUILD_REMAINING_FRACTION` rather than the identity `1.0`, which claimed the
-                // build was free *and* still on offer.
-                tame_build_fraction: forecast
-                    .build_dips
-                    .rung_two
-                    .unwrap_or(NO_BUILD_REMAINING_FRACTION),
-                corral_build_fraction: forecast
-                    .build_dips
-                    .rung_three
-                    .unwrap_or(NO_BUILD_REMAINING_FRACTION),
+                // **THE STANDING UPKEEP** (`docs/plan_standing_upkeep.md` §2) — what holding this
+                // herd's rung demands, what its keepers supplied and what went unmet, all three
+                // published so the client subtracts nothing. The demand is the ladder's own price,
+                // always meaningful (the `penUpkeep` rule); the supplied/unmet pair is this turn's
+                // scratch, stamped by the labor arm that resolved the keeping crew.
+                // Every one of them resolves through the **keeping** rung
+                // (`fauna::herd_keeping_rung` — the newest meter with progress on it), the same seam
+                // `advance_husbandry` sheds through and the grace below counts down against, so a row
+                // cannot bill one rung's demand while the sim judges another's.
+                upkeep_demand: herd.map_or(NO_UPKEEP_DEMAND, |herd| {
+                    crate::fauna::herd_upkeep_demand(herd, fauna, ladder)
+                }),
+                upkeep_supplied: herd.map_or(NO_UPKEEP_DEMAND, |herd| herd.upkeep_supplied),
+                // **Derived, so the three always describe one turn and one rung** — a stored
+                // shortfall would be stamped only on herds some band is assigned to, and would read
+                // `0` on exactly the abandoned herds that are shedding.
+                upkeep_shortfall: herd.map_or(NO_UPKEEP_DEMAND, |herd| {
+                    crate::fauna::herd_upkeep_shortfall(herd, fauna, ladder)
+                }),
+                // **HANDS TO MEET THE DEMAND, whoever is supplying it** — the same number as
+                // `herders_needed` above, and published while the rung is still being **built** too,
+                // where it is the **minimum viable build crew**: the maintenance rate is owed either
+                // way, so a build crew at or below this count banks nothing and the meter holds or
+                // rots (`intensification::net_build_supply`). It read `0` mid-build on the
+                // since-retired premise that an unfinished meter owed no keeping. The take
+                // activity's answer rides `SourceYield::workers_needed`.
+                upkeep_workers_needed: herd.map_or(NO_CREW_ON_THIS_ACTIVITY, |herd| {
+                    herd_herders_needed(herd, fauna, ladder)
+                }),
                 // **The neglect countdown**, resolved through the *same* `herd_keeping_rung` seam
                 // `advance_husbandry` gates the shed on, so the wire can never count down a grace
                 // against a rung the sim is not applying. `None` = a wild herd: nobody's to keep, so
@@ -689,15 +708,47 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     .rung(RungKey::AnimalPen)
                     .build_cost(RUNG_COST_UNSCALED)
                     .unwrap_or(0.0),
+                // **AND THE RATE THAT EATS IT** — the *second* term of the same quote, resolved here
+                // for the same reason and by the same rule as the `*_work_cost` above: off the
+                // **ladder**, per rung, **whether or not a build is in flight**. A price without the
+                // rate that eats it is not a quote — the maintenance rate is owed while building
+                // too, so a crew at or below it never finishes, and a sheet that subtracts nothing
+                // promises `work_cost / crew` turns for a meter that will sit where it is forever.
+                //
+                // **`upkeep_demand` above cannot answer this**, and deliberately: it resolves
+                // through the **keeping** rung (`fauna::herd_keeping_rung`), which is what this herd
+                // is *billed* today — `0` on a herd nobody has started, which is exactly the herd a
+                // compose sheet is looking at. The two coincide the moment a build is in flight.
+                //
+                // **At this herd's own keeper load**, because both animal rungs quote their rate per
+                // keeper-load (`scaled_by: source_load`), and the load is ownership-independent —
+                // `herders_needed_if_managed`'s rule, for its reason: a quote has to exist before
+                // the herd is anyone's.
+                tame_upkeep_demand: herd.map_or(NO_UPKEEP_DEMAND, |herd| {
+                    ladder
+                        .rung(RungKey::AnimalPastoral)
+                        .upkeep_demand(crate::fauna::herd_keeper_load(herd, fauna))
+                }),
+                corral_upkeep_demand: herd.map_or(NO_UPKEEP_DEMAND, |herd| {
+                    ladder
+                        .rung(RungKey::AnimalPen)
+                        .upkeep_demand(crate::fauna::herd_keeper_load(herd, fauna))
+                }),
                 // **The turns estimate the labor arm stamped this turn** — the running build's, or,
                 // when nothing is being built, the **projection** for the rung this herd would climb
                 // next, so the pair reads "50 work, ≈13 turns" before the player commits. Which
                 // `*WorkCost` it belongs beside is the assignment's own `improvement`, or the next
                 // rung up when that is empty. `-1` only where there is genuinely no answer (penned,
                 // a gate refuses, or a stalled build). The client can derive none of it.
+                // **THREE NEGATIVES, THREE FACTS** (`intensification::BuildTurns`): `-1` where
+                // there is genuinely no answer (nobody on the source, a gate refuses, the top of
+                // the ladder); `-2` where a **staffed** crew's net supply is exactly zero, so the
+                // meter holds where it is; and `-3` where it is negative, so the meter is going
+                // backwards. The last two are the ones the player can act on, and they are two
+                // answers because holding wastes a turn where rotting destroys bought work.
                 build_turns_remaining: herd
                     .and_then(|herd| herd.build_turns_remaining)
-                    .map_or(NO_BUILD_TURNS_ESTIMATE, |turns| turns as i32),
+                    .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),
                 // **What the keepers' tools took off the running build** — quoted beside the RAW
                 // `*WorkCost` above, never folded into it, so a readout can say "your hurdles: −17
                 // work" against a price that does not move under the crew's kit.
@@ -783,7 +834,6 @@ pub(crate) fn snapshot_forage_patches(
                 forage,
                 flora,
                 equipped_gather_rate,
-                ladder,
                 // **The EQUIPPED reference rate, not any band's basket tier** — a patch row is a fact
                 // about the *patch*, and a patch has no band to resolve a kit against. Exactly the
                 // rule `HerdTelemetryState` already follows for the hunt's haul; a band's real,
@@ -897,15 +947,32 @@ pub(crate) fn snapshot_forage_patches(
                     .rung(RungKey::PlantField)
                     .build_cost(RUNG_COST_UNSCALED)
                     .unwrap_or(0.0),
+                // **AND THE RATE THAT EATS IT** — the plant twin; the herd row has the reasoning.
+                // `upkeep_demand` below resolves through the **at-risk** rung
+                // (`forage::patch_unwinding_rung`) and is therefore `0` on a wild patch, which is
+                // precisely the patch a compose sheet is quoting. [`UNSCALED_UPKEEP`] on both,
+                // because a patch is one tile: both plant rungs declare `scaled_by: flat`.
+                cultivation_upkeep_demand: ladder
+                    .rung(RungKey::PlantTended)
+                    .upkeep_demand(UNSCALED_UPKEEP),
+                field_upkeep_demand: ladder
+                    .rung(RungKey::PlantField)
+                    .upkeep_demand(UNSCALED_UPKEEP),
                 // **The turns estimate the labor arm stamped this turn** — the running build's, or,
                 // when nothing is being built, the **projection** for the rung this patch would climb
                 // next, so the compose sheet can quote the job before the player commits. Read it
                 // beside the `*WorkCost` for the assignment's own `improvement`, or for the next rung
                 // up when that is empty. `-1` only where there is genuinely no answer (a Field, a
                 // gate that refuses, or a stalled build).
+                // **THREE NEGATIVES, THREE FACTS** (`intensification::BuildTurns`): `-1` where
+                // there is genuinely no answer (nobody on the source, a gate refuses, the top of
+                // the ladder); `-2` where a **staffed** crew's net supply is exactly zero, so the
+                // meter holds where it is; and `-3` where it is negative, so the meter is going
+                // backwards. The last two are the ones the player can act on, and they are two
+                // answers because holding wastes a turn where rotting destroys bought work.
                 build_turns_remaining: patch
                     .build_turns_remaining
-                    .map_or(NO_BUILD_TURNS_ESTIMATE, |turns| turns as i32),
+                    .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),
                 // The plant twin — `NO_BUILD_GEAR` on every plant build today, since no plant item
                 // declares `EquipmentStat::BuildWork` yet (issue #539).
                 build_work_from_gear: patch.build_work_from_gear,
@@ -926,37 +993,26 @@ pub(crate) fn snapshot_forage_patches(
                 // `refresh_ecology_phase` classified the word above with.
                 collapse_fraction: ecology.collapse_fraction,
                 stressed_fraction: ecology.stressed_fraction,
-                // **The two plant build dips, as fractions** (issue #442) — the twins of the herd's
-                // `tame_build_fraction`/`corral_build_fraction`, off the same `build_dips` the take
-                // path prices a build with. `preparing(stance) = ceiling[stance] × fraction`.
-                // A **Field** has nothing left to build; see the herd twin above for why that is
-                // `NO_BUILD_REMAINING_FRACTION` and not the identity.
-                cultivate_build_fraction: forecast
-                    .build_dips
-                    .rung_two
-                    .unwrap_or(NO_BUILD_REMAINING_FRACTION),
-                sow_build_fraction: forecast
-                    .build_dips
-                    .rung_three
-                    .unwrap_or(NO_BUILD_REMAINING_FRACTION),
+                // **THE STANDING UPKEEP** — the plant twin; see the herd row for the seam and why
+                // all three terms ship. Every one of them is resolved through the **at-risk** rung
+                // (`forage::patch_unwinding_rung`), the same seam `advance_cultivation` bleeds and
+                // the grace below counts down against, so a row cannot bill one rung's demand while
+                // the sim bleeds another's.
+                upkeep_demand: crate::forage::patch_upkeep_demand(patch, ladder),
+                upkeep_supplied: patch.upkeep_supplied,
+                // **Derived, so the three always describe one turn and one rung.** A stored
+                // shortfall would be stamped only on patches some band is assigned to, and would
+                // therefore read `0` on exactly the abandoned patches that are reverting.
+                upkeep_shortfall: crate::forage::patch_upkeep_shortfall(patch, ladder),
+                // **The MAINTAIN activity's own `workers_needed`** — the plant twin, and what makes
+                // a standing cost legible: *"this wants 1, you have 0"*.
+                upkeep_workers_needed: crate::forage::patch_upkeep_workers_needed(patch, ladder),
                 // **The neglect countdown**, resolved through the *same* `patch_unwinding_rung` seam
                 // `advance_cultivation` bleeds through — so the wire counts down against the rung
                 // that will actually revert, not one the patch merely stands on. `None` = a wild
                 // patch, which is most of them.
                 has_neglect_grace: neglect_grace.is_some(),
                 neglect_grace_remaining: neglect_grace.unwrap_or(NO_NEGLECT_REMAINING),
-                // **The two build crews** — the floor under the client's worker cap, and the
-                // denominator its build actually accrues against. `0` means the rung declares no
-                // crew (unreachable on the plant branch today; the field is the honest shape rather
-                // than a fabricated `1`).
-                cultivate_crew_needed: ladder
-                    .rung(RungKey::PlantTended)
-                    .build_crew_needed()
-                    .unwrap_or(NO_RUNG_CREW),
-                sow_crew_needed: ladder
-                    .rung(RungKey::PlantField)
-                    .build_crew_needed()
-                    .unwrap_or(NO_RUNG_CREW),
                 // The two investment rungs' PAYOFF twins — each projected at **its own** rung
                 // (`tended_*` at rung 2, `field_*` at rung 3), never at the rung the patch happens to
                 // stand on. That is the #433 rule, and getting it wrong is the exact defect #433

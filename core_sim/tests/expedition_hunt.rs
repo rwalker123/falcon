@@ -41,12 +41,11 @@ use core_sim::{
     ExpeditionMission, ExpeditionPhase, FactionId, FactionInventory, FaunaConfig,
     FaunaConfigHandle, ForageRegistry, GenerationId, GenerationRegistry, Herd, HerdDensityMap,
     HerdRegistry, HerdTelemetry, HuntDraw, HuntTripBound, LaborAllocation, LaborConfigHandle,
-    LadderConfig, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause,
-    PopulationCohort, ResidentBand, Scalar, SimulationConfig, SimulationTick, SizeClass,
-    SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
-    VisibilityConfig, VisibilityConfigHandle, VisibilityLedger, WellbeingConfigHandle, FOOD,
-    NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
+    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
+    ResidentBand, Scalar, SimulationConfig, SimulationTick, SizeClass, SnapshotHistory,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, VisibilityConfig,
+    VisibilityConfigHandle, VisibilityLedger, WellbeingConfigHandle, FOOD, STRIP_IT_BARE,
 };
 
 /// Party size used by every trip test: 4 hunters (the design's reference party).
@@ -549,11 +548,9 @@ fn a_raid_and_a_resident_band_reach_the_same_animals() {
             &mut quarry,
             PARITY_PARTY,
             PEAK_FLOOR,
-            NO_IMPROVEMENT_UNDERWAY,
             per_worker,
             &hunting_party(),
             &fauna,
-            &LadderConfig::builtin(),
             f32::INFINITY,
             // Every shipped species has `wariness 0`, which makes the retreat draw an exact
             // identity — so the seed is unobservable and held fixed on both paths.
@@ -1312,13 +1309,11 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                     hunt_source_yield_preview(
                         herd,
                         &fauna,
-                        &LadderConfig::builtin(),
                         equipped_haul_rate(),
                         &hunting_party(),
                         output_multiplier,
                         workers,
                         policy,
-                        NO_IMPROVEMENT_UNDERWAY,
                         labor.yield_average_horizon_turns,
                         labor.arrivals_horizon_turns,
                         app.world
@@ -1342,11 +1337,9 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                     &mut herd,
                     workers,
                     policy,
-                    NO_IMPROVEMENT_UNDERWAY,
                     equipped_haul_rate(),
                     &hunting_party(),
                     &fauna,
-                    &LadderConfig::builtin(),
                     f32::INFINITY,
                     // The preview pins `forecast == actual`, so the retreat draw is held fixed —
                     // every species here ships `wariness 0`, making it an identity anyway.

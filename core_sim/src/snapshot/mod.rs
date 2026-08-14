@@ -895,6 +895,7 @@ mod indexed_diff_tests {
 
 #[cfg(test)]
 mod tests {
+    use crate::intensification::NO_CREW_ON_THIS_ACTIVITY;
     /// One animal, for the snapshot fixtures (slice 8). These tests assert what crosses the wire, not
     /// what a take pays, so the quantum is deliberately small enough never to bind.
     const SNAPSHOT_BODY_MASS: f32 = 1.0;
@@ -1394,6 +1395,7 @@ mod tests {
                     workers: 10,
                     improvement: None,
                     kit: None,
+                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
                 },
                 LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -1403,6 +1405,7 @@ mod tests {
                     workers: 5,
                     improvement: None,
                     kit: None,
+                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
                 },
             ],
             last_yields: vec![
@@ -1442,6 +1445,7 @@ mod tests {
             last_raid_forfeit: 0.0,
             last_transfer_received: 0.0,
             last_transfer_sent: 0.0,
+            upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
         };
         let (mut cohort, allocation) = food_test_cohort(
             Scalar::from_f32(0.0),
@@ -1514,6 +1518,7 @@ mod tests {
                     workers: 10,
                     improvement: None,
                     kit: None,
+                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
                 },
                 LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -1523,6 +1528,7 @@ mod tests {
                     workers: 5,
                     improvement: None,
                     kit: None,
+                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
                 },
             ],
             last_yields: vec![
@@ -1539,6 +1545,7 @@ mod tests {
             last_raid_forfeit: 0.0,
             last_transfer_received: 0.0,
             last_transfer_sent: 0.0,
+            upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
         };
         let (cohort, allocation) = food_test_cohort(
             Scalar::from_f32(0.0),
@@ -1583,12 +1590,14 @@ mod tests {
                 workers: 10,
                 improvement: None,
                 kit: None,
+                improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             last_yields: Vec::new(),
             last_pen_feed_upkeep: 0.0,
             last_raid_forfeit: 0.0,
             last_transfer_received: 0.0,
             last_transfer_sent: 0.0,
+            upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
         };
         let (cohort, allocation) = food_test_cohort(
             Scalar::from_f32(0.0),
@@ -1624,6 +1633,7 @@ mod tests {
             workers: 6,
             improvement: None,
             kit: None,
+            improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
         };
         let state = labor_assignment_to_state(
             &assignment,
@@ -1653,6 +1663,7 @@ mod tests {
             workers: 6,
             improvement: Some(Improvement::Cultivate),
             kit: None,
+            improvement_workers: 6,
         };
         let state = labor_assignment_to_state(
             &assignment,

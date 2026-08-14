@@ -19,6 +19,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
+use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     advance_forage_regrowth, advance_labor_allocation, generate_hydrology, patch_composition,
     patch_provisions_per_biomass, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
@@ -1211,6 +1212,7 @@ fn spawn_forager(
                     workers: FORAGE_WORKERS,
                     improvement: None,
                     kit: None,
+                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },

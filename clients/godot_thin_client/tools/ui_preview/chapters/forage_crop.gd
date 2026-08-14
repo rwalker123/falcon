@@ -295,9 +295,16 @@ func run(harness) -> void:
 	# What the frame shows now is the pair that has to hold TOGETHER: nothing is offered that the sim
 	# would refuse, and the aside is still naming the lesson being earned. A SOURCE gate is untouched
 	# and still leads a control — `improvement_offered_gated` and `forage_sow_locked` are those frames.
+	# **THE PATCH HAS TO BE ONE NOBODY IS BUILDING, and that is not a fixture convenience.** The build
+	# verb is derived from the meter (`docs/plan_standing_upkeep.md` §2.4), so the reference tile's
+	# own 0.6 cultivation meter makes it a patch mid-Cultivate — which renders its RUNNING state and
+	# would fail the claim below for the right reason. A rung blocked on knowledge is a rung nobody
+	# has STARTED, which is what a zero meter says.
+	var locked_tile := BaseFx.unbuilt(BaseFx.food_tile_fixture())
+	h._hud._compose.reset_forage_source()
 	h._hud._compose.set_forage_count(1)
-	h._show_tile(BaseFx.food_tile_fixture())
-	h._compose_forage(BaseFx.food_tile_fixture())
+	h._show_tile(locked_tile)
+	h._compose_forage(locked_tile)
 	await h._settle()
 	await h._save("forage_cultivate_locked")
 	# **ASKED OF THE WHOLE CONTROL FAMILY, not of the Cultivate rung.** `ForageFx.find_improvement_control`
@@ -498,9 +505,9 @@ func run(harness) -> void:
 	# caption composing the arrow's key unconditionally fails here whichever of the two it read.
 	# `improvement_running_plant` is where the SUPPRESSION alone is pinned, against a crew that does
 	# reach its floor.
-	h._assert_hud("…under a caption keying the dip alone, this crew reaching no holding rate",
+	h._assert_hud("…under the plain per-turn caption, this crew reaching no holding rate",
 		Readout.yields_header(h._hud._drawercompose._compose_sheet)
-			== SourceForecast.YIELD_ROW_HEADER_WHILE_BUILDING.to_upper())
+			== SourceForecast.YIELD_ROW_HEADER.to_upper())
 	# **A CREW OF ZERO IS BUILDING NOTHING, AND THE ASIDE MAY NOT SAY OTHERWISE.** `learn_multiplier`
 	# is a function of the FLOOR alone, so at the food peak it reads ×1.00 no matter who is assigned —
 	# and this frame has a composed Cultivate with NOBODY on it. The build half is gated on the same
@@ -674,6 +681,12 @@ func run(harness) -> void:
 	# It is an A/B against `forage_cultivate_locked` above: the SAME wild basket, refused there because
 	# the craft is half-learned and offered here because it is known, with the Stressed ecology the only
 	# thing that differs between this frame and `forage_cultivate` — and deciding nothing.
+	# **RE-SEED THE COMPOSITION, because this frame's claim is about an OFFER.** The stressed tile
+	# shares the reference tile's coordinates, so without a reset the sheet is not a source change
+	# and carries the previous frame's composed verb — which, on a meter at zero, is honoured as a
+	# declaration and renders the RUNNING state. It passed for years by reading a checked RUNNING box
+	# as the live checkbox it was asserting, the two states having shared a node type.
+	h._hud._compose.reset_forage_source()
 	h._show_tile(TileFx.stressed_tile_fixture())
 	h._compose_forage(TileFx.stressed_tile_fixture())
 	await h._settle()
@@ -828,7 +841,12 @@ func run(harness) -> void:
 	# that will take seed. `can_sow` is a DIFFERENT flag from `can_cultivate`, so only Wild Emmer stays
 	# legal here and Hazel/Ground Nut join the greyed rows: the two frames side by side are what prove
 	# the gate reads the composed rung's own flag rather than one "can be farmed" bit.
+	# **DIALLED AFTER THE FIRST OPEN, THEN RE-OPENED — the plant twin of `_compose_herd`'s contract.**
+	# `_show_tile` closes any open sheet, and a close now ENDS the composition
+	# (`DrawerComposeController._on_compose_sheet_closed`), so a rung dialled before the first open is
+	# re-seeded away by the source-changed branch exactly as a pre-open `set_hunt_count` always was.
 	h._show_tile(_sowable_long_basket_tile_fixture())
+	h._compose_forage(_sowable_long_basket_tile_fixture())
 	h._hud._compose.set_forage_improvement("sow")
 	h._hud._compose.set_forage_species("")
 	h._compose_forage(_sowable_long_basket_tile_fixture())

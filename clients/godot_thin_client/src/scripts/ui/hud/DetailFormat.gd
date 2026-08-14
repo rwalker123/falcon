@@ -26,7 +26,7 @@ class_name DetailFormat
 ##
 ## CONSTS. The rule is: a const lives HERE iff every one of its readers moved here. The herd-drawer
 ## vocabulary came with `herd_summary_lines` (the pen/husbandry/range/size rows, `OVERGRAZING_WARNING`,
-## `HERDERS_ROW`, `FULLY_HERDED`, `CORRAL_PROGRESS_COMPLETE`, `PEN_FEED_ROW`) and the expedition
+## `FULLY_HERDED`, `CORRAL_PROGRESS_COMPLETE`, `PEN_FEED_ROW`) and the expedition
 ## delivery/tooltip vocabulary with the tooltip trio, plus the recovery-guidance PAIR (the tint
 ## registry matches the glyph, the producer emits the text — splitting them across files would put a
 ## one-string invariant in two). The rest of that vocabulary now lives HERE too (the morale-breakdown
@@ -89,15 +89,17 @@ const MORALE_HINT_PERSISTENT := "  Hunting a herd also lifts morale each turn (+
 const CORRAL_GLYPH := "🐄"
 
 # ---- The four LADDER RUNG glyphs, glyph-ONLY -----------------------------------------------------
-# The rung LABELS below (`cultivation_label` / `field_label` / `corral_label`) weld the glyph to its
+# The rung BADGES below (`cultivation_built_label` / `field_built_label` / `corral_built_label`) weld
+# the glyph to its
 # words — "🌾 Tended Patch" — which a one-glyph column cannot take. These are the same marks with the
 # words stripped, so a mark column reads the glyph and a detail row reads the label WITHOUT either
 # slicing the other's string. One home per glyph, and every one of them is REUSED, never minted here:
 #   plants:  wild → 🌾 Tended Patch → ▦ Field       animals: wild → ◎ pastoral → 🐄 penned
 # The two FIELD/PASTORAL marks come from `FoodIcons.POLICY_ICONS` — the ladder's own table, where each
 # verb wears the glyph of THE RUNG IT BUILDS, so `sow`'s ▦ IS the Field's mark and `tame`'s ◎ IS the
-# pastoral herd's. **The animal side has no rung glyph of its own and must borrow**: `husbandry_label`
-# (Domesticated) and `corral_label` (Corralled) BOTH wear 🐄, so reusing it for the pastoral rung would
+# pastoral herd's. **The animal side has no rung glyph of its own and must borrow**:
+# `husbandry_built_label` (Domesticated) and `corral_built_label` (Corralled) BOTH wear 🐄, so reusing
+# it for the pastoral rung would
 # make pastoral and penned indistinguishable — the one distinction a rung mark exists to draw.
 const CULTIVATION_GLYPH := "🌾"
 
@@ -400,6 +402,19 @@ const BREAKDOWN_CARET_CLOSED := "▸"
 const FOOD_UNLIMITED_GLYPH := "∞"
 const FOOD_RUNWAY_UNIT := "turn"
 
+## **THE SAME GLYPH ON A BUILD ESTIMATE, AND ITS MEANING IS INVERTED.** On the Food line `∞` is good
+## news — the larder never empties; on a build it is the worst news the sheet can carry — this crew
+## never finishes, because it is at or below the maintenance rate the meter owes every turn.
+## So it takes a WARNING treatment rather than the neutral ink the runway gets: the one readout that
+## should stop the player must not read as reassurance. The glyph is shared deliberately — a player
+## who has learned it on the food line reads it here without being taught twice — and the ink is what
+## says which way it points.
+##
+## **BOTH never-finishing sentinels draw it, and the INK is what separates THEM too**: amber for
+## `SourceForecast.BUILD_TURNS_HOLDS` (the meter stands still) and red for `BUILD_TURNS_ROTS` (it is
+## going backwards). One glyph, three meanings, three colours — see `rung_value_hex`.
+const BUILD_TURNS_NEVER_GLYPH := FOOD_UNLIMITED_GLYPH
+
 # ---- Predators Phase 0 — the four RAW combat components (strength ≠ danger). Keys ≤ 16 chars so
 # `_split_kv` aligns them as table rows. Attack/Defense are open-ended (bar relative to the roster
 # max); Fights back / Aggressive are native 0..1 (bar + %).
@@ -425,29 +440,27 @@ const DANGER_DERIVED_FORMAT := "Hunt %s · Threat %s"
 ## indents inside the key cell and still falls through to `_split_kv`. Guarded in `ui_preview`.
 const DANGER_COMPONENT_INDENT := "   "
 
-# ---- Herder staffing. The row KEY is read by the herd-lines producer below AND by this file's tint
-# registry; `FULLY_HERDED` is the `herded_fraction` wire default (1.0 = fully staffed, also
-# unmanaged/vanished herds) — treated as "no problem". Staffed reads "N / N" (calm), under-herded
-# "A / N — under-herded" (amber).
-const HERDERS_ROW := "Herders"
+# ---- Keeper staffing. RETIRED — **the `Keepers:` row is gone** (issue #545): it stated a standing
+# demand every turn on a herd where nothing was wrong, read as noise beside the `Keeping:` row saying
+# the same number again, and what a player needed from it — the head count — only matters when the
+# pool is SHORT, which `HERDERS_SHED_FORMAT` below states and the rung row's own ⚠ marks. `KEEPERS_ROW`,
+# `HERDERS_STAFFED_FORMAT`, `HERDERS_UNDER_FORMAT` and `herders_label` / `herders_value_hex` went with
+# it. `FULLY_HERDED` is the `herded_fraction` wire default (1.0 = fully staffed, also
+# unmanaged/vanished herds) — treated as "no problem". The `under-herded` word survives on the shed
+# sentence: it names the HERD's state (the sim's own), not a crew.
 const FULLY_HERDED := 1.0
-const HERDERS_STAFFED_FORMAT := "%d / %d"
-const HERDERS_UNDER_FORMAT := "%d / %d — under-herded"
 
-# ---- Build-verb labels. "Building" / "Sowing" share the pen's "Fencing N%" convention: a rung under
-# construction names the WORK, a finished one wears its own badge word. Each rung's "the meter is
-# full" mark is its own const (progress arrives as 0..1 per rung).
-const CORRAL_BUILDING_LABEL := "Building"
-# The Tame rung's build verb — the animal twin of `HudFloraVocab.CULTIVATION_PREPARING_LABEL`, and
-# the word the plant rungs' own comments already cite ("exactly as the herd's Husbandry row reads
-# 'Domesticating N%'"). It was written inline at its one site until the work readout gave every rung
-# one composer, at which point a literal there would have been the only verb not stated as one.
-const HUSBANDRY_DOMESTICATING_LABEL := "Domesticating"
+# ---- RETIRED — the per-rung BUILD VERBS (issue #545). `Building` / `Sowing` / `Domesticating` /
+# `Preparing` each headlined a card row stating that rung's meter in work units; the row leads with
+# the TURN COUNT now (`HudSelectionVocab.RUNG_TURNS_FORMAT`), which is what a glance wants off a build
+# and which no verb can say. The compose sheet keeps its own participles
+# (`HudComposeVocab.IMPROVEMENT_RUNNING_LABELS`) because a sheet is composing that verb, not reporting
+# it. Each rung's "the meter is full" mark stays its own const (progress arrives as 0..1 per rung),
+# and the badge word a BUILT rung wears lives beside its `*_built_label`.
 const CORRAL_PROGRESS_COMPLETE := 1.0
 const HUSBANDRY_PROGRESS_COMPLETE := 1.0
 const CULTIVATION_PROGRESS_COMPLETE := 1.0
 const FIELD_PROGRESS_COMPLETE := 1.0
-const FIELD_SOWING_LABEL := "Sowing"
 const FIELD_BADGE_LABEL := "Field"
 
 # ---- The pen's standing feed debit + its two starving states. The row KEY is read by the herd-lines
@@ -485,7 +498,21 @@ const HUSBANDRY_PASTORAL_HINT := "Herdable, not pennable"
 # managed herd's tameness — an under-herded herd SHEDS whole animals over its labor capacity into a
 # nearby wild herd (the animals drift off, tameness leaves with them). So the drawer states the shed,
 # its live cost, and the one lever that stops it — never the retired "tameness slipping" story.
-const HERDERS_SHED_FORMAT := "Under-herded — animals are drifting off. Staff all %d herders to hold the herd."
+#
+# **THE LEVER IS THE BAND'S HUSBANDRY ROLE, AND IT IS NAMED AS SUCH** (`docs/plan_standing_upkeep.md`
+# §2.5). It read *"Staff all N herders"* while one crew both hunted a herd and held it, then *"Staff
+# N KEEPERS"* while the keeping was a stepper on this herd's compose sheet. **Maintenance has since
+# left the tile**: a managed herd is held out of the band's `husbandry` pool, so the sentence names
+# the role card that moves it and quotes what THIS herd is worth in hands (`upkeepWorkersNeeded`,
+# which equals `herdersNeeded` on a held rung — the two differ only while the rung is still being
+# BUILT, where the row above states in words that the build's crew holds it). A remedy that named a
+# control the player cannot find is the failure this wording exists to avoid.
+#
+# **IT LEADS WITH THE HAZARD MARK NOW** (issue #545), which is what routes it through
+# `detail_bbcode`'s full-width WARN branch. It rendered in the muted INK_DIM a descriptive sentence
+# gets, because that branch tested one known sentence by equality — so the one line in the client that
+# says animals are drifting off was quieter than the rows around it.
+const HERDERS_SHED_FORMAT := "%s Under-herded — animals are drifting off. This herd wants %%d of the band's Husbandry hands." % HudSelectionVocab.RUNG_HAZARD_GLYPH
 
 # ---- THE STANDING-STOCK ROW, AND ITS KEY NAMES ITS UNIT. `Herd: 6 / 11` counts ANIMALS — the unit
 # the hunt sheet already delivers in — so the card and the sheet finally read in one currency. It
@@ -510,7 +537,8 @@ const HERD_SIZE_CLASS_PREDATOR_FORMAT := "%s predator"
 # sim's). The epsilon keeps a herd sitting exactly at K from flickering the warning; the warning SENTENCE
 # is emitted by the producer below and matched verbatim by `detail_bbcode`'s WARN branch.
 const OVERGRAZE_EPSILON := 0.05
-const OVERGRAZING_WARNING := "⚠ Overgrazing — range can't sustain this herd"
+const OVERGRAZING_WARNING := "%s Overgrazing — range can't sustain this herd" \
+    % HudSelectionVocab.RUNG_HAZARD_GLYPH
 
 # ---- Recovery guidance — a dim line naming the real levers (NOT harvest) when morale is concerning.
 # The GLYPH is how `detail_bbcode` recognizes the line; the TEXT is what the morale-breakdown producer
@@ -658,11 +686,22 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
                 row_hex = HudStyle.HEALTHY_HEX
             elif line.contains(DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH):
                 row_hex = HudStyle.WARN_HEX
+            # **THE BUILD'S `∞` IS THE THIRD SIGN THIS BRANCH RECOGNISES**, and it takes the same amber
+            # a negative contribution does: a crew that never finishes is the one reading on a source
+            # card that should stop the player. The larder runway draws the
+            # identical glyph for the OPPOSITE news and never lands here — it is a `Key: value` row,
+            # tinted by `_value_hex` — so the mark can be shared while the ink stays disjoint.
+            elif line.contains(DetailFormat.BUILD_TURNS_NEVER_GLYPH):
+                row_hex = HudStyle.WARN_HEX
             out += "[color=#%s]%s[/color]\n" % [row_hex, line]
             continue
-        # The overgrazing warning is a full-width WARN sentence (biomass > K), tinted with the same
-        # WARN_HEX the Ecology/Corral value rows use — not a parallel styling path, just the shared color.
-        if line == OVERGRAZING_WARNING:
+        # **A FULL-WIDTH SENTENCE THAT LEADS WITH THE HAZARD MARK IS A WARNING, and that is now the
+        # rule rather than a list of known sentences.** It tested `line == OVERGRAZING_WARNING`
+        # exactly, so every other hazard sentence in the game rendered in the muted INK_DIM a
+        # descriptive line gets — including the under-herded shed, which is the one line in the client
+        # that says animals are drifting off. `HudSelectionVocab.RUNG_HAZARD_GLYPH` is the same mark
+        # the rung rows carry, so one needle covers both shapes.
+        if line.begins_with(HudSelectionVocab.RUNG_HAZARD_GLYPH):
             if table_open:
                 out += "[/table]\n"
                 table_open = false
@@ -724,9 +763,12 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
         return ecology_value_hex(value)
     elif key == "Husbandry":
         return husbandry_value_hex(value)
-    elif key == HERDERS_ROW:
-        # A managed herd's staffing: amber when under-herded (animals shedding), ink when full.
-        return herders_value_hex(value)
+    elif key == UPKEEP_RISK_ROW:
+        # **THE ONE ROW THAT ONLY EXISTS WHEN SOMETHING IS WRONG, so it is never neutral.** It fell
+        # through to INK for as long as the calm `Keeping:` bill sat above it carrying the context;
+        # that row is retired (issue #545) and this is now the whole detail behind a marked rung, so
+        # a shortfall stated in the same ink as a stock reading is the reassuring direction again.
+        return HudStyle.WARN_HEX
     elif key == "Cultivation":
         return cultivation_value_hex(value)
     elif key == HudFloraVocab.FIELD_ROW:
@@ -954,6 +996,97 @@ static func build_meter_value(verb: String, progress: float,
         verb, format_work_units(work_done), format_work_units(work_cost),
         HudFormat.progress_percent(progress)]
 
+## **THE RUNG ROW'S WHOLE VALUE — one composer, four rungs, both webs** (issue #545). The tile card's
+## plant rungs and the herd drawer's animal ones render through this and nothing else, so a rung's
+## state cannot be worded one way on a patch and another on a herd.
+##
+## **IT IS ONE ROW, AND THAT IS THE POINT.** A rung used to cost four lines here — the meter in work
+## units, an indented turn estimate, a `Keepers` head count and a `Keeping` sentence — and the last
+## two were reported from play as unreadable: both existed to say *there is nothing to do*, and both
+## said the same number twice. What a glance wants is how long, or how much is at stake.
+##
+## **THE ABSENCE OF A HAZARD IS NOW THE ONLY SIGNAL THAT THINGS ARE FINE**, so every failure state
+## below carries `RUNG_HAZARD_GLYPH` and none may render bare. Four of them, in the order they are
+## tested:
+##
+## | state | reads | why it is not the one above it |
+## |---|---|---|
+## | built | `🌾 Tended 100%` (+ `⚠` when the keeping is short) | achievement is the stamped retention bar, not the meter's fullness |
+## | declared, nobody on it, nothing banked | `⚠ Not started — no builders assigned` | there is no meter to state — `0 / 50 (0%)` is that zero written three ways |
+## | work banked, nobody on it | `⚠ Reverting 42%` | the remedy is HANDS, and the plant web is actively losing the work |
+## | staffed exactly AT the rate | `⚠ ∞ turns (42%)` | somebody IS on it; the remedy is MORE of them |
+## | staffed UNDER the rate | `⚠ ∞ turns, losing ground (42%)` | the same remedy, and the work already bought is going back — so it is RED, not amber |
+## | staffed, and nothing accrues anyway | `⚠ Stalled 42%` | a gate or an empty escapement room, which no crew size fixes |
+## | otherwise | `≈11 turns (42%)` | the healthy reading, and the only one with no mark |
+##
+## **`built` IS THE ACHIEVEMENT FLAG, NEVER `progress >= 1`**, and the two genuinely differ: a rung
+## that has eroded to 92% is still tended AND is being repaired, which is why fullness and achievement
+## stay orthogonal (`SourceForecast.build_verb`'s own note). Passing the meter here would make a
+## rung's LOSS and a rung's REPAIR one edge.
+##
+## **THE BUILT ROW'S `⚠` IS `is_under_kept`, NOT the raw shortfall.** That test additionally requires
+## no build in flight, which is what keeps the mark on the row it belongs to: a patch holding a Tended
+## rung while a Field goes up is billed for the FIELD, so an unqualified shortfall would light the
+## tended row for a bill the Field's builders owe.
+##
+## `built_label` is the rung's own badge, glyph included, and is the caller's because one of them
+## forks on something no rung shares — a penned herd that is starving states that instead.
+static func rung_row_value(src: Dictionary, prefix: String, improvement: String, kind: String,
+        built_label: String, built: bool, progress: float, building: bool,
+        declared: bool) -> String:
+    var percent := HudFormat.progress_percent(progress)
+    if built:
+        var face := HudSelectionVocab.RUNG_BUILT_FORMAT % [built_label, percent]
+        if SourceForecast.is_under_kept(src, prefix, kind):
+            return "%s %s" % [face, HudSelectionVocab.RUNG_HAZARD_GLYPH]
+        return face
+    if declared and progress <= BUILD_METER_EMPTY:
+        return BUILD_UNSTARTED_VALUE
+    if not building:
+        return HudSelectionVocab.RUNG_REVERTING_FORMAT % [
+            HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
+    var turns := SourceForecast.build_turns_remaining(src, prefix)
+    if turns == SourceForecast.BUILD_TURNS_HOLDS:
+        return HudSelectionVocab.RUNG_HOLDING_FORMAT % [
+            HudSelectionVocab.RUNG_HAZARD_GLYPH, BUILD_TURNS_NEVER_GLYPH, percent]
+    if turns == SourceForecast.BUILD_TURNS_ROTS:
+        return HudSelectionVocab.RUNG_ROTTING_FORMAT % [
+            HudSelectionVocab.RUNG_HAZARD_GLYPH, BUILD_TURNS_NEVER_GLYPH,
+            HudSelectionVocab.RUNG_ROTTING_PHRASE, percent]
+    if turns == SourceForecast.BUILD_TURNS_NO_ESTIMATE:
+        return HudSelectionVocab.RUNG_STALLED_FORMAT % [
+            HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
+    if turns == BUILD_TURNS_SINGULAR:
+        return HudSelectionVocab.RUNG_TURNS_ONE_FORMAT % percent
+    return HudSelectionVocab.RUNG_TURNS_FORMAT % [turns, percent]
+
+## A meter with nothing banked on it at all — the boundary between *declared* and *under way*, and the
+## one value at which a rung row states a sentence rather than a number.
+const BUILD_METER_EMPTY := 0.0
+
+## **THE ONE TINT RULE FOR ALL FOUR RUNG ROWS.** A value that says the meter is going BACKWARDS under a
+## crew is red, any other value carrying the hazard mark is amber, a value carrying its rung's BUILT
+## badge is signal green, and everything else is neutral ink — so the four `*_value_hex` leaves are one
+## shape and a new hazard state cannot ship without its colour.
+##
+## **THE ROTTING TEST RUNS FIRST BECAUSE THAT ROW WEARS BOTH NEEDLES.** It leads with the hazard mark
+## like every other failure state — it must, or the mark stops meaning *something is wrong here* — so
+## an amber branch tested first would swallow it and the schema's promised red/yellow split would exist
+## in the wire and nowhere on screen.
+##
+## `built_needle` is the rung's own badge word, lowercased by the caller's own const, and
+## `RUNG_ROTTING_PHRASE` is the same idea for the red: the row PRINTS the phrase this tests, so the
+## words and the test cannot drift. The starving pen is the single case that outranks the mark, and it
+## says so in its own leaf rather than here.
+static func rung_value_hex(value: String, built_needle: String) -> String:
+    if value.contains(HudSelectionVocab.RUNG_ROTTING_PHRASE):
+        return HudStyle.DANGER_HEX
+    if value.contains(HudSelectionVocab.RUNG_HAZARD_GLYPH):
+        return HudStyle.WARN_HEX
+    if value.to_lower().contains(built_needle):
+        return HudStyle.SIGNAL_HEX
+    return HudStyle.INK_HEX
+
 ## A quantity of WORK UNITS: whole numbers bare (`50`), fractions to one place (`17.6`). One unit is
 ## one worker-turn at the food peak with no gear, so a cost reads itself — and the shipped costs are
 ## integers, which a trailing `.0` would dress up as a measured figure.
@@ -977,12 +1110,30 @@ static func build_price_clause(work_cost: float, turns: int) -> String:
         return price
     return HudComposeVocab.BUILD_PRICE_TURNS_FORMAT % [price, build_turns_clause(turns)]
 
+## RETIRED — **`build_turns_never(turns)`**, which answered *"is this the estimate that has to STOP the
+## player?"*. Its doc called it the single test both compose faces gate their warning ink on, and it had
+## been reached by nobody since `SourceForecast.build_pace` took that job: the pace CLASSIFIES the
+## sentinel and the ink follows from the class (`HudWidgets.improvement_pace_color`), which is what lets
+## the same fork carry three colours where a bool can only carry two. A live-looking test with no
+## callers is the worst kind of stale — it went on special-casing `-2` alone, so a reader checking
+## whether this client had followed the sentinel split would have found a *yes* that meant nothing.
+
 ## **THE COMPOSE SHEET'S TURN CLAUSE — `≈20 turns`, or `≈1 turn`** — the count and its noun, decided in
 ## ONE place for both compose faces (the offered face's price and the running face's tail). They quote
 ## one estimate about one job, so a build one turn out that read `≈1 turns` on the sheet beside the
 ## tile card's `≈1 turn at this crew` would be the same number worded two ways on one screen.
 ## `HudSelectionVocab.BUILD_TURNS_ROW_ONE` is that card's half of the same pair.
+##
+## **BOTH NON-FINISHING SENTINELS TAKE THE SAME SLOT AND READ `∞ turns`** — a crew at the source's
+## maintenance rate (`BUILD_TURNS_HOLDS`) and one under it (`BUILD_TURNS_ROTS`). The clause is the same
+## because the fact is: neither ever reaches a turn count. **What tells them apart on this surface is
+## the INK, which is not this function's** — the face is one Control and takes one colour, applied by
+## the host from `SourceForecast.build_pace` (amber holding, red losing). The tile card, which has a
+## whole row to spend, additionally says *losing ground* in words (`rung_row_value`); a compose face
+## has one line already carrying the meter and the price.
 static func build_turns_clause(turns: int) -> String:
+    if turns == SourceForecast.BUILD_TURNS_HOLDS or turns == SourceForecast.BUILD_TURNS_ROTS:
+        return HudComposeVocab.BUILD_TURNS_NEVER_FORMAT % BUILD_TURNS_NEVER_GLYPH
     if turns == BUILD_TURNS_SINGULAR:
         return HudComposeVocab.BUILD_TURNS_COUNT_ONE
     return HudComposeVocab.BUILD_TURNS_COUNT_FORMAT % turns
@@ -992,19 +1143,78 @@ static func build_turns_clause(turns: int) -> String:
 ## than as two more facts about the source. Both webs' hosts (the tile card's plant rungs, the herd
 ## drawer's animal ones) append this, so neither can grow a shape the other lacks.
 ##
-## **A `-1` TURN ESTIMATE RENDERS NO LINE AT ALL.** The sim answers it for a stalled build and for a
-## source nobody works, and a `0 turns` in its place promises a build about to land — the failure
-## `BUILD_TURNS_NO_ESTIMATE` exists to name. The gear line is likewise absent at zero: a `−0 work`
-## advertises a tool that did nothing.
+## RETIRED — **`Keeping:` AND `Keepers:` ARE GONE, AND `At risk:` IS WHAT THEY LEFT BEHIND** (issue
+## #545). The card carried `Keeping: the pool covers 1 of 2 work — worth 2 keepers` on every source
+## that owed anything, plus a `Keepers: 1 — drawn from the band's Husbandry` above it on the animal
+## web, and reported from play neither could be read: both existed to say *there is nothing to do
+## here*, and both said the same number twice. A rung's keeping only becomes a decision when it is
+## SHORT, which is exactly when `At risk:` renders — so the standing bill went and its failure stayed.
+## `UPKEEP_ROW`, `UPKEEP_VALUE_FORMAT`, the keeper/builder noun pairs, `UPKEEP_MID_BUILD_FORMAT` and
+## `UPKEEP_UNBUILT_VALUE` went with it; the mid-build sentence's job — *this build's own crew is not
+## covering the rate* — is the rung row's own `∞` now, on the row the player would act on.
+
+## The row that only appears when the keeping is UNDERPAID — its own key, so the tint registry can ink
+## it as a warning without inking the bill above it.
+const UPKEEP_RISK_ROW := "At risk"
+
+const UPKEEP_LOST_SOON_FORMAT := "short %s work — this rung is lost in %d turn%s"
+
+const UPKEEP_LOST_NOW_FORMAT := "short %s work — this rung is being lost NOW"
+
+## **THE AT-RISK ROW — the shortfall, and how long this rung has if nobody pays**
+## (`docs/plan_standing_upkeep.md` §2, §2.4). One producer for BOTH webs, because the upkeep fields
+## ship under the same names on a patch and on a herd, and a card that worded the plant web's loss
+## differently from the animal web's would be answering *"what am I about to lose?"* twice.
+##
+## **THE EDGE IS A CLIFF, WHICH IS WHY THE COUNTDOWN IS ON THE CARD AND NOT ONLY IN AN ALERT.** A
+## completed meter sits exactly at its own cost, so the FIRST bleeding turn drops it below and the rung
+## is lost — three unkept turns costs a tended patch, two costs a Field. A player who loses a 25-turn
+## investment with no warning reads it as a bug, so the warning stands wherever the improvement does.
+##
+## **IT IS THE DETAIL BEHIND THE RUNG ROW'S OWN MARK, and that is why it needs no `kind`.** The row
+## above states WHICH rung is in trouble and the four-hazard fork decides the mark; this states what
+## the trouble costs. It fires on the published shortfall alone, so it covers both sides of the
+## meter — a built rung the pool underpaid, and a build whose own crew is under the rate — without
+## re-deciding which of those it is.
+##
+## Nothing here is derived: the shortfall is a published field (never `demand − supplied`) and the
+## countdown is `neglectGraceRemaining` read through its own flag. Empty on a source that is being
+## paid, which is every wild patch and every held rung in the game.
+static func at_risk_lines(src: Dictionary, prefix: String) -> Array[String]:
+    var lines: Array[String] = []
+    var state := SourceForecast.upkeep_state(src, prefix)
+    if not SourceForecast.upkeep_is_short(state):
+        return lines
+    # **THE SHORTFALL IS THE DECAY, CONTINUOUSLY** (§2.4): half the hands means it slides at half rate.
+    # The countdown beside it is the rung's remaining grace, which is what turns *it is bleeding* into
+    # *you have two turns*.
+    var grace := int(state["grace"])
+    if not bool(state.get("at_risk", false)) or grace <= 0:
+        lines.append("%s: %s" % [UPKEEP_RISK_ROW,
+            UPKEEP_LOST_NOW_FORMAT % format_work_units(float(state["shortfall"]))])
+        return lines
+    lines.append("%s: %s" % [UPKEEP_RISK_ROW, UPKEEP_LOST_SOON_FORMAT % [
+        format_work_units(float(state["shortfall"])), grace,
+        "" if grace == 1 else HudAttentionVocab.ATTENTION_TURN_PLURAL_SUFFIX]])
+    return lines
+
+## **THE ONE SUB-ROW A RUNNING BUILD STILL HANGS BENEATH ITSELF** — what the crew's tools took off the
+## job, indented so it reads as an expansion of the meter row above it.
+##
+## **THE TURN ESTIMATE LEFT THIS PRODUCER AND BECAME THE ROW ITSELF** (issue #545). It was an indented
+## `≈11 turns at this crew` under a meter stating the same build in work units — two lines for one
+## fact — and the rung row now LEADS with the count (`rung_row_value`), which is what a glance wants
+## off a build. The `at this crew` tail went with it: the row is the crew's answer, and the estimate
+## and the state can no longer disagree because they are one string.
+##
+## **THE GEAR LINE STAYED, and it renders only above zero** (a `−0 work` advertises a tool that did
+## nothing). It is the only way a player can tell a tool is worth carrying to a garden and not to a
+## farm, it is conditional rather than permanent chrome, and it was no part of the four-line block
+## that made a rung unreadable.
 ##
 ## `prefix` spells the keys, so one call serves a `patch_`-prefixed `tile_info` and a bare herd dict.
-static func build_estimate_lines(source: Dictionary, prefix: String) -> Array[String]:
+static func build_gear_lines(source: Dictionary, prefix: String) -> Array[String]:
     var lines: Array[String] = []
-    var turns := SourceForecast.build_turns_remaining(source, prefix)
-    if turns != SourceForecast.BUILD_TURNS_NO_ESTIMATE:
-        var row := HudSelectionVocab.BUILD_TURNS_ROW_ONE if turns == BUILD_TURNS_SINGULAR \
-            else HudSelectionVocab.BUILD_TURNS_ROW_FORMAT % turns
-        lines.append("%s%s" % [MORALE_BREAKDOWN_INDENT, row])
     var gear := SourceForecast.build_work_from_gear(source, prefix)
     if gear > BUILD_GEAR_WORK_NONE:
         lines.append("%s%s" % [MORALE_BREAKDOWN_INDENT,
@@ -1018,107 +1228,72 @@ const BUILD_TURNS_SINGULAR := 1
 ## helps), and the gear row is not rendered at all.
 const BUILD_GEAR_WORK_NONE := 0.0
 
-## Player-facing husbandry label from domestication progress (0.0–1.0). Fully tamed shows a livestock
-## glyph; in-progress shows the verb, the work the Tame has absorbed and what it costs on THIS herd
-## (a Steppe Runner is several times a rabbit's job). `detail_bbcode` tints a Domesticated value via
-## `husbandry_value_hex`.
-static func husbandry_label(progress: float,
-        work_done: float = 0.0,
-        work_cost: float = SourceForecast.BUILD_WORK_COST_NONE) -> String:
-    if progress >= HUSBANDRY_PROGRESS_COMPLETE:
-        return "%s Domesticated" % DetailFormat.CORRAL_GLYPH
-    return build_meter_value(HUSBANDRY_DOMESTICATING_LABEL, progress, work_done, work_cost)
+## **A RUNG DECLARED WITH NOBODY ON IT AND NOTHING BUILT YET, AS A ROW VALUE** —
+## `SourceForecast.BUILD_UNSTAFFED_UNSTARTED` on whichever rung row would otherwise say nothing at
+## all. It is a SENTENCE rather than a meter because there is no meter to state: the job has not
+## moved, so `0 / 50 work (0%)` would be three ways of writing the same zero, and that zero beside a
+## verb is exactly the *"it looks like it is working"* reading this row exists to remove.
+##
+## **THE ROW APPEARS AT A METER OF ZERO, which is the whole point.** Every rung row is gated on
+## `progress > 0`, so a declared build nobody has staffed printed nothing on the tile card and nothing
+## in the herd drawer, while the map drew a `0%` badge over it — a standing commitment that said
+## *fine* on all three surfaces. The sim is not withholding anything here: it publishes the
+## declaration and the crew, and the absence of a `buildTurnsRemaining` for an unstaffed source is
+## correct (`SourceForecast.unstaffed_build_state` carries the full autopsy).
+##
+## **The OTHER unstaffed state keeps the words it already had.** A meter above zero with nobody on it
+## is `RUNG_REVERTING_LABEL` in the same WARN ink, because a rung sliding back is losing work off the
+## same job and the existing three-state rows already say so.
+## The needle every rung row's tint registry matches this value on, so the amber is decided once for
+## four rows rather than by four independent substring guesses. The value is BUILT FROM it
+## (`RECOVERY_GUIDANCE_TEXT`'s idiom) so the words and the test cannot drift apart.
+const BUILD_UNSTAFFED_NEEDLE := "no builders"
 
-## BBCode hex for a "Husbandry" value: signal (positive) for a domesticated herd, normal ink while
-## it's still being tamed. Matched on the label produced by `husbandry_label`.
+const BUILD_UNSTARTED_VALUE := "%s Not started — %s assigned" % [
+    HudSelectionVocab.RUNG_HAZARD_GLYPH, BUILD_UNSTAFFED_NEEDLE]
+
+## The Husbandry rung's BUILT badge — the word a fully-tamed herd wears, glyph included, handed to
+## `rung_row_value` as the face its percentage follows. `HUSBANDRY_BUILT_NEEDLE` is the same word
+## lowercased, so the tint and the label cannot drift.
+const HUSBANDRY_BUILT_WORD := "Domesticated"
+
+const HUSBANDRY_BUILT_NEEDLE := "domesticated"
+
+static func husbandry_built_label() -> String:
+    return "%s %s" % [DetailFormat.CORRAL_GLYPH, HUSBANDRY_BUILT_WORD]
+
+## BBCode hex for a "Husbandry" value — the shared rung rule: amber on the hazard mark, signal green
+## on the built badge, neutral ink for a build under way.
 static func husbandry_value_hex(value: String) -> String:
-    if value.to_lower().contains("domesticated"):
-        return HudStyle.SIGNAL_HEX
-    return HudStyle.INK_HEX
+    return rung_value_hex(value, HUSBANDRY_BUILT_NEEDLE)
 
-## The "Herders" row value: a calm "N / N" when the herd is fully staffed, an amber "A / N —
-## under-herded" when short of herders (and shedding animals). `assigned` is the ACTUAL count of
-## herders staffed/staged on the herd — never a reconstruction from last turn's resolved
-## `herded_fraction` — so the row updates the instant the player assigns one. Tinted via
-## `herders_value_hex`.
-static func herders_label(assigned: int, needed: int) -> String:
-    if assigned >= needed:
-        return HERDERS_STAFFED_FORMAT % [assigned, needed]
-    return HERDERS_UNDER_FORMAT % [assigned, needed]
+## The Cultivation rung's BUILT badge. **`Tended`, not `Tended Patch`** — the word now carries a
+## percentage behind it (`🌾 Tended 92%`), and a noun-phrase plus a number read as two facts jammed
+## into one cell. The row's own key already says which rung this is.
+const CULTIVATION_BUILT_WORD := "Tended"
 
-## BBCode hex for a "Herders" value: WARN (amber) while the herd is under-herded (shedding animals),
-## normal ink when fully staffed. Matched on the label from `herders_label`, mirroring
-## `corral_value_hex` / the overgrazing warning's shared WARN tint.
-static func herders_value_hex(value: String) -> String:
-    if value.to_lower().contains("under-herded"):
-        return HudStyle.WARN_HEX
-    return HudStyle.INK_HEX
+const CULTIVATION_BUILT_NEEDLE := "tended"
 
-## Player-facing cultivation label for a forage patch — THREE states, not two. A fully-tended patch
-## shows a crop glyph; a meter below complete reads as a BUILD while somebody is building it and as a
-## LOSS while nobody is. Mirrors `husbandry_label`; `detail_bbcode` tints via `cultivation_value_hex`.
+static func cultivation_built_label() -> String:
+    return "%s %s" % [CULTIVATION_GLYPH, CULTIVATION_BUILT_WORD]
+
+## BBCode hex for a "Cultivation" value — the shared rung rule (`rung_value_hex`): amber on the hazard
+## mark, signal green on the built badge, neutral ink for a build under way.
 ##
-## **"Preparing 99%" WAS THE MOST MISLEADING ROW ON THE CARD.** A meter that is bleeding back toward
-## wild wore the same word, in the same neutral ink, as a fresh build one turn from done — the two
-## states differ only in which DIRECTION the number is moving, which a percentage cannot show. So the
-## decaying case gets its own word (the sim's own: an abandoned rung "goes feral — the ground is
-## reverting") and WARN ink.
-##
-## `building` is the DISTINGUISHING FACT and must be the improvement axis, never the meter: a patch is
-## reverting exactly when its meter is short of complete and no crew is building that rung
-## (`HudBandLaborState.forage_effort_at(...).improvement`). A test on progress alone cannot tell the
-## two apart at any value.
-static func cultivation_label(progress: float, cultivated: bool, building: bool = false,
-        work_done: float = 0.0,
-        work_cost: float = SourceForecast.BUILD_WORK_COST_NONE) -> String:
-    if cultivated or progress >= CULTIVATION_PROGRESS_COMPLETE:
-        return "%s Tended Patch" % CULTIVATION_GLYPH
-    # Lead with the VERB, exactly as the herd's Husbandry row reads "Domesticating N%" — a bare
-    # percentage buried in the tile card was easy to miss and broke parity with the animal side.
-    # The work absolutes ride behind it: a REVERTING meter is losing units off the same job, so the
-    # two states state the same pair and only the verb and the ink say which way it is moving.
-    var verb := HudFloraVocab.CULTIVATION_PREPARING_LABEL if building \
-        else HudFloraVocab.RUNG_REVERTING_LABEL
-    return build_meter_value(verb, progress, work_done, work_cost)
-
-## BBCode hex for a "Cultivation" value: signal (positive) for a tended patch, WARN while the meter is
-## reverting (nobody is building it and the ground is going back), normal ink while it is being built.
-## Matched on the label from `cultivation_label`.
+## **THE THREE WARN CASES COLLAPSED INTO ONE TEST.** It matched `no builders`, then the word
+## `Reverting`, and each new hazard state needed its own substring guess — which is how a state ships
+## without its colour. The mark is now the needle, and `rung_row_value` puts it on every hazard.
 static func cultivation_value_hex(value: String) -> String:
-    var normalized := value.to_lower()
-    if normalized.contains("tended"):
-        return HudStyle.SIGNAL_HEX
-    if normalized.contains(HudFloraVocab.RUNG_REVERTING_LABEL.to_lower()):
-        return HudStyle.WARN_HEX
-    return HudStyle.INK_HEX
+    return rung_value_hex(value, CULTIVATION_BUILT_NEEDLE)
 
-## Player-facing label for the plant RUNG-3 meter — the patch twin of `corral_label` and the rung
-## above `cultivation_label`. While the crop is going in it reads as a BUILD ("Sowing 40%"), using the
-## same building-verb convention as the pen's "Building 40%" / the fence's "Fencing 60%"; once
-## complete it is a **Field**, badged with its own glyph so it reads as a DIFFERENT THING from a
-## 🌾 Tended Patch rather than as a bigger number — which is the whole point of rung 3.
-##
-## THREE states here too, and the decaying one shares `cultivation_label`'s word rather than inventing
-## a rung-specific one: what is happening is the same fact on both rungs — the ground is going back —
-## and the ROW's name already says which rung is losing it.
-static func field_label(progress: float, is_field: bool, building: bool = false,
-        work_done: float = 0.0,
-        work_cost: float = SourceForecast.BUILD_WORK_COST_NONE) -> String:
-    if is_field or progress >= FIELD_PROGRESS_COMPLETE:
-        return "%s %s" % [field_glyph(), FIELD_BADGE_LABEL]
-    var verb := FIELD_SOWING_LABEL if building else HudFloraVocab.RUNG_REVERTING_LABEL
-    return build_meter_value(verb, progress, work_done, work_cost)
+## The plant RUNG-3 badge — a completed **Field**, wearing its own glyph so it reads as a DIFFERENT
+## THING from a 🌾 Tended patch rather than as a bigger number, which is the whole point of rung 3.
+static func field_built_label() -> String:
+    return "%s %s" % [field_glyph(), FIELD_BADGE_LABEL]
 
-## BBCode hex for a "Field" value: signal (positive) for a completed Field, WARN while it reverts,
-## normal ink while the crop is still going in. Matched on the label from `field_label`, mirroring
-## `cultivation_value_hex`.
+## BBCode hex for a "Field" value — the shared rung rule, needled on this rung's own badge word.
 static func field_value_hex(value: String) -> String:
-    var normalized := value.to_lower()
-    if normalized.contains(FIELD_BADGE_LABEL.to_lower()):
-        return HudStyle.SIGNAL_HEX
-    if normalized.contains(HudFloraVocab.RUNG_REVERTING_LABEL.to_lower()):
-        return HudStyle.WARN_HEX
-    return HudStyle.INK_HEX
+    return rung_value_hex(value, FIELD_BADGE_LABEL.to_lower())
 
 ## The tile card's BASKET — one indented row per realized plant, sitting directly under the `Foraging`
 ## stock they DECOMPOSE (`🌾 Wild Tubers 38%  (78)` / `⇄ Cotton Fields 31%  (63)` / …).
@@ -1240,19 +1415,22 @@ static func _flora_biomass_split(entries: Array[Dictionary], stock: float) -> Ar
     return split
 
 ## Player-facing corral label from pen-build progress (0.0–1.0) — the herd twin of
-## `cultivation_label`. A finished pen shows the livestock glyph; an in-progress one reads
+## `cultivation_built_label`. A finished pen shows the livestock glyph; an in-progress one reads
 ## "Building N%", naming the work under way. A finished pen whose keeper did NOT pay this turn's feed
 ## reads the STARVING state instead of the penned badge — the herd is losing biomass every turn,
 ## which is the one fact the player must not be able to miss. `detail_bbcode` tints via
 ## `corral_value_hex`.
-static func corral_label(progress: float, corralled: bool, fed_fraction: float,
-        work_done: float = 0.0,
-        work_cost: float = SourceForecast.BUILD_WORK_COST_NONE) -> String:
-    if corralled or progress >= CORRAL_PROGRESS_COMPLETE:
-        if PenStatus.is_starving(fed_fraction):
-            return PEN_STARVING_LABEL % int(round(fed_fraction * HudConst.PROGRESS_PERCENT_SCALE))
-        return "%s Corralled" % DetailFormat.CORRAL_GLYPH
-    return build_meter_value(CORRAL_BUILDING_LABEL, progress, work_done, work_cost)
+static func corral_built_label(fed_fraction: float) -> String:
+    if PenStatus.is_starving(fed_fraction):
+        return PEN_STARVING_LABEL % int(round(fed_fraction * HudConst.PROGRESS_PERCENT_SCALE))
+    return "%s %s" % [DetailFormat.CORRAL_GLYPH, CORRAL_BUILT_WORD]
+
+## The Corral rung's BUILT badge word and its lowercased needle. A STARVING pen states its own face
+## instead (`PEN_STARVING_LABEL`), which is why this rung is the one that hands `rung_row_value` a
+## caller-decided label rather than a fixed one.
+const CORRAL_BUILT_WORD := "Corralled"
+
+const CORRAL_BUILT_NEEDLE := "corralled"
 
 ## The "Pen feed" row's value: what this pen demands per turn, plus — when the keeper is short — how
 ## much of it was actually paid. Amber/red-tinted via `pen_feed_value_hex`.
@@ -1264,16 +1442,14 @@ static func pen_feed_label(upkeep: float, fed_fraction: float) -> String:
         ]
     return demand
 
-## BBCode hex for a "Corral" value: DANGER for a starving pen (the herd is shrinking NOW), signal
-## (positive) once penned and fed, normal ink while it's being built. Matched on the label from
-## `corral_label`, mirroring `cultivation_value_hex`.
+## BBCode hex for a "Corral" value — the shared rung rule with ONE case above it: a STARVING pen is
+## DANGER red, because the herd is shrinking right now and that outranks every hazard the four-state
+## fork can raise. `PEN_STARVING_LABEL` leads with the same ⚠ every hazard does, so the order here is
+## what keeps the louder reading.
 static func corral_value_hex(value: String) -> String:
-    var normalized := value.to_lower()
-    if normalized.contains("starving"):
+    if value.to_lower().contains("starving"):
         return HudStyle.DANGER_HEX
-    if normalized.contains("corralled"):
-        return HudStyle.SIGNAL_HEX
-    return HudStyle.INK_HEX
+    return rung_value_hex(value, CORRAL_BUILT_NEEDLE)
 
 ## BBCode hex for the "Pen feed" value: DANGER while the pen goes unfed (the herd is shrinking), WARN
 ## otherwise — a paid pen is still a standing debit on the larder, never good news.
@@ -1747,13 +1923,19 @@ static func food_breakdown_row(value: float, label: String) -> String:
 ## `world_herds` is THREADED IN (it is only ever forwarded to `append_danger_component_lines`, whose
 ## Attack/Defense bars normalize against the roster) — the same treatment the tint `Context` gets, and
 ## what makes this producer pure. Callers pass `HudBandLaborState.world_herds()`.
-## `assigned_herders` is the ACTUAL count of herders staffed/staged on this herd (summed from the
-## player's `Hunt` assignments across bands, pending-aware — see `HudBandLaborState.assigned_herders_for`),
-## threaded in as a parameter the way `world_herds` is so this layer stays stateless. `-1` = "not
-## supplied" (the danger-only ui_preview callers on wild herds, where `herders_needed` is 0 and the
-## staffing block is skipped anyway); it is clamped to 0. It is deliberately NOT reconstructed from
-## `herded_fraction`, which lags a turn.
-static func herd_summary_lines(herd_data: Dictionary, world_herds: Array, assigned_herders: int = -1) -> Array[String]:
+##
+## **THE `assigned_keepers` PARAMETER IS GONE** (`docs/plan_standing_upkeep.md` §2.5). It carried the
+## `maintain` crews summed across the player's bands, and maintenance left the tile: a managed herd
+## is held out of its band's `husbandry` pool, so the drawer's own `Keeping:` row states this herd's
+## share of it and the `Keepers:` row states the demand alone. Nothing in this producer needs a
+## caller-supplied head count any more.
+## **`unstaffed_build` IS THREADED IN FOR THE SAME REASON `world_herds` IS** — it is a fact about the
+## player's LABOR ROW, which a pure producer over one herd dict cannot see, and it is the herd drawer's
+## half of the declared-but-unstaffed readout: the rung a band has promised here and put nobody on
+## (`HudBandLaborState.unstaffed_build_hunt`, `IMPROVEMENT_NONE` for none). It renders the Husbandry or
+## Corral row that a meter of zero would otherwise suppress entirely; see `BUILD_UNSTARTED_VALUE`.
+static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
+        unstaffed_build: String = SourceForecast.IMPROVEMENT_NONE) -> Array[String]:
     var lines: Array[String] = []
     # A predator is a hunter, not quarry — the SAME `prey_sense_radius > 0` signal the map's prey-sense
     # ring keys on (carnivore == 4, herbivore == 0). A herbivore's drawer is byte-for-byte unchanged.
@@ -1821,42 +2003,39 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array, assign
     if ceiling == SourceForecast.HUSBANDRY_CEILING_WILD:
         lines.append(HUSBANDRY_WILD_PREDATOR_HINT if is_predator else HUSBANDRY_WILD_HINT)
     else:
-        # **THE METER SAYS WORK, NOT JUST PERCENT** (`docs/plan_unit_costed_work.md` §11) — the animal
-        # twin of the tile card's rows. A Tame's cost carries the SPECIES' own multiplier, so this is
-        # where a Steppe Runner reads as several times a rabbit's job rather than as the same meter
-        # filling more slowly.
+        # **ONE ROW PER LIVE METER, AND THE TURNS LEAD IT** (issue #545) — the animal twin of the tile
+        # card's rows, through the same `rung_row_value` fork, so a rung's four hazard states cannot
+        # be worded one way on a patch and another on a herd. The work absolutes came off this
+        # surface with them: `0.3 / 100 work` is compose-sheet detail.
         var domestication := float(herd_data.get("domestication", 0.0))
         var herd_prefix: String = HudComposeVocab.BARE_FORECAST_PREFIX
-        if domestication > 0.0:
-            lines.append("Husbandry: %s" % husbandry_label(domestication,
-                SourceForecast.build_work_done(
-                    herd_data, herd_prefix, SourceForecast.IMPROVEMENT_TAME),
-                SourceForecast.build_work_cost(
-                    herd_data, herd_prefix, SourceForecast.IMPROVEMENT_TAME)))
-            # **WHICH RUNG THE ESTIMATE DESCRIBES IS READ OFF THE SOURCE, not off a crew.** The ladder
-            # is strictly sequential and at most one improvement is ever in flight, so an incomplete
-            # Tame IS the build these per-source fields answer for; the Corral branch below takes them
-            # once taming is done. A herd nobody works reports no estimate and renders no line.
-            if domestication < HUSBANDRY_PROGRESS_COMPLETE:
-                lines.append_array(build_estimate_lines(herd_data, herd_prefix))
-        # Staffing deficit (fauna neglect-escape arc). A managed herd needs `herders_needed` herders
-        # every turn to HOLD its animals — understaffed, it SHEDS whole animals over its labor capacity
-        # into a nearby wild herd (they drift off; tameness leaves with them, it is never decayed). The
-        # count is the ACTUAL herders staffed/staged on the herd (`assigned_herders`, summed from the
-        # player's Hunt assignments across bands, pending-aware) — NOT `round(herded_fraction · needed)`,
-        # which reconstructed last turn's RESOLVED fraction and so read a stale, self-contradictory
-        # "only 2 of 5 working" the instant the player assigned a herder. Shown only for a managed herd
-        # (`herders_needed > 0`); a wild herd reports 0 and never trips it. Fully staffed reads a calm
-        # "N / N"; under-herded an amber "A / N — under-herded".
-        var herders_needed := int(herd_data.get("herders_needed", 0))
-        if herders_needed > 0:
-            var herders_assigned := maxi(assigned_herders, 0)
-            lines.append("%s: %s" % [HERDERS_ROW, herders_label(herders_assigned, herders_needed)])
-            # State the CONSEQUENCE when the herd is under-contained AND owned: a muted one-liner
-            # naming the shed and the single lever that stops it. `assigned < needed` is the same
-            # "under-contained" condition the map/work-panel warning derives.
-            if herders_assigned < herders_needed and domestication > 0.0:
-                lines.append(HERDERS_SHED_FORMAT % herders_needed)
+        var tamed := domestication >= HUSBANDRY_PROGRESS_COMPLETE
+        var tame_declared := unstaffed_build == SourceForecast.IMPROVEMENT_TAME
+        # **BOTH ROWS RENDER WHEN BOTH METERS ARE LIVE.** A herd holding a finished Tame while its pen
+        # goes up states `Husbandry: 🐄 Domesticated 100%` over `Corral: ≈40 turns (8%)` — one row
+        # would silently drop either the rung you hold or the build in flight.
+        if tamed or domestication > BUILD_METER_EMPTY or tame_declared:
+            # **A HERD NOBODY IS ON READS AS *BUILDING* HERE, and the sim's own `-1` is what catches
+            # it.** The drawer sees no labor row (that is `unstaffed_build`'s whole job, and it
+            # answers only for a DECLARED rung), so an abandoned Tame falls through to the estimate
+            # and renders `⚠ Stalled` — which is the honest word on this web, `domestication` being
+            # monotone-up: the meter is stuck, not sliding back.
+            lines.append("Husbandry: %s" % rung_row_value(herd_data, herd_prefix,
+                SourceForecast.IMPROVEMENT_TAME, SourceForecast.SOURCE_KIND_HERD,
+                husbandry_built_label(), tamed, domestication, not tame_declared, tame_declared))
+            if not tamed:
+                lines.append_array(build_gear_lines(herd_data, herd_prefix))
+        # **THE CONSEQUENCE OF AN UNDER-KEPT HERD IS THE ONE KEEPER FACT THAT SURVIVED THE `Keepers:`
+        # ROW** (issue #545). That row stated a demand every turn, on a herd where nothing was wrong,
+        # and read as noise; this fires ONLY when the band's Husbandry pool failed to cover this herd
+        # (`SourceForecast.is_under_kept`, the same test the work board's ⚠ and the Husbandry row's
+        # own mark make), and it is the only place in the client that says animals are drifting off.
+        # It carries the head count because a head count only matters when it is short.
+        if int(herd_data.get("herders_needed", 0)) > 0 and domestication > BUILD_METER_EMPTY \
+                and SourceForecast.is_under_kept(
+                    herd_data, herd_prefix, SourceForecast.SOURCE_KIND_HERD):
+            lines.append(HERDERS_SHED_FORMAT % SourceForecast.keepers_wanted(
+                herd_data, herd_prefix))
         # A corralled herd is penned by the band (intensification ladder). SIGNAL-tinted, mirroring the
         # Husbandry/Ecology row treatment. While the keepers are still BUILDING the pen (0 < progress < 1
         # under the Corral policy) the same row reports the meter — the animal twin of the tile card's
@@ -1871,7 +2050,9 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array, assign
             var corral_progress := float(herd_data.get("corral_progress", 0.0))
             var fed_fraction := PenStatus.fed_fraction(herd_data)
             if bool(herd_data.get("corralled", false)):
-                lines.append("Corral: %s" % corral_label(CORRAL_PROGRESS_COMPLETE, true, fed_fraction))
+                lines.append("Corral: %s" % rung_row_value(herd_data, herd_prefix,
+                    SourceForecast.IMPROVEMENT_CORRAL, SourceForecast.SOURCE_KIND_HERD,
+                    corral_built_label(fed_fraction), true, CORRAL_PROGRESS_COMPLETE, false, false))
                 # The pen is fenced LAND (Grazing 2d-γ): its footprint (radius + the SERVER's in-bounds
                 # tile count, shown verbatim) and the feed SPLIT — how much of the herd's feed its own
                 # grazed footprint covers vs what the keeper still hauls from the larder.
@@ -1895,22 +2076,27 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array, assign
                 # pen fed for free by pasture + hay shows NO debit row, and the two never disagree.
                 if larder_bill >= SourceForecast.FOOD_FLOW_MIN:
                     lines.append("%s: %s" % [PEN_FEED_ROW, pen_feed_label(larder_bill, fed_fraction)])
-            elif corral_progress > 0.0:
-                lines.append("Corral: %s" % corral_label(corral_progress, false, PenStatus.FULLY_FED,
-                    SourceForecast.build_work_done(
-                        herd_data, herd_prefix, SourceForecast.IMPROVEMENT_CORRAL),
-                    SourceForecast.build_work_cost(
-                        herd_data, herd_prefix, SourceForecast.IMPROVEMENT_CORRAL)))
+            elif corral_progress > 0.0 \
+                    or unstaffed_build == SourceForecast.IMPROVEMENT_CORRAL:
                 # Penning is a flat job for every species — a fence is a fence — so unlike the Tame
-                # row above this cost carries no species multiplier, and the estimate beside it moves
-                # only with the keeper crew, their floor and their kit.
-                lines.append_array(build_estimate_lines(herd_data, herd_prefix))
+                # row above this cost carries no species multiplier, and the turns leading the row
+                # move only with the keeper crew, their floor and their kit.
+                var corral_declared := unstaffed_build == SourceForecast.IMPROVEMENT_CORRAL
+                lines.append("Corral: %s" % rung_row_value(herd_data, herd_prefix,
+                    SourceForecast.IMPROVEMENT_CORRAL, SourceForecast.SOURCE_KIND_HERD,
+                    corral_built_label(PenStatus.FULLY_FED), false, corral_progress,
+                    not corral_declared, corral_declared))
+                lines.append_array(build_gear_lines(herd_data, herd_prefix))
         elif ceiling == SourceForecast.HUSBANDRY_CEILING_PASTORAL:
             lines.append(HUSBANDRY_PASTORAL_HINT)
     # **NO `Position` ROW.** These lines render in ONE place — the tile card's subject drawer — and
     # the card's own header states the hex two rows above them (`TILE (34, 24)`), so a herd stating
     # it again was the same coordinate pair twice on one card. `Next waypoint` below is a different
     # fact — where it is HEADING, which nothing else on the card says — and stays.
+    # **WHAT THIS HERD IS ABOUT TO LOSE, and how long it has** — the animal web's half of the one
+    # at-risk row both webs share, and the detail behind whichever rung row above it is marked. A herd
+    # whose keeping is being paid prints none, which is what makes the silence readable.
+    lines.append_array(at_risk_lines(herd_data, HudComposeVocab.BARE_FORECAST_PREFIX))
     var next_x := int(herd_data.get("next_x", -1))
     var next_y := int(herd_data.get("next_y", -1))
     if next_x >= 0 and next_y >= 0:

@@ -193,12 +193,13 @@ static func crew_row_label(root: Node) -> String:
 	var node := Q.find_meta_node(root, HudWidgets.CREW_ROW_LABEL_META)
 	return (node as Label).text if node is Label else ""
 
-## The crew row's BUILD-DIP note, by its own meta — `""` when none rendered, which is a real reading
-## and half of what the note is asserted on: a line that appears on every sheet claims nothing. Not
-## found by text, and not by scanning the row: the row LABEL sits beside it and renders either way.
-static func crew_row_dip_note(root: Node) -> String:
-	var node := Q.find_meta_node(root, HudWidgets.CREW_ROW_DIP_META)
-	return (node as Label).text if node is Label else ""
+## **THE KEEPING-ROW READERS ARE RETIRED** (`docs/plan_standing_upkeep.md` §2.5).
+## `has_crew_row_maintain` / `crew_row_maintain_note` / `maintain_verdict_text` read a stepper and a
+## verdict on a compose-sheet row that no longer exists: maintenance left the tile, so the keeping is
+## a band-wide standing role and a sheet composes no keeping crew. What a source's keeping costs is
+## stated by `DetailFormat.at_risk_lines`, which lands in the land card and the herd drawer — and
+## only where it is going UNPAID, the standing bill having been retired with the `Keeping:` row
+## (issue #545): a rung whose keeping is met says nothing, so a bare row IS the good news.
 
 ## The verdict's SENTENCE — the row's Labels joined (the severity dot is a Label of the row too, so it
 ## leads). Found by the same meta as the severity below, because the row's two halves are one claim and
@@ -260,6 +261,53 @@ static func stepper_value(root: Node) -> int:
 		return STEPPER_VALUE_ABSENT
 	var value: Node = siblings[index + 1]
 	return int((value as Label).text) if value is Label else STEPPER_VALUE_ABSENT
+
+## **THE BUILDERS STEPPER — the SECOND one on the sheet, which `stepper_value` above cannot reach.**
+## That reader takes the first `−` it finds, which is the TAKE crew's, so a claim about the build
+## crew's own value or its `+` needs a reader scoped to the BUILD CREW ROW
+## (`HudWidgets.BUILD_CREW_ROW_META`, the row `_mount_build_crew_row` stamps).
+##
+## They exist because the two steppers now share ONE pool
+## (`HudBandLaborState.source_crew_pool_forage` / `_hunt`): "dropping the take crew immediately raises
+## the build's ceiling" is a claim about the OTHER stepper's `+`, and nothing here could see it.
+const BUILD_CREW_VALUE_ABSENT := -1
+
+static func build_crew_value(root: Node) -> int:
+	var minus := _build_crew_minus(root)
+	if minus == null:
+		return BUILD_CREW_VALUE_ABSENT
+	var siblings := minus.get_parent().get_children()
+	var value: Node = siblings[siblings.find(minus) + 1]
+	return int((value as Label).text) if value is Label else BUILD_CREW_VALUE_ABSENT
+
+## Can the BUILDERS stepper still take a hand? `false` where the row is not rendered at all, which is
+## the honest answer for a control offering no build to staff.
+static func build_crew_can_add(root: Node) -> bool:
+	var plus := build_crew_plus(root)
+	return plus != null and not plus.disabled
+
+## The BUILDERS stepper's `+` itself, so a state can PRESS it rather than write the model behind it —
+## the press is what runs the ceiling clamp in the sheet's own handler.
+static func build_crew_plus(root: Node) -> Button:
+	var minus := _build_crew_minus(root)
+	if minus == null:
+		return null
+	var siblings := minus.get_parent().get_children()
+	var index := siblings.find(minus) + STEPPER_MINUS_TO_PLUS
+	if index >= siblings.size():
+		return null
+	var plus: Node = siblings[index]
+	return plus as Button if plus is Button else null
+
+## The `−` and the `+` sit either side of the value Label (`HudWidgets.add_stepper_controls`).
+const STEPPER_MINUS_TO_PLUS := 2
+
+static func _build_crew_minus(root: Node) -> Button:
+	var row := Q.find_meta_node(root, HudWidgets.BUILD_CREW_ROW_META)
+	if row == null:
+		return null
+	var minus := Q.find_button_by_text(row, Spine.COMPOSE_STEPPER_MINUS_FACE)
+	return minus if minus != null and minus.get_parent() != null else null
 
 ## How many characters of a detail card's BBCode `detail_excerpt` returns around the key it found —
 ## enough to carry the row's whole value cell into the run log, short enough not to swallow the rows

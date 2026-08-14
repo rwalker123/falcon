@@ -20,6 +20,7 @@ use bevy::prelude::Entity;
 use bevy::MinimalPlugins;
 
 use core_sim::grid_utils::hex_range_tiles;
+use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     advance_graze_regrowth, advance_herd_grazing, advance_herds, advance_husbandry,
     advance_labor_allocation, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_graze,
@@ -213,7 +214,10 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                 current_tile: tile_entity,
                 size: 30,
                 children: scalar_zero(),
-                working: scalar_from_f32(KEEPER_WORKERS as f32),
+                // Room for the tending crew **and** a ring crew beside it: the take and the
+                // build draw on one pool (`docs/plan_standing_upkeep.md` §2.2), and a band sized at
+                // the tenders alone would have `LaborAllocation::normalize` trim the ring away.
+                working: scalar_from_f32((KEEPER_WORKERS + KEEPER_WORKERS) as f32),
                 elders: scalar_zero(),
                 stores: LocalStore::new(),
                 morale: scalar_one(),
@@ -247,6 +251,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                     workers: KEEPER_WORKERS,
                     improvement: None,
                     kit: None,
+                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },
@@ -498,14 +503,30 @@ fn pen_state(app: &App, id: &str) -> (u32, bool, f32) {
 }
 
 /// Put the penned herd into the ExtendPen "extending" state (the sim half of `handle_extend_pen`).
-fn begin_extension(app: &mut App, id: &str, radius_max: u32) -> bool {
+/// Begin a fence extension **and staff it**, which is what `handle_extend_pen` does: a ring is a
+/// build like any other and names its own crew (`docs/plan_standing_upkeep.md` §2.2), so a fixture
+/// that only flipped the herd's flag would measure a ring nobody is raising.
+fn begin_extension(
+    app: &mut App,
+    id: &str,
+    keeper: bevy::prelude::Entity,
+    radius_max: u32,
+) -> bool {
     let mut registry = app.world.resource_mut::<HerdRegistry>();
-    registry
+    let began = registry
         .herds
         .iter_mut()
         .find(|h| h.id == id)
         .expect("herd persists")
-        .begin_pen_extension(radius_max)
+        .begin_pen_extension(radius_max);
+    if began {
+        app.world
+            .get_mut::<LaborAllocation>(keeper)
+            .expect("the keeper band keeps its allocation")
+            .assignments[0]
+            .improvement_workers = KEEPER_WORKERS;
+    }
+    began
 }
 
 #[test]
@@ -562,12 +583,12 @@ fn extend_pen_accrues_a_ring_flips_the_radius_raises_k_and_caps_at_max() {
 
     // --- Ring 1: begin extending, then work it off. ---
     assert!(
-        begin_extension(&mut app, &id, radius_max),
+        begin_extension(&mut app, &id, keeper, radius_max),
         "a built radius-0 pen below the max may begin an extension"
     );
     // A second begin while one is in flight is a no-op (mirrors the command's rejection).
     assert!(
-        !begin_extension(&mut app, &id, radius_max),
+        !begin_extension(&mut app, &id, keeper, radius_max),
         "no second extension may start while one is in flight"
     );
 
@@ -602,7 +623,7 @@ fn extend_pen_accrues_a_ring_flips_the_radius_raises_k_and_caps_at_max() {
     );
 
     // --- Ring 2 → reach the max, then REFUSE to go past it. ---
-    assert!(begin_extension(&mut app, &id, radius_max));
+    assert!(begin_extension(&mut app, &id, keeper, radius_max));
     for _ in 0..RING_TURNS {
         run_pen_turn(&mut app, keeper);
         if pen_state(&app, &id).0 == 2 {
@@ -616,7 +637,7 @@ fn extend_pen_accrues_a_ring_flips_the_radius_raises_k_and_caps_at_max() {
     );
     // At the max, a further extension is refused (the command's `at_max` rejection, sim-side).
     assert!(
-        !begin_extension(&mut app, &id, radius_max),
+        !begin_extension(&mut app, &id, keeper, radius_max),
         "a pen at pen_radius_max ({radius_max}) refuses to extend further"
     );
 }

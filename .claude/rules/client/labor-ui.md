@@ -18,7 +18,7 @@ paths:
 
 | Script | Purpose |
 |--------|---------|
-| `ui/hud/HudBandLaborState.gd` | `RefCounted` state model (HUD decomposition Phase 0) — "the digested per-snapshot player world + optimistic overlay": `player_band`/`player_bands`/`panel_band`/`player_expeditions`, `world_herds`, grid scalars, `current_turn`, the `prev_band_sizes` losing-population diff, the `forage_patch_lookup`/`food_module_by_tile` lookups, and the `pending_labor` optimistic overlay. Ingest mutators (`set_turn`/`set_grid(width, height, wrap)`/`set_world_herds`/`set_panel_band`/`ingest_snapshot_bands`/`set_food_modules`/`set_forage_patches`) + the pending API (`record_pending_assign`/`record_pending_move`/`reconcile_pending`/`pending_assigns_for`/`pending_key`) + the moved-on derived readers `effective_worker_map`/`effective_idle`/`effective_forage_workers`/`effective_hunt_workers` (pure functions of `pending_labor` + a band) + the statics `as_schedule` and **`labor_assignments_of(band)`** (the public band-dict `labor_assignments` reader — `DetailFormat` + `AttentionController` reach it as `HudBandLaborState.labor_assignments_of`; it merged HudLayer's `_labor_assignments_of` static into the byte-identical private copy that already lived here, and its four internal callers now call it unqualified. The MapView-side `BandOverlayRenderer._labor_assignments_of_marker` deliberately stays a LOCAL copy — a renderer must not depend on the HUD's band-labor model). Also owns the **thin band-labor readers** every consumer reaches through `_band_labor.` — the roster pair `current_player_bands`/`player_band_by_entity`, the per-source lookups `forage_assignment_of`/`hunt_assignment_of` and their `workers_for_forage`/`workers_for_hunt`/`policy_for_hunt`/`policy_for_forage`/`assignable_forage_workers`/`assignable_hunt_workers` — plus the DERIVED READS over its own tables that the `BandPanelController` shared-layer pass brought home: `find_world_herd` (8 call sites file-wide — herds MIGRATE, so this list, never an assignment's launch-time target, is the authority on where a hunted herd is), `food_module_icon` (+ its `FOOD_SITE_KIND_GAME_TRAIL` key), `effective_role_workers`/`workers_for_role` (the band-wide-role twins of `effective_forage_workers`/`workers_for_hunt`), and **`band_parties`/`band_party_workers`** — the pair that KILLED the band↔parties straddle, since the WORKFORCE header's `· N away` clause and the parties zone's row set now read one filter over `player_expeditions()` rather than the band zone calling into the parties zone. **`band_party_workers` feeds a HEADER CLAUSE, not a bar segment** — the sim removes a party's members from the parent cohort on launch, so its sum sits OUTSIDE the `working_age` the WORKFORCE segments partition (`band-city-panel.md` → "PARTIES ARE A HEADER CLAUSE"). Plus the canonical policy-rung consts `HUNT_POLICY_OPTIONS`/`FORAGE_POLICY_OPTIONS`/`DEFAULT_HUNT_POLICY` (the last aliases `SourceForecast`'s; `HudLayer` re-exports all three via `const X = HudBandLaborState.X`). Emits `changed(reason)`, consumed by nothing yet |
+| `ui/hud/HudBandLaborState.gd` | `RefCounted` state model (HUD decomposition Phase 0) — "the digested per-snapshot player world + optimistic overlay": `player_band`/`player_bands`/`panel_band`/`player_expeditions`, `world_herds`, grid scalars, `current_turn`, the `prev_band_sizes` losing-population diff, the `forage_patch_lookup`/`food_module_by_tile` lookups, and the `pending_labor` optimistic overlay. Ingest mutators (`set_turn`/`set_grid(width, height, wrap)`/`set_world_herds`/`set_panel_band`/`ingest_snapshot_bands`/`set_food_modules`/`set_forage_patches`) + the pending API (`record_pending_assign`/`record_pending_move`/`reconcile_pending`/`pending_assigns_for`/`pending_key`) + the moved-on derived readers `effective_worker_map`/`effective_idle`/`effective_forage_workers`/`effective_hunt_workers` (pure functions of `pending_labor` + a band) + the statics `as_schedule` and **`labor_assignments_of(band)`** (the public band-dict `labor_assignments` reader — `DetailFormat` + `AttentionController` reach it as `HudBandLaborState.labor_assignments_of`; it merged HudLayer's `_labor_assignments_of` static into the byte-identical private copy that already lived here, and its four internal callers now call it unqualified. The MapView-side `BandOverlayRenderer._labor_assignments_of_marker` deliberately stays a LOCAL copy — a renderer must not depend on the HUD's band-labor model). Also owns the **thin band-labor readers** every consumer reaches through `_band_labor.` — the roster pair `current_player_bands`/`player_band_by_entity`, the per-source lookups `forage_assignment_of`/`hunt_assignment_of` and their `workers_for_forage`/`workers_for_hunt`/`policy_for_hunt`/`policy_for_forage`/**`source_crew_pool_forage`/`source_crew_pool_hunt`** (the ONE pool both of a compose sheet's steppers draw on — it replaced the four per-activity `assignable_*` ceilings, which were each right about ONE command and wrong side by side on a sheet that edits both)/**`unstaffed_build_forage`/`unstaffed_build_hunt`** (a rung this faction has DECLARED and put nobody on, read off the CONFIRMED wire row alone — see `selection-card.md` → "A build DECLARED with nobody on it is a fourth state") — plus the DERIVED READS over its own tables that the `BandPanelController` shared-layer pass brought home: `find_world_herd` (8 call sites file-wide — herds MIGRATE, so this list, never an assignment's launch-time target, is the authority on where a hunted herd is), `food_module_icon` (+ its `FOOD_SITE_KIND_GAME_TRAIL` key), `effective_role_workers`/`workers_for_role` (the band-wide-role twins of `effective_forage_workers`/`workers_for_hunt`), and **`band_parties`/`band_party_workers`** — the pair that KILLED the band↔parties straddle, since the WORKFORCE header's `· N away` clause and the parties zone's row set now read one filter over `player_expeditions()` rather than the band zone calling into the parties zone. **`band_party_workers` feeds a HEADER CLAUSE, not a bar segment** — the sim removes a party's members from the parent cohort on launch, so its sum sits OUTSIDE the `working_age` the WORKFORCE segments partition (`band-city-panel.md` → "PARTIES ARE A HEADER CLAUSE"). Plus the canonical policy-rung consts `HUNT_POLICY_OPTIONS`/`FORAGE_POLICY_OPTIONS`/`DEFAULT_HUNT_POLICY` (the last aliases `SourceForecast`'s; `HudLayer` re-exports all three via `const X = HudBandLaborState.X`). Emits `changed(reason)`, consumed by nothing yet |
 | `ui/hud/ComposeState.gd` | `RefCounted` state model (HUD decomposition Phase 2c-1) — "what the player is dialing but has not committed": the tile card's **forage** compose (`forage_key`/`count`/`policy`/`species`/`band` + its autofill one-shot), the herd drawer's **hunt** compose (`hunt_key`/`count`/`policy`/`band` + its own one-shot), the Band panel's PARTIES-zone **party** compose (`party_quarry_id` + its one-shot) on its own clearly-separated accessor group so a later band-panel extraction can take it without unpicking the drawer's, and the open sheet's subject identity (`kind`/`subject`; `COMPOSE_KIND_*` alias to its `KIND_*`). Mutators are named for the transition — `begin_*_source` + `seed_*` (the two-step re-seed: the caller must resolve the actual band between them, and `seed_*` records that band as `forage_seeded_band()` / `hunt_seeded_band()` so an ACTOR-band change re-seeds like a source change — see "THE COMPOSITION RE-SEEDS ON A SOURCE CHANGE **OR AN ACTOR-BAND CHANGE**"), `set_*`, `arm_*_autofill`/`consume_*_autofill`, `reset_*_source` (the harnesses' way to stage a fresh compose), `set_composing`/`clear_composing` — and the three READ-MODIFY-WRITEs get explicit ones so the field is never read and written apart: **`clamp_forage_count`/`clamp_hunt_count`** and **`resolve_forage_species(resolver: Callable)`** (the RMW is the model's; the crop RULES stay with the caller, so it holds no flora knowledge). Pure DATA — which is exactly why **the `ComposeSheet` NODE lives on `DrawerComposeController`**, beside the lifecycle that opens it, rather than on this model. The model instance is SHARED: HudLayer (the parties zone) and that controller (the drawer) hold the same one. Deliberately **NO `changed` signal**, unlike the Phase-0 pair: nothing subscribes (the compose builders re-render explicitly) and unused API is a liability. **`hunt_policy()` is PUBLIC beyond its builder, but its readers are all HERD-DRAWER ones now** (`_tame_stalled_hint` / `_herd_crew_noun`): `HudWidgets.build_policy_picker`'s `selected` fallback — the one real cross-boundary read, where a work-inspector or party-compose render picked up the DRAWER's rung — was DEAD (every caller passed an explicit, provably non-empty `selected`) and is **deleted**; `selected` is a REQUIRED param, so the shared builder now owns none of its callers' state and the drawer/band-panel boundary is structural rather than conventional |
 | `ui/hud/DrawerComposeController.gd` | `RefCounted` controller (HUD decomposition Phase 2c-2b, `docs/plan_hud_decomposition.md`) owning the selection drawer's **COMPOSE half** — the other half of the selection card, after `SelectionCardController` took the identity/list one. It holds the **compose-sheet lifecycle** (`_ensure_compose_sheet` / `open_forage_compose` / `open_herd_compose` / `refresh_compose_sheet` / `is_compose_sheet_open` / `close_compose_sheet` / `_compose_anchor_rect`, and the `ComposeSheet` NODE itself), the two **drawer-action builders** (`build_forage_drawer_actions` / `build_herd_drawer_actions` + the standing-summary / compose-open-button / extend-pen factories and their in-place diffing twins), the two big **compose builders** (`_build_forage_assign_controls` / `_build_herd_assign_controls`), and the **compose-only** forecast/gate/picker layer beneath them (`_forecast_worker_cap` / `_forecast_yield_row` / `_is_overdraw` / `_hunt_take_rate` / `_hunt_delivered_and_waste` / `_hunt_avg_window_turns` / `_hunt_policy_takes` / `_payoff_take` / `_local_hunt_preview_bbcode` / `_local_forage_preview_bbcode` / `_forage_policy_takes` / `_forage_policy_gates` / `_hunt_policy_gates` / `_sow_site_refusal_reason` / `_tame_stalled_hint` / the `_flora_entry_*` sub-layer / `_build_crop_picker` / `_build_band_picker`) — ~1,400 lines, 54 functions. It also owns the drawer-actions diff caches `_forage_drawer_shape` / `_herd_drawer_shape` (zero external readers), so a per-snapshot restate still patches nodes rather than tearing them down. The drawer RENDER DISPATCH (`_render_land_drawer` / `_render_occupant_drawer` / `_render_subject_drawer` / the terrain-lines producer + `_tile_detail_lines_cache` / `_fit_subject_drawer`) and the `%AllocationPanel` expedition/band-move branches later left `HudLayer` too, into `ui/hud/SubjectDrawerController.gd` (Phase 2c-3), and call IN here through `refresh_compose_sheet` / `build_forage_drawer_actions` / `build_herd_drawer_actions`. Hud holds it as `_drawercompose`, constructed in `_ready` after `_selectioncard`. **THE INJECTION SURFACE IS EXACTLY THREE CALLABLES** — `_resolve_assign_band` / `_herd_label_for_id` / `_emit_assign_labor`, each retained on HudLayer because it has callers on the other side too (and `_emit_assign_labor` additionally owns the `assign_labor_requested` emit, the optimistic pending write and `_after_pending_change()`, which is why `assign_labor` stays INDIRECT). Each is reached through a **typed adapter** rather than called raw — `Callable.call` returns `Variant`, which would push an untyped value into every consumer. Everything else is a collaborator: the SAME `_compose` / `_band_labor` / `_selection` model instances (BY REFERENCE), `_topbar` for `faction_knowledge` ONLY (the rung gates), `_selectioncard` for `tile_contents_unseen` ONLY, the two drawer-action containers it fills (`%HerdAssignControls` / `%ForageAssignControls`), `tile_panel` READ-ONLY (the rect the sheet floats beside), and the HUD CanvasLayer as the **host** it `add_child`s the `ComposeSheet` into (a `RefCounted` cannot parent — the `TurnOrbController` fork-panel pattern). **Three absorptions shrank that boundary from six injections to three:** `_expedition_party_cap` → `SourceForecast.expedition_party_cap` (expedition forecast math, beside its sibling `expedition_useful_cap`), `_format_food_module_label` + its `FOOD_MODULE_LABELS` table → `HudFormat.food_module_label` (vocabulary, not compose logic), and — the highest-leverage one — the grid-wrap flag `_grid_wrap_horizontal` **onto `HudBandLaborState` as `wrap_horizontal()`**, beside the `grid_width()` it is meaningless without, so the moving set calls `SourceForecast.hex_distance_wrapped(…, _band_labor.grid_width(), _band_labor.wrap_horizontal())` DIRECTLY and the `_hex_distance_wrapped` injection disappeared (that pass-through survives on HudLayer for its other callers). `_band_display_name` went to `HudFormat.band_display_name` for the same reason. **It emits TWO signals, both RELAYED by HudLayer** (the controller never emits a HudLayer signal): `send_hunt_expedition_requested` → `HudLayer.send_hunt_expedition_requested` and `extend_pen_requested` → `HudLayer.extend_pen_requested` (the latter travels because `_build_extend_pen_control`'s only caller and its diffing twin are both inside). **`is_compose_sheet_open` / `close_compose_sheet` MUST stay callable on the HUD node** — `Main._unhandled_input`'s Esc precedence and ~11 ui_preview sites probe them BY NAME, and a `has_method` probe fails SILENTLY — so HudLayer keeps them as thin delegators. Word tables, formats and thresholds stay on `HudLayer` and are read back as `HudLayer.X`, the `HudWidgets`/`HudFormat`/`FactionReadouts`/`SelectionCardController` convention. Behaviour identical to the old inlined drawer-compose code |
 | `ui/hud/ComposeSheet.gd` | The selection card's **write state** — the floating **compose sheet** (`docs/plan_tile_panel_layout.md` §10-§15). Composing is MODAL BY NATURE (open, decide, commit, done), so the two ~270px compose blocks (`%ForageAssignControls` / `%HerdAssignControls`) left the drawer for a sheet that borrows space only while in use; the drawer keeps the detail rows, a one-line standing summary and an `Assign … ▸` button. **That button wears `primary` while ITS sheet is open and `ghost` at rest — never `armed`**: `armed` is the destructive/warned treatment (DANGER border), and "its sheet is open" is a LIVE state, which this HUD spells in SIGNAL cyan (the Sight chip, the selection accent, the turn orb's calm pulse). **Its card is an `AutoSizingPanel`, NOT a `DockScrollFit` card** — it floats against the VIEWPORT, which is the opposite of what the drawer above needs, and picking wrong misbehaves silently rather than failing (`.claude/rules/client/panel-framework.md`). **Its width is FITTED to its content like its height** — `CARD_WIDTH` is the nominal, not a cap; see "THE CARD IS AS WIDE AS ITS WIDEST ROW" below, and "THE HEIGHT CHROME IS THE HEADER **ROW**" beside it for the same measurement error on the other axis. **`_panel` is held as a member for the assertion, not for the layout** — the `PanelContainer` that draws the card is a real `Container` in a plain `Control`, so its minimum is the one honest measure of what the fit owes. **The node IS the full-screen dismiss catcher with the card as its CHILD**, reusing `NarrativeForkPanel`'s nesting exactly (siblings make the ordering ambiguous and the catcher eats the card's own clicks), pinned to the viewport EXPLICITLY via `_sync_to_viewport` — a hidden Control's anchors never settle, and the full-rect preset would also overwrite the size. **NO SCRIM, and that is the one deliberate departure from the fork panel:** a fork is a story beat demanding attention, an assignment is composed *against* the map (work-range ring, herd position, hunt reach are all live context), so the catcher dismisses without dimming. **And that is also why the catcher dismisses on a real CLICK only, never a wheel tick** (`DISMISS_BUTTONS`, an ALLOWLIST of left/right/middle so a future Godot wheel/extra index stays non-dismissing by default): the catcher is `MOUSE_FILTER_STOP` across the whole viewport, so an idle scroll over the un-scrimmed map lands on it, and dismissing there would throw away the composition mid-read. `NarrativeForkPanel` is deliberately left as-is — a modal scrimmed story beat has no such gesture — so the two diverge here on purpose; do NOT factor out a shared predicate for one differing call site. (**Not** a map-zoom passthrough: the catcher stops the wheel either way, so the map cannot zoom while a sheet is open, and a wheel over the card is absorbed by its own `ScrollContainer`.) Guarded by ui_preview's paired wheel-leaves-OPEN / left-click-CLOSES assertions. The sheet floats BESIDE the selection card (`_place_card`, falling back to the viewport margin) so the list + summary it is editing stay readable. It knows nothing about foraging or hunting: `open(eyebrow, title, subject_key, anchor)` returns the content VBox and the caller fills it. `subject_key` is what lets a per-snapshot refresh tell "the same source, restated" from "a different source, gone" |
@@ -57,8 +57,25 @@ There is no per-stance ceiling row on either web. What ships instead is the **te
 
 ```text
 ceiling(floor, account) = max(0, B − floor·K) × <account>PerBiomass
-expected(workers, rung) = min(workers × perWorkerYield × <rung>BuildFraction, ceiling(floor))
+expected(workers)       = min(workers × perWorkerYield, ceiling(floor))
 ```
+
+> #### THE BUILD FRACTIONS ARE OFF THE WIRE — the sim publishes no dip to fold in
+>
+> **A build has its own crew** (`docs/plan_standing_upkeep.md` §2.2): the player states it on the verb
+> (`cultivate|sow|tame|corral <target…> <workers>`, and `extend_pen` likewise), so the gatherers or
+> hunters beside a build carry exactly what they carried before and there is no factor left to
+> multiply anything by. `ForagePatchState.cultivateBuildFraction` / `sowBuildFraction` and
+> `HerdTelemetryState.tameBuildFraction` / `corralBuildFraction` are `(deprecated)` slots the sim no
+> longer writes, and the native reader no longer inserts their dict keys — so **a GDScript expression
+> multiplying by one is reading a key that is not there**. The two `*CrewNeeded` slots went the same
+> way with `crew_needed` (`yield-forecast.md` → "`workers_needed` IS THE TAKE'S OWN COUNT"), and what
+> rides those tables now is the upkeep quartet: `upkeepDemand`, `upkeepSupplied`, `upkeepShortfall`
+> and `upkeepWorkersNeeded` — the **maintain** activity's own `workers_needed`, in keepers, beside the
+> take's own in haulers.
+>
+> **The dip prose below this line describes GDScript that still folds one in**, which is the shape the
+> client-side pass has to unwind; the wire contract above is what it must unwind toward.
 
 **This is a deliberate, narrow exception to "the sim exports the answer".** That rule exists because a
 hunt's TAKE is rounded to whole animals — `floor(ceiling / bodyMass)` is not linear, so no client can
@@ -306,7 +323,7 @@ room is what stands above the floor *today*; `project_stock` regrows before it t
 cannot out-carry the regrowth across the band it has to cross never empties the room — not this turn,
 not in any number of turns. Where the regrowth is the larger of the two, the bare quotient is
 therefore **smaller** than `crew_that_reaches`, and it is the more attractive of the two pills.
-Reported from play (`forage_build_dip`): `5 clear it now` · `6 hold it after` two lines above *"7
+Reported from play (`forage_build_crew`): `5 clear it now` · `6 hold it after` two lines above *"7
 foragers would reach the floor"* — three numbers, no two of which agree. The honest reading of *clear
 it now* is "the crew that empties the room this turn", and a crew that never empties it does not
 qualify, so the target floors on the reaching crew; the one-turn drain still wins wherever the room is
@@ -343,9 +360,11 @@ only right if a forager carries ~2 biomass where the sim's own rate says ~6.
   publishes `Some(fraction)` for BOTH rungs whatever the source has climbed — only a rung-3 *managed*
   forecast carries `NOTHING_LEFT_TO_BUILD` — so a positive fraction is not "a build is available
   here". The sim's `BuildDips::of` already states the rule in prose (*"a crew standing on a finished
-  source is harvesting, not preparing"*); `live_improvement` is that rule, client-side, over the
-  `improvement_is_done` test the improvement control ALREADY makes to render DONE instead of RUNNING.
-  Before it, the panel said the build was over and priced it as running.
+  source is harvesting, not preparing"*); `live_improvement` was that rule, client-side, over the
+  `improvement_is_done` test the improvement control ALREADY made to render DONE instead of RUNNING.
+  Before it, the panel said the build was over and priced it as running. **Its successor asks the
+  METER rather than the done flags**, which answers this case and the one no flag can reach — a rung
+  that has eroded back below its cost and is building AGAIN while its ground is still tended.
 - **THE SEASONAL WEIGHT IS NOT A SUSPECT HERE, and it is worth knowing why.** A 4× on the crew looks
   like a seasonal term (`perWorkerBiomass` is `per_worker_biomass_capacity × seasonal_weight`), but
   worldgen sets every food module to `INITIAL_SEASONAL_WEIGHT` **1.0** and no system moves it, and the
@@ -366,6 +385,13 @@ only right if a forager carries ~2 biomass where the sim's own rate says ~6.
   stages the same stale verb, reads `1 hold it after` either way).
 
 ### THE ANIMAL TAKE IS QUANTISED **AFTER** THE DIP, SO A BUILD MOVES THE WASTE LINE
+
+> **⚠ SUPERSEDED BY "THREE CREWS PER SOURCE" (`docs/plan_standing_upkeep.md` §2.2).** Everything below
+> about the during-build dip describes a model where ONE crew both gathered and built. A source
+> carries three independent allocations now: a build takes NOTHING off what the gatherers carry, and
+> `build_dip` / `<rung>BuildFraction` / `crew_needed` are all deleted. The passages are kept because
+> they still record *why* each surface reads the way it does — read them against that section.
+
 
 `SourceForecast.herd_axis_rates` is the hunt sheet's one resolution of "which component does this
 species pay, and at what rate" — and it took `forecast_inputs`' `IMPROVEMENT_NONE` default, so every
@@ -395,7 +421,7 @@ only place that quantity is stated now, so the disagreement is no longer express
 - **The overdraw GATE takes the live verb too.** `_herd_take_draws_down` was deliberately asked
   undipped "to match its undipped takes"; that premise died with them, and a gate walking a crew four
   times the one being quoted reports a drawdown the sheet does not claim.
-- **The frame is `herd_build_dip` + `herd_build_dip_none`, judged as a pair** — a Steppe Runner
+- **The frame is `herd_build_crew` + `herd_build_crew_none`, judged as a pair** — a Steppe Runner
   mid-Tame (the roster's heaviest **tameable** animal; the heavier mammoth is `wild`-ceilinged and can
   never be tamed, so a Tame composed on one would stage a build the sim refuses) at the shipped rates,
   with four hunters carrying one whole body undipped and two thirds of one under the build. It reads
@@ -629,6 +655,13 @@ reaches the line by meta and is sabotage-verified against both a blanked note an
 
 ### THE SHEET'S LOWER HALF: A ROW-LABELLED CREW LINE OVER A BOUNDED READOUT
 
+> **⚠ SUPERSEDED BY "THREE CREWS PER SOURCE" (`docs/plan_standing_upkeep.md` §2.2).** Everything below
+> about the during-build dip describes a model where ONE crew both gathered and built. A source
+> carries three independent allocations now: a build takes NOTHING off what the gatherers carry, and
+> `build_dip` / `<rung>BuildFraction` / `crew_needed` are all deleted. The passages are kept because
+> they still record *why* each surface reads the way it does — read them against that section.
+
+
 The panel's subject is the chart and the numbers under it. It did not read that way: the three intent
 presets rendered at the theme's default size (the largest type on the sheet), the crew was a body-size
 heading with the stepper flung to the far right and two full-width boxed targets on a row of their
@@ -663,8 +696,8 @@ patch's published throughput says 48 —
 and every impossible-looking number on a building sheet follows from that one factor. The only other
 cue was a ticked box further down, which says a build is running and never says its price; without the
 line, *"six foragers cannot out-take one patch"* is inexplicable. It renders **only** where a dip is
-live, because a line on every sheet claims nothing (frames: `forage_build_dip` /
-`forage_build_dip_none`, asserted by presence AND by absence through `HudWidgets.CREW_ROW_DIP_META`).
+live, because a line on every sheet claims nothing (frames: `forage_build_crew` /
+`forage_build_crew_none`, asserted by presence AND by absence through `HudWidgets.CREW_ROW_DIP_META`).
 Its wording deliberately avoids `while building`, and that avoidance has now survived two different
 reasons. It was first the DEAL LINE's middle term and the phrase that line was IDENTIFIED by; two
 labels on one sheet carrying one phrase is how a search for either finds the other, measured at seven
@@ -1010,7 +1043,7 @@ one-turn quotient, so the cap reported those hands useless while the verdict bes
 as the remedy — and *clear it now*, now floored on that number, would have named a count the `+`
 refused. It is a floor for its own sake too: hands between the quotient and the reaching crew draw the
 stock further down every turn instead of settling above the floor, which is strictly more than the
-quotient's crew achieves. Frame + assertion: `forage_build_dip` (`7 clear it now` under `max 7 workers
+quotient's crew achieves. Frame + assertion: `forage_build_crew` (`7 clear it now` under `max 7 workers
 useful here`, the press asserted to land the stepper on 7).
 
 **BOTH PROJECTION-DERIVED FLOORS CARRY THE ENGAGEMENT PAIR, and that is what keeps this promise true
@@ -1259,8 +1292,8 @@ breath. Both sentences now read the ONE projection: the flag survives only if
   because a party that reaches 1.3 biomass of bird a turn against 2.5 of regrowth is not drawing the
   herd down however much its carry says otherwise — carry-only, `herd_hunt_engagement_bound` would
   fly `⚠ OVERDRAWS THE HERD` above *it settles at 84% and holds there*.
-- Frames + sabotage-verified assertions: `forage_build_dip` (rises → no flag) and
-  `forage_build_dip_decline` (one more hand, falls → the flag returns). **Both halves, or the first
+- Frames + sabotage-verified assertions: `forage_build_crew` (rises → no flag) and
+  `forage_build_crew_decline` (one more hand, falls → the flag returns). **Both halves, or the first
   passes vacuously on a gate that silenced everything.** The animal web's is
   `herd_hunt_engagement_bound`, asserted as the **EQUALITY** of the gate's answer and the verdict's —
   the pairing IS the claim, so a fixture that stops rising fails nothing while a gate that stops
@@ -1333,7 +1366,7 @@ the readout has no food line and the chart does not care, a floor being a fracti
 IDENTITY (`FLOOR_CHART_META` / `CREW_TARGET_META` / `VERDICT_META`) — the chart carries no text at all
 and the other two wear faces made of live numbers, so a text match would find nothing and pass.
 
-**A SIXTH CASE — `forage_build_dip` / `_decline` / `_none`, WHERE THE REGROWTH BEATS THE ROOM.** The
+**A SIXTH CASE — `forage_build_crew` / `_decline` / `_none`, WHERE THE REGROWTH BEATS THE ROOM.** The
 played frame: `K 195`, ~9 biomass standing above a 45% floor while the patch regrows ~12, worked by
 six foragers at this fixture's quarter carry (`_building_patch_tile_fixture` — the stale-verb patch's
 basket and 8.0 carry, and a canned 0.25 that was the ladder's value when the frame was built; the
@@ -1626,8 +1659,8 @@ selection changes), the faction page leaves it alone as the subject the cycler w
 the player was reading when they clicked the map.
 
 **It is re-resolved LIVE by entity; the stored dict is never returned.** `set_panel_band` keeps
-`unit.duplicate(true)`, a copy taken at render time, and this answer feeds `assignable_hunt_workers` /
-`assignable_forage_workers` — the very idle counts the steppers cap against — so returning that copy
+`unit.duplicate(true)`, a copy taken at render time, and this answer feeds `source_crew_pool_hunt` /
+`source_crew_pool_forage` — the very idle counts the steppers cap against — so returning that copy
 would put a stale crew under the steppers this fix exists for. A lookup that FAILS is not staleness
 either: the panel band only ever comes from `player_bands()`, so an entity the roster no longer lists
 is a band that has left the world, and the last rung takes that case rather than addressing a command
@@ -1694,6 +1727,33 @@ working band and requires the sheet really does say `Unassign` and really does d
 fails the eight re-seed claims (`got Unassign`, the played defect, on both webs) and leaves the
 default claims green; removing the working-band rung fails exactly the four default claims
 (`Band 2, got Band 1`).
+
+#### …AND THE COMPOSITION DIES WITH THE SHEET
+
+**An uncommitted edit must not outlive its own sheet.** Reported from play: drop HUNTERS 4 → 2, close
+WITHOUT committing, reopen — and the sheet still showed 2 over a band that still had 4 on the herd. A
+number nothing in the game is keeping is worse than no number.
+
+`_on_compose_sheet_closed` was only ever dropping *which sheet is open* (`clear_composing`); the
+*what is dialled* half — the crews, the floor, the crop, the declared rung — is keyed on the SOURCE
+and survived every close. It now calls `reset_forage_source()` + `reset_hunt_source()` beside it,
+which clears the key the `source_changed` test above compares against, so **the next open takes that
+existing branch and re-seeds from the band's own row**. There is deliberately no seed-on-open call:
+two seeding paths over one composition is how a sheet comes to open on a crew nobody has.
+
+**BOTH webs are reset on any close**, not just the kind that was open. One sheet is on screen at a
+time and this is the only place either composition ends, so clearing the pair leaves no way for the
+other web's stale dial to survive into a later session.
+
+**The seed reads the WIRE, so a just-committed edit reads back at the previous snapshot's value until
+the turn resolves** — and that is the coherent answer, not a gap: the drawer's own standing summary
+beside it reads the same confirmed assignment (`_standing_assignment`), and the optimistic overlay
+carries no build crew at all (`assign_labor` never states one), so a pending-aware seed would restore
+the take and silently revert the builders.
+
+**It re-pointed one `ui_preview` state.** `forage_crop_picker_sow` dialled its rung BEFORE the first
+open, which `_show_tile`'s close now re-seeds away — the plant twin of the trap `_compose_herd`'s
+docstring has always recorded. The fix is the documented one: open, dial, re-open.
 
 #### THE STANDING-CREW LINE IS GONE
 
@@ -2421,8 +2481,10 @@ retires, so no rung of that picker can be disabled.
    **On the COMPOSE SHEET this state is reached by a SOURCE gate only** — a knowledge gate builds no
    control here at all, which is why the example above is the ground's refusal and not the knowledge
    line it used to be; see "A KNOWLEDGE gate renders NO improvement control on the compose sheet".
-2. **Running** — checked and **LIVE**, carrying the build meter and nothing else
-   (`🌱 Cultivating — 60%`). Unchecking it abandons the build (`abandon_improvement`, below).
+2. **Running** — a static `Label` in `HudStyle.SIGNAL`, carrying the build meter and its turn estimate
+   (`🌱 Cultivating 30 / 50 work (60%) — ≈10 turns`). It was a checked, live `CheckBox` whose
+   uncheck sent `abandon_improvement`; a build in flight is a FACT the meters state now, and the lever
+   is the BUILDERS stepper beneath it (see "RETIRED — `abandon_improvement`" below).
 3. **Done** — a static `Label` naming the state (`🌾 Tended Patch`), with the NEXT rung's checkbox
    beneath it when there is one.
 
@@ -2755,42 +2817,549 @@ Each existed only to undo the overload:
 - **The per-kind option lists** and the husbandry-ceiling filtering / standing-rung re-admission pass
   that maintained them.
 
-### Unchecking: `abandon_improvement`
+## TWO CREWS PER SOURCE, AND THE PLAYER STATES EACH (`docs/plan_standing_upkeep.md` §2.2)
 
-**`abandon_improvement <faction> forage <x> <y>` / `abandon_improvement <faction> hunt <herd_id>`**
-(alias `abandon`) is what a live Running box sends. It exists because the split otherwise removed a
-capability the old model had by accident: when the build verb WAS the policy, picking another policy
-always walked a 25-turn commitment away.
+A source carries **two independent worker allocations** from one band, and the compose sheet has a
+stepper for each. There is no split rule to derive, because there is nothing to derive.
 
-**It names a SOURCE, not a verb** — at most one improvement is ever in flight on a source — so it is
-targeted by the **web** (`forage` → tile, `hunt` → herd). The SET verbs are targeted by the **verb**
-(`tame` names a herd; `cultivate`/`sow`/`corral` name a tile), and **`corral` is the case that proves
-the two rules genuinely differ**: a herd's rung addressed by the pen's place. `Main` therefore keeps
-`format_improvement` and `format_abandon_improvement` as separate builders, dispatched on whether the
-payload's `improvement` is empty — `""` being the wire's own spelling of "building nothing", so the
-compose state, the payload and the branch all read one value instead of a parallel flag.
+| Activity | Control | Command |
+|---|---|---|
+| **take** | the crew row (`_mount_crew_row`) — the stepper that was always there | `assign_labor …` |
+| **build** | a stepper ON the improvement control (`_mount_build_crew_row`) | `cultivate\|sow <f> <x> <y> <n>`, `tame\|corral <f> <target> <n>` |
 
-**UNCHECKING IS ALWAYS LEGAL, and nothing may gate it.** No knowledge, no ceiling, no site, no
-`Thriving` check — abandoning a *stalled* build is the case it exists for, so gating it on the
-conditions that STARTED the build would make the remedy unreachable exactly when it is wanted. Hence
-`build_improvement_control` disables **only** an OFFERED box, and only on unmet prerequisites; a
-RUNNING box stays live however loudly its pause note reads. A condition that greys a running box is a
-bug, not a safeguard.
+**The build's stepper sits on the improvement control rather than beside the take crew**, because it
+IS the improvement's statement: the verb carries the count, so a rung with nobody on it is a rung
+nobody is building.
 
-**It is NOT a cancel-and-refund, and the two webs differ** — verified sim-side, not assumed. The
-command does not touch the meter at all; it hands the source back to the rule that already governs an
-unimproved one, which is the same state walking the band away reaches:
+### THE COMMIT SENDS TWO COMMANDS, AND THE SHRINKING CREW GOES FIRST
 
-- **plant** — `cultivation_progress` / `field_progress` BLEED at `decay_per_turn = 0.01` (~100 turns
-  to zero) once nobody is improving the patch;
-- **animal** — `domestication` / `corral_progress` are KEPT (the animal branch never decays).
+One press, two commands, each judged on its own against the hands free **at that moment** — so the
+order is part of the composition. `DrawerComposeController._commit_source` decides it, and the rule
+is *whichever crew is shrinking goes first*.
 
-So the copy must not promise progress back on either web, and must not imply the plant meter is safe.
-`IMPROVEMENT_ABANDON_HINTS` carries one honest line per web on the running control's **tooltip**,
-beside the rung's own hint. **Deliberately no confirm dialog**: unchecking is always legal, fully
-reversible on the animal web and slow-decaying on the plant one, so a modal would be ceremony over a
-decision the player can simply re-make — and the "End it" confirm that used to guard a policy-pick
-discard is precisely what this axis split removed.
+It is provably sufficient rather than merely usually right. Each command reads back only its OWN
+activity's crew on this source (`LaborAllocation::idle_for`, `set_assignment`'s `standing` term), so
+the take is affordable iff `take ≤ idle + standing take` and the build iff
+`build ≤ idle + standing build`. The pool clamp below guarantees
+`take + build ≤ idle + standing take + standing build`, and that inequality forces at least one of
+the two to hold already: a shrinking build is affordable outright, and a build that is NOT shrinking
+leaves the take inside its own ceiling.
+
+**It was a fixed take-then-build order, and that was correct only while the take stepper could not
+exceed `idle + standing take`.** The shared pool is what made the other direction reachable — a
+player moving two hands off a Cultivate and onto the gathering now composes a take the old order
+would have clamped away *silently*, `assign_labor` trimming rather than refusing, and a trim to zero
+DROPS the row and takes the build's own declaration with it.
+
+**The swap does not reintroduce the "staff it first" rejection.** An improvement command reaches only
+bands already working the source, and the build-first branch is taken only when the standing build
+crew is positive — which means a staffed row exists to carry the verb.
+
+### THE KEEPING WAS A THIRD CREW HERE, AND IT LEFT THE TILE (§2.5)
+
+**There was a `KEEPERS` stepper under the readout on both sheets, and there is nothing left for it to
+staff.** Maintenance is a band-level standing role now — `agriculture` for the plant web, `husbandry`
+for the animal one — so a source is not staffed with keepers at all; it is paid a SHARE of its band's
+pool. The whole control retired with the `maintain` command: `_mount_maintain_row`, its verdict
+label, `maintain_requested` on `DrawerComposeController` and `HudLayer`, `Main.format_maintain` /
+`_on_hud_maintain`, `ComposeState`'s two keeping counts and their accessors,
+`HudBandLaborState.maintain_workers_for_*` / `assignable_maintain_workers_*` /
+`assigned_keepers_for`, `HudWidgets.CREW_ROW_MAINTAIN_META` / `MAINTAIN_VERDICT_META`, and
+`HudComposeVocab`'s whole `CREW_MAINTAIN_*` block.
+
+**What replaced it is a card, not a stepper on a source**: the Band panel's KEEPING block, specified
+in `band-city-panel.md` → "THE KEEPING BLOCK". `upkeep_mode_requested` is the one signal the roles
+cannot express, and `Main.format_upkeep_mode` is its builder.
+
+**The per-source READOUT stayed, and then HALF of it went too** (issue #545). `upkeepDemand` /
+`upkeepSupplied` / `upkeepShortfall` still ship per patch and per herd, but the land card and the herd
+drawer render the `At risk:` row ALONE: the standing `Keeping:` bill was reported from play as
+unreadable, stating a cost every turn on a source where nothing was wrong. **A rung's keeping only
+becomes a decision when it is SHORT**, which is exactly when `At risk:` renders. The full autopsy,
+and the four-hazard rule that makes the resulting silence safe, are in `selection-card.md` →
+"ONE ROW PER LIVE METER".
+
+### THE SHEET IS ONE TRANSACTION OVER BOTH CREWS, AND IT IS CLAMPED AS ONE
+
+`assign_labor` clamps and says so; the improvement verbs and `extend_pen` **refuse**,
+naming the idle count (*"Cultivating needs 9 workers — the band has 4 idle."*). A silent trim on a
+build is how the gathering it was meant to improve gets disbanded — so the sheet must never offer a
+crew the band cannot staff.
+
+**The pool is `idle + EVERY crew this band has committed on THIS source`**
+(`HudBandLaborState.source_crew_pool_forage` / `_hunt`), and each stepper's ceiling is that pool
+minus what the **other** stepper currently proposes: the take is capped at `min(pool − builders,
+max-useful)` and the build at `pool − take`, resolved in that order so the build's ceiling reads the
+take AFTER it has been clamped.
+
+**IT REPLACED A PAIR OF PER-ACTIVITY CEILINGS, and the pair is what the bug was.** `idle + this
+source's take` and `idle + this source's builders` are each the ceiling the sim judges ONE command
+against (`LaborAllocation::idle_for` hands back only the activity being restated), and read on their
+own they are correct. Read SIDE BY SIDE on a sheet that edits both, they describe a band with more
+hands than it has in one direction and fewer in the other: reported from play, a band with four
+hunters and no idle workers dropped HUNTERS to 2 and **BUILDERS stayed disabled at a maximum of 0**,
+because that stepper's ceiling was computed against COMMITTED state and could not see the sheet's own
+pending edit. The two hands only appeared after a commit, a close and a reopen.
+
+**The pool cannot be crossed, which is the other half.** `take + build ≤ pool` holds by construction
+— each stepper is capped at the pool minus the other — so no composition the sheet offers can exceed
+what the band has. What that *did* newly reach is a take above `idle + standing take`, which one
+command order cannot afford; the ordering rule above is the other half of this fix and neither is
+correct without it.
+
+**The keeping twins went with the keeping** — a role's stepper clamps on the band's plain idle count,
+exactly as scout's and warrior's do.
+
+**IT IS ALSO WHAT MAKES A FULLY-ALLOCATED BAND EDITABLE AT ALL.** Clamped at `idle` alone — which is
+all the client could do while the build crew was write-only — a band with every hand committed capped
+both steppers at **0**: the player could take a crew to nothing and could never put it back, on the
+one source where the decision matters most. Frames: `forage_reopened_crews`,
+`compose_pool_take_full` / `compose_pool_take_freed`.
+
+**THE CAP NOTE HAS TO NAME THE NEARER LEVER.** `SourceForecast.LABOR_BOUND_NOTE_FORMAT` reads *"N of
+M useful — free up idle workers to send more"*, which points past the BUILDERS stepper two rows down
+when that is where the missing hands are standing. `BUILD_BOUND_NOTE_FORMAT` is the same line with
+the build named first; `_forecast_worker_cap` takes the proposed build crew for the WORDING alone,
+the arithmetic being entirely the caller's, since only the caller knows which stepper it is capping.
+
+**Every clamp reads the wire's `idle_workers`, NOT `HudBandLaborState.effective_idle`.** The two agree
+about the builders now (see below), but they still answer different questions: the sheet's ceiling is
+judged against a REFUSAL the sim makes, and `idleWorkers` IS `BandWorkforce::idle()` — every staffed
+hand across every activity and role, minus the bench — where `effective_idle` is an OPTIMISTIC answer
+carrying the pending overlay. A ceiling composed from the optimistic one would offer a crew on the
+strength of a command the server has not acknowledged.
+
+### `effective_idle` SUMS `staffed_total`, AND FOR ONE RELEASE IT DID NOT
+
+That helper summed each merged row's `workers` — the TAKE crew alone — so a band with three hands on
+a Cultivate reported three idle who were already spent. Reported from play as **`3 idle of 18` beside
+`Forage 9 · Hunt 6 · Idle 3`**, on a band whose every hand was committed: the builders miscounted AND
+invisible, one defect wearing two faces.
+
+**The sim was never in doubt.** `LaborAllocation::assigned_total` sums
+`LaborAssignment::staffed_total`, which is `workers + improvement_workers`;
+`HudBandLaborState.staffed_total` is that same sum, client-side, and `effective_idle` is written in
+terms of it. What made the disagreement expressible at all was that **`effective_worker_map` did not
+copy `improvement_workers` through**, so no consumer of that map could see a build crew even to sum
+it. It carries the pair now under the wire's own key (`BUILD_WORKERS_KEY`), and the pending overlay
+PRESERVES the confirmed builders it finds — `assign_labor` states neither the declaration nor the
+build crew, so a pending TAKE edit that blanked them would make three staffed builders reappear as
+idle hands for the turn between the command and its confirmation.
+
+**What the miscount cost was every ceiling built on top of it** — the four role cards' steppers, the
+pen-extend crew, `benchable_workers` and so the crafting bench's own — each offering a crew the sim
+then refused, while the panel showed the phantom hands that justified the offer.
+
+**THE SWEEP FOUND THREE MORE CONSUMERS AND ONE DELIBERATE NON-CONSUMER**, and the distinction is the
+useful part:
+
+| consumer | what it was doing | now |
+|---|---|---|
+| `BandPanelController._build_workforce_block` | segments summed to `working_age − builders` | a **`Build`** segment (`HudWorkVocab.WORKFORCE_KEY_BUILD`, `SIGNAL_DEEP`) beside Forage and Hunt |
+| `FactionRollup._build_workforce_block` | the same hole one scale up | the same segment, the two bars being one chart at two scales |
+| `BandPanelController._work_source_models` | admitted a row on `workers > 0`, so a source with ONLY builders left the board, its chips and the WORK tab's badge | admitted on either crew, and the model carries `build_workers` for the inspector's `N building` clause |
+| `HudBandLaborState._effort_on` | sums the take crew alone | **unchanged, deliberately** — its readers ask *"is anybody HARVESTING this"*, and a builder harvests nothing |
+
+**The builders are their own SEGMENT rather than folded into Forage/Hunt**, for the reason the bench's
+is its own: those two name what a crew TAKES, `effective_idle` nets a builder out, and a bar whose
+segments are supposed to partition `working_age` must account for every hand it removes from Idle.
+`band_panel_preview`'s `_assert_people_matches_workforce` is what catches a missing one — it sums the
+RENDERED chips against `working_age`, so a bar short of the build segment fails by exactly its count.
+
+### Both crews are READABLE, and the sheet opens on them
+
+**`LaborAssignment` publishes `workers` / `improvementWorkers`** — the take and the build. The second
+was write-only for one slice (the client could send it and never read it back), and closing that gap
+retired every compromise it forced:
+
+- **Both steppers seed from the band's own row** (`seed_forage` / `seed_hunt` take the pair,
+  `HudBandLaborState.build_workers_for_*` reads it). A reopened sheet opens on what the band HAS,
+  which is what makes a restate possible: the commands SET rather than add, so a stepper opening at
+  `0` on a staffed source would offer only the choice to unstaff it.
+- **`0` IS THE WIRE'S ANSWER, NOT A MISSING ONE.** No verb in flight genuinely means no builders,
+  which is the common case. A reader that treated it as "unknown" and substituted a seed would put
+  phantom hands on every unbuilt source in the game.
+- **`_emit_improvement`'s no-op test reads the band's real `improvement_workers`**, so a sheet opened
+  and closed on a staffed build sends nothing (it was a hard `0`, which re-sent the verb every time).
+- **`maintainWorkers` IS DEPRECATED ON THE WIRE and the client reads it nowhere.** A per-source keeper
+  count is a question with no answer now, so the frame that proved all three crews readable
+  (`forage_reopened_crews`) proves two and asserts, in the same state, that the sheet mounts exactly
+  ONE untagged stepper — the take's.
+
+### The crop seeds from the ASSIGNMENT, not from the ground
+
+`seed_forage` used to clear the composed crop outright, on the reasoning that a crop pick belongs to
+the PATCH it was made on. True of a tile the band does not work; wrong for one it does — and the
+assignment carries the player's own `species` now.
+
+**It is the SELECTION, and it is deliberately not `ForagePatchState.committedSpecies`.** The patch's
+field is what the GROUND is committed to and only exists once a crew has worked it; the assignment's
+exists from the moment the player chose. **On unworked ground it is the only record there is**, so a
+sheet reopened there re-resolved to the tile's dominant plant and silently re-pointed a 25-turn
+commitment. `HudBandLaborState.species_for_forage` is the reader; `""` stays a real instruction
+(*"pick the tile's dominant legal plant for me"*) rather than an absent one.
+
+### THE DIP IS RETIRED, and so is `crew_needed`
+
+`yield_fraction_while_building` said *"this crew is preparing ground, not gathering"* — true of a
+SHARED crew and of nothing else. With the allocations split, **a build takes nothing off what the
+gatherers carry**, and what it costs is the hands standing on it. Deleted, not defaulted to `1.0`:
+
+- `SourceForecast.build_dip` / `FORECAST_BUILD_FRACTION_KEYS` / `NO_BUILD_DIP` are gone, and with them
+  the `dip` parameter on the whole engagement family (`engagement_per_worker` / `engage_workers` /
+  `engagement_carry` / `take_workers` / `animals_engaged` / `crew_to_clear` / `crew_to_hold` /
+  `crew_that_reaches` / `engaged_quantum`) and the `improvement` parameter on `forecast_inputs`,
+  `hold_crew`, `reach_crew`, `take_draws_down` and `herd_axis_rates` — every one of which existed only
+  to reach the fraction.
+- `improvement_forecast` carries ONE forecast. The *preparing* middle term (`build_forecast`,
+  `build_fraction`) is gone: the take is the same number before, during and after the build, so a
+  second reading of it would state one fact twice. **What now decides a rung is unquotable is its
+  own `workCost`** — `BUILD_WORK_COST_NONE` is the wire saying it prices no such job here, which the
+  dip fraction used to be.
+- `YIELD_ROW_HEADER_WHILE_BUILDING` and the `while_building` flag are gone from `build_yields_row` /
+  `yield_row_header` / `_mount_readout` / `_fill_yields_host`. The caption is keyed by `has_after`
+  alone. (The floor-walk SUPPRESSION survives — `_walks_to_the_floor` — for its own reason: two
+  unlabelled "laters" in one box.)
+- `plant_crew_floor` and `<rung>CrewNeeded` are gone. That floor existed because the cap divided a
+  DIPPED ceiling, so a 25-turn improvement asked for fewer hands than gathering the same ground; the
+  quotient is honest now. **`workers_needed` fell 12 → 3 on the reference patch**, and that is the
+  same retirement seen from the wire.
+- **`herd_crew_floor` and `useful_floor` went with them, on BOTH cap twins**
+  (`SourceForecast.source_worker_cap_state`, `DrawerComposeController._forecast_worker_cap`). They
+  raised the TAKE cap to a managed herd's `herdersNeeded`, because one crew both hunted the animals
+  and held them — a cap sized on the take alone went dead below the count the sim asked for while the
+  same row rendered the under-herded ⚠. **Those keepers are the MAINTAIN allocation now**, with their
+  own stepper, their own ceiling and their own command, so flooring the take stepper on them staffed
+  one crew against another crew's demand. The *hold* crew is still folded in and is a different
+  thing: it is a fact about this take at this floor, not a demand a KIND of source makes, so it stays
+  inside `max_useful_workers` where both twins pick it up. Frames: `herd_tame_worker_cap` and
+  `herd_tame_worker_cap_sustain`, now a pair asserting the two read the SAME cap.
+- The crew row's *"— building this rung, each carries 25% as much"* note is gone
+  (`build_crew_dip_note`, `CREW_BUILD_DIP_NOTE_FORMAT`, `CREW_ROW_DIP_META`); the row it explained
+  now carries no penalty to explain.
+
+### The build's closed form lost its floor term and moved onto the BUILD crew
+
+```text
+gear(b)  = min(b, buildWorkSaturatingCrew) × buildWorkPerWorker
+net(b)   = b × buildWorkPerWorkerTurn − <the QUOTED rung's own upkeep demand>
+turns(b) = ceil((workCost − workDone − gear(b)) / net(b))
+```
+
+`b` is the BUILD crew — `SourceForecast.build_turns_at` is called with the improvement control's own
+stepper, not the take crew's — and the gear is resolved over those same builders, a tool's
+contribution being a rate per worker.
+
+**`work_cost / crew` IS NOT THE BUILD PACE, AND THE `net` TERM IS WHAT CHANGED THAT**
+(`docs/plan_standing_upkeep.md` §2.4). The maintenance rate is owed every turn while the meter is
+being raised, and the BUILD crew is what supplies it there, so only the surplus is progress — the
+sim's `intensification::net_build_supply`, transcribed. It is never `demand − supplied` and never a
+rate this client composes. `core_sim/tests/build_turns_closed_form.rs` pins the two forms equal on the
+exported snapshot, and its own transcription carries the term.
+
+#### THE RATE BELONGS TO THE RUNG BEING QUOTED, AND `upkeepDemand` IS NOT IT (issue #545)
+
+**Reported from play: a wild patch, `Cultivate` declared, ONE builder — the sheet promised ≈50 turns,
+and four turns later the meter still read `0 / 50 (0%)` and always would.** The rung's rate is 2, so
+one hand nets −1. **The sim was right the whole time** and published `-2` (never finishes) for it; the
+client was the wrong half, and the two surfaces disagreed about one build.
+
+The term it subtracted was the source's published `upkeepDemand`, which answers *what is this source
+BILLED right now* — and that is `0` on a source with no progress, because nothing is at risk yet. So
+the rate **vanished from the form at exactly the moment the sheet is quoting a rung nobody has
+started**, which is every rung a player is about to commit to, and the arithmetic collapsed to
+`50 ÷ 1`.
+
+**Four wire fields fix it** — `cultivationUpkeepDemand` / `fieldUpkeepDemand` on `ForagePatchState`,
+`tameUpkeepDemand` / `corralUpkeepDemand` on `HerdTelemetryState`. Each is the LADDER's rate for that
+rung, published unconditionally, **exactly as `workCost` already is**, and read through
+`SourceForecast.FORECAST_BUILD_UPKEEP_DEMAND_KEYS` / `build_upkeep_demand`.
+
+- **The rung is picked with the SAME key table the cost is**, so price, meter and rate can never name
+  three different rungs. That is the whole safety argument for a second per-rung table rather than a
+  scalar.
+- **`upkeepDemand` keeps its own meaning and its own readers.** It resolves through the AT-RISK rung —
+  the newest meter carrying progress — which is the right answer for *what is this source losing* and
+  the wrong one for *what would this rung cost to hold*. Both ship; nothing may substitute one for the
+  other.
+- **The plant pair is deliberately NOT in `MapView.FOW_DISCOVERED_HIDDEN_KEYS`.** Both plant rungs
+  declare `scaled_by: flat`, so the figure is the ladder's and reads identically on every patch in the
+  game — there is no live patch state in it to leak — and keeping it out of the redaction is what stops
+  the closed form silently losing its rate term. (The animal pair scales with the herd's own keeper
+  load and rides the herd dict, which travels whole.)
+- **`cargo xtask decode-guard` goes RED on these keys and is re-recorded** (`--write-golden`); the
+  diff must be those four keys and nothing else.
+
+**A CREW AT OR BELOW THE RATE NEVER FINISHES, and that is an ANSWER rather than an absence.** It is
+its own sentinel, `SourceForecast.BUILD_TURNS_NEVER`, kept apart from `BUILD_TURNS_NO_ESTIMATE`
+because the two render differently — see "∞ IS THE ANSWER" below.
+
+**THIS IS THE ONE COMPARISON THE CLIENT STILL MAKES, and it survives only because the sim cannot
+answer the question it asks.** `buildTurnsRemaining` publishes all three answers for the crew ALREADY
+on the source, so every crewless surface READS the verdict; a stepper mid-drag is a crew the sim has
+never seen, which is what leaves a proposal to price. **The sim's two boundaries are honoured here by
+construction rather than by a second opinion**: an UNSTAFFED source takes the `workers <=
+BUILD_CREW_NONE` branch and answers `BUILD_TURNS_NO_ESTIMATE`, and a rung whose gate refuses it is
+never priced at all — a GATED control spends its whole slot on the reason and quotes no price, so this
+is never reached for one.
+
+**`learn_multiplier(floor)` is no longer a factor.** It scaled the accrual when one crew did both
+jobs (*a crew pulling hard on the source it is improving builds slowly*); a build crew is not pulling
+anything, so the sim's `build_accrual` takes no floor and neither does this. **The floor is still a
+parameter**, because the WORK PREDICATE reads it: `crew_is_working_the_source` still gates Cultivate
+and Tame, so a floor standing above the patch's stock leaves no room and the estimate drops out.
+
+That retirement reaches the aside too: `TEACHING_RATE_BUILD_TAIL` and `TEACHING_BUILD_ONLY_FORMAT`
+are deleted, `teaching_note` takes no `building`, and `floor_chart_model` takes no `improvement` at
+all. A lesson the faction already knows now leaves the aside **silent** on a building sheet, which is
+what it always meant: the top of the dial buys that source nothing further.
+
+### WHAT IT COSTS TO HOLD IT, on every surface that shows the improvement
+
+`SourceForecast.upkeep_state(src, prefix)` is the ONE reader of the four published fields
+(`upkeepDemand` / `upkeepSupplied` / `upkeepShortfall` / `upkeepWorkersNeeded`) plus the
+`hasNeglectGrace` / `neglectGraceRemaining` pair. **The shortfall is READ, never derived from
+`demand − supplied`** — it IS what the meter decays by, and a client that subtracted would be a second
+authority over the number the whole readout exists to make legible.
+
+`DetailFormat.at_risk_lines` renders it identically on **both webs** — the land card and the herd
+drawer both append it — as an `At risk:` row, and ONLY when the keeping is underpaid.
+
+**THE STANDING BILL IS RETIRED** (issue #545). `Keeping: the pool covers 1 of 2 work — worth 2
+keepers` rendered on every source that owed anything, which is every held rung in the game, and
+reported from play it could not be read: a rung's keeping becomes a decision only when it is SHORT.
+The wording it had was right for the question it answered — `upkeepSupplied` is this source's SHARE of
+the band's pool, not the keepers standing on it, so it said `the pool covers` rather than reading as a
+staffing verdict that would send the player looking for a stepper that no longer exists — and the
+question stopped being worth a row. `selection-card.md` → "RETIRED — `Keepers:` and `Keeping:`" is the
+full autopsy, including the four-hazard rule that makes the resulting silence safe.
+
+**`upkeepWorkersNeeded` IS STILL PUBLISHED AND STILL A SIZE RATHER THAN AN ORDER** — what this
+source's keeping is worth in hands — and `keepers_wanted` still reads it, for the one line that
+survives the retirement: `HERDERS_SHED_FORMAT`, which quotes the count precisely because a head count
+only matters when it is short.
+
+**`keepers_wanted` / `is_under_kept` sit beside it over the same reader**, and the animal web's two
+under-kept surfaces both call it: the herd drawer's Husbandry row MARK and the work board's
+under-herded ⚠. **`is_under_kept` IS A SHORTFALL TEST NOW, and it had to become one.** It compared a herd's
+`maintain` crew against `upkeepWorkersNeeded` — the right question while keepers were staffed per
+source, and unanswerable once maintenance left the tile: that count is `0` on every managed herd in
+the game, so the ⚠ would have been permanently up. What the sim decides per source is its share, and
+`upkeepShortfall` is exactly *"the share did not cover this one"* — the same number the decay and the
+shed read. **The old objection to a shortfall test is answered by the GRACE**: `neglectGraceRemaining`
+counts the forgiven turns, which the `At risk:` row beside the warning states, so the notice still
+arrives before the animals go. See `band-city-panel.md` → "The under-herded ⚠".
+
+**BOTH WARNINGS ARE GATED ON THE METER NOW, AND BOTH WOULD OTHERWISE HAVE BROKEN IN OPPOSITE
+DIRECTIONS** when `upkeepWorkersNeeded` began publishing mid-build. They took their `kind` for it, so
+each can ask `build_is_in_flight` of the right web:
+
+- **`is_under_kept` requires NO build in flight.** Left on `crew > 0 and short` it would light the
+  under-herded ⚠ on every source mid-Tame or mid-Cultivate — blaming the band's keeping pool for a
+  bill the BUILDERS owe, on a source whose row a keeper can do nothing about.
+- **`is_unbuilt_and_unpaid` requires one.** It was `keepers_wanted == 0 and short` — *"nobody is owed
+  keepers, so this must be a build"* — which is an inference off a field's meaning rather than a state
+  test, and it goes permanently FALSE mid-build: the builders' warning would have silently stopped
+  existing on both webs, with the keeper warning firing in its place.
+
+They stay **exclusive by construction** — one requires a build in flight and the other requires none —
+so the two still share one note slot without either displacing the other. **The shortfall is still
+what each fires on, and no headcount substitutes**: it covers both ways a build starves, nobody on it
+and a crew under the rate, and the wire publishes no builder requirement, so a count derived by
+dividing the shortfall would be the client inventing a number the sim never stated. What the sheet CAN
+state is the published `min_build_work` — the quoted rung's own RATE, in work — which is the threshold
+rather than a diagnosis. The note's
+wording moved with the trigger: it reads *this rung is sliding back* rather than *nobody is building
+this*, an under-staffed crew being the commoner half of it now.
+
+**THE EDGE IS A CLIFF, WHICH IS WHY THE COUNTDOWN IS ON THE CARD.** A completed meter sits exactly at
+its own cost, so the FIRST bleeding turn drops it below and the rung is **lost** — three unkept turns
+costs a tended patch, two costs a Field. A player who loses a 25-turn investment with no warning reads
+it as a bug, so the warning stands wherever the improvement does rather than only in an alert.
+
+**A METER STILL BEING RAISED IS OWED BUILDERS, AND ITS DEMAND IS NOT ZERO.** The sim bills an unbuilt
+rung what it would LOSE — the plant web's rot rate, the animal web's whole keeping, the animals being
+there whether or not the fence is up — so a patch mid-Cultivate publishes a non-zero `upkeepDemand`,
+and **no pool covers it**: the sim leaves an unbuilt rung out of the band's keeping pool entirely and
+credits its BUILD crew instead (`patch_upkeep_supply` / `herd_upkeep_supply`).
+
+**THAT FORK USED TO BE A ROW AND IS NOW THE RUNG ROW'S OWN `∞`** (issue #545). The retired sentence
+said *"still being built — its own crew pays 2 work a turn"* when the bill was met and *"its builders
+are not covering that — this rung is sliding back"* when it was not — a fact about the BUILD, stated
+one row away from the meter the player would act on. `BUILD_TURNS_NEVER` is the same fact where it
+belongs, and the `At risk:` row beneath it prices what the shortfall costs. `build_is_in_flight` is
+still the state test both remaining warnings gate on, and it is still asked structurally rather than
+inferred off a zero keeper count — `upkeepWorkersNeeded` publishes on both sides of completion, so
+that inference has been dead since it began doing so. Frames: `herd_keeping_mid_build` (with its
+unpaid twin asserted beside it, PNG-less, since only the shortfall separates the two states) and
+`improvement_rung_slipped`'s land card.
+
+### RETIRED — `abandon_improvement`, and what walking away is now
+
+**Unchecking a running build is gone, and so is the command it sent** (`docs/plan_standing_upkeep.md`
+§2.4). It existed to clear an assignment's STORED `improvement`, back when that field was the
+commitment; the verb is DERIVED from the meter now, so there is no stored authority left to clear and
+a command that cleared a derived value would either do nothing or fight the derivation.
+
+**UNSTAFFING SENDS `cultivate <faction> <x> <y> 0`** — the same set verb that started the build, with
+its crew at zero. There is one grammar and one builder (`Main.format_improvement`) for both
+directions. `DrawerComposeController._emit_improvement` is where the two meet: an unchecked OFFER
+sends the standing verb at `BUILD_CREW_NONE`, and a source with neither a live meter nor a
+declaration sends nothing at all. `format_abandon_improvement`, `Main._on_hud_improvement`'s
+empty-improvement branch, `IMPROVEMENT_ABANDON_HINTS` and `IMPROVEMENT_TOOLTIP_SEPARATOR` are all
+deleted.
+
+> #### ⛔ THAT COMMAND TAKES THE HANDS OFF; IT DOES NOT WITHDRAW THE DECLARATION
+>
+> This section claimed the crew-zero command IS the walk-away. It is not. Every server path reaches
+> `set_improvement_on_working_bands(…, Some(verb), workers)`, so the command sets
+> `improvement = Some(Cultivate)` with `improvement_workers = 0`, and `forage::patch_build_verb`
+> honours a declaration whenever its meter is at zero — so the source goes on reading as **building,
+> with no builders**, and **unticking the improvement control does not currently undo it**.
+> `set_improvement`'s `None` arm is unreachable from any command.
+>
+> What the client renders is honest about the state it is left in: a declared, unstaffed rung is
+> `IMPROVEMENT_STATE_DECLARED` — a live, ticked box over the *not started* warning — which is the
+> readout for a build that is going nowhere. What it cannot do is clear it.
+>
+> `docs/plan_standing_upkeep.md` §4.6 owns the fix, folded into the builder-pool slice;
+> `.claude/rules/core_sim/intensification.md` → "A DECLARATION CANNOT CURRENTLY BE WITHDRAWN" carries
+> the server-side mechanism.
+
+**THE RUNNING CONTROL IS A `Label`, and the shape rule the GATED state already stated covers three of
+the five.** The control's TYPE says whether this is a CHOICE or a FACT: a `CheckBox` is a choice
+(OFFERED and DECLARED), and running/done/gated are Labels told apart by
+`HudWidgets.IMPROVEMENT_STATE_META` (added for exactly that, since the type no longer separates them).
+
+### A DECLARATION IS NOT A BUILD, and rendering one as RUNNING was a ONE-WAY DOOR
+
+`build_verb` honours a declaration at a zero meter, and the control took that answer as *running*. So
+a player who ticked `cultivate` on a band with no free hands got a `Label` reading
+**`🌱 Cultivating 0 / 50 work (0%)`** with the *not started* warning under it and **no box left to
+untick** — reported from play. The declaration was expressible and its withdrawal was not.
+
+**The control now asks whether a build is ACTUALLY in flight**, which is the wire's own two facts:
+builders on it (`build_crew > BUILD_CREW_NONE`) or work banked on its meter
+(`improvement_progress > BUILD_METER_UNSTARTED`). Neither ⇒ **`IMPROVEMENT_STATE_DECLARED`**: the
+OFFER's own face (verb and price, through the one `_improvement_offer_face` both states share) on a
+**ticked, live** checkbox, over the *not started* note, over the BUILDERS stepper — with the pen's
+zero-payoff note riding beneath exactly as it rides a running build, that being a warning about the
+RUNG rather than about work in flight, which is why one predicate
+(`_rung_pays_nothing_under_its_feed`) serves both.
+
+- **Unticking sends what the stepper sends** — `cultivate <faction> <x> <y> 0` through
+  `_emit_improvement` — so the two levers agree by construction rather than by convention. **Neither
+  of them withdraws the declaration**: the command sets the verb with a crew of zero, so the rung goes
+  on reading as declared-and-unstaffed. See the callout above.
+- **A DECLARED box is NEVER disabled, however few hands the band has.** The offer one branch down
+  greys out with no free workers *because ticking it would declare an unstaffable build*; here the
+  declaration already stands, and unticking is precisely what a player with no hands needs to do.
+- **The *not started* warning stays reachable and stays useful**: a band that SHRINKS sheds its
+  builders while the declaration stands, which is not a player choice and must still be flagged. It
+  simply renders on a control the player can act on.
+- **`BUILD_UNSTAFFED_UNSTARTED` can no longer reach the RUNNING branch** — it is *no crew and no work*,
+  i.e. exactly `not in_flight` — so that branch's notes carry `BUILD_SLIDING_NOTE` alone. A dead
+  `elif` there would read as a live case.
+
+### A BOX THE BAND CANNOT STAFF IS DISABLED WITH ITS REASON, NOT LEFT LIVE
+
+The click that produced the state above is refused before it happens. An OFFERED control on a sheet
+whose build pool is empty (`build_idle <= BUILD_CREW_NONE`) renders greyed, carrying
+`HudComposeVocab.BUILD_NO_HANDS_REASON`, and mounts **no BUILDERS stepper** — there is nothing to
+staff it with, and a live-but-useless control one row down is the same defect again.
+
+**The pool tested is the SHEET's, not the band's idle count**: `build_idle` is the source's crew pool
+less the composed take, so the reason names both levers — free an idle hand, or take one off the crew
+row above. **`disabled_reason` is now the ONE thing that disables a box.** It was
+`disabled = not notes.is_empty()`, which was dead logic (a gated rung reaches the GATED branch, never
+this one) and which would have silently killed the box the moment a live state grew a note of its own
+— which is exactly what DECLARED does.
+
+**THE UNGATED RULE SURVIVES THE CONTROL IT WAS WRITTEN FOR.** Nothing may withhold the remedy on a
+stalled build — that is when a player reaches for it — so the BUILDERS row is mounted on a RUNNING
+control however loudly the sheet reads. `improvement_no_room_plant` is the frame where withholding it
+would look defensible.
+
+### THE BUILD LINE'S STATE IS ITS COLOUR, AND THE PROSE THAT SAID IT IS DELETED
+
+`2 work a turn holds it — the surplus is progress` sat beside the BUILDERS stepper, one line under the
+build line whose own ink says which side of that rate the crew is on. It was prose doing a colour's
+job, and it is gone; the state goes on the `Cultivating` / `Domesticating` line itself, three ways:
+
+| pace | net | the face reads | ink |
+|---|---|---|---|
+| `BUILD_PACE_GROWING` | > 0 | a real turn count | `HudStyle.HEALTHY` |
+| `BUILD_PACE_HOLDING` | = 0 | `∞ turns` | `HudStyle.WARN` |
+| `BUILD_PACE_LOSING` | < 0 | `∞ turns` | `HudStyle.DANGER` |
+
+**`SourceForecast.build_pace(turns, unstaffed_state)` is the one classifier, and the discipline is
+that it CLASSIFIES rather than derives.** It reads the sentinel the estimate already answered with and
+the unstaffed state the meters already decided; comparing a composed `work_per_turn` against zero
+would be a second opinion about a number the sim owns — the drift that once quoted `≈50 turns` for a
+build that never moved.
+
+- **THE WIRE SPELLS BOTH `∞` STATES AND EACH HAS ITS OWN PACE.** `sim_schema::BUILD_METER_HOLDS`
+  (`-2`, the crew exactly at the rate) answers `HOLDING`; `BUILD_METER_ROTS` (`-3`, the crew under it)
+  answers `LOSING`, and that is the red the schema promises for work already bought and now bleeding.
+  The amber covered both for one slice — the conservative reading while there was one sentinel — and
+  reading it that way *after* the split told a player whose build was being destroyed exactly what it
+  tells one merely treading water. `LOSING` is additionally reachable through
+  `BUILD_UNSTAFFED_SLIDING` — work banked, nobody on it — which is the meters' own answer rather than
+  an arithmetic sign.
+- **A CHECKBOX takes only the two stopping paces** (`HudWidgets.improvement_pace_stops`): green on an
+  unticked offer would read as an achievement on a rung nobody has started.
+- **The RATE is not lost, which is why the note moved rather than being deleted.** It is a tooltip on
+  the BUILDERS row's own label, still in WORK units and still stamped
+  `HudWidgets.BUILD_WORK_FLOOR_META`, so *how much work holds this rung* is one hover away and a
+  harness still asserts the NUMBER rather than a wording.
+
+**Frames**: `improvement_turns_lone_crew` (amber, `∞`) / `improvement_turns_full_crew` (green,
+`≈10 turns`) — one patch, one floor, only the builders moving — and `improvement_rung_slipped` (red,
+the sliding meter). `tile_build_unstaffed` carries the DECLARED checkbox and `compose_offer_no_hands`
+the dead offer with its reason.
+
+**What the retired tooltip said is still true and still differs by web**: unstaffing a plant build
+lets its meter BLEED at the rung's `decay_per_turn` (~100 turns to zero) while an animal meter is KEPT
+(`domestication` is monotone-up and the pen rung declares no decay). Nothing is refunded on either.
+That reaches the player through the source's own rung row and the `At risk:` row beneath it, which
+state the live shortfall and the turns of grace left rather than a hypothetical about a control. **Deliberately
+no confirm dialog** — a stepper tick is not a destructive act, and it is re-made by ticking back.
+
+### THE BUILD VERB IS DERIVED FROM THE METER, AND THE DECLARATION ONLY ANSWERS AT ZERO
+
+`SourceForecast.build_verb(src, prefix, kind, declared)` is the client's transcription of
+`forage::patch_build_verb` / `fauna::herd_build_verb`, and the ONE answer to *"is a build in flight
+here, and which rung"*:
+
+| meter | state | who declares |
+|---|---|---|
+| **zero** | nothing in flight | **the player** — a wild patch could climb to tended *or* be sown |
+| **between zero and its cost** | building that rung, **implied** | nobody — the progress banked on it IS the answer |
+| **at its cost** | maintaining | nobody |
+
+**NEWEST METER FIRST**, exactly as the sim resolves it, so a Field with progress governs the tended
+ground beneath and a `Cultivate` declared on a Field is dead rather than stalled. `declared` is the
+assignment's `improvement` (or a box the player just ticked) and is honoured **only at a zero meter**,
+which is what makes a spent one inert rather than something to clean up.
+
+- **`live_improvement` is GONE**, and this is more than its replacement. That helper filtered a verb
+  naming an already-BUILT rung; the derivation does that AND the opposite — it adopts a build the
+  meters say is running where nothing was ever declared.
+- **IT PUT THE REPAIR ON SCREEN.** Completion freed the declaration, so a completed rung that eroded
+  back below its cost re-entered the *building* state with nothing set: the sheet rendered its DONE
+  label, the work board's badge went quiet, and there was no way back but re-issuing the command the
+  player had never withdrawn. **A player who has paid for a rung and watched it slip adds HANDS.**
+- **FULLNESS AND ACHIEVEMENT STAY ORTHOGONAL.** This reads the meter's fullness (who pays the rate);
+  `improvement_is_done` reads the stamped retention bar (what the ground pays out). A patch at 90% is
+  **building** — a repair — and **still tended**. Folding them would make a rung's LOSS and a rung's
+  REPAIR one edge.
+- **EVERY SURFACE READS IT.** The compose control's RUNNING branch, both sheets' `standing`/`composed`
+  pair at the commit, and `RungGates.rung_in_progress` — which is the work board's row mark and the
+  map badge, and which was keyed on the stored verb until this. Frame: `improvement_rung_slipped`.
+- **A FIXTURE THAT WANTS AN OFFER MUST NOW SAY SO.** A patch carrying progress IS building it, so the
+  reference tile's own 0.6 meter makes it a patch mid-Cultivate wherever it is used;
+  `BaseFx.unbuilt(tile)` zeroes both meters, re-prices the absolutes and drops the keeping with the
+  rung (a patch on no rung owes nothing, and the demand is a term of the build's pace now).
 
 ### CLOSED — the build's PRICE and its turn estimate are on the wire now
 
@@ -2868,8 +3437,119 @@ dies with it). The crew half needs nothing — a stepper tick rebuilds the sheet
 
 `SourceForecast.BUILD_TURNS_NO_ESTIMATE` (`-1`) renders as **no clause at all** on both producers; a
 `0` in its place promises a build about to land. The sheet's producer answers it for a crew of
-nobody, a rung the wire prices nothing on, a floor at which nothing accrues, and a crew standing over
-an empty escapement room. Each is the sim's own `None`, which it reserves for a **stalled** build.
+nobody, a rung the wire prices nothing on, a source banking nothing per worker-turn, and a crew
+standing over an empty escapement room — each of them *there is no question here yet* rather than an
+answer about a crew the player has stated. The **sim** answers it for the same class of states, plus
+two more of its own that no client may re-derive: an unstaffed source, and a build whose knowledge,
+site or species gate does not hold. **A crew that is merely too SMALL is the other sentinel**
+(`BUILD_TURNS_NEVER`), and it must render on every producer: see "∞ IS THE ANSWER" below.
+
+### ∞ IS THE ANSWER FOR A CREW THAT NEVER FINISHES, AND IT IS AMBER
+
+`BUILD_TURNS_NEVER` renders as `∞ turns` on **both** compose faces — the running face's tail and the
+offered face's price — through `DetailFormat.build_turns_clause`, which spells every count in one
+place. It wears no `≈`: every other reading there is an estimate that could come in early or late, and
+this one is not an estimate at all.
+
+**AND ON THE TILE CARD AND THE HERD DRAWER, WHICH IS WHERE IT MATTERS MOST.** It is `-2` on the wire
+(`sim_schema::BUILD_METER_HOLDS`, beside `NO_BUILD_TURNS_ESTIMATE`'s `-1` and `BUILD_METER_ROTS`'
+`-3`), so `SourceForecast.build_turns_remaining` reads it rather than flattening every negative, and
+`DetailFormat.rung_row_value` renders it as the rung row itself — `⚠ ∞ turns (42%)`, in the same
+amber. The two were ONE sentinel for a release and this row was silent for it, so the state a player
+has to act on was visible only while dragging a stepper they may never open. **The `at this crew` tail
+retired with the indented sub-row it lived on** (issue #545): the row IS the crew's answer now, and the
+state and the count are one string that cannot disagree. The card's own half of this — the four-hazard
+fork, the shared tint rule keyed on the mark, and the two sim boundaries a client-side comparison
+would blur — is in `selection-card.md` → "ONE ROW PER LIVE METER".
+
+**THE GLYPH IS THE LARDER RUNWAY'S, AND THE MEANING IS INVERTED.** `DetailFormat.FOOD_UNLIMITED_GLYPH`
+is `∞` on the Food line for *your larder never empties*; on a build it is the worst news the sheet can
+carry. So `BUILD_TURNS_NEVER_GLYPH` is that same const — a player who has learned the mark on the food
+line reads it here without being taught twice — and the **INK** is what says which way it points:
+`HudWidgets.build_improvement_control`'s `warn_face` inks the whole face `HudStyle.WARN`, the
+treatment the shortfall rows wear. A face is one `Label`/`CheckBox` and takes one colour, so the
+warning cannot ride the clause alone, which is the honest treatment anyway: what is wrong is the whole
+proposition on that line. The ink is decided by `SourceForecast.build_pace` and applied through
+`HudWidgets.improvement_pace_color`, so the ∞ and its colour cannot appear without each other.
+
+**`DetailFormat.build_turns_never` IS RETIRED, and it was one of the sites the split slipped past.**
+Its doc called it *"the single test both compose faces gate their warning ink on"* and it had been
+reached by nobody since the pace classifier took that job — a three-state fork cannot be gated on a
+bool. What made the corpse worth deleting rather than leaving is that it went on special-casing `-2`
+alone: a reader checking whether this client had followed the sentinel split would have found a *yes*
+that meant nothing.
+
+### THE SECOND `∞` IS RED, AND THE CARD SAYS *losing ground* IN WORDS
+
+`sim_schema` split `BUILD_METER_ROTS` (`-3`) out of `BUILD_METER_HOLDS` (`-2`), and the difference is
+what the player is being told: **holding wastes the crew's turn, rotting destroys work already paid
+for.** The client did not follow, and every symptom of that was a silence in the reassuring direction:
+
+- `SourceForecast.build_turns_remaining` accepted `>= 0` and `-2` and mapped everything else to *no
+  estimate*, so a real, staffed, priced build that was actively bleeding banked work rendered as the
+  STALLED hazard — *a gate refuses this, no crew size fixes it* — when the remedy is precisely more
+  hands. Before issue #545's stalled fallback it rendered as **no row at all**.
+- `build_pace` fell to `BUILD_PACE_UNKNOWN`, i.e. neutral ink on the compose face, for the same value.
+- **It is reachable at the most common early staffing there is**: one builder on a Cultivate against
+  `plant:tended`'s rate of `2.0` nets `−1`. The A/B frames in `chapters/improvements.gd` had been
+  staging it since the pace landed and reading amber.
+
+**BOTH ANSWERS WEAR THE `∞`, because both are true of the meter**; what separates them is the INK, and
+on the card also the WORDS. `HudSelectionVocab.RUNG_ROTTING_FORMAT` renders
+`⚠ ∞ turns, losing ground (42%)` in `HudStyle.DANGER` against the holding row's `⚠ ∞ turns (42%)` in
+amber, and **`RUNG_ROTTING_PHRASE` is passed INTO the format rather than spelled inside it** — the
+phrase the row prints is the needle `DetailFormat.rung_value_hex` keys the red off, the same
+one-definition shape the BUILT badges use. That tint test runs **first**, because the rotting row
+leads with the hazard mark like every other failure state (it must, or the mark stops meaning
+*something is wrong here*), so an amber branch tested first swallows it and the split exists on the
+wire and nowhere on screen.
+
+**A compose FACE gets the ink and not the words**, because it is one Control taking one colour and its
+line already carries the meter and the price. The card has a whole row to spend and spends it.
+
+**`build_turns_at` FORKS ON THE SAME CUT POINT** (`SourceForecast.BUILD_BALANCE_HOLDS`, the client's
+copy of `intensification::BUILD_BALANCE_HOLDS`), which is not optional tidiness: the sheet and the
+card are two producers of one estimate and are required to agree at the committed crew. A sheet
+answering HOLDS where the card answers ROTS quotes amber for the crew the card paints red — the two
+disagreeing about the very decision the stepper is being dragged through.
+
+**The harness was pinning the defect, which is the part worth remembering.**
+`chapters/improvements.gd` declared `UNKNOWN_BUILD_TURNS_SENTINEL := -3` and asserted that value
+*"renders as NO answer"* — a claim written when `-3` really was unspelled, left in place when the wire
+grew it. **A sentinel-is-unknown claim has to be re-aimed the day the schema spells that value**; it
+is now `-4`, one past the last one defined, and it moves again the next time the schema grows.
+
+**ON THE OFFER THE FACE GOES AMBER AND THE BOX STAYS LIVE.** A crew below the rate makes the job
+unfinishable, not illegal — the player may staff it anyway and add hands next turn. **The tint has to
+be applied AFTER `HudStyle.apply_checkbox` and on every interaction slot**
+(`HudWidgets.CHECKBOX_LIVE_FONT_COLOR_SLOTS`): that helper writes `font_color` plus hover/pressed/focus
+itself, so an override set before it is silently overwritten and one set on `font_color` alone reverts
+to neutral ink under the pointer.
+
+**AND THE THRESHOLD IS ON THE STEPPER, BEFORE THE COMMITMENT — STATED IN WORK** (issue #545).
+`_mount_build_crew_row` states `SourceForecast.min_build_work` — the QUOTED rung's own published rate,
+the same term this sheet's closed form subtracts — as `2 work a turn holds it — the surplus is
+progress`, amber on the same `build_turns_never` verdict the face uses. It says HOLD rather than
+"needs N" because the rate is where the meter stops SLIDING and not where it starts advancing: a crew
+banking exactly the rate holds the rung and finishes nothing.
+
+**IT WAS A HEAD COUNT (`min_build_crew`, the published `upkeepWorkersNeeded`) AND THAT WAS WRONG TWICE
+OVER.** This model is denominated in work units end to end — a rung declares a size in work, a crew
+produces work per turn, a rung's keeping is a rate of work — so *"2 hold it"* quietly reintroduced the
+worker as the unit; and the field behind it reads `0` on a source with no progress, so the note **fell
+silent on exactly the pre-commit quote it exists for**. How many hands the rate buys is what the
+stepper beside it is for. The figure rides `HudWidgets.BUILD_WORK_FLOOR_META` (a float now) so a
+harness asserts the number rather than the wording.
+
+**Frames + assertions** (`chapters/improvements.gd`, the `improvement_turns_*` A/B — one patch, one
+floor, only the BUILDERS stepper moving): the lone crew's `∞` **and** its warning ink, the four-hand
+crew's `≈10 turns` **and** its absence of that ink, and the threshold note's figure and colour on both
+sides. Each half is asserted as a PAIR: an always-amber face and an always-quiet one each satisfy one
+claim alone. The shipped rates are what make the pair reachable at a staffable crew —
+`plant:tended` asks **2** work a turn (`BaseFx.PLANT_TENDED_UPKEEP_PER_TURN`) and `plant:field` **4**;
+the fixtures carried each rung's `meter_decay` (0.5 / 0.75) instead, which is what those demands were
+back when SHORTFALL WAS THE DECAY, and a stale copy halved every plant estimate the moment the pace
+became `crew − rate`.
 
 **A JOB THE GEAR ALONE PAYS OFF IS `BUILD_FINISHES_IN_ONE_TURN`, NOT "no estimate"** — the client's
 transcription of `intensification::BUILD_FINISHES_IN_ONE_TURN`, which the sim returns for the same two
@@ -2884,15 +3564,16 @@ reading `≈1 turn at this crew`.
 
 **And the count is SPELLED in one place, for both faces** — `DetailFormat.build_turns_clause`, which
 forks the singular (`≈1 turn` / `≈25 turns`). The two faces quote one estimate about one job, so a
-build one turn out reading `≈1 turns` on the sheet beside the tile card's own `≈1 turn at this crew`
-(`HudSelectionVocab.BUILD_TURNS_ROW_ONE`) would be the same number worded two ways on one screen.
+build one turn out reading `≈1 turns` on the sheet beside the tile card's own `≈1 turn (98%)`
+(`HudSelectionVocab.RUNG_TURNS_ONE_FORMAT`) would be the same number worded two ways on one screen.
 `BUILD_PRICE_TURNS_FORMAT` / `IMPROVEMENT_RUNNING_TURNS_FORMAT` therefore take the clause already
 spelled and never a raw count.
 - The percentage is **still the `*_progress` fraction**, never `workDone / workCost` re-derived here.
   The wire ships both and they are exactly each other; dividing client-side would be a second
-  authority over one meter. The copy and the composer are
-  `HudSelectionVocab.BUILD_METER_WORK_FORMAT` / `DetailFormat.build_meter_value`, shared with the tile
-  card and the herd drawer so one build cannot read two ways on one screen.
+  authority over one meter. `HudSelectionVocab.BUILD_METER_WORK_FORMAT` /
+  `DetailFormat.build_meter_value` are **the compose sheet's alone now** (issue #545) — the tile card
+  and the herd drawer state a rung's turns and its percentage, the work absolutes being what you read
+  while COMPOSING a build rather than while glancing at one.
 
 ---
 
@@ -3116,7 +3797,7 @@ spelled and never a raw count.
     no label field), item metadata = the band `entity`. The selection is the **actor band**:
     `_hunt_assign_band` / `_forage_assign_band` hold the picked entity (defaulting to
     `_resolve_assign_band()` when the selected source changes, else persisted across re-renders);
-    the worker stepper's cap is that band's `_assignable_hunt_workers` / `_assignable_forage_workers`
+    the worker stepper's cap is that band's `source_crew_pool_hunt` / `source_crew_pool_forage`
     (its `idle_workers` + any it already staffs on that source, so re-editing isn't capped below
     current staffing), and the Assign emit + optimistic pending key off the picked band. Switching
     the dropdown re-caps the stepper and re-renders. Always shown (single-item with one band, so the

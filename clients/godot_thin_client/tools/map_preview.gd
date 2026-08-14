@@ -574,6 +574,17 @@ func _ready() -> void:
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_worked_ready")
+	# State A-unstaffed — **THE SAME THREE SOURCES, with the mid-Cultivate patch's BUILD CREW taken
+	# off.** Only `improvement_workers` moves between this frame and the one above, so the ⌃ marks and
+	# the crew counts are held constant and the one thing that can differ is the building patch's own
+	# plate: `🌱42%` in the deep signal ink becomes `🌱⚠` in WARN. **The A/B is the claim** — a plate
+	# that always warned would pass this frame alone, and the percentage is what a build nobody is
+	# staffing must stop showing.
+	_map.display_snapshot(_snapshot_work_unstaffed())
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_worked_unstaffed")
 	_map.set_faction_knowledge({})  # leave the following states on the honest "knows nothing" default
 
 	# State A-far — the SAME worked band on a large grid so fitted hexes go tiny (radius <
@@ -2239,6 +2250,23 @@ func _snapshot_work() -> Dictionary:
 ## the ⌃ mark has something to offer. The deer is fully tamed with a "pen" ceiling (→ Corral); the
 ## first forage tile is a tended patch on willing ground (→ Sow); the wolf pack keeps its "wild"
 ## ceiling, so it stays unmarked and proves the mark is selective.
+## The crew on the mid-Cultivate patch in `_snapshot_work_ready`. Any positive count serves — the
+## badge asks whether ANYBODY is on the rung, not how many — and it is named so the unstaffed twin
+## below can be spelled as its absence rather than as a second literal zero.
+const WORKED_READY_BUILDERS := 2
+
+## **THE SAME PATCH WITH ITS BUILD CREW TAKEN OFF** — the map half of the declared-but-unstaffed
+## readout. The rung is still declared and its meter still holds 42% of the job, and NOTHING is
+## happening: a `🌱42%` plate in the building ink says the opposite, and at a meter of zero the same
+## plate reads `🌱0%`, which is pixel-identical to a build that started this turn.
+func _snapshot_work_unstaffed() -> Dictionary:
+	var snap := _snapshot_work_ready()
+	for entry_variant in snap["populations"][0]["labor_assignments"]:
+		var entry: Dictionary = entry_variant
+		if String(entry.get("kind", "")) == "forage" and int(entry.get("target_x", -1)) == 9:
+			entry["improvement_workers"] = 0
+	return snap
+
 func _snapshot_work_ready() -> Dictionary:
 	var snap := _snapshot_work()
 	snap["forage_patches"] = [{
@@ -2267,6 +2295,11 @@ func _snapshot_work_ready() -> Dictionary:
 			# The BUILD BADGE keys on the IMPROVEMENT axis, not the floor (issue #442): the crew holds
 			# its floor while it cultivates, and the badge reads the second field.
 			entry["improvement"] = "cultivate"
+			# **AND THE CREW ON IT, because a rung DECLARED with nobody building it is a third state
+			# and wears a different face** (`SourceForecast.unstaffed_build_state`). Leaving this at
+			# the wire's `0` staged the warned case while the frame's own comment describes work in
+			# flight — the pair below is what tells the two apart.
+			entry["improvement_workers"] = WORKED_READY_BUILDERS
 			entry["overdraws"] = false
 	for herd_variant in snap["herds"]:
 		var herd: Dictionary = herd_variant

@@ -26,7 +26,7 @@ use crate::{
         Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
         MoraleCause, MoraleContributions, MountainMetadata, PendingMigration, PopulationCohort,
         PowerNode, ResidentBand, SourceYield, StartingUnit, Tile, YieldRange,
-        DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
+        DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, STRIP_IT_BARE,
     },
     creatures_config::CreaturesConfigHandle,
     culture::{
@@ -57,9 +57,9 @@ use crate::{
     hydrology::HydrologyState,
     influencers::{InfluencerCultureResonance, InfluencerImpacts},
     intensification::{
-        build_turns_remaining, build_work_from_gear, knows, source_crew_needed, LadderConfig,
-        LadderConfigHandle, LadderKnowledge, RungDef, RungKey, MANAGED_SOURCE_FLOOR,
-        RUNG_COST_UNSCALED,
+        activity_work, build_turns_estimate, build_work_from_gear, distribute_upkeep_pool, knows,
+        BuildTurns, LadderConfig, LadderConfigHandle, LadderKnowledge, RungDef, RungKey,
+        NO_CREW_ON_THIS_ACTIVITY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, UNSCALED_UPKEEP,
     },
     labor_config::{LaborConfig, LaborConfigHandle},
     mapgen::MountainType,

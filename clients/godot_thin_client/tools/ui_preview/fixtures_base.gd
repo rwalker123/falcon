@@ -102,16 +102,12 @@ static func seed_forage_rows(tile: Dictionary) -> Dictionary:
 	else:
 		tile["patch_provisions_per_biomass"] = peak_food / room
 		tile["patch_fodder_per_biomass"] = peak_fodder / room
-	# **THE TWO BUILD DIPS ARE FRACTIONS** (issue #442). `patch_ceiling_cultivate` /
-	# `patch_ceiling_sow` remain the fixture-authoring shorthand — a fixture states the dip as the
-	# absolute rate its comments explain — and this converts each to the wire's fraction form by
-	# dividing by the food-peak ceiling, which is exactly what the old row was. A fixture that states a
-	# fraction outright wins; a barren patch leaves it 0, i.e. "no build described here".
+	# **THE BUILD DIPS ARE RETIRED** (`docs/plan_standing_upkeep.md` §2.2), so the authoring shorthand
+	# `patch_ceiling_<rung>` no longer converts to anything — the native reader stopped publishing
+	# `<rung>BuildFraction` and nothing composes one. The keys are dropped here rather than at every
+	# fixture, so a fixture that still states one is simply ignored instead of seeding a dict key no
+	# reader would ever look at.
 	for rung in SourceForecast.FORAGE_IMPROVEMENTS:
-		var key := "patch_%s_build_fraction" % rung
-		if not tile.has(key):
-			var dip := float(tile.get("patch_ceiling_%s" % rung, 0.0))
-			tile[key] = (dip / peak_food) if peak_food > 0.0 else 0.0
 		tile.erase("patch_ceiling_%s" % rung)
 	for policy in LEGACY_STANCE_FLOORS:
 		tile.erase("patch_ceiling_%s" % policy)
@@ -122,6 +118,23 @@ static func seed_forage_rows(tile: Dictionary) -> Dictionary:
 ## worker-turn at the food peak with no gear, so the shipped 50 and 75 read themselves — and the
 ## pair is what makes the two rungs visibly different jobs rather than one meter filling at
 ## unexplained speeds. Stated here so every plant fixture prices its rungs from one place.
+## **WHAT IT COSTS TO HOLD A TENDED PATCH, PER TURN** — `intensification_ladder.json`'s
+## `plant:tended` `upkeep.work_per_turn`, `scaled_by: flat`. Stated here so every plant fixture bills
+## its keeping from one place, exactly as the two work costs above are.
+## **THE SHIPPED DEMAND, AND IT IS A WHOLE NUMBER A PLAYER CAN STAFF EXACTLY** — `plant:tended`
+## declares `work_per_turn` **2.0**, `flat`. It was `0.5` here, which is the rung's `meter_decay`
+## and was its demand too back when SHORTFALL WAS THE DECAY; splitting those two dials is what let
+## the demand move to two hands while the rot rate stayed exactly where it was
+## (`docs/plan_standing_upkeep.md` §2.4). A stale copy here was harmless while nothing read the
+## demand, and became a HALVED build estimate on every plant frame the moment the build's pace
+## became `crew − rate`.
+const PLANT_TENDED_UPKEEP_PER_TURN := 2.0
+
+## The Field's own, one rung up (`plant:field`, **4.0**/`flat`) — a standing crop wants four hands
+## where tended ground wants two, which is the ladder's whole claim about a higher rung. It carried
+## the rung's `meter_decay` (0.75) for the reason the rate above carried its own.
+const PLANT_FIELD_UPKEEP_PER_TURN := 4.0
+
 const PLANT_CULTIVATE_WORK_COST := 50.0
 
 const PLANT_SOW_WORK_COST := 75.0
@@ -158,7 +171,41 @@ static func price_plant_build(tile: Dictionary, turns: int = BUILD_TURNS_REMAINI
 	tile["patch_build_turns_remaining"] = turns
 	tile["patch_build_work_from_gear"] = PLANT_BUILD_WORK_FROM_GEAR
 	tile["patch_build_work_per_worker_turn"] = BUILD_WORK_PER_WORKER_TURN
+	# **THE PER-RUNG RATE, PUBLISHED UNCONDITIONALLY BESIDE THE PER-RUNG COST** — the second term of
+	# the compose sheet's closed form, and the one term `patch_upkeep_demand` cannot supply: that field
+	# is what the patch is BILLED today, so it reads `0` on a patch with no progress. These are the
+	# LADDER's rates, so they are set here rather than beside the billed figure and they survive
+	# `unbuilt()` — which is exactly the reported repro (a wild patch quoting ≈50 turns on a Cultivate
+	# at one builder, against a rung asking 2 work a turn).
+	tile["patch_cultivation_upkeep_demand"] = PLANT_TENDED_UPKEEP_PER_TURN
+	tile["patch_field_upkeep_demand"] = PLANT_FIELD_UPKEEP_PER_TURN
 	return tile
+
+## **A PATCH NOBODY IS BUILDING — both plant meters at zero, re-priced.**
+##
+## It exists because the build verb is DERIVED from the meter now
+## (`docs/plan_standing_upkeep.md` §2.4): a patch carrying progress IS building that rung, declared
+## or not, so the reference tile's own `patch_cultivation_progress` 0.6 makes it a patch
+## mid-Cultivate wherever it is used. Every frame whose claim is about an OFFER — a rung on the
+## table, a floor walk with no build to stack a second "later" against — has to stage a source at
+## zero, and stating that once is what stops each of them zeroing a meter and forgetting to
+## re-price the absolutes beside it.
+static func unbuilt(tile: Dictionary) -> Dictionary:
+	tile["patch_cultivation_progress"] = 0.0
+	tile["patch_is_cultivated"] = false
+	tile["patch_field_progress"] = 0.0
+	tile["patch_is_field"] = false
+	# **AND THE KEEPING GOES WITH THE RUNG.** `patch_unwinding_rung` answers `None` with both meters
+	# at zero, so a wild patch is billed nothing — and since the maintenance rate is a TAX ON
+	# BUILDING now (`docs/plan_standing_upkeep.md` §2.4), a fixture that kept the reference tile's
+	# `0.5` here would halve every turn estimate quoted against a state the sim cannot produce.
+	tile["patch_upkeep_demand"] = 0.0
+	tile["patch_upkeep_supplied"] = 0.0
+	tile["patch_upkeep_shortfall"] = 0.0
+	tile["patch_upkeep_workers_needed"] = 0
+	tile["patch_has_neglect_grace"] = false
+	tile["patch_neglect_grace_remaining"] = 0
+	return price_plant_build(tile)
 
 static func food_tile_fixture() -> Dictionary:
 	var tile := {
@@ -200,16 +247,22 @@ static func food_tile_fixture() -> Dictionary:
 		# Both are food/turn at output_multiplier 1.0, like the ceilings above.
 		"patch_ceiling_cultivate": 0.24,
 		"patch_tended_yield": 1.20,
-		# THE BUILD CREWS (#442) — `intensification_ladder.json`'s own `crew_needed` for the two plant
-		# rungs (tended 2, field 3), which is what the compose stepper FLOORS its cap on. Not decoration:
-		# the dip shrinks the ceiling the cap divides, so without a crew a Cultivate composed here caps
-		# at ONE forager while the sim asks for two — the exact disagreement the pair of them fixes.
-		"patch_cultivate_crew_needed": 2,
-		"patch_sow_crew_needed": 3,
-		# THE NEGLECT GRACE (#442) — the countdown to this rung reverting. The reference patch IS being
-		# worked (a crew is cultivating it), so it reads the plant:tended rung's full `grace + 1` = 3:
-		# "walk away and you have this long". `has_neglect_grace` is what makes the number readable at
-		# all — a wild patch would ship `false`, not a zero.
+		# **THE STANDING UPKEEP** (`docs/plan_standing_upkeep.md` §2). `plant:tended` declares
+		# `0.5` work per turn, `flat` — a patch is ONE TILE, so the rate is the cost of the thing
+		# existing. The reference patch is KEPT and the bill is met EXACTLY: the sim charges the
+		# keeping against what the crew supplied, capped at the demand, so `supplied == demand` is what
+		# a paid rung reads. A fixture stating more supplied than demanded would render `1 of 0.5 work`
+		# — arithmetic that looks like a defect on the row whose whole job is to be legible.
+		"patch_upkeep_demand": PLANT_TENDED_UPKEEP_PER_TURN,
+		"patch_upkeep_supplied": PLANT_TENDED_UPKEEP_PER_TURN,
+		"patch_upkeep_shortfall": 0.0,
+		# `ceil(2.0 / 1.0)` — two hands meet the whole bill, and the same two are the minimum viable
+		# BUILD crew while this patch's meter is still going up (`SourceForecast.min_build_crew`).
+		"patch_upkeep_workers_needed": 2,
+		# THE NEGLECT GRACE — the countdown to this rung reverting, now counted in turns of upkeep
+		# SHORTFALL. The reference patch is kept, so it reads the plant:tended rung's full
+		# `grace + 1` = 3: "stop paying and you have this long". `has_neglect_grace` is what makes the
+		# number readable at all — a wild patch would ship `false`, not a zero.
 		"patch_has_neglect_grace": true,
 		"patch_neglect_grace_remaining": 3,
 		# Plant RUNG 3 — the Field + the Sow verb. This reference tile is ordinary prairie steppe:

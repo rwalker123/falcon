@@ -551,7 +551,12 @@ SHIPS**; v1 still traces the hexagon, v3 dissolves the bank) and `BANK_shipped` 
 
 **`map_preview`** — `map_worked_ready` (the ⌃ CONTRAST: a tended patch offers Sow, a tamed
 "pen"-ceiling deer offers Corral, a "wild"-ceiling wolf offers nothing; a chevron on every marker would
-prove nothing) · `map_hunt_expedition_quarry` (an outbound party's quarry marked beside a resident
+prove nothing) · **`map_worked_unstaffed`** (its A/B twin: the SAME three sources with the
+mid-Cultivate patch's `improvement_workers` taken off, so the one plate that can differ goes from
+`🌱42%` in the deep signal ink to `🌱⚠` in WARN — see `overlay-channels.md`. **The pair is the
+claim**, a plate that always warned passing either frame alone, and `_snapshot_work_ready` had to
+GAIN a build crew for it: leaving that field at the wire's `0` staged the warned case under a comment
+describing work in flight) · `map_hunt_expedition_quarry` (an outbound party's quarry marked beside a resident
 band's local hunt — two routes to a worked source, one grammar) · `map_overflow_worked` (three wonders
 take every visible slot, so both worked sources roll into the chip as `+2 ⌃`). **Both new states push
 `set_faction_knowledge` explicitly**: `map_preview` has no HUD, so without it every source reads "not

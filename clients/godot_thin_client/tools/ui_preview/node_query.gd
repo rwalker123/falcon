@@ -16,6 +16,24 @@ static func has_label_containing(root: Node, text: String) -> bool:
 			return true
 	return false
 
+## **THE FIRST LABEL CONTAINING `text`, AS ITS WHOLE TEXT** — the reading half of
+## `has_label_containing`, for a claim that two renders produced the SAME line rather than that each
+## contains one number. Two `contains` assertions are satisfied by two different labels; comparing the
+## labels is what makes "nothing moved" a claim. `""` when none matched, which fails a comparison
+## rather than satisfying it.
+static func label_containing(root: Node, text: String) -> String:
+	if root == null:
+		return ""
+	if root is Label and (root as Label).text.contains(text):
+		return (root as Label).text
+	if root is RichTextLabel and (root as RichTextLabel).text.contains(text):
+		return (root as RichTextLabel).text
+	for child in root.get_children():
+		var found := label_containing(child, text)
+		if found != "":
+			return found
+	return ""
+
 static func find_button_by_text(root: Node, text: String) -> Button:
 	if root == null:
 		return null

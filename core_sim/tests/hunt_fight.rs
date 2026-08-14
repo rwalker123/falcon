@@ -26,8 +26,7 @@ fn equipped_haul_rate() -> f32 {
 use core_sim::{
     animals_engaged, herd_capacity, hunt_take, quantise_animal_take, resolve_hunt_fight,
     BandEquipment, CombatConfig, CombatStats, CreaturesConfig, DamageLedger, EquipmentConfig,
-    FaunaConfig, FaunaConfigHandle, Herd, HuntDraw, HuntingParty, LadderConfig, QuarryFight,
-    SizeClass,
+    FaunaConfig, FaunaConfigHandle, Herd, HuntDraw, HuntingParty, QuarryFight, SizeClass,
 };
 
 /// Standing stock far above anything a party can take, so **the escapement never binds** and the take
@@ -35,8 +34,6 @@ use core_sim::{
 const FAT_HERD: f32 = 200_000.0;
 /// Take everything the herd can spare: the floor is deliberately not a term in any of these tests.
 const STRIP_IT_BARE: f32 = 0.0;
-/// No rung transition underway, so the crew carries the identity build dip.
-const NO_IMPROVEMENT: Option<core_sim::Improvement> = None;
 /// A resident band eats/banks its whole take — no carry limit, so carry never binds either.
 const NO_CARRY_LIMIT: f32 = f32::INFINITY;
 /// Wariness is `0` across the shipped roster (slice 7 authors it), so the retreat draw is an exact
@@ -102,18 +99,15 @@ fn party_at(attack: f32) -> HuntingParty {
 /// One turn of a resident band's hunt: the animals killed, and what the fight cost the party.
 fn hunt_once(species: &str, workers: u32, party: &HuntingParty) -> (u32, f32, bool) {
     let fauna = deterministic_fauna();
-    let ladder = LadderConfig::builtin();
 
     let mut herd = herd_of(&fauna, species);
     let outcome = hunt_take(
         &mut herd,
         workers,
         STRIP_IT_BARE,
-        NO_IMPROVEMENT,
         equipped_haul_rate(),
         party,
         &fauna,
-        &ladder,
         NO_CARRY_LIMIT,
         FIXED_SEED,
     );
@@ -181,7 +175,6 @@ fn a_bare_handed_horde_takes_nothing_over_any_horizon() {
     const HORDE: u32 = 100_000;
 
     let fauna = deterministic_fauna();
-    let ladder = LadderConfig::builtin();
 
     let bare = HuntingParty::builtin_unequipped();
     let mut herd = herd_of(&fauna, MAMMOTH);
@@ -194,11 +187,9 @@ fn a_bare_handed_horde_takes_nothing_over_any_horizon() {
             &mut herd,
             HORDE,
             STRIP_IT_BARE,
-            NO_IMPROVEMENT,
             equipped_haul_rate(),
             &bare,
             &fauna,
-            &ladder,
             NO_CARRY_LIMIT,
             // A real per-event seed, varying per turn exactly as the take path composes it — so this
             // is not passing because one lucky draw was reused.
@@ -360,7 +351,7 @@ fn a_fractional_engagement_reaches_one_animal_and_fails_at_the_fight() {
         "the fixture must actually be in the fractional regime ({TINY_PARTY} × {engage})"
     );
     assert_eq!(
-        animals_engaged(TINY_PARTY, engage, 1.0),
+        animals_engaged(TINY_PARTY, engage),
         1.0,
         "a party that exists reaches one animal"
     );
@@ -543,7 +534,6 @@ fn a_sub_threshold_party_kills_after_enough_turns() {
     const PATIENCE: u32 = 40;
 
     let fauna = deterministic_fauna();
-    let ladder = LadderConfig::builtin();
 
     let party = HuntingParty::builtin_equipped();
     let threshold = {
@@ -564,11 +554,9 @@ fn a_sub_threshold_party_kills_after_enough_turns() {
             &mut herd,
             SMALL_PARTY,
             STRIP_IT_BARE,
-            NO_IMPROVEMENT,
             equipped_haul_rate(),
             &party,
             &fauna,
-            &ladder,
             NO_CARRY_LIMIT,
             FIXED_SEED,
         );
@@ -613,7 +601,6 @@ fn a_sub_threshold_party_kills_after_enough_turns() {
 fn more_hunters_shorten_the_wait_for_a_sub_threshold_kill() {
     let turns_to_first_kill = |workers: u32| -> u32 {
         let fauna = deterministic_fauna();
-        let ladder = LadderConfig::builtin();
 
         let party = HuntingParty::builtin_equipped();
         let mut herd = herd_of(&fauna, MAMMOTH);
@@ -622,11 +609,9 @@ fn more_hunters_shorten_the_wait_for_a_sub_threshold_kill() {
                 &mut herd,
                 workers,
                 STRIP_IT_BARE,
-                NO_IMPROVEMENT,
                 equipped_haul_rate(),
                 &party,
                 &fauna,
-                &ladder,
                 NO_CARRY_LIMIT,
                 FIXED_SEED,
             );
@@ -811,7 +796,6 @@ fn hunt_ordering_does_not_change_outcomes() {
 fn the_shipped_fight_is_seed_independent() {
     const CREW: u32 = 40;
     let fauna = deterministic_fauna();
-    let ladder = LadderConfig::builtin();
 
     let party = HuntingParty::builtin_equipped();
 
@@ -821,11 +805,9 @@ fn the_shipped_fight_is_seed_independent() {
             &mut herd,
             CREW,
             STRIP_IT_BARE,
-            NO_IMPROVEMENT,
             equipped_haul_rate(),
             &party,
             &fauna,
-            &ladder,
             NO_CARRY_LIMIT,
             HuntDraw::Seeded(seed),
         )
@@ -850,7 +832,6 @@ fn the_shipped_fight_is_seed_independent() {
 fn the_escapement_floor_still_bounds_a_party_that_could_take_far_more() {
     const HUGE_CREW: u32 = 500;
     let fauna = deterministic_fauna();
-    let ladder = LadderConfig::builtin();
 
     let mut herd = herd_of(&fauna, DEER);
     let capacity = herd_capacity(&herd, &fauna);
@@ -861,11 +842,9 @@ fn the_escapement_floor_still_bounds_a_party_that_could_take_far_more() {
         &mut herd,
         HUGE_CREW,
         0.5,
-        NO_IMPROVEMENT,
         equipped_haul_rate(),
         &HuntingParty::builtin_equipped(),
         &fauna,
-        &ladder,
         NO_CARRY_LIMIT,
         FIXED_SEED,
     );
@@ -935,7 +914,7 @@ fn the_passive_device_beats_spears_on_every_small_game_row_and_takes_no_large_ga
             ferocity: def.ferocity,
             wounds: DamageLedger::default(),
         };
-        let reached = animals_engaged(HUNTERS, def.engage_rate, 1.0);
+        let reached = animals_engaged(HUNTERS, def.engage_rate);
         let stayed = party.stayers(reached, def.combat.wariness, HuntDraw::EXPECTED);
         resolve_hunt_fight(
             stayed,

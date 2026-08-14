@@ -199,12 +199,12 @@ spends handling animals.
   (`intensification::tests::a_fully_geared_reference_crew_tames_in_the_turns_the_retired_multiplier_gave`),
   and one equipped keeper of the two now takes **21** — honestly slower, where the uncovered
   multiplier gave that crew the whole ×1.5.
-- **It moves the JOB'S BAR and NOT `build_decay`** — the same treatment `floor` gets, and for the
-  same reason: decay happens on turns nobody works the source, so there is no crew and no kit to
-  read. `build_decay` therefore bleeds a fraction of the **raw** cost, never of the tooled-down one:
-  better tools make a build arrive sooner; they do not make an abandoned one forget more slowly.
-  (The per-source **cost multiplier** *does* reach the decay, because `build_decay` reads
-  `decay_fraction_per_turn` off the scaled cost — see `intensification.md`.)
+- **It moves the JOB'S BAR and NOT THE UPKEEP** — the same treatment `floor` gets, and for a reason
+  that outlived the mechanism it was written about: what an unkept improvement loses is the work its
+  **keepers** did not supply (`docs/plan_standing_upkeep.md` §2.4), which is a fact about a crew and a
+  rung rather than about tools. Better tools make a build arrive sooner; they do not make an
+  unmaintained one forget more slowly. (The per-source **cost multiplier** prices the *job* and does
+  not reach the upkeep either — see `intensification.md`.)
 - **The stored companion cost stays the RAW job, and the meter JUMPS on completion.** The bar the
   crew must reach moves with the kit; the cost `is_cultivated()` and its three siblings compare
   against does not, or a tool wearing out mid-build would *un*-complete a rung. So crossing the

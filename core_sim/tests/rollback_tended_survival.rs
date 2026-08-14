@@ -71,10 +71,18 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
         patch.complete_field(faction);
         patch.owner = Some(faction);
         patch.biomass = patch.carrying_capacity;
-        // As a band that worked it this turn would have left it (the flag the restore drops):
-        patch.tended_this_turn = true;
         patch.tile
     };
+    // As a band whose KEEPERS held it this turn would have left it — the one-turn-lag signal the
+    // restore must carry (`docs/plan_standing_upkeep.md` §2.4; it was the retired `tended_this_turn`
+    // flag before the upkeep replaced it). Stamped through the shipped seam so a retune of either
+    // plant rung's demand cannot leave this fixture supplying too little.
+    {
+        let ladder = core_sim::LadderConfig::builtin();
+        let mut forage = app.world.resource_mut::<ForageRegistry>();
+        let patch = forage.patch_mut(field_tile).expect("the Field persists");
+        patch.upkeep_supplied = core_sim::patch_upkeep_demand(patch, &ladder);
+    }
 
     // --- Set up a completed, worked corral (pen) on a real herd. --------------------------------
     // Domesticated + corralled at its tile with a grown (radius-1) fence.

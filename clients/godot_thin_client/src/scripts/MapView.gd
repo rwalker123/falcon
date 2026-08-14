@@ -306,20 +306,15 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# patch's CURRENT stock, which a hex the player cannot see does not render.
 	"patch_material_per_biomass", "patch_per_worker_material",
 	"patch_tended_fodder", "patch_field_fodder",
-	# The two build DIPS, as fractions (#442). They are patch CONFIG rather than patch state — the
-	# fraction does not move with biomass — but they are redacted with the rest of the payload for the
-	# reason `patch_sow_site_refusal` is: they are only ever read to compose the improvement forecast,
-	# and that control is already withheld on a hex the player cannot see. ONE rule for the whole
-	# patch payload beats a pair of exceptions.
-	"patch_cultivate_build_fraction", "patch_sow_build_fraction",
-	# THE NEGLECT GRACE + the two build CREWS (#442). The grace is live patch state by construction
-	# (it counts the turns since anyone worked this ground), and the crews are patch config like the
-	# dips beside them — both redacted under the one rule the whole patch payload follows, since both
-	# are only ever read to drive the improvement control, which a hex the player cannot see does not
-	# render. Redacting the grace is also what keeps a remembered tile from counting down a lapse it
-	# has no way to observe.
+	# THE STANDING UPKEEP (`docs/plan_standing_upkeep.md` §2) — what holding this patch's rung demands
+	# every turn, what its keepers paid, what went unmet, and the hands that would meet it. Live patch
+	# state, redacted under the one rule the whole patch payload follows.
+	"patch_upkeep_demand", "patch_upkeep_supplied", "patch_upkeep_shortfall",
+	"patch_upkeep_workers_needed",
+	# THE NEGLECT GRACE. Live patch state by construction — it counts the turns of upkeep SHORTFALL —
+	# and redacting it is what keeps a remembered tile from counting down a lapse it has no way to
+	# observe.
 	"patch_has_neglect_grace", "patch_neglect_grace_remaining",
-	"patch_cultivate_crew_needed", "patch_sow_crew_needed",
 	"units", "herds", "unit_count", "herd_count",
 	"harvest_tasks", "harvest_active", "scout_tasks", "scout_active",
 ]
@@ -2756,9 +2751,10 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		info["patch_cultivation_work_cost"] = float(patch.get("cultivation_work_cost", 0.0))
 		info["patch_field_work_done"] = float(patch.get("field_work_done", 0.0))
 		info["patch_field_work_cost"] = float(patch.get("field_work_cost", 0.0))
-		# **`-1` IS "NO ESTIMATE" AND MUST SURVIVE THE COPY AS ITSELF** — a `0` default here would
-		# hand every unworked patch a "this build lands next turn" reading. The int cast is what keeps
-		# the sentinel intact.
+		# **THE NEGATIVES MUST SURVIVE THE COPY AS THEMSELVES** — `-1` no estimate, `-2` the meter
+		# holds, `-3` the meter rots. A `0` default here would hand every unworked patch a "this build
+		# lands next turn" reading, and the int cast is what keeps the whole family intact; nothing on
+		# this path may collapse one negative into another (`SourceForecast.build_turns_remaining`).
 		info["patch_build_turns_remaining"] = int(patch.get(
 			"build_turns_remaining", SourceForecast.BUILD_TURNS_NO_ESTIMATE))
 		info["patch_build_work_from_gear"] = float(patch.get("build_work_from_gear", 0.0))
@@ -2801,25 +2797,34 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# vector on the COMPOSITION entry, which travels whole in `patch_composition`.
 		info["patch_tended_fodder"] = float(patch.get("tended_fodder", 0.0))
 		info["patch_field_fodder"] = float(patch.get("field_fodder", 0.0))
-		# THE TWO BUILD DIPS, AS FRACTIONS (#442) — the factor applied while a crew builds that rung.
-		# **It multiplies the CREW, not the ceiling** (docs/plan_harvest_floor.md §3.1): dipping the
-		# ceiling let a deeper floor build for free, and moving it onto throughput is what leaves the
-		# ceiling linear in the floor and therefore composable client-side at all.
-		info["patch_cultivate_build_fraction"] = float(patch.get("cultivate_build_fraction", 0.0))
-		info["patch_sow_build_fraction"] = float(patch.get("sow_build_fraction", 0.0))
-		# THE NEGLECT GRACE (#442) — the COUNTDOWN to the ground reverting, with its own presence bool.
+		# THE STANDING UPKEEP (`docs/plan_standing_upkeep.md` §2) — the four numbers that say what this
+		# patch costs to HOLD: the rung's per-turn demand, what the keepers supplied out of this turn's
+		# budget, what went unmet (**the sim's own field — never `demand − supplied` here**, since the
+		# shortfall IS what the meter decays by) and the hands that would meet the demand.
+		# `SourceForecast.upkeep_state` is the ONE reader of the four.
+		info["patch_upkeep_demand"] = float(patch.get("upkeep_demand", 0.0))
+		info["patch_upkeep_supplied"] = float(patch.get("upkeep_supplied", 0.0))
+		info["patch_upkeep_shortfall"] = float(patch.get("upkeep_shortfall", 0.0))
+		info["patch_upkeep_workers_needed"] = int(patch.get("upkeep_workers_needed", 0))
+		# **THE PRE-COMMIT RATE, PER RUNG** — what holding each plant rung costs per turn, published
+		# whether or not a build is running (the `*_work_cost` rule). The compose sheet's closed form
+		# nets the BUILD crew's output against the rate of the rung it is pricing; the source-level
+		# `patch_upkeep_demand` above is `0` on a patch with nothing started, which is what made the
+		# stepper quote a finish date for a build that could never advance.
+		#
+		# **Deliberately NOT in `FOW_DISCOVERED_HIDDEN_KEYS`.** Both plant rungs declare
+		# `scaled_by: flat`, so this is the LADDER's number and reads identically on every patch in
+		# the game — there is no live patch state in it to leak — and keeping it out of the redaction
+		# is what stops the closed form from silently losing its rate term on a remembered tile.
+		info["patch_cultivation_upkeep_demand"] = float(patch.get("cultivation_upkeep_demand", 0.0))
+		info["patch_field_upkeep_demand"] = float(patch.get("field_upkeep_demand", 0.0))
+		# THE NEGLECT GRACE — the COUNTDOWN to the ground reverting, with its own presence bool.
 		# `has_neglect_grace == false` means nothing is built here to lose (the common case, a wild
 		# patch), and it is what keeps the honest "reverting NOW" zero from reading as "nothing at
 		# risk": every reader tests the bool BEFORE the number. Both travel `patch_`-prefixed like the
 		# rest of the payload.
 		info["patch_has_neglect_grace"] = bool(patch.get("has_neglect_grace", false))
 		info["patch_neglect_grace_remaining"] = int(patch.get("neglect_grace_remaining", 0))
-		# THE TWO BUILD CREWS (#442) — what each plant rung's build demands, and the FLOOR under the
-		# compose sheet's worker cap (the plant twin of a managed herd's `herders_needed`). Without it
-		# a build asked for fewer hands than gathering the same ground, because while a build runs the
-		# ceiling the cap divides is the DIP.
-		info["patch_cultivate_crew_needed"] = int(patch.get("cultivate_crew_needed", 0))
-		info["patch_sow_crew_needed"] = int(patch.get("sow_crew_needed", 0))
 		# WHAT GROWS HERE — the tile's named plant composition (share-descending, already sorted
 		# server-side; never re-sorted here). It is the patch's STANDING basket: seeded from the
 		# biome, then REWEIGHTED as a commitment's build lands (issue #433 — a Tended Patch weeds the

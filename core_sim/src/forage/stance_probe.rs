@@ -34,7 +34,7 @@ use crate::fauna::{
 };
 use crate::fauna_config::{FaunaConfig, HusbandryCeiling, SizeClass};
 use crate::flora_config::FloraConfig;
-use crate::intensification::{LadderConfig, RungDef, RungKey, RUNG_COST_UNSCALED};
+use crate::intensification::{LadderConfig, RungDef, RungKey, RUNG_COST_UNSCALED, UNSCALED_UPKEEP};
 use crate::labor_config::LaborConfig;
 use crate::systems::hunt_take;
 use sim_runtime::TerrainType;
@@ -44,13 +44,36 @@ use sim_runtime::TerrainType;
 /// **Every build in this probe is staffed to its rung's REFERENCE crew**, so the figures it reports
 /// are the turns the config comment quotes rather than an arbitrary staffing level's. A rung that
 /// declares no `crew_needed` (both animal rungs) is probed at one worker.
-fn full_crew(rung: &RungDef) -> u32 {
-    rung.build_crew_needed().unwrap_or(SOLE_WORKER)
+fn full_crew(rung: &RungDef, source_measure: f32) -> u32 {
+    // The rung declares no crew any more (`docs/plan_standing_upkeep.md` §2.2) — the player states
+    // a build's staffing — so the probe states its own: **the minimum viable crew, plus one**.
+    //
+    // **The maintenance rate is a tax on building** (§2.4), so a lone worker is below the threshold
+    // on every managed rung and would bank nothing at all — a probe of a build that never runs. One
+    // hand *above* the rate keeps every figure reading directly in work units per turn (the net is
+    // exactly `PER_WORKER_OUTPUT`) and puts the threshold itself in the harness's own arithmetic.
+    rung.upkeep_crew_needed(source_measure)
+        .saturating_add(SOLE_WORKER)
 }
 
-/// The crew a rung with no declared crew is probed at — one worker, so its figures read directly in
-/// work units per turn and any other number would imply the probe had chosen a staffing level.
+/// The one hand a probe puts **above** the rung's maintenance rate, so its figures read directly in
+/// work units per turn of *net* progress and any other number would imply the probe had chosen a
+/// staffing level.
 const SOLE_WORKER: u32 = 1;
+
+/// **What one builder banks on `verb` per turn**, in work units — the term the probe's headers
+/// report where they used to report `yield_fraction_while_building`. A build is staffed in its own
+/// right now (`docs/plan_standing_upkeep.md` §2.2), so what a build costs the *take* is simply the
+/// hands that are not on it, and there is no factor left to print.
+fn builder_work_per_turn(ladder: &LadderConfig, verb: Improvement) -> f32 {
+    let rung = ladder.rung_for(verb);
+    rung.build_accrual(
+        Some(verb),
+        true,
+        full_crew(rung, UNSCALED_UPKEEP),
+        UNSCALED_UPKEEP,
+    )
+}
 
 /// Turns each run is driven for. Long enough for every stance on both webs to reach its fixed point
 /// (or its floor) with room to spare — the slowest mover is a mammoth at `r = 0.04`.
@@ -135,13 +158,12 @@ fn run_patch(floor: f32, improvement: Option<Improvement>) -> PlantOutcome {
 /// as well as the ceiling-bound one.
 fn run_patch_with_crew(
     floor: f32,
-    improvement: Option<Improvement>,
+    _improvement: Option<Improvement>,
     foragers: u32,
 ) -> PlantOutcome {
     let labor = LaborConfig::builtin();
     let forage = &labor.forage;
     let flora = FloraConfig::builtin();
-    let ladder = LadderConfig::builtin();
     let composition =
         flora.realized_composition(REFERENCE_BIOME, UVec2::new(0, 0), REFERENCE_MAP_SEED);
     let cap = forage.capacity_for(REFERENCE_BIOME);
@@ -170,10 +192,8 @@ fn run_patch_with_crew(
             &composition,
             foragers,
             floor,
-            improvement,
             forage,
             &flora,
-            &ladder,
             UNIT_OUTPUT_MULTIPLIER,
             forage.per_worker_biomass_capacity,
             FULL_SEASONAL_WEIGHT,
@@ -265,10 +285,8 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
             &composition,
             FULLY_STAFFED_FORAGERS,
             floor,
-            improvement,
             forage,
             &flora,
-            &ladder,
             UNIT_OUTPUT_MULTIPLIER,
             forage.per_worker_biomass_capacity,
             FULL_SEASONAL_WEIGHT,
@@ -276,7 +294,6 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
         .to_f32();
         if turns_to_complete.is_none() {
             provisions_over_build += provisions;
-            patch.tended_this_turn = true;
             let eligible = match verb {
                 // The Cultivate arm's gate, minus the knowledge check this probe grants. The health
                 // gate is gone (`docs/plan_harvest_floor.md` §3.2); the escapement room replaced it.
@@ -285,7 +302,12 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
                 // health check and no work predicate, deliberately: sown ground draws nothing.
                 _ => true,
             };
-            let accrual = rung.build_accrual(improvement, eligible, floor, full_crew(rung));
+            let accrual = rung.build_accrual(
+                improvement,
+                eligible,
+                full_crew(rung, UNSCALED_UPKEEP),
+                UNSCALED_UPKEEP,
+            );
             let cost = rung
                 .build_cost(RUNG_COST_UNSCALED)
                 .expect("a rung a verb builds has a build meter");
@@ -295,10 +317,20 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
                 let _completed_this_turn = match verb {
                     // **The probe carries no gear**, so the effective bar IS the raw cost
                     // (`NO_BUILD_GEAR` takes nothing off) — it measures the ladder's own pacing.
-                    Improvement::Cultivate => {
-                        patch.accrue_cultivation(PROBE_FACTION, accrual, cost, cost)
-                    }
-                    _ => patch.accrue_field(PROBE_FACTION, accrual, cost, cost),
+                    Improvement::Cultivate => patch.accrue_cultivation(
+                        PROBE_FACTION,
+                        accrual,
+                        cost,
+                        cost,
+                        rung.retention_bar(cost),
+                    ),
+                    _ => patch.accrue_field(
+                        PROBE_FACTION,
+                        accrual,
+                        cost,
+                        cost,
+                        rung.retention_bar(cost),
+                    ),
                 };
                 let done = match verb {
                     Improvement::Cultivate => patch.is_cultivated(),
@@ -384,13 +416,12 @@ fn run_herd(
 fn run_herd_with_crew(
     species_key: &str,
     floor: f32,
-    improvement: Option<Improvement>,
+    _improvement: Option<Improvement>,
     start_fraction: f32,
     hunters: u32,
 ) -> HerdOutcome {
     let fauna = probe_fauna();
     let labor = LaborConfig::builtin();
-    let ladder = LadderConfig::builtin();
     let mut herd = probe_herd(&fauna, species_key, start_fraction);
     let cap = herd_capacity(&herd, &fauna);
     let hunt_yield = fauna.hunt_yield_for(&herd.species);
@@ -415,13 +446,11 @@ fn run_herd_with_crew(
             &mut herd,
             hunters,
             floor,
-            improvement,
             labor.hunt.per_worker_biomass_capacity,
             // The probe measures what the FLOOR does to a herd, so it hunts with the shipped kit —
             // the tier an ordinary band is on. A dry-speared party is a different probe.
             &crate::fauna::HuntingParty::builtin_equipped(),
             &fauna,
-            &ladder,
             NO_CARRY_LIMIT,
             PROBE_RETREAT_SEED,
         )
@@ -489,11 +518,9 @@ fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOu
             &mut herd,
             FULLY_STAFFED_HUNTERS,
             floor,
-            improvement,
             labor.hunt.per_worker_biomass_capacity,
             &crate::fauna::HuntingParty::builtin_equipped(),
             &fauna,
-            &ladder,
             NO_CARRY_LIMIT,
             PROBE_RETREAT_SEED,
         )
@@ -504,7 +531,9 @@ fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOu
                 .provisions;
             let eligible =
                 herd.can_pen() && herd.is_domesticated() && herd.owner == Some(PROBE_FACTION);
-            let accrual = pen.build_accrual(improvement, eligible, floor, full_crew(pen));
+            let pen_load = crate::fauna::herd_keeper_load(&herd, &fauna);
+            let accrual =
+                pen.build_accrual(improvement, eligible, full_crew(pen, pen_load), pen_load);
             let cost = pen
                 .build_cost(RUNG_COST_UNSCALED)
                 .expect("the pen rung has a build meter");
@@ -555,11 +584,9 @@ fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutc
             &mut herd,
             FULLY_STAFFED_HUNTERS,
             floor,
-            improvement,
             labor.hunt.per_worker_biomass_capacity,
             &crate::fauna::HuntingParty::builtin_equipped(),
             &fauna,
-            &ladder,
             NO_CARRY_LIMIT,
             PROBE_RETREAT_SEED,
         )
@@ -573,7 +600,13 @@ fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutc
             // gone (`docs/plan_harvest_floor.md` §3.2); what replaced it is the **escapement room**,
             // read pre-take and pre-quantisation, never "an animal died".
             let eligible = herd.can_domesticate() && standing_above_floor > 0.0;
-            let accrual = pastoral.build_accrual(improvement, eligible, floor, full_crew(pastoral));
+            let tame_load = crate::fauna::herd_keeper_load(&herd, &fauna);
+            let accrual = pastoral.build_accrual(
+                improvement,
+                eligible,
+                full_crew(pastoral, tame_load),
+                tame_load,
+            );
             if accrual > 0.0 {
                 herd.accrue_domestication(PROBE_FACTION, accrual, tame_cost, tame_cost);
                 if herd.is_domesticated() {
@@ -931,13 +964,13 @@ fn probe_plant_stances() {
         print!(" {} {:.3}", share.species, share.share);
     }
     println!(
-        "\nr {}  collapse<{}K  stressed<{}K  reseed floor {}K  floors {}  cultivate dip x{}",
+        "\nr {}  collapse<{}K  stressed<{}K  reseed floor {}K  floors {}  cultivate work/builder {}",
         labor.forage.ecology.regrowth_rate,
         labor.forage.ecology.collapse_fraction,
         labor.forage.ecology.stressed_fraction,
         labor.forage.reseed_floor_fraction,
         floor_ladder(),
-        ladder.build_dip(Some(Improvement::Cultivate)),
+        builder_work_per_turn(&ladder, Improvement::Cultivate),
     );
 
     println!("\n-- Part 1: no build running ({PROBE_TURNS} turns, starting at K) --");
@@ -1001,12 +1034,12 @@ fn probe_animal_stances() {
     let ladder = LadderConfig::builtin();
     println!("\n=== ANIMAL WEB — wild herds ({PROBE_TURNS} turns) ===");
     println!(
-        "collapse<{}K  stressed<{}K  extinction floor {}K  floors {}  tame dip x{}",
+        "collapse<{}K  stressed<{}K  extinction floor {}K  floors {}  tame work/builder {}",
         fauna.ecology.collapse_fraction,
         fauna.ecology.stressed_fraction,
         fauna.ecology.extinction_floor,
         floor_ladder(),
-        ladder.build_dip(Some(Improvement::Tame)),
+        builder_work_per_turn(&ladder, Improvement::Tame),
     );
 
     for key in PROBE_SPECIES {
@@ -1135,12 +1168,14 @@ fn probe_build_and_teach_axis() {
         "\n=== Part 3 — WORK UNITS each rung builds per turn, per floor (RungDef::build_accrual) ==="
     );
     println!(
-        "(the floor IS an argument now — it paces the build exactly as it paces the lesson; decay takes no floor. \
-         `cost` is the whole job; the accrual columns are one turn of the rung's reference crew.)"
+        "(the floor no longer paces the build — it paces the LESSON alone. `cost` is the whole job; \
+         the accrual columns are one turn of the rung's reference crew. `upkeep` is what holding the \
+         rung costs per turn, and it is also what a fully unmaintained one bleeds: shortfall IS the \
+         decay.)"
     );
     println!(
         "{:<16} {:>10} {:<10} {:>10} {:>16} {:>16} {:>10}",
-        "rung", "dip", "floor", "cost", "accrual eligible", "accrual !eligible", "decay"
+        "rung", "verb", "floor", "cost", "accrual eligible", "accrual !eligible", "upkeep"
     );
     for (label, key, verb) in rungs {
         let rung = ladder.rung(key);
@@ -1148,15 +1183,22 @@ fn probe_build_and_teach_axis() {
             println!(
                 "{:<16} {:>10} {:<10} {:>10.2} {:>16.4} {:>16.4} {:>10.4}",
                 label,
-                verb.map_or("-".to_string(), |v| format!(
-                    "x{}",
-                    ladder.build_dip(Some(v))
-                )),
+                verb.map_or("-", |v| v.as_str()),
                 format!("{floor:.2}K"),
                 rung.build_cost(RUNG_COST_UNSCALED).unwrap_or(0.0),
-                rung.build_accrual(verb, true, floor, full_crew(rung)),
-                rung.build_accrual(verb, false, floor, full_crew(rung)),
-                rung.build_decay(RUNG_COST_UNSCALED),
+                rung.build_accrual(
+                    verb,
+                    true,
+                    full_crew(rung, UNSCALED_UPKEEP),
+                    UNSCALED_UPKEEP
+                ),
+                rung.build_accrual(
+                    verb,
+                    false,
+                    full_crew(rung, UNSCALED_UPKEEP),
+                    UNSCALED_UPKEEP
+                ),
+                rung.upkeep_demand(UNSCALED_UPKEEP),
             );
         }
     }

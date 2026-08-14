@@ -46,6 +46,29 @@ var _bandpanel: BandPanelController = null
 # --- The one retained HudLayer helper, injected as a Callable (see the class header) ---
 var _herd_label_for_id_fn: Callable
 
+## **THE BUILD HAND-OFFS THIS TURN** (`docs/plan_standing_upkeep.md` §2.3) — `{label, carried}` rows
+## ingested off the command-event stream, held until the turn moves on.
+##
+## **THEY ARE HELD, not read straight out of the events, because the two arrive on different
+## dispatches.** `Main` feeds `command_events` and `populations` separately and the attention array is
+## rebuilt from the populations pass, so a producer that read the event array would answer empty on
+## every frame but the one the events landed on — and the rows would flicker away mid-turn, which is
+## exactly when the player is deciding what to do with those hands.
+var _handoffs: Array[Dictionary] = []
+
+## The turn `_handoffs` describes. A hand-off is news about ONE turn, so the list is dropped whole
+## when the turn changes rather than accumulating a session's worth of finished builds.
+var _handoff_turn: int = -1
+
+## **THE `seq`s ALREADY TAKEN FOR `_handoff_turn`** — the de-duplication set, dropped with the rows it
+## describes. One frame is not one delivery of a row: a mid-tick RECAPTURE delta re-ships every event
+## appended since the turn's baseline, so the same hand-off arrives twice inside one turn and would
+## otherwise be announced twice.
+##
+## Keyed on the sim's own monotonic `seq` and nothing else — a signature over label+detail would
+## silently collapse two bands that finished the same rung with the same crew size on the same tile.
+var _handoff_seqs: Dictionary = {}
+
 func _init(band_labor: HudBandLaborState, bandpanel: BandPanelController,
         herd_label_for_id: Callable) -> void:
     _band_labor = band_labor
@@ -79,6 +102,119 @@ func _herd_label_for_id(herd_id: String) -> String:
 ## omission: a patch is owned by the FACTION (`patch.owner == PLAYER_FACTION_ID`), never by a band, so
 ## there is no band whose row it could sit on. `OWNER_NONE` is what it reads as.
 const OWNER_NONE := -1
+
+## The two tokens a hand-off event is recognized by, on the sim's own `status=... action=...` detail
+## line (`systems::labor`'s completion pass). Matched structurally rather than by the label's words,
+## because the label is a sentence written for the player and the detail is the contract.
+const HANDOFF_ACTION_TOKEN := "action=build_complete"
+
+const HANDOFF_STATUS_CARRIED := "status=carried_to_upkeep"
+
+const HANDOFF_STATUS_FREED := "status=freed"
+
+## The event's own turn, and the sim's own monotonic sequence — two fields the decoder inserts on every
+## command event (`native/src/dict/campaign.rs`) and the two this producer filters on.
+const HANDOFF_TICK_KEY := "tick"
+
+const HANDOFF_SEQ_KEY := "seq"
+
+## **A ROW THE SIM NEVER SEQUENCED.** `seq` is ONE-BASED, so `0` is the FlatBuffers default and means
+## the row never went through `CommandEventLog::push`. There is nothing to de-duplicate on, so such a
+## row is admitted rather than dropped — the same reading `EventDockPanel` gives it, minus that panel's
+## signature fallback, because the tick filter above already bounds this producer to ONE turn's events.
+const HANDOFF_SEQ_UNSEQUENCED := 0
+
+## The tick of an event that states none. Below every real turn, so an unstamped row can never match
+## the current one — which is the honest answer: this producer announces THIS turn's hand-offs, and a
+## row that will not say which turn it belongs to is not evidence about this one.
+const HANDOFF_TICK_NONE := -1
+
+## **INGEST THE TURN'S BUILD HAND-OFFS** (`docs/plan_standing_upkeep.md` §2.3) — the completions whose
+## crew moved, off the same `command_events` array the Telling and the event dock read.
+##
+## **THE SIM'S OWN SENTENCE IS KEPT VERBATIM.** It knows which rung finished, how many hands moved and
+## where they went (*"3 of your cultivate crew stay on (31, 18) to keep it"*); recomposing it here
+## would be a second description of one event, and the two would drift.
+##
+## The `status=` token is what separates the two outcomes: `carried_to_upkeep` means those hands are
+## now paying the rung's keeping, `freed` means they are idle. Anything else on the stream is not a
+## hand-off and is left to the surfaces that own it.
+##
+## **THE FRAME IS NOT THE FILTER — THE EVENT'S OWN `tick` IS.** `command_events` is per-frame HISTORY
+## and the array's SHAPE varies by frame kind: a delta carries the rows appended since the client's
+## cursor, and a **full snapshot carries the whole retained ring** — up to
+## `command_events_retention_turns` of them, so an initial connect or a resync after a dropped delta
+## re-delivers every hand-off of the last twenty turns. Taking the array as "what happened this turn"
+## re-dated all of them to now and flooded the orb with builds the player finished long ago. So a row
+## joins `_handoffs` only if its own `tick` IS `_handoff_turn`; the backfill still reaches the surfaces
+## that want history (the Telling, the event dock) and reaches this one as nothing at all, which is
+## correct — a hand-off is a decision about hands that moved THIS turn.
+##
+## **AND ONE TURN'S ROWS CAN ARRIVE TWICE, so the `seq` set is the other half.** A mid-tick recapture
+## delta re-ships every row since the turn baseline, which passes the tick filter by construction; the
+## sim's monotonic `seq` is what says *this is the same row again*. The two filters answer different
+## questions (WHICH TURN vs SEEN ALREADY) and neither substitutes for the other.
+func ingest_command_events(events_variant: Variant, turn: int) -> void:
+    if not (events_variant is Array):
+        return
+    if turn != _handoff_turn:
+        _handoffs.clear()
+        _handoff_seqs.clear()
+        _handoff_turn = turn
+    for entry_variant in events_variant:
+        if not (entry_variant is Dictionary):
+            continue
+        var entry: Dictionary = entry_variant
+        var detail := String(entry.get("detail", ""))
+        if not detail.contains(HANDOFF_ACTION_TOKEN):
+            continue
+        var carried := detail.contains(HANDOFF_STATUS_CARRIED)
+        if not carried and not detail.contains(HANDOFF_STATUS_FREED):
+            continue
+        if int(entry.get(HANDOFF_TICK_KEY, HANDOFF_TICK_NONE)) != _handoff_turn:
+            continue
+        var seq := int(entry.get(HANDOFF_SEQ_KEY, HANDOFF_SEQ_UNSEQUENCED))
+        if seq != HANDOFF_SEQ_UNSEQUENCED:
+            if _handoff_seqs.has(seq):
+                continue
+            _handoff_seqs[seq] = true
+        _handoffs.append({
+            "label": String(entry.get("label", "")).strip_edges(),
+            "carried": carried,
+        })
+
+## Turn-orb items for the builds that finished this turn and moved their crew (Producer 8) — the
+## next-turn attention half of §2.3's *"either way it is announced"*.
+##
+## **NON-LOCATING** (`x < 0`): the event names its source in words and carries no coordinates, so the
+## row reads `Open` rather than promising a jump it would have to guess. Capped like the awaiting
+## rows, for the same off-screen-popover reason.
+func _crew_handoff_attention() -> Array:
+    var items: Array = []
+    for i in _handoffs.size():
+        var handoff: Dictionary = _handoffs[i]
+        if i >= HudAttentionVocab.ATTENTION_HANDOFF_MAX_ROWS:
+            items.append({
+                "kind": HudAttentionVocab.ATTENTION_KIND_CREW_HANDOFF,
+                "severity": HudAttentionVocab.ATTENTION_SEVERITY_INFO,
+                "label": HudAttentionVocab.ATTENTION_HANDOFF_OVERFLOW_LABEL_FORMAT % (
+                    _handoffs.size() - i),
+                "detail": HudAttentionVocab.ATTENTION_HANDOFF_OVERFLOW_DETAIL,
+                "x": HudAttentionVocab.ATTENTION_NON_LOCATING,
+                "y": HudAttentionVocab.ATTENTION_NON_LOCATING,
+            })
+            break
+        items.append({
+            "kind": HudAttentionVocab.ATTENTION_KIND_CREW_HANDOFF,
+            "severity": HudAttentionVocab.ATTENTION_SEVERITY_INFO,
+            "label": String(handoff["label"]),
+            "detail": HudAttentionVocab.ATTENTION_HANDOFF_DETAIL_CARRIED \
+                if bool(handoff["carried"]) \
+                else HudAttentionVocab.ATTENTION_HANDOFF_DETAIL_FREED,
+            "x": HudAttentionVocab.ATTENTION_NON_LOCATING,
+            "y": HudAttentionVocab.ATTENTION_NON_LOCATING,
+        })
+    return items
 
 func build_band_attention(player_bands: Array, player_expeditions: Array) -> Array:
     var attention: Array = []
@@ -147,6 +283,10 @@ func build_band_attention(player_bands: Array, player_expeditions: Array) -> Arr
     # hang it on, so there is no band whose roster it could be found through. Patches carry an owner on
     # the wire (herds do not), which is what makes an assignment-free scan attributable here.
     attention.append_array(_unworked_rung_attention(player_bands))
+    # Producer 8 — a finished build's crew moved (§2.3). Outside the band loop and fed by the command
+    # stream rather than by the roster: a hand-off is an EVENT, and no band field records that it
+    # happened.
+    attention.append_array(_crew_handoff_attention())
     return attention
 
 ## An orb row's "Jump →". A row that locates an AWAITING EXPEDITION routes through the SAME path the

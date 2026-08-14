@@ -19,6 +19,20 @@ const COMPOSE_SPINE_STEPPER := "stepper"
 
 const COMPOSE_SPINE_IMPROVEMENT := "improvement"
 
+## **THE SOURCE'S SECOND WORKER ALLOCATION** (`docs/plan_standing_upkeep.md` §2.2), tagged apart from
+## the take crew's plain `stepper` because it is not the same control answering the same question:
+## one hauls the offer, one staffs the verb.
+##
+## **THE `keeping` TAG IS RETIRED** (§2.5) — maintenance left the tile, so no sheet mounts a keeping
+## stepper and no spine can carry one.
+const COMPOSE_SPINE_BUILDERS := "builders"
+
+## **THE ROWS A SHEET RENDERS OR NOT ACCORDING TO ITS SOURCE, never according to its WEB.** Empty
+## today: the keeping row was its only member and went with the per-source keeping crew. The parity
+## check still drops this set before comparing, so a future source-conditional row has a home and the
+## check stays a claim about ORDER.
+const COMPOSE_SPINE_SOURCE_CONDITIONAL: Array[String] = []
+
 ## What EVERY compose sheet must open with — both webs, and the hunt sheet's local and expedition
 ## branches alike. The expedition branch builds no improvement control (a detached party builds
 ## nothing), so the shared claim is the HEAD; the two LOCAL sheets are additionally compared in full.
@@ -56,6 +70,9 @@ static func collect_compose_spine(node: Node, spine: Array[String]) -> void:
 	if node is Button and (node as Button).has_meta(HudWidgets.POLICY_RUNG_META):
 		if spine.is_empty() or spine[spine.size() - 1] != COMPOSE_SPINE_POLICY:
 			spine.append(COMPOSE_SPINE_POLICY)
+		return
+	if node is Control and (node as Control).has_meta(HudWidgets.BUILD_CREW_ROW_META):
+		spine.append(COMPOSE_SPINE_BUILDERS)
 		return
 	if node is Button and (node as Button).text == COMPOSE_STEPPER_MINUS_FACE:
 		spine.append(COMPOSE_SPINE_STEPPER)

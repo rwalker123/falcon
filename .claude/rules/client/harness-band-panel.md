@@ -118,8 +118,35 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 226 `assert OK` lines, 332 `: PASS` ones and ZERO `FAIL` ones, over
-89 frames.** (Five of those `PASS`es are `_assert_work_material_readouts`, the board half of closing
+**A clean run exits 0 and prints 242 `assert OK` lines, 348 `: PASS` ones and ZERO `FAIL` ones, over
+95 frames.** (It was 240 / 341 / 94 before **`band_panel_builders_segment`** — the BUILDERS segment
+state, whose two `assert OK`s are its own bounds/content-fits pair and whose seven `PASS`es are
+`_assert_people_matches_workforce`'s four plus three of its own. **Its fixture IS the claim**: the
+reference band's four assignments spend 13 of 16 workers, so putting THREE builders on its forage row
+takes it to exactly `working_age` — before the fix the zone read `3 idle of 16` over segments summing
+to 13, and after it `0 idle of 16` over segments summing to 16. **A band with slack could not say
+this**: the idle count would merely be wrong by three rather than wrong about whether the band has any
+hands at all. The partition guard is what does the work — it sums the RENDERED chips against
+`working_age`, so a bar missing the build segment fails by exactly its count — with the segment's own
+count and the NEGATIVE on the reference band (a band with no build in flight grows no such segment,
+the bar's render-only-when-non-zero rule) beside it. The rationale is `labor-ui.md` →
+"`effective_idle` SUMS `staffed_total`". The paragraph below records the figures as they stood before
+it.)
+
+**It was 240 `assert OK` lines, 341 `: PASS` ones and ZERO `FAIL` ones, over
+94 frames.** (It was 236 / 332 / 92 before the KEEPING POOL landed — `docs/plan_standing_upkeep.md`
+§2.5, the arc that took maintenance off the tile. Its two frames are
+`band_panel_upkeep_mode_spread` / `_priority`, worth their two bounds/content-fits `assert OK` pairs
+and `_assert_upkeep_mode_control`'s four `PASS` each, with the fund-mode NEGATIVE on the reference
+band as the ninth. **The under-herded A/B moved and did not grow**: its fixtures now vary the HERD's
+pool share where they used to vary a per-source `maintain` crew, which is the same three claims about
+a different measurement.) (It was 226 / 332 / 89 before the under-herded ⚠ was re-aimed at the KEEPING crew: the
+`band_panel_keepers_short` / `_staffed` pair is two of the three frames and four of the ten
+`assert OK`s — each state's bounds/content-fits pair — with `_assert_keeper_warning`'s three answers
+and `band_panel_unbuilt_rung`'s three (its own pair plus `_assert_unbuilt_warning`) being the rest.
+**Those three report through `print`, not `_assert_band_panel`, so they land in the `assert OK` tally
+and the `: PASS` one is unmoved** — which is exactly the shape that makes a `PASS`-only count read
+this arc as having added nothing.) (Five of those `PASS`es are `_assert_work_material_readouts`, the board half of closing
 the inedible quarry's `+0.00`; four more are the party PACK's, on `band_panel_worst_case_party`; one
 more is `_assert_denial_pelt_take`; **four more are the KIT REPRICING's material arm**, inside
 `_assert_kit_reprices_the_source` — the per-material rate by RATIO, its no-op twin at the reference

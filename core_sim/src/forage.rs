@@ -33,11 +33,12 @@
 //! - A **Sustain** forage on a **Thriving** patch earns the faction **Cultivation knowledge**
 //!   (`CULTIVATION_DISCOVERY_ID`, in the `DiscoveryProgressLedger`) — the gate on the policy below.
 //!   Sustain **never** accrues a patch's `cultivation_progress`.
-//! - Taming a patch means **paying the `Cultivate` policy's investment**: a reduced take
-//!   (the `plant:tended` rung's `yield_fraction_while_building ×` the Sustain/MSY ceiling — read off
-//!   the shared ladder, `crate::intensification`) while `cultivation_progress` accrues
-//!   toward `1.0`. The `cultivate` command only **sets that policy** on bands already foraging the
-//!   tile; it claims nothing.
+//! - Taming a patch means **staffing the `Cultivate` verb**: the player names the build's own crew,
+//!   those hands bank work units toward the `plant:tended` rung's `work_cost` (read off the shared
+//!   ladder, `crate::intensification`), and the gatherers beside them carry exactly what they always
+//!   did — what a Cultivate costs is the people who are clearing instead
+//!   (`docs/plan_standing_upkeep.md` §2.2). The `cultivate` command only **sets that verb** on bands
+//!   already foraging the tile; it claims nothing.
 //! - A completed ("tended") patch pays only the band that **tends it** (a Forage assignment worked it
 //!   this turn — place-local, in `advance_labor_allocation`) a higher-than-wild yield without drawing
 //!   biomass down; `advance_cultivation` takes an **untended** patch **feral** (progress decays back
@@ -76,8 +77,9 @@ use crate::{
     flora_config::{FloraConfig, FloraShare},
     food::FoodModuleTag,
     intensification::{
-        BuildDips, LadderConfig, LadderConfigHandle, RungBranch, RungDef, RungKey, SiteRefusal,
-        FABRICATED_BUILD_COST, NEGLECT_NONE, NO_BUILD_GEAR, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
+        upkeep_shortfall, LadderConfig, LadderConfigHandle, RungDef, RungKey, SiteRefusal,
+        FABRICATED_BUILD_COST, NEGLECT_NONE, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY,
+        NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_UNSTARTED, UNSCALED_UPKEEP,
     },
     labor_config::{ForageLaborConfig, LaborConfigHandle, NO_FORAGE_CAPACITY},
     materials_config::MaterialPayoff,
@@ -173,8 +175,36 @@ pub struct ForagePatch {
     /// **It is never re-stamped once the rung is complete**, which is the point: a later config
     /// retune that raises the cost must not silently *un*-cultivate ground the player already paid
     /// for. And it resets to [`RUNG_UNSTARTED`] when the meter decays to zero — the patch is
-    /// unstarted again, and `cost > 0` is what stops `0 >= 0` reading a wild patch as finished.
+    /// unstarted again.
+    ///
+    /// **It is the JOB's size, and it is no longer what [`Self::is_cultivated`] compares against** —
+    /// that is [`Self::cultivation_retain_bar`]. The two used to be one number, which is why the
+    /// first bleed of any size took the rung away.
     pub cultivation_cost: f32,
+    /// **THE BAR THIS PATCH IS TENDED DOWN TO** — the rung's
+    /// [`crate::intensification::RungDef::retention_bar`] at this patch's own stamped cost, written
+    /// the turn the Cultivate completes and cleared the turn the meter falls below it.
+    ///
+    /// # A RUNG IS NOT LOST THE INSTANT ITS METER DIPS
+    ///
+    /// A completed meter sits **exactly at its cost**, so a predicate reading `progress >= cost` made
+    /// the very first bleed revoke the rung: finish a Cultivate and the patch could be out of
+    /// *tended* before its keepers were assigned, and no grace and no rate could fix it because the
+    /// loss was a **threshold test** rather than anything continuous. The rung's **achieved** state
+    /// and the meter's **fullness** are two facts now, and this is what separates them — a tended
+    /// patch stays tended while its meter erodes, and is lost at a stated point well below.
+    ///
+    /// # WHY IT IS STAMPED RATHER THAN LOOKED UP
+    ///
+    /// [`Self::is_cultivated`]'s ~hundred call sites hold no ladder config, which is
+    /// [`Self::cultivation_cost`]'s own reason for existing — so the bar is stamped beside the cost,
+    /// by the same seam, and doubles as the *achieved* marker: [`RUNG_UNSTARTED`] means this rung was
+    /// never earned (a wild patch, or one still being raised), so the predicate needs no second
+    /// field and no `cost > 0` guard of its own.
+    ///
+    /// **The rung is still EARNED at `progress >= cost`** — the accrual completes exactly where it
+    /// always did. Only losing it moves.
+    pub cultivation_retain_bar: f32,
     /// **Field**-build progress in absolute work units; the patch is a sown Field (the plant ladder's
     /// **rung 3**) once it reaches [`Self::field_cost`]. Accrues only while a band works this patch
     /// with [`crate::components::Improvement::Sow`] in flight (faction knows **Seed Selection**);
@@ -191,6 +221,9 @@ pub struct ForagePatch {
     /// **What this patch's Sow costs, in work units** — the rung-3 twin of [`Self::cultivation_cost`],
     /// with the same stamping rule and the same reason for existing.
     pub field_cost: f32,
+    /// **THE BAR THIS PATCH IS A FIELD DOWN TO** — the rung-3 twin of
+    /// [`Self::cultivation_retain_bar`], with the same rule and the same reason for existing.
+    pub field_retain_bar: f32,
     /// **How many more turns a build on this patch needs, at the crew, floor and kit that worked it
     /// this turn** — stamped by the labor arm and published as
     /// `ForagePatchState.buildTurnsRemaining`.
@@ -211,7 +244,13 @@ pub struct ForagePatch {
     /// Transient per-turn scratch on the same one-turn cycle as [`Self::tended_this_turn`]: written
     /// in Population, cleared by `advance_cultivation` in the *next* turn's Logistics, so the value
     /// the Snapshot stage captures is always the turn's own.
-    pub build_turns_remaining: Option<u32>,
+    /// `None` is the wire's [`sim_schema::NO_BUILD_TURNS_ESTIMATE`],
+    /// [`crate::intensification::BuildTurns::Holding`] its [`sim_schema::BUILD_METER_HOLDS`] and
+    /// [`crate::intensification::BuildTurns::Rotting`] its [`sim_schema::BUILD_METER_ROTS`] — three
+    /// negatives, three facts, because *"there is no answer"*, *"the meter is standing still"* and
+    /// *"the meter is going backwards"* are not the same thing to a player who has already
+    /// committed a crew.
+    pub build_turns_remaining: Option<crate::intensification::BuildTurns>,
     /// **What the crew's TOOLS took off this patch's running build**, in work units — the `t` in
     /// `effective_cost = cost − t`
     /// ([`crate::intensification::build_work_from_gear`]), published as
@@ -246,33 +285,110 @@ pub struct ForagePatch {
     pub species: Option<String>,
     /// Faction tending/owning this patch (`Some` iff either improvement meter is `> 0`).
     pub owner: Option<FactionId>,
-    /// Transient per-turn flag: a Forage assignment **worked this patch as an improvement** this turn
-    /// — tending a completed patch/Field, or preparing one under `Cultivate`/`Sow` (set in
-    /// `advance_labor_allocation`, Population). `advance_cultivation` (Logistics, the *next* turn —
-    /// Logistics runs before Population) reads it to decide feral/decay vs. spared, then clears it.
-    /// Sparing a *preparing* patch too is what makes the investment accrue at the full
-    /// crew output (25 turns at the rung's own crew) rather than net-of-decay. **Not** on the client wire (derived,
-    /// transient), but it **does survive a rollback**: the checkpoint clones the whole
-    /// `ForageRegistry` (`SimState::forage`), so a restored patch resumes with exactly the worked flag
-    /// it was captured with. That is what keeps the first post-restore Logistics decay pass — which
-    /// runs before the labor arm can re-mark a patch a band is working — from reverting a tended patch
-    /// / Field a band tends every turn.
-    pub tended_this_turn: bool,
-    /// **How many consecutive turns nobody has worked this patch as an improvement** — the neglect
-    /// counter `advance_cultivation` gates the feral bleed on. Reset to [`NEGLECT_NONE`] on any turn
-    /// `tended_this_turn` is set; incremented on every turn it is not. The bleed applies only while
-    /// this exceeds the decaying rung's [`RungBuild::grace_turns`], so a crew may be away for a few
-    /// turns — re-tasked, raided, following a herd — without the patch starting to revert.
+    /// **How many consecutive turns this patch's standing upkeep has gone unmet** — the counter
+    /// `advance_cultivation` gates the feral bleed on. Reset to [`NEGLECT_NONE`] on any turn the
+    /// keepers met the demand ([`Self::upkeep_supplied`] covers the at-risk rung's
+    /// [`RungDef::upkeep_demand`]); incremented on every turn they did not. The bleed applies only
+    /// while this exceeds that rung's [`crate::intensification::RungUpkeep::grace_turns`], so a crew
+    /// may be away for a few turns — re-tasked, raided, following a herd — without the patch starting
+    /// to revert.
     ///
-    /// **The requirement stays per-SOURCE, not per-band** (`tended_this_turn` is set by *any* crew on
-    /// the tile), and it stays **binary**: a partly-crewed build accrues more slowly
-    /// ([`RungDef::build_accrual`]'s crew scale) but is not *neglect*. Grading neglect by crew size is
-    /// a separate decision.
+    /// **It counts SHORTFALL turns, not un-worked ones, and that is the behavioural headline of
+    /// `docs/plan_standing_upkeep.md` §2.4.** The retired `tended_this_turn` flag was set by *any*
+    /// crew on the tile, so a patch somebody was **gathering** was spared for free — holding an
+    /// improvement cost nothing as long as you were taking from it. Holding is its own allocation
+    /// now: a patch being gathered but not *maintained* has an unmet demand and does start to revert.
+    ///
+    /// **The requirement stays per-SOURCE, not per-band** (the keepers of every band on the tile sum
+    /// into one [`Self::upkeep_supplied`]), but it is no longer **binary**: half the hands a patch
+    /// needs is half a shortfall and bleeds at half rate, which is precisely what the flag could not
+    /// express.
     ///
     /// Rides the checkpoint with the rest of the registry, so a rollback rewinds the grace along with
     /// the meter it protects — otherwise a restore could hand a patch a fresh grace it had already
     /// spent.
     pub neglect_turns: u16,
+    /// **WHAT THE AT-RISK METER'S OWN CREW SUPPLIED THIS TURN**, in work units — the **keepers**
+    /// once that rung is built and the **builders** while it is not
+    /// ([`patch_upkeep_supply`], `docs/plan_standing_upkeep.md` §2.4), stamped by the labor arm that
+    /// resolved it.
+    ///
+    /// **It is the ONE stored fact of the upkeep**, and the reason is that it is the only one a crew
+    /// authors: the demand is the at-risk rung's ([`patch_unwinding_rung`]) and the shortfall is the
+    /// difference, so both are derived wherever they are needed rather than stored twice and left to
+    /// drift. It rides the same one-turn cycle as [`Self::build_turns_remaining`] — written in
+    /// Population, read and cleared by `advance_cultivation` in the *next* turn's Logistics — which
+    /// is exactly the carry-across-turns signal the retired `tended_this_turn` flag was, and it
+    /// survives a rollback for the same reason (the checkpoint clones the whole `ForageRegistry`), so
+    /// the first post-restore decay pass does not bleed a patch whose keepers are still on it.
+    pub upkeep_supplied: f32,
+    // **RETIRED before it shipped: `ForagePatch::repair_verb`** — a per-turn flag stamped on the edge a
+    // completed meter fell below its cost, so the labor arm could re-stamp the rung's verb.
+    //
+    // **The verb is DERIVED from the meter now** ([`patch_build_verb`]), so there is no edge to catch and
+    // nothing to re-stamp: a meter carrying progress *is* the declaration. An edge-triggered write would
+    // have been a second authority beside the meter, and the two could disagree the moment anything else
+    // touched a build.
+}
+
+// **RETIRED: `ForagePatch::maintain` / `Herd::maintain`** — a per-source boolean the player toggled
+// to stop paying a standing upkeep.
+//
+// It answered *"is this being kept"* beside a crew that answered *"by how many hands"*, and the two
+// could disagree: a source maintained by nobody and a source deliberately written off are the same
+// state, said twice. **`LaborAssignment::maintain_workers == 0` is the whole of "stop maintaining
+// this"** now (`docs/plan_standing_upkeep.md` §2.2), and it lives with the band that would have
+// supplied the hands rather than on the ground they stand on.
+
+/// **WHICH RUNG THIS PATCH IS BUILDING** — derived from its meters, with the player's declaration
+/// answering only for a meter that is at zero.
+///
+/// # THE METER IS THE DECLARATION
+///
+/// | meter | state | who declares |
+/// |---|---|---|
+/// | **zero** | nothing in flight | **the player** — a wild patch could climb to tended *or* be sown, and the sim cannot guess |
+/// | **between zero and its cost** | building that rung, **implied** | nobody — the progress banked on it *is* the answer |
+/// | **at its cost** | maintaining | nobody |
+///
+/// **Per METER, not per source**: a completed tended patch the player wants to sow is still a
+/// declaration, because its field meter is at zero.
+///
+/// # WHAT THIS FIXED
+///
+/// `RungDef::build_accrual` banks nothing unless the rung's verb is in flight, and completion cleared
+/// the stored verb — so a completed rung that eroded back below its cost re-entered the *building*
+/// state with nothing set, accrued nothing, and could not be repaired until the player re-issued
+/// `cultivate`/`sow`. They never withdrew that intent. **A player who has paid for a rung and watched
+/// it slip adds hands, not a command.**
+///
+/// # AND IT RETIRED `abandon_improvement`
+///
+/// That command existed to let a player walk away from a 25-turn commitment while the *verb* was the
+/// commitment. The commitment is the **hands** now — you walk away by unstaffing the builders
+/// (`cultivate <faction> <x> <y> 0`) — and a command that cleared a *derived* value would either do
+/// nothing or fight the derivation. There is no stored authority left for it to clear.
+///
+/// **The declaration is honoured only at a zero meter**, which is what makes a spent one inert: once
+/// the first accrual lands, the meter answers and the stale declaration is filtered out here rather
+/// than having to be cleaned up somewhere.
+pub fn patch_build_verb(patch: &ForagePatch, declared: Option<Improvement>) -> Option<Improvement> {
+    // **NEWEST METER FIRST, exactly as the unwind resolves** ([`patch_unwinding_rung`]): a Field with
+    // any progress on it governs the tended ground beneath, so a `Cultivate` declared on a Field is
+    // dead rather than stalled — the case that used to need the retired "nothing left to build" test.
+    if patch.field_progress > RUNG_UNSTARTED {
+        return (!patch.field_meter_full()).then_some(Improvement::Sow);
+    }
+    // **A declaration counts for a meter at zero**, which the field's is here — so a `Sow` on tended
+    // ground (or on a bare gathering site) is the player starting the rung above.
+    if declared == Some(Improvement::Sow) {
+        return Some(Improvement::Sow);
+    }
+    if patch.cultivation_progress > RUNG_UNSTARTED {
+        return (!patch.cultivation_meter_full()).then_some(Improvement::Cultivate);
+    }
+    // Both meters at zero: only the player can say which rung this ground climbs.
+    (declared == Some(Improvement::Cultivate)).then_some(Improvement::Cultivate)
 }
 
 /// **WHERE A BUILD METER LANDS THIS TURN — and the jump on the turn it completes.**
@@ -306,14 +422,16 @@ impl ForagePatch {
             ecology_phase: EcologyPhase::Thriving,
             cultivation_progress: RUNG_UNSTARTED,
             cultivation_cost: RUNG_UNSTARTED,
+            cultivation_retain_bar: RUNG_UNSTARTED,
             field_progress: RUNG_UNSTARTED,
             field_cost: RUNG_UNSTARTED,
+            field_retain_bar: RUNG_UNSTARTED,
             build_turns_remaining: None,
             build_work_from_gear: NO_BUILD_GEAR,
             species: None,
             owner: None,
-            tended_this_turn: false,
             neglect_turns: NEGLECT_NONE,
+            upkeep_supplied: NO_UPKEEP_DEMAND,
         }
     }
 
@@ -346,17 +464,44 @@ impl ForagePatch {
     /// wild gather patch the moment `cultivation_progress` decays below `1.0` (feral — see
     /// `advance_cultivation`). The plant mirror of `Herd::is_domesticated`.
     ///
-    /// **`cost > RUNG_UNSTARTED` is load-bearing, not defensive**: a wild patch carries `0` in both
-    /// fields, and `0 >= 0` would read every untouched stand on the map as a tended crop.
+    /// **`bar > RUNG_UNSTARTED` is load-bearing, not defensive**: a wild patch — and one still being
+    /// prepared — carries `0` there, and `0 >= 0` would read every untouched stand on the map as a
+    /// tended crop. It is the *achieved* half of the predicate: an unearned rung has no bar.
+    ///
+    /// **IT READS THE RETENTION BAR, NOT THE COST** ([`Self::cultivation_retain_bar`]). The rung is
+    /// earned at `progress >= cost` and held until `progress` falls below a stated fraction of that
+    /// cost — so the meter may erode for many turns under a patch that is still, correctly, tended.
     pub fn is_cultivated(&self) -> bool {
-        self.cultivation_cost > RUNG_UNSTARTED && self.cultivation_progress >= self.cultivation_cost
+        self.cultivation_retain_bar > RUNG_UNSTARTED
+            && self.cultivation_progress >= self.cultivation_retain_bar
     }
 
     /// A fully-sown **Field** (the plant ladder's rung 3): pays the band that works it a *higher*
     /// managed yield than a tended patch (`field_provisions`) and, like a tended patch, is not
-    /// gather-drawn. Reverts the moment `field_progress` decays below `1.0` (see
+    /// gather-drawn. Reverts once `field_progress` erodes below [`Self::field_retain_bar`] (see
     /// `advance_cultivation`). The plant mirror of `Herd::is_corralled`.
     pub fn is_field(&self) -> bool {
+        self.field_retain_bar > RUNG_UNSTARTED && self.field_progress >= self.field_retain_bar
+    }
+
+    /// **IS THE CULTIVATION METER FULL?** — `progress >= cost`, the *building vs maintaining* state
+    /// test (`docs/plan_standing_upkeep.md` §2.4) and **not** the same question as
+    /// [`Self::is_cultivated`].
+    ///
+    /// The two came apart when a rung stopped being lost on its first bleed. A patch eroded to 99% of
+    /// its cost is **still tended** (it is above its retention bar) and is **building** (its meter is
+    /// not full), so a `Cultivate` crew may repair it and pays the maintenance rate while doing so.
+    /// Fullness is what the build accrual, the "nothing left to build" test and the supplier test all
+    /// ask; the retention bar is what the ~hundred *is this ground tended* call sites ask.
+    ///
+    /// `cost > RUNG_UNSTARTED` is load-bearing for the reason it always was: a wild patch carries `0`
+    /// in both fields and `0 >= 0` would read every untouched stand as finished.
+    pub fn cultivation_meter_full(&self) -> bool {
+        self.cultivation_cost > RUNG_UNSTARTED && self.cultivation_progress >= self.cultivation_cost
+    }
+
+    /// **IS THE FIELD METER FULL?** — the rung-3 twin of [`Self::cultivation_meter_full`].
+    pub fn field_meter_full(&self) -> bool {
         self.field_cost > RUNG_UNSTARTED && self.field_progress >= self.field_cost
     }
 
@@ -385,14 +530,23 @@ impl ForagePatch {
     /// `cost` is the job's size in work units ([`RungDef::build_cost`]), **stamped onto the patch**
     /// while the meter is incomplete so that [`Self::is_cultivated`] needs no config — see
     /// [`Self::cultivation_cost`].
+    ///
+    /// `retain_bar` is the rung's [`RungDef::retention_bar`] at that cost, and is stamped **only on
+    /// the turn the rung completes** ([`Self::cultivation_retain_bar`]) — a build in flight has
+    /// earned nothing to hold, and stamping it early would read as tended ground the moment the meter
+    /// passed three-quarters of the job.
     pub(crate) fn accrue_cultivation(
         &mut self,
         faction: FactionId,
         amount: f32,
         cost: f32,
         effective_cost: f32,
+        retain_bar: f32,
     ) -> bool {
-        if self.is_cultivated() {
+        // **The guard is the METER, not the rung** (`Self::cultivation_meter_full`). A tended patch
+        // eroded below its cost is *building* — that shortfall is a repair, and refusing it here
+        // would make erosion a one-way ratchet with no way back up short of losing the rung.
+        if self.cultivation_meter_full() {
             return false;
         }
         if self.owner.is_none() {
@@ -404,6 +558,11 @@ impl ForagePatch {
         self.cultivation_cost = cost;
         self.cultivation_progress =
             banked_or_paid_off(self.cultivation_progress + amount, cost, effective_cost);
+        // **The rung is EARNED at the full job** — the meter reaching its own cost, exactly where it
+        // always completed. Only *losing* it moved down to the bar this stamps.
+        if cost > RUNG_UNSTARTED && self.cultivation_progress >= cost {
+            self.cultivation_retain_bar = retain_bar;
+        }
         self.is_cultivated()
     }
 
@@ -411,9 +570,15 @@ impl ForagePatch {
     /// `cultivation_progress = 1.0`, which no longer means anything now that a job has a size. It
     /// runs the real accrual against [`FABRICATED_BUILD_COST`], so ownership and the owner-lock
     /// behave exactly as they do in play.
+    ///
+    /// **It is held at its WHOLE cost** — the strictest retention bar there is, and the pre-arc
+    /// reading — because a fixture holds no ladder to ask for a fraction. A test about the *erosion*
+    /// of a completed rung must therefore build the patch through the real accrual with the rung's
+    /// own [`RungDef::retention_bar`]; this helper is for tests that merely need tended ground.
     pub fn complete_cultivation(&mut self, faction: FactionId) -> bool {
         self.accrue_cultivation(
             faction,
+            FABRICATED_BUILD_COST,
             FABRICATED_BUILD_COST,
             FABRICATED_BUILD_COST,
             FABRICATED_BUILD_COST,
@@ -431,8 +596,9 @@ impl ForagePatch {
         amount: f32,
         cost: f32,
         effective_cost: f32,
+        retain_bar: f32,
     ) -> bool {
-        if self.is_field() {
+        if self.field_meter_full() {
             return false;
         }
         if self.owner.is_none() {
@@ -444,13 +610,18 @@ impl ForagePatch {
         self.field_cost = cost;
         self.field_progress =
             banked_or_paid_off(self.field_progress + amount, cost, effective_cost);
+        if cost > RUNG_UNSTARTED && self.field_progress >= cost {
+            self.field_retain_bar = retain_bar;
+        }
         self.is_field()
     }
 
-    /// **A fixture's already-sown Field** — the rung-3 twin of [`Self::complete_cultivation`].
+    /// **A fixture's already-sown Field** — the rung-3 twin of [`Self::complete_cultivation`], held
+    /// at its whole cost for that helper's reason.
     pub fn complete_field(&mut self, faction: FactionId) -> bool {
         self.accrue_field(
             faction,
+            FABRICATED_BUILD_COST,
             FABRICATED_BUILD_COST,
             FABRICATED_BUILD_COST,
             FABRICATED_BUILD_COST,
@@ -463,10 +634,15 @@ impl ForagePatch {
     /// Mirrors `Herd::decay_domestication` (minus the domesticated short-circuit — a tended patch left
     /// untended is meant to go feral).
     ///
-    /// **Returns `true` only when THIS call took the rung back below its cost** — the feral
+    /// **Returns `true` only when THIS call took the rung back below its RETENTION BAR** — the feral
     /// *edge*, the exact mirror of [`Self::accrue_cultivation`]'s "did this call finish it". The
     /// caller announces on that edge and nowhere else: a 25-turn investment's payoff has just been
     /// destroyed, and the feed says so once rather than every turn of the long bleed that follows.
+    ///
+    /// **The bar is where the rung is LOST, and crossing it clears the bar**
+    /// ([`Self::cultivation_retain_bar`] back to [`RUNG_UNSTARTED`]) — which is what makes the loss
+    /// stick: the patch has to be re-earned at the full cost, from wherever its meter landed, and the
+    /// bar cannot be re-crossed on the way back up without completing the rung again.
     ///
     /// **A meter that reaches zero forgets its cost too** ([`Self::cultivation_cost`] back to
     /// [`RUNG_UNSTARTED`]): the ground is unstarted again, and a stranded cost would leave a wild
@@ -474,6 +650,9 @@ impl ForagePatch {
     pub(crate) fn decay_cultivation(&mut self, amount: f32) -> bool {
         let was_cultivated = self.is_cultivated();
         self.cultivation_progress = (self.cultivation_progress - amount).max(RUNG_UNSTARTED);
+        if self.cultivation_progress < self.cultivation_retain_bar {
+            self.cultivation_retain_bar = RUNG_UNSTARTED;
+        }
         if self.cultivation_progress <= RUNG_UNSTARTED {
             self.cultivation_cost = RUNG_UNSTARTED;
         }
@@ -486,11 +665,15 @@ impl ForagePatch {
     /// *gradual* bleed for the same reason cultivation bleeds gradually: **a patch is a place and a
     /// herd is not**, so leftover progress still refers to the same ground.
     ///
-    /// **Returns `true` only when THIS call took the rung back below its cost** — see
-    /// [`Self::decay_cultivation`] for why the announcement rides the edge.
+    /// **Returns `true` only when THIS call took the rung back below its retention bar** — see
+    /// [`Self::decay_cultivation`] for why the announcement rides the edge and why crossing the bar
+    /// clears it.
     pub(crate) fn decay_field(&mut self, amount: f32) -> bool {
         let was_field = self.is_field();
         self.field_progress = (self.field_progress - amount).max(RUNG_UNSTARTED);
+        if self.field_progress < self.field_retain_bar {
+            self.field_retain_bar = RUNG_UNSTARTED;
+        }
         if self.field_progress <= RUNG_UNSTARTED {
             self.field_cost = RUNG_UNSTARTED;
         }
@@ -1582,28 +1765,39 @@ pub fn advance_forage_regrowth(
 
 /// Per-turn cultivation feral/decay pass (`TurnStage::Logistics`, alongside `advance_forage_regrowth`).
 ///
-/// **A tended patch is worked, not passive.** The tended-crop *food* is no longer paid here (the old
-/// even-split across all the owner's bands is retired): it is paid **place-local** in the labor arm
-/// (`advance_labor_allocation`, Population) to the band whose Forage assignment actually tends the
-/// patch, at a higher-than-wild rate — see that system. This pass now only handles **decay/feral**:
-/// - A patch **worked as an improvement this turn** (`tended_this_turn`) is **spared**. That covers
-///   a completed patch/Field being worked *and* one being prepared under `Improvement::Cultivate` /
-///   `Improvement::Sow` — so an investment accrues at the crew's full output (25 turns at the
-///   shipped default) instead of net-of-decay.
-/// - An **untended** cultivated patch **goes feral**: `cultivation_progress` decays by
-///   `decay_per_turn`, dropping below `1.0` so it reverts to a wild depletable gather patch, and keeps
-///   decaying toward 0 over ~`1/decay_per_turn` turns (owner clears at 0 — the investment is fully
-///   lost, and re-preparing must re-accrue from wherever progress landed).
-/// - An **abandoned** part-prepared patch's partial accrual decays the same way (walk away mid-
-///   investment and the cleared ground grows back over).
+/// **SHORTFALL IS THE DECAY** (`docs/plan_standing_upkeep.md` §2.4). The tended-crop *food* is not
+/// paid here (the old even-split across all the owner's bands is retired): it is paid **place-local**
+/// in the labor arm (`advance_labor_allocation`, Population) to the band whose Forage assignment
+/// actually gathers the patch. This pass handles **decay/feral**, and it asks exactly one question —
+/// *did anybody hold this rung this turn?*:
+/// - The at-risk rung's [`RungDef::upkeep_demand`] is what holding it costs, per turn, forever. The
+///   keepers on the `maintain` allocation supply [`ForagePatch::upkeep_supplied`] against it, and
+///   whatever is left over is the shortfall — which **is** the amount the meter loses
+///   ([`RungDef::upkeep_decay`]).
+/// - A **fully unmaintained** cultivated patch bleeds the rung's whole demand: it drops below its own
+///   cost so the patch reverts to a wild depletable gather patch, and keeps decaying toward 0 (owner
+///   clears at 0 — the investment is fully lost, and re-preparing must re-accrue from wherever
+///   progress landed). At the shipped rates that is `0.5`/turn on `plant:tended` and `0.75` on
+///   `plant:field`, which is **exactly** what the retired `decay_fraction_per_turn` bled.
+/// - A **partly** maintained one bleeds the difference, and that is the whole reason the term is a
+///   rate rather than a flag: half the hands means it slides at half rate, where the retired
+///   `tended_this_turn` boolean made a crew of one and a crew of ten equally sufficient.
+/// - An **abandoned** part-prepared patch's partial accrual decays the same way (walk away
+///   mid-investment and the cleared ground grows back over) — a meter with progress on it is a meter
+///   at risk, whether or not it ever completed.
 ///
-/// **A GRACE first.** Nothing decays on the first un-worked turn any more. Each patch carries a
-/// [`ForagePatch::neglect_turns`] counter — reset whenever the patch is worked, incremented whenever
-/// it is not — and the bleed applies only while it *exceeds* the decaying rung's `grace_turns`
-/// ([`RungDef::neglect_grace_turns`]). A crew re-tasked for a couple of turns, a band that walked to
-/// answer a raid, a keeper following a herd: none of those cost the investment now. The animal twin is
-/// the same counter gating the shed in [`crate::fauna::advance_husbandry`] — one trigger, two
-/// penalties.
+/// **WORKING A PATCH NO LONGER SPARES IT, and that is the behavioural headline of this pass.** The
+/// retired flag was set by *any* crew on the tile, so a patch somebody was **gathering** never
+/// decayed and holding an improvement was free as long as you were taking from it. Holding and taking
+/// are separate allocations now (§2.2), so a gathered-but-unmaintained patch does revert — at the
+/// shipped demands, one keeper covers either plant rung.
+///
+/// **A GRACE first.** Nothing decays on the first turn of shortfall. Each patch carries a
+/// [`ForagePatch::neglect_turns`] counter — reset whenever the demand was met, incremented whenever
+/// it was not — and the bleed applies only while it *exceeds* the at-risk rung's own
+/// [`RungDef::upkeep_grace_turns`]. A crew re-tasked for a couple of turns, a band that walked to
+/// answer a raid: none of those cost the investment. The animal twin is the same counter gating the
+/// shed in [`crate::fauna::advance_husbandry`] — one trigger, two penalties.
 ///
 /// **The unwind is NEWEST-FIRST: one meter at a time, the highest rung with progress on it.** The
 /// least-established improvement is the most fragile, so a Field bleeds to nothing *before* the tended
@@ -1624,20 +1818,28 @@ pub fn advance_forage_regrowth(
 /// announced a lost pen (`fauna::announce_pen_lost`). The long bleed to zero that follows says nothing
 /// further: the loss already happened.
 ///
-/// **Stage ordering.** Logistics runs *before* Population, so the `tended_this_turn` flag this pass
-/// reads was written by the labor arm **last** turn (a one-turn lag) — the flag is a deliberate
-/// carry-across-turns signal, not a same-turn one. Each patch's flag is cleared here after it is read,
-/// so the labor arm re-sets it next Population stage. Net effect: a patch worked every turn never
-/// decays; a patch whose band leaves starts counting toward its rung's grace one turn later. The plant
-/// counterpart of `fauna::advance_husbandry`'s decay side.
+/// **Stage ordering.** Logistics runs *before* Population, so the [`ForagePatch::upkeep_supplied`]
+/// this pass reads was written by the labor arm **last** turn (a one-turn lag) — a deliberate
+/// carry-across-turns signal, exactly as the flag it replaced was. Each patch's supply is cleared here
+/// after it is read, so the labor arm re-stamps it next Population stage. Net effect: a patch whose
+/// keepers meet the demand every turn never decays; a patch whose keepers leave starts counting toward
+/// its rung's grace one turn later. The plant counterpart of `fauna::advance_husbandry`'s decay side.
 /// **Which rung's meter is unwinding on this patch right now** — the *newest* improvement that still
 /// has progress banked on it, because the plant web unwinds newest-first (see
 /// [`advance_cultivation`]). `None` for a wild patch: nothing has been built here, so there is nothing
 /// to lose and no grace to spend.
 ///
-/// **One seam, two readers**, and that is the point: `advance_cultivation` bleeds the rung this
-/// returns, and `snapshot_forage_patches` publishes *that* rung's remaining grace. Deriving the
-/// at-risk rung twice is how the wire comes to count down a grace on a rung the sim is not touching.
+/// **It is also the rung whose UPKEEP is due**, and that is one fact rather than two: what a patch
+/// costs to hold is what it costs to hold *the thing it would otherwise lose*
+/// (`docs/plan_standing_upkeep.md` §2.4). So a patch standing on `plant:tended` with a half-built Sow
+/// on it owes the **field** rung's demand and bleeds the **field** meter — the same rung on both
+/// sides, which is what makes the shortfall the sim bleeds and the shortfall the wire shows the same
+/// number.
+///
+/// **One seam, four readers**, and that is the point: `advance_cultivation` bleeds the rung this
+/// returns, the labor arm stamps its shortfall, and `snapshot_forage_patches` publishes *that* rung's
+/// demand and remaining grace. Deriving the at-risk rung twice is how the wire comes to count down a
+/// grace on a rung the sim is not touching.
 pub fn patch_unwinding_rung<'a>(
     patch: &ForagePatch,
     ladder: &'a LadderConfig,
@@ -1651,15 +1853,181 @@ pub fn patch_unwinding_rung<'a>(
     }
 }
 
-/// **Turns of neglect this patch can still absorb before its feral bleed starts** — the wire's
+/// **Turns of SHORTFALL this patch can still absorb before its feral bleed starts** — the wire's
 /// countdown, resolved through [`patch_unwinding_rung`] so it always describes the rung
 /// [`advance_cultivation`] would actually bleed. `None` = a wild patch, with nothing at risk.
+///
+/// It reads the **upkeep's** grace, not the build's: on the plant branch the neglect trigger is an
+/// unmet standing demand rather than an un-worked build, so both plant rungs declare
+/// `build.grace_turns: null` and the live number lives in their `upkeep` block.
 pub fn patch_neglect_grace_remaining(patch: &ForagePatch, ladder: &LadderConfig) -> Option<u32> {
     patch_unwinding_rung(patch, ladder).map(|rung| {
         crate::intensification::neglect_grace_remaining(
             patch.neglect_turns,
-            rung.neglect_grace_turns(),
+            rung.upkeep_grace_turns(),
         )
+    })
+}
+
+/// **WHAT IT COSTS TO HOLD THIS PATCH THIS TURN**, in work units — the at-risk rung's
+/// [`RungDef::upkeep_demand`], or [`NO_UPKEEP_DEMAND`] for a wild patch, which has nothing built on it
+/// to hold. [`UNSCALED_UPKEEP`] because a patch is **one tile**: the plant web has no head count for a
+/// rate to ride, which is the whole reason [`crate::intensification::UpkeepScale::SourceLoad`] exists
+/// for the pen instead.
+///
+/// **THE one definition**, reached by the decay pass, the labor arm's stamp and the snapshot alike —
+/// so the demand the sim bleeds against, the demand the player is billed for and the demand the wire
+/// shows can never be three different rungs' answers.
+pub fn patch_upkeep_demand(patch: &ForagePatch, ladder: &LadderConfig) -> f32 {
+    patch_unwinding_rung(patch, ladder)
+        .map_or(NO_UPKEEP_DEMAND, |rung| rung.upkeep_demand(UNSCALED_UPKEEP))
+}
+
+/// **IS THIS PATCH BUILDING OR MAINTAINING?** — `true` = maintaining
+/// (`docs/plan_standing_upkeep.md` §2.4). A source is **building** below its meter's cost and
+/// **maintaining** at it, and that one state test decides **nothing but who supplies the maintenance
+/// rate**: the build crew below, the band's keeping pool at it. The rate itself is owed either way.
+///
+/// **It is the METER'S FULLNESS, not the rung's achieved state**, and the two are deliberately
+/// orthogonal. A tended patch whose meter has rotted to 99% is *building* — that 1% is a repair, and
+/// its build crew pays the rate — while remaining, correctly, **tended**: whether the rung is still
+/// held is [`ForagePatch::is_cultivated`]'s retention bar, a separate axis. Folding them together is
+/// what would make a rung's *loss* and a rung's *repair* the same edge.
+///
+/// `false` for a wild patch too: there is no meter there, so there is nothing to maintain. Resolved
+/// for whichever meter [`patch_unwinding_rung`] put at risk — never for the rung the patch *stands*
+/// on, or a half-sown Field would be judged by the tended ground beneath it.
+pub fn patch_is_maintaining(patch: &ForagePatch) -> bool {
+    if patch.field_progress > RUNG_UNSTARTED {
+        patch.field_meter_full()
+    } else if patch.cultivation_progress > RUNG_UNSTARTED {
+        patch.cultivation_meter_full()
+    } else {
+        false
+    }
+}
+
+/// **WHAT HAS BEEN SUNK INTO THE METER AT RISK** — that meter's own stamped cost, in work units, and
+/// [`RUNG_UNSTARTED`] for a wild patch.
+///
+/// It is the ordering key of [`crate::intensification::UpkeepFundMode::Priority`]: *most-invested
+/// first*, so a band that cannot cover its whole plant web funds the Field before the garden and
+/// lets the marginal ground rot. **The stored cost rather than the live progress**, because the
+/// question is *what did this cost me*, and a meter eroding under a shortfall would otherwise slide
+/// down the priority order exactly as it started to need the hands.
+pub fn patch_at_risk_cost(patch: &ForagePatch) -> f32 {
+    if patch.field_progress > RUNG_UNSTARTED {
+        patch.field_cost
+    } else if patch.cultivation_progress > RUNG_UNSTARTED {
+        patch.cultivation_cost
+    } else {
+        RUNG_UNSTARTED
+    }
+}
+
+/// **THE WORK THE AT-RISK METER WAS OWED THIS TURN, AND WHO OWED IT** — the one place the split
+/// lives (`docs/plan_standing_upkeep.md` §2.4).
+///
+/// A rung's meter bleeds when *the hands it needs are not on it*, and which hands those are depends
+/// on whether the rung is finished:
+///
+/// | meter | the work it is owed | bleeds when |
+/// |---|---|---|
+/// | **incomplete** — a build in flight, or one walked away from | the **build** crew | no builders |
+/// | **complete** — a rung being held | the **maintain** crew | no keepers |
+///
+/// **You cannot be billed to hold something you have not finished building.** Charging a mid-build
+/// meter the *maintain* demand made a crew pay to keep a tended patch that did not exist yet, which
+/// turned a 25-turn Cultivate into 34 — and it contradicts the term's own definition. Charging only
+/// *completed* rungs would have been the other error: an abandoned half-Cultivate would then cost
+/// nothing to walk away from, and the cleared ground would sit there forever.
+///
+/// **The builders only answer for the meter they are actually filling.** A crew mid-`Cultivate` on a
+/// patch whose half-sown Field is the at-risk meter supplies that Field nothing — they are not sowing
+/// — so it bleeds, exactly as it would with nobody there at all.
+///
+/// It is **continuous on both arms**: half the builders on an incomplete meter is half a shortfall,
+/// precisely as half the keepers is on a complete one.
+pub fn patch_upkeep_supply(
+    patch: &ForagePatch,
+    improvement: Option<Improvement>,
+    build_work: f32,
+    maintain_work: f32,
+) -> f32 {
+    // **The meter this crew's hands answer for is the NEWEST of two readings**: the one with
+    // progress on it, and the one their verb is filling. The second is what keeps the stamp on the
+    // right meter across the one-turn carry — a crew starting a `Sow` on a finished tended patch is
+    // answering for the **Field** from its very first turn, even though the Field has no progress on
+    // it until that turn's accrual lands. Reading only the first put their work against the tended
+    // rung, and the next Logistics pass — which sees a Field that now *does* have progress — judged
+    // that Field against a supply nobody had credited to it, so a Sow bled 0.75 off its own meter on
+    // its second turn.
+    let by_progress = if patch.field_progress > RUNG_UNSTARTED {
+        Some(RungKey::PlantField)
+    } else if patch.cultivation_progress > RUNG_UNSTARTED {
+        Some(RungKey::PlantTended)
+    } else {
+        None
+    };
+    // **Exhaustive on purpose — a catch-all here fails SILENTLY.** A new plant verb (rung 4's Farm)
+    // falling through to `None` would leave its meter answered for by progress alone, which is
+    // precisely the reading that bled a Sow off its own meter on turn two. `Improvement::valid_for_*`
+    // is exhaustive for the same reason: the retired `!matches!` complements it replaced defaulted a
+    // new verb to legal on both webs. Name every variant so the compiler asks the question.
+    let by_verb = improvement.and_then(|verb| match verb {
+        Improvement::Sow => Some(RungKey::PlantField),
+        Improvement::Cultivate => Some(RungKey::PlantTended),
+        Improvement::Tame | Improvement::Corral => None,
+    });
+    let answering_for = match (by_progress, by_verb) {
+        (Some(RungKey::PlantField), _) | (_, Some(RungKey::PlantField)) => RungKey::PlantField,
+        (Some(key), _) => key,
+        (None, Some(key)) => key,
+        // Nothing built here and nothing being built, so nothing is owed and nothing can be short.
+        (None, None) => return NO_UPKEEP_DEMAND,
+    };
+    // **The state test decides only who supplies** (`patch_is_maintaining`): the meter's *fullness*,
+    // never the rung's achieved state — a tended patch eroded to 99% is being repaired by builders.
+    let maintaining = match answering_for {
+        RungKey::PlantField => patch.field_meter_full(),
+        _ => patch.cultivation_meter_full(),
+    };
+    if maintaining {
+        maintain_work
+    } else if by_verb == Some(answering_for) {
+        // The builders answer only for the meter they are actually filling: a crew mid-`Cultivate`
+        // beside a half-sown Field supplies that Field nothing, so it bleeds exactly as it would
+        // with nobody there.
+        build_work
+    } else {
+        NO_UPKEEP_DEMAND
+    }
+}
+
+/// **WHAT WENT UNMET THIS TURN**, in work units — [`patch_upkeep_demand`] less what the meter's own
+/// crew supplied, floored at zero. Exactly what [`RungDef::upkeep_decay`] bleeds off the at-risk meter once
+/// the shortfall has outlasted that rung's grace.
+///
+/// **It is DERIVED, never stored, and that is what keeps an unworked patch honest.** The labor arm
+/// only visits sources some band is assigned to, so a stored shortfall would read a tidy `0` on
+/// exactly the patches that are bleeding — a wire row saying *"demand 0.75, supplied 0, shortfall 0"*
+/// while the sim reverts the ground underneath it.
+pub fn patch_upkeep_shortfall(patch: &ForagePatch, ladder: &LadderConfig) -> f32 {
+    upkeep_shortfall(patch_upkeep_demand(patch, ladder), patch.upkeep_supplied)
+}
+
+/// **The MAINTAIN activity's own `workers_needed`** — whole keepers to meet
+/// [`patch_upkeep_demand`], `0` on a wild patch. The plant twin of the herd row's, and the readout
+/// that makes the standing cost legible: *"this wants 1, you have 0"*.
+///
+/// **IT IS PUBLISHED WHILE THE METER IS STILL BEING BUILT TOO**, and there it is the **minimum
+/// viable build crew**: the maintenance rate is owed either way, so a build crew at or below this
+/// count banks nothing (`intensification::net_build_supply`) and the meter holds or rots. One
+/// arithmetic, one sentence — *hands to meet the demand* — whoever is supplying it. It used to read
+/// `0` mid-build, on the since-retired premise that an unfinished meter owed no keeping.
+pub fn patch_upkeep_workers_needed(patch: &ForagePatch, ladder: &LadderConfig) -> u32 {
+    patch_unwinding_rung(patch, ladder).map_or(NO_CREW_ON_THIS_ACTIVITY, |rung| {
+        rung.upkeep_crew_needed(UNSCALED_UPKEEP)
     })
 }
 
@@ -1671,23 +2039,46 @@ pub fn advance_cultivation(
 ) {
     let ladder = ladder_config.get();
     for patch in registry.patches.values_mut() {
-        // Spare any patch a band worked as an improvement this turn (working a completed
-        // Field/patch, or preparing one under Cultivate/Sow) — and forgive whatever neglect it had
-        // accumulated, so the grace is about *consecutive* absence rather than a lifetime budget.
-        if patch.tended_this_turn {
+        // **Newest first, through the one seam the wire reads too.** Exactly one meter is ever at
+        // risk — the Field while it has anything left, then the tended ground under it — and that
+        // rung owns *both* halves of the question, because the grace sits inside the same `upkeep`
+        // block as the demand it forgives. Every number here is the ladder's
+        // (`crate::intensification`), so a rung can be retuned without this system knowing what it
+        // says.
+        let at_risk = patch_unwinding_rung(patch, &ladder);
+        // **The shortfall is DERIVED here rather than read off the patch**, and that is what makes
+        // an abandoned patch decay at all: the labor arm stamps a shortfall only on patches some
+        // band is working, so a patch nobody works would otherwise report a tidy `0` unmet — the
+        // exact state that must bleed. What the crew supplied is the one thing stored, because it is
+        // the one thing a crew authors.
+        let demand = patch_upkeep_demand(patch, &ladder);
+        let shortfall = upkeep_shortfall(demand, patch.upkeep_supplied);
+        // **HOW SHORT, as a fraction of what was asked** — what the decay actually rides
+        // (`crate::intensification::upkeep_shortfall_fraction`). The absolute shortfall still gates
+        // the counter, because *any* unmet work is an unmet turn.
+        //
+        // **This covers a BUILD in flight as well as a held rung**, and it is the same subtraction
+        // for both: the maintenance rate is owed either way, and only the supplier moved. A build
+        // crew below the rate leaves a shortfall and the meter goes backwards; one exactly at it
+        // holds; one above it banks the surplus (`RungDef::build_accrual`).
+        let shortfall_fraction =
+            crate::intensification::upkeep_shortfall_fraction(demand, patch.upkeep_supplied);
+        if shortfall <= NO_UPKEEP_DEMAND {
+            // The demand was met (or there was none to meet). Forgive whatever neglect had
+            // accumulated, so the grace is about *consecutive* shortfall rather than a lifetime
+            // budget.
             patch.neglect_turns = NEGLECT_NONE;
         } else {
             patch.neglect_turns = patch.neglect_turns.saturating_add(1);
-            let neglect = u32::from(patch.neglect_turns);
-            // **Newest first, through the one seam the wire reads too.** Exactly one meter unwinds
-            // per turn — the Field while it has anything left, then the tended ground under it — and
-            // the rung whose meter is moving owns *both* dials, because the grace sits beside the
-            // `decay_per_turn` it gates. Every number here is the ladder's
-            // (`crate::intensification`), so a rung can be retuned without this system knowing what
-            // it says.
-            if let Some(rung) = patch_unwinding_rung(patch, &ladder) {
-                if neglect > rung.neglect_grace_turns() {
-                    let decay = rung.build_decay(RUNG_COST_UNSCALED);
+            if let Some(rung) = at_risk {
+                // **The decay is PROPORTIONAL to the shortfall, at the rung's own rate, past the
+                // grace** — three dials answering three questions (how much work holding this wants,
+                // how fast it rots when you stop, how long before it starts) where the shortfall
+                // used to *be* the decay and the first two were welded together. `upkeep_decay` owns
+                // both the rate and the grace comparison, so this system never restates the `>` that
+                // decides whether the penalty is biting.
+                let decay = rung.upkeep_decay(shortfall_fraction, patch.neglect_turns);
+                if decay > NO_UPKEEP_DECAY {
                     let verb = rung.verb_improvement();
                     let lost = if verb == Some(Improvement::Sow) {
                         patch.decay_field(decay)
@@ -1700,13 +2091,20 @@ pub fn advance_cultivation(
                 }
             }
         }
-        // Clear the transient per-turn flag after reading it (re-set next Population stage if worked).
-        patch.tended_this_turn = false;
-        // **And the turns estimate with it**, on the same one-turn cycle: a build the player
-        // abandoned must stop publishing a finish date, and the labor arm re-stamps it this turn if
-        // a crew is still on it (Logistics runs before Population).
+        // **Losing ground needs no flag**: a meter below its cost derives its own rung's verb
+        // ([`patch_build_verb`]), so the labor arm sees a build in flight next Population stage
+        // without anything being stamped here.
+        //
+        // **The turns estimate**, on the one-turn cycle: a build the player abandoned must stop
+        // publishing a finish date, and the labor arm re-stamps it this turn if a crew is still on it
+        // (Logistics runs before Population).
         patch.build_turns_remaining = None;
         patch.build_work_from_gear = NO_BUILD_GEAR;
+        // **And this turn's supply**, on the same cycle and for the same reason: it describes the
+        // keepers that held the patch, so a patch whose keepers have gone must stop reporting what
+        // they paid. Clearing it is also what re-arms this pass — next turn's shortfall is the whole
+        // demand again unless somebody restates it.
+        patch.upkeep_supplied = NO_UPKEEP_DEMAND;
     }
 }
 
@@ -1805,15 +2203,17 @@ pub(crate) fn patch_rung_key(patch: &ForagePatch) -> RungKey {
 }
 
 /// The forage counterpart of `fauna::hunt_take`: resolve the **escapement ceiling**, cap it by the
-/// gathering crew's throughput (`workers × per_worker_biomass_capacity × seasonal × build_dip`),
-/// clamp to the patch's remaining biomass, **subtract it from the patch**, and convert the take to
-/// provisions (× the caller's productivity `output_multiplier`). Returns the provisions gathered.
+/// gathering crew's throughput (`workers × per_worker_biomass_capacity × seasonal`), clamp to the
+/// patch's remaining biomass, and convert the take to provisions (× the caller's productivity
+/// `output_multiplier`). Returns the provisions gathered.
 ///
-/// **The two webs' take paths are the same expression** (`docs/plan_harvest_floor.md` §1 + §3.1):
-/// `min(crew throughput × build_dip, max(0, B − floor·K))`. The **floor** is a fraction of `K` the
-/// assignment carries (`0.5` holds the patch on its most productive biomass, `0` strips it); the
-/// **dip** is whatever the crew is building, and it multiplies the *crew* — see
-/// [`forage_escapement_ceiling`] for why it left the ceiling.
+/// **The two webs' take paths are the same expression** (`docs/plan_harvest_floor.md` §1):
+/// `min(crew throughput, max(0, B − floor·K))`. The **floor** is a fraction of `K` the assignment
+/// carries (`0.5` holds the patch on its most productive biomass, `0` strips it).
+///
+/// **`workers` is the TAKE crew and there is no build term in the expression at all**
+/// (`docs/plan_standing_upkeep.md` §2.2). A build on this patch is its own allocation with its own
+/// hands, so what the gatherers carry does not depend on what the builders beside them are doing.
 ///
 /// The take resolves the patch's **conversion rate** off its own basket as well as its ecology, so
 /// it carries the tile's composition and the flora table alongside the forage config — one extra
@@ -1824,10 +2224,8 @@ pub(crate) fn forage_take(
     tile_composition: &[FloraShare],
     workers: u32,
     floor: f32,
-    improvement: Option<Improvement>,
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
-    ladder: &LadderConfig,
     output_multiplier: f32,
     // **This crew's resolved BASKET tier**, in biomass/worker before the season — see
     // `forage_per_worker_biomass`.
@@ -1840,12 +2238,14 @@ pub(crate) fn forage_take(
     // patch's rung: what a tended patch buys is a faster refill, which shows up next turn as more
     // stock standing above the floor. One call still serves rungs 1 and 2 alike.
     let take_ceiling = forage_escapement_ceiling(floor, patch.biomass, patch.carrying_capacity);
-    // **The build dip rides the CREW** (`docs/plan_harvest_floor.md` §3.1): a crew clearing ground
-    // carries a fraction of what a gathering crew carries, whatever floor it holds. Multiplying the
-    // ceiling instead is what let the harshest draw build for free.
-    let worker_cap = workers as f32
-        * forage_per_worker_biomass(per_worker_biomass_capacity, seasonal)
-        * ladder.build_dip(improvement);
+    // **`workers` IS THE TAKE CREW, and it is the only crew in this expression**
+    // (`docs/plan_standing_upkeep.md` §2.2). A build and a keeping on this same patch are their own
+    // allocations with their own hands; nothing they do scales what these gatherers carry. The
+    // retired `yield_fraction_while_building` multiplied this term to say *"the crew is clearing,
+    // not gathering"* — which is a statement the player now makes by putting the hands where they
+    // want them, rather than one the sim derives from a fraction.
+    let worker_cap =
+        workers as f32 * forage_per_worker_biomass(per_worker_biomass_capacity, seasonal);
     let take = worker_cap
         .min(take_ceiling)
         .max(0.0)
@@ -1879,15 +2279,12 @@ pub(crate) fn forage_take(
 /// depending on it again. The rung-2 payoff is unchanged in substance and clearer in mechanism: a
 /// tended patch regrows faster, so *next* turn it has more stock standing above the floor.
 ///
-/// **THE BUILD DIP IS NO LONGER HERE — it multiplies the CREW, not the ceiling**
-/// (`docs/plan_harvest_floor.md` §3.1). `yield_fraction_while_building` used to scale this ceiling,
-/// which made the harshest draw build for free: a deeper floor offers a bigger stock, so a fraction
-/// of a bigger stock still filled the crew's baskets and every stance completed a 25-turn Cultivate
-/// on schedule (§0.3). On throughput it is **floor-independent by construction** — there is no floor
-/// you can pick that dodges it, because it no longer touches the floor's term — and it is legible:
-/// at 25% carry it takes four times the people to clear the same standing surplus. The factor is
-/// applied by `forage_take`'s worker cap and by `fauna::forecast_expected_take`, both through the one
-/// [`LadderConfig::build_dip`] seam, so the two webs' dips cannot be applied differently.
+/// **NO BUILD TERM REACHES THIS CEILING, and none reaches the crew term beside it either**
+/// (`docs/plan_standing_upkeep.md` §2.2). A rung's `yield_fraction_while_building` used to scale this
+/// ceiling and then, briefly, the crew; it is retired on both webs. The build has its own crew now,
+/// so *"these hands are clearing, not gathering"* is a fact about where the player put them rather
+/// than a fraction the sim multiplies — and the price is the same statement at every staffing, where
+/// the dip's depended on whether the patch's standing stock happened to be binding.
 pub(crate) fn forage_escapement_ceiling(floor: f32, biomass: f32, carrying_capacity: f32) -> f32 {
     escapement_ceiling(floor, biomass, carrying_capacity)
 }
@@ -2254,10 +2651,9 @@ pub fn tended_take_fodder(
 // at rungs 1, 2 and 3 alike, so the hole this closed stays closed without the scalar.
 
 // **RETIRED: `field_yield_fraction_while_building`** — the `plant:field` rung's dip, looked up here
-// because two plant sites needed it and only one of them went through the shared ceiling helper. It has
-// no callers left: since issue #442 *every* dip on both webs is read through the one
-// `LadderConfig::build_dip(improvement)` seam, which is keyed on the verb rather than hard-coding a
-// `RungKey`, so a per-rung accessor could only ever be a second way to ask the same question.
+// because two plant sites needed it and only one of them went through the shared ceiling helper. The
+// dip itself is gone from both webs (`docs/plan_standing_upkeep.md` §2.2): a build is staffed in its
+// own right, so there is no fraction left for any seam to hand out.
 
 /// `SourceYieldForecast::body_mass_yield` for a plant source (slice 8) — `0` = *do not quantise*.
 ///
@@ -2315,7 +2711,6 @@ pub(crate) fn forage_forecast(
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
     equipped_gather_rate: f32,
-    ladder: &LadderConfig,
     // **The crew's per-gatherer throughput for THIS turn, season already folded in**
     // (`forage_per_worker_biomass(resolved basket tier, seasonal)`). Taken pre-folded rather than as
     // the tier + the season, so this signature stays inside clippy's argument budget and there is
@@ -2379,12 +2774,6 @@ pub(crate) fn forage_forecast(
         // A wild or tended patch IS drawn down — it is a wild stand either way, which is what makes
         // rungs 1 and 2 floor-live and rung 3 (a Field) not.
         managed_production: None,
-        // **The plant web's two build dips, as the FACTORS they are** (issue #442 §2.2). They used
-        // to be three more ceiling *rows* — `ceiling_prepare` (Cultivate), `ceiling_sow` and a
-        // permanently-zero `ceiling_tame` — each the rung's fraction of the **Sustain** ceiling,
-        // which was only expressible while a build verb *was* the policy. A patch is a plant source,
-        // so it prices `Cultivate` and `Sow`; `Tame`/`Corral` are not askable of it by type.
-        build_dips: BuildDips::for_branch(ladder, RungBranch::Plant),
         // **Cultivate's "then Y"** — what this patch will pay once tended, on the tended curve. On a
         // patch that is *already* tended this is simply its own `ceiling_sustain`, which is the truth:
         // the rung is built, and the number is what it pays. (Sow's "then Y" is `field_provisions`,
@@ -2470,13 +2859,11 @@ pub fn project_realized_forage(
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
     equipped_gather_rate: f32,
-    ladder: &LadderConfig,
     per_worker_biomass_capacity: f32,
     seasonal: f32,
     output_multiplier: f32,
     workers: u32,
     floor: f32,
-    improvement: Option<Improvement>,
     horizon: u32,
 ) -> f32 {
     if horizon == 0 {
@@ -2514,10 +2901,8 @@ pub fn project_realized_forage(
                 tile_composition,
                 workers,
                 floor,
-                improvement,
                 forage,
                 flora,
-                ladder,
                 output_multiplier,
                 per_worker_biomass_capacity,
                 seasonal,
@@ -2560,13 +2945,11 @@ pub fn project_arrivals_forage(
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
     equipped_gather_rate: f32,
-    ladder: &LadderConfig,
     per_worker_biomass_capacity: f32,
     seasonal: f32,
     output_multiplier: f32,
     workers: u32,
     floor: f32,
-    improvement: Option<Improvement>,
     horizon: u32,
 ) -> Vec<f32> {
     // `LaborConfig::validate` pins `horizon > 0`; a zero horizon yields an empty schedule, which the
@@ -2599,10 +2982,8 @@ pub fn project_arrivals_forage(
                 tile_composition,
                 workers,
                 floor,
-                improvement,
                 forage,
                 flora,
-                ladder,
                 output_multiplier,
                 per_worker_biomass_capacity,
                 seasonal,
@@ -2627,13 +3008,11 @@ pub fn forage_source_yield_preview(
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
     equipped_gather_rate: f32,
-    ladder: &LadderConfig,
     per_worker_biomass_capacity: f32,
     seasonal: f32,
     output_multiplier: f32,
     workers: u32,
     floor: f32,
-    improvement: Option<Improvement>,
     realized_horizon: u32,
     arrivals_horizon: u32,
     // `combat_config.forecast_range_sigmas`. **The plant web has no stochastic stage** — no
@@ -2647,7 +3026,6 @@ pub fn forage_source_yield_preview(
         forage,
         flora,
         equipped_gather_rate,
-        ladder,
         forage_per_worker_biomass(per_worker_biomass_capacity, seasonal),
         output_multiplier,
     );
@@ -2671,13 +3049,11 @@ pub fn forage_source_yield_preview(
         forage,
         flora,
         equipped_gather_rate,
-        ladder,
         per_worker_biomass_capacity,
         seasonal,
         output_multiplier,
         workers,
         floor,
-        improvement,
         realized_horizon,
     );
     // The discrete twin, from the same patch state: what lands on each of the next
@@ -2688,13 +3064,11 @@ pub fn forage_source_yield_preview(
         forage,
         flora,
         equipped_gather_rate,
-        ladder,
         per_worker_biomass_capacity,
         seasonal,
         output_multiplier,
         workers,
         floor,
-        improvement,
         arrivals_horizon,
     );
     // **`managed` is rung 3 ONLY** (slice 7). It marks the sources whose harvest cannot overdraw —
@@ -2704,16 +3078,8 @@ pub fn forage_source_yield_preview(
         &forecast,
         sustainable,
         patch.is_field(),
-        // **The plant web's standing crew is the BUILD's** — a patch has no herders, so what a crew is
-        // owed regardless of the take is whatever rung it is preparing (`LadderConfig::build_crew`,
-        // `NO_BUILD_CREW` for a pure gather). This is the *same* seam the resolved Forage arm floors
-        // on, which is the point: the seed used to pass `0` here, so a freshly-composed `Cultivate`
-        // inverted the dipped take alone and reported "only 1 of 2 working" against the compose
-        // sheet's own "max 2 workers useful here" — until the next turn resolved and overwrote it.
-        ladder.build_crew(improvement),
         workers,
         floor,
-        improvement,
         realized,
         arrivals,
         range_sigmas,
@@ -2741,7 +3107,7 @@ mod tests {
     }
 
     use super::*;
-    use crate::components::NO_IMPROVEMENT_UNDERWAY;
+    use crate::intensification::RUNG_COST_UNSCALED;
     use crate::labor_config::LaborConfig;
     use sim_runtime::TerrainType;
 
@@ -2850,10 +3216,8 @@ mod tests {
             NO_BASKET,
             20,
             0.5,
-            NO_IMPROVEMENT_UNDERWAY,
             &forage,
             &FloraConfig::builtin(),
-            &LadderConfig::builtin(),
             1.0,
             equipped_gather_rate(),
             1.0,
@@ -2890,10 +3254,8 @@ mod tests {
                 NO_BASKET,
                 20,
                 0.5,
-                NO_IMPROVEMENT_UNDERWAY,
                 &forage,
                 &FloraConfig::builtin(),
-                &LadderConfig::builtin(),
                 1.0,
                 equipped_gather_rate(),
                 1.0,
@@ -2945,10 +3307,8 @@ mod tests {
                 NO_BASKET,
                 3,
                 0.0,
-                NO_IMPROVEMENT_UNDERWAY,
                 &forage,
                 &FloraConfig::builtin(),
-                &LadderConfig::builtin(),
                 1.0,
                 equipped_gather_rate(),
                 1.0,
@@ -2988,10 +3348,8 @@ mod tests {
                 NO_BASKET,
                 workers,
                 policy,
-                NO_IMPROVEMENT_UNDERWAY,
                 &forage,
                 &FloraConfig::builtin(),
-                &LadderConfig::builtin(),
                 1.0,
                 equipped_gather_rate(),
                 1.0,
@@ -3118,10 +3476,8 @@ mod tests {
                 NO_BASKET,
                 50,
                 0.0,
-                NO_IMPROVEMENT_UNDERWAY,
                 &forage,
                 &FloraConfig::builtin(),
-                &LadderConfig::builtin(),
                 1.0,
                 equipped_gather_rate(),
                 1.0,
@@ -3215,16 +3571,34 @@ mod tests {
     fn cultivation_accrual_is_owner_locked_and_clamped() {
         let mut patch = ForagePatch::new(UVec2::new(1, 1), 120.0);
         // First accrual claims ownership for the acting faction, and stamps the job's cost.
-        patch.accrue_cultivation(FactionId(0), 15.0, CULTIVATE_COST, CULTIVATE_COST);
+        patch.accrue_cultivation(
+            FactionId(0),
+            15.0,
+            CULTIVATE_COST,
+            CULTIVATE_COST,
+            CULTIVATE_COST,
+        );
         assert_eq!(patch.owner, Some(FactionId(0)));
         assert!((patch.cultivation_progress - 15.0).abs() < 1e-6);
         assert_eq!(patch.cultivation_cost, CULTIVATE_COST);
         // A different faction cannot accrue on an already-owned patch.
-        patch.accrue_cultivation(FactionId(1), 25.0, CULTIVATE_COST, CULTIVATE_COST);
+        patch.accrue_cultivation(
+            FactionId(1),
+            25.0,
+            CULTIVATE_COST,
+            CULTIVATE_COST,
+            CULTIVATE_COST,
+        );
         assert_eq!(patch.owner, Some(FactionId(0)));
         assert!((patch.cultivation_progress - 15.0).abs() < 1e-6);
         // Owner accrues; progress clamps at the job's cost and latches cultivated.
-        patch.accrue_cultivation(FactionId(0), 45.0, CULTIVATE_COST, CULTIVATE_COST);
+        patch.accrue_cultivation(
+            FactionId(0),
+            45.0,
+            CULTIVATE_COST,
+            CULTIVATE_COST,
+            CULTIVATE_COST,
+        );
         assert!(patch.is_cultivated());
         assert_eq!(patch.cultivation_progress, CULTIVATE_COST);
         // A cultivated patch is a no-op for further accrual — including for its stamped cost, so a
@@ -3232,6 +3606,7 @@ mod tests {
         patch.accrue_cultivation(
             FactionId(0),
             25.0,
+            CULTIVATE_COST * 2.0,
             CULTIVATE_COST * 2.0,
             CULTIVATE_COST * 2.0,
         );
@@ -3255,7 +3630,13 @@ mod tests {
     #[test]
     fn cultivation_decay_clears_owner_at_zero_and_takes_cultivated_feral() {
         let mut patch = ForagePatch::new(UVec2::new(2, 2), 120.0);
-        patch.accrue_cultivation(FactionId(0), 2.5, CULTIVATE_COST, CULTIVATE_COST);
+        patch.accrue_cultivation(
+            FactionId(0),
+            2.5,
+            CULTIVATE_COST,
+            CULTIVATE_COST,
+            CULTIVATE_COST,
+        );
         patch.decay_cultivation(1.0);
         assert!((patch.cultivation_progress - 1.5).abs() < 1e-6);
         assert_eq!(patch.owner, Some(FactionId(0)), "owner held above zero");
@@ -3267,7 +3648,13 @@ mod tests {
         assert_eq!(patch.owner, None);
         // Rung 1a: a cultivated patch now DOES decay when decayed (an untended tended patch goes
         // feral) — it reverts to wild the moment progress drops below its own cost.
-        patch.accrue_cultivation(FactionId(1), CULTIVATE_COST, CULTIVATE_COST, CULTIVATE_COST);
+        patch.accrue_cultivation(
+            FactionId(1),
+            CULTIVATE_COST,
+            CULTIVATE_COST,
+            CULTIVATE_COST,
+            CULTIVATE_COST,
+        );
         assert!(patch.is_cultivated());
         patch.decay_cultivation(CULTIVATE_COST * 0.5);
         assert!(
@@ -3308,61 +3695,322 @@ mod tests {
         assert_eq!(patch.owner, None);
     }
 
-    /// Rung 1a feral mechanic (`advance_cultivation` decay side, tested at the patch level): a
-    /// cultivated patch tended this turn is spared; an untended one goes feral — it reverts to wild
-    /// after the first untended turn and fully decays to 0 (owner cleared) over ~`1/decay_per_turn`
-    /// turns. Replicates the system's `if !(is_cultivated && tended_this_turn) { decay }; clear`.
+    /// **THE PLANT ROT RATES ARE THE PACING-NEUTRAL INVERSION OF THE RETIRED
+    /// `decay_fraction_per_turn`, ASSERTED AS ARITHMETIC** (`docs/plan_standing_upkeep.md` §2.4).
+    ///
+    /// Both plant rungs used to bleed `0.01 × their own work_cost` on every turn nobody worked the
+    /// patch, and for one slice that product was also their **demand**, because shortfall *was* the
+    /// decay. The two questions have separate dials now — `work_per_turn` is what holding costs,
+    /// `meter_decay.per_turn` is how fast it rots — and this pins the half that must not have moved:
+    /// a **wholly unmaintained** improvement still loses precisely what it always lost, so the
+    /// demands could be retuned to whole numbers with the decay axis provably untouched.
+    ///
+    /// Stated against the retired fraction rather than against the two literals, so a future retune
+    /// of either `work_cost` reads as a deliberate change of the bleed rather than as a silent one.
+    ///
+    /// The **spread** between the two rungs is deliberately *not* asserted: 0.75 > 0.5 is an artefact
+    /// of inverting `0.01` against a bigger job, not a claim that a Field rots faster.
     #[test]
-    fn tended_patch_spared_untended_goes_feral() {
+    fn the_plant_rot_rates_are_exactly_what_the_retired_decay_fraction_bled() {
+        /// The fraction of its own `work_cost` each plant rung bled per un-worked turn, before
+        /// shortfall became the decay. Restated here because the dial it named is gone: this test is
+        /// the only remaining record of the number the rot rates were derived from.
+        const RETIRED_DECAY_FRACTION_PER_TURN: f32 = 0.01;
+        /// The turn a wholly unmaintained rung is on once every grace on the ladder is spent —
+        /// larger than any shipped `grace_turns`, so the decay is certainly biting.
+        const WELL_PAST_ANY_GRACE: u16 = 32;
+        let ladder = LadderConfig::builtin();
+        for key in [RungKey::PlantTended, RungKey::PlantField] {
+            let rung = ladder.rung(key);
+            let cost = rung
+                .build_cost(RUNG_COST_UNSCALED)
+                .expect("both plant rungs build");
+            // **The whole demand is what a patch with no keepers goes short by**, which is the step
+            // that turns a staffing into a rot rate.
+            let demand = rung.upkeep_demand(UNSCALED_UPKEEP);
+            let fraction = crate::intensification::upkeep_shortfall_fraction(
+                demand,
+                crate::intensification::NO_UPKEEP_DEMAND,
+            );
+            assert_eq!(
+                fraction,
+                crate::intensification::WHOLLY_UNSUPPLIED,
+                "{key:?}: nobody keeping it means the whole demand is unmet"
+            );
+            let bled = rung.upkeep_decay(fraction, WELL_PAST_ANY_GRACE);
+            assert!(
+                (bled - cost * RETIRED_DECAY_FRACTION_PER_TURN).abs() < 1e-6,
+                "{key:?}: a wholly unmaintained improvement must bleed what it always bled — \
+                 {bled} against {RETIRED_DECAY_FRACTION_PER_TURN} × cost {cost}"
+            );
+            // **And it is PROPORTIONAL**: half the demand met is half the rot, which is what makes
+            // the demand retunable without touching the rot at all.
+            let half_bled = rung.upkeep_decay(
+                crate::intensification::upkeep_shortfall_fraction(demand, demand / 2.0),
+                WELL_PAST_ANY_GRACE,
+            );
+            assert!(
+                (half_bled - bled / 2.0).abs() < 1e-6,
+                "{key:?}: half the hands means half the rot — {half_bled} against {bled}"
+            );
+        }
+    }
+
+    /// **WHICH CREW A METER IS OWED FLIPS ON COMPLETION, and `workers_needed` flips with it**
+    /// (`docs/plan_standing_upkeep.md` §2.4). One rung, one demand, two suppliers:
+    ///
+    /// | meter | owed | asks for keepers? |
+    /// |---|---|---|
+    /// | half-built | the **builders** | no — `0` |
+    /// | finished | the **keepers** | yes — `1` |
+    ///
+    /// The half-built row is the correction this seam exists for: resolving a mid-build meter's
+    /// demand as a *maintain* demand billed a crew to hold ground that did not exist yet, which turned
+    /// the reference 25-turn Cultivate into 34.
+    #[test]
+    fn an_unfinished_rung_is_owed_its_builders_and_a_finished_one_its_keepers() {
+        const A_BUILD_CREWS_TURN: f32 = 2.0;
+        const A_KEEPERS_TURN: f32 = 1.0;
         let forage = test_forage_config();
-        // The feral rate is the `plant:tended` rung's build decay — the same value
-        // `advance_cultivation` bleeds.
+        let ladder = LadderConfig::builtin();
+        let cost = ladder
+            .rung(RungKey::PlantTended)
+            .build_cost(RUNG_COST_UNSCALED)
+            .expect("the tended rung builds");
+        let demand = ladder
+            .rung(RungKey::PlantTended)
+            .upkeep_demand(UNSCALED_UPKEEP);
+
+        let mut patch = ForagePatch::new(UVec2::new(1, 1), forage.capacity_for(TEST_BIOME));
+        patch.cultivation_cost = cost;
+
+        // --- Half-built: owed the CULTIVATE crew, and asks for no keepers. ---------------------
+        patch.cultivation_progress = cost / 2.0;
+        assert!(!patch_is_maintaining(&patch));
+        // **THE SAME COUNT ON BOTH SIDES OF COMPLETION** — the maintenance rate is owed while the
+        // meter is being raised too, and only *who supplies it* moves. Mid-build the number reads as
+        // the **minimum viable build crew**: at or below it the meter holds or rots rather than
+        // advancing (`intensification::net_build_supply`).
+        assert_eq!(
+            patch_upkeep_workers_needed(&patch, &ladder),
+            demand.ceil() as u32,
+            "hands to meet the rate, whoever is supplying it"
+        );
+        assert_eq!(
+            patch_upkeep_supply(
+                &patch,
+                Some(Improvement::Cultivate),
+                A_BUILD_CREWS_TURN,
+                A_KEEPERS_TURN
+            ),
+            A_BUILD_CREWS_TURN,
+            "the builders answer for the meter they are filling"
+        );
+        assert_eq!(
+            patch_upkeep_supply(&patch, None, A_BUILD_CREWS_TURN, A_KEEPERS_TURN),
+            NO_UPKEEP_DEMAND,
+            "…and a crew that has stopped building supplies it nothing, keepers or no keepers — \
+             which is what makes an ABANDONED part-build decay"
+        );
+        // **A crew starting a Sow answers for the FIELD from its first turn**, even before that
+        // meter has any progress on it — the verb says which meter their hands are on, and reading
+        // only the progress would credit their work to the rung underneath and then let the next
+        // turn's pass bleed the Field they had just started.
+        assert_eq!(
+            patch_upkeep_supply(
+                &patch,
+                Some(Improvement::Sow),
+                A_BUILD_CREWS_TURN,
+                A_KEEPERS_TURN
+            ),
+            A_BUILD_CREWS_TURN,
+            "the verb names the meter, so a Sow crew is answering for the Field it is starting"
+        );
+
+        // --- Finished: owed the KEEPERS, and asks for the hands that hold it. -----------------
+        // **The rung is EARNED at the full cost and HELD down to its retention bar**, so a fixture
+        // that fills the meter by hand has to stamp the bar the completion would have
+        // (`RungDef::retention_bar`) — the achieved state and the meter's fullness are two facts.
+        patch.cultivation_progress = cost;
+        patch.cultivation_retain_bar = ladder.rung(RungKey::PlantTended).retention_bar(cost);
+        assert!(patch_is_maintaining(&patch));
+        assert_eq!(
+            patch_upkeep_workers_needed(&patch, &ladder),
+            ladder
+                .rung(RungKey::PlantTended)
+                .upkeep_crew_needed(UNSCALED_UPKEEP),
+            "a held rung asks for the hands that hold it"
+        );
+        assert_eq!(
+            patch_upkeep_supply(
+                &patch,
+                Some(Improvement::Cultivate),
+                A_BUILD_CREWS_TURN,
+                A_KEEPERS_TURN
+            ),
+            A_KEEPERS_TURN,
+            "a finished rung is held by keepers, whatever verb is still hanging off the assignment"
+        );
+
+        // --- The WRONG verb is no verb, as far as a meter is concerned. -----------------------
+        // A half-sown Field with a crew doing something else entirely: they are not filling it, so
+        // they supply it nothing and it bleeds exactly as it would with nobody there. This is the
+        // case that keeps `patch_upkeep_supply` from reading as "any builder holds any meter".
+        let mut half_sown = ForagePatch::new(UVec2::new(3, 3), forage.capacity_for(TEST_BIOME));
+        let field_cost = ladder
+            .rung(RungKey::PlantField)
+            .build_cost(RUNG_COST_UNSCALED)
+            .expect("the field rung builds");
+        half_sown.cultivation_cost = cost;
+        half_sown.cultivation_progress = cost;
+        half_sown.field_cost = field_cost;
+        half_sown.field_progress = field_cost / 2.0;
+        assert_eq!(
+            patch_upkeep_supply(
+                &half_sown,
+                Some(Improvement::Cultivate),
+                A_BUILD_CREWS_TURN,
+                A_KEEPERS_TURN
+            ),
+            NO_UPKEEP_DEMAND,
+            "a crew tending the ground under a half-sown Field is not sowing it"
+        );
+
+        // --- A wild patch: nothing built, nothing owed, nobody wanted. -------------------------
+        let wild = ForagePatch::new(UVec2::new(2, 2), forage.capacity_for(TEST_BIOME));
+        assert_eq!(patch_upkeep_demand(&wild, &ladder), NO_UPKEEP_DEMAND);
+        assert_eq!(
+            patch_upkeep_workers_needed(&wild, &ladder),
+            NO_CREW_ON_THIS_ACTIVITY
+        );
+        assert!(
+            demand > NO_UPKEEP_DEMAND,
+            "fixture: the rung does cost something to hold"
+        );
+    }
+
+    /// **PARTIAL SUPPLY IS CONTINUOUS ON THE BUILD ARM TOO** — half the builders on an unfinished
+    /// meter is half a shortfall, exactly as half the keepers is on a finished one. The rule moved
+    /// *which crew* answers for a meter; it did not make either arm a step function.
+    ///
+    /// Asserted at the seam rather than through the system because a build's *accrual* also scales
+    /// with its crew, so a system-level comparison would confound the two — this isolates the term
+    /// under test.
+    #[test]
+    fn a_half_staffed_build_is_half_short_on_the_meter_it_is_raising() {
+        let forage = test_forage_config();
+        let ladder = LadderConfig::builtin();
+        let rung = ladder.rung(RungKey::PlantTended);
+        let cost = rung
+            .build_cost(RUNG_COST_UNSCALED)
+            .expect("the tended rung builds");
+        // **THE SAME RATE A HELD RUNG OWES** — the maintenance rate never lapses; below the meter's
+        // cost it is simply the **build crew** that supplies it
+        // (`docs/plan_standing_upkeep.md` §2.4). There is no second demand, which is exactly why the
+        // retired `meter_raising_demand` had to go.
+        let demand = rung.upkeep_demand(UNSCALED_UPKEEP);
+
+        let mut patch = ForagePatch::new(UVec2::new(1, 1), forage.capacity_for(TEST_BIOME));
+        patch.cultivation_cost = cost;
+        patch.cultivation_progress = cost / 2.0;
+
+        let short_at = |build_work: f32| -> f32 {
+            let supplied = patch_upkeep_supply(
+                &patch,
+                Some(Improvement::Cultivate),
+                build_work,
+                // Keepers are irrelevant here by construction — the meter is not built.
+                demand,
+            );
+            crate::intensification::upkeep_shortfall(patch_upkeep_demand(&patch, &ladder), supplied)
+        };
+
+        assert_eq!(
+            short_at(NO_UPKEEP_DEMAND),
+            demand,
+            "no builders, whole demand short"
+        );
+        assert!(
+            (short_at(demand / 2.0) - demand / 2.0).abs() < 1e-6,
+            "half the builders, half short"
+        );
+        assert_eq!(
+            short_at(demand),
+            NO_UPKEEP_DEMAND,
+            "enough builders, nothing short"
+        );
+    }
+
+    /// Rung 1a feral mechanic at the patch level: a patch whose keepers meet the demand never
+    /// decays; one with nobody on it goes feral — reverting to wild on the first bleeding turn and
+    /// fully lapsing to `0` (owner cleared) over ~`cost/demand` turns. Replicates the system's
+    /// `decay(upkeep_shortfall(demand, supplied))`, which is the whole of the new pass.
+    #[test]
+    fn a_kept_patch_is_spared_and_an_unkept_one_goes_feral() {
+        let forage = test_forage_config();
         let ladder = LadderConfig::builtin();
         let tended_rung = ladder.rung(RungKey::PlantTended);
-        let decay = tended_rung.build_decay(RUNG_COST_UNSCALED);
+        let demand = tended_rung.upkeep_demand(UNSCALED_UPKEEP);
         let cost = tended_rung
             .build_cost(RUNG_COST_UNSCALED)
             .expect("the tended rung builds");
-        assert!(decay > 0.0);
+        assert!(demand > 0.0, "the tended rung costs something to hold");
 
-        // Tended every turn → never decays, stays cultivated.
-        let mut tended = ForagePatch::new(UVec2::new(1, 1), forage.capacity_for(TEST_BIOME));
-        tended.accrue_cultivation(FactionId(0), cost, cost, cost);
+        // Kept every turn → the shortfall is zero, so nothing bleeds however long you wait.
+        let mut kept = ForagePatch::new(UVec2::new(1, 1), forage.capacity_for(TEST_BIOME));
+        kept.accrue_cultivation(FactionId(0), cost, cost, cost, cost);
         for _ in 0..200 {
-            tended.tended_this_turn = true; // labor arm marks it worked
-            if !(tended.is_cultivated() && tended.tended_this_turn) {
-                tended.decay_cultivation(decay);
-            }
-            tended.tended_this_turn = false;
+            kept.decay_cultivation(crate::intensification::upkeep_shortfall(demand, demand));
         }
-        assert!(tended.is_cultivated(), "a tended patch never decays");
-        assert_eq!(tended.owner, Some(FactionId(0)));
+        assert!(kept.is_cultivated(), "a kept patch never decays");
+        assert_eq!(kept.owner, Some(FactionId(0)));
 
-        // Untended → feral. Reverts to wild after the first untended turn, then fully decays to 0.
+        // Nobody keeping it → the whole demand is unmet, and that is the bleed.
+        let unkept_bleed = crate::intensification::upkeep_shortfall(demand, NO_UPKEEP_DEMAND);
         let mut feral = ForagePatch::new(UVec2::new(2, 2), forage.capacity_for(TEST_BIOME));
-        feral.accrue_cultivation(FactionId(0), cost, cost, cost);
-        // Turn 1 untended: decays below 1.0 → no longer cultivated.
-        if !(feral.is_cultivated() && feral.tended_this_turn) {
-            feral.decay_cultivation(decay);
-        }
-        feral.tended_this_turn = false;
+        feral.accrue_cultivation(FactionId(0), cost, cost, cost, cost);
+        feral.decay_cultivation(unkept_bleed);
         assert!(
             !feral.is_cultivated(),
-            "one untended turn reverts a farm to wild"
+            "one bleeding turn reverts a farm to wild"
         );
-        // Over ~cost/decay total turns it fully decays and clears ownership.
-        let turns_to_zero = (cost / decay).ceil() as usize + 2;
+        // Over ~cost/demand further turns it fully decays and clears ownership.
+        let turns_to_zero = (cost / unkept_bleed).ceil() as usize + 2;
         for _ in 0..turns_to_zero {
-            if !(feral.is_cultivated() && feral.tended_this_turn) {
-                feral.decay_cultivation(decay);
-            }
-            feral.tended_this_turn = false;
+            feral.decay_cultivation(unkept_bleed);
         }
         assert_eq!(
             feral.cultivation_progress, RUNG_UNSTARTED,
             "feral patch fully reverts"
         );
         assert_eq!(feral.owner, None, "ownership lapses once fully feral");
+    }
+
+    /// **HALF THE HANDS IS HALF THE BLEED** — the property the retired binary flag could not express
+    /// at all, and the reason the upkeep is a *rate* (`docs/plan_standing_upkeep.md` §2.4). A crew of
+    /// one on a rung wanting two used to count as fully worked, so under-crewing cost exactly nothing
+    /// until it reached zero.
+    #[test]
+    fn a_half_staffed_keeping_bleeds_at_half_rate() {
+        let ladder = LadderConfig::builtin();
+        let rung = ladder.rung(RungKey::PlantTended);
+        let demand = rung.upkeep_demand(UNSCALED_UPKEEP);
+        let half = demand / 2.0;
+        assert!(
+            (crate::intensification::upkeep_shortfall(demand, half) - half).abs() < 1e-6,
+            "half supplied is half short"
+        );
+        assert!(
+            crate::intensification::upkeep_shortfall(demand, half)
+                < crate::intensification::upkeep_shortfall(demand, NO_UPKEEP_DEMAND),
+            "and strictly less than nobody at all — under-crewing has to cost something"
+        );
+        // Over-supplying is not a credit: the meter is not repaired by extra keepers.
+        assert_eq!(
+            crate::intensification::upkeep_shortfall(demand, demand * 2.0),
+            NO_UPKEEP_DEMAND,
+            "twice the hands is still zero short, never a negative bleed"
+        );
     }
 
     #[test]
