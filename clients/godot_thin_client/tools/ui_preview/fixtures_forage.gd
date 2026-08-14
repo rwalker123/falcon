@@ -391,20 +391,24 @@ static func build_crew_row(root: Node) -> Control:
 			return found
 	return null
 
-## **THE MINIMUM VIABLE BUILD CREW THE BUILDERS ROW STATES**, read off the note's own meta rather than
-## out of its text: the number is the claim and the wording is not (`SourceForecast.min_build_crew`).
-## `BUILD_CREW_FLOOR_ABSENT` where the row states no floor, which is a real answer — a rung whose rate
+## **THE WORK-PER-TURN THRESHOLD THE BUILDERS ROW STATES**, read off the note's own meta rather than
+## out of its text: the number is the claim and the wording is not (`SourceForecast.min_build_work`).
+## `BUILD_WORK_FLOOR_ABSENT` where the row states no floor, which is a real answer — a rung whose rate
 ## the wire prices at nothing has no threshold to clear.
-const BUILD_CREW_FLOOR_ABSENT := -1
+##
+## **IT READS WORK, NOT WORKERS** (issue #545). The meta carried `upkeepWorkersNeeded`, a head count
+## that reads `0` on a source with no progress — so a harness asserting it was asserting the
+## pre-commit case as an ABSENCE, which is exactly the state the note exists for.
+const BUILD_WORK_FLOOR_ABSENT := -1.0
 
-static func build_crew_floor(root: Node) -> int:
+static func build_work_floor(root: Node) -> float:
 	var row := build_crew_row(root)
 	if row == null:
-		return BUILD_CREW_FLOOR_ABSENT
+		return BUILD_WORK_FLOOR_ABSENT
 	for child in row.get_children():
-		if child is Control and (child as Control).has_meta(HudWidgets.BUILD_CREW_FLOOR_META):
-			return int((child as Control).get_meta(HudWidgets.BUILD_CREW_FLOOR_META))
-	return BUILD_CREW_FLOOR_ABSENT
+		if child is Control and (child as Control).has_meta(HudWidgets.BUILD_WORK_FLOOR_META):
+			return float((child as Control).get_meta(HudWidgets.BUILD_WORK_FLOOR_META))
+	return BUILD_WORK_FLOOR_ABSENT
 
 ## Is that threshold note in the WARNING ink — i.e. is this crew on the never-finishes side of it? The
 ## colour is the other half of the claim, and it is APPLIED rather than inherited, so it is read as the
@@ -415,7 +419,7 @@ static func build_crew_floor_warns(root: Node) -> bool:
 	if row == null:
 		return false
 	for child in row.get_children():
-		if child is Label and (child as Label).has_meta(HudWidgets.BUILD_CREW_FLOOR_META):
+		if child is Label and (child as Label).has_meta(HudWidgets.BUILD_WORK_FLOOR_META):
 			return (child as Label).get_theme_color("font_color") == HudStyle.WARN
 	return false
 

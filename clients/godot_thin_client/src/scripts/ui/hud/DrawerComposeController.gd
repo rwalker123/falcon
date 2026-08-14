@@ -1146,8 +1146,8 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         target.add_child(HudWidgets.build_improvement_control(running_verb,
             HudWidgets.IMPROVEMENT_STATE_RUNNING, running_face,
             _improvement_running_tooltip(running_verb), on_toggle, notes, true, running_warns))
-        _mount_build_crew_row(target, source, prefix, build_crew, build_idle, on_build_crew,
-            running_warns)
+        _mount_build_crew_row(target, source, prefix, running_verb, build_crew, build_idle,
+            on_build_crew, running_warns)
         if extra_rows.is_valid():
             extra_rows.call(running_verb, target)
         return
@@ -1250,7 +1250,7 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         HudWidgets.IMPROVEMENT_STATE_OFFERED, offer_face,
         String(HudComposeVocab.IMPROVEMENT_HINTS.get(rung, "")), on_toggle, [], false,
         DetailFormat.build_turns_never(offer_turns)))
-    _mount_build_crew_row(target, source, prefix, build_crew, build_idle, on_build_crew,
+    _mount_build_crew_row(target, source, prefix, rung, build_crew, build_idle, on_build_crew,
         DetailFormat.build_turns_never(offer_turns))
     # The crop picker rides an OFFER only: "which crop do I commit this patch to?" is part of
     # committing, so it has no meaning where committing is refused — the gated branch above returns
@@ -1267,24 +1267,29 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
 ## band cannot staff (it does not trim — a quietly-smaller build crew is a commitment the player
 ## believes they made), so the `+` must not offer one.
 ##
-## **AND IT STATES THE MINIMUM VIABLE CREW BESIDE THE STEPPER** (`docs/plan_standing_upkeep.md` §2.4).
+## **AND IT STATES THE THRESHOLD BESIDE THE STEPPER, IN WORK** (`docs/plan_standing_upkeep.md` §2.4).
 ## The maintenance rate is owed while the meter is going up too and the builders are what supply it,
-## so a crew at or below it holds the meter where it is or takes it backwards — a threshold, not a
-## slow build. `SourceForecast.min_build_crew` is the sim's own published count
-## (`upkeepWorkersNeeded`, which now ships on both sides of completion), never a figure derived by
-## dividing the shortfall. Stated HERE rather than only as the face's ∞ because this is the control
-## that answers it: *"this crew is below the threshold"* has to be readable while dragging, not
-## discovered as a missing turn estimate afterwards.
+## so a crew whose output does not beat it holds the meter where it is or takes it backwards — a
+## threshold, not a slow build. `SourceForecast.min_build_work` is the QUOTED rung's own published
+## rate, the same term this sheet's closed form subtracts, so the note and the estimate beside it can
+## never sit on opposite sides of one number. Stated HERE rather than only as the face's ∞ because
+## this is the control that answers it: *"this crew is below the threshold"* has to be readable while
+## dragging, not discovered as a missing turn estimate afterwards.
 ##
-## A rung the wire prices no rate on (`NO_UPKEEP_CREW`) states no floor — there is no threshold to
-## clear, and a `0 hold it` reads as a defect.
+## **IT IS A RATE OF WORK, NOT A HEAD COUNT.** The model is denominated in work units throughout, and
+## the count it replaced was `upkeepWorkersNeeded` — which reads `0` on a source with no progress,
+## i.e. precisely the pre-commit case this row exists for, so the note fell silent exactly where it
+## was needed. How many hands the rate takes is what the stepper next to it is for.
+##
+## A rung the wire prices no rate on (`NO_UPKEEP_DEMAND`) states no floor — there is no threshold to
+## clear, and a `0 work a turn holds it` reads as a defect.
 ##
 ## `never` is the face's own `BUILD_TURNS_NEVER` verdict, threaded in rather than re-derived, so the
 ## amber here and the `∞` up there are one answer rendered twice.
 ##
 ## Renders nothing without a live `on_build_crew` — the DONE and GATED states have no build to staff.
 func _mount_build_crew_row(target: VBoxContainer, source: Dictionary, prefix: String,
-        crew: int, idle: int, on_build_crew: Callable, never: bool) -> void:
+        improvement: String, crew: int, idle: int, on_build_crew: Callable, never: bool) -> void:
     if not on_build_crew.is_valid():
         return
     var row := HBoxContainer.new()
@@ -1295,11 +1300,11 @@ func _mount_build_crew_row(target: VBoxContainer, source: Dictionary, prefix: St
     stepper.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     HudWidgets.add_stepper_controls(stepper, crew, crew < idle, on_build_crew)
     row.add_child(stepper)
-    var floor_crew := SourceForecast.min_build_crew(source, prefix)
-    if floor_crew > SourceForecast.NO_UPKEEP_CREW:
-        var note := HudWidgets.alloc_hint_label(
-            HudComposeVocab.CREW_BUILD_FLOOR_FORMAT % floor_crew)
-        note.set_meta(HudWidgets.BUILD_CREW_FLOOR_META, floor_crew)
+    var floor_work := SourceForecast.min_build_work(source, prefix, improvement)
+    if floor_work >= SourceForecast.UPKEEP_WORK_MIN:
+        var note := HudWidgets.alloc_hint_label(HudComposeVocab.CREW_BUILD_FLOOR_FORMAT
+            % DetailFormat.format_work_units(floor_work))
+        note.set_meta(HudWidgets.BUILD_WORK_FLOOR_META, floor_work)
         if never:
             note.add_theme_color_override("font_color", HudStyle.WARN)
         row.add_child(note)

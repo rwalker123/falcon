@@ -110,29 +110,64 @@ const BUILD_METER_PERCENT_FORMAT := "%s %d%%"
 # rule `_format_danger_scalar` already follows for the same reason.
 const BUILD_WORK_DECIMALS := 1
 
-# `≈11 turns at this crew` — the readout that makes "turns are an OUTPUT" legible: add hands and
-# watch it fall. **The trailing clause is load-bearing.** Without it the number reads as a property
-# of the rung, which is the fixed-turn model this arc exists to replace.
+# ---- ONE ROW PER LIVE METER, AND THE TURNS LEAD IT -----------------------------------------------
+# The card used to spend FOUR lines on one rung — the meter in work units, an indented turn estimate,
+# a `Keepers` head count and a `Keeping` sentence — and reported from play, the last two were
+# unreadable: both existed to say *there is nothing to do here* and both said the same number twice.
+# What a glance needs off a rung is **how long, or how much is at stake**, so the row is now one line:
 #
-# **Both forms are SPELLED FROM THE TAIL** rather than each carrying its own copy of it, so a needle
-# for "any turn estimate at all" is one string that cannot go stale — which is what the `-1` rule
-# needs asserting: a row reading `≈-1 turns` is exactly the failure, and a needle built from a
-# specific count passes straight over it (measured — the first cut of that assertion did).
-const BUILD_TURNS_ROW_TAIL := "at this crew"
+#     Husbandry   ≈308 turns (0%)      building — the turns LEAD, the meter is context
+#     Husbandry   🐄 Domesticated 100% built
+#     Cultivation 🌾 Tended 92% ⚠      built and its keeping is short
+#
+# **THE WORK ABSOLUTES CAME OFF THE CARD.** `0.3 / 100 work` is what you read while COMPOSING a build,
+# beside the stepper that moves it, so it stays on the compose sheet (`BUILD_METER_WORK_FORMAT`, still
+# the sheet's) and leaves the two surfaces a player scans every turn.
+#
+# **THE PERCENTAGE STAYS ON A BUILT RUNG, and that is not decoration**: a completed meter sits exactly
+# at its own cost, so `92%` is a rung that has already begun eroding — precisely what a glance should
+# catch, and the only number on the card that shows it.
 
-const BUILD_TURNS_ROW_FORMAT := "≈%d turns " + BUILD_TURNS_ROW_TAIL
+# The building row: the sim's own estimate, then the meter in parentheses. `≈` because it IS an
+# estimate — it moves with the crew, the floor and the kit — which is the one hedge the never-finishes
+# and built forms below deliberately do not wear.
+const RUNG_TURNS_FORMAT := "≈%d turns (%d%%)"
 
-# …and its singular, so a build one turn out does not read `≈1 turns at this crew`.
-const BUILD_TURNS_ROW_ONE := "≈1 turn " + BUILD_TURNS_ROW_TAIL
+# …and its singular, so a build one turn out does not read `≈1 turns (99%)`.
+const RUNG_TURNS_ONE_FORMAT := "≈1 turn (%d%%)"
 
-# **AND THE THIRD ANSWER — `∞ turns at this crew`** (`SourceForecast.BUILD_TURNS_NEVER`, the wire's
-# own `-2`). It keeps the SAME tail, and that is the whole reason this row can say it at all: the tail
-# names the CREW, so a card with no stepper on it still points at the thing the player has to change.
-# It wears no `≈` — every other reading here is an estimate that could come in early or late, and a
-# meter that does not advance has no distribution to hedge. The glyph is
-# `DetailFormat.BUILD_TURNS_NEVER_GLYPH`, shared with the larder runway and inked amber here because
-# on a build it is the opposite news.
-const BUILD_TURNS_ROW_NEVER := "%s turns " + BUILD_TURNS_ROW_TAIL
+# **A BUILT RUNG: its badge, then how full its meter still is.** `100%` is the healthy reading and
+# anything less is erosion already under way.
+const RUNG_BUILT_FORMAT := "%s %d%%"
+
+# ---- THE FOUR HAZARDS, AND WHY EVERY ONE OF THEM CARRIES A MARK ----------------------------------
+# With the `Keeping` row gone, **the ABSENCE of a hazard is the only thing that says this rung is
+# fine** — so a failure state that renders bare reads as success, which is exactly the defect the
+# unstaffed build was (a declared Cultivate with nobody on it rendered a calm `0%`). Every state below
+# therefore leads with `RUNG_HAZARD_GLYPH`, and the tint registry keys the amber off that ONE mark
+# rather than off four independent word guesses.
+
+# The mark itself. Shared with `DetailFormat.BUILD_UNSTARTED_VALUE`, `PEN_STARVING_LABEL` and the
+# overgrazing sentence, all of which already led with it.
+const RUNG_HAZARD_GLYPH := "⚠"
+
+# **HAZARD: staffed at or below the rung's rate** (`SourceForecast.BUILD_TURNS_NEVER`, the wire's own
+# `-2`). The `∞` is `DetailFormat.BUILD_TURNS_NEVER_GLYPH`, shared with the larder runway and meaning
+# the opposite there, which is why the ink is what separates them. It wears no `≈`: a meter that does
+# not advance has no distribution to hedge.
+const RUNG_NEVER_FORMAT := "%s %s turns (%d%%)"
+
+# **HAZARD: work banked, and nobody building it.** The plant web's meter is actively rotting back at
+# the rung's decay rate; the animal web's is merely stuck. One word for both, because the ROW's own
+# name already says which rung is losing it.
+const RUNG_REVERTING_FORMAT := "%s Reverting %d%%"
+
+# **HAZARD: builders are on it and the meter is not moving anyway** — the sim's `-1` for a rung whose
+# knowledge, site or species gate does not hold, or whose crew is standing over an empty escapement
+# room. It is NOT one of the three states a crew size explains, so it gets its own word rather than
+# borrowing *Reverting* (which would name the wrong remedy) or rendering as a bare percentage (which
+# is the silence this whole family exists to remove).
+const RUNG_STALLED_FORMAT := "%s Stalled %d%%"
 
 # `your gear: −8.5 work off this job` — what the crew's tools took off the COST, in the units the
 # cost is quoted in. It is the only way a player can tell a tool is worth carrying to a garden and

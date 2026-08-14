@@ -2871,10 +2871,13 @@ label, `maintain_requested` on `DrawerComposeController` and `HudLayer`, `Main.f
 in `band-city-panel.md` → "THE KEEPING BLOCK". `upkeep_mode_requested` is the one signal the roles
 cannot express, and `Main.format_upkeep_mode` is its builder.
 
-**The per-source READOUT stayed and answers a better question.** `upkeepDemand` /
-`upkeepSupplied` / `upkeepShortfall` still ship per patch and per herd, so the land card and the herd
-drawer keep their `Keeping:` and `At risk:` rows — see "WHAT IT COSTS TO HOLD IT" below for the
-wording the pooled reading forced.
+**The per-source READOUT stayed, and then HALF of it went too** (issue #545). `upkeepDemand` /
+`upkeepSupplied` / `upkeepShortfall` still ship per patch and per herd, but the land card and the herd
+drawer render the `At risk:` row ALONE: the standing `Keeping:` bill was reported from play as
+unreadable, stating a cost every turn on a source where nothing was wrong. **A rung's keeping only
+becomes a decision when it is SHORT**, which is exactly when `At risk:` renders. The full autopsy,
+and the four-hazard rule that makes the resulting silence safe, are in `selection-card.md` →
+"ONE ROW PER LIVE METER".
 
 ### THE SHEET IS ONE TRANSACTION OVER BOTH CREWS, AND IT IS CLAMPED AS ONE
 
@@ -3001,7 +3004,7 @@ gatherers carry**, and what it costs is the hands standing on it. Deleted, not d
 
 ```text
 gear(b)  = min(b, buildWorkSaturatingCrew) × buildWorkPerWorker
-net(b)   = b × buildWorkPerWorkerTurn − upkeepDemand
+net(b)   = b × buildWorkPerWorkerTurn − <the QUOTED rung's own upkeep demand>
 turns(b) = ceil((workCost − workDone − gear(b)) / net(b))
 ```
 
@@ -3012,10 +3015,42 @@ contribution being a rate per worker.
 **`work_cost / crew` IS NOT THE BUILD PACE, AND THE `net` TERM IS WHAT CHANGED THAT**
 (`docs/plan_standing_upkeep.md` §2.4). The maintenance rate is owed every turn while the meter is
 being raised, and the BUILD crew is what supplies it there, so only the surplus is progress — the
-sim's `intensification::net_build_supply`, transcribed. The demand is the source's own published
-`upkeepDemand`, never `demand − supplied` and never a rate this client composes.
-`core_sim/tests/build_turns_closed_form.rs` pins the two forms equal on the exported snapshot, and its
-own transcription carries the term.
+sim's `intensification::net_build_supply`, transcribed. It is never `demand − supplied` and never a
+rate this client composes. `core_sim/tests/build_turns_closed_form.rs` pins the two forms equal on the
+exported snapshot, and its own transcription carries the term.
+
+#### THE RATE BELONGS TO THE RUNG BEING QUOTED, AND `upkeepDemand` IS NOT IT (issue #545)
+
+**Reported from play: a wild patch, `Cultivate` declared, ONE builder — the sheet promised ≈50 turns,
+and four turns later the meter still read `0 / 50 (0%)` and always would.** The rung's rate is 2, so
+one hand nets −1. **The sim was right the whole time** and published `-2` (never finishes) for it; the
+client was the wrong half, and the two surfaces disagreed about one build.
+
+The term it subtracted was the source's published `upkeepDemand`, which answers *what is this source
+BILLED right now* — and that is `0` on a source with no progress, because nothing is at risk yet. So
+the rate **vanished from the form at exactly the moment the sheet is quoting a rung nobody has
+started**, which is every rung a player is about to commit to, and the arithmetic collapsed to
+`50 ÷ 1`.
+
+**Four wire fields fix it** — `cultivationUpkeepDemand` / `fieldUpkeepDemand` on `ForagePatchState`,
+`tameUpkeepDemand` / `corralUpkeepDemand` on `HerdTelemetryState`. Each is the LADDER's rate for that
+rung, published unconditionally, **exactly as `workCost` already is**, and read through
+`SourceForecast.FORECAST_BUILD_UPKEEP_DEMAND_KEYS` / `build_upkeep_demand`.
+
+- **The rung is picked with the SAME key table the cost is**, so price, meter and rate can never name
+  three different rungs. That is the whole safety argument for a second per-rung table rather than a
+  scalar.
+- **`upkeepDemand` keeps its own meaning and its own readers.** It resolves through the AT-RISK rung —
+  the newest meter carrying progress — which is the right answer for *what is this source losing* and
+  the wrong one for *what would this rung cost to hold*. Both ship; nothing may substitute one for the
+  other.
+- **The plant pair is deliberately NOT in `MapView.FOW_DISCOVERED_HIDDEN_KEYS`.** Both plant rungs
+  declare `scaled_by: flat`, so the figure is the ladder's and reads identically on every patch in the
+  game — there is no live patch state in it to leak — and keeping it out of the redaction is what stops
+  the closed form silently losing its rate term. (The animal pair scales with the herd's own keeper
+  load and rides the herd dict, which travels whole.)
+- **`cargo xtask decode-guard` goes RED on these keys and is re-recorded** (`--write-golden`); the
+  diff must be those four keys and nothing else.
 
 **A CREW AT OR BELOW THE RATE NEVER FINISHES, and that is an ANSWER rather than an absence.** It is
 its own sentinel, `SourceForecast.BUILD_TURNS_NEVER`, kept apart from `BUILD_TURNS_NO_ESTIMATE`
@@ -3049,21 +3084,26 @@ what it always meant: the top of the dial buys that source nothing further.
 `demand − supplied`** — it IS what the meter decays by, and a client that subtracted would be a second
 authority over the number the whole readout exists to make legible.
 
-`DetailFormat.upkeep_lines` renders it identically on **both webs** — the land card's rung rows and
-the herd drawer both append it — as `Keeping: the pool covers 1 of 2 work — worth 2 keepers`, plus an
-`At risk:` row whenever the keeping is underpaid.
+`DetailFormat.at_risk_lines` renders it identically on **both webs** — the land card and the herd
+drawer both append it — as an `At risk:` row, and ONLY when the keeping is underpaid.
 
-**THE ROW'S QUESTION CHANGED WITH THE POOL, AND SO DID ITS WORDING** (`docs/plan_standing_upkeep.md`
-§2.5). `upkeepSupplied` used to be the keepers standing on this source and the row read as *"did you
-staff this one"*; it is this source's SHARE of the band's keeping pool now, so the row answers *"where
-is my shortfall landing"* — and it says `the pool covers` outright, because a row still worded as a
-staffing verdict sends the player looking for a stepper that no longer exists. The lever it points at
-is the band's Agriculture / Husbandry card. `upkeepWorkersNeeded` is likewise a SIZE and not an order:
-what this source's keeping is worth in hands.
+**THE STANDING BILL IS RETIRED** (issue #545). `Keeping: the pool covers 1 of 2 work — worth 2
+keepers` rendered on every source that owed anything, which is every held rung in the game, and
+reported from play it could not be read: a rung's keeping becomes a decision only when it is SHORT.
+The wording it had was right for the question it answered — `upkeepSupplied` is this source's SHARE of
+the band's pool, not the keepers standing on it, so it said `the pool covers` rather than reading as a
+staffing verdict that would send the player looking for a stepper that no longer exists — and the
+question stopped being worth a row. `selection-card.md` → "RETIRED — `Keepers:` and `Keeping:`" is the
+full autopsy, including the four-hazard rule that makes the resulting silence safe.
+
+**`upkeepWorkersNeeded` IS STILL PUBLISHED AND STILL A SIZE RATHER THAN AN ORDER** — what this
+source's keeping is worth in hands — and `keepers_wanted` still reads it, for the one line that
+survives the retirement: `HERDERS_SHED_FORMAT`, which quotes the count precisely because a head count
+only matters when it is short.
 
 **`keepers_wanted` / `is_under_kept` sit beside it over the same reader**, and the animal web's two
-under-kept surfaces both call it: the herd drawer's `Keepers:` row and the work board's under-herded
-⚠. **`is_under_kept` IS A SHORTFALL TEST NOW, and it had to become one.** It compared a herd's
+under-kept surfaces both call it: the herd drawer's Husbandry row MARK and the work board's
+under-herded ⚠. **`is_under_kept` IS A SHORTFALL TEST NOW, and it had to become one.** It compared a herd's
 `maintain` crew against `upkeepWorkersNeeded` — the right question while keepers were staffed per
 source, and unanswerable once maintenance left the tile: that count is `0` on every managed herd in
 the game, so the ⚠ would have been permanently up. What the sim decides per source is its share, and
@@ -3089,7 +3129,8 @@ so the two still share one note slot without either displacing the other. **The 
 what each fires on, and no headcount substitutes**: it covers both ways a build starves, nobody on it
 and a crew under the rate, and the wire publishes no builder requirement, so a count derived by
 dividing the shortfall would be the client inventing a number the sim never stated. What the sheet CAN
-state is the published `min_build_crew`, which is the threshold rather than a diagnosis. The note's
+state is the published `min_build_work` — the quoted rung's own RATE, in work — which is the threshold
+rather than a diagnosis. The note's
 wording moved with the trigger: it reads *this rung is sliding back* rather than *nobody is building
 this*, an under-staffed crew being the commoner half of it now.
 
@@ -3100,23 +3141,20 @@ it as a bug, so the warning stands wherever the improvement does rather than onl
 
 **A METER STILL BEING RAISED IS OWED BUILDERS, AND ITS DEMAND IS NOT ZERO.** The sim bills an unbuilt
 rung what it would LOSE — the plant web's rot rate, the animal web's whole keeping, the animals being
-there whether or not the fence is up — so a patch mid-Cultivate publishes a non-zero `upkeepDemand`.
-**No pool covers it**: the sim leaves an unbuilt rung out of the band's keeping pool entirely and
-credits its BUILD crew instead (`patch_upkeep_supply` / `herd_upkeep_supply`). So the row suppresses
-the pooled figures and says `still being built — its own crew pays 2 work a turn, worth 2 builders`;
-printing `the pool covers x of y` there would send the player to raise a role that will never pay
-this bill.
+there whether or not the fence is up — so a patch mid-Cultivate publishes a non-zero `upkeepDemand`,
+and **no pool covers it**: the sim leaves an unbuilt rung out of the band's keeping pool entirely and
+credits its BUILD crew instead (`patch_upkeep_supply` / `herd_upkeep_supply`).
 
-**THE FORK IS THE METER, AND IT USED TO BE A ZERO KEEPER COUNT.** `upkeepWorkersNeeded` was suppressed
-mid-build, so `crew == 0` read as *"this must be a build"*. It publishes on **both sides of
-completion** now — mid-build it is the MINIMUM VIABLE BUILD CREW, the same `ceil(demand /
-PER_WORKER_OUTPUT)` wearing a different noun — so that inference is dead, and every reader of it has
-to say which question it is answering (`SourceForecast.keepers_wanted` / `min_build_crew`). The row
-asks `SourceForecast.build_is_in_flight` instead, which is the state test directly rather than an
-inference off a field's meaning. **Its NOUN forks with it**: mid-build the count is `builders`, not
-`keepers`, because the hands are a different crew doing a different job — which is the row's whole
-point. Frames: `herd_keeping_mid_build` (with its unpaid twin asserted beside it, PNG-less, since only
-the shortfall separates the two sentences) and `improvement_rung_slipped`'s land card.
+**THAT FORK USED TO BE A ROW AND IS NOW THE RUNG ROW'S OWN `∞`** (issue #545). The retired sentence
+said *"still being built — its own crew pays 2 work a turn"* when the bill was met and *"its builders
+are not covering that — this rung is sliding back"* when it was not — a fact about the BUILD, stated
+one row away from the meter the player would act on. `BUILD_TURNS_NEVER` is the same fact where it
+belongs, and the `At risk:` row beneath it prices what the shortfall costs. `build_is_in_flight` is
+still the state test both remaining warnings gate on, and it is still asked structurally rather than
+inferred off a zero keeper count — `upkeepWorkersNeeded` publishes on both sides of completion, so
+that inference has been dead since it began doing so. Frames: `herd_keeping_mid_build` (with its
+unpaid twin asserted beside it, PNG-less, since only the shortfall separates the two states) and
+`improvement_rung_slipped`'s land card.
 
 ### RETIRED — `abandon_improvement`, and what walking away is now
 
@@ -3147,8 +3185,8 @@ prerequisites. `improvement_no_room_plant` is the frame where withholding it wou
 **What the retired tooltip said is still true and still differs by web**: unstaffing a plant build
 lets its meter BLEED at the rung's `decay_per_turn` (~100 turns to zero) while an animal meter is KEPT
 (`domestication` is monotone-up and the pen rung declares no decay). Nothing is refunded on either.
-That reaches the player through the source's own `Keeping:` / `At risk:` rows now, which state the
-live shortfall and the turns of grace left rather than a hypothetical about a control. **Deliberately
+That reaches the player through the source's own rung row and the `At risk:` row beneath it, which
+state the live shortfall and the turns of grace left rather than a hypothetical about a control. **Deliberately
 no confirm dialog** — a stepper tick is not a destructive act, and it is re-made by ticking back.
 
 ### THE BUILD VERB IS DERIVED FROM THE METER, AND THE DECLARATION ONLY ANSWERS AT ZERO
@@ -3280,12 +3318,13 @@ this one is not an estimate at all.
 **AND ON THE TILE CARD AND THE HERD DRAWER, WHICH IS WHERE IT MATTERS MOST.** It is `-2` on the wire
 (`sim_schema::BUILD_NEVER_FINISHES`, beside `NO_BUILD_TURNS_ESTIMATE`'s `-1`), so
 `SourceForecast.build_turns_remaining` reads it rather than flattening every negative, and
-`DetailFormat.build_estimate_lines` renders `∞ turns at this crew` in the same amber. The two were ONE
-sentinel for a release and this row was silent for it — so the state a player has to act on was
-visible only while dragging a stepper they may never open. The row keeps its `at this crew` tail,
-which is what makes it actionable on a surface with no stepper. The card's own half of this is in
-`selection-card.md` → "The build meter says WORK", including the ink's seam (`detail_bbcode`'s
-indented branch, keyed on the glyph) and the two sim boundaries a client-side comparison would blur.
+`DetailFormat.rung_row_value` renders it as the rung row itself — `⚠ ∞ turns (42%)`, in the same
+amber. The two were ONE sentinel for a release and this row was silent for it, so the state a player
+has to act on was visible only while dragging a stepper they may never open. **The `at this crew` tail
+retired with the indented sub-row it lived on** (issue #545): the row IS the crew's answer now, and the
+state and the count are one string that cannot disagree. The card's own half of this — the four-hazard
+fork, the shared tint rule keyed on the mark, and the two sim boundaries a client-side comparison
+would blur — is in `selection-card.md` → "ONE ROW PER LIVE METER".
 
 **THE GLYPH IS THE LARDER RUNWAY'S, AND THE MEANING IS INVERTED.** `DetailFormat.FOOD_UNLIMITED_GLYPH`
 is `∞` on the Food line for *your larder never empties*; on a build it is the worst news the sheet can
@@ -3304,13 +3343,20 @@ be applied AFTER `HudStyle.apply_checkbox` and on every interaction slot**
 itself, so an override set before it is silently overwritten and one set on `font_color` alone reverts
 to neutral ink under the pointer.
 
-**AND THE THRESHOLD IS ON THE STEPPER, BEFORE THE COMMITMENT.** `_mount_build_crew_row` states
-`SourceForecast.min_build_crew` — the published `upkeepWorkersNeeded`, never a count derived by
-dividing the shortfall — as `2 hold it — the surplus is progress`, amber on the same
-`build_turns_never` verdict the face uses. **It says HOLD rather than "needs N"**, because N is where
-the meter stops SLIDING and not where it starts advancing: the count is `ceil(demand /
-PER_WORKER_OUTPUT)`, so a crew of exactly N nets zero on a whole-numbered demand. The number rides
-`HudWidgets.BUILD_CREW_FLOOR_META` so a harness asserts the figure rather than the wording.
+**AND THE THRESHOLD IS ON THE STEPPER, BEFORE THE COMMITMENT — STATED IN WORK** (issue #545).
+`_mount_build_crew_row` states `SourceForecast.min_build_work` — the QUOTED rung's own published rate,
+the same term this sheet's closed form subtracts — as `2 work a turn holds it — the surplus is
+progress`, amber on the same `build_turns_never` verdict the face uses. It says HOLD rather than
+"needs N" because the rate is where the meter stops SLIDING and not where it starts advancing: a crew
+banking exactly the rate holds the rung and finishes nothing.
+
+**IT WAS A HEAD COUNT (`min_build_crew`, the published `upkeepWorkersNeeded`) AND THAT WAS WRONG TWICE
+OVER.** This model is denominated in work units end to end — a rung declares a size in work, a crew
+produces work per turn, a rung's keeping is a rate of work — so *"2 hold it"* quietly reintroduced the
+worker as the unit; and the field behind it reads `0` on a source with no progress, so the note **fell
+silent on exactly the pre-commit quote it exists for**. How many hands the rate buys is what the
+stepper beside it is for. The figure rides `HudWidgets.BUILD_WORK_FLOOR_META` (a float now) so a
+harness asserts the number rather than the wording.
 
 **Frames + assertions** (`chapters/improvements.gd`, the `improvement_turns_*` A/B — one patch, one
 floor, only the BUILDERS stepper moving): the lone crew's `∞` **and** its warning ink, the four-hand
@@ -3335,15 +3381,16 @@ reading `≈1 turn at this crew`.
 
 **And the count is SPELLED in one place, for both faces** — `DetailFormat.build_turns_clause`, which
 forks the singular (`≈1 turn` / `≈25 turns`). The two faces quote one estimate about one job, so a
-build one turn out reading `≈1 turns` on the sheet beside the tile card's own `≈1 turn at this crew`
-(`HudSelectionVocab.BUILD_TURNS_ROW_ONE`) would be the same number worded two ways on one screen.
+build one turn out reading `≈1 turns` on the sheet beside the tile card's own `≈1 turn (98%)`
+(`HudSelectionVocab.RUNG_TURNS_ONE_FORMAT`) would be the same number worded two ways on one screen.
 `BUILD_PRICE_TURNS_FORMAT` / `IMPROVEMENT_RUNNING_TURNS_FORMAT` therefore take the clause already
 spelled and never a raw count.
 - The percentage is **still the `*_progress` fraction**, never `workDone / workCost` re-derived here.
   The wire ships both and they are exactly each other; dividing client-side would be a second
-  authority over one meter. The copy and the composer are
-  `HudSelectionVocab.BUILD_METER_WORK_FORMAT` / `DetailFormat.build_meter_value`, shared with the tile
-  card and the herd drawer so one build cannot read two ways on one screen.
+  authority over one meter. `HudSelectionVocab.BUILD_METER_WORK_FORMAT` /
+  `DetailFormat.build_meter_value` are **the compose sheet's alone now** (issue #545) — the tile card
+  and the herd drawer state a rung's turns and its percentage, the work absolutes being what you read
+  while COMPOSING a build rather than while glancing at one.
 
 ---
 

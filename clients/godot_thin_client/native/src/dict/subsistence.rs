@@ -386,6 +386,16 @@ pub(crate) fn herds_to_array(
             "upkeep_workers_needed",
             i64::from(herd.upkeepWorkersNeeded()),
         );
+        // **THE PRE-COMMIT RATE, PER RUNG** — what holding THAT rung costs per turn, published
+        // unconditionally exactly as the `*_work_cost` beside it is. `upkeep_demand` above answers
+        // *"what is this herd billed right now"*, which is `0` on a herd with nothing started, so a
+        // compose sheet netting the build crew's output against it quoted a finish date for a build
+        // whose rung can never advance at that crew. These are the ladder's own rates, so the
+        // stepper's closed form subtracts the rate of the rung it is PRICING and price, meter and
+        // rate always name one rung. Both carry this herd's own keeper load (`scaled_by:
+        // source_load`) and are ownership-independent: a quote exists before the herd is anyone's.
+        let _ = dict.insert("tame_upkeep_demand", herd.tameUpkeepDemand());
+        let _ = dict.insert("corral_upkeep_demand", herd.corralUpkeepDemand());
         // THE NEGLECT GRACE (issue #442) — the animal twin of `ForagePatchState`'s pair. A COUNTDOWN,
         // not a counter: `0` = the shed is biting NOW, `N > 0` = it bites in N more un-herded turns,
         // and a herd whose keepers are present reads the rung's full `grace + 1` ("walk away and you
@@ -801,6 +811,12 @@ pub(crate) fn forage_patches_to_array(
             "upkeep_workers_needed",
             i64::from(patch.upkeepWorkersNeeded()),
         );
+        // **THE PRE-COMMIT RATE, PER RUNG** — the plant twin of the herd block's pair; see there for
+        // why the stepper cannot net against `upkeep_demand`. Both plant rungs declare
+        // `scaled_by: flat`, so these are the ladder's numbers verbatim (2 and 4 work a turn today)
+        // and are the same on every patch in the game.
+        let _ = dict.insert("cultivation_upkeep_demand", patch.cultivationUpkeepDemand());
+        let _ = dict.insert("field_upkeep_demand", patch.fieldUpkeepDemand());
         // THE NEGLECT GRACE (issue #442) — how many more un-worked turns this patch can absorb before
         // its improvement starts reverting. A COUNTDOWN, not a counter, so no client does the
         // subtraction: `0` = the ground is reverting RIGHT NOW, `N > 0` = it starts in N more

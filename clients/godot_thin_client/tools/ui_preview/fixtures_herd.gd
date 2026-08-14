@@ -392,9 +392,13 @@ const ANIMAL_BUILD_WORK_FROM_GEAR := 17.0
 ## Price a herd's two rungs in WORK, deriving each meter's `work_done` from the fraction the fixture
 ## already states — so a fixture that re-dials a meter cannot end up with a percentage and an
 ## absolute that disagree, which is the one thing this readout exists to make visible.
+## `upkeep` is the rung RATE both animal rungs quote, and it is a PARAMETER because the rate scales
+## with the herd's own keeper load: the reference herd is two loads, a warren is one. A fixture whose
+## load differs states it rather than inheriting a rate its own size would never produce.
 static func price_animal_build(fixture: Dictionary,
 		turns: int = ANIMAL_BUILD_TURNS_REMAINING,
-		gear: float = ANIMAL_BUILD_WORK_FROM_GEAR) -> Dictionary:
+		gear: float = ANIMAL_BUILD_WORK_FROM_GEAR,
+		upkeep: float = ANIMAL_TAME_UPKEEP_DEMAND) -> Dictionary:
 	fixture["tame_work_cost"] = ANIMAL_TAME_WORK_COST
 	fixture["tame_work_done"] = \
 		float(fixture.get("domestication", 0.0)) * ANIMAL_TAME_WORK_COST
@@ -407,7 +411,20 @@ static func price_animal_build(fixture: Dictionary,
 	# per-worker output is stated rather than assumed. The gear half is not here: it is the BAND's
 	# ledger, so it rides `BandFx.kit_tiers_rows`.
 	fixture["build_work_per_worker_turn"] = BaseFx.BUILD_WORK_PER_WORKER_TURN
+	# **THE PER-RUNG RATE, PUBLISHED UNCONDITIONALLY BESIDE THE PER-RUNG COST** — the plant twin's own
+	# note says why `upkeep_demand` cannot serve: it is what the herd is BILLED today, so a herd with
+	# nothing started reads `0` and a sheet netting against it quotes a finish date on a rung its crew
+	# can never advance. Both animal rungs quote per keeper-load, so these carry this herd's own load.
+	fixture["tame_upkeep_demand"] = upkeep
+	fixture["corral_upkeep_demand"] = upkeep
 	return fixture
+
+## **WHAT HOLDING A TAMED HERD COSTS, PER TURN, IN WORK.** `intensification_ladder.json` declares
+## `1.0 × source_load` on **both** animal rungs — a penned animal is not less work to mind than an
+## unfenced one, and what the fence buys is GRACE, not rate — so this is the pen's own figure by
+## construction rather than by coincidence, over the reference herd's two keeper-loads. Spelled as an
+## alias so a retune of one animal rung cannot silently leave the other behind.
+const ANIMAL_TAME_UPKEEP_DEMAND := ANIMAL_PEN_UPKEEP_DEMAND
 
 ## The world's herd list (Main pushes snapshot["herds"]). Named because the turn-orb starving-pen
 ## state swaps in its own list and must restore this one.

@@ -2805,6 +2805,18 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		info["patch_upkeep_supplied"] = float(patch.get("upkeep_supplied", 0.0))
 		info["patch_upkeep_shortfall"] = float(patch.get("upkeep_shortfall", 0.0))
 		info["patch_upkeep_workers_needed"] = int(patch.get("upkeep_workers_needed", 0))
+		# **THE PRE-COMMIT RATE, PER RUNG** — what holding each plant rung costs per turn, published
+		# whether or not a build is running (the `*_work_cost` rule). The compose sheet's closed form
+		# nets the BUILD crew's output against the rate of the rung it is pricing; the source-level
+		# `patch_upkeep_demand` above is `0` on a patch with nothing started, which is what made the
+		# stepper quote a finish date for a build that could never advance.
+		#
+		# **Deliberately NOT in `FOW_DISCOVERED_HIDDEN_KEYS`.** Both plant rungs declare
+		# `scaled_by: flat`, so this is the LADDER's number and reads identically on every patch in
+		# the game — there is no live patch state in it to leak — and keeping it out of the redaction
+		# is what stops the closed form from silently losing its rate term on a remembered tile.
+		info["patch_cultivation_upkeep_demand"] = float(patch.get("cultivation_upkeep_demand", 0.0))
+		info["patch_field_upkeep_demand"] = float(patch.get("field_upkeep_demand", 0.0))
 		# THE NEGLECT GRACE — the COUNTDOWN to the ground reverting, with its own presence bool.
 		# `has_neglect_grace == false` means nothing is built here to lose (the common case, a wild
 		# patch), and it is what keeps the honest "reverting NOW" zero from reading as "nothing at

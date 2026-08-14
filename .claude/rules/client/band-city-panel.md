@@ -2237,7 +2237,7 @@ before the shed does.
   (mid-build it is the minimum viable BUILD crew), so that inference would light this ⚠ on every
   source being improved in the game, blaming the Husbandry pool for a bill the builders owe.
   `SourceForecast.is_under_kept` asks `build_is_in_flight` instead, which agrees with the drawer's own
-  `Keeping:` row saying it is still being built.
+  rung row: a build in flight states its turn count (or its `∞`), never a keeper verdict.
   **The rung that is going up gets its OWN warning instead** — see the section below.
 - **THE SHORTFALL IS THE CONFIRMED ONE and there is no optimistic overlay for it.** It is resolved
   sim-side from a pool the client never composes, so a pending edit cannot move it: raising the
@@ -2276,18 +2276,20 @@ this — staff its BUILDERS."*).
   is the commoner half now that the rate is a tax on building — hence the note reads *this rung is
   sliding back* rather than *nobody is building this*. **A count derived by dividing the shortfall
   would be a client inventing a number the sim never stated**; what the compose sheet CAN state is the
-  published `SourceForecast.min_build_crew`, which is the threshold rather than a diagnosis.
+  published `SourceForecast.min_build_work` — the quoted rung's own RATE, in work rather than in hands
+  (issue #545) — which is the threshold rather than a diagnosis.
 - **IT IS EXCLUSIVE WITH THE KEEPER WARNING BY CONSTRUCTION, not by ordering.** That one requires no
   build in flight and this one requires one, so the two share the `note` slot without either
   displacing the other — unlike the overstaff note, which is keyed on something else entirely and had
   to be given way to.
 - **BOTH WEBS REACH IT.** The test reads `upkeep_state` off whichever source the row is about, so a
   walked-away Cultivate warns exactly as a walked-away Tame does.
-- **The herd drawer's `Keeping:` row forked with it.** It said *"the build's crew holds it"* on a
-  build being worked, which is false of one walked away from or staffed under the rate — the same
-  demand and the same count, opposite news — and now reads `UPKEEP_UNBUILT_VALUE` when the shortfall
-  says the rate is going unpaid. The `At risk:` row beside it already carried the cost and the
-  countdown. Mid-build the row counts in **builders**, not keepers, the hands being a different crew.
+- **The herd drawer's `Keeping:` row forked with it, and then RETIRED** (issue #545). It said *"the
+  build's crew holds it"* on a build being worked and *"its builders are not covering that"* when the
+  shortfall said otherwise — a fact about the BUILD, stated one row away from the meter the player
+  would act on. That fork is the rung row's own `⚠ ∞ turns` now, with the `At risk:` row beneath it
+  carrying the cost and the countdown it always did. See `selection-card.md` → "RETIRED — `Keepers:`
+  and `Keeping:`".
 
 Frame: `band_panel_unbuilt_rung` (a part-tamed Aurochs, hunters on it, nobody on the improvement — ⚠
 up, the rung-in-progress `◎60%` mark beside it, and the BUILDERS note in the strip).

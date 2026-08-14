@@ -56,8 +56,15 @@ const BUILD_ROOM_FLOOR := 0.15
 ## **THE FLOOR NO LONGER PACES IT** (`docs/plan_standing_upkeep.md` §2.2). `learn_multiplier(0.15)`
 ## used to scale the accrual to ×0.30, which read as 167 turns; a build crew is not pulling on the
 ## source, so the rate is the builders' plain output and what the floor still decides is only whether
-## there is any room to work in at all. ⌈50 ÷ 1⌉.
-const BUILD_ROOM_BUILDERS := 1
+## there is any room to work in at all.
+##
+## **THREE HANDS, BECAUSE THE RUNG'S OWN RATE COMES OFF THE TOP** (issue #545). This patch has nothing
+## built on it, so its SOURCE demand is honestly zero — and a client netting against that quoted a
+## finish date for a crew the rung can never let advance. `plant:tended` asks 2 work a turn whether or
+## not anything is at risk yet, so the pace is `3 − 2` and the estimate is ⌈50 ÷ 1⌉. At the ONE hand
+## this frame used to staff the honest answer is `∞`, which is a different frame's subject
+## (`improvement_never_finishes_unstarted`) and not this one's.
+const BUILD_ROOM_BUILDERS := 3
 
 const TURNS_AT_ROOM_FLOOR := 50
 
@@ -118,19 +125,43 @@ const UNKNOWN_BUILD_TURNS_SENTINEL := -3
 ## be staging a completed rung or a lost one.
 const SLIPPED_METER_PROGRESS := 0.9
 
-## The pooled `Keeping:` wording, as a LITERAL — what the land card must NOT say about a rung no
-## pool is paying for. Spelled out rather than composed from the format, because a needle built
-## from the live const could only ever describe whatever the code currently says.
+## The retired pooled `Keeping:` wording, as a LITERAL — what the land card must NOT say about a rung
+## no pool is paying for. Spelled out rather than composed from the format, because the format is gone
+## (issue #545) and a needle built from a live const could only ever describe what the code says now.
 const UPKEEP_POOL_NEEDLE := "the pool covers"
+
+## **THE CARD'S TURN COUNT, AS A NEEDLE THAT NAMES NO NUMBER.** Every building row opens with the
+## estimate's `≈`, so asserting its absence tells a WITHDRAWN count from a shortened one — where a
+## needle built from a specific count sails past a row rendering any other, `≈-1 turns` included.
+const RUNG_TURNS_NEEDLE := "≈"
+
+## The work-unit word the COMPOSE SHEET's meter spells and the CARD no longer does (issue #545).
+## Asserting its absence on the card is how "the absolutes moved to the sheet" is checkable.
+const BUILD_WORK_UNIT_NEEDLE := "work ("
+
+## ---- THE REPRO (`improvement_never_finishes_unstarted`) ---------------------------------------
+## **A WILD PATCH, CULTIVATE DECLARED, ONE BUILDER — AND THE SHEET PROMISED ≈50 TURNS.** Reported
+## from play: commit it, wait four turns, and the meter still reads `0 / 50 (0%)` because the rung's
+## rate is 2 and one hand nets −1. The sim was right the whole time (it publishes `-2` here); the
+## client's own stepper arithmetic subtracted the SOURCE's `upkeepDemand`, which is `0` on a patch
+## with no progress — nothing is at risk yet — so the rate vanished from the form at exactly the
+## moment the sheet is quoting a rung nobody has started, and it computed `50 ÷ 1`.
+const UNSTARTED_BUILD_CREW := 1
+
+## What the broken arithmetic quoted, so the NEGATIVE can name the defect rather than merely denying
+## a shape: `PLANT_CULTIVATE_WORK_COST ÷ UNSTARTED_BUILD_CREW`, with the rung's own rate netted at
+## nothing.
+const UNSTARTED_BUILD_WRONG_TURNS := 50
 
 ## ---- THE TURN-ESTIMATE A/B (`improvement_turns_lone_crew` / `_full_crew`) ---------------------
 ## **TWO CREWS ON ONE PATCH AT ONE FLOOR**, which is the only shape that can show the estimate moving.
 ## Both are well under the frame's own worker cap, so what differs between the frames is the count and
 ## nothing else.
-## **THE PUBLISHED MINIMUM VIABLE BUILD CREW on the reference patch** — `ceil(2.0 / 1.0)`, the
-## `patch_upkeep_workers_needed` the fixture states. It is what the BUILDERS row names, and it
-## brackets the A/B: `TURNS_LONE_CREW` sits under it and `TURNS_FULL_CREW` above.
-const TURNS_MIN_BUILD_CREW := 2
+## **THE PUBLISHED THRESHOLD ON THE REFERENCE PATCH, IN WORK PER TURN** — `plant:tended`'s own
+## `upkeep.work_per_turn`, which the fixture states as `patch_cultivation_upkeep_demand`. It is what
+## the BUILDERS row names, and at the shipped one-work-per-worker-turn output it brackets the A/B:
+## `TURNS_LONE_CREW` banks less than it and `TURNS_FULL_CREW` more.
+const TURNS_MIN_BUILD_WORK := BaseFx.PLANT_TENDED_UPKEEP_PER_TURN
 
 const TURNS_LONE_CREW := 1
 
@@ -177,18 +208,65 @@ const NO_BUILD_GEAR := {}
 ## §2.2), where the retired dip would have quoted a quarter of it.
 const BUILD_CREW_UNDIPPED_TAKE := "0.96"
 
-## One rung-meter row's rendered VALUE CELL — `[color=#HEX]<verb> 48 / 50 work (96%)[/color]`, exactly
-## as `DetailFormat.detail_bbcode` emits it. Word and tint in ONE needle, because the decaying state
-## was a failure of BOTH and an assertion that pinned only one of them would pass on half a fix.
+## One rung row's rendered VALUE CELL — `[color=#HEX]<value>[/color]`, exactly as
+## `DetailFormat.detail_bbcode` emits it. Word and tint in ONE needle, because a rung's failure states
+## are a failure of BOTH and an assertion that pinned only one of them would pass on half a fix.
 ##
-## The value itself goes through `DetailFormat.build_meter_value`, so the needle states the job's SIZE
-## the way the row does — and the claim stays about the verb and the ink, which is what moves between
-## these two frames.
-func _meter_value_markup(verb: String, hex: String) -> String:
-	return "[color=#%s]%s[/color]" % [hex, DetailFormat.build_meter_value(verb,
-		REVERTING_METER_PROGRESS,
-		REVERTING_METER_PROGRESS * BaseFx.PLANT_CULTIVATE_WORK_COST,
-		BaseFx.PLANT_CULTIVATE_WORK_COST)]
+## **THE VALUE IS THE WHOLE ROW NOW** (issue #545): the card states `≈11 turns (96%)` rather than a
+## verb over an indented estimate, so a needle built from a verb would be asserting a readout that no
+## longer exists. The caller spells the expected value from the shipped format, so the claim stays
+## about which of the four hazard states this is and what colour it wears.
+func _rung_value_markup(value: String, hex: String) -> String:
+	return "[color=#%s]%s[/color]" % [hex, value]
+
+## **ONE RUNG ROW'S VALUE AT A GIVEN PUBLISHED TURN ANSWER**, asked of the producer over a source
+## dict carrying nothing but that answer and this chapter's meter — the shape that reaches the states
+## no frame here stages (a stall, an unrecognised sentinel) without building a fixture for each.
+func _rung_value_for_turns(turns: int) -> String:
+	return DetailFormat.rung_row_value({
+		SourceForecast.FORECAST_BUILD_TURNS_KEY: turns,
+		SourceForecast.FORECAST_BUILD_WORK_COST_KEYS[SourceForecast.IMPROVEMENT_TAME]:
+			BaseFx.PLANT_CULTIVATE_WORK_COST,
+	}, HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_TAME,
+		SourceForecast.SOURCE_KIND_HERD, DetailFormat.husbandry_built_label(), false,
+		REVERTING_METER_PROGRESS, true, false)
+
+## **ARE ALL FOUR HAZARD STATES MARKED?** With the standing `Keeping:` row retired, a bare rung row is
+## the ONLY thing that says a rung is fine — so a failure state rendering without
+## `RUNG_HAZARD_GLYPH` reads as success, which is precisely the defect the unstaffed build was. Asked
+## as ONE conjunction because the claim is about the SET: any state escaping the mark is the bug, and
+## a per-state frame would sample rather than close it.
+func _hazard_states_all_marked() -> bool:
+	var mark := HudSelectionVocab.RUNG_HAZARD_GLYPH
+	# (1) declared, nobody assigned, nothing banked — the row states a sentence, not a meter.
+	var unstarted := DetailFormat.rung_row_value({}, HudComposeVocab.BARE_FORECAST_PREFIX,
+		SourceForecast.IMPROVEMENT_TAME, SourceForecast.SOURCE_KIND_HERD,
+		DetailFormat.husbandry_built_label(), false, 0.0, false, true)
+	# (2) work banked and nobody on it.
+	var sliding := DetailFormat.rung_row_value({}, HudComposeVocab.BARE_FORECAST_PREFIX,
+		SourceForecast.IMPROVEMENT_TAME, SourceForecast.SOURCE_KIND_HERD,
+		DetailFormat.husbandry_built_label(), false, REVERTING_METER_PROGRESS, false, false)
+	# (3) staffed at or under the rate, and (4) staffed with nothing accruing anyway.
+	return unstarted.contains(mark) and sliding.contains(mark) \
+		and _rung_value_for_turns(SourceForecast.BUILD_TURNS_NEVER).contains(mark) \
+		and _rung_value_for_turns(SourceForecast.BUILD_TURNS_NO_ESTIMATE).contains(mark)
+
+## The reverting row's expected value at this chapter's meter — the hazard mark and the percentage.
+func _reverting_value() -> String:
+	return HudSelectionVocab.RUNG_REVERTING_FORMAT % [
+		HudSelectionVocab.RUNG_HAZARD_GLYPH,
+		HudFormat.progress_percent(REVERTING_METER_PROGRESS)]
+
+## …and the BUILDING row's, which leads with the sim's own count.
+func _building_value(turns: int) -> String:
+	return HudSelectionVocab.RUNG_TURNS_FORMAT % [
+		turns, HudFormat.progress_percent(REVERTING_METER_PROGRESS)]
+
+## …and the NEVER row's, which leads with the ∞ under the same mark.
+func _never_value() -> String:
+	return HudSelectionVocab.RUNG_NEVER_FORMAT % [
+		HudSelectionVocab.RUNG_HAZARD_GLYPH, DetailFormat.BUILD_TURNS_NEVER_GLYPH,
+		HudFormat.progress_percent(REVERTING_METER_PROGRESS)]
 
 ## The staple tile as the COMPOSE SHEET sees it — `BaseFx.food_tile_fixture` already runs through
 ## `BaseFx.seed_forage_rows`, so this is simply the named handle the dip-comparison assertion reads its
@@ -651,9 +729,9 @@ func run(harness) -> void:
 	# has to, because the old row was not merely mis-WORDED, it was mis-COLOURED: a bleeding meter wore
 	# the neutral ink of a build one turn from done. A bare hex search would match any INK row on the
 	# card; this one can only be satisfied by the cultivation value itself.
-	h._assert_hud("a meter a crew IS building reads as a BUILD, in neutral ink",
-		building_row.contains(_meter_value_markup(
-			HudFloraVocab.CULTIVATION_PREPARING_LABEL, HudStyle.INK_HEX)))
+	h._assert_hud("a meter a crew IS building leads with the sim's turn count, in neutral ink",
+		building_row.contains(_rung_value_markup(
+			_building_value(BaseFx.BUILD_TURNS_REMAINING), HudStyle.INK_HEX)))
 	#   (b) REVERTING — the SAME patch at the SAME percentage with nobody building it. The band is
 	#   working a different tile, so the patch is improved, unworked and bleeding.
 	BaseFx.price_plant_build(meter_tile, SourceForecast.BUILD_TURNS_NO_ESTIMATE)
@@ -669,46 +747,38 @@ func run(harness) -> void:
 		Readout.detail_excerpt(building_row, CULTIVATION_ROW_KEY),
 		Readout.detail_excerpt(reverting_row, CULTIVATION_ROW_KEY)])
 	h._assert_hud("the SAME meter with nobody on it reads as a LOSS, in WARN ink — not a build",
-		reverting_row.contains(_meter_value_markup(
-			HudFloraVocab.RUNG_REVERTING_LABEL, HudStyle.WARN_HEX)))
+		reverting_row.contains(_rung_value_markup(_reverting_value(), HudStyle.WARN_HEX)))
 	# THE NEGATIVE, with the positive above it as its companion (a whole-text search alone would also
-	# pass on a card that rendered no cultivation row at all): the build's word must be REPLACED, not
-	# merely joined — a row reading both would be the same ambiguity in longer form.
-	h._assert_hud("…and the build's own word is GONE from the row, not merely joined by another",
-		not reverting_row.contains(HudFloraVocab.CULTIVATION_PREPARING_LABEL))
-	# **THE TURN ESTIMATE IS A PAIR, and the negative is the whole of `-1`'s contract**
-	# (`docs/plan_unit_costed_work.md` §11): a build under way states what it has left, and one nobody
-	# is working states NOTHING — never `0 turns`, which reads as a build about to land on ground that
-	# is going back to wild. The positive is what stops the negative passing on a card that lost the
-	# line entirely; the whole ROW is the needle, so a stray digit elsewhere on the card cannot satisfy
-	# either half.
-	var turns_row := HudSelectionVocab.BUILD_TURNS_ROW_FORMAT % BaseFx.BUILD_TURNS_REMAINING
-	h._assert_hud("a running build states the sim's own turn estimate beside its meter",
-		building_row.contains(turns_row))
-	# The reverting half states no estimate for the honest reason: nobody works this ground, so the sim
-	# answers `-1`. **The needle is the row's shared TAIL, never a specific count** — one shaped like a
-	# count sails past a row rendering any other, the sentinel's own `≈-1 turns` included.
-	h._assert_hud("…and a meter nobody is building states NO estimate, not a zero",
-		not reverting_row.contains(HudSelectionVocab.BUILD_TURNS_ROW_TAIL))
-	# **THE SENTINEL'S OWN RULE IS SEPARATE, and only a DRIVEN claim reaches it.** The frame above is
-	# silent because its fixture states `-1`, so it would stay silent for a producer that RENDERED the
-	# sentinel — `≈-1 turns at this crew` under a STALLED build (a crew whose output is zero, which the
-	# sim answers `-1` for). Asked of the producer directly, over one source dict in its two states,
-	# since no frame in the corpus stages a stall and the failure is a string either way.
-	var stalled := {SourceForecast.FORECAST_BUILD_TURNS_KEY: SourceForecast.BUILD_TURNS_NO_ESTIMATE}
-	var running := {SourceForecast.FORECAST_BUILD_TURNS_KEY: BaseFx.BUILD_TURNS_REMAINING}
-	h._assert_hud("a STALLED build's `-1` renders no estimate line at all",
-		not "\n".join(DetailFormat.build_estimate_lines(stalled, HudComposeVocab.BARE_FORECAST_PREFIX))
-			.contains(HudSelectionVocab.BUILD_TURNS_ROW_TAIL))
-	h._assert_hud("…while a live one does, so the silence above is the sentinel and not the producer",
-		"\n".join(DetailFormat.build_estimate_lines(running, HudComposeVocab.BARE_FORECAST_PREFIX))
-			.contains(turns_row))
+	# pass on a card that rendered no cultivation row at all): a build under way states a COUNT, and
+	# one nobody is working must state none — never `0 turns`, which reads as a build about to land on
+	# ground that is going back to wild. The needle is the count's own punctuation rather than a
+	# specific number, so a row rendering any other count fails it too.
+	h._assert_hud("…and a meter nobody is building states NO turn count, not a zero",
+		not reverting_row.contains(RUNG_TURNS_NEEDLE))
+	# **THE HAZARD MARK IS THE POINT OF THE REDESIGN, AND ITS NEGATIVE IS ITS OTHER HALF** (issue
+	# #545). With the `Keeping:` row retired, the ABSENCE of a mark is the only thing that says a rung
+	# is fine — so a healthy build must carry none, or the mark means nothing on the three states that
+	# do carry it.
+	h._assert_hud("…while the build a crew IS advancing wears NO hazard mark at all",
+		not Readout.detail_excerpt(building_row, CULTIVATION_ROW_KEY).contains(
+			HudSelectionVocab.RUNG_HAZARD_GLYPH))
+	# **THE FOUR HAZARD STATES, ASKED OF THE PRODUCER, because two of them render as a state no frame
+	# in this chapter stages and every one of them must be marked.** A state that renders bare reads as
+	# success, which is the defect the unstaffed build was; a producer-level claim is what makes the
+	# rule checkable rather than sampled.
+	h._assert_hud("every rung hazard carries its mark: unstarted · sliding · never · stalled",
+		_hazard_states_all_marked())
 	# **THE GEAR LINE'S NEGATIVE.** No plant item declares the build stat yet (issue #539 is the hoe),
 	# so a plant build's contribution is honestly `0` and the row must not appear at all — a
 	# `−0 work off this job` advertises a tool that did nothing. Its positive twin is the animal web's
 	# (`herd_corral`), where the shipped handling gear really does take work off the job.
 	h._assert_hud("a build no tool helps states NO gear line, not a zero one",
 		not building_row.contains(HudSelectionVocab.BUILD_GEAR_WORK_ROW_FORMAT.split("%s")[0]))
+	# **AND THE WORK ABSOLUTES ARE OFF THE CARD**, which is the other half of the one-row redesign:
+	# `30 / 50 work` is what you read while COMPOSING a build, beside the stepper that moves it, and
+	# it stays on the compose sheet. The needle is the unit word the meter format spells.
+	h._assert_hud("…and the card states no work absolutes at all — those are the sheet's",
+		not building_row.contains(BUILD_WORK_UNIT_NEEDLE))
 
 	#   (c) NEVER — **the third answer, and the one this card was silent about**
 	#   (`docs/plan_standing_upkeep.md` §2.4). The SAME patch with the SAME crew ON it, whose
@@ -732,33 +802,22 @@ func run(harness) -> void:
 	# branch tints the WHOLE line, so the markup is the claim: silence and neutral ink are both
 	# failures here, and only asserting the colour separates ∞-the-warning from the larder runway's
 	# ∞, which draws the identical glyph for the opposite news.
-	h._assert_hud("a committed crew below the rate reads ∞ on the card, in WARN ink",
-		never_row.contains("[color=#%s]%s%s" % [HudStyle.WARN_HEX,
-			DetailFormat.MORALE_BREAKDOWN_INDENT,
-			HudSelectionVocab.BUILD_TURNS_ROW_NEVER % DetailFormat.BUILD_TURNS_NEVER_GLYPH]))
-	# …and the meter above it still reads as a BUILD in neutral ink — the crew is ON it. Without
-	# this the frame is satisfied by the reverting state, which is a different fact with a
-	# different remedy: nobody is there, against somebody is there and it is not enough.
-	h._assert_hud("…while the meter itself still reads as a BUILD — somebody IS on this one",
-		never_row.contains(_meter_value_markup(
-			HudFloraVocab.CULTIVATION_PREPARING_LABEL, HudStyle.INK_HEX)))
-	# **THE THREE SENTINELS, ASKED OF THE PRODUCER, because two of them render as an ABSENCE and an
-	# absence cannot be told from a producer that has stopped rendering at all.** `-1` is silent,
-	# `-2` says ∞, a count says the count — and the client DERIVES none of it: an unstaffed source
-	# and a gate that refuses both reach this reader as `-1`, and re-deriving either would claim
-	# every idle improvement on the map never finishes.
-	var never_answer := {SourceForecast.FORECAST_BUILD_TURNS_KEY: SourceForecast.BUILD_TURNS_NEVER}
-	var never_lines := "\n".join(
-		DetailFormat.build_estimate_lines(never_answer, HudComposeVocab.BARE_FORECAST_PREFIX))
-	h._assert_hud("the wire's `-2` renders ∞ rather than the silence `-1` earns",
-		never_lines.contains(DetailFormat.BUILD_TURNS_NEVER_GLYPH)
-			and never_lines.contains(HudSelectionVocab.BUILD_TURNS_ROW_TAIL))
-	# …and it is READ, not derived: a sentinel this client does not recognise is *no answer*, never
-	# a guess. `-3` stands for whatever the wire grows next.
-	h._assert_hud("…and an unrecognised negative stays silent — the client guesses at nothing",
-		not "\n".join(DetailFormat.build_estimate_lines(
-			{SourceForecast.FORECAST_BUILD_TURNS_KEY: UNKNOWN_BUILD_TURNS_SENTINEL},
-			HudComposeVocab.BARE_FORECAST_PREFIX)).contains(HudSelectionVocab.BUILD_TURNS_ROW_TAIL))
+	h._assert_hud("a committed crew below the rate reads ∞ on the card's own row, in WARN ink",
+		never_row.contains(_rung_value_markup(_never_value(), HudStyle.WARN_HEX)))
+	# …and the row still carries its METER, because the crew is ON this one. Without the percentage
+	# the frame is satisfied by the unstarted state, which is a different fact with a different
+	# remedy: nobody is there, against somebody is there and it is not enough.
+	h._assert_hud("…and it still states how far the meter got — somebody IS on this one",
+		never_row.contains("(%d%%)" % HudFormat.progress_percent(REVERTING_METER_PROGRESS)))
+	# **THE UNRECOGNISED SENTINEL, ASKED OF THE PRODUCER.** A negative this client does not know is
+	# *no answer*, never a guess — and with the row now leading on the count, "no answer" has to
+	# render as the STALLED hazard rather than as a bare percentage, which is the silence the whole
+	# redesign exists to remove. `-3` stands for whatever the wire grows next.
+	h._assert_hud("…and an unrecognised negative is marked as STALLED, never rendered bare",
+		_rung_value_for_turns(UNKNOWN_BUILD_TURNS_SENTINEL)
+			== HudSelectionVocab.RUNG_STALLED_FORMAT % [
+				HudSelectionVocab.RUNG_HAZARD_GLYPH,
+				HudFormat.progress_percent(REVERTING_METER_PROGRESS)])
 
 	# ---- THE TURN ESTIMATE FOLLOWS THE STEPPER (docs/plan_unit_costed_work.md §11) ----------------
 	# **ONE PATCH, ONE FLOOR, TWO CREWS — and a frame set that renders only one crew proves nothing
@@ -787,7 +846,7 @@ func run(harness) -> void:
 	# Captured off the LONE-crew sheet, because the next line recomposes it and frees these nodes.
 	var _face_warned_at_lone_crew := ForageFx.improvement_face_is_warned(
 		h._hud._drawercompose._compose_sheet, "cultivate")
-	var _floor_at_lone_crew := ForageFx.build_crew_floor(h._hud._drawercompose._compose_sheet)
+	var _floor_at_lone_crew := ForageFx.build_work_floor(h._hud._drawercompose._compose_sheet)
 	var _floor_warned_at_lone_crew := ForageFx.build_crew_floor_warns(
 		h._hud._drawercompose._compose_sheet)
 	h._hud._compose.set_forage_build_count(TURNS_FULL_CREW)
@@ -823,13 +882,15 @@ func run(harness) -> void:
 	# decoration rather than a verdict.
 	h._assert_hud("…and that face is NOT warned — the amber is the verdict, not the control's livery",
 		not _face_was_warned_at_full_crew)
-	# **AND THE THRESHOLD IS ON THE STEPPER, BEFORE EITHER OF THEM.** The published minimum viable
-	# crew is what makes `∞` actionable rather than merely alarming — it names the number to reach —
-	# and it is read off the note's own meta rather than its wording.
-	h._assert_hud("the BUILDERS row states the crew that holds the rung (%d), on both sides of it"
-		% TURNS_MIN_BUILD_CREW,
-		_floor_at_lone_crew == TURNS_MIN_BUILD_CREW
-			and ForageFx.build_crew_floor(h._hud._drawercompose._compose_sheet) == TURNS_MIN_BUILD_CREW)
+	# **AND THE THRESHOLD IS ON THE STEPPER, BEFORE EITHER OF THEM, IN WORK** (issue #545). It makes
+	# `∞` actionable rather than merely alarming — it names the rate to beat — and it is read off the
+	# note's own meta rather than its wording. **Work, not hands**: the model is denominated in work
+	# units end to end, and the head count it replaced reads `0` before a build starts.
+	h._assert_hud("the BUILDERS row states the WORK that holds the rung (%s), on both sides of it"
+		% TURNS_MIN_BUILD_WORK,
+		is_equal_approx(_floor_at_lone_crew, TURNS_MIN_BUILD_WORK)
+			and is_equal_approx(ForageFx.build_work_floor(h._hud._drawercompose._compose_sheet),
+				TURNS_MIN_BUILD_WORK))
 	h._assert_hud("…amber while the crew is under it, and quiet once it is cleared",
 		_floor_warned_at_lone_crew
 			and not ForageFx.build_crew_floor_warns(h._hud._drawercompose._compose_sheet))
@@ -899,6 +960,8 @@ func run(harness) -> void:
 	await _the_sheets_two_crews_share_one_pool()
 	await _a_reopened_sheet_shows_the_LIVE_crew()
 	await _a_declared_build_with_no_builders_says_so()
+	await _an_unstarted_rung_is_priced_at_its_own_rate()
+	await _both_live_meters_get_their_own_row()
 
 ## **THE SHEET IS ONE TRANSACTION OVER A SOURCE'S TWO CREWS, AND IT IS CLAMPED AS ONE.** Reported
 ## from play: a band with every hand on a herd, HUNTERS dropped 4 → 2, and BUILDERS still dead at a
@@ -1024,8 +1087,8 @@ func _a_declared_build_with_no_builders_says_so() -> void:
 			HudComposeVocab.BUILD_UNSTARTED_NOTE))
 	# THE NEGATIVE that names the defect: the word a rung nobody is building must not wear anywhere on
 	# the card, in any ink — that word is what read as work in progress.
-	h._assert_hud("…and never the build's own word, which is what read as work in progress",
-		not h._hud.tile_detail.text.contains(HudFloraVocab.CULTIVATION_PREPARING_LABEL))
+	h._assert_hud("…and never a turn count, which is what a started build states and this is not",
+		not h._hud.tile_detail.text.contains(RUNG_TURNS_NEEDLE))
 	# THE MAP's own fork, asked directly — all three answers, or "always warn" passes the first two.
 	h._assert_hud("the map badge reads an unstarted rung as NOT WORKING",
 		SourceForecast.unstaffed_build_of(POOL_UNSTARTED_METER, SourceForecast.BUILD_CREW_NONE)
@@ -1127,16 +1190,17 @@ func _a_rung_that_slipped_is_building_again() -> void:
 				== HudWidgets.IMPROVEMENT_STATE_RUNNING)
 	# **AND THE REMEDY IS ON SCREEN**, which is the whole point of showing it: the repair is staffed
 	# from the BUILDERS stepper, and the threshold beside it names the crew that stops the slide.
-	h._assert_hud("…and offers the BUILDERS stepper, which is how a slipped rung is repaired",
-		ForageFx.build_crew_floor(h._hud._drawercompose._compose_sheet) == TURNS_MIN_BUILD_CREW)
-	# **THE LAND CARD AGREES WITH IT**, and says who owes the rate while the meter is down: this
-	# rung is out of the band's keeping pool until it stands again, so the row must not send the
-	# player to the Agriculture role that will never settle it.
-	var slipped_keeping := "\n".join(DetailFormat.upkeep_lines(slipped,
-		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.SOURCE_KIND_FORAGE))
-	h._assert_hud("…and the land card bills the BUILDERS rather than quoting the keeping pool",
-		slipped_keeping.contains(DetailFormat.UPKEEP_UNBUILT_VALUE)
-			and not slipped_keeping.contains(UPKEEP_POOL_NEEDLE))
+	h._assert_hud("…and offers the BUILDERS stepper, whose threshold is stated in WORK",
+		is_equal_approx(ForageFx.build_work_floor(h._hud._drawercompose._compose_sheet),
+			BaseFx.PLANT_TENDED_UPKEEP_PER_TURN))
+	# **THE LAND CARD STATES WHAT IS AT STAKE AND NOT WHAT IS OWED** (issue #545). The standing
+	# `Keeping:` bill is retired — it read as noise on every source that owed anything — so what
+	# survives is the row that only exists when the rate is going UNPAID, which is this patch.
+	var slipped_risk := "\n".join(DetailFormat.at_risk_lines(slipped,
+		HudComposeVocab.FORAGE_FORECAST_PREFIX))
+	h._assert_hud("…and the land card states what the shortfall costs, never the pooled bill",
+		slipped_risk.contains(DetailFormat.UPKEEP_RISK_ROW)
+			and not slipped_risk.contains(UPKEEP_POOL_NEEDLE))
 
 ## **AN ARROW BETWEEN TWO IDENTICAL NUMBERS** — `0.26 → 0.26 FOOD`, reported from play beside a
 ## second account correctly reading `0.90 → 0.87`. The `after` reading is attached where it DIFFERS from the
@@ -1172,3 +1236,103 @@ func _row_for(rows: Array[Dictionary], account: String) -> Dictionary:
 		if String(row.get(SourceForecast.YIELD_ROW_ACCOUNT, "")) == account:
 			return row
 	return {}
+
+
+## **THE REPRO, AS A FRAME.** A WILD patch — nothing built, so the source's own `upkeepDemand` is the
+## honest `0` — with Cultivate declared and ONE builder on it. The rung asks 2 work a turn, so one
+## hand nets −1 and the build can never advance; the sim publishes `-2` for exactly this, and the
+## sheet must now agree rather than quoting `≈50 turns` off a rate it netted at nothing.
+##
+## **IT IS THE UNSTARTED CASE THAT MATTERS, and the existing turn A/B cannot reach it.** That pair
+## runs on the reference patch, whose meter is already at 60% — so its `upkeepDemand` is live and the
+## old arithmetic happened to be right there. The defect only shows where nothing is at risk yet,
+## which is every rung the player is about to commit to.
+func _an_unstarted_rung_is_priced_at_its_own_rate() -> void:
+	var wild := BaseFx.unbuilt(BaseFx.food_tile_fixture())
+	# The PRECONDITION, without which this frame is about some other patch: the source-level demand
+	# really is zero here, and the RUNG's rate really is not.
+	h._assert_hud("the wild patch is billed nothing today — the source demand is honestly zero",
+		SourceForecast.upkeep_state(wild, HudComposeVocab.FORAGE_FORECAST_PREFIX)["demand"]
+			< SourceForecast.UPKEEP_WORK_MIN)
+	h._assert_hud("…while the Cultivate RUNG still costs %s work a turn to hold"
+		% BaseFx.PLANT_TENDED_UPKEEP_PER_TURN,
+		is_equal_approx(SourceForecast.build_upkeep_demand(wild,
+			HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_CULTIVATE),
+			BaseFx.PLANT_TENDED_UPKEEP_PER_TURN))
+	var band := _fully_committed_forage_band(wild, POOL_TAKE_CREW, UNSTARTED_BUILD_CREW)
+	h._hud._band_labor._player_band = band
+	h._hud._band_labor._player_bands = [band]
+	h._hud._compose.reset_forage_source()
+	h._show_tile(wild)
+	h._compose_forage(wild)
+	h._hud._compose.set_forage_build_count(UNSTARTED_BUILD_CREW)
+	h._compose_forage(wild)
+	await h._settle()
+	await h._save("improvement_never_finishes_unstarted")
+	var face := ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, "cultivate")
+	print("ui_preview: unstarted cultivate face  %s" % face)
+	h._assert_hud("a lone builder on an UNSTARTED rung reads ∞, in the warning ink",
+		face.contains(DetailFormat.BUILD_TURNS_NEVER_GLYPH)
+			and ForageFx.improvement_face_is_warned(
+				h._hud._drawercompose._compose_sheet, "cultivate"))
+	# **THE NEGATIVE THAT NAMES THE DEFECT.** `≈50 turns` is what the source-demand arithmetic
+	# produced, and it is the reading the player acted on; denying the ∞'s absence alone would pass on
+	# a sheet quoting any other wrong number.
+	h._assert_hud("…and never the %d turns the source-demand arithmetic promised"
+		% UNSTARTED_BUILD_WRONG_TURNS,
+		not face.contains(_turns_clause(UNSTARTED_BUILD_WRONG_TURNS)))
+	# **AND THE THRESHOLD BESIDE IT IS STATED IN WORK, on the one state where the head count it
+	# replaced reads zero** — `upkeepWorkersNeeded` is `0` on an unstarted source, so the note that
+	# tells the player what to beat fell silent exactly where it was needed.
+	h._assert_hud("the BUILDERS row names the RATE to beat, on a rung with no progress",
+		is_equal_approx(ForageFx.build_work_floor(h._hud._drawercompose._compose_sheet),
+			BaseFx.PLANT_TENDED_UPKEEP_PER_TURN))
+
+## **BOTH METERS LIVE, BOTH ROWS RENDERED.** A patch holding a Tended rung while a Field goes up is
+## two facts — the rung you HAVE and the build in FLIGHT — and a single merged row would silently drop
+## one of them. Each row is labelled by its own rung and carries its own state.
+func _both_live_meters_get_their_own_row() -> void:
+	var both := BaseFx.food_tile_fixture()
+	both["patch_is_cultivated"] = true
+	both["patch_cultivation_progress"] = 1.0
+	both["patch_is_field"] = false
+	both["patch_field_progress"] = BOTH_METERS_FIELD_PROGRESS
+	BaseFx.price_plant_build(both, BOTH_METERS_FIELD_TURNS)
+	# The keeping is PAID, so the tended row above must be bare — which is what makes the Field row's
+	# own reading the only thing on this card that says anything is happening.
+	both["patch_upkeep_supplied"] = float(both["patch_upkeep_demand"])
+	both["patch_upkeep_shortfall"] = 0.0
+	var sowing_band := BandFx.cultivating_forage_band_fixture(int(both["x"]), int(both["y"]))
+	sowing_band["labor_assignments"][0]["improvement"] = SourceForecast.IMPROVEMENT_SOW
+	h._hud._band_labor._player_band = sowing_band
+	h._hud._band_labor._player_bands = [sowing_band]
+	h._hud.clear_selection()
+	h._show_tile(both)
+	await h._settle()
+	await h._save("tile_two_meters_live")
+	var card: String = h._hud.tile_detail.text
+	print("ui_preview: two meters  %s | %s" % [
+		Readout.detail_excerpt(card, CULTIVATION_ROW_KEY),
+		Readout.detail_excerpt(card, HudFloraVocab.FIELD_ROW)])
+	h._assert_hud("the rung the patch HOLDS states its badge and how full it still is",
+		card.contains(_rung_value_markup("%s %d%%" % [DetailFormat.cultivation_built_label(),
+			HudConst.PROGRESS_PERCENT_SCALE], HudStyle.SIGNAL_HEX)))
+	h._assert_hud("…and the build in FLIGHT gets its OWN row, leading with the sim's count",
+		card.contains(_rung_value_markup(HudSelectionVocab.RUNG_TURNS_FORMAT % [
+			BOTH_METERS_FIELD_TURNS,
+			HudFormat.progress_percent(BOTH_METERS_FIELD_PROGRESS)], HudStyle.INK_HEX)))
+	# **THE PAIR IS THE CLAIM**, and the silence is its third half: a card whose keeping is paid must
+	# carry NO hazard mark on either row, or the mark that the four failure states rely on means
+	# nothing.
+	h._assert_hud("…and a patch whose keeping is paid carries no hazard mark on either row",
+		not Readout.detail_excerpt(card, CULTIVATION_ROW_KEY).contains(
+				HudSelectionVocab.RUNG_HAZARD_GLYPH)
+			and not Readout.detail_excerpt(card, HudFloraVocab.FIELD_ROW).contains(
+				HudSelectionVocab.RUNG_HAZARD_GLYPH))
+
+## The Field meter and the sim's answer for it on `tile_two_meters_live`. Deliberately DIFFERENT from
+## every other build reading in this chapter, so a card rendering one rung's numbers on both rows
+## cannot pass.
+const BOTH_METERS_FIELD_PROGRESS := 0.12
+
+const BOTH_METERS_FIELD_TURNS := 30

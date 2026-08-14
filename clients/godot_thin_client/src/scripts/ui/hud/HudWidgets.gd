@@ -729,7 +729,7 @@ const CREW_ROW_LABEL_META := "crew_row_label"
 ## `CREW_ROW_MAINTAIN_META` and `MAINTAIN_VERDICT_META` tagged a stepper and a verdict on a row that
 ## no longer exists: maintenance left the tile, so neither compose sheet composes a keeping crew and
 ## there is nothing here for a harness to find. What a source's keeping costs is stated by
-## `DetailFormat.upkeep_lines` on the land card and the herd drawer.
+## `DetailFormat.at_risk_lines` on the land card and the herd drawer.
 
 ## The BUILD crew's stepper row, as `Control` meta — the second of a source's two allocations, mounted
 ## on the improvement control that states the verb it staffs.
@@ -819,10 +819,15 @@ const IMPROVEMENT_STATE_META := "improvement_state"
 const CHECKBOX_LIVE_FONT_COLOR_SLOTS := ["font_color", "font_hover_color", "font_pressed_color",
     "font_hover_pressed_color", "font_focus_color"]
 
-## The BUILD crew stepper's threshold note, as `Control` meta, carrying the crew count it states —
-## `SourceForecast.min_build_crew`. A harness reading the label's text would be asserting the wording;
-## this is the number.
-const BUILD_CREW_FLOOR_META := "build_crew_floor"
+## The BUILD crew stepper's threshold note, as `Control` meta, carrying the WORK RATE it states —
+## `SourceForecast.min_build_work`, the quoted rung's own upkeep demand. A harness reading the label's
+## text would be asserting the wording; this is the number.
+##
+## **IT CARRIES WORK, NOT WORKERS** (it was `BUILD_CREW_FLOOR_META`, an `int` head count). The model is
+## denominated in work units end to end, and the count behind the old meta read `0` before a build
+## starts — so a harness asserting it was asserting the one state the note is most needed in as an
+## absence.
+const BUILD_WORK_FLOOR_META := "build_work_floor"
 
 ## The PLANT a crop-picker row stands for, as `Button` meta — its `FloraShareInfo.species` key, which
 ## is the sim's own id and the very string the row's art is composed from (`FloraSprites`). The

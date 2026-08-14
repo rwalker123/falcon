@@ -171,6 +171,14 @@ static func price_plant_build(tile: Dictionary, turns: int = BUILD_TURNS_REMAINI
 	tile["patch_build_turns_remaining"] = turns
 	tile["patch_build_work_from_gear"] = PLANT_BUILD_WORK_FROM_GEAR
 	tile["patch_build_work_per_worker_turn"] = BUILD_WORK_PER_WORKER_TURN
+	# **THE PER-RUNG RATE, PUBLISHED UNCONDITIONALLY BESIDE THE PER-RUNG COST** — the second term of
+	# the compose sheet's closed form, and the one term `patch_upkeep_demand` cannot supply: that field
+	# is what the patch is BILLED today, so it reads `0` on a patch with no progress. These are the
+	# LADDER's rates, so they are set here rather than beside the billed figure and they survive
+	# `unbuilt()` — which is exactly the reported repro (a wild patch quoting ≈50 turns on a Cultivate
+	# at one builder, against a rung asking 2 work a turn).
+	tile["patch_cultivation_upkeep_demand"] = PLANT_TENDED_UPKEEP_PER_TURN
+	tile["patch_field_upkeep_demand"] = PLANT_FIELD_UPKEEP_PER_TURN
 	return tile
 
 ## **A PATCH NOBODY IS BUILDING — both plant meters at zero, re-priced.**

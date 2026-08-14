@@ -125,17 +125,13 @@ const SOW_REFUSAL_FALLBACK := "This ground will not take seed — your people ca
 # checkbox in the shared hint style — one reason per line, no collapsing, because the control is one
 # rung and not six and there is no longer a height problem to solve.
 
-# The build-verb for the in-progress Cultivate rung — the plant twin of Husbandry's "Domesticating".
-const CULTIVATION_PREPARING_LABEL := "Preparing"
-
-# The DECAYING state's verb, shared by BOTH plant rungs (`DetailFormat.cultivation_label` /
-# `field_label`) — a meter below complete that nobody is building. It is the third state those rows
-# used to lack: a bleeding 99% wore "Preparing 99%" in neutral ink, identical to a fresh build one
-# turn from done, so the card said *gaining* while the player was *losing*. The word is the SIM's own
+# RETIRED — the Cultivate rung's build verb AND the decaying state's verb (issue #545). Both were
+# headline words on a card row that now leads with a NUMBER: a build states its turn count
+# (`HudSelectionVocab.RUNG_TURNS_FORMAT`) and a rung nobody is building states
+# `RUNG_REVERTING_FORMAT`, which owns the word `Reverting` outright. That word is the SIM's own
 # ("gone feral — untended, the ground is reverting"), so the tile card and the command-feed receipt
-# that fires when the meter finally empties name the same event. ONE word for both rungs on purpose:
-# the fact is identical and the ROW's name already says which rung is losing.
-const RUNG_REVERTING_LABEL := "Reverting"
+# that fires when the meter finally empties still name the same event, and ONE word still serves both
+# plant rungs — the fact is identical and the ROW's name already says which rung is losing.
 
 # Tile card "Field" row — plant RUNG 3, the patch twin of the herd's "Corral" row and the rung above
 # "Cultivation". Its own row (never merged with Cultivation): a patch carries BOTH meters, and a Field
@@ -359,7 +355,8 @@ const FLORA_CROP_COMMITTED_HINT := "Already committed — the crop cannot be cha
 # capacity into a nearby wild herd (they drift off — tameness leaves with them, it is never decayed;
 # fauna neglect-escape arc). The row makes the deficit visible from the ACTUAL staffed count
 # (`assigned_keepers` — the MAINTAIN crews, never the hunting one and never a reconstruction from
-# `herded_fraction`); the under-herded value is WARN-tinted via `DetailFormat.herders_value_hex`, and
+# `herded_fraction`); the under-herded HERD states it on the shed sentence now, `Keepers:` having
+# been retired with issue #545, and
 # the shed consequence (`HERDERS_SHED_FORMAT`) is spelled out below it so the player knows the animals
 # are drifting off and which crew stops it.
 # (Herd drawer combat-component rows, Predators Phase 0 — the whole `DANGER_*` family lives in

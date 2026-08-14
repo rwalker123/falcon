@@ -582,31 +582,43 @@ func run(harness) -> void:
 	# HUSBANDRY POOL, so the row states this herd's DEMAND and which side of the pool's shortfall it
 	# landed on. There is no per-herd keeper crew to count and none to reconstruct from last turn's
 	# resolved `herded_fraction`, which is left stale on both fixtures to keep that guard live.
-	# COVERED: the pool paid this herd's whole 4 → a calm `Keepers: 4 — drawn from the band's
-	# Husbandry` (neutral ink), no consequence line.
+	# COVERED: the pool paid this herd's whole demand → and since issue #545 that renders as NOTHING.
+	# The standing `Keepers:` / `Keeping:` pair is retired; a rung being paid for says so by carrying no
+	# mark and no `At risk:` row, which is what makes the marked states legible.
 	h._show_herd(_fully_herded_herd_fixture())
 	await h._settle()
 	await h._save("herd_fully_herded")
 	var fully_lines = DetailFormat.herd_summary_lines(
 		_fully_herded_herd_fixture(), h._hud._band_labor.world_herds())
-	h._assert_hud("a covered herd states its keeping demand calmly and names the pool",
-		_lines_contain(fully_lines, "Keepers: 4 — drawn from the band's Husbandry")
-		and not _lines_any_contain(fully_lines, "under-herded"))
+	# **THE SILENCE IS THE CLAIM, AND IT NEEDS ITS RUNG ROW BESIDE IT** — a producer that had stopped
+	# emitting the herd's ladder rows entirely would satisfy every negative here, so the positive is
+	# that the Husbandry row IS rendered and is bare.
+	h._assert_hud("a covered herd states its rung and nothing else — no mark, no bill, no risk row",
+		_lines_any_contain(fully_lines, DetailFormat.HUSBANDRY_BUILT_WORD)
+		and not _lines_any_contain(fully_lines, HudSelectionVocab.RUNG_HAZARD_GLYPH)
+		and not _lines_any_contain(fully_lines, DetailFormat.UPKEEP_RISK_ROW)
+		and not _lines_any_contain(fully_lines, "drawn from the band"))
 
-	# SHORT: the herd wants 6 keepers' worth and the pool paid 4 → an amber `Keepers: 6 —
-	# under-herded, the Husbandry pool is short here` plus the shed line naming the band's Husbandry
-	# role — NOT the retired "tameness slipping" copy, and NOT the retired per-source `KEEPERS`
+	# SHORT: the herd wants 6 keepers' worth and the pool paid 4 → the ⚠ on its own Husbandry row, the
+	# `At risk:` row pricing the shortfall, and the shed line naming the band's Husbandry role and the
+	# head count — NOT the retired "tameness slipping" copy, and NOT the retired per-source `KEEPERS`
 	# stepper, which no longer exists to be staffed.
 	h._show_herd(_under_herded_herd_fixture())
 	await h._settle()
 	await h._save("herd_under_herded")
 	var under_lines = DetailFormat.herd_summary_lines(
 		_under_herded_herd_fixture(), h._hud._band_labor.world_herds())
+	# **THE `Keepers:` ROW IS RETIRED and the HAZARD is what carries the news** (issue #545). It
+	# stated a standing demand every turn on a herd where nothing was wrong, said the same number the
+	# `Keeping:` row beside it said, and neither could be read; what a player needs from a head count
+	# is only ever *am I short*, which is the shed sentence and the rung row's own mark.
 	h._assert_hud("an under-kept herd flags the deficit and names the Husbandry role that stops it",
-		_lines_contain(under_lines, "Keepers: 6 — under-herded, the Husbandry pool is short here")
-		and _lines_any_contain(under_lines, "animals are drifting off")
+		_lines_any_contain(under_lines, "animals are drifting off")
 		and _lines_any_contain(under_lines, "Husbandry")
 		and not _lines_any_contain(under_lines, "slipping"))
+	h._assert_hud("…and the standing keeper/keeping bill is gone from the drawer entirely",
+		not _lines_any_contain(under_lines, "drawn from the band")
+		and not _lines_any_contain(under_lines, "the pool covers"))
 
 	# **THE MID-BUILD READING, and it is the one a pooled readout gets wrong.** A herd mid-Tame is
 	# billed a non-zero upkeep — its animals are standing there whether or not the rung is finished —
@@ -624,23 +636,28 @@ func run(harness) -> void:
 	await h._save("herd_keeping_mid_build")
 	var mid_tame_lines := DetailFormat.herd_summary_lines(
 		_mid_tame_herd_fixture(), h._hud._band_labor.world_herds())
-	h._assert_hud("a herd mid-Tame says it is being BUILT rather than asking the pool for keepers",
-		_lines_any_contain(mid_tame_lines, DetailFormat.UPKEEP_MID_BUILD_FORMAT % [
-			DetailFormat.format_work_units(float(MID_TAME_UPKEEP_DEMAND)),
-			MID_TAME_UPKEEP_DEMAND, DetailFormat.UPKEEP_BUILDER_MANY])
+	# **THE MID-BUILD READING IS THE RUNG ROW'S NOW, and it is a PAIR** (issue #545). The retired
+	# `Keeping:` sentence said *its own crew pays the rate* on a paid build and *this rung is sliding
+	# back* on an unpaid one; a build whose crew is under the rate is exactly what the sim answers
+	# `-2` for, so the row states `∞` and the `At risk:` row beneath it says what the shortfall costs.
+	# Neither is on a herd whose build IS being paid, which is what makes the silence readable.
+	h._assert_hud("a herd mid-Tame whose build is paid states no shortfall and no keeper bill",
+		not _lines_any_contain(mid_tame_lines, DetailFormat.UPKEEP_RISK_ROW)
 		and not _lines_any_contain(mid_tame_lines, "the pool covers")
 		and not _lines_any_contain(mid_tame_lines, "under-herded"))
-	# …and the WARNING half of the same fork, which the row above cannot make: the identical herd,
-	# identical demand and identical count, with the pool having paid NOTHING. Only the shortfall
-	# separates them, so a row that had gone back to reading the crew count renders one of these two
-	# sentences in both states and passes whichever is asserted alone.
+	# …and the WARNING half of the same fork, which the row above cannot make: the identical herd with
+	# the same demand, its rate going UNPAID. Only the shortfall separates them, so a producer that
+	# had stopped reading it renders the same lines in both states and passes whichever is asserted
+	# alone.
 	var unpaid_tame := _mid_tame_herd_fixture()
 	unpaid_tame["upkeep_supplied"] = 0.0
 	unpaid_tame["upkeep_shortfall"] = float(MID_TAME_UPKEEP_DEMAND)
+	unpaid_tame["build_turns_remaining"] = SourceForecast.BUILD_TURNS_NEVER
 	var unpaid_lines := DetailFormat.herd_summary_lines(
 		unpaid_tame, h._hud._band_labor.world_herds())
-	h._assert_hud("…while the same build going UNPAID says the rung is sliding back",
-		_lines_any_contain(unpaid_lines, DetailFormat.UPKEEP_UNBUILT_VALUE)
+	h._assert_hud("…while the same build going UNPAID is marked on its rung row AND priced at risk",
+		_lines_any_contain(unpaid_lines, HudSelectionVocab.RUNG_HAZARD_GLYPH)
+		and _lines_any_contain(unpaid_lines, DetailFormat.UPKEEP_RISK_ROW)
 		and not _lines_any_contain(unpaid_lines, "the pool covers"))
 
 	# State 2d-γ self-feeding pen — a radius-2 pen (19 fenced tiles) on lush land: the fenced footprint
@@ -834,9 +851,14 @@ func run(harness) -> void:
 	h._assert_hud("a geared animal build states what its keepers took off the job",
 		corral_drawer.contains(HudSelectionVocab.BUILD_GEAR_WORK_ROW_FORMAT
 			% DetailFormat.format_work_units(HerdFx.ANIMAL_BUILD_WORK_FROM_GEAR)))
-	h._assert_hud("…and it states the sim's own turn estimate beside its meter",
-		corral_drawer.contains(
-			HudSelectionVocab.BUILD_TURNS_ROW_FORMAT % HerdFx.ANIMAL_BUILD_TURNS_REMAINING))
+	# **THE TURN COUNT IS THE ROW ITSELF NOW** (issue #545), not an indented line under a meter
+	# restating the same job in work units — so the needle is the Corral row's own rendered value, with
+	# the meter following the count as context.
+	h._assert_hud("…and the Corral row LEADS with the sim's own turn estimate",
+		corral_drawer.contains(HudSelectionVocab.RUNG_TURNS_FORMAT % [
+			HerdFx.ANIMAL_BUILD_TURNS_REMAINING,
+			HudFormat.progress_percent(float(
+				HerdFx.corral_ready_herd_fixture().get("corral_progress", 0.0)))]))
 
 	# State 3d-corral-under-herded — the HERDER-DEFICIT cap frame. A composing-Corral herd needs 2
 	# keepers every turn to hold its tameness, but the Corral rung's take/prepare max-useful is 1.
@@ -953,7 +975,7 @@ func run(harness) -> void:
 			HudFloraVocab.KNOWLEDGE_TRACK_PENNING), TWO_METER_PENNING))
 	h._assert_hud("…and THIS HERD's own progress lives in its own drawer's Husbandry row",
 		Q.has_label_containing(h._hud.occupant_detail,
-			DetailFormat.husbandry_label(DetailFormat.HUSBANDRY_PROGRESS_COMPLETE)))
+			DetailFormat.husbandry_built_label()))
 	h._assert_hud("…and no knowledge percent leaks into the drawer, where it would read as a stat of the animal",
 		not Q.has_label_containing(h._hud.occupant_detail,
 			String(FactionReadouts.KNOWLEDGE_TRACK_LABELS[HudFloraVocab.KNOWLEDGE_TRACK_PENNING])))

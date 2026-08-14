@@ -134,7 +134,8 @@ const CREW_ROW_SEPARATION := 6
 # loss formats and `CREW_MAINTAIN_HELD_TEXT` described a stepper on the sheet that staffed one
 # source's keeping. Maintenance left the tile — the keeping is the band's `agriculture` /
 # `husbandry` role — so a sheet has no keeping crew to compose, and what a source's keeping costs is
-# stated by `DetailFormat.upkeep_lines` where the source itself is described.
+# stated by `DetailFormat.at_risk_lines` where the source itself is described — and only when it is
+# going UNPAID, the standing bill having been retired with the `Keeping:` row (issue #545).
 #
 # The BUILD crew's row label — the second of a source's two allocations, stated on the improvement
 # control that names the verb these hands are filling.
@@ -142,22 +143,26 @@ const CREW_ROW_BUILD_LABEL := "BUILDERS"
 # The crew row's note separation, beside its label.
 const CREW_ROW_NOTE_SEPARATION := 5
 
-# **THE MINIMUM VIABLE CREW, STATED BESIDE THE STEPPER THAT HAS TO CLEAR IT**
+# **THE THRESHOLD, STATED BESIDE THE STEPPER THAT HAS TO CLEAR IT — IN WORK**
 # (`docs/plan_standing_upkeep.md` §2.4). The maintenance rate is owed while the meter is being raised
-# too, and the build crew is what supplies it, so a crew at or below the rate holds the meter where it
-# is or takes it backwards — a real threshold rather than a slow build. It is published
-# (`SourceForecast.min_build_crew`), so the sheet states it BEFORE the player commits rather than
-# leaving them to discover it as an ∞ afterwards.
+# too, and the build crew is what supplies it, so a crew whose output does not beat the rate holds the
+# meter where it is or takes it backwards — a real threshold rather than a slow build. It is published
+# per rung (`SourceForecast.min_build_work`), so the sheet states it BEFORE the player commits rather
+# than leaving them to discover it as an ∞ afterwards.
 #
 # **ONE STRING, AND THE INK IS WHAT FORKS** — amber exactly where the face reads `∞`, off the same
 # `DetailFormat.build_turns_never` test, so the threshold note and the estimate can never disagree
 # about which side of it a crew is on. A second wording would be a second opinion.
 #
-# **It says HOLD rather than "needs N", because N is where the meter STOPS SLIDING, not where it
-# starts advancing.** The count is `ceil(demand / PER_WORKER_OUTPUT)`, so a crew of exactly N nets
-# zero on a whole-numbered demand — it holds the rung and finishes nothing, which `needs N` would
-# promise it does not.
-const CREW_BUILD_FLOOR_FORMAT := "%d hold it — the surplus is progress"
+# **IT IS A RATE OF WORK, AND IT REPLACED A HEAD COUNT.** `2 hold it` named the worker as the unit in
+# a model denominated in work units end to end, and the count behind it (`upkeepWorkersNeeded`) reads
+# `0` on a source with no progress — so the note fell silent on exactly the pre-commit quote it exists
+# for. The rate is the fact; how many hands buy it is what the stepper beside this note is for.
+#
+# **It says HOLD rather than "needs N", because the rate is where the meter STOPS SLIDING, not where
+# it starts advancing** — a crew banking exactly the rate holds the rung and finishes nothing, which
+# `needs N` would promise it does not.
+const CREW_BUILD_FLOOR_FORMAT := "%s work a turn holds it — the surplus is progress"
 
 # A crew TARGET is a PILL, and the shape is the point: the stepper beside it is a boxed control you
 # operate, a target is a value you can jump to. Its face carries two registers — the COUNT (what you

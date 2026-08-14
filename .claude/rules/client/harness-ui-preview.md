@@ -615,8 +615,8 @@ found rather than two added.)
 **THE KEEPING POOL (`docs/plan_standing_upkeep.md` §2.5) ADDED ONE FRAME AND MOVED CLAIMS RATHER THAN
 GAINING THEM** — the measurement above came back two frames and one `PASS` off the recorded 320 / 997
 while this arc added one frame and net-zero claims, which is this line's own instruction being earned
-again. `herd_keeping_mid_build` is the new one (a herd mid-Tame, whose
-`Keeping:` row must say it is being BUILT rather than quoting a pool that does not fund it) and
+again. `herd_keeping_mid_build` is the new one (a herd mid-Tame; its claim has since inverted with the
+`Keeping:` row's retirement — a build that IS being paid states nothing at all) and
 `forage_no_food_basket`'s neighbour `forage_reopened_crews` kept its name while its subject shrank
 from three crews to two — its keeping-stepper claims went with the stepper, replaced by ONE
 structural claim that the sheet mounts exactly one untagged stepper. The under-kept pair's third
@@ -1114,3 +1114,44 @@ came from, and the wrong one renders no rows rather than wrong ones. It is judge
 turn frame above, and the accumulator is ZEROED rather than left behind, because a client rendering
 whichever term is non-zero would otherwise pass both. Sabotage-verified: pointing the rows back at
 the accumulating pair fails exactly these two and nothing else in the run.
+
+
+## The one-row rung readout, and the never-finishes repro (issue #545)
+
+Two frames and a re-pointing pass across `chapters/improvements.gd`,
+`chapters/herd_graze_pen.gd` and `chapters/compose_rungs.gd`. The behaviour is `selection-card.md`'s
+and `labor-ui.md`'s; what belongs here is the shape of the drive and the fixture arithmetic it moved.
+
+- **`improvement_never_finishes_unstarted` is the reported repro, and the existing turn A/B
+  structurally cannot reach it.** That pair runs on the reference patch, whose meter is already at
+  60% — so its source-level `upkeepDemand` is live and the old arithmetic happened to be RIGHT there.
+  The defect only shows where nothing is at risk yet, so this state stands up `BaseFx.unbuilt(...)`
+  with one builder and asserts the `∞` **and** the negative that names the number the player acted on
+  (`≈50 turns`), plus the two PRECONDITIONS without which the frame is about some other patch: the
+  source demand really is zero here, and the RUNG's rate really is not.
+- **`tile_two_meters_live` is the both-rows frame**, and its third claim is the SILENCE — a patch whose
+  keeping is paid carries no mark on either row. Its Field meter and turn count are deliberately
+  unlike every other build reading in the chapter, so a card rendering one rung's numbers on both rows
+  cannot pass.
+- **The five hazard states are asked of the PRODUCER as one conjunction** (`_hazard_states_all_marked`),
+  because two of them render in states no frame stages and the claim is about the SET.
+- **`_meter_value_markup` became `_rung_value_markup`**, and the needle is now the whole rendered value
+  rather than a verb: the card states `≈11 turns (96%)` where it stated `Preparing 48 / 50 work (96%)`,
+  so a needle built from a build verb would be asserting a readout that no longer exists.
+
+**THE FIXTURES GREW THE RUNGS' OWN RATES, AND TWO STATES HAD TO BE RE-STAFFED FOR IT.**
+`BaseFx.price_plant_build` now sets `patch_cultivation_upkeep_demand` / `patch_field_upkeep_demand`
+and `HerdFx.price_animal_build` takes the animal rate as a PARAMETER — the animal rungs both declare
+`1.0 × source_load`, so a warren's rate is not the reference herd's. With the rate a real term of the
+pace (`crew − rate`):
+
+- **`improvement_stressed_advances` staffs THREE builders where it staffed one.** At one hand the
+  honest answer on a `plant:tended` rung is `∞`, which is `improvement_never_finishes_unstarted`'s
+  subject and not this frame's; three keeps its `≈50 turns` and its claim (a build advancing on a
+  non-Thriving source).
+- **The kit-swap counts moved 17/11/9/4 → 25/17/11/6**, the warren's own one-keeper-load rate coming
+  off a three-keeper crew. The A/B's claim is untouched: the two kits still differ by the gear alone.
+
+**A clean run is 328 frames / 1040 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+two new frames and the four new claims account for the delta from the 1033 recorded before them; the
+rest is the re-pointing, which moved claims rather than adding them.

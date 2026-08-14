@@ -197,7 +197,9 @@ static func crew_row_label(root: Node) -> String:
 ## `has_crew_row_maintain` / `crew_row_maintain_note` / `maintain_verdict_text` read a stepper and a
 ## verdict on a compose-sheet row that no longer exists: maintenance left the tile, so the keeping is
 ## a band-wide standing role and a sheet composes no keeping crew. What a source's keeping costs is
-## stated by `DetailFormat.upkeep_lines`, which lands in the land card and the herd drawer.
+## stated by `DetailFormat.at_risk_lines`, which lands in the land card and the herd drawer — and
+## only where it is going UNPAID, the standing bill having been retired with the `Keeping:` row
+## (issue #545): a rung whose keeping is met says nothing, so a bare row IS the good news.
 
 ## The verdict's SENTENCE — the row's Labels joined (the severity dot is a Label of the row too, so it
 ## leads). Found by the same meta as the severity below, because the row's two halves are one claim and

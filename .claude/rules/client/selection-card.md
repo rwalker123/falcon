@@ -289,105 +289,141 @@ otherwise a rebuild would launder the bug) and the before/after classes read off
 Sabotage-verified: dropping the swap fails exactly that one assertion.
 
 
-## The build meter says WORK, and the turns beside it are the SIM's answer
+## ONE ROW PER LIVE METER, AND THE TURNS LEAD IT (issue #545)
 
-`docs/plan_unit_costed_work.md` §11. Every improvement used to cost the same 25 turns, so
-*"Cultivation: 42%"* was a complete statement. It is not one any more: **a rung declares a fixed size
-in WORK UNITS, a crew produces work units per turn, and TURNS ARE THE OUTPUT** — so the same
-percentage fills at different speeds on different rungs, and fills faster with more hands, a higher
-escapement floor or better tools. None of that is visible in a percentage, which is why the readout
-landed BEFORE the config spread that makes the rungs differ.
-
-Both webs' meter rows go through **one composer**, `DetailFormat.build_meter_value`, so the tile
-card's plant rungs, the herd drawer's animal ones and the compose sheet's running face cannot word
-one build three ways:
+`docs/plan_unit_costed_work.md` §11 put a rung's SIZE on the card — a rung declares a fixed size in
+WORK UNITS, a crew produces work units per turn, and TURNS ARE THE OUTPUT — and it did it by adding
+lines. A herd being tamed cost four:
 
 ```
-Cultivation   Preparing 30 / 50 work (60%)
-                  ≈11 turns at this crew
-                  your gear: −17 work off this job
+Husbandry    Domesticating 0.3 / 100 work (0%)
+             ≈308 turns at this crew
+Keepers      1 — drawn from the band's Husbandry
+Keeping      still being built — its own crew pays 0.7 work a turn, worth 1 builder
 ```
 
-- **THE PERCENTAGE IS THE WIRE'S FRACTION, NEVER `workDone / workCost`.** The sim publishes the
-  fraction and the two absolutes as separate fields and they are exactly each other; dividing here
-  would be a second authority over one meter, and only the turn they disagreed would say so.
-  `SourceForecast.FORECAST_BUILD_WORK_{DONE,COST}_KEYS` are the two tables, keyed by improvement
-  exactly as `FORECAST_BUILD_METER_KEYS` is.
-- **A `work_cost` of `BUILD_WORK_COST_NONE` states the percentage alone** — the row this always was.
-  That is a source the wire prices no such job on, not a missing field; `18 / 0 work` reads as a
-  defect where a bare percentage reads as an unpriced job.
-- **The COST is published whether or not a build is in flight**, which is what lets the compose sheet
-  quote a rung pre-commit (`labor-ui.md` → "CLOSED — the build's PRICE and its turn estimate").
-- **The REVERTING state states the same pair.** A bleeding meter is losing units off the same job, so
-  only the verb and the WARN ink say which direction it is moving — the distinction the third meter
-  state exists for, unchanged.
+Reported from play: the last two could not be read. **Both existed to say *there is nothing to do
+here*, and both said the same number twice** — one as a demand in hands, one as a rate in work — while
+the reading a glance actually wants was buried on the second line. So the block is ONE row:
 
-### The two sub-rows, and what each one's absence means
+```
+Husbandry   ≈308 turns (0%)      building — the turns LEAD, the meter is context
+Husbandry   🐄 Domesticated 100% built
+Husbandry   🐄 Domesticated 92% ⚠ built, and its keeping is short
+```
 
-`DetailFormat.build_estimate_lines` emits both, indented into `detail_bbcode`'s shared
-full-width neutral branch (`MORALE_BREAKDOWN_INDENT`) so they read as an expansion of the meter above
-them rather than as two more facts about the source. `prefix` spells the keys, so ONE call serves a
-`patch_`-prefixed `tile_info` and a bare herd dict.
+**Both webs, identically, through ONE composer** — `DetailFormat.rung_row_value`, which the tile
+card's `Cultivation` / `Field` rows and the herd drawer's `Husbandry` / `Corral` rows all render
+through, so a rung's state cannot be worded one way on a patch and another on a herd. The plant side
+reads `Cultivation ≈50 turns (0%)` / `🌾 Tended 100%` / `🌾 Tended 92% ⚠`.
 
-- **`≈11 turns at this crew` is the readout that makes "turns are an OUTPUT" legible** — add hands and
-  watch it drop. **The client computes no part of it**: it holds neither the crew's output, nor the
-  assignment's escapement floor, nor the kit's coverage-weighted contribution, so the sim answers
-  (`buildTurnsRemaining`, the `penFeedUpkeep` discipline). The trailing *at this crew* is
-  load-bearing — without it the number reads as a property of the RUNG, which is the fixed-turn model
-  this arc replaced.
-- **THE FIELD PUBLISHES THREE ANSWERS, AND THE CARD RENDERS ALL THREE.** A count is a finish date;
-  **`-2` is `∞ turns at this crew`, in WARN amber** (`SourceForecast.BUILD_TURNS_NEVER`, the wire's
-  `sim_schema::BUILD_NEVER_FINISHES`) — a crew at or below the source's maintenance rate never
-  finishes, which is a standing fact about a commitment the player has ALREADY made; **`-1` renders as
-  NO LINE** (`BUILD_TURNS_NO_ESTIMATE`), there being genuinely no answer. A `0 turns` in place of
-  either promises a build about to land, which is why the guard is in the producer rather than left to
-  a formatter.
-- **THE `∞` IS THE STATE THIS CARD WAS SILENT ABOUT.** The two were ONE sentinel for a release, so a
-  build nobody could finish rendered as no line here and on the herd drawer — the two surfaces a player
-  reads every turn — and was visible only on a compose sheet that redid the comparison itself. That is
-  backwards for the one reading that should stop them. The row keeps `BUILD_TURNS_ROW_TAIL`
-  (*at this crew*), which is what makes it actionable on a surface with no stepper: it names the thing
-  to change. It wears no `≈` — a meter that does not advance has no distribution to hedge.
-- **THE INK RIDES THE GLYPH, in `detail_bbcode`'s indented branch**, beside the morale contributions'
-  ± signs and by the same rule that branch already stated: an indented family is neutral until it
-  carries a sign. The larder runway draws the identical `∞` for the OPPOSITE news and never lands
-  there — it is a `Key: value` row, tinted by `_value_hex` — so the mark is shared while the ink stays
-  disjoint.
-- **THE CLIENT DERIVES NONE OF IT.** Two of the sim's boundaries reach this reader as `-1` and a
-  comparison here would blur both: an **unstaffed** source has promised nothing (deriving would call
-  every idle improvement on the map a never-finisher), and a build whose **knowledge, site or species
-  gate** does not hold accrues nothing for a reason that has nothing to do with staffing. An
-  unrecognised negative therefore reads as *no answer* rather than being guessed at.
-- **`your gear: −17 work off this job` renders only above zero** (`buildWorkFromGear`). It is the only
-  way a player can tell a tool is worth carrying to a garden and not to a farm — the contribution is a
-  fixed number of units against a job whose size is not, so its share shrinks as the job grows. **The
-  ANIMAL web is where it is judged**: `husbandry_gear` ships 8.5 per equipped keeper, and no plant item
-  declares the stat yet (issue #539).
-- **Both are PER SOURCE, not per rung** — at most one improvement is ever in flight on one source — so
-  they hang off whichever meter a crew is actually filling: the plant card gates them on the band's own
-  `forage_effort_at(...).improvement`, and the herd drawer reads the ladder (an incomplete Tame IS the
-  build; the Corral branch takes them once taming is done). Under a REVERTING meter they would
-  describe a build nobody is doing.
+- **THE WORK ABSOLUTES CAME OFF THE CARD.** `0.3 / 100 work` is what you read while COMPOSING a build,
+  beside the stepper that moves it, so `DetailFormat.build_meter_value` stays and is now the compose
+  sheet's alone. The card states the outcome; the sheet states the transaction.
+- **THE PERCENTAGE STAYS ON A BUILT RUNG, and it is not decoration.** A completed meter sits exactly
+  at its own cost, so `92%` is a rung that has ALREADY begun eroding — the one number on the card that
+  shows it, and exactly what a glance should catch.
+- **`built` IS THE ACHIEVEMENT FLAG, NEVER `progress >= 1`.** Fullness and achievement stay orthogonal
+  (`SourceForecast.build_verb`'s own note): a patch at 92% is still tended AND is being repaired, so
+  passing the meter as the fork would make a rung's LOSS and a rung's REPAIR one edge.
+- **BOTH ROWS RENDER WHEN BOTH METERS ARE LIVE**, each labelled by its own rung and carrying its own
+  state and its own hazard — `Cultivation 🌾 Tended 100%` over `Field ≈30 turns (12%)`, and
+  `Husbandry 🐄 Domesticated 100%` over `Corral ≈6 turns (40%)`. A single merged row would silently
+  drop either the rung you hold or the build in flight.
+- **The rung row is gated on `built OR meter > 0 OR declared`**, which is what makes the declared-and-
+  unmanned state renderable at a meter of ZERO (see the section below).
+- **`your gear: −17 work off this job` SURVIVED as the one indented sub-row** (`build_gear_lines`,
+  which is what `build_estimate_lines` became once the turn estimate moved into the row). It renders
+  only above zero, is the only way a player can tell a tool is worth carrying to a garden and not to a
+  farm, and was no part of the four-line block that made a rung unreadable. It is PER SOURCE, so it
+  hangs off whichever meter a crew is actually filling.
+- **THE `at this crew` TAIL WENT WITH THE SUB-ROW, and nothing is lost.** It existed because an
+  indented estimate under a meter had to say whose answer it was; the row IS the crew's answer now, and
+  the state and the count can no longer disagree because they are one string.
 
-**Frames + assertions.** `tile_meter_building` / `tile_meter_reverting` / **`tile_meter_never`**
-(`chapters/improvements.gd`) carry the plant set — ONE patch at ONE meter value, with only the band's
-assignment and the published sentinel moving — plus the turn row's presence, the reverting half's
-silence, and the gear line's NEGATIVE (a plant build no tool helps states none). `herd_corral`
-(`chapters/herd_graze_pen.gd`) carries the animal positive: the gear line and the turn row on a keeper
-crew holding the shipped handling gear.
+### THE ABSENCE OF A HAZARD IS THE ONLY SIGNAL THAT THINGS ARE FINE
 
-**The `∞` frame is asserted as MARKUP, word and ink together**, the treatment the building/reverting
-pair already takes — silence and neutral ink are both failures, and only the colour separates it from
-the larder's own `∞`. Its companion claim is that the METER above it still reads as a BUILD in neutral
-ink: somebody IS on this one, which is a different fact with a different remedy from the reverting
-state's nobody-is-there, and without it the frame is satisfied by that state.
+That is what deleting the `Keeping:` row costs, and it is the rule everything above rests on: **a
+failure state that renders bare reads as success.** It is the same trap as the unstaffed build one
+section down, where a calm `0%` was taken for work in progress. So `rung_row_value` forks four ways
+and every one of them leads with `HudSelectionVocab.RUNG_HAZARD_GLYPH`:
 
-**The sentinels need DRIVEN claims of their own and get three**: a frame that is silent because its
-fixture states `-1` would stay silent for a producer that RENDERED the sentinel, so
-`build_estimate_lines` is asked directly — `-1` silent, `-2` says `∞`, and an unrecognised negative
-stays silent rather than falling into whichever branch happens to be last. Sabotage-verified, each
-failing a DISJOINT claim: rendering the sentinel fails the driven negative alone, dropping the gear
-gate fails the plant negative alone, and reading the gear as zero fails the animal positive alone.
+| state | reads | why it is not the one above it |
+|---|---|---|
+| declared, nobody assigned, nothing banked | `⚠ Not started — no builders assigned` | there is no meter to state — `0 / 50 (0%)` is that zero written three ways |
+| work banked, nobody on it | `⚠ Reverting 42%` | the remedy is HANDS, and the plant web is actively losing the work |
+| staffed at or under the rung's rate | `⚠ ∞ turns (42%)` | somebody IS on it; the remedy is MORE of them |
+| built, and the keeping pool is short | `🌾 Tended 92% ⚠` | the rung is HELD and slipping, which no build crew fixes |
+
+**A FIFTH STATE EXISTS AND IT IS MARKED TOO** — `⚠ Stalled 42%`, the sim's `-1` on a source with
+builders on it: a rung whose knowledge, site or species gate does not hold, or whose crew stands over
+an empty escapement room. It gets its own word rather than borrowing *Reverting* (which would name
+the wrong remedy) and must not render as a bare percentage, which is the silence this family exists to
+remove.
+
+**THE BUILT ROW'S MARK IS `is_under_kept`, NOT the raw shortfall.** That test additionally requires no
+build in flight, which is what keeps the mark on the row it belongs to: a patch holding a Tended rung
+while a Field goes up is billed for the FIELD, so an unqualified shortfall would light the tended row
+for a bill the Field's builders owe.
+
+**THE TINT IS DECIDED ONCE FOR FOUR ROWS, AND IT KEYS ON THE MARK.** `DetailFormat.rung_value_hex` is
+what `cultivation_value_hex` / `field_value_hex` / `husbandry_value_hex` / `corral_value_hex` all
+delegate to — amber on the hazard glyph, signal green on the rung's own BUILT badge, neutral ink
+otherwise. Each of those used to guess by substring (`no builders`, then `Reverting`, then the badge
+word), so every new hazard state needed its own guess and could ship without its colour. The one case
+above the rule is the STARVING pen, which is DANGER red because the herd is shrinking right now.
+
+**AND A FULL-WIDTH SENTENCE THAT LEADS WITH THE MARK IS A WARNING**, which is now a rule in
+`detail_bbcode` rather than a list of known sentences. It tested `line == OVERGRAZING_WARNING` by
+equality, so every other hazard sentence rendered in the muted `INK_DIM` a descriptive line gets —
+including `HERDERS_SHED_FORMAT`, the one line in the client that says animals are drifting off.
+
+### RETIRED — `Keepers:` and `Keeping:`
+
+`DetailFormat.upkeep_lines` is `at_risk_lines` now, and it emits the `At risk:` row alone:
+
+- **`Keeping:` stated a standing bill on every source that owed anything.** A rung's keeping only
+  becomes a decision when it is SHORT — which is exactly when `At risk:` renders — so the bill went and
+  its failure stayed. `UPKEEP_ROW`, `UPKEEP_VALUE_FORMAT`, the keeper/builder noun pairs,
+  `UPKEEP_MID_BUILD_FORMAT` and `UPKEEP_UNBUILT_VALUE` went with it.
+- **The mid-build sentence's job is the rung row's `∞` now.** *"Its builders are not covering that —
+  this rung is sliding back"* was the row saying a build's crew is under the rate, on a surface that is
+  not the row the player would act on. `BUILD_TURNS_NEVER` says it where the meter is.
+- **`Keepers:` stated a DEMAND in hands, every turn, on a herd where nothing was wrong.** What a head
+  count is for is *am I short* — which `HERDERS_SHED_FORMAT` carries, with the count, and only when the
+  pool has failed to cover this herd. `KEEPERS_ROW`, `HERDERS_STAFFED_FORMAT`, `HERDERS_UNDER_FORMAT`,
+  `herders_label` and `herders_value_hex` are gone.
+- **`At risk:` is WARN-inked now** (`_value_hex`'s own case). It fell through to neutral INK for as
+  long as the calm `Keeping:` row above it carried the context; as the whole detail behind a marked
+  rung, a shortfall stated in the same ink as a stock reading is the reassuring direction again.
+- **It takes no `kind`.** The row above states WHICH rung is in trouble and the four-hazard fork
+  decides the mark; this states what the trouble costs, off the published shortfall alone, so it covers
+  both sides of the meter without re-deciding which side it is on.
+
+**The four per-rung BUILD VERBS went too** — `Preparing` / `Sowing` / `Domesticating` / `Building`
+each headlined a row that now leads with a number. The compose sheet keeps its own participles
+(`HudComposeVocab.IMPROVEMENT_RUNNING_LABELS`), because a sheet is COMPOSING that verb rather than
+reporting it. `Reverting` survives, owned outright by `HudSelectionVocab.RUNG_REVERTING_FORMAT`.
+
+**The three answers `buildTurnsRemaining` publishes are unchanged and all three still render** —
+a count is a finish date, `-2` is `∞`, `-1` is *no answer*. What changed is that `-1` is no longer
+allowed to render as nothing on a row a crew IS on: it is the `Stalled` hazard there, and it stays
+silent only where the row itself does not render. **THE CLIENT DERIVES NONE OF IT**: an unstaffed
+source and a refused gate both reach this reader as `-1`, and re-deriving either would call every idle
+improvement on the map a never-finisher.
+
+**Frames + assertions.** `tile_meter_building` / `tile_meter_reverting` / `tile_meter_never` /
+`tile_build_unstaffed` (`chapters/improvements.gd`) carry the plant hazards as WORD-AND-TINT markup —
+ONE patch at ONE meter value, with only the band's assignment and the published sentinel moving.
+`tile_two_meters_live` is the both-rows frame, and its third claim is the SILENCE: a patch whose
+keeping is paid must carry no mark on either row, or the mark means nothing on the states that do.
+`improvement_never_finishes_unstarted` is the compose-sheet repro (see `labor-ui.md`). `herd_corral`
+carries the animal both-rows case with the gear line under the building rung; `herd_under_herded`
+carries hazard 4, the built row's `⚠` beside the shed sentence and the `At risk:` countdown.
+
+**All five hazard states are ASKED OF THE PRODUCER as one conjunction** (`_hazard_states_all_marked`),
+because two of them render in states no frame in the chapter stages and the claim is about the SET: any
+state escaping the mark is the bug, and a per-state frame samples rather than closes it.
 
 **The fixtures DERIVE `work_done` from the fraction they already state** (`BaseFx.price_plant_build` /
 `HerdFx.price_animal_build`), so a fixture that re-dials a meter cannot end up with a percentage and

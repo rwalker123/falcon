@@ -364,23 +364,18 @@ func run(harness) -> void:
 	h._assert_hud("the reopened sheet quotes the FRESH meter (4% tamed), not the captured 0%",
 		ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
 			HudConst.LABOR_POLICY_TAME).begins_with(fresh_meter))
-	# The KEEPERS row is the second witness, and a different field entirely (`herders_needed` 0 -> 4),
-	# so the two cannot both pass off one stale-or-fresh dict by coincidence.
+	# **THE SECOND WITNESS IS THE BUTTON'S NOUN, asserted above** — a different field entirely
+	# (`herders_needed` 0 → 4, through `SourceForecast.is_managed_hunt_source`), so the two cannot both
+	# pass off one stale-or-fresh dict by coincidence.
 	#
-	# **IT HAS TO BE THE ROW, NOT THE NUMBER.** This searched the drawer OR the sheet for the digit "4"
-	# — which the fresh meter beside it ("Tame — 4%") already contains, so it passed off the very
-	# witness it was meant to be independent of, and would have passed off a coordinate or a yield just
-	# as happily. The Keepers row's whole rendered value is the only text that can testify: it names the
-	# demand, and it names it in the row the claim is about.
-	#
-	# **AND IT IS THE CALM FORM, on a herd part-way through its Tame** (`docs/plan_standing_upkeep.md`
-	# §2.5): the row is SHOWN because the herd is owned and will owe keepers, and it does not warn
-	# because the keeping is still the BUILD crew's — `upkeepWorkersNeeded` is `0` until the rung
-	# stands, so no share of the band's Husbandry pool is owed here yet. The demand it names is the
-	# herd's own, which is what this claim is about.
-	h._assert_hud("…and the drawer's keeper demand is the live one (4), not the pre-tame 0",
-		Q.has_label_containing(h._hud.occupant_detail,
-			DetailFormat.herders_label(REOPEN_TAMING_HERDERS, false)))
+	# **IT WAS THE `Keepers:` ROW, AND THAT ROW IS RETIRED** (issue #545). It stated a standing demand
+	# every turn on a herd where nothing was wrong, beside a `Keeping:` row saying the same number
+	# again, and reported from play neither could be read. What a head count is FOR is *am I short*,
+	# which the shed sentence and the rung row's own ⚠ now carry — so this asserts the retirement
+	# instead, on the one drawer in the corpus where a calm keeper demand used to render.
+	h._assert_hud("…and the drawer states no standing keeper bill at all — that row is retired",
+		not Q.has_label_containing(h._hud.occupant_detail, "drawn from the band")
+			and not Q.has_label_containing(h._hud.occupant_detail, "the pool covers"))
 	h._hud._drawercompose.close_compose_sheet()
 	h._hud._compose.reset_hunt_source()
 	h._hud._compose.set_hunt_floor(SourceForecast.DEFAULT_HARVEST_FLOOR)
@@ -1273,19 +1268,21 @@ const KIT_SWAP_KEEPERS := 3
 ## What that crew owes on an UNSTARTED Tame under each kit, derived HERE from the fixtures rather
 ## than through the producer under test: the rung costs `HerdFx.ANIMAL_TAME_WORK_COST` (50) with
 ## nothing banked, the floor sits at the food peak (×1.0) and one keeper banks one work unit a turn.
-## The stalking kit arms nobody for a build, so ⌈50 ÷ 3⌉; the handling gear arms two of the three at
-## 8.5 apiece, so ⌈(50 − 17) ÷ 3⌉.
-const KIT_SWAP_TURNS_BARE := 17
+## **AND THE RUNG'S RATE COMES OFF THE CREW BEFORE ANY OF IT IS PROGRESS** (issue #545): this warren's
+## Tame asks `KIT_SWAP_UPKEEP_PER_TURN` a turn, so three keepers bank `3 − 1 = 2`. The stalking kit
+## arms nobody for a build, so ⌈50 ÷ 2⌉; the handling gear arms two of the three at 8.5 apiece, so
+## ⌈(50 − 17) ÷ 2⌉.
+const KIT_SWAP_TURNS_BARE := 25
 
-const KIT_SWAP_TURNS_GEARED := 11
+const KIT_SWAP_TURNS_GEARED := 17
 
 ## …and what ONE MORE keeper owes under the handling gear, ⌈(50 − 17) ÷ 4⌉ — the gear term unmoved,
 ## because the fourth keeper finds no hurdles left to carry. Beside it, what a `min` dropped from the
 ## head count would quote that crew instead (`4 × 8.5` off the job, so ⌈16 ÷ 4⌉): stated so the
 ## negative names a number rather than merely differing.
-const KIT_SWAP_TURNS_SATURATED := 9
+const KIT_SWAP_TURNS_SATURATED := 11
 
-const KIT_SWAP_TURNS_UNCAPPED := 4
+const KIT_SWAP_TURNS_UNCAPPED := 6
 
 ## The herd both frames are composed on — a warren, which is the ceiling that keeps the handling kit
 ## OFFERED (a wild-ceiling herd greys it, see `_kit_offer_states`), with its Tame priced and unstarted
@@ -1294,13 +1291,21 @@ func _kit_swap_herd() -> Dictionary:
 	var herd := _offer_quarry(KIT_SWAP_HERD_ID, "Rabbit Warren", "small", OFFER_RABBIT_BODY_MASS,
 		OFFER_RABBIT_DEFENSE, SourceForecast.HUSBANDRY_CEILING_PEN)
 	herd["domestication"] = KIT_SWAP_UNSTARTED_TAME
-	return HerdFx.price_animal_build(herd)
+	return HerdFx.price_animal_build(herd, HerdFx.ANIMAL_BUILD_TURNS_REMAINING,
+		HerdFx.ANIMAL_BUILD_WORK_FROM_GEAR, KIT_SWAP_UPKEEP_PER_TURN)
 
 const KIT_SWAP_HERD_ID := "game_warren_kitswap"
 
 ## Nothing banked on the Tame, so the quote is the whole job and the two frames differ by the gear
 ## alone rather than by where a part-built meter happened to stand.
 const KIT_SWAP_UNSTARTED_TAME := 0.0
+
+## **THE RUNG'S OWN RATE ON THIS HERD** (issue #545) — `animal:pastoral`'s `1.0 × source_load` over a
+## warren's ONE keeper-load, against the reference herd's two. It is a term of the estimate now
+## (the pace is `crew − rate`), so a warren inheriting the reference herd's 2.0 would be a rate this
+## herd's own size can never produce — and at the three keepers these frames staff it would answer
+## `∞` and there would be no counts to compare.
+const KIT_SWAP_UPKEEP_PER_TURN := 1.0
 
 ## **THE OVER-GEARED CREW, and both halves of it are the fixture's claim.** Six keepers at the handling
 ## gear's 8.5 apiece take 51 work off a 50-unit Tame — the shipped start-stock case, a band holding 26

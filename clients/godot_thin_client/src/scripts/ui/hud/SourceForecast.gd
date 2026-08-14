@@ -742,6 +742,24 @@ const FORECAST_BUILD_WORK_COST_KEYS := {
     IMPROVEMENT_TAME: "tame_work_cost",
     IMPROVEMENT_CORRAL: "corral_work_cost",
 }
+# **WHAT THAT RUNG COSTS TO HOLD, PER TURN — the second term of the same pre-commit quote**, keyed by
+# improvement exactly as the cost above is and published under the same rule: unconditionally,
+# whether or not a build is in flight.
+#
+# **`upkeep_demand` IS NOT THIS NUMBER AND USING IT WAS THE BUG.** That field is what the source is
+# BILLED right now, resolved through the rung actually at risk, so it reads `0` on a source with no
+# progress — nothing is at stake yet. The build's pace is `crew − rate`, so a stepper netting against
+# the billed figure quoted `50 work ÷ 1 worker = 50 turns` on a wild patch whose Cultivate rung asks
+# 2 work a turn: a build that can never advance, priced as if it would land in fifty turns, beside a
+# tile card correctly rendering the sim's own `never finishes`. **The rate belongs to the rung being
+# QUOTED**, and it is picked with the same key table the cost is, so price, meter and rate can never
+# name three different rungs.
+const FORECAST_BUILD_UPKEEP_DEMAND_KEYS := {
+    IMPROVEMENT_CULTIVATE: "cultivation_upkeep_demand",
+    IMPROVEMENT_SOW: "field_upkeep_demand",
+    IMPROVEMENT_TAME: "tame_upkeep_demand",
+    IMPROVEMENT_CORRAL: "corral_upkeep_demand",
+}
 # **HOW MANY MORE TURNS THE BUILD NEEDS, AND WHAT THE CREW'S TOOLS TOOK OFF IT.** One of each per
 # SOURCE rather than per rung: at most one improvement is ever in flight on one source.
 #
@@ -3302,6 +3320,21 @@ static func build_work_cost(src: Dictionary, prefix: String, improvement: String
         prefix + String(FORECAST_BUILD_WORK_COST_KEYS[improvement]), BUILD_WORK_COST_NONE)),
         BUILD_WORK_COST_NONE)
 
+## **WHAT THIS IMPROVEMENT'S RUNG COSTS TO HOLD, PER TURN** — the rate a build crew pays before any
+## of its output is progress, read at the rung being PRICED rather than at the rung the source is
+## billed for today. See `FORECAST_BUILD_UPKEEP_DEMAND_KEYS` for why the difference is the whole
+## point, and `upkeep_state`'s `demand` for the other question — *what is this source billed right
+## now* — which no proposal may be netted against.
+##
+## `NO_UPKEEP_DEMAND` for a rung the wire states no rate on, which is an honest measured nothing (the
+## `penUpkeep` rule): a rung that costs nothing to hold makes every hand on it pure progress.
+static func build_upkeep_demand(src: Dictionary, prefix: String, improvement: String) -> float:
+    if not FORECAST_BUILD_UPKEEP_DEMAND_KEYS.has(improvement):
+        return NO_UPKEEP_DEMAND
+    return maxf(float(src.get(
+        prefix + String(FORECAST_BUILD_UPKEEP_DEMAND_KEYS[improvement]), NO_UPKEEP_DEMAND)),
+        NO_UPKEEP_DEMAND)
+
 ## **THE SIM'S OWN TURN ESTIMATE** for whatever this source is building. Per SOURCE, not per rung, so
 ## it takes no improvement.
 ##
@@ -3385,13 +3418,22 @@ static func upkeep_is_short(state: Dictionary) -> bool:
 static func keepers_wanted(src: Dictionary, prefix: String) -> int:
     return int(upkeep_state(src, prefix).get("crew", NO_UPKEEP_CREW))
 
-## **THE SMALLEST BUILD CREW THAT MAKES ANY PROGRESS AT ALL**, on a source whose meter is still going
-## up — the same published count `keepers_wanted` reads, named for the question a build stepper asks
-## of it. Below this the crew pays the maintenance rate and banks nothing, which is what
-## `BUILD_TURNS_NEVER` says one readout over; the stepper states the floor BEFORE the player commits,
-## rather than leaving them to discover it as a missing turn estimate afterwards.
-static func min_build_crew(src: Dictionary, prefix: String) -> int:
-    return keepers_wanted(src, prefix)
+## **THE WORK A BUILD CREW MUST BEAT BEFORE ANY OF IT IS PROGRESS**, for the rung the sheet is
+## quoting — the same `build_upkeep_demand` its own closed form subtracts, so the stepper's threshold
+## note and its turn estimate can never sit on opposite sides of one number. The stepper states it
+## BEFORE the player commits, rather than leaving them to discover it as an ∞ afterwards.
+##
+## **IT IS STATED IN WORK, NOT IN HANDS, AND IT REPLACED A HEAD COUNT** (`min_build_crew`, the
+## published `upkeepWorkersNeeded`). This model is denominated in work units — a rung declares a size
+## in work, a crew produces work per turn, a rung's keeping is a rate of work — so *"2 hold it"*
+## quietly reintroduced the worker as the unit and, worse, was answered by a field that reads `0`
+## before a build starts, which is exactly where the note is needed. The rate is the fact; how many
+## hands it takes is what the stepper beside it is for.
+##
+## `NO_UPKEEP_DEMAND` for a rung the wire prices no rate on — there is no threshold to clear, and a
+## `0 work a turn holds it` reads as a defect.
+static func min_build_work(src: Dictionary, prefix: String, improvement: String) -> float:
+    return build_upkeep_demand(src, prefix, improvement)
 
 ## **THE ONE UNDER-KEPT TEST** — this source stands on a rung that wants keeping, and the pool did not
 ## cover it.
@@ -3466,7 +3508,7 @@ static func is_unbuilt_and_unpaid(src: Dictionary, prefix: String, kind: String)
 ## would lie about the very decision the card then reports.
 ##
 ##     gear(b)  = min(b, kit_gear's saturating crew) × kit_gear's per-worker worth
-##     net(b)   = b × PER_WORKER_TURN − upkeepDemand
+##     net(b)   = b × PER_WORKER_TURN − <the QUOTED rung's own upkeep demand>
 ##     turns(b) = ceil((cost − done − gear(b)) / net(b))
 ##
 ## **`work_cost / crew` IS NOT THE BUILD PACE, and the `net` term is what changed that**
@@ -3546,11 +3588,20 @@ static func build_turns_at(src: Dictionary, prefix: String, improvement: String,
         # The source banks nothing per worker-turn, so there is no rate to divide by and no crew size
         # that would change it — an absent question rather than a crew that falls short.
         return BUILD_TURNS_NO_ESTIMATE
-    # **THE MAINTENANCE RATE COMES OFF THE TOP, and it is the source's own published demand** — never
-    # `demand − supplied`, and never a rate this client composes. A build crew pays it before any of
-    # its output is progress, so the surplus is the pace.
+    # **THE MAINTENANCE RATE COMES OFF THE TOP, AND IT IS THE RATE OF THE RUNG BEING QUOTED** — the
+    # published `*_upkeep_demand` for `improvement`, picked with the same key table `build_work_cost`
+    # above used, so price, meter and rate always name ONE rung. Never `demand − supplied`, and never
+    # a rate this client composes. A build crew pays it before any of its output is progress, so the
+    # surplus is the pace.
+    #
+    # **IT WAS THE SOURCE'S `upkeep_demand`, AND THAT FIELD IS `0` ON A SOURCE WITH NO PROGRESS.**
+    # Nothing is at risk on a wild patch, so the billed figure is honestly nothing — and netting
+    # against it made the rate vanish from the form at exactly the moment the sheet is quoting a rung
+    # nobody has started. Reported from play: a wild patch, Cultivate declared, one builder, the sheet
+    # promising ≈50 turns on a rung whose rate is 2, so the meter sat at `0 / 50 (0%)` for ever while
+    # the tile card beside it rendered the sim's own `never finishes`.
     var work_per_turn := float(workers) * per_worker_turn \
-        - float(upkeep_state(src, prefix)["demand"])
+        - build_upkeep_demand(src, prefix, improvement)
     if work_per_turn <= BUILD_WORK_NONE:
         return BUILD_TURNS_NEVER
     # **THE GEAR TERM SATURATES IN THE CREW, and the `min` is on the HEAD COUNT.** Coverage arms a
