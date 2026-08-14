@@ -113,13 +113,17 @@ take             = min(take_workers × per_worker_capacity, source_offer)
 > paying it too and only its **surplus** is progress: `turns = work_cost / (crew − rate)`. Earlier
 > prose in this file asserted `work_cost / crew`; that identity is gone, deliberately.
 >
-> **A crew at or below the rate never finishes.** It holds the meter exactly where it is, or takes it
-> backwards. That is a real minimum-viable-crew threshold rather than a slow build, and it is sharper
-> than anything else in the game, so it gets **its own published answer**: `buildTurnsRemaining` reads
-> `-2` (**never, at this staffing**) rather than the `-1` that means *there is no answer*. A staffed
-> crew that cannot clear the rate is a standing fact the player can act on — add hands — where the
-> other negative is a transient absence of information; an **unstaffed** source has promised nothing
-> and still reads `-1`. **`<rung>UpkeepDemand` publishes the threshold itself for the rung being
+> **A crew at or below the rate never finishes**, and *which* of the two it is is its own piece of
+> news. At the rate **exactly** the meter holds where it is: nothing banked, nothing lost, the turn
+> wasted. **Below** it the meter goes backwards — past the rung's grace the decay pass bleeds work
+> the player has already bought. Both are real minimum-viable-crew thresholds rather than slow
+> builds, and they are sharper than anything else in the game, so each gets **its own published
+> answer**: `buildTurnsRemaining` reads `-2` (**the meter holds**) or `-3` (**the meter rots**)
+> rather than the `-1` that means *there is no answer*. A staffed crew that cannot clear the rate is
+> a standing fact the player can act on — add hands — where the `-1` is a transient absence of
+> information; an **unstaffed** source has promised nothing and still reads `-1`, and so does one
+> whose knowledge / site / species gate refuses the build even with hands on it.
+> **`<rung>UpkeepDemand` publishes the threshold itself for the rung being
 > QUOTED**, beside that rung's `workCost`, so a compose sheet can say *"this crew is below it"* before
 > the player commits — `upkeepDemand` / `upkeepWorkersNeeded` answer for the rung the source stands on
 > or is raising, and are therefore `0` on a source nobody has started, which is the source the sheet

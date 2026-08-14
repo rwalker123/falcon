@@ -1,26 +1,32 @@
-//! **THE BUILD COUNTDOWN'S THREE STATES, ON THE WIRE** (`docs/plan_standing_upkeep.md` §2.4).
+//! **THE BUILD COUNTDOWN'S FOUR STATES, ON THE WIRE** (`docs/plan_standing_upkeep.md` §2.4).
 //!
 //! `buildTurnsRemaining` shipped as one sentinel covering four different situations, so the tile card
 //! and the herd drawer — the two surfaces a player reads every turn — rendered **no line at all** for
-//! all of them. One of those situations is not an absence of information:
+//! all of them. Three of those situations are not an absence of information:
 //!
 //! | published | meaning |
 //! |---|---|
 //! | `>= 0` | a real finish date at the crew that is on it |
-//! | `BUILD_NEVER_FINISHES` (`-2`) | **this staffing never finishes** — a real, staffed, priced build whose net supply is zero or negative |
+//! | `BUILD_METER_HOLDS` (`-2`) | a real, staffed, priced build whose net supply is **exactly zero** — the crew's whole output goes on the maintenance rate |
+//! | `BUILD_METER_ROTS` (`-3`) | the same build with a **negative** net — banked work is being lost |
 //! | `NO_BUILD_TURNS_ESTIMATE` (`-1`) | there is genuinely no answer — nobody is on the source |
 //!
-//! The maintenance rate is a tax on building, so a crew at or below it holds the meter exactly where
-//! it is, forever. **That is actionable and permanent** — the player adds hands — where the other
-//! no-answer states are transient. Folding it into `-1` made it visible only to a compose sheet that
-//! happened to redo the comparison itself.
+//! The maintenance rate is a tax on building, so a crew at or below it never finishes. **That is
+//! actionable and permanent** — the player adds hands — where the no-answer state is transient.
+//! Folding it into `-1` made it visible only to a compose sheet that redid the comparison itself.
+//!
+//! **AND "NEVER FINISHES" WAS ITSELF TWO PIECES OF NEWS.** Holding wastes a crew's turn; rotting
+//! destroys progress the player has already bought, and the client renders them yellow and red
+//! against a real count's green. One `-2` for both made the worse of them unspeakable.
 //!
 //! **Asserted on the ENCODED envelope, never on the in-process value**, the discipline
 //! `source_crews_on_the_wire.rs` follows: a field can be right in the capture and wrong in the
 //! buffer, and the schema/codec/reader path is what a client actually sees.
 //!
-//! **All three states run on ONE fixture and are asserted pairwise distinct**, because a test that
-//! exercised only two of them would pass with the new sentinel wired to the wrong branch.
+//! **All four states run on ONE fixture and are asserted pairwise distinct**, because a test that
+//! exercised only three of them would pass with the new sentinel wired to the wrong branch. **The
+//! EXACT-EQUALITY arm is the one that matters**: a fixture staffed only *below* the rate passes with
+//! holding and rotting wired to the same branch, since both are then reached the same way.
 //!
 //! **And the SECOND TERM of the same quote lives here too** — `cultivationUpkeepDemand`, the rate
 //! the rung being quoted costs to hold. `upkeepDemand` beside it resolves through the **at-risk**
@@ -39,11 +45,11 @@ use core_sim::{
     SnapshotHistory, StartingUnit, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR,
     NO_CREW_ON_THIS_ACTIVITY, UNSCALED_UPKEEP,
 };
-use sim_schema::{BUILD_NEVER_FINISHES, NO_BUILD_TURNS_ESTIMATE};
+use sim_schema::{BUILD_METER_HOLDS, BUILD_METER_ROTS, NO_BUILD_TURNS_ESTIMATE};
 
 /// **A GATHERING SITE THE CULTIVATE GATE ADMITS.** Every plant rung requires one
 /// (`RungSiteRequirement::requires_gathering_site`), and a refused gate publishes *no estimate* for a
-/// reason that has nothing to do with staffing — which would make two of this test's three arms the
+/// reason that has nothing to do with staffing — which would make three of this test's four arms the
 /// same state for the wrong reason.
 fn a_cultivable_site(app: &mut App) -> UVec2 {
     let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
@@ -283,16 +289,24 @@ fn resolve_a_turn(app: &mut App, source: UVec2) -> i32 {
     published_build_turns(app, source)
 }
 
-/// **THE THREE STATES, PAIRWISE DISTINCT, ON ONE FIXTURE.**
+/// **A CREW ONE HAND SHORT OF THE RATE** — the staffing that makes the net strictly negative, so the
+/// meter is bled rather than merely held. Named because `rate - 1` at a call site reads as
+/// arithmetic when what it states is *"under the rate, by the smallest step a player can take"*.
+const ONE_HAND_UNDER_THE_RATE: u32 = 1;
+
+/// **THE FOUR STATES, PAIRWISE DISTINCT, ON ONE FIXTURE.**
 #[test]
-fn the_build_countdown_publishes_a_count_never_and_no_estimate_as_three_states() {
+fn the_build_countdown_publishes_a_count_holding_rotting_and_no_estimate_as_four_states() {
     let rate = {
         let probe = build_headless_app();
         rate_in_hands(&probe)
     };
+    // **The rate must be at least two hands, or the rotting arm is unreachable**: at a rate of one,
+    // the only staffing below it is no staffing at all, which is `NO_BUILD_TURNS_ESTIMATE` by
+    // design. The shipped `plant:tended` demand of `2.0` is exactly why this fixture is a patch.
     assert!(
-        rate >= 1,
-        "fixture: the rung must charge a rate, or 'at or below it' is unreachable"
+        rate > ONE_HAND_UNDER_THE_RATE,
+        "fixture: the rung must charge a rate of at least two hands, or 'under it' is unreachable"
     );
 
     // (1) **A crew above the rate publishes a real count.**
@@ -303,28 +317,31 @@ fn the_build_countdown_publishes_a_count_never_and_no_estimate_as_three_states()
         "a crew above the maintenance rate is quoted a finish date, got {counted}"
     );
 
-    // (2) **A crew AT the rate publishes NEVER** — it is a real, staffed, priced build whose net
-    // supply is zero, so the meter holds exactly where it is forever. This is the state the whole
-    // sentinel exists for: an answer, not the absence of one.
+    // (2) **A crew EXACTLY AT the rate publishes HOLDING** — a real, staffed, priced build whose net
+    // supply is precisely zero, so the meter stands still: nothing is banked and nothing is lost.
+    //
+    // **THIS IS THE ARM THE SPLIT LIVES OR DIES ON.** Rotting is reached by a `< 0` comparison and
+    // holding by falling through it, so a suite that only staffed *below* the rate would pass with
+    // both wired to the same branch. Pinning the exact equality is what makes them two answers.
     let (mut app, source) = world_with_a_cultivate_staffed_at(rate);
-    let never = resolve_a_turn(&mut app, source);
+    let holding = resolve_a_turn(&mut app, source);
     assert_eq!(
-        never, BUILD_NEVER_FINISHES,
-        "a crew that cannot clear the rate never finishes, and says so"
+        holding, BUILD_METER_HOLDS,
+        "a crew whose whole output pays the rate holds the meter where it is, and says so"
     );
 
-    // …and so does one BELOW it, which is going backwards rather than standing still.
-    if rate > 1 {
-        let (mut app, source) = world_with_a_cultivate_staffed_at(rate - 1);
-        assert_eq!(
-            resolve_a_turn(&mut app, source),
-            BUILD_NEVER_FINISHES,
-            "a crew under the rate is losing ground — still never"
-        );
-    }
+    // (3) **A crew BELOW it publishes ROTTING** — it is going backwards, not standing still, and the
+    // player is losing work already bought rather than merely wasting a turn.
+    let (mut app, source) = world_with_a_cultivate_staffed_at(rate - ONE_HAND_UNDER_THE_RATE);
+    let rotting = resolve_a_turn(&mut app, source);
+    assert_eq!(
+        rotting, BUILD_METER_ROTS,
+        "a crew under the rate leaves a shortfall — the meter loses ground, and says so"
+    );
 
-    // (3) **An UNSTAFFED source publishes NO ESTIMATE, not never.** Nobody has promised anything
-    // there; claiming it will never finish would fire on every idle improvement on the map.
+    // (4) **An UNSTAFFED source publishes NO ESTIMATE, neither holding nor rotting.** Nobody has
+    // promised anything there; claiming it will never finish would fire on every idle improvement on
+    // the map.
     let (mut app, source) = world_with_a_cultivate_staffed_at(NO_CREW_ON_THIS_ACTIVITY);
     let unstaffed = resolve_a_turn(&mut app, source);
     assert_eq!(
@@ -332,20 +349,29 @@ fn the_build_countdown_publishes_a_count_never_and_no_estimate_as_three_states()
         "an unstaffed build has no answer — it has not promised one"
     );
 
-    // **Pairwise distinct**, which is what stops the new sentinel being wired to the wrong branch.
-    assert_ne!(counted, never);
-    assert_ne!(counted, unstaffed);
-    assert_ne!(never, unstaffed);
+    // **Pairwise distinct**, which is what stops a new sentinel being wired to the wrong branch.
+    let published = [counted, holding, rotting, unstaffed];
+    for (index, left) in published.iter().enumerate() {
+        for right in published.iter().skip(index + 1) {
+            assert_ne!(
+                left, right,
+                "the four states must be four numbers on the wire: {published:?}"
+            );
+        }
+    }
 }
 
-/// **THE TWO SENTINELS ARE OUTSIDE THE RANGE A REAL COUNT LIVES IN, and are not each other** — the
+/// **THE THREE SENTINELS ARE OUTSIDE THE RANGE A REAL COUNT LIVES IN, and are not each other** — the
 /// property every reader leans on when it branches on the sign.
 #[test]
-fn the_two_sentinels_are_distinct_and_below_every_real_count() {
+fn the_three_sentinels_are_distinct_and_below_every_real_count() {
     const {
-        assert!(NO_BUILD_TURNS_ESTIMATE != BUILD_NEVER_FINISHES);
+        assert!(NO_BUILD_TURNS_ESTIMATE != BUILD_METER_HOLDS);
+        assert!(NO_BUILD_TURNS_ESTIMATE != BUILD_METER_ROTS);
+        assert!(BUILD_METER_HOLDS != BUILD_METER_ROTS);
         assert!(NO_BUILD_TURNS_ESTIMATE < 0);
-        assert!(BUILD_NEVER_FINISHES < 0);
+        assert!(BUILD_METER_HOLDS < 0);
+        assert!(BUILD_METER_ROTS < 0);
     }
 }
 
@@ -399,11 +425,13 @@ fn an_unstarted_patch_publishes_the_quoted_rungs_upkeep_where_the_billed_one_is_
     );
 
     // **And the projection agrees with it**: a crew that cannot clear the rate never finishes, so
-    // the sim publishes the answer rather than a turn count computed against a rate of zero.
+    // the sim publishes the answer rather than a turn count computed against a rate of zero. One
+    // builder against a demand of `2.0` is *under* the rate, not at it, so the honest answer is that
+    // the meter rots — the quote states which of the two it is.
     assert_eq!(
         published_build_turns(&app, source),
-        BUILD_NEVER_FINISHES,
-        "one builder is under the tended rung's rate — the meter holds at 0 forever"
+        BUILD_METER_ROTS,
+        "one builder is under the tended rung's rate — the meter never reaches its cost"
     );
 
     // **MID-BUILD, THE TWO ARE ONE NUMBER.** Same rung on both sides, so a drift between the seams

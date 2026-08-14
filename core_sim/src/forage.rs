@@ -243,10 +243,12 @@ pub struct ForagePatch {
     /// Transient per-turn scratch on the same one-turn cycle as [`Self::tended_this_turn`]: written
     /// in Population, cleared by `advance_cultivation` in the *next* turn's Logistics, so the value
     /// the Snapshot stage captures is always the turn's own.
-    /// `None` is the wire's [`sim_schema::NO_BUILD_TURNS_ESTIMATE`] and
-    /// [`crate::intensification::BuildTurns::Never`] its [`sim_schema::BUILD_NEVER_FINISHES`] — two
-    /// negatives, two facts, because *"there is no answer"* and *"the answer is never"* are not the
-    /// same thing to a player who has already committed a crew.
+    /// `None` is the wire's [`sim_schema::NO_BUILD_TURNS_ESTIMATE`],
+    /// [`crate::intensification::BuildTurns::Holding`] its [`sim_schema::BUILD_METER_HOLDS`] and
+    /// [`crate::intensification::BuildTurns::Rotting`] its [`sim_schema::BUILD_METER_ROTS`] — three
+    /// negatives, three facts, because *"there is no answer"*, *"the meter is standing still"* and
+    /// *"the meter is going backwards"* are not the same thing to a player who has already
+    /// committed a crew.
     pub build_turns_remaining: Option<crate::intensification::BuildTurns>,
     /// **What the crew's TOOLS took off this patch's running build**, in work units — the `t` in
     /// `effective_cost = cost − t`

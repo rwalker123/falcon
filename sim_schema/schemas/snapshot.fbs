@@ -2126,21 +2126,27 @@ table ForagePatchState {
   // (`isCultivated`/`isField`) when that is empty — the pair reads "50 work, ~25 turns", so they
   // must name one rung.
   //
-  // TWO NEGATIVES, TWO FACTS, and they must not be collapsed:
+  // THREE NEGATIVES, THREE FACTS, and they must not be collapsed:
   //
   //   -1  NO ESTIMATE — there genuinely is no answer: this is already a Field, the next rung's own
   //       site/knowledge/species gates refuse it for this faction, or NO CREW is working the source.
-  //   -2  NEVER, AT THIS STAFFING — a REAL, STAFFED, PRICED build whose net supply is zero or
-  //       negative. The maintenance rate is a tax on building (docs/plan_standing_upkeep.md 2.4), so
-  //       a crew at or below it holds the meter exactly where it is, forever. Render it as INFINITY.
+  //   -2  THE METER HOLDS — a REAL, STAFFED, PRICED build whose net supply is EXACTLY ZERO. The
+  //       maintenance rate is a tax on building (docs/plan_standing_upkeep.md 2.4), and this crew's
+  //       whole output goes on it: nothing is banked, nothing is lost. Render as INFINITY.
+  //   -3  THE METER ROTS — the same build with a NEGATIVE net. The crew is under the rate, so past
+  //       the rung's grace the decay pass bleeds work the player already bought. Render as INFINITY
+  //       too, but NOT the same way as `-2`: holding wastes a turn, rotting destroys progress.
   //
-  // THE SECOND IS AN ANSWER, NOT THE ABSENCE OF ONE, and it is the one the player can act on: add
-  // hands. It shipped folded into `-1` for one slice, which rendered as NO LINE AT ALL on the tile
-  // card and the herd drawer — visible only to a compose sheet that redid the comparison itself.
+  // THE LAST TWO ARE ANSWERS, NOT THE ABSENCE OF ONE, and they are the ones the player can act on:
+  // add hands. They shipped folded into `-1` for one slice, which rendered as NO LINE AT ALL on the
+  // tile card and the herd drawer — visible only to a compose sheet that redid the comparison
+  // itself — and then as one `-2` for another, which said "never finishes" about a build that was
+  // treading water and one that was losing ground alike.
   //
-  // ALL THREE CONDITIONS ON `-2` ARE LOAD-BEARING. An UNSTAFFED source reads `-1`, not `-2`: nobody
-  // has promised anything there, and claiming a source with no crew will never finish would fire on
-  // every idle improvement on the map.
+  // ALL THREE CONDITIONS ON `-2`/`-3` ARE LOAD-BEARING. An UNSTAFFED source reads `-1`: nobody has
+  // promised anything there, and claiming a source with no crew will never finish would fire on
+  // every idle improvement on the map. So does a build whose knowledge/site/species gate refuses it
+  // even with hands on it — it accrues nothing for a reason that is not the staffing.
   //
   // THE CLIENT CANNOT COMPUTE THIS. It holds neither the crew's output, nor the floor multiplier,
   // nor the kit's build rate — so the sim answers, exactly as it does for `penFeedUpkeep` and the
@@ -2238,7 +2244,8 @@ table ForagePatchState {
   //                   / (w x buildWorkPerWorkerTurn x floor / foodPeak - <rung>UpkeepDemand))
   //
   // ...and a `w` whose output does not clear the rate NEVER finishes, which is what
-  // `buildTurnsRemaining` publishes as `-2`.
+  // `buildTurnsRemaining` publishes as `-2` (exactly at the rate, the meter holds) or `-3` (under
+  // it, the meter rots).
   //
   // ALWAYS MEANINGFUL, NEVER A SENTINEL (the penUpkeep rule): it is the LADDER's rate for that rung,
   // resolved at capture whether or not a build is in flight, exactly as the `*WorkCost` beside it is.
@@ -3203,12 +3210,15 @@ table HerdTelemetryState {
   // assignment's own `improvement`, or for the next rung up (`domestication`/`corralled`) when that
   // is empty.
   //
-  // TWO NEGATIVES, TWO FACTS — the same pair the plant twin on `ForagePatchState` documents in full:
+  // THREE NEGATIVES, THREE FACTS — the same set the plant twin on `ForagePatchState` documents in
+  // full:
   //   -1  NO ESTIMATE — already penned, the next rung's ceiling/knowledge/ownership gates refuse it,
   //       or NO CREW is working the herd.
-  //   -2  NEVER, AT THIS STAFFING — a real, STAFFED, priced build whose net supply is zero or
-  //       negative, because the maintenance rate is a tax on building. Render it as INFINITY.
-  // An unstaffed herd reads `-1`, never `-2`. The client cannot compute either.
+  //   -2  THE METER HOLDS — a real, STAFFED, priced build whose net supply is exactly zero: the
+  //       maintenance rate is a tax on building and this crew's whole output goes on it.
+  //   -3  THE METER ROTS — the same build with a negative net, so banked work is being lost.
+  // Render the last two as INFINITY, and not as each other. An unstaffed herd reads `-1`, and so
+  // does one whose gates refuse the build. The client cannot compute any of them.
   buildTurnsRemaining:int = -1;
   // WHAT THE CREW'S TOOLS TOOK OFF THIS BUILD, in work units (appended,
   // docs/plan_unit_costed_work.md section 6) - the `t` in
@@ -3301,7 +3311,8 @@ table HerdTelemetryState {
   //                   / (w x buildWorkPerWorkerTurn x floor / foodPeak - <rung>UpkeepDemand))
   //
   // ...and a `w` whose output does not clear the rate NEVER finishes, which is what
-  // `buildTurnsRemaining` publishes as `-2`.
+  // `buildTurnsRemaining` publishes as `-2` (exactly at the rate, the meter holds) or `-3` (under
+  // it, the meter rots).
   //
   // ALWAYS MEANINGFUL, NEVER A SENTINEL (the penUpkeep rule): it is the LADDER's rate for that rung,
   // resolved at capture whether or not a build is in flight, exactly as the `*WorkCost` beside it is.

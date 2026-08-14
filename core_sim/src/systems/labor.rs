@@ -1168,6 +1168,17 @@ pub fn advance_labor_allocation(
                                 build_workers,
                                 UNSCALED_UPKEEP,
                             );
+                        // **THE SAME NET, UNFLOORED** — what the countdown is struck from. The
+                        // accrual above is floored because a meter may not be handed a negative
+                        // amount to add; the estimate must see the sign, or *holding at the rate*
+                        // and *rotting below it* are the same published answer
+                        // (`RungDef::build_balance`).
+                        let balance = tended_rung.build_balance(
+                            improvement,
+                            eligible,
+                            build_workers,
+                            UNSCALED_UPKEEP,
+                        );
                         // **THE JOB'S PRICE**, in work units — `RUNG_COST_UNSCALED` because a patch
                         // is a patch: the only per-source cost multiplier on the ladder is a
                         // species' `taming_cost_multiplier`, and a plant has no species.
@@ -1217,11 +1228,11 @@ pub fn advance_labor_allocation(
                             build_turns_estimate(
                                 cultivate_bar,
                                 patch.cultivation_progress,
-                                accrual,
-                                // **"NEVER" NEEDS A BUILD THAT IS ACTUALLY RUNNING.** Hands on the
-                                // verb *and* the rung's own gate holding — a gate that refuses is
-                                // "no estimate", not "this staffing never gets there", because
-                                // nothing has been promised at all.
+                                balance,
+                                // **HOLDING AND ROTTING BOTH NEED A BUILD THAT IS ACTUALLY
+                                // RUNNING.** Hands on the verb *and* the rung's own gate holding —
+                                // a gate that refuses is "no estimate", not "this staffing never
+                                // gets there", because nothing has been promised at all.
                                 build_workers > NO_CREW_ON_THIS_ACTIVITY && eligible,
                             ),
                             cultivate_gear,
@@ -2061,6 +2072,14 @@ pub fn advance_labor_allocation(
                             build_workers,
                             fauna::herd_keeper_load(herd, &fauna),
                         );
+                        // **The countdown's unfloored twin** — the Cultivate arm's rule: the meter
+                        // takes the floored accrual, the estimate takes the sign.
+                        let balance = pastoral_rung.build_balance(
+                            improvement,
+                            eligible,
+                            build_workers,
+                            fauna::herd_keeper_load(herd, &fauna),
+                        );
                         // **THE JOB'S PRICE** — the rung's `work_cost` times this species' own
                         // `taming_cost_multiplier` (slice 3c inverted): the rung owns the mechanic,
                         // the species prices it. A Steppe Runner is five times the work, not a crew
@@ -2098,7 +2117,7 @@ pub fn advance_labor_allocation(
                             build_turns_estimate(
                                 tame_bar,
                                 herd.domestication_progress,
-                                accrual,
+                                balance,
                                 build_workers > NO_CREW_ON_THIS_ACTIVITY && eligible,
                             ),
                             tame_gear,
@@ -2156,6 +2175,13 @@ pub fn advance_labor_allocation(
                             build_workers,
                             fauna::herd_keeper_load(herd, &fauna),
                         );
+                        // **The countdown's unfloored twin** — the Cultivate arm's rule.
+                        let balance = pen_rung.build_balance(
+                            improvement,
+                            eligible,
+                            build_workers,
+                            fauna::herd_keeper_load(herd, &fauna),
+                        );
                         // Penning is a flat job for every species — a fence is a fence — so the pen
                         // takes no per-species multiplier; only *taming* varies.
                         let pen_cost = pen_rung
@@ -2178,7 +2204,7 @@ pub fn advance_labor_allocation(
                             build_turns_estimate(
                                 pen_bar,
                                 herd.corral_progress,
-                                accrual,
+                                balance,
                                 build_workers > NO_CREW_ON_THIS_ACTIVITY && eligible,
                             ),
                             pen_gear,
@@ -2817,19 +2843,55 @@ impl<K: Eq + std::hash::Hash> BuildEstimateClaims<K> {
     }
 }
 
-/// **Does `proposed` finish sooner than what is already published?** A real count beats everything
-/// else (a crew that is moving the meter is never displaced by one that is not), then the smaller
-/// count wins; and a crew that **never** finishes beats only silence, because *"never"* is still an
-/// answer where `None` is the absence of one ([`BuildTurns`]).
+/// **Does `proposed` finish sooner than what is already published?** Strictly, on
+/// [`EstimateStanding`]'s total order — so equal standings never displace one another and the
+/// published answer cannot depend on the order the labor loop visits bands in.
 fn is_a_sooner_estimate(proposed: Option<BuildTurns>, published: Option<BuildTurns>) -> bool {
-    match (proposed, published) {
-        (Some(BuildTurns::Turns(proposed)), Some(BuildTurns::Turns(published))) => {
-            proposed < published
-        }
-        (Some(BuildTurns::Turns(_)), _) => true,
-        (Some(BuildTurns::Never), Some(BuildTurns::Turns(_)) | Some(BuildTurns::Never)) => false,
-        (Some(BuildTurns::Never), None) => true,
-        (None, _) => false,
+    estimate_standing(proposed) < estimate_standing(published)
+}
+
+/// **THE FOUR ANSWERS, RANKED — and the whole ranking is one statement: MORE NET SUPPLY IS BETTER
+/// NEWS.**
+///
+/// Several crews can work one source, and each quote counts only its own output
+/// ([`BuildEstimateClaims`]), so the source publishes the best of them. The order below is the
+/// derived `Ord` on this enum — variant order first, payload second — which makes it **total**, so
+/// two equal standings compare equal and neither displaces the other:
+///
+/// | standing | net supply | why it sits here |
+/// |---|---|---|
+/// | `Finishes(n)` | `> 0` | a crew that is moving the meter is never displaced by one that is not; among them the **smaller count** wins, and for one source that is the larger net |
+/// | `Holds` | `== 0` | the meter is preserved, so this crew is strictly **closer to a finish** than one losing the work |
+/// | `Rots` | `< 0` | going backwards is still an answer, and the worst of the three |
+/// | `Silent` | — | the *absence* of an answer, which any answer beats |
+///
+/// **Holding above rotting is not a taste call** — it is the same monotonicity that orders the real
+/// counts. A larger net supply is a sooner finish, and the three non-count states continue that
+/// line past zero rather than starting a second rule.
+///
+/// **`Silent` must be last**, which is why this exists rather than an `Ord` on
+/// `Option<BuildTurns>`: `Option`'s derived order puts `None` **first**, i.e. makes silence beat
+/// every answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum EstimateStanding {
+    /// A real count — the fewer turns, the better the news.
+    Finishes(u32),
+    /// The meter holds exactly where it is ([`BuildTurns::Holding`]).
+    Holds,
+    /// The meter is going backwards ([`BuildTurns::Rotting`]).
+    Rots,
+    /// No answer at all — nobody has promised anything on this source.
+    Silent,
+}
+
+/// [`EstimateStanding`] for a published answer. An exhaustive match, so a fifth `BuildTurns` fails
+/// to compile until someone states where in the order it belongs.
+fn estimate_standing(estimate: Option<BuildTurns>) -> EstimateStanding {
+    match estimate {
+        Some(BuildTurns::Turns(turns)) => EstimateStanding::Finishes(turns),
+        Some(BuildTurns::Holding) => EstimateStanding::Holds,
+        Some(BuildTurns::Rotting) => EstimateStanding::Rots,
+        None => EstimateStanding::Silent,
     }
 }
 
@@ -2889,6 +2951,9 @@ fn accrue_field(
 ) -> bool {
     // Net of the `plant:field` rung's own maintenance rate — see the Cultivate arm.
     let accrual = field_rung.build_accrual(improvement, eligible, workers, UNSCALED_UPKEEP);
+    // **The same net, unfloored** — the meter takes the floored accrual, the countdown takes the
+    // sign, so *holding at the rate* and *rotting below it* stay two answers.
+    let balance = field_rung.build_balance(improvement, eligible, workers, UNSCALED_UPKEEP);
     // **THE JOB'S PRICE** — `RUNG_COST_UNSCALED`, because sowing is a flat job: the only per-source
     // cost multiplier on the ladder is a species' `taming_cost_multiplier`, and a plant has none.
     let sow_cost = field_rung
@@ -2908,7 +2973,7 @@ fn accrue_field(
             build_turns_estimate(
                 sow_bar,
                 patch.field_progress,
-                accrual,
+                balance,
                 workers > NO_CREW_ON_THIS_ACTIVITY && eligible,
             ),
             sow_gear,
@@ -2940,7 +3005,7 @@ fn accrue_field(
         build_turns_estimate(
             sow_bar,
             patch.field_progress,
-            accrual,
+            balance,
             workers > NO_CREW_ON_THIS_ACTIVITY && eligible,
         ),
         sow_gear,

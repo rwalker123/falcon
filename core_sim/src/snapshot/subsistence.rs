@@ -13,7 +13,7 @@ use crate::intensification::{
     build_fraction, build_work_per_worker_turn, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY,
     NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, UNSCALED_UPKEEP,
 };
-use sim_schema::{BUILD_NEVER_FINISHES, NO_BUILD_TURNS_ESTIMATE};
+use sim_schema::{BUILD_METER_HOLDS, BUILD_METER_ROTS, NO_BUILD_TURNS_ESTIMATE};
 
 /// **THE COUNTDOWN, ON THE WIRE** — the one place `BuildTurns` becomes an `i32`, so the plant and the
 /// animal web cannot come to publish the same state as two different numbers.
@@ -23,7 +23,8 @@ use sim_schema::{BUILD_NEVER_FINISHES, NO_BUILD_TURNS_ESTIMATE};
 fn published_build_turns(turns: crate::intensification::BuildTurns) -> i32 {
     match turns {
         crate::intensification::BuildTurns::Turns(count) => count as i32,
-        crate::intensification::BuildTurns::Never => BUILD_NEVER_FINISHES,
+        crate::intensification::BuildTurns::Holding => BUILD_METER_HOLDS,
+        crate::intensification::BuildTurns::Rotting => BUILD_METER_ROTS,
     }
 }
 
@@ -739,11 +740,12 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // `*WorkCost` it belongs beside is the assignment's own `improvement`, or the next
                 // rung up when that is empty. `-1` only where there is genuinely no answer (penned,
                 // a gate refuses, or a stalled build). The client can derive none of it.
-                // **TWO NEGATIVES, TWO FACTS** (`intensification::BuildTurns`): `-1` where there
-                // is genuinely no answer (nobody on the source, a gate refuses, the top of the
-                // ladder), and `-2` where a **staffed** crew's net supply is zero or negative and
-                // this build will never finish at that staffing. The second is the one the player
-                // can act on, and folding it into the first rendered as no line at all.
+                // **THREE NEGATIVES, THREE FACTS** (`intensification::BuildTurns`): `-1` where
+                // there is genuinely no answer (nobody on the source, a gate refuses, the top of
+                // the ladder); `-2` where a **staffed** crew's net supply is exactly zero, so the
+                // meter holds where it is; and `-3` where it is negative, so the meter is going
+                // backwards. The last two are the ones the player can act on, and they are two
+                // answers because holding wastes a turn where rotting destroys bought work.
                 build_turns_remaining: herd
                     .and_then(|herd| herd.build_turns_remaining)
                     .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),
@@ -962,11 +964,12 @@ pub(crate) fn snapshot_forage_patches(
                 // beside the `*WorkCost` for the assignment's own `improvement`, or for the next rung
                 // up when that is empty. `-1` only where there is genuinely no answer (a Field, a
                 // gate that refuses, or a stalled build).
-                // **TWO NEGATIVES, TWO FACTS** (`intensification::BuildTurns`): `-1` where there
-                // is genuinely no answer (nobody on the source, a gate refuses, the top of the
-                // ladder), and `-2` where a **staffed** crew's net supply is zero or negative and
-                // this build will never finish at that staffing. The second is the one the player
-                // can act on, and folding it into the first rendered as no line at all.
+                // **THREE NEGATIVES, THREE FACTS** (`intensification::BuildTurns`): `-1` where
+                // there is genuinely no answer (nobody on the source, a gate refuses, the top of
+                // the ladder); `-2` where a **staffed** crew's net supply is exactly zero, so the
+                // meter holds where it is; and `-3` where it is negative, so the meter is going
+                // backwards. The last two are the ones the player can act on, and they are two
+                // answers because holding wastes a turn where rotting destroys bought work.
                 build_turns_remaining: patch
                     .build_turns_remaining
                     .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),

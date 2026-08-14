@@ -424,9 +424,10 @@ pub struct Herd {
     /// compute any of it (it holds neither the crew's output, nor the floor multiplier, nor the kit),
     /// so the sim answers — the `penFeedUpkeep` discipline. Transient per-turn scratch on
     /// `tamed_this_turn`'s cycle: written in Population, cleared by `advance_husbandry` the next turn.
-    /// `None` is the wire's [`sim_schema::NO_BUILD_TURNS_ESTIMATE`] and
-    /// [`crate::intensification::BuildTurns::Never`] its [`sim_schema::BUILD_NEVER_FINISHES`] — see
-    /// `ForagePatch::build_turns_remaining` for why the two are separate answers.
+    /// `None` is the wire's [`sim_schema::NO_BUILD_TURNS_ESTIMATE`],
+    /// [`crate::intensification::BuildTurns::Holding`] its [`sim_schema::BUILD_METER_HOLDS`] and
+    /// [`crate::intensification::BuildTurns::Rotting`] its [`sim_schema::BUILD_METER_ROTS`] — see
+    /// `ForagePatch::build_turns_remaining` for why the three are separate answers.
     pub build_turns_remaining: Option<crate::intensification::BuildTurns>,
     /// **What the keepers' TOOLS took off this herd's running build**, in work units — the `t` in
     /// `effective_cost = cost − t`

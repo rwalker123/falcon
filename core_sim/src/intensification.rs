@@ -279,49 +279,80 @@ pub fn build_turns_remaining(cost: f32, done: f32, work_this_turn: f32) -> Optio
     Some((remaining / work_this_turn).ceil() as u32)
 }
 
-/// **WHAT A SOURCE'S BUILD COUNTDOWN SAYS — THREE ANSWERS, NOT TWO.**
+/// **WHAT A SOURCE'S BUILD COUNTDOWN SAYS — FOUR ANSWERS, NOT TWO.**
 ///
 /// [`build_turns_remaining`] is the arithmetic and answers `Option<u32>`; this is what the *source*
-/// stores and the wire publishes, because *"there is no answer"* and *"the answer is never"* are
-/// different facts and were being collapsed into one sentinel.
+/// stores and the wire publishes, because *"there is no answer"*, *"the meter is standing still"*
+/// and *"the meter is going backwards"* are different facts and were being collapsed into one
+/// sentinel — first all three into `-1`, then the last two into `-2`.
 ///
 /// | this enum | wire | what it means |
 /// |---|---|---|
 /// | `Some(Turns(n))` | `n` | a real finish date |
-/// | `Some(Never)` | [`sim_schema::BUILD_NEVER_FINISHES`] | **this staffing never finishes** |
+/// | `Some(Holding)` | [`sim_schema::BUILD_METER_HOLDS`] | **the meter holds exactly where it is** |
+/// | `Some(Rotting)` | [`sim_schema::BUILD_METER_ROTS`] | **the meter is going backwards** |
 /// | `None` | [`sim_schema::NO_BUILD_TURNS_ESTIMATE`] | there is genuinely no answer |
 ///
-/// # WHY `Never` HAD TO BE ITS OWN ANSWER
+/// # WHY THE TWO NON-FINISHING STATES ARE NOT ONE
 ///
 /// The maintenance rate is a tax on building (`docs/plan_standing_upkeep.md` §2.4), so a crew at or
-/// below it holds the meter where it is forever. That is **actionable and permanent** — a standing
-/// fact about a staffing the player has already committed — where the other no-answer states are a
-/// transient absence of information. Folded into one sentinel it rendered as *no line at all* on the
-/// tile card and the herd drawer, visible only to a compose sheet that happened to redo the
-/// comparison itself.
+/// below it never finishes. That is **actionable and permanent** — a standing fact about a staffing
+/// the player has already committed — where the no-answer state is a transient absence of
+/// information; folded into one sentinel it rendered as *no line at all* on the tile card and the
+/// herd drawer, visible only to a compose sheet that happened to redo the comparison itself.
+///
+/// **But "never finishes" was itself two pieces of news**, and they cost the player differently:
+/// exactly at the rate the crew's whole output is spent on maintenance, so the meter **holds** and
+/// the turn is merely wasted; **below** it there is a shortfall, and past the rung's grace the decay
+/// pass bleeds work the player already bought. The mirror of [`net_build_supply`]'s own three-line
+/// table — *grows / holds / rots* — which is the vocabulary this enum deliberately reuses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuildTurns {
     /// `ceil((cost − done) / net)` at the crew that is on it.
     Turns(u32),
-    /// **A real, staffed, priced build whose net supply is zero or negative.** All three conditions
-    /// are load-bearing: an *unstaffed* source has promised nothing and reads `None`, or every idle
+    /// **A real, staffed, priced build whose net supply is exactly zero.** All three conditions are
+    /// load-bearing: an *unstaffed* source has promised nothing and reads `None`, or every idle
     /// improvement on the map would claim it will never finish.
-    Never,
+    Holding,
+    /// **The same build with a negative net** — the crew is under the rung's maintenance rate, so
+    /// what it does not supply is a shortfall and the decay pass takes the meter backwards.
+    Rotting,
 }
 
-/// **THE COUNTDOWN A SOURCE PUBLISHES** — [`build_turns_remaining`]'s arithmetic, with the one state
-/// it cannot see folded in: whether anybody is actually on the job.
+/// **THE COUNTDOWN A SOURCE PUBLISHES** — [`build_turns_remaining`]'s arithmetic, with the two states
+/// it cannot see folded in: whether anybody is actually on the job, and which side of the maintenance
+/// rate they fall on.
+///
+/// `balance` is the **signed** net ([`RungDef::build_balance`]), not the floored one
+/// [`net_build_supply`] hands a meter: the floor is what a meter may *add*, and it maps *holding* and
+/// *rotting* onto the same `0.0`, which is exactly the distinction this function exists to publish.
 ///
 /// `staffed` is *"is this a real build crew"* — hands on the verb, or the hands a projection is being
-/// quoted at. A non-positive net with a crew is [`BuildTurns::Never`]; a non-positive net with **no**
-/// crew is `None`, because nobody has promised anything there.
-pub fn build_turns_estimate(cost: f32, done: f32, net: f32, staffed: bool) -> Option<BuildTurns> {
-    match build_turns_remaining(cost, done, net) {
+/// quoted at — **and the rung's own gates holding**. A non-positive balance with no such crew is
+/// `None`, because nobody has promised anything there.
+pub fn build_turns_estimate(
+    cost: f32,
+    done: f32,
+    balance: f32,
+    staffed: bool,
+) -> Option<BuildTurns> {
+    match build_turns_remaining(cost, done, balance) {
         Some(turns) => Some(BuildTurns::Turns(turns)),
-        None if staffed => Some(BuildTurns::Never),
-        None => None,
+        None if !staffed => None,
+        None if balance < BUILD_BALANCE_HOLDS => Some(BuildTurns::Rotting),
+        None => Some(BuildTurns::Holding),
     }
 }
+
+/// **THE BALANCE AT WHICH A METER NEITHER GROWS NOR ROTS** — a crew whose whole output goes on the
+/// rung's maintenance rate, so `supply − demand` is exactly this.
+///
+/// It is the boundary [`BuildTurns::Holding`] and [`BuildTurns::Rotting`] are split on, and it is
+/// named separately from [`NO_BUILD_PROGRESS`] — which is the same number — because the two are
+/// different statements about it: that one is a **floor** on what a meter may add, this one is the
+/// **cut point** between two published answers. A reader that borrowed the floor's name here would
+/// be asserting the rot case away.
+pub const BUILD_BALANCE_HOLDS: f32 = 0.0;
 
 /// **THE ANSWER FOR A BAR A WORKING CREW IS ALREADY AT OR PAST** — one turn, because a build with no
 /// work left to do completes on the first turn anybody works it.
@@ -451,6 +482,9 @@ pub fn activity_work(workers: u32) -> f32 {
 /// **The floor at zero is not a clamp, it is the boundary between two accounts.** A negative net is
 /// the *rot*, and the rot is the decay pass's to apply off the same stored supply — this seam only
 /// answers the build's half, so it must not hand a caller a negative amount to add to a meter.
+///
+/// **The COUNTDOWN reads the unfloored twin** ([`RungDef::build_balance`]), because the floor is what
+/// erases the difference between the middle line and the bottom one above.
 pub fn net_build_supply(supply: f32, maintenance_rate: f32) -> f32 {
     (supply - maintenance_rate).max(NO_BUILD_PROGRESS)
 }
@@ -460,6 +494,16 @@ pub fn net_build_supply(supply: f32, maintenance_rate: f32) -> f32 {
 /// [`net_build_supply`]'s floor reads as *"no crew"* when the case that matters is *"a crew that is
 /// not enough"*.
 pub const NO_BUILD_PROGRESS: f32 = 0.0;
+
+/// **NOTHING IS IN PLAY ON THIS RUNG** — [`RungDef::build_balance`]'s answer where the crew is not
+/// building this rung at all: it has nothing to build, its gates refuse, or the verb names another
+/// rung. Neither growing nor rotting, because there is no build to describe.
+///
+/// Distinct from [`NO_BUILD_PROGRESS`] in the same way [`BUILD_BALANCE_HOLDS`] is: that is a real
+/// crew that exactly pays the rate, this is the absence of a build. Nothing acts on it — every
+/// caller reaching a non-positive balance is already gated by `staffed` — and it is named so that
+/// absence cannot be misread as the holding case if one ever does.
+pub const NO_BUILD_BALANCE: f32 = 0.0;
 
 /// **WHAT THE RUNG'S STANDING DEMAND LEAVES UNMET**, in work units — `max(0, demand − supplied)`,
 /// and therefore exactly what [`RungDef::upkeep_decay`] bleeds off the meter past the grace
@@ -1312,13 +1356,57 @@ impl RungDef {
         workers: u32,
         source_measure: f32,
     ) -> f32 {
-        if self.build.is_none() {
-            return 0.0;
-        }
+        self.build_terms(improvement, eligible, workers, source_measure)
+            .map_or(NO_BUILD_PROGRESS, |(supply, rate)| {
+                net_build_supply(supply, rate)
+            })
+    }
+
+    /// **THE SAME SUBTRACTION, SIGNED** — what [`build_accrual`](Self::build_accrual) floors at
+    /// [`NO_BUILD_PROGRESS`] before handing it to a meter. `supply − demand`, with nothing under it.
+    ///
+    /// # THE FLOOR IS RIGHT FOR A METER AND WRONG FOR A COUNTDOWN
+    ///
+    /// A meter must never be handed a negative amount to add — the rot is the decay pass's, off the
+    /// same stored supply ([`net_build_supply`]). But the floor maps *"the crew exactly pays the
+    /// rate"* and *"the crew is under it"* onto one `0.0`, and those are the two facts
+    /// [`BuildTurns::Holding`] and [`BuildTurns::Rotting`] exist to tell apart: holding wastes the
+    /// crew's turn, rotting destroys work already bought. So the countdown reads this and the meter
+    /// reads the floored twin, off **one** gate and **one** subtraction.
+    ///
+    /// [`NO_BUILD_BALANCE`] for a rung this crew is not building at all — nothing is in play, and
+    /// every caller that could act on the value is already gated by `staffed`.
+    pub fn build_balance(
+        &self,
+        improvement: Option<Improvement>,
+        eligible: bool,
+        workers: u32,
+        source_measure: f32,
+    ) -> f32 {
+        self.build_terms(improvement, eligible, workers, source_measure)
+            .map_or(NO_BUILD_BALANCE, |(supply, rate)| supply - rate)
+    }
+
+    /// **THE TWO TERMS OF A BUILD CREW'S TURN** — what the crew supplies, and what the rung charges
+    /// to hold itself — or `None` when this rung is not the one this crew is building: it has
+    /// nothing to build, the caller's gates refuse it, or the assignment's verb names a different
+    /// rung.
+    ///
+    /// One gate for the two readings above, so [`build_accrual`](Self::build_accrual) and
+    /// [`build_balance`](Self::build_balance) cannot come to disagree about *whether* a build is
+    /// running while agreeing about its arithmetic.
+    fn build_terms(
+        &self,
+        improvement: Option<Improvement>,
+        eligible: bool,
+        workers: u32,
+        source_measure: f32,
+    ) -> Option<(f32, f32)> {
+        self.build.as_ref()?;
         if !eligible || improvement.is_none() || self.verb_improvement() != improvement {
-            return 0.0;
+            return None;
         }
-        net_build_supply(activity_work(workers), self.upkeep_demand(source_measure))
+        Some((activity_work(workers), self.upkeep_demand(source_measure)))
     }
 
     /// **The build seam — the cost side. WHAT THIS JOB COSTS ON THIS SOURCE**, in work units:
@@ -1707,16 +1795,17 @@ impl LadderConfig {
         let bar = self.effective_build_cost(cost, build_work_from_gear(gear_per_worker, workers));
         // **Quoted at the NET**, exactly as the live stamp is: the maintenance rate is a tax on
         // building, so a projection off the raw crew would promise a finish date the crew cannot
-        // reach — and at or below the rate `build_turns_remaining` refuses to answer at all.
-        let accrual =
-            rung.build_accrual(rung.verb_improvement(), eligible, workers, source_measure);
+        // reach — and at or below the rate `build_turns_remaining` refuses to answer at all. The
+        // **signed** net, so a quote can say which side of the rate the proposed crew falls on.
+        let balance =
+            rung.build_balance(rung.verb_improvement(), eligible, workers, source_measure);
         // **A quoted crew that cannot clear the rate never gets there** — the same standing fact a
         // running build states, so a projection says so rather than withholding the line. `workers`
         // is what the quote is priced at, so it is also what "staffed" means here.
         build_turns_estimate(
             bar,
             banked,
-            accrual,
+            balance,
             workers > NO_CREW_ON_THIS_ACTIVITY && eligible,
         )
     }
@@ -2701,12 +2790,15 @@ mod tests {
             Some(BuildTurns::Turns(BUILD_FINISHES_IN_ONE_TURN)),
             "gear that pays the job off outright finishes it on the first worked turn"
         );
-        // **And a crew at the maintenance rate is quoted NEVER, not silence** — a projection states
-        // the same standing fact a running build does.
+        // **And a crew EXACTLY at the maintenance rate is quoted HOLDING, not silence** — a
+        // projection states the same standing fact a running build does. The *rotting* half is
+        // unreachable on this rung with whole hands (its demand is `1.0`, so the only staffing
+        // under the rate is no staffing at all, which is `None` by design); the plant web's
+        // demand of `2.0` is where that arm is pinned — `build_turns_on_the_wire.rs`.
         assert_eq!(
             quote(pastoral.upkeep_crew_needed(UNSCALED_UPKEEP)),
-            Some(BuildTurns::Never),
-            "a quoted crew that cannot clear the rate never gets there — and says so"
+            Some(BuildTurns::Holding),
+            "a quoted crew that exactly pays the rate holds the meter — and says so"
         );
 
         // And the quote is monotone into that floor rather than falling off it: each added hand

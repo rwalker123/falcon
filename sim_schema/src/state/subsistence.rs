@@ -15,22 +15,45 @@ use serde::{Deserialize, Serialize};
 /// than about the sim's arithmetic (`core_sim`'s `build_turns_remaining` answers an `Option<u32>`).
 pub const NO_BUILD_TURNS_ESTIMATE: i32 = -1;
 
-/// **"Never, at this staffing"** — the wire value of `buildTurnsRemaining` for a **real, staffed,
-/// priced** build whose net supply is zero or negative.
+/// **"The meter holds exactly where it is"** — the wire value of `buildTurnsRemaining` for a **real,
+/// staffed, priced** build whose net supply is exactly **zero**: the crew's whole output is spent on
+/// the rung's maintenance rate, so nothing is banked and nothing is lost.
 ///
-/// The maintenance rate is a tax on building (`docs/plan_standing_upkeep.md` §2.4), so a crew at or
-/// below it holds the meter exactly where it is, forever. **That is an answer, not the absence of
-/// one**, and it is the one the player can act on: add hands. It shipped folded into
-/// [`NO_BUILD_TURNS_ESTIMATE`] for one slice, which rendered as *no line at all* on the two surfaces
-/// a player reads every turn — visible only to a compose sheet that redid the comparison itself.
+/// The maintenance rate is a tax on building (`docs/plan_standing_upkeep.md` §2.4), so a crew at the
+/// rate never finishes. **That is an answer, not the absence of one**, and it is the one the player
+/// can act on: add hands. It shipped folded into [`NO_BUILD_TURNS_ESTIMATE`] for one slice, which
+/// rendered as *no line at all* on the two surfaces a player reads every turn — visible only to a
+/// compose sheet that redid the comparison itself.
+///
+/// **It is NOT [`BUILD_METER_ROTS`], and the difference is what the player is being told.** Holding
+/// wastes the crew's turn; rotting destroys work already paid for. A reader that renders them alike
+/// is back to one sentinel for two facts, which is the defect this pair exists to close.
 ///
 /// **All three conditions are load-bearing.** An **unstaffed** source reads
 /// [`NO_BUILD_TURNS_ESTIMATE`], not this: nobody has promised anything there, and claiming a source
 /// with no crew will never finish would fire on every idle improvement on the map.
 ///
-/// Sits outside the `>= 0` range a real estimate lives in, beside its pair, so no reader has to
+/// Sits outside the `>= 0` range a real estimate lives in, beside its siblings, so no reader has to
 /// guess which negative it is looking at.
-pub const BUILD_NEVER_FINISHES: i32 = -2;
+pub const BUILD_METER_HOLDS: i32 = -2;
+
+/// **"The meter is going backwards"** — the wire value of `buildTurnsRemaining` for a **real,
+/// staffed, priced** build whose net supply is **negative**: the crew is under the rung's
+/// maintenance rate, so past its grace the decay pass bleeds work the player has already bought
+/// (`docs/plan_standing_upkeep.md` §2.4).
+///
+/// **It is the third state split out of the old `-2`**, which said only *"this staffing never
+/// finishes"* and therefore said the same thing about a crew that is merely treading water and one
+/// that is losing the build. Neither finishes; only one of them is destroying progress, and that is
+/// the news a player has to be able to see (the client renders this **red** against
+/// [`BUILD_METER_HOLDS`]'s yellow and a real count's green).
+///
+/// The same three conditions are load-bearing as for its sibling: an **unstaffed** source, and one
+/// whose knowledge / site / species gate refuses the build, both read [`NO_BUILD_TURNS_ESTIMATE`] —
+/// they accrue nothing for a reason that has nothing to do with staffing.
+///
+/// Appended below its siblings (append-only wire; the two existing values keep their numbers).
+pub const BUILD_METER_ROTS: i32 = -3;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct SedentarizationState {
@@ -473,13 +496,15 @@ pub struct HerdTelemetryState {
     /// **next rung up** when that is empty (`is_cultivated` / `is_field`, `domestication` /
     /// `corralled`): the pair is read as *"50 work, ≈13 turns"*, so they must name one rung.
     ///
-    /// **TWO NEGATIVES, TWO FACTS.** [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**,
+    /// **THREE NEGATIVES, THREE FACTS.** [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**,
     /// where there is genuinely no answer: the source is at the top of its ladder, the next rung's
     /// own gates refuse it for this faction (a projection must never quote a job the command would
-    /// reject), or **no crew is working the source**. [`crate::BUILD_NEVER_FINISHES`] (`-2`) =
-    /// **never, at this staffing** — a real, **staffed**, priced build whose net supply is zero or
-    /// negative, because the maintenance rate is a tax on building. Render the second as **infinity**:
-    /// it is an answer, and the one the player can act on.
+    /// reject), or **no crew is working the source**. [`crate::BUILD_METER_HOLDS`] (`-2`) = a real,
+    /// **staffed**, priced build whose net supply is exactly **zero** — the crew's whole output goes
+    /// on the maintenance rate, so the meter holds where it is. [`crate::BUILD_METER_ROTS`] (`-3`) =
+    /// the same build with a **negative** net: the meter is going backwards and banked work is being
+    /// lost. Render the last two as **infinity**, and distinguish them — both are answers, and one
+    /// of them is costing the player progress they already paid for.
     ///
     /// **The client cannot compute this** — it holds neither the crew's output, nor the floor
     /// multiplier, nor the kit's build rate — so the sim answers, the `pen_feed_upkeep` discipline.
@@ -885,13 +910,15 @@ pub struct ForagePatchState {
     /// **next rung up** when that is empty (`is_cultivated` / `is_field`, `domestication` /
     /// `corralled`): the pair is read as *"50 work, ≈13 turns"*, so they must name one rung.
     ///
-    /// **TWO NEGATIVES, TWO FACTS.** [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**,
+    /// **THREE NEGATIVES, THREE FACTS.** [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**,
     /// where there is genuinely no answer: the source is at the top of its ladder, the next rung's
     /// own gates refuse it for this faction (a projection must never quote a job the command would
-    /// reject), or **no crew is working the source**. [`crate::BUILD_NEVER_FINISHES`] (`-2`) =
-    /// **never, at this staffing** — a real, **staffed**, priced build whose net supply is zero or
-    /// negative, because the maintenance rate is a tax on building. Render the second as **infinity**:
-    /// it is an answer, and the one the player can act on.
+    /// reject), or **no crew is working the source**. [`crate::BUILD_METER_HOLDS`] (`-2`) = a real,
+    /// **staffed**, priced build whose net supply is exactly **zero** — the crew's whole output goes
+    /// on the maintenance rate, so the meter holds where it is. [`crate::BUILD_METER_ROTS`] (`-3`) =
+    /// the same build with a **negative** net: the meter is going backwards and banked work is being
+    /// lost. Render the last two as **infinity**, and distinguish them — both are answers, and one
+    /// of them is costing the player progress they already paid for.
     ///
     /// **The client cannot compute this** — it holds neither the crew's output, nor the floor
     /// multiplier, nor the kit's build rate — so the sim answers, the `pen_feed_upkeep` discipline.

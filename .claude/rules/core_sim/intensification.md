@@ -548,29 +548,50 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
 > disagree. Only the shortfall **fraction** is shared — `intensification::upkeep_shortfall_fraction`,
 > stated once, applied at each web's own rate.
 
-> #### THE COUNTDOWN HAS THREE ANSWERS, AND TWO OF THEM ARE NEGATIVE
+> #### THE COUNTDOWN HAS FOUR ANSWERS, AND THREE OF THEM ARE NEGATIVE
 >
 > `intensification::BuildTurns` is what a source stores and
-> `build_turns_estimate(cost, done, net, staffed)` is what fills it:
+> `build_turns_estimate(cost, done, balance, staffed)` is what fills it:
 >
 > | stored | wire | meaning |
 > |---|---|---|
 > | `Some(Turns(n))` | `n` | a real finish date at the crew that is on it |
-> | `Some(Never)` | `BUILD_NEVER_FINISHES` (**`-2`**) | **this staffing never finishes** |
+> | `Some(Holding)` | `BUILD_METER_HOLDS` (**`-2`**) | **the meter holds exactly where it is** — net supply is exactly `0` |
+> | `Some(Rotting)` | `BUILD_METER_ROTS` (**`-3`**) | **the meter is going backwards** — net supply is negative |
 > | `None` | `NO_BUILD_TURNS_ESTIMATE` (**`-1`**) | there is genuinely no answer |
 >
-> **`Never` is an ANSWER, not the absence of one**, and it is the only one the player can act on:
-> add hands. Folded into `-1` it rendered as **no line at all** on the tile card and the herd drawer,
-> visible only to a compose sheet that happened to redo the comparison itself.
+> **All three of the negatives are ANSWERS or the absence of one, never a mix**, and the two the
+> player can act on are the last pair: add hands. Folded into `-1` they rendered as **no line at
+> all** on the tile card and the herd drawer, visible only to a compose sheet that happened to redo
+> the comparison itself.
+>
+> **AND THE TWO NON-FINISHING STATES COST THE PLAYER DIFFERENTLY, so they are two values.** At the
+> rate exactly, the crew's whole output goes on maintenance: the meter stands still and a turn is
+> wasted. Below it there is a shortfall, and past the rung's grace the decay pass bleeds work the
+> player already bought. One `-2` for both said *"never finishes"* about a build treading water and
+> one losing ground alike — and a client rendering them yellow and red cannot derive the difference,
+> because the difference is a **sign** the sim floors away before any meter sees it.
+>
+> **The split is a SIGN, so the estimate reads the unfloored net.** `RungDef::build_accrual` is
+> `net_build_supply`-floored — a meter must never be handed a negative amount to add, since the rot
+> is the decay pass's off the same stored supply — and that floor maps *holding* and *rotting* onto
+> one `0.0`. `RungDef::build_balance` is the same subtraction **signed**, off the same
+> `RungDef::build_terms` gate, and it is what every countdown site passes. The meter takes the
+> floored reading, the countdown takes the sign; one gate, one subtraction, two readings.
 >
 > **The boundary is three conditions, all load-bearing**: a **real** (a verb in flight), **staffed**
 > (`build_workers > 0`), **priced** build whose net supply is `<= 0`. An **unstaffed** source reads
 > `None` — nobody has promised anything, and "never" there would fire on every idle improvement on
 > the map. **A refused GATE also reads `None`**, because a build that is not running has not promised
-> anything either. The **projection** answers on the same rule at the crew it is quoted for.
+> anything either — it accrues nothing for a reason that has nothing to do with staffing. The
+> **projection** answers on the same rule at the crew it is quoted for.
 >
-> Pinned on the encoded snapshot, three states pairwise distinct, by
-> `core_sim/tests/build_turns_on_the_wire.rs`.
+> Pinned on the encoded snapshot, four states pairwise distinct, by
+> `core_sim/tests/build_turns_on_the_wire.rs`. **The exact-equality arm is the one that carries the
+> test**: rotting is reached by a `< 0` comparison and holding by falling through it, so a fixture
+> staffed only *below* the rate passes with both wired to the same branch. The shipped
+> `plant:tended` demand of `2.0` is what makes a patch the fixture — at a rate of one hand the only
+> staffing under it is no staffing at all, which is `None` by design.
 
 - **THE MAINTENANCE RATE IS A TAX ON BUILDING, so `work_cost / crew` is NOT the pace.** It is
   `work_cost / (crew − rate)` (`RungDef::build_accrual` → `net_build_supply`), and **a crew at or
@@ -944,7 +965,7 @@ Appended (append-only) on both tables:
 |---|---|
 | `cultivationWorkDone` / `cultivationWorkCost`, `fieldWorkDone` / `fieldWorkCost` | the plant meters in **work units**, and what each job costs |
 | `tameWorkDone` / `tameWorkCost`, `corralWorkDone` / `corralWorkCost` | the animal pair, the Tame carrying the species' own cost multiplier |
-| `buildTurnsRemaining` | how many more turns at the crew, floor and kit that worked this source **this turn** — and, with no build in flight, the same question asked of the rung it would climb **next** |
+| `buildTurnsRemaining` | how many more turns at the crew, floor and kit that worked this source **this turn** — and, with no build in flight, the same question asked of the rung it would climb **next**. Four states: a count, `-2` the meter holds, `-3` the meter rots, `-1` no answer |
 | `buildWorkFromGear` | what that crew's **tools** took off the job, in work units — the `t` above |
 | `buildWorkPerWorkerTurn` | what **one** worker banks per turn on this source at the food peak, before the floor multiplier and before gear — `intensification::build_work_per_worker_turn`, today `PER_WORKER_OUTPUT` |
 | `cultivationUpkeepDemand` / `fieldUpkeepDemand`, `tameUpkeepDemand` / `corralUpkeepDemand` | what **that rung** costs to hold, per turn — the **rate** half of the same quote the `*WorkCost` beside it gives the **pile** half of |
@@ -987,7 +1008,8 @@ Appended (append-only) on both tables:
 >
 > **`buildTurnsRemaining` was never wrong.** `LadderConfig::projected_build_turns` nets the rate off
 > the rung it is *quoting* (`RungDef::build_accrual` → `net_build_supply`), so the sim already
-> published `-2` **never, at this staffing** for the repro above. The defect was that the client had
+> published `-3` **the meter rots** for the repro above (one builder against a demand of `2.0` is
+> under the rate, not at it). The defect was that the client had
 > no field to reproduce that with, and the closed form it evaluates for a *proposed* crew therefore
 > divided by an un-netted crew output.
 - **`buildWorkFromGear` is quoted BESIDE the raw price, never folded into it.** `workCost` stays
@@ -1050,7 +1072,21 @@ Appended (append-only) on both tables:
   fills the same meter and each quote counts only its own output, so the smallest is the least wrong;
   and **a stall never displaces a moving crew, but still claims the source** — *"no estimate"* is the
   running build's own answer. **`buildWorkFromGear` rides the same winner**, because the two are read
-  as one pair by the client's closed form. Guards:
+  as one pair by the client's closed form.
+  > **THE ORDER IS ONE STATEMENT: MORE NET SUPPLY IS BETTER NEWS** — `Turns(n)` (smaller `n` sooner)
+  > → `Holding` → `Rotting` → silence. It is a `#[derive(Ord)]` on the private
+  > `systems::labor::EstimateStanding`, so it is **total** and equal standings never displace one
+  > another, which is what makes the published answer independent of the order the labor loop visits
+  > bands in.
+  >
+  > **Holding above rotting is derived, not a taste call.** Among running builds the soonest finish
+  > wins, and for one source a sooner finish *is* a larger net supply; the three non-count states
+  > continue that same line past zero rather than starting a second rule. A crew holding the meter is
+  > strictly closer to a finish than one destroying the work banked on it. Silence sits last because
+  > it is the absence of an answer — which is also why the standing is its own enum rather than an
+  > `Ord` on `Option<BuildTurns>`, whose derived order puts `None` **first** and would let silence
+  > beat every answer.
+  Guards:
   `forage_cultivation::{a_running_build_outranks_a_bystanders_projection_on_the_same_patch,
   the_soonest_of_two_building_crews_is_the_one_published}`, the second asserted under **both** spawn
   orders — a rule that holds for one order is last-writer-wins with a nicer number.
@@ -1075,9 +1111,9 @@ Appended (append-only) on both tables:
     unquotable.
 - **`-1` now means there is genuinely NO ANSWER** (`sim_schema::NO_BUILD_TURNS_ESTIMATE`): the source
   is at the top of its ladder (a Field, a penned herd), one of the gates above refuses it for this
-  faction, **no crew is working the source** (the labor arm never visits it, so nothing is stamped), or
-  the crew's output is zero and a running build is **stalled** — a stall has no finite answer, and a
-  huge number would read as a promise.
+  faction, or **no crew is working the source** (the labor arm never visits it, so nothing is stamped).
+  A **staffed** crew that cannot clear the rate is not this — it publishes `-2` or `-3`, per "THE
+  COUNTDOWN HAS FOUR ANSWERS".
 - **`workCost` and the turns must name ONE rung**, because they are read as a pair (*"50 work, ≈25
   turns"*). Both rungs' costs ship per source, so the client picks: the verb on
   `LaborAssignment.improvement`, or — when that is empty — the rung above the one the source's own
