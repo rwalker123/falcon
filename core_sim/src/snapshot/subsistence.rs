@@ -11,7 +11,7 @@ use crate::forage::{
 };
 use crate::intensification::{
     build_fraction, build_work_per_worker_turn, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY,
-    NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED,
+    NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, UNSCALED_UPKEEP,
 };
 use sim_schema::{BUILD_NEVER_FINISHES, NO_BUILD_TURNS_ESTIMATE};
 
@@ -707,6 +707,32 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     .rung(RungKey::AnimalPen)
                     .build_cost(RUNG_COST_UNSCALED)
                     .unwrap_or(0.0),
+                // **AND THE RATE THAT EATS IT** — the *second* term of the same quote, resolved here
+                // for the same reason and by the same rule as the `*_work_cost` above: off the
+                // **ladder**, per rung, **whether or not a build is in flight**. A price without the
+                // rate that eats it is not a quote — the maintenance rate is owed while building
+                // too, so a crew at or below it never finishes, and a sheet that subtracts nothing
+                // promises `work_cost / crew` turns for a meter that will sit where it is forever.
+                //
+                // **`upkeep_demand` above cannot answer this**, and deliberately: it resolves
+                // through the **keeping** rung (`fauna::herd_keeping_rung`), which is what this herd
+                // is *billed* today — `0` on a herd nobody has started, which is exactly the herd a
+                // compose sheet is looking at. The two coincide the moment a build is in flight.
+                //
+                // **At this herd's own keeper load**, because both animal rungs quote their rate per
+                // keeper-load (`scaled_by: source_load`), and the load is ownership-independent —
+                // `herders_needed_if_managed`'s rule, for its reason: a quote has to exist before
+                // the herd is anyone's.
+                tame_upkeep_demand: herd.map_or(NO_UPKEEP_DEMAND, |herd| {
+                    ladder
+                        .rung(RungKey::AnimalPastoral)
+                        .upkeep_demand(crate::fauna::herd_keeper_load(herd, fauna))
+                }),
+                corral_upkeep_demand: herd.map_or(NO_UPKEEP_DEMAND, |herd| {
+                    ladder
+                        .rung(RungKey::AnimalPen)
+                        .upkeep_demand(crate::fauna::herd_keeper_load(herd, fauna))
+                }),
                 // **The turns estimate the labor arm stamped this turn** — the running build's, or,
                 // when nothing is being built, the **projection** for the rung this herd would climb
                 // next, so the pair reads "50 work, ≈13 turns" before the player commits. Which
@@ -919,6 +945,17 @@ pub(crate) fn snapshot_forage_patches(
                     .rung(RungKey::PlantField)
                     .build_cost(RUNG_COST_UNSCALED)
                     .unwrap_or(0.0),
+                // **AND THE RATE THAT EATS IT** — the plant twin; the herd row has the reasoning.
+                // `upkeep_demand` below resolves through the **at-risk** rung
+                // (`forage::patch_unwinding_rung`) and is therefore `0` on a wild patch, which is
+                // precisely the patch a compose sheet is quoting. [`UNSCALED_UPKEEP`] on both,
+                // because a patch is one tile: both plant rungs declare `scaled_by: flat`.
+                cultivation_upkeep_demand: ladder
+                    .rung(RungKey::PlantTended)
+                    .upkeep_demand(UNSCALED_UPKEEP),
+                field_upkeep_demand: ladder
+                    .rung(RungKey::PlantField)
+                    .upkeep_demand(UNSCALED_UPKEEP),
                 // **The turns estimate the labor arm stamped this turn** — the running build's, or,
                 // when nothing is being built, the **projection** for the rung this patch would climb
                 // next, so the compose sheet can quote the job before the player commits. Read it

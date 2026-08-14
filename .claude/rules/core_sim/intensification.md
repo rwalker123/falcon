@@ -579,8 +579,10 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
   estimate** — or, once a crew is actually on it, **`Never`** (above) — at a non-positive net rather
   than a large number, and the **projection**
   (`LadderConfig::projected_build_turns`) quotes the net too: a finish date that will never arrive is
-  a promise, not an estimate. `upkeepDemand` and `upkeepWorkersNeeded` publish the threshold on
-  **both** sides of completion so a compose sheet can say *"this crew is below it"*.
+  a promise, not an estimate. **`<rung>UpkeepDemand` is the threshold a compose sheet reads** — it
+  names the rung being quoted, so the sheet can say *"this crew is below it"* on a source nobody has
+  started. `upkeepDemand` / `upkeepWorkersNeeded` publish the *billed* rung's on both sides of
+  completion; see "A price without the rate that eats it is not a quote".
 - **ALL FOUR MANAGED RUNGS DECLARE ONE.** `upkeep_demand` is an honest `0` on the two `wild` rungs
   rather than a sentinel — `HerdTelemetryState::pen_upkeep`'s rule.
 - **THE DECAY IS PROPORTIONAL, continuously** (§2.4). Meet the demand and the net is zero and the
@@ -706,6 +708,8 @@ other row (§2.5).
 
 - **`upkeepDemand` follows `penUpkeep`'s rule: always meaningful, never a sentinel.** A rung with no
   upkeep publishes an honest `0`.
+- **IT ANSWERS FOR THE RUNG THE SOURCE IS ON, WHICH IS WHY A QUOTE CANNOT READ IT** — see "A price
+  without the rate that eats it is not a quote" below, the pair that closes that gap.
 - **`upkeepWorkersNeeded` is the MAINTAIN activity's own `workers_needed`** —
   `ceil(demand / PER_WORKER_OUTPUT)`, in keepers — beside the TAKE activity's
   (`SourceYield::workersNeeded`, in haulers). Two counts in two units, because a `max` across units
@@ -943,11 +947,49 @@ Appended (append-only) on both tables:
 | `buildTurnsRemaining` | how many more turns at the crew, floor and kit that worked this source **this turn** — and, with no build in flight, the same question asked of the rung it would climb **next** |
 | `buildWorkFromGear` | what that crew's **tools** took off the job, in work units — the `t` above |
 | `buildWorkPerWorkerTurn` | what **one** worker banks per turn on this source at the food peak, before the floor multiplier and before gear — `intensification::build_work_per_worker_turn`, today `PER_WORKER_OUTPUT` |
+| `cultivationUpkeepDemand` / `fieldUpkeepDemand`, `tameUpkeepDemand` / `corralUpkeepDemand` | what **that rung** costs to hold, per turn — the **rate** half of the same quote the `*WorkCost` beside it gives the **pile** half of |
 
 - **`workCost` is the LADDER's price, not the source's stamped one.** It is resolved at capture off
   the rung (and, for a Tame, the species) and published **whether or not a build is in flight** — the
   compose sheet has to quote a rung's price *before* the player commits, and a source nobody has
   started carries a stamped cost of `0`.
+
+> #### A PRICE WITHOUT THE RATE THAT EATS IT IS NOT A QUOTE
+>
+> **`<rung>UpkeepDemand` is `workCost`'s rule applied to the second term of the same quote**: the
+> LADDER's `upkeep.work_per_turn` for that rung, resolved at capture, published whether or not a
+> build is in flight. Four slots, one per built rung, read by the **same rung-picking rule** as the
+> `*WorkCost` they sit beside (the assignment's `improvement`, else the rung above the one the
+> source's published state stands on) — so the price, the meter and the rate always name one rung.
+>
+> **`upkeepDemand` cannot be that number, and appending rather than widening it is deliberate.** That
+> field answers *"what is this source billed right now"* and resolves through the rung the source
+> **stands on or is raising** (`forage::patch_unwinding_rung` / `fauna::herd_keeping_rung`) — which is
+> what the decay pass bleeds and what the keeping readouts count down. On a source with no progress on
+> any meter there is no such rung, so it publishes an honest `0`, and **that is exactly the source a
+> compose sheet is looking at**. Netting a quote against it subtracts nothing, so the sheet promised
+> `workCost / crew` turns for a build whose crew is under the rate: a wild patch, `Cultivate`, one
+> builder, *"≈50 turns"* — and a meter that sits at `0 / 50` forever, because `plant:tended` demands
+> `2.0` a turn and `1 − 2` is negative. **The price and the outcome were computed against different
+> rungs.**
+>
+> The two coincide the moment a build is in flight and differ only before it starts, which is why the
+> guard is a **no-progress** fixture on the encoded envelope
+> (`build_turns_on_the_wire.rs::an_unstarted_patch_publishes_the_quoted_rungs_upkeep_where_the_billed_one_is_zero`)
+> — a mid-build fixture passes with the gap wide open. The *agreement* is pinned too, on both webs,
+> because two seams for one rate will otherwise drift.
+>
+> **The animal web hid it**, and that is the tell rather than an exemption: `herd_keeping_rung`
+> answers for any **owned** herd, so a part-tamed herd's demand was published and its quote was right.
+> A **wild** herd — the one a Tame is composed against — had the same hole. `tameUpkeepDemand` /
+> `corralUpkeepDemand` carry the herd's own **keeper load**, ownership-independent, for
+> `herdersNeededIfManaged`'s reason: a quote has to exist before the herd is anyone's.
+>
+> **`buildTurnsRemaining` was never wrong.** `LadderConfig::projected_build_turns` nets the rate off
+> the rung it is *quoting* (`RungDef::build_accrual` → `net_build_supply`), so the sim already
+> published `-2` **never, at this staffing** for the repro above. The defect was that the client had
+> no field to reproduce that with, and the closed form it evaluates for a *proposed* crew therefore
+> divided by an un-netted crew output.
 - **`buildWorkFromGear` is quoted BESIDE the raw price, never folded into it.** `workCost` stays
   the job as the ladder prices it, so a readout can say *"your hurdles: −17 work"* against a number
   that does not move under the crew's kit — and the estimate beside it already reflects the tooled
@@ -959,7 +1001,8 @@ Appended (append-only) on both tables:
 
   ```text
   gear(w)  = min(w, buildWorkSaturatingCrew) × buildWorkPerWorker      ← the band's kitTiers row
-  turns(w) = ceil((workCost − workDone − gear(w)) / (w × buildWorkPerWorkerTurn × floor / foodPeak))
+  turns(w) = ceil((workCost − workDone − gear(w))
+                  / (w × buildWorkPerWorkerTurn × floor / foodPeak − <rung>UpkeepDemand))
   ```
 
   - **The GEAR pair rides `PopulationCohortState.kitTiers[]`, not a source row**, because both of its

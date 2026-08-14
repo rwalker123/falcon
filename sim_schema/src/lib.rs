@@ -1319,8 +1319,8 @@ mod tests {
         assert_eq!(
             patch.upkeepDemand(),
             0.0,
-            "no shipped plant rung declares an upkeep, so the demand is an honest 0 — always \
-             meaningful, never a sentinel (the `penUpkeep` rule)"
+            "a patch nothing has described bills nothing — an honest 0, always meaningful and \
+             never a sentinel (the `penUpkeep` rule)"
         );
         assert_eq!(patch.upkeepSupplied(), 0.0);
         assert_eq!(patch.upkeepShortfall(), 0.0);
@@ -1328,6 +1328,67 @@ mod tests {
             patch.upkeepWorkersNeeded(),
             0,
             "…so nobody is needed to keep it"
+        );
+    }
+
+    /// **THE PRE-COMMIT RATE SURVIVES THE WIRE, on both webs, in its OWN four slots** — the rung a
+    /// source would *climb*, beside that rung's `workCost` (`docs/plan_standing_upkeep.md` §2).
+    ///
+    /// `upkeepDemand` above answers *"what is this source billed right now"* and resolves through
+    /// the rung it stands on or is raising, so an **unstarted** source publishes `0` there — and a
+    /// compose sheet netting its quote against that subtracts nothing and promises a finish date the
+    /// crew can never reach. These answer *"what would the rung being quoted cost to hold"*.
+    ///
+    /// **Four distinct values**, because four slots wired to one field would pass a fixture that
+    /// stated the same rate everywhere.
+    #[test]
+    fn the_quoted_rungs_upkeep_survives_the_wire_on_both_webs() {
+        const TAME_RATE: f32 = 3.0;
+        const CORRAL_RATE: f32 = 4.5;
+        const CULTIVATION_RATE: f32 = 2.0;
+        const FIELD_RATE: f32 = 4.0;
+
+        let snapshot = WorldSnapshot {
+            herds: vec![HerdTelemetryState {
+                tame_upkeep_demand: TAME_RATE,
+                corral_upkeep_demand: CORRAL_RATE,
+                ..HerdTelemetryState::default()
+            }],
+            forage_patches: vec![ForagePatchState {
+                cultivation_upkeep_demand: CULTIVATION_RATE,
+                field_upkeep_demand: FIELD_RATE,
+                ..ForagePatchState::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("a decodable snapshot envelope");
+        let subsistence = envelope
+            .payload_as_snapshot()
+            .expect("a snapshot payload")
+            .subsistence()
+            .expect("a subsistence section");
+
+        let herd = subsistence.herds().expect("the herds").get(0);
+        assert_eq!(herd.tameUpkeepDemand(), TAME_RATE);
+        assert_eq!(herd.corralUpkeepDemand(), CORRAL_RATE);
+        assert_eq!(
+            herd.upkeepDemand(),
+            0.0,
+            "the billed demand keeps its own meaning — a herd nobody has started owes nothing yet"
+        );
+
+        let patch = subsistence
+            .foragePatches()
+            .expect("the forage patches")
+            .get(0);
+        assert_eq!(patch.cultivationUpkeepDemand(), CULTIVATION_RATE);
+        assert_eq!(patch.fieldUpkeepDemand(), FIELD_RATE);
+        assert_eq!(
+            patch.upkeepDemand(),
+            0.0,
+            "…and the plant twin, which is the gap the pair above closes"
         );
     }
 

@@ -119,8 +119,11 @@ take             = min(take_workers × per_worker_capacity, source_offer)
 > `-2` (**never, at this staffing**) rather than the `-1` that means *there is no answer*. A staffed
 > crew that cannot clear the rate is a standing fact the player can act on — add hands — where the
 > other negative is a transient absence of information; an **unstaffed** source has promised nothing
-> and still reads `-1`. `upkeepDemand` / `upkeepWorkersNeeded` publish the threshold itself on **both**
-> sides of completion, so a compose sheet can say *"this crew is below it"* before the player commits.
+> and still reads `-1`. **`<rung>UpkeepDemand` publishes the threshold itself for the rung being
+> QUOTED**, beside that rung's `workCost`, so a compose sheet can say *"this crew is below it"* before
+> the player commits — `upkeepDemand` / `upkeepWorkersNeeded` answer for the rung the source stands on
+> or is raising, and are therefore `0` on a source nobody has started, which is the source the sheet
+> is looking at.
 
 #### This is what dissolved the dip
 

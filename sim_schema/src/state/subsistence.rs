@@ -518,12 +518,41 @@ pub struct HerdTelemetryState {
     /// ```text
     /// gear(w)  = min(w, build_work_saturating_crew) × build_work_per_worker
     /// turns(w) = ceil((work_cost − work_done − gear(w))
-    ///                 / (w × build_work_per_worker_turn × floor / food_peak))
+    ///                 / (w × build_work_per_worker_turn × floor / food_peak − upkeep))
     /// ```
+    ///
+    /// **`upkeep` is the divisor's second term, and it is not optional**: the maintenance rate is
+    /// owed while building too, so a `w` at or below it never finishes where the un-netted form
+    /// quotes `work_cost / w` turns. Take it from the `*_upkeep_demand` field of the **same rung**
+    /// the `work_cost` came from.
     ///
     /// Appended (append-only).
     #[serde(default)]
     pub build_work_per_worker_turn: f32,
+    /// **WHAT EACH RUNG COSTS TO HOLD, PER TURN**, in work units — the **rate** half of the same
+    /// quote [`Self::tame_work_cost`] / [`Self::corral_work_cost`] give the **pile** half of, and
+    /// read beside them by the same rung-picking rule (the assignment's `improvement`, or the next
+    /// rung up when that is empty).
+    ///
+    /// **It is not [`Self::upkeep_demand`], and the difference is the whole point.** That field
+    /// answers *"what is this herd billed right now"* and resolves through the **keeping** rung — the
+    /// one the herd stands on or is raising. A herd nobody has started taming stands on no managed
+    /// rung, so it publishes an honest `0`, and a compose sheet quoting the Tame off it subtracts
+    /// nothing and promises `work_cost / crew` turns for a build that will never move. This one
+    /// answers *"what would the rung being quoted cost to hold"*, resolved at capture off the
+    /// **ladder** whether or not a build is in flight — exactly the rule the `*_work_cost` beside it
+    /// follows. On a herd mid-build the two agree; on an unstarted one they differ, and that
+    /// difference was the trap.
+    ///
+    /// **Both carry this herd's own keeper load**, because both animal rungs quote their rate per
+    /// keeper-load (`scaled_by: source_load`) — and the load is **ownership-independent**, like
+    /// [`Self::herders_needed_if_managed`]: a quote has to exist before the herd is anyone's.
+    /// Appended (append-only).
+    #[serde(default)]
+    pub tame_upkeep_demand: f32,
+    /// The rung-3 twin of [`Self::tame_upkeep_demand`].
+    #[serde(default)]
+    pub corral_upkeep_demand: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -602,6 +631,9 @@ impl Default for HerdTelemetryState {
             build_turns_remaining: no_build_turns_estimate(),
             build_work_from_gear: 0.0,
             build_work_per_worker_turn: 0.0,
+            // A herd nothing has described quotes no rung, so neither rate is owed yet.
+            tame_upkeep_demand: 0.0,
+            corral_upkeep_demand: 0.0,
             corral_material: Vec::new(),
             pastoral_material: Vec::new(),
         }
@@ -898,12 +930,38 @@ pub struct ForagePatchState {
     /// ```text
     /// gear(w)  = min(w, build_work_saturating_crew) × build_work_per_worker
     /// turns(w) = ceil((work_cost − work_done − gear(w))
-    ///                 / (w × build_work_per_worker_turn × floor / food_peak))
+    ///                 / (w × build_work_per_worker_turn × floor / food_peak − upkeep))
     /// ```
+    ///
+    /// **`upkeep` is the divisor's second term, and it is not optional**: the maintenance rate is
+    /// owed while building too, so a `w` at or below it never finishes where the un-netted form
+    /// quotes `work_cost / w` turns. Take it from the `*_upkeep_demand` field of the **same rung**
+    /// the `work_cost` came from.
     ///
     /// Appended (append-only).
     #[serde(default)]
     pub build_work_per_worker_turn: f32,
+    /// **WHAT EACH RUNG COSTS TO HOLD, PER TURN**, in work units — the **rate** half of the same
+    /// quote [`Self::cultivation_work_cost`] / [`Self::field_work_cost`] give the **pile** half of,
+    /// and read beside them by the same rung-picking rule (the assignment's `improvement`, or the
+    /// next rung up when that is empty).
+    ///
+    /// **It is not [`Self::upkeep_demand`], and the difference is the whole point.** That field
+    /// answers *"what is this patch billed right now"* and resolves through the **at-risk** rung —
+    /// the newest meter carrying progress. A wild patch has progress on neither, so it publishes an
+    /// honest `0`, and a compose sheet quoting a Cultivate off it subtracts nothing and promises
+    /// `work_cost / crew` turns for a build that will never move. This one answers *"what would the
+    /// rung being quoted cost to hold"*, resolved at capture off the **ladder** whether or not a
+    /// build is in flight — exactly the rule the `*_work_cost` beside it follows. On a patch
+    /// mid-build the two agree; on an unstarted one they differ, and that difference was the trap.
+    ///
+    /// **Neither scales with anything**, because a patch is one tile: both plant rungs declare
+    /// `scaled_by: flat`, so the rate is what the ladder states. Appended (append-only).
+    #[serde(default)]
+    pub cultivation_upkeep_demand: f32,
+    /// The rung-3 twin of [`Self::cultivation_upkeep_demand`].
+    #[serde(default)]
+    pub field_upkeep_demand: f32,
 }
 
 /// The serde default of a `build_turns_remaining` field — [`crate::NO_BUILD_TURNS_ESTIMATE`], so an

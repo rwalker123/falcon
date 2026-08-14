@@ -2180,7 +2180,12 @@ table ForagePatchState {
   //
   //   gear(w)  = min(w, buildWorkSaturatingCrew) x buildWorkPerWorker
   //   turns(w) = ceil((workCost - workDone - gear(w))
-  //                   / (w x buildWorkPerWorkerTurn x floor / foodPeak))
+  //                   / (w x buildWorkPerWorkerTurn x floor / foodPeak - <rung>UpkeepDemand))
+  //
+  // THE MAINTENANCE RATE IS THE DIVISOR'S SECOND TERM, and leaving it out is not a rounding error:
+  // a `w` at or below the rate never finishes at all, where the un-netted form quotes `workCost / w`
+  // turns for a meter that will sit at zero forever. Take it from the `<rung>UpkeepDemand` field for
+  // the SAME rung the `workCost` came from.
   //
   // READ IT BESIDE `buildTurnsRemaining`, NEVER INSTEAD OF IT. That field is the sim's answer for
   // the COMMITTED crew and is what a card with no stepper renders; this is a term a sheet WITH a
@@ -2193,8 +2198,9 @@ table ForagePatchState {
   //
   //   upkeepDemand    = what the rung demands this turn. Follows penUpkeep's rule: it is ALWAYS
   //                     MEANINGFUL, never a sentinel - for a rung that declares no upkeep it is
-  //                     honestly 0. Every shipped rung declares none today, so it reads 0
-  //                     everywhere, and that is the honest reading rather than a gap.
+  //                     honestly 0. It resolves through the rung this source STANDS ON or is
+  //                     RAISING, so a source nobody has started reads 0 - see the
+  //                     `<rung>UpkeepDemand` pair below for the number a PRE-COMMIT quote wants.
   //   upkeepSupplied  = what the crew actually paid toward it out of this turn's work budget.
   //   upkeepShortfall = what went unmet - and therefore EXACTLY what the improvement decays by,
   //                     once the shortfall outlasts the rung's own grace. Shortfall IS the decay
@@ -2214,6 +2220,36 @@ table ForagePatchState {
   upkeepSupplied:float = 0;
   upkeepShortfall:float = 0;
   upkeepWorkersNeeded:uint = 0;
+  // WHAT EACH RUNG COSTS TO HOLD, PER TURN (appended, docs/plan_standing_upkeep.md section 2) - the
+  // RATE half of the same quote `cultivationWorkCost`/`fieldWorkCost` give the PILE half of, and read
+  // beside them by the SAME rung-picking rule (the assignment's `improvement`, or the next rung up
+  // when that is empty).
+  //
+  // WHY IT IS NOT `upkeepDemand` ABOVE. That field answers "what is this patch BILLED right now", and
+  // it resolves through the AT-RISK rung - the newest meter carrying progress. A wild patch has
+  // progress on neither meter, so it publishes an honest `0` - and a compose sheet quoting a
+  // Cultivate off it subtracts nothing, promises `workCost / crew` turns, and the player commits to a
+  // build that never moves because the crew is under the rate. The price and the outcome were
+  // computed against different rungs.
+  //
+  // THE RATE IS OWED WHILE BUILDING TOO, so the build's closed form nets it out:
+  //
+  //   turns(w) = ceil((workCost - workDone - gear(w))
+  //                   / (w x buildWorkPerWorkerTurn x floor / foodPeak - <rung>UpkeepDemand))
+  //
+  // ...and a `w` whose output does not clear the rate NEVER finishes, which is what
+  // `buildTurnsRemaining` publishes as `-2`.
+  //
+  // ALWAYS MEANINGFUL, NEVER A SENTINEL (the penUpkeep rule): it is the LADDER's rate for that rung,
+  // resolved at capture whether or not a build is in flight, exactly as the `*WorkCost` beside it is.
+  // On a patch mid-build it equals `upkeepDemand`; on an unstarted one it is the number that field
+  // cannot yet give. `0` only where the rung declares no upkeep.
+  //
+  // NEITHER SCALES WITH ANYTHING, because a patch is ONE TILE: both plant rungs declare
+  // `scaled_by: flat`, so the rate is what the ladder states (2 and 4 work per turn today - whole
+  // numbers a player can staff exactly).
+  cultivationUpkeepDemand:float = 0;
+  fieldUpkeepDemand:float = 0;
 }
 
 // One STANCE's ceiling on one tile, in every account the tile's basket pays (issue #426). The plant
@@ -3207,7 +3243,12 @@ table HerdTelemetryState {
   //
   //   gear(w)  = min(w, buildWorkSaturatingCrew) x buildWorkPerWorker
   //   turns(w) = ceil((workCost - workDone - gear(w))
-  //                   / (w x buildWorkPerWorkerTurn x floor / foodPeak))
+  //                   / (w x buildWorkPerWorkerTurn x floor / foodPeak - <rung>UpkeepDemand))
+  //
+  // THE MAINTENANCE RATE IS THE DIVISOR'S SECOND TERM, and leaving it out is not a rounding error:
+  // a `w` at or below the rate never finishes at all, where the un-netted form quotes `workCost / w`
+  // turns for a meter that will sit at zero forever. Take it from the `<rung>UpkeepDemand` field for
+  // the SAME rung the `workCost` came from.
   //
   // READ IT BESIDE `buildTurnsRemaining`, NEVER INSTEAD OF IT. That field is the sim's answer for
   // the COMMITTED crew and is what a card with no stepper renders; this is a term a sheet WITH a
@@ -3220,8 +3261,9 @@ table HerdTelemetryState {
   //
   //   upkeepDemand    = what the rung demands this turn. Follows penUpkeep's rule: it is ALWAYS
   //                     MEANINGFUL, never a sentinel - for a rung that declares no upkeep it is
-  //                     honestly 0. Every shipped rung declares none today, so it reads 0
-  //                     everywhere, and that is the honest reading rather than a gap.
+  //                     honestly 0. It resolves through the rung this source STANDS ON or is
+  //                     RAISING, so a source nobody has started reads 0 - see the
+  //                     `<rung>UpkeepDemand` pair below for the number a PRE-COMMIT quote wants.
   //   upkeepSupplied  = what the crew actually paid toward it out of this turn's work budget.
   //   upkeepShortfall = what went unmet - and therefore EXACTLY what the improvement decays by,
   //                     once the shortfall outlasts the rung's own grace. Shortfall IS the decay
@@ -3241,6 +3283,37 @@ table HerdTelemetryState {
   upkeepSupplied:float = 0;
   upkeepShortfall:float = 0;
   upkeepWorkersNeeded:uint = 0;
+  // WHAT EACH RUNG COSTS TO HOLD, PER TURN (appended, docs/plan_standing_upkeep.md section 2) - the
+  // RATE half of the same quote `tameWorkCost`/`corralWorkCost` give the PILE half of, and read
+  // beside them by the SAME rung-picking rule (the assignment's `improvement`, or the next rung up
+  // when that is empty).
+  //
+  // WHY IT IS NOT `upkeepDemand` ABOVE. That field answers "what is this herd BILLED right now", and
+  // it resolves through the KEEPING rung - the one this herd stands on or is raising. A herd nobody
+  // has started taming is standing on no managed rung at all, so it publishes an honest `0` - and a
+  // compose sheet quoting the Tame off it subtracts nothing, promises `workCost / crew` turns, and
+  // the player commits to a build that never moves because the crew is under the rate. The price and
+  // the outcome were computed against different rungs.
+  //
+  // THE RATE IS OWED WHILE BUILDING TOO, so the build's closed form nets it out:
+  //
+  //   turns(w) = ceil((workCost - workDone - gear(w))
+  //                   / (w x buildWorkPerWorkerTurn x floor / foodPeak - <rung>UpkeepDemand))
+  //
+  // ...and a `w` whose output does not clear the rate NEVER finishes, which is what
+  // `buildTurnsRemaining` publishes as `-2`.
+  //
+  // ALWAYS MEANINGFUL, NEVER A SENTINEL (the penUpkeep rule): it is the LADDER's rate for that rung,
+  // resolved at capture whether or not a build is in flight, exactly as the `*WorkCost` beside it is.
+  // On a herd mid-build it equals `upkeepDemand`; on an unstarted one it is the number that field
+  // cannot yet give. `0` only where the rung declares no upkeep.
+  //
+  // BOTH CARRY THIS HERD'S OWN KEEPER LOAD, because both animal rungs quote `work_per_turn` per
+  // keeper-load (`scaled_by: source_load`) - so the rate says "a shepherd minds 300 sheep and a
+  // cowherd 80 cattle" rather than naming a head count. The load is OWNERSHIP-INDEPENDENT, like
+  // herdersNeededIfManaged: a quote must exist before the herd is anyone's.
+  tameUpkeepDemand:float = 0;
+  corralUpkeepDemand:float = 0;
 }
 
 table CommandEventState {

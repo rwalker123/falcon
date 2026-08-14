@@ -502,6 +502,12 @@ fn create_herds<'a>(
                 upkeepSupplied: herd.upkeep_supplied,
                 upkeepShortfall: herd.upkeep_shortfall,
                 upkeepWorkersNeeded: herd.upkeep_workers_needed,
+                // **The PRE-COMMIT rate** — appended last (append-only wire). `upkeepDemand` above
+                // is what the KEEPING rung bills today; these are what each rung would cost to
+                // hold, so a sheet quoting a Tame on an unstarted herd nets a rate rather than
+                // subtracting zero. Read beside the `*WorkCost` of the same rung.
+                tameUpkeepDemand: herd.tame_upkeep_demand,
+                corralUpkeepDemand: herd.corral_upkeep_demand,
             },
         );
         entries.push(entry);
@@ -593,6 +599,12 @@ fn create_forage_patches<'a>(
                 upkeepSupplied: patch.upkeep_supplied,
                 upkeepShortfall: patch.upkeep_shortfall,
                 upkeepWorkersNeeded: patch.upkeep_workers_needed,
+                // **The PRE-COMMIT rate** — appended last (append-only wire), the plant twin of the
+                // herd's pair: `upkeepDemand` above is what the AT-RISK rung bills today, and these
+                // are what each rung would cost to hold, so a sheet quoting a Cultivate on a wild
+                // patch nets a rate rather than subtracting zero.
+                cultivationUpkeepDemand: patch.cultivation_upkeep_demand,
+                fieldUpkeepDemand: patch.field_upkeep_demand,
             },
         );
         entries.push(entry);

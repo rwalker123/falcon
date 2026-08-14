@@ -328,10 +328,12 @@ fn client_turns_estimate(
     // count it multiplies has to be the workers actually doing the job. Handing it the band's
     // gathering crew would price a one-hand build with a large party's tools.
     builders: u32,
-    // **THE MAINTENANCE RATE, off the source's own `upkeepDemand`** — the tax the build crew pays
-    // before any of its output is progress (`docs/plan_standing_upkeep.md` §2.4). Without it the
-    // client's form promises a finish date the crew cannot reach, and at or below the rate it would
-    // quote a huge number where the sim answers *no estimate*.
+    // **THE MAINTENANCE RATE OF THE RUNG BEING QUOTED**, off the `<rung>UpkeepDemand` beside the
+    // `<rung>WorkCost` this form is pricing — the tax the build crew pays before any of its output
+    // is progress (`docs/plan_standing_upkeep.md` §2.4). Without it the client's form promises a
+    // finish date the crew cannot reach, and at or below the rate it would quote a huge number
+    // where the sim answers *never*. **Not `upkeepDemand`**, which is what the source is billed
+    // today and reads `0` on the unstarted source a compose sheet is by definition looking at.
     upkeep_demand: f32,
 ) -> Option<u32> {
     let gear = client_gear_term(build_work_per_worker, build_work_saturating_crew, builders);
@@ -442,6 +444,19 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
             herd.build_work_from_gear
         );
 
+        // (1b) **AND THE TWO UPKEEP READOUTS ARE ONE NUMBER ON A SOURCE MID-BUILD.** They answer
+        // different questions — what this herd is *billed* now, and what the rung being *quoted*
+        // costs to hold — and here those are the same rung, so a drift between the two seams would
+        // show up as a disagreement the client's form below would silently inherit.
+        assert!(
+            herd.upkeep_demand > 0.0,
+            "fixture: a mid-Tame herd owes its rung's rate, or this equality is vacuous"
+        );
+        assert_eq!(
+            herd.tame_upkeep_demand, herd.upkeep_demand,
+            "a herd raising the pastoral rung is billed exactly what that rung is quoted at"
+        );
+
         // (2) **THE TURN COUNT** — the whole form against the sim's own answer.
         let quoted = client_turns_estimate(
             herd.tame_work_cost,
@@ -452,7 +467,12 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
             // **The crew the wire publishes**, which is the net the fixture stated plus the rate it
             // also pays — the same number `improvementWorkers` carries.
             staffed,
-            herd.upkeep_demand,
+            // **The QUOTED rung's rate, not the BILLED one.** `upkeepDemand` reads `0` on a source
+            // nobody has started, which is exactly the source a compose sheet is quoting, so the
+            // client's form nets the rung it is pricing. This fixture is mid-build, where the two
+            // are one number — which is why the no-progress case is pinned in
+            // `build_turns_on_the_wire.rs` instead.
+            herd.tame_upkeep_demand,
         );
         let published = u32::try_from(herd.build_turns_remaining).ok();
 
@@ -882,7 +902,7 @@ fn a_crew_whose_gear_pays_the_tame_off_is_quoted_one_turn_on_the_wire() {
                 tiers.build_work_saturating_crew,
                 herd.build_work_per_worker_turn,
                 KEEPERS,
-                herd.upkeep_demand,
+                herd.tame_upkeep_demand,
             ),
             u32::try_from(herd.build_turns_remaining).ok(),
             "the client's form must reproduce the sim's answer in the over-geared regime too"
