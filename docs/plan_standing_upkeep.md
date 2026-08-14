@@ -428,7 +428,7 @@ hauling: that work is the upkeep, not a second line beside it.
 
 The ordering constraint that is **not** negotiable is that the client readout lands before any
 tuning — `plan_unit_costed_work.md` §11 learned this: *a cost spread with no readout change is
-invisible*. Tuning is therefore **last**, and after §4.8, which changes what the numbers do.
+invisible*. Tuning is therefore **last**, and after §4.10, which changes what the numbers do.
 
 ### Landed (PR #557, branch `worktree-route-ladder`)
 
@@ -510,12 +510,26 @@ invisible*. Tuning is therefore **last**, and after §4.8, which changes what th
    *"is this worth it"* does not move — but the payoff starts on turn one, which softens the
    commitment considerably. That may be right, given this arc has been about removing cliffs; it
    should be a deliberate smoothing rather than a discovered one.
-11. **The route branch (#532 proper).** Routes as the ladder's third branch, `infrastructure_cost`
+11. **Plant upkeep SCALES WITH THE SOURCE.** Both plant rungs ship `scaled_by: flat`, so a rich
+    alluvial patch and a thin one cost the same to hold. Ray: *"the flora track should scale by size,
+    just like animals."* The whole-number demands were an explicit short-term step, not the model —
+    §2.6 already says a flat per-rung number cannot be right, because what makes a thing expensive to
+    hold differs by what it is. The animal web has had this since slice 4 (`SourceLoad`, the herd's
+    own keeper load); the plant web needs its own measure, most likely the patch's capacity.
+    **Mechanism, not tuning** — it is a scale primitive, and the numbers move in §4.14 regardless.
+12. **The RESOURCE HALF of upkeep** (§2.7). Designed and **not built**: upkeep currently costs work
+    and nothing else, while the pen's feed runs as its own separate mechanism, deliberately untouched
+    so that moving it would not risk the pen-food ledger identity for no behaviour change.
+    > **Routes are what force it.** A road wants hands *and* quarried stone, and it is the first
+    > improvement whose resource draw does not already exist somewhere else — the pen's does. So this
+    > lands before §4.13 rather than after, and generalising the pen's shipped
+    > pasture-offsets-hay-offsets-larder split is the reference implementation.
+13. **The route branch (#532 proper).** Routes as the ladder's third branch, `infrastructure_cost`
     wired for the first time, traversal-driven progress from supply links, shipments and movement.
-12. **The tuning spread.** Config-only, and **last** — §4.10 changes what the numbers do to the curve,
+14. **The tuning spread.** Config-only, and **last** — §4.10 changes what the numbers do to the curve,
     so tuning before it would be tuning a shape that is about to move.
 
-> **Every number in this arc is provisional until §4.12.** The plant demands of `2.0` / `4.0` are
+> **Every number in this arc is provisional until §4.14.** The plant demands of `2.0` / `4.0` are
 > whole-number placeholders chosen to be legible, not balanced; the `retain_fraction` of `0.75` is a
 > playtest dial that §4.10 largely dissolves; the graces of `2` and `1` are inherited from the rung
 > they replaced rather than chosen. Do not tune any of them in an earlier slice — the mechanism is
@@ -550,9 +564,11 @@ cheap answer is to make reassignment observable so it would be noticed rather th
   `0.5` would give ~53, which reads as *"never lost"* while a rung's benefit is still binary. **It
   becomes much less load-bearing once §4's symmetric partial credit lands**, because a rung sliding
   back turns into a fading payout rather than a status you lose — so it is not worth over-tuning now.
-- **The scale primitives' bounded set.** `Flat` and `SourceLoad` ship; a route wants length × terrain
-  (`infrastructure_cost`), which is slice 9's to add. Whether that is a third primitive or a
-  parameterisation of one is a question for the code, not for this doc.
+- **The scale primitives' bounded set.** `Flat` and `SourceLoad` ship. A **plant** measure is §4.11's
+  to add and a **route** wants length × terrain (`infrastructure_cost`), which is §4.13's. Whether
+  those are two more primitives or one parameterisation is a question for the code, not for this doc —
+  but note that after §4.11 **no shipped rung uses `Flat`**, which is the point at which to ask
+  whether the variant still earns its place.
 - **Whether the two keeping pools should split further.** Agriculture and husbandry split because the
   webs do. A finer split — a herd keeper's kit versus a field tender's — is only meaningful once a kit
   declares a maintenance contribution, which none does today, so splitting now would invent a
