@@ -34,11 +34,12 @@ use bevy::math::UVec2;
 
 use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
-    advance_herds, advance_labor_allocation, build_fraction, build_headless_app,
-    recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero, BandEquipment,
-    DiscoveryProgressLedger, EquipmentConfig, FactionId, FaunaConfigHandle, GenerationId,
-    HerdRegistry, Improvement, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
-    MoraleCause, PopulationCohort, ResidentBand, SimulationConfig, SnapshotHistory, TileRegistry,
+    advance_cultivation, advance_herds, advance_labor_allocation, build_fraction,
+    build_headless_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
+    BandEquipment, DiscoveryProgressLedger, EquipmentConfig, FactionId, FaunaConfigHandle,
+    ForageRegistry, GenerationId, HerdRegistry, Improvement, LaborAllocation, LaborAssignment,
+    LaborTarget, LadderConfigHandle, LocalStore, MoraleCause, PopulationCohort, ResidentBand,
+    RungKey, SimulationConfig, SnapshotHistory, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR,
     HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
 };
 
@@ -922,4 +923,224 @@ fn a_crew_whose_gear_pays_the_tame_off_is_quoted_one_turn_on_the_wire() {
             "the client's form must reproduce the sim's answer in the over-geared regime too"
         );
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE ROT TERM, WHERE IT IS ACTUALLY NON-ZERO (`docs/plan_standing_upkeep.md` §4.6a)
+// ---------------------------------------------------------------------------------------------
+
+/// **THE EQUALITY WITH A LIVE `meterRotPerTurn`, ON THE PLANT WEB, PAST THE GRACE.**
+///
+/// Every arm above runs on a **herd**, and no animal rung declares a `meter_decay` — so
+/// `meterRotPerTurn` is structurally `0` there and the divisor's second term is never exercised. It
+/// also runs **one** turn, so the neglect counter never leaves its grace. Between them, those two
+/// facts mean the arms above **would not have caught a wrong rot**: the client's form and the sim's
+/// answer agree on any rot when the rot is zero.
+///
+/// This arm closes that: a `plant:tended` build with **no keeping**, walked past the rung's own
+/// grace, so the published rot is the rung's real `meter_decay.per_turn` and the client's transcribed
+/// form has to net exactly it to land on `buildTurnsRemaining`.
+///
+/// **The gear term is `0` here and that is not a gap** — no plant item declares
+/// `EquipmentStat::BuildWork` (issue #539), and the two gear regimes are pinned on the herd arms
+/// above. What is under test is the *other* term.
+#[test]
+fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
+    /// Builders on the Cultivate. More than one, so the quote is a multi-turn count and `ceil` is
+    /// exercised rather than saturating at one turn.
+    const BUILDERS: u32 = 2;
+    /// A gathering crew beside them, so the rung's own work predicate holds.
+    const GATHERERS: u32 = 1;
+    /// How far the meter is into its job when the walk starts — room to move in either direction.
+    const HALF_BUILT: f32 = 0.5;
+    /// Well above the escapement floor, so `crew_is_working_the_source` stays true every turn.
+    const STOCKED: f32 = 0.8;
+
+    let mut app = build_headless_app();
+    app.update();
+
+    // A curated gathering site whose basket the tended rung can commit to — the Cultivate gate wants
+    // both, and a refusal would make the quote `-1` for a reason that is not the rot.
+    let (source, crop) = {
+        let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
+        let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
+        let map_seed = app.world.resource::<SimulationConfig>().map_seed;
+        let sites: Vec<UVec2> = app
+            .world
+            .resource::<core_sim::FoodSiteRegistry>()
+            .sites()
+            .iter()
+            .map(|site| site.position)
+            .collect();
+        let tiles: std::collections::HashMap<UVec2, core_sim::Tile> = {
+            let mut query = app.world.query::<&core_sim::Tile>();
+            query
+                .iter(&app.world)
+                .map(|tile| (tile.position, tile.clone()))
+                .collect()
+        };
+        let registry = app.world.resource::<ForageRegistry>();
+        sites
+            .into_iter()
+            .find_map(|position| {
+                registry.patch(position)?;
+                let tile = tiles.get(&position)?;
+                let composition =
+                    core_sim::tile_flora_composition(&flora, &labor.forage, tile, map_seed);
+                let crop =
+                    core_sim::default_species_for_rung(&composition, &flora, RungKey::PlantTended)?;
+                Some((position, crop))
+            })
+            .expect("worldgen curated a site whose basket the tended rung can commit to")
+    };
+    let tile = app
+        .world
+        .resource::<TileRegistry>()
+        .index(source.x, source.y)
+        .expect("the fixture tile resolves");
+    app.world
+        .resource_mut::<DiscoveryProgressLedger>()
+        .add_progress(
+            FactionId(0),
+            core_sim::CULTIVATION_DISCOVERY_ID,
+            scalar_one(),
+        );
+
+    let (cost, grace) = {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let rung = ladder.rung(RungKey::PlantTended);
+        (
+            rung.build_cost(core_sim::RUNG_COST_UNSCALED)
+                .expect("the tended rung builds"),
+            rung.upkeep_grace_turns(),
+        )
+    };
+    {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry
+            .patch_mut(source)
+            .expect("the site carries a patch");
+        patch.cultivation_cost = cost;
+        patch.cultivation_progress = cost * HALF_BUILT;
+        patch.owner = Some(FactionId(0));
+        patch.species = Some(crop);
+        patch.biomass = patch.carrying_capacity * STOCKED;
+    }
+
+    // The band: gatherers, builders, and **no `agriculture` role** — which is what makes the rot real.
+    app.world.spawn((
+        PopulationCohort {
+            home: tile,
+            current_tile: tile,
+            size: 30,
+            children: scalar_zero(),
+            working: scalar_from_f32((GATHERERS + BUILDERS + 8) as f32),
+            elders: scalar_zero(),
+            stores: LocalStore::new(),
+            morale: scalar_one(),
+            last_food_consumption: 0.0,
+            last_turn_transfer_received: 0.0,
+            last_turn_transfer_sent: 0.0,
+            last_morale_delta: scalar_zero(),
+            last_morale_cause: MoraleCause::None,
+            last_morale_contributions: Default::default(),
+            last_fertility_factors: Default::default(),
+            discontent_fraction: scalar_zero(),
+            grievance: scalar_zero(),
+            last_emigrated: 0,
+            last_immigrated: 0,
+            age_turns: 0,
+            generation: 0 as GenerationId,
+            faction: FactionId(0),
+            knowledge: Vec::new(),
+            migration: None,
+        },
+        ResidentBand,
+        LaborAllocation {
+            assignments: vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: source,
+                    floor: DEFAULT_ESCAPEMENT_FLOOR,
+                    species: None,
+                },
+                workers: GATHERERS,
+                improvement: None,
+                kit: None,
+                improvement_workers: BUILDERS,
+            }],
+            ..Default::default()
+        },
+    ));
+
+    // Walk past the rung's own grace in the real stage order, so the neglect counter is spent and the
+    // published rot is the rung's live `meter_decay.per_turn`.
+    for _ in 0..=(grace + 1) {
+        app.world.run_system_once(advance_cultivation);
+        app.world.run_system_once(advance_labor_allocation);
+    }
+    recapture_snapshot_in_place(&mut app.world);
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let row = snapshot
+        .forage_patches
+        .iter()
+        .find(|patch| patch.x == source.x && patch.y == source.y)
+        .expect("the fixture patch is on the wire");
+
+    assert!(
+        row.meter_rot_per_turn > 0.0,
+        "fixture: the grace must be spent and the keeping empty, or the rot term is untested \
+         (published {})",
+        row.meter_rot_per_turn
+    );
+    assert!(
+        row.build_turns_remaining > 1,
+        "fixture: the sim must quote a multi-turn count, or `ceil` and the divisor are untested \
+         (published {})",
+        row.build_turns_remaining
+    );
+
+    let quoted = client_turns_estimate(
+        row.cultivation_work_cost,
+        row.cultivation_work_done,
+        // No plant item declares a build contribution, so the gear term is neutral here by
+        // construction — the two gear regimes are the herd arms' business.
+        core_sim::NO_BUILD_GEAR,
+        NO_CREW_ON_THIS_ACTIVITY,
+        row.build_work_per_worker_turn,
+        BUILDERS,
+        row.meter_rot_per_turn,
+    );
+    assert_eq!(
+        quoted,
+        u32::try_from(row.build_turns_remaining).ok(),
+        "the client's closed form must net the published rot and land on the sim's own answer: \
+         cost {} done {} per-worker-turn {} builders {BUILDERS} rot {}",
+        row.cultivation_work_cost,
+        row.cultivation_work_done,
+        row.build_work_per_worker_turn,
+        row.meter_rot_per_turn,
+    );
+
+    // **AND THE ROT IS LOAD-BEARING IN THAT EQUALITY** — a form that ignored it would land somewhere
+    // else, which is what makes the assertion above a guard rather than a coincidence.
+    assert_ne!(
+        client_turns_estimate(
+            row.cultivation_work_cost,
+            row.cultivation_work_done,
+            core_sim::NO_BUILD_GEAR,
+            NO_CREW_ON_THIS_ACTIVITY,
+            row.build_work_per_worker_turn,
+            BUILDERS,
+            core_sim::NO_UPKEEP_DECAY,
+        ),
+        u32::try_from(row.build_turns_remaining).ok(),
+        "a form that dropped the rot term must NOT reproduce the sim's answer, or this arm proves \
+         nothing about the term it exists for"
+    );
 }

@@ -2269,9 +2269,18 @@ table ForagePatchState {
   // numbers a player can staff exactly).
   cultivationUpkeepDemand:float = 0;
   fieldUpkeepDemand:float = 0;
-  // WHAT THIS PATCH'S AT-RISK METER IS LOSING PER TURN RIGHT NOW, in WORK UNITS (appended,
+  // WHAT THIS PATCH'S AT-RISK METER WILL LOSE ON THE NEXT DECAY PASS, in WORK UNITS (appended,
   // docs/plan_standing_upkeep.md section 4.6a) - the rung's own `meter_decay.per_turn` scaled by how
-  // short the keeping fell, i.e. exactly what the Logistics decay pass will bleed off the meter.
+  // short the keeping fell. `0` for as long as the rung's grace still forgives the shortfall.
+  //
+  // IT IS A FORECAST THE SIM CAN MAKE EXACTLY, not an estimate. The pass it describes runs at the top
+  // of the next turn and judges the supply THIS turn has just stamped, so the bleed is already
+  // determined: a positive value here cannot fail to arrive, and nothing the player does next turn
+  // prevents it. Restore the keeping and this reads 0 on the same turn.
+  //
+  // SO IT IS NOT "what the meter just did". On a turn the keeping is RESTORED the meter still loses
+  // the PREVIOUS turn's shortfall while this reads 0 - correctly, because that loss is already spent.
+  // A readout wanting the turn's realised cost must read the meter, not this field.
   //
   // ALWAYS MEANINGFUL, NEVER A SENTINEL (the penUpkeep rule). It is `0` when the keeping covers the
   // demand, when the source is still inside its rung's grace, when nothing is built here, and when
@@ -3374,7 +3383,7 @@ table HerdTelemetryState {
   // herdersNeededIfManaged: a quote must exist before the herd is anyone's.
   tameUpkeepDemand:float = 0;
   corralUpkeepDemand:float = 0;
-  // WHAT THIS HERD'S AT-RISK METER IS LOSING PER TURN RIGHT NOW, in WORK UNITS (appended,
+  // WHAT THIS HERD'S AT-RISK METER WILL LOSE ON THE NEXT DECAY PASS, in WORK UNITS (appended,
   // docs/plan_standing_upkeep.md section 4.6a) - the plant twin's field, on the same rule, so a
   // client's build estimate is one expression across both webs.
   //

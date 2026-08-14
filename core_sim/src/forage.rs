@@ -1985,9 +1985,14 @@ fn patch_meter_answering_for(
     }
 }
 
-/// **WHAT THIS PATCH'S AT-RISK METER IS LOSING PER TURN RIGHT NOW**, in work units — the bleed
-/// [`advance_cultivation`] will take off it, quoted through the rung's own
-/// [`RungDef::meter_rot`] seam so the published number cannot drift from the pass that applies it.
+/// **WHAT THIS PATCH'S AT-RISK METER WILL LOSE ON THE NEXT DECAY PASS**, in work units — what
+/// the **next** [`advance_cultivation`] will take off it, quoted through the rung's own
+/// [`RungDef::meter_rot`] seam so the published number and the pass that applies it cannot use two
+/// different rates.
+///
+/// **It is a forecast the sim can make exactly, not an estimate**: that pass judges the supply this
+/// turn has just stamped, so the bleed is already determined — `RungDef::meter_rot` states the
+/// ordering. It is `0` for as long as the grace forgives the shortfall.
 ///
 /// **The build countdown's denominator and the wire's `meterRotPerTurn` are this one number**: what
 /// eats a build is not the maintenance rate (the keeping pool owes that whatever the builders do) but

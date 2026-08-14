@@ -969,9 +969,10 @@ pub(crate) fn snapshot_forage_patches(
                 field_upkeep_demand: ladder
                     .rung(RungKey::PlantField)
                     .upkeep_demand(UNSCALED_UPKEEP),
-                // **WHAT THE GROUND IS LOSING UNDER THE BUILDERS** — the bleed the next
-                // `advance_cultivation` will take off the at-risk meter, and the term a build's
-                // closed form nets (`docs/plan_standing_upkeep.md` §4.6a). It is emphatically not
+                // **WHAT THE GROUND WILL LOSE UNDER THE BUILDERS** — exactly what the next
+                // decay pass will bleed off the at-risk meter, and the term a build's closed form
+                // nets (`docs/plan_standing_upkeep.md` §4.6a). See `RungDef::meter_rot` for why the
+                // forecast is exact rather than an estimate. It is emphatically not
                 // the two demands above: the keeping pool owes those whatever a build crew does, so
                 // netting a rate off a build would re-price the wrong thing.
                 //

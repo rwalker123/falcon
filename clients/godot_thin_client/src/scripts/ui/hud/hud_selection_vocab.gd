@@ -191,12 +191,21 @@ const RUNG_ROTTING_PHRASE := "losing ground"
 # answering a question nobody asked.
 const RUNG_HELD_FORMAT := "Held at %d%%"
 
-# RETIRED — **`RUNG_REVERTING_FORMAT`**, `⚠ Reverting 42%`, fired on *work banked and nobody on it*.
-# **It was this surface's own producer of a state the wire now answers** (§4.6a): a parked meter was
-# assumed to be bleeding, which held only while an unbuilt rung was billed to its build crew. The
-# keeping pool holds it at any fullness now, so that staffing splits into `RUNG_HELD_FORMAT` above
-# (the keeping covers it) and `RUNG_ROTTING_FORMAT` (it does not) — and the sim, not this client,
-# decides which.
+# **HAZARD: a rung that is NOT the one in flight, carrying banked work its keeping did not cover.**
+# The half of the old *work banked and nobody on it* row that survived, and it survived because the
+# sim's answer cannot reach it.
+#
+# **THE SOURCE PUBLISHES ONE COUNTDOWN AND THE CARD HAS TWO ROWS** (`docs/plan_standing_upkeep.md`
+# §4.6a). `buildTurnsRemaining` describes whichever rung `build_verb` names, so the OTHER row has no
+# sentinel of its own — `-2` / `-3` replaced this format **for the at-risk meter only**, and for one
+# pass nothing replaced it here, which put the Field's `≈30 turns` on a Cultivation meter nobody was
+# touching. So a row that is not the rung in flight states what it IS: `RUNG_HELD_FORMAT` where the
+# keeping covers it, and this where it does not.
+#
+# **THE FORK IS `SourceForecast.rung_is_under_kept`** — the published shortfall routed through the
+# at-risk rung — so this row derives no number of its own and cannot disagree with the mark on the
+# built row beside it, which uses the same seam.
+const RUNG_REVERTING_FORMAT := "%s Reverting %d%%"
 
 # **HAZARD: builders are on it and the meter is not moving anyway** — the sim's `-1` for a rung whose
 # knowledge, site or species gate does not hold, or whose crew is standing over an empty escapement

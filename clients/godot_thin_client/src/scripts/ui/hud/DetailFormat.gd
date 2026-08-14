@@ -1014,6 +1014,7 @@ static func build_meter_value(verb: String, progress: float,
 ## | built | `🌾 Tended 100%` (+ `⚠` when the keeping is short) | achievement is the stamped retention bar, not the meter's fullness |
 ## | declared, nobody on it, nothing banked | `⚠ Not started — no builders assigned` | there is no meter to state — `0 / 50 (0%)` is that zero written three ways |
 ## | **work banked, nobody on it, keeping COVERS it** | **`Held at 42%` — NO MARK, NEUTRAL INK** | **it is a player's decision, not a failure** |
+## | banked work on a rung that is NOT the one in flight | `Held at 42%`, or `⚠ Reverting 42%` if the keeping is short | the source's ONE countdown is about the OTHER rung |
 ## | a crew on it banking exactly the ROT | `⚠ ∞ turns (42%)` | somebody IS on it and their turn is being wasted; the remedy is MORE of them |
 ## | under the rot, staffed or not | `⚠ ∞ turns, losing ground (42%)` | work already bought is going back — so it is RED, not amber |
 ## | staffed, and nothing accrues anyway | `⚠ Stalled 42%` | a gate or an empty escapement room, which no crew size fixes |
@@ -1025,12 +1026,33 @@ static func build_meter_value(verb: String, progress: float,
 ## the player to ignore the mark, which costs every other row above its meaning. It says `Held` in
 ## WORDS rather than `∞ turns`, because `∞` is a statement about a crew and there is no crew here.
 ##
-## **IT REPLACED `⚠ Reverting 42%`, WHICH WAS THIS SURFACE'S OWN PRODUCER OF THE STATE.** That row
-## fired on *work banked and nobody on it* — a client-side inference that a parked meter must be
-## bleeding, true only while an unbuilt rung was billed to its build crew. The wire answers it now
-## (`-2` held, `-3` losing), so the rotting row covers the half that really is a loss and this covers
-## the half that is not. **`staffed` is not a second opinion about that**: it is the one fact
-## `BUILD_METER_HOLDS` cannot carry, and it chooses only between two wordings of one sentinel.
+## **IT REPLACED `⚠ Reverting 42%` ON THE RUNG IN FLIGHT.** That row fired on *work banked and nobody
+## on it* — a client-side inference that a parked meter must be bleeding, true only while an unbuilt
+## rung was billed to its build crew. The wire answers it now for the meter it is about (`-2` held,
+## `-3` losing), so the rotting row covers the half that really is a loss and this covers the half that
+## is not. **`build_crew` is not a second opinion about that**: it is the one fact `BUILD_METER_HOLDS`
+## cannot carry, and it chooses only between two wordings of one sentinel.
+##
+## > #### ⛔ THE COUNTDOWN IS PER SOURCE AND THE CARD HAS TWO ROWS
+## >
+## > `buildTurnsRemaining` describes **one** rung — whichever `build_verb` names — and so does
+## > `meterRotPerTurn`, and the two need not even be the same rung: a Cultivate abandoned at 60% with a
+## > `Sow` declared over it puts the ROT on the Cultivate and the COUNTDOWN on the Field. A row that is
+## > not the rung in flight therefore has no countdown of its own, and printing the source's would put
+## > the Field's `≈30 turns` on a Cultivation meter nobody is touching — **reported by review, and the
+## > same routing mistake the built row's `⚠` had**.
+## >
+## > So such a row states what it IS rather than a number that is not its own: `Held at 42%` where the
+## > keeping covers it, and **`RUNG_REVERTING_FORMAT`'s `⚠ Reverting 42%` where it does not**. That
+## > format was retired with the client-side sliding inference and had to come back for exactly this:
+## > the sim's `-3` replaced it **for the at-risk meter only**, and nothing replaced it for the other
+## > row. The fork is `rung_is_under_kept` — the published shortfall routed through `at_risk_rung` —
+## > which is the same seam the built row's mark uses and derives no number of its own.
+## >
+## > **`declared_rung` is a STRING rather than the bool it replaced** so both facts a row needs come
+## > from one place: *is this the rung the player declared* (the unstarted row) and *is this the rung
+## > in flight* (`build_verb`'s own answer, which honours a declaration only at a zero meter). Two
+## > separately-passed bools could disagree; one string cannot.
 ##
 ## **`built` IS THE ACHIEVEMENT FLAG, NEVER `progress >= 1`**, and the two genuinely differ: a rung
 ## that has eroded to 92% is still tended AND is being repaired, which is why fullness and achievement
@@ -1054,19 +1076,26 @@ static func build_meter_value(verb: String, progress: float,
 ## `built_label` is the rung's own badge, glyph included, and is the caller's because one of them
 ## forks on something no rung shares — a penned herd that is starving states that instead.
 static func rung_row_value(src: Dictionary, prefix: String, improvement: String, kind: String,
-        built_label: String, built: bool, progress: float, staffed: bool,
-        declared: bool) -> String:
+        built_label: String, built: bool, progress: float, build_crew: int,
+        declared_rung: String) -> String:
     var percent := HudFormat.progress_percent(progress)
     if built:
         var face := HudSelectionVocab.RUNG_BUILT_FORMAT % [built_label, percent]
         if SourceForecast.rung_is_under_kept(src, prefix, kind, improvement):
             return "%s %s" % [face, HudSelectionVocab.RUNG_HAZARD_GLYPH]
         return face
-    if declared and progress <= BUILD_METER_EMPTY:
+    if declared_rung == improvement and progress <= BUILD_METER_EMPTY:
         return BUILD_UNSTARTED_VALUE
+    # **A ROW THAT IS NOT THE RUNG IN FLIGHT MAY NOT PRINT THE COUNTDOWN**, because there is exactly
+    # ONE of those per source and the card has two rows. See the note above.
+    if SourceForecast.build_verb(src, prefix, kind, declared_rung) != improvement:
+        if SourceForecast.rung_is_under_kept(src, prefix, kind, improvement):
+            return HudSelectionVocab.RUNG_REVERTING_FORMAT % [
+                HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
+        return HudSelectionVocab.RUNG_HELD_FORMAT % percent
     var turns := SourceForecast.build_turns_remaining(src, prefix)
     if turns == SourceForecast.BUILD_TURNS_HOLDS:
-        if not staffed:
+        if build_crew <= SourceForecast.BUILD_CREW_NONE:
             return HudSelectionVocab.RUNG_HELD_FORMAT % percent
         return HudSelectionVocab.RUNG_HOLDING_FORMAT % [
             HudSelectionVocab.RUNG_HAZARD_GLYPH, BUILD_TURNS_NEVER_GLYPH, percent]
@@ -2081,8 +2110,7 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
             # `⚠ Stalled` while the wire answered `-1` for an unstaffed source.
             lines.append("Husbandry: %s" % rung_row_value(herd_data, herd_prefix,
                 SourceForecast.IMPROVEMENT_TAME, SourceForecast.SOURCE_KIND_HERD,
-                husbandry_built_label(), tamed, domestication,
-                build_crew > SourceForecast.BUILD_CREW_NONE, tame_declared))
+                husbandry_built_label(), tamed, domestication, build_crew, unstaffed_build))
             if not tamed:
                 lines.append_array(build_gear_lines(herd_data, herd_prefix))
         # **THE CONSEQUENCE OF AN UNDER-KEPT HERD IS THE ONE KEEPER FACT THAT SURVIVED THE `Keepers:`
@@ -2111,7 +2139,8 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
             if bool(herd_data.get("corralled", false)):
                 lines.append("Corral: %s" % rung_row_value(herd_data, herd_prefix,
                     SourceForecast.IMPROVEMENT_CORRAL, SourceForecast.SOURCE_KIND_HERD,
-                    corral_built_label(fed_fraction), true, CORRAL_PROGRESS_COMPLETE, false, false))
+                    corral_built_label(fed_fraction), true, CORRAL_PROGRESS_COMPLETE,
+                    SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE))
                 # The pen is fenced LAND (Grazing 2d-γ): its footprint (radius + the SERVER's in-bounds
                 # tile count, shown verbatim) and the feed SPLIT — how much of the herd's feed its own
                 # grazed footprint covers vs what the keeper still hauls from the larder.
@@ -2140,11 +2169,10 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
                 # Penning is a flat job for every species — a fence is a fence — so unlike the Tame
                 # row above this cost carries no species multiplier, and the turns leading the row
                 # move only with the keeper crew, their floor and their kit.
-                var corral_declared := unstaffed_build == SourceForecast.IMPROVEMENT_CORRAL
                 lines.append("Corral: %s" % rung_row_value(herd_data, herd_prefix,
                     SourceForecast.IMPROVEMENT_CORRAL, SourceForecast.SOURCE_KIND_HERD,
                     corral_built_label(PenStatus.FULLY_FED), false, corral_progress,
-                    build_crew > SourceForecast.BUILD_CREW_NONE, corral_declared))
+                    build_crew, unstaffed_build))
                 lines.append_array(build_gear_lines(herd_data, herd_prefix))
         elif ceiling == SourceForecast.HUSBANDRY_CEILING_PASTORAL:
             lines.append(HUSBANDRY_PASTORAL_HINT)

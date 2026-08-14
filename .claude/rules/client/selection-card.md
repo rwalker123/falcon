@@ -352,6 +352,7 @@ FAILURE state leads with `HudSelectionVocab.RUNG_HAZARD_GLYPH`:
 |---|---|---|
 | declared, nobody assigned, nothing banked | `⚠ Not started — no builders assigned` | there is no meter to state — `0 / 50 (0%)` is that zero written three ways |
 | **work banked, nobody on it, keeping COVERS it** | **`Held at 42%` — no mark, neutral ink** | **it is a decision, not a failure** (see below) |
+| banked work on a rung that is NOT the one in flight | `Held at 42%`, or `⚠ Reverting 42%` when its keeping is short | the source's ONE countdown is about the OTHER rung |
 | a crew on it banking exactly the ROT | `⚠ ∞ turns (42%)` | somebody IS on it and their turn is being wasted; the remedy is MORE of them |
 | under the rot, staffed or not | `⚠ ∞ turns, losing ground (42%)` | the work already bought is going BACK — so it is RED, not amber |
 | built, and the keeping pool is short | `🌾 Tended 92% ⚠` | the rung is HELD and slipping, which no build crew fixes |
@@ -396,6 +397,30 @@ merged the test with `is_unbuilt_and_unpaid`, and with the gate went the routing
 side effect. **It decides which ROW shows a number, never the number** — the same job `build_verb`
 already does for the build verb, off the same table. **And it withholds a mark from a ROW, never the
 fact**: the source-level `At risk:` row still states what the shortfall costs and how long is left.
+
+> #### ⛔ THE COUNTDOWN IS PER SOURCE TOO, AND IT NEEDED THE SAME ROUTING
+>
+> **`buildTurnsRemaining` describes ONE rung — whichever `build_verb` names — and the card has two
+> rows.** Found by review: a Cultivate abandoned at 60% (never completed, so `built` is false) with a
+> `Sow` declared over it publishes the FIELD's countdown, and the Cultivation row printed
+> `≈30 turns (60%)` for a meter nobody is touching.
+>
+> **THE TWO PER-SOURCE NUMBERS NEED NOT NAME THE SAME RUNG**, which is why each is routed on its own
+> question: on that patch `at_risk_rung` answers CULTIVATE (the newest meter carrying work) and
+> `build_verb` answers SOW. A row asking either question of the other gets a confident wrong answer.
+>
+> A row that is not the rung in flight therefore states **what it is** rather than a number that is not
+> its own: `RUNG_HELD_FORMAT` where the keeping covers it, `RUNG_REVERTING_FORMAT` where it does not.
+> **That format came back for exactly this.** Retiring it was right for the at-risk meter — the sim's
+> `-2`/`-3` replaced it there — and wrong for the other row, which the sim's answer cannot reach.
+>
+> **`rung_row_value`'s last argument is a STRING (`declared_rung`), not the bool it replaced**, so both
+> facts a row needs come from one place: *is this the rung the player declared* (the unstarted row) and
+> *is this the rung in flight* (`build_verb`'s answer, which honours a declaration only at a zero
+> meter). Two separately-passed bools could disagree; one string cannot. **`SubjectDrawerController`'s
+> `building_rung` retired with it** — comparing against the raw declaration is what put the source's
+> countdown on whichever row happened to name the declared verb, and the GEAR line hangs off
+> `build_verb`'s answer now for the same reason.
 
 **THE TINT IS DECIDED ONCE FOR FOUR ROWS, AND IT KEYS ON THE MARK.** `DetailFormat.rung_value_hex` is
 what `cultivation_value_hex` / `field_value_hex` / `husbandry_value_hex` / `corral_value_hex` all
@@ -514,8 +539,14 @@ Four surfaces, and each says it in its own register:
 
 - **The tile card** renders the rung row it used to suppress, valued
   `DetailFormat.BUILD_UNSTARTED_VALUE` (`⚠ Not started — no builders assigned`) in WARN. Above zero
-  the row is the wire's own verdict, and `staffed` (was `building`) chooses only the WORDING of
-  `BUILD_METER_HOLDS`: a crew treading water, or a build parked on purpose.
+  the row is the wire's own verdict, and the **real build crew** chooses only the WORDING of
+  `BUILD_METER_HOLDS`: a crew treading water, or a build parked on purpose. **It was a bool meaning
+  *this rung is the one in flight*, which is a different question** — found by review, and it parts
+  from the crew on a state this arc built a whole readout for: a completed Cultivate that later erodes
+  below its retention bar carries no declared improvement (completion clears it), so the bool could
+  answer *staffed* on a meter nobody is touching and the row wore the amber `⚠ ∞ turns` where the
+  deliberate-hold `Held at 92%` belongs. `HudBandLaborState.build_crew_forage` / `build_crew_hunt` are
+  the folded counts both webs pass.
 - **The herd drawer** takes the rung as a parameter — `herd_summary_lines`' trailing
   `unstaffed_build`, and since §4.6a the `build_crew` beside it — because a pure producer over one herd
   dict cannot see the player's labor row. **On this web `HOLDS` always means parked**: no animal rung

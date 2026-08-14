@@ -3142,9 +3142,16 @@ crew of zero as they do at any other.
 
 - **Nothing banked AND nobody on it is still no answer** — that is the DECLARED state, and its own
   *not started* warning speaks for it.
-- **The WORK PREDICATE is asked only where there is a crew.** It gates a crew's accrual; at zero
-  builders nothing accrues whatever the floor is, and what the meter does is decided by the rot alone.
-  Left ungated it would answer *no estimate* on a floor-starved patch that the sim says is rotting.
+- **The WORK PREDICATE IS ASKED AT EVERY STAFFING, INCLUDING NONE.** It was gated on
+  `workers > BUILD_CREW_NONE` for one pass, on the reasoning that nothing accrues at zero builders
+  anyway — **true, and not this predicate's question.** `RungDef::build_accrual`'s `eligible` carries
+  `crew_is_working_the_source`, which reads the STOCK against the floor and takes **no crew count at
+  all**, so the sim answers `-1` there whatever the staffing. The gate made the sheet answer the
+  neutral `held` on a floor-starved half-built Cultivate the card correctly called `⚠ Stalled` —
+  **two producers disagreeing about one meter**, which is the exact thing the closed-form equality
+  exists to prevent. Found by review; the `per_worker_turn <= 0` guard beside it was gated the same
+  way and was ungated with it. Frame: `tile_meter_stalled`, which asserts the card's hazard and the
+  sheet's `BUILD_TURNS_NO_ESTIMATE` for the same crew of zero.
 - **`-2` WITH NO BUILDERS IS NOT A HAZARD.** That is the whole point of the boundary moving, and it is
   `BUILD_PACE_HELD` — see `selection-card.md` → "THE HELD ROW IS THE ONE STATE HERE THAT MUST NOT BE
   MARKED".

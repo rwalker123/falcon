@@ -118,13 +118,15 @@ const METER_AWAY_TILE_X := 64
 ## match the rendered VALUE markup, which no other row can produce.
 const CULTIVATION_ROW_KEY := "Cultivation"
 
-## **IS ANYBODY ON THIS BUILD?** — `rung_row_value`'s `staffed` argument, named because a bare
-## `true`/`false` at a call site says nothing about which of the two `BUILD_METER_HOLDS` readings the
-## row is being asked for: a crew treading water (marked, amber `∞`) or a build parked on purpose
-## (unmarked, neutral `Held at N%`).
-const STAFFED := true
+## **A CREW ON THE BUILD** — `rung_row_value`'s `build_crew` argument wherever a state wants *somebody
+## is on it* without the count mattering. Named because a bare `1` at a call site says nothing about
+## which of the two `BUILD_METER_HOLDS` readings the row is being asked for: a crew treading water
+## (marked, amber `∞`) or a build parked on purpose (unmarked, neutral `Held at N%`).
+const STAFFED_CREW := 1
 
-const UNSTAFFED := false
+## **THE ABANDONED CULTIVATE'S OWN METER** — banked work on a rung nobody is building, under a Sow that
+## IS declared. Any value strictly between empty and full stages it; this one is the reference tile's.
+const ABANDONED_CULTIVATE_METER := 0.6
 
 ## **A NEGATIVE THIS CLIENT DOES NOT RECOGNISE** — one past the THREE the wire spells
 ## (`sim_schema::{NO_BUILD_TURNS_ESTIMATE, BUILD_METER_HOLDS, BUILD_METER_ROTS}`). It stands for
@@ -278,9 +280,14 @@ func _rung_value_for_turns(turns: int) -> String:
 		SourceForecast.FORECAST_BUILD_TURNS_KEY: turns,
 		SourceForecast.FORECAST_BUILD_WORK_COST_KEYS[SourceForecast.IMPROVEMENT_TAME]:
 			BaseFx.PLANT_CULTIVATE_WORK_COST,
+		# **THE METER RIDES THE DICT, not only the `progress` argument** — `rung_row_value` asks
+		# `build_verb` whether this rung is the one in flight, and a dict with no meter answers NO, so
+		# the row would take the not-in-flight branch and never reach the sentinel under test.
+		SourceForecast.FORECAST_BUILD_METER_KEYS[SourceForecast.IMPROVEMENT_TAME]:
+			REVERTING_METER_PROGRESS,
 	}, HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_TAME,
 		SourceForecast.SOURCE_KIND_HERD, DetailFormat.husbandry_built_label(), false,
-		REVERTING_METER_PROGRESS, STAFFED, false)
+		REVERTING_METER_PROGRESS, STAFFED_CREW, SourceForecast.IMPROVEMENT_NONE)
 
 ## **ARE ALL FOUR HAZARD STATES MARKED?** With the standing `Keeping:` row retired, a bare rung row is
 ## the ONLY thing that says a rung is fine — so a failure state rendering without
@@ -292,7 +299,8 @@ func _hazard_states_all_marked() -> bool:
 	# (1) declared, nobody assigned, nothing banked — the row states a sentence, not a meter.
 	var unstarted := DetailFormat.rung_row_value({}, HudComposeVocab.BARE_FORECAST_PREFIX,
 		SourceForecast.IMPROVEMENT_TAME, SourceForecast.SOURCE_KIND_HERD,
-		DetailFormat.husbandry_built_label(), false, 0.0, UNSTAFFED, true)
+		DetailFormat.husbandry_built_label(), false, 0.0, SourceForecast.BUILD_CREW_NONE,
+		SourceForecast.IMPROVEMENT_TAME)
 	# **(2) WORK BANKED AND NOBODY ON IT LEFT THIS SET, AND ITS ABSENCE IS ASSERTED HERE** (§4.6a). It
 	# was `⚠ Reverting`, on the premise that a parked meter must be bleeding; the keeping pool holds it
 	# at any fullness now, so with the keeping covered it is a decision the player made, and marking it
@@ -300,9 +308,12 @@ func _hazard_states_all_marked() -> bool:
 	# frame because this is where the SET is decided.
 	var held := DetailFormat.rung_row_value({
 		SourceForecast.FORECAST_BUILD_TURNS_KEY: SourceForecast.BUILD_TURNS_HOLDS,
+		SourceForecast.FORECAST_BUILD_METER_KEYS[SourceForecast.IMPROVEMENT_TAME]:
+			REVERTING_METER_PROGRESS,
 	}, HudComposeVocab.BARE_FORECAST_PREFIX,
 		SourceForecast.IMPROVEMENT_TAME, SourceForecast.SOURCE_KIND_HERD,
-		DetailFormat.husbandry_built_label(), false, REVERTING_METER_PROGRESS, UNSTAFFED, false)
+		DetailFormat.husbandry_built_label(), false, REVERTING_METER_PROGRESS,
+		SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE)
 	# (3) a crew banking exactly the ROT, (4) a crew under it — the meter going backwards — and
 	# (5) staffed with nothing accruing anyway. The rotting one is in this conjunction rather than
 	# only on its own frame because it is the newest sentinel, i.e. the one most likely to be added
@@ -314,12 +325,45 @@ func _hazard_states_all_marked() -> bool:
 	var not_at_risk := DetailFormat.rung_row_value(_two_live_meters_short_of_keeping(),
 		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_CULTIVATE,
 		SourceForecast.SOURCE_KIND_FORAGE, DetailFormat.cultivation_built_label(), true,
-		SourceForecast.BUILD_METER_FULL, UNSTAFFED, false)
+		SourceForecast.BUILD_METER_FULL, SourceForecast.BUILD_CREW_NONE,
+		SourceForecast.IMPROVEMENT_NONE)
+	# **(7) THE SAME ROUTING ON THE *UNBUILT* ARM, which is where review found it in the countdown.**
+	# A Cultivate abandoned mid-build with a `Sow` declared over it is not the rung in flight, so it
+	# states its own condition — marked here, the keeping being short — and never the Field's count.
+	# The two arms are asserted separately because `built` forks before the routing does, so a fix to
+	# one says nothing about the other.
+	var abandoned := _an_abandoned_cultivate_under_a_declared_sow()
+	var stale_count := DetailFormat.rung_row_value(abandoned,
+		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_CULTIVATE,
+		SourceForecast.SOURCE_KIND_FORAGE, DetailFormat.cultivation_built_label(), false,
+		ABANDONED_CULTIVATE_METER, SourceForecast.BUILD_CREW_NONE,
+		SourceForecast.IMPROVEMENT_SOW)
 	return unstarted.contains(mark) and not held.contains(mark) \
 		and not not_at_risk.contains(mark) \
+		and stale_count.contains(mark) \
+		and not stale_count.contains(RUNG_TURNS_NEEDLE) \
 		and _rung_value_for_turns(SourceForecast.BUILD_TURNS_HOLDS).contains(mark) \
 		and _rung_value_for_turns(SourceForecast.BUILD_TURNS_ROTS).contains(mark) \
 		and _rung_value_for_turns(SourceForecast.BUILD_TURNS_NO_ESTIMATE).contains(mark)
+
+## **THE REVIEWER'S OWN WALK — a Cultivate abandoned mid-build with a `Sow` declared over it.**
+## `build_verb` honours the Sow (its meter is at zero, which is the one state a declaration answers
+## for), so the source publishes the FIELD's countdown — and the Cultivation row, which is not the rung
+## in flight, must not print it. The keeping is short, so what that row states instead is its own
+## condition: `⚠ Reverting 60%`.
+##
+## **THE TWO PER-SOURCE NUMBERS NAME DIFFERENT RUNGS HERE**, which is the whole reason the routing is
+## per-number: `at_risk_rung` answers CULTIVATE (the newest meter carrying work) while `build_verb`
+## answers SOW. A row asking either question of the other gets the wrong answer.
+func _an_abandoned_cultivate_under_a_declared_sow() -> Dictionary:
+	var tile := BaseFx.food_tile_fixture()
+	tile["patch_is_cultivated"] = false
+	tile["patch_cultivation_progress"] = ABANDONED_CULTIVATE_METER
+	tile["patch_is_field"] = false
+	tile["patch_field_progress"] = 0.0
+	tile["patch_upkeep_supplied"] = 0.0
+	tile["patch_upkeep_shortfall"] = BaseFx.PLANT_TENDED_UPKEEP_PER_TURN
+	return BaseFx.price_plant_build(tile, BOTH_METERS_FIELD_TURNS)
 
 ## **A PATCH HOLDING A TENDED RUNG WHILE ITS FIELD GOES UP, WITH THE BAND'S KEEPING SHORT** — the one
 ## shape on which the at-risk mark has a choice of rows to land on, and the shape a mark on the wrong
@@ -342,6 +386,14 @@ func _two_live_meters_short_of_keeping() -> Dictionary:
 ## player's decision, and the row wears **no mark and no `∞`**.
 func _held_value() -> String:
 	return HudSelectionVocab.RUNG_HELD_FORMAT % HudFormat.progress_percent(REVERTING_METER_PROGRESS)
+
+## …and what a rung that is NOT the one in flight reads when its keeping is short. It is the surviving
+## half of the retired reverting row: the sim's `-2`/`-3` answer for the at-risk meter, and this row is
+## not the one the countdown is about, so it states its condition rather than a number that is not its.
+func _reverting_value() -> String:
+	return HudSelectionVocab.RUNG_REVERTING_FORMAT % [
+		HudSelectionVocab.RUNG_HAZARD_GLYPH,
+		HudFormat.progress_percent(ABANDONED_CULTIVATE_METER)]
 
 ## …and the BUILDING row's, which leads with the sim's own count.
 func _building_value(turns: int) -> String:
@@ -982,6 +1034,52 @@ func run(harness) -> void:
 			== HudSelectionVocab.RUNG_STALLED_FORMAT % [
 				HudSelectionVocab.RUNG_HAZARD_GLYPH,
 				HudFormat.progress_percent(REVERTING_METER_PROGRESS)])
+
+	#   (e) **STALLED — and the frame exists to pin that the SHEET and the CARD agree about it**
+	#   (§4.6a). A half-built Cultivate on a patch drawn to or below its own floor, with nobody on it:
+	#   `RungDef::build_accrual`'s `eligible` carries `crew_is_working_the_source`, which reads the
+	#   STOCK against the floor and takes **no crew count at all**, so the sim answers `-1` at any
+	#   staffing and the card renders `⚠ Stalled`.
+	#
+	#   **THE CLIENT GATED THAT PREDICATE ON A CREW FOR ONE PASS**, reasoning that nothing accrues at
+	#   zero builders anyway — true, and not this predicate's question. The gate made the sheet answer
+	#   the neutral `held` where the card says `⚠ Stalled`: **two producers disagreeing about one
+	#   meter**, which is the exact thing the closed-form equality exists to prevent.
+	var starved := TileFx.stressed_tile_fixture()
+	starved["patch_cultivation_progress"] = REVERTING_METER_PROGRESS
+	BaseFx.price_plant_build(starved, SourceForecast.BUILD_TURNS_NO_ESTIMATE)
+	h._hud._band_labor._player_band = BandFx.cultivating_forage_band_fixture(
+		METER_AWAY_TILE_X, int(starved["y"]))
+	h._hud._band_labor._player_bands = [h._hud._band_labor.player_band()]
+	h._hud.clear_selection()
+	h._show_tile(starved)
+	await h._settle()
+	await h._save("tile_meter_stalled")
+	var starved_row = h._hud.tile_detail.text
+	print("ui_preview: meter stalled  %s" % Readout.detail_excerpt(starved_row, CULTIVATION_ROW_KEY))
+	# THE PRECONDITION, or this frame is about a patch with room to work in: the food peak really does
+	# stand above this patch's own stock, which is what makes the predicate refuse.
+	h._assert_hud("the starved patch really has NO room above the floor — the predicate must refuse",
+		SourceForecast.escapement_room(starved, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+			SourceForecast.FLOOR_FOOD_PEAK) <= SourceForecast.BUILD_NO_ESCAPEMENT_ROOM)
+	h._assert_hud("…and the CARD states the sim's own STALLED hazard, never a bare percentage",
+		starved_row.contains(_rung_value_markup(
+			_rung_value_for_turns(SourceForecast.BUILD_TURNS_NO_ESTIMATE), HudStyle.WARN_HEX)))
+	# **THE EQUALITY, at the committed crew of ZERO.** The sheet prices a proposal and the card reads
+	# the sim, and on this source they have to answer the same thing — which they did not while the
+	# predicate was gated on a crew.
+	h._assert_hud("…and the SHEET answers no estimate for the same crew, as the sim does",
+		SourceForecast.build_turns_at(starved, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+			SourceForecast.IMPROVEMENT_CULTIVATE, SourceForecast.BUILD_CREW_NONE,
+			SourceForecast.FLOOR_FOOD_PEAK, NO_BUILD_GEAR)
+			== SourceForecast.BUILD_TURNS_NO_ESTIMATE)
+	# …and the NEGATIVE that names the defect: `held` is what the crew-gated form answered here, and it
+	# is the reassuring direction on a build that is going nowhere.
+	h._assert_hud("…and specifically NOT the neutral *held* the crew-gated predicate produced",
+		SourceForecast.build_turns_at(starved, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+			SourceForecast.IMPROVEMENT_CULTIVATE, SourceForecast.BUILD_CREW_NONE,
+			SourceForecast.FLOOR_FOOD_PEAK, NO_BUILD_GEAR)
+			!= SourceForecast.BUILD_TURNS_HOLDS)
 
 	# ---- THE TURN ESTIMATE FOLLOWS THE STEPPER (docs/plan_unit_costed_work.md §11) ----------------
 	# **ONE PATCH, ONE FLOOR, TWO CREWS — and a frame set that renders only one crew proves nothing
@@ -1667,6 +1765,41 @@ func _both_live_meters_get_their_own_row() -> void:
 	# is the half a per-rung mark was never carrying.
 	h._assert_hud("…while the card still states what the shortfall costs, on its own At risk: row",
 		short_card.contains(DetailFormat.UPKEEP_RISK_ROW))
+
+	# **AND THE SAME ROUTING ON THE UNBUILT ARM — the reviewer's own walk, as a rendered card.** A
+	# Cultivate ABANDONED at 60% with a `Sow` declared over it: `build_verb` honours the Sow, so the
+	# source publishes the FIELD's countdown, and the Cultivation row printed it — `≈30 turns (60%)`
+	# for a meter nobody is touching. `built` forks before the routing does, so the claim above says
+	# nothing about this arm and it is asserted separately.
+	var abandoned := _an_abandoned_cultivate_under_a_declared_sow()
+	var abandoning_band := BandFx.cultivating_forage_band_fixture(
+		int(abandoned["x"]), int(abandoned["y"]))
+	abandoning_band["labor_assignments"][0]["improvement"] = SourceForecast.IMPROVEMENT_SOW
+	abandoning_band["labor_assignments"][0]["improvement_workers"] = SourceForecast.BUILD_CREW_NONE
+	h._hud._band_labor._player_band = abandoning_band
+	h._hud._band_labor._player_bands = [abandoning_band]
+	h._hud.clear_selection()
+	h._show_tile(abandoned)
+	await h._settle()
+	var abandoned_card: String = h._hud.tile_detail.text
+	print("ui_preview: abandoned rung under a declared Sow  %s | %s" % [
+		Readout.detail_excerpt(abandoned_card, CULTIVATION_ROW_KEY),
+		Readout.detail_excerpt(abandoned_card, HudFloraVocab.FIELD_ROW)])
+	# THE PRECONDITION, and it is the whole shape: the two per-source numbers name DIFFERENT rungs
+	# here, which is why routing them separately is not over-engineering.
+	h._assert_hud("the rung IN FLIGHT is the Sow while the rung AT RISK is the Cultivate",
+		SourceForecast.build_verb(abandoned, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+			SourceForecast.SOURCE_KIND_FORAGE, SourceForecast.IMPROVEMENT_SOW)
+			== SourceForecast.IMPROVEMENT_SOW
+		and SourceForecast.at_risk_rung(abandoned, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+			SourceForecast.SOURCE_KIND_FORAGE) == SourceForecast.IMPROVEMENT_CULTIVATE)
+	# THE DEFECT, denied by name: the Field's own count must not appear on the Cultivation row.
+	h._assert_hud("…so the Cultivation row states no turn count at all — the count is the Field's",
+		not Readout.detail_excerpt(abandoned_card, CULTIVATION_ROW_KEY).contains(RUNG_TURNS_NEEDLE))
+	# …and the POSITIVE beside it, or "prints nothing" would satisfy the negative: the row states its
+	# own condition instead, marked, because this patch's keeping is short.
+	h._assert_hud("…and states its OWN condition instead — reverting, marked, in WARN ink",
+		abandoned_card.contains(_rung_value_markup(_reverting_value(), HudStyle.WARN_HEX)))
 
 ## The Field meter and the sim's answer for it on `tile_two_meters_live`. Deliberately DIFFERENT from
 ## every other build reading in this chapter, so a card rendering one rung's numbers on both rows

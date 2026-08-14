@@ -538,6 +538,119 @@ fn an_abandoned_half_built_patch_publishes_rotting_and_a_kept_one_holding() {
     );
 }
 
+/// **THE PUBLISHED ROT IS EXACTLY WHAT THE NEXT DECAY PASS BLEEDS.**
+///
+/// Logistics runs before Population, so the pass that bleeds judges the supply the *previous* turn
+/// stamped. `RungDef::meter_rot` therefore advances the neglect count by one and publishes what that
+/// pass will take — an exact forecast rather than an estimate, because the supply it is struck from
+/// is already stamped and nothing the player does next turn can change it.
+///
+/// **The invariant, asserted turn after turn: `rot published at T == −(the meter's movement at
+/// T+1)`.** Three arms, and the third is what makes the other two mean anything:
+///
+/// - **the boundary** — the last grace turn publishes the rot the *next* turn actually bleeds, and
+///   `buildTurnsRemaining` reads `-3` there rather than `-2`;
+/// - **the steady state** — the relation holds every turn once the bleed has started;
+/// - **the rescue** — keeping staffed mid-grace publishes `0` and the following turn bleeds `0`, so
+///   the forward form is shown **not** to over-warn. Without it, a form that always predicted a bleed
+///   would pass both the others.
+#[test]
+fn the_published_rot_is_exactly_what_the_next_decay_pass_bleeds() {
+    let (mut app, source) = world_with_a_patch_knowing(
+        NOBODY_BUILDING,
+        HALF_BUILT,
+        THE_GATE_IS_OPEN,
+        NOBODY_GATHERING,
+    );
+    let grace = app
+        .world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung(RungKey::PlantTended)
+        .upkeep_grace_turns();
+    assert!(
+        grace > 0,
+        "fixture: the rung must forgive something, or there is no boundary to pin"
+    );
+
+    // **`source` is a PARAMETER, not a capture** — the rescue arm below opens a second world, and a
+    // closure holding the first world's tile would read a patch that is not in it.
+    let work_done =
+        |app: &App, source| published_patch_field(app, source, |p| p.cultivationWorkDone());
+    let rot_now = |app: &App, source| published_patch_field(app, source, |p| p.meterRotPerTurn());
+
+    // --- (1) THE BOUNDARY, and (2) the steady state, on one walk. ---------------------------------
+    //
+    // Every turn: take the rot this turn publishes, resolve the next turn, and assert the meter moved
+    // by exactly that. `grace + 3` turns covers the forgiven span, the last grace turn (where the
+    // published rot first goes positive while the meter has still not moved) and two steady ones.
+    recapture_snapshot_in_place(&mut app.world);
+    let mut forecast = rot_now(&app, source);
+    let mut before = work_done(&app, source);
+    let mut saw_a_forecast_of_a_bleed_before_the_meter_moved = false;
+    for turn in 1..=(grace + 3) {
+        let published = resolve_a_turn(&mut app, source);
+        let now = work_done(&app, source);
+        assert!(
+            (before - now - forecast).abs() < 1e-4,
+            "turn {turn}: the rot published last turn ({forecast}) must be exactly what this turn \
+             bled ({})",
+            before - now
+        );
+        let next = rot_now(&app, source);
+        // **THE LAST GRACE TURN IS THE ARM THE FORM LIVES ON**: the meter has not moved yet, and the
+        // wire already says it is about to — `-3`, not `-2`.
+        if next > core_sim::NO_UPKEEP_DECAY && (before - now).abs() < 1e-4 {
+            saw_a_forecast_of_a_bleed_before_the_meter_moved = true;
+            assert_eq!(
+                published, BUILD_METER_ROTS,
+                "turn {turn}: a meter with a bleed already determined is LOSING, not holding"
+            );
+        }
+        forecast = next;
+        before = now;
+    }
+    assert!(
+        saw_a_forecast_of_a_bleed_before_the_meter_moved,
+        "fixture: the walk must cross the grace boundary, or the forward claim is untested"
+    );
+
+    // --- (3) THE RESCUE — the arm that proves it does not over-warn. -------------------------------
+    //
+    // Staff the keeping while the grace is still counting. The forward form must publish `0` on that
+    // turn and the next turn must bleed `0` — where a form that merely always predicted a bleed would
+    // have promised one that never arrives.
+    let (mut app, source) = world_with_a_patch_knowing(
+        NOBODY_BUILDING,
+        HALF_BUILT,
+        THE_GATE_IS_OPEN,
+        NOBODY_GATHERING,
+    );
+    for _ in 1..grace.max(2) {
+        resolve_a_turn(&mut app, source);
+    }
+    let keepers = keeping_demand_in_hands(&app);
+    staff_the_keeping(&mut app, source, keepers);
+    resolve_a_turn(&mut app, source);
+    assert_eq!(
+        rot_now(&app, source),
+        core_sim::NO_UPKEEP_DECAY,
+        "the turn the keeping is restored, nothing is forecast — the next pass will take nothing"
+    );
+    let before = work_done(&app, source);
+    resolve_a_turn(&mut app, source);
+    assert_eq!(
+        work_done(&app, source),
+        before,
+        "…and the next turn really does bleed nothing: the forecast cannot over-warn"
+    );
+    assert_eq!(
+        rot_now(&app, source),
+        core_sim::NO_UPKEEP_DECAY,
+        "…and it stays zero while the keeping holds"
+    );
+}
+
 /// **THE THREE SENTINELS ARE OUTSIDE THE RANGE A REAL COUNT LIVES IN, and are not each other** — the
 /// property every reader leans on when it branches on the sign.
 #[test]

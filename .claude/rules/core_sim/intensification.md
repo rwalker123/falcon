@@ -647,6 +647,46 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
 > published as `meterRotPerTurn` because the client can derive neither the grace state nor the rung's
 > decay rate.
 >
+> > #### ⛔ THE ROT IS WHAT THE **NEXT** PASS WILL BLEED — and reading it backwards withheld a fact
+> >
+> > Logistics runs before Population, so within one turn `T`:
+> >
+> > ```text
+> > Logistics(T):   bleeds  decay(fraction(supplied(T−1)), neglect(T−1) + 1)   ← LAST turn's supply
+> > Population(T):  stamps  supplied(T);  publishes  decay(fraction(supplied(T)), neglect(T) + 1)
+> > ```
+> >
+> > Two lines, **one expression, one turn apart** — so what is published at `T` is exactly what
+> > `Logistics(T+1)` bleeds. Measured on `plant:tended` (grace `2`), on a half-built meter with nobody
+> > on it, the published rot at each turn against the movement of the **next**:
+> >
+> > | turn | published rot | `neglectGraceRemaining` | `buildTurnsRemaining` | meter moved that turn | meter moved NEXT turn |
+> > |---|---|---|---|---|---|
+> > | 1 | `0.00` | 2 | `-2` | `+0.00` | `+0.00` |
+> > | 2 | `0.50` | 1 | `-3` | `+0.00` | `−0.50` |
+> > | 3 | `0.50` | 0 | `-3` | `−0.50` | `−0.50` |
+> > | 4+ | `0.50` | 0 | `-3` | `−0.50` | `−0.50` |
+> >
+> > **THE BLEED IS ALREADY DETERMINED WHEN IT IS PUBLISHED, and that is the non-obvious part a future
+> > reader will re-derive incorrectly.** The next pass judges the supply *this* turn has just stamped,
+> > so a shortfall standing at `T` cannot be undone by anything the player does at `T+1`. The backward
+> > reading therefore **withheld a fact** rather than declining to predict one — it published `0.00`
+> > and `-2` on turn 2, *the meter holds*, about a meter that was already going to lose `0.50`. It
+> > looks like the cautious reading; it is the wrong one.
+> >
+> > **It cannot over-warn**: a positive rot needs a shortfall in the just-stamped supply, which is
+> > exactly the condition the next pass tests. Restore the keeping and both go to `0` on the same turn.
+> >
+> > **What it gives up, deliberately**: it is not *"what the meter just did"*. On a turn the keeping is
+> > **restored** the meter still loses the previous turn's shortfall while this reads `0` — correct,
+> > because that loss is already spent and the next pass takes nothing. A surface wanting the turn's
+> > realised cost reads the meter, not this.
+> >
+> > Pinned on the encoded snapshot by
+> > `build_turns_on_the_wire.rs::the_published_rot_is_exactly_what_the_next_decay_pass_bleeds`, whose
+> > **rescue arm** is what makes the other two mean anything: a form that always predicted a bleed
+> > would pass the boundary and the steady state alike.
+>
 > #### ⛔ THE NO-ANSWER BOUNDARY IS **WORK BANKED**, NOT HANDS ON THE JOB
 >
 > | state | answer |

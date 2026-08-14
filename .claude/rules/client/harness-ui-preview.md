@@ -1255,7 +1255,7 @@ correctly stays green — a flattened `-3` still reaches the STALLED hazard, whi
 which is why that claim cannot stand in for this one). Removing the tick/seq filter fails exactly the
 ring and recapture claims, the vacuity guard correctly staying green.
 
-**A clean run is 332 frames / 1070 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says.
+**A clean run is 333 frames / 1077 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says.
 
 ## The rate is not a tax on building (`docs/plan_standing_upkeep.md` §4.6a)
 
@@ -1323,6 +1323,17 @@ for the same reason as before, its claim having inverted.**
   third claim that makes the withheld mark safe: the card still carries its `At risk:` row. The
   negative rides `_hazard_states_all_marked`'s conjunction as state (6), so the SET decides whether a
   mark means anything rather than one frame sampling it.
+- **`tile_meter_stalled` is the two-producer EQUALITY made visible** — a half-built Cultivate on a
+  patch drawn below its own floor, nobody on it. The card renders the sim's `⚠ Stalled 96%` and the
+  sheet answers `BUILD_TURNS_NO_ESTIMATE` for the same crew of zero, with the negative naming the
+  reading a crew-gated work predicate produced (`held`). The precondition — the floor really does
+  stand above this patch's stock — rides beside it, or the frame is about a patch with room to work in.
+- **`_hazard_states_all_marked` grew a SEVENTH state: the routing on the UNBUILT arm.** `built` forks
+  before the routing does, so the built-row negative said nothing about a Cultivate abandoned under a
+  declared Sow; that state is asserted to carry its own mark **and no `≈`**, which is the reviewer's
+  defect denied by name. `tile_two_meters_live` renders the same walk PNG-less, with the precondition
+  that `build_verb` answers SOW while `at_risk_rung` answers CULTIVATE — the shape in which the two
+  per-source numbers name different rungs.
 - **The `held` FACE is rendered, not only asserted at the producer.** The A/B's own sheet is recomposed
   over the kept reference tile — **the same coordinates**, so the composition survives the swap and the
   only thing that moves is the shortfall — and the face reads `— held` where the short-kept one reads

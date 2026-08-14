@@ -318,8 +318,10 @@ pub fn build_turns_remaining(cost: f32, done: f32, work_this_turn: f32) -> Optio
 /// the rot the meter **holds** and the turn is merely wasted; **below** it the decay pass takes back
 /// more than the builders banked. *grows / holds / rots* is the vocabulary this enum reuses.
 ///
-/// **Inside the grace the rot is zero**, so a build publishes a real count and then flips to losing
-/// when the grace expires. That is what the grace means; it is not smoothed.
+/// **While the grace still forgives the shortfall the rot is zero**, so a build publishes a real
+/// count and then flips to losing on the last grace turn — one turn *before* the meter first moves,
+/// because by then the bleed is already determined ([`RungDef::meter_rot`]). That is what the grace
+/// means; it is not smoothed.
 ///
 /// **The animal web cannot reach [`BuildTurns::Rotting`], and that is not an omission**: neither
 /// animal rung declares a `meter_decay` (their penalty is the shed), so their rot is always
@@ -1389,9 +1391,15 @@ impl RungDef {
     /// [`BuildTurns::Rotting`], losing work already bought.
     ///
     /// `rot_this_turn` comes from [`Self::meter_rot`] — the one seam, so the published countdown
-    /// cannot drift from the bleed it describes, nor from the `meterRotPerTurn` the wire quotes
-    /// beside it. It is a **constant with respect to the crew**, which is what lets a compose sheet
-    /// re-evaluate the estimate for a crew the player is merely proposing.
+    /// cannot drift from the `meterRotPerTurn` the wire quotes beside it. It is a **constant with
+    /// respect to the crew**, which is what lets a compose sheet re-evaluate the estimate for a crew
+    /// the player is merely proposing.
+    ///
+    /// **The two terms describe the same turn**, which is what makes the subtraction mean anything:
+    /// the accrual is what this crew banks over the coming turn and the rot is what the next decay
+    /// pass takes off the same meter ([`Self::meter_rot`]). Reading the rot backwards would have made
+    /// the countdown's halves describe different turns, and would have published
+    /// [`BuildTurns::Holding`] on the last grace turn — a meter about to start losing.
     ///
     /// [`NO_BUILD_BALANCE`] for a rung this crew is not building at all — nothing is in play, and
     /// every caller that could act on the value is already gated by `staffed`.
@@ -1557,27 +1565,61 @@ impl RungDef {
             .max(NO_UPKEEP_DECAY)
     }
 
-    /// **WHAT THIS METER IS LOSING PER TURN RIGHT NOW**, in work units —
-    /// [`Self::upkeep_decay`] evaluated at the live shortfall, and **the one seam** three readers
-    /// share: the build countdown's denominator ([`Self::build_balance`]), the wire's
+    /// **WHAT THIS METER WILL LOSE ON THE NEXT DECAY PASS**, in work units — [`Self::upkeep_decay`]
+    /// evaluated at the live shortfall against the count that pass will judge at, and **the one seam**
+    /// three readers share: the build countdown's denominator ([`Self::build_balance`]), the wire's
     /// `meterRotPerTurn`, and the compose sheet that re-derives the countdown from it.
     ///
     /// ```text
-    /// rot = upkeep_decay(upkeep_shortfall_fraction(upkeep_demand(measure), supplied), shortfall_turns)
+    /// rot = upkeep_decay(upkeep_shortfall_fraction(upkeep_demand(measure), supplied), neglect_turns + 1)
     /// ```
     ///
-    /// It is [`NO_UPKEEP_DECAY`] when the keeping covers the demand, when the source is still inside
-    /// its grace, and when the rung declares no `meter_decay` at all — **which is both animal rungs**,
+    /// It is [`NO_UPKEEP_DECAY`] when the keeping covers the demand, while the grace still forgives the
+    /// shortfall, and when the rung declares no `meter_decay` at all — **which is both animal rungs**,
     /// whose penalty is the shed rather than a meter bleed. An animal source therefore always reads
     /// `0` here, and that is the model rather than a gap: nothing eats an animal build.
     ///
-    /// `shortfall_turns` is the source's own consecutive-shortfall counter (`neglect_turns`), read on
-    /// [`Self::upkeep_decay`]'s convention — so inside the grace this is `0` and a build publishes a
-    /// real count, then flips to losing the turn the grace expires.
+    /// # ⛔ IT ADVANCES THE COUNT BY ONE, and that is not an off-by-one — it is the phase
+    ///
+    /// **State the ordering before touching this.** Logistics runs before Population, so within one
+    /// turn `T`:
+    ///
+    /// ```text
+    /// Logistics(T):   bleeds  decay(fraction(supplied(T−1)), neglect(T−1) + 1)   ← LAST turn's supply
+    /// Population(T):  stamps  supplied(T);  publishes  decay(fraction(supplied(T)), neglect(T) + 1)
+    /// ```
+    ///
+    /// The two lines are **the same expression one turn apart**, so what is published at `T` is
+    /// exactly what `Logistics(T+1)` will bleed. The supply term was always shared; advancing the
+    /// count is what makes the seam whole.
+    ///
+    /// **THE BLEED IS ALREADY DETERMINED WHEN THIS IS PUBLISHED, which is why forecasting it is not
+    /// speculation.** The next pass judges the supply *this* turn has just stamped — so a shortfall
+    /// standing here cannot be undone by anything the player does next turn, and reading the count
+    /// backwards **withheld a fact** rather than declining to predict one. That is the non-obvious
+    /// part, and it is what a future reader will re-derive incorrectly: it looks like the safe
+    /// reading is the backward one.
+    ///
+    /// **It cannot over-warn.** A positive rot here requires a shortfall in the supply just stamped,
+    /// which is precisely the condition the next pass tests — so there is no state in which this
+    /// promises a bleed that does not arrive. Restore the keeping and the fraction is `0` and so is
+    /// this, on the same turn.
+    ///
+    /// **What it gives up**, measured and deliberate: it is no longer *"what the meter just did"*. On
+    /// a turn the keeping is **restored**, the meter still loses the previous turn's shortfall while
+    /// this reads `0` — correctly, because that loss is already spent and the next pass will take
+    /// nothing. A surface wanting *"what did this turn cost me"* must read the meter, not this.
+    ///
+    /// `shortfall_turns` is the source's own consecutive-shortfall counter (`neglect_turns`) **as it
+    /// stands**; this seam advances it, because the pass it describes will.
     pub fn meter_rot(&self, source_measure: f32, supplied: f32, shortfall_turns: u16) -> f32 {
         self.upkeep_decay(
             upkeep_shortfall_fraction(self.upkeep_demand(source_measure), supplied),
-            shortfall_turns,
+            // **The count the NEXT pass will judge at.** It increments the counter before comparing it
+            // to the grace, so a seam describing that pass has to increment it too — see the ordering
+            // block above. Saturating because a counter at `u16::MAX` is a source neglected for longer
+            // than any grace could forgive, where one more turn changes nothing.
+            shortfall_turns.saturating_add(1),
         )
     }
 

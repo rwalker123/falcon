@@ -892,9 +892,10 @@ pub fn advance_labor_allocation(
                     // the top of every turn, so the sum is always this turn's.
                     patch.upkeep_supplied +=
                         crate::forage::patch_upkeep_supply(patch, improvement, keeping_share);
-                    // **WHAT THE GROUND IS LOSING UNDER THE BUILDERS** — the bleed the next
-                    // `advance_cultivation` will take off the meter at risk, resolved once here off
-                    // the supply just stamped. It is the **countdown's denominator** (a build crew
+                    // **WHAT THE GROUND WILL LOSE UNDER THE BUILDERS** — exactly what the next
+                    // `advance_cultivation` will bleed off the at-risk meter, resolved once here off
+                    // the supply just stamped. That pass judges *this* supply, so the bleed is
+                    // already determined and the forecast is exact (`RungDef::meter_rot`). It is the **countdown's denominator** (a build crew
                     // supplies nothing toward the rate, so what eats a build is the rot) and the
                     // wire's `meterRotPerTurn`, and it is one number precisely so the card, the
                     // compose sheet and the decay pass cannot disagree. Constant with respect to the
@@ -6885,13 +6886,6 @@ mod labor_yield_tests {
             regrow_source_herd(&mut world);
             world.run_system_once(advance_labor_allocation);
             turns_taken += 1;
-            {
-                let h = world.resource::<HerdRegistry>().find(HERD_ID).unwrap();
-                println!(
-                    "DEBUG t={turns_taken} prog={} bio={} cap={}",
-                    h.domestication_progress, h.biomass, h.carrying_capacity
-                );
-            }
         }
         assert!(
             world

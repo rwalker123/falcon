@@ -3263,6 +3263,22 @@ static func improvement_forecast(src: Dictionary, kind: String, prefix: String, 
 ##
 ## `kind` is a SOURCE kind (`SOURCE_KIND_*`); a caller holding a labor kind converts through
 ## `source_kind_for_labor`.
+static func build_verb(src: Dictionary, prefix: String, kind: String,
+        declared: String = IMPROVEMENT_NONE) -> String:
+    var ladder := _improvement_ladder(kind)
+    var wanted := declared.strip_edges().to_lower()
+    for i in range(ladder.size() - 1, -1, -1):
+        var rung := String(ladder[i])
+        var progress := improvement_progress(src, prefix, rung)
+        if progress > BUILD_METER_UNSTARTED:
+            # A meter carrying work answers for itself, in both directions: still climbing means this
+            # rung is in flight, full means the source has moved on to maintaining it.
+            return IMPROVEMENT_NONE if progress >= BUILD_METER_FULL else rung
+        if wanted == rung:
+            # The meter is at zero, which is the one state the player's declaration answers for.
+            return rung
+    return IMPROVEMENT_NONE
+
 ## **WHICH RUNG'S METER IS THE ONE AT RISK — the newest one carrying any work at all**, full or not.
 ## The client's transcription of `forage::patch_unwinding_rung` (and its animal twin), and the rung the
 ## published `upkeepDemand` / `upkeepShortfall` / `meterRotPerTurn` are resolved THROUGH.
@@ -3296,22 +3312,6 @@ static func at_risk_rung(src: Dictionary, prefix: String, kind: String) -> Strin
 static func rung_is_under_kept(src: Dictionary, prefix: String, kind: String,
         improvement: String) -> bool:
     return at_risk_rung(src, prefix, kind) == improvement and is_under_kept(src, prefix)
-
-static func build_verb(src: Dictionary, prefix: String, kind: String,
-        declared: String = IMPROVEMENT_NONE) -> String:
-    var ladder := _improvement_ladder(kind)
-    var wanted := declared.strip_edges().to_lower()
-    for i in range(ladder.size() - 1, -1, -1):
-        var rung := String(ladder[i])
-        var progress := improvement_progress(src, prefix, rung)
-        if progress > BUILD_METER_UNSTARTED:
-            # A meter carrying work answers for itself, in both directions: still climbing means this
-            # rung is in flight, full means the source has moved on to maintaining it.
-            return IMPROVEMENT_NONE if progress >= BUILD_METER_FULL else rung
-        if wanted == rung:
-            # The meter is at zero, which is the one state the player's declaration answers for.
-            return rung
-    return IMPROVEMENT_NONE
 
 ## **IS THIS RUNG PROMISED AND UNMANNED — AND WHICH OF THE TWO WAYS?** `BUILD_STAFFED` when somebody
 ## is on it (or nothing is declared at all), else one of the two unstaffed states.
@@ -3771,9 +3771,11 @@ static func is_under_kept(src: Dictionary, prefix: String) -> bool:
 ## reached for.
 ##
 ## `BUILD_TURNS_NO_ESTIMATE` — rendering as no clause at all — for every case with no finite answer:
-## a crew of nobody, a rung the wire prices nothing on, a floor (or a per-worker output) at which
-## nothing accrues, and a rung whose crew is standing over an empty escapement room. Each is the
-## sim's own `None`, which it reserves for a build that is **stalled** and for nothing else.
+## a rung the wire prices nothing on, a source banking nothing per worker-turn, a rung standing over an
+## empty escapement room, and a rung with **nothing banked and nobody on it**. Each is the sim's own
+## `None`, which it reserves for a build that is **stalled** and for nothing else. **A crew of nobody
+## is NOT on that list any more** (§4.6a): on a meter carrying work it is a real, common state with a
+## real answer, and the boundary is `is there work banked` — see above.
 ##
 ## **A JOB THE GEAR ALONE ALREADY PAYS OFF IS `BUILD_FINISHES_IN_ONE_TURN`, NOT "no estimate".** A bar
 ## at or below zero completes on the first worked turn (`docs/plan_unit_costed_work.md` §6.2), which is
@@ -3800,18 +3802,24 @@ static func build_turns_at(src: Dictionary, prefix: String, improvement: String,
     # **THE WORK PREDICATE, on the two rungs that carry it in the sim.** No room above the floor means
     # no build, so no estimate — the same `max(0, B − floor·K)` the yield curve composes, and the only
     # other place the client may compose it.
-    # It gates a CREW's accrual, so it is asked only where there is a crew: at zero builders nothing
-    # accrues whatever the floor is, and what the meter does is decided by the rot alone — which is
-    # what the sim publishes there, and what the two producers have to agree on.
-    if workers > BUILD_CREW_NONE \
-            and BUILD_WORK_PREDICATE_IMPROVEMENTS.has(improvement) \
+    # **IT IS ASKED AT EVERY STAFFING, INCLUDING NONE, BECAUSE THE SIM ASKS IT THAT WAY.**
+    # `RungDef::build_accrual`'s `eligible` carries `crew_is_working_the_source`, which reads the STOCK
+    # against the floor and takes no crew count at all — so a floor above the source's own stock makes
+    # the sim answer `-1` whatever the staffing. It was gated on `workers > BUILD_CREW_NONE` for one
+    # pass, on the reasoning that nothing accrues at zero builders anyway; that is true and it is not
+    # this predicate's question, and the gate made the sheet answer the neutral *held* on a source the
+    # card correctly called `⚠ Stalled`. **Two producers disagreeing about one meter is the exact thing
+    # the closed-form equality exists to prevent.**
+    if BUILD_WORK_PREDICATE_IMPROVEMENTS.has(improvement) \
             and escapement_room(src, prefix, floor) <= BUILD_NO_ESCAPEMENT_ROOM:
         return BUILD_TURNS_NO_ESTIMATE
     var per_worker_turn := maxf(float(src.get(
         prefix + FORECAST_BUILD_PER_WORKER_TURN_KEY, BUILD_WORK_NONE)), BUILD_WORK_NONE)
-    if per_worker_turn <= BUILD_WORK_NONE and workers > BUILD_CREW_NONE:
+    if per_worker_turn <= BUILD_WORK_NONE:
         # The source banks nothing per worker-turn, so there is no rate to divide by and no crew size
-        # that would change it — an absent question rather than a crew that falls short.
+        # that would change it — an absent question rather than a crew that falls short. Ungated for
+        # the reason the predicate above is: it is a fact about the SOURCE, and gating it on a crew
+        # would answer *held* where the sim answers *no estimate*.
         return BUILD_TURNS_NO_ESTIMATE
     # **THE ROT COMES OFF THE TOP, AND IT IS THE ONLY THING THAT DOES** — the published
     # `meter_rot_per_turn`, what this source's at-risk meter is losing while the band's keeping pool

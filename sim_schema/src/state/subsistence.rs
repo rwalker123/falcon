@@ -590,9 +590,9 @@ pub struct HerdTelemetryState {
     /// The rung-3 twin of [`Self::tame_upkeep_demand`].
     #[serde(default)]
     pub corral_upkeep_demand: f32,
-    /// **What this herd's at-risk meter is losing per turn right now**, in work units — the plant
-    /// twin's field on the same rule, so a client's build estimate is one expression across both
-    /// webs (`docs/plan_standing_upkeep.md` §4.6a).
+    /// **What this herd's at-risk meter will lose on the next decay pass**, in work units — the
+    /// plant twin's field on the same rule, so a client's build estimate is one expression across
+    /// both webs (`docs/plan_standing_upkeep.md` §4.6a).
     ///
     /// **It is always `0` on the shipped ladder, and that is not an omission**: neither animal rung
     /// declares a `meter_decay`, because an under-kept flock **sheds animals** instead. Nothing eats
@@ -1014,9 +1014,19 @@ pub struct ForagePatchState {
     /// The rung-3 twin of [`Self::cultivation_upkeep_demand`].
     #[serde(default)]
     pub field_upkeep_demand: f32,
-    /// **What this patch's at-risk meter is losing per turn right now**, in work units — the rung's
-    /// own `meter_decay.per_turn` scaled by how short the keeping fell, i.e. exactly what the
-    /// Logistics decay pass will bleed off the meter (`docs/plan_standing_upkeep.md` §4.6a).
+    /// **What this patch's at-risk meter will lose on the next decay pass**, in work units — the
+    /// rung's own `meter_decay.per_turn` scaled by how short the keeping fell
+    /// (`docs/plan_standing_upkeep.md` §4.6a). `0.0` for as long as the rung's grace still forgives
+    /// the shortfall.
+    ///
+    /// **It is a forecast the sim can make exactly.** The pass it describes judges the supply this
+    /// turn has just stamped, so the bleed is already determined — nothing the player does next turn
+    /// can prevent it, and a positive value here cannot fail to arrive.
+    ///
+    /// **It is therefore not "what the meter just did".** On a turn the keeping is restored the meter
+    /// still loses the *previous* turn's shortfall while this reads `0`, correctly: that loss is
+    /// already spent and the next pass will take nothing. A readout wanting the turn's realised cost
+    /// must read the meter.
     ///
     /// **It is what a build's closed form nets, and `upkeep_demand` is not.** A build crew supplies
     /// nothing toward the maintenance rate — the keeping pool owes that for every meter carrying

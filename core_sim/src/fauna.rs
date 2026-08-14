@@ -3839,7 +3839,7 @@ fn herd_meter_answering_for(
     }
 }
 
-/// **WHAT THIS HERD'S AT-RISK METER IS LOSING PER TURN RIGHT NOW**, in work units — the plant twin's
+/// **WHAT THIS HERD'S AT-RISK METER WILL LOSE ON THE NEXT DECAY PASS**, in work units — the plant twin's
 /// shape (`forage::patch_meter_rot`), through the same [`RungDef::meter_rot`] seam.
 ///
 /// **IT IS ALWAYS `0` ON THE SHIPPED LADDER, AND THAT IS NOT AN OMISSION.** Neither animal rung
