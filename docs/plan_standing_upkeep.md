@@ -426,26 +426,64 @@ hauling: that work is the upkeep, not a second line beside it.
 
 ## 4. Sequencing
 
-Seven slices. The ordering constraint that is **not** negotiable is that the client readout lands
-before any tuning — `plan_unit_costed_work.md` §11 learned this: *a cost spread with no readout
-change is invisible*.
+The ordering constraint that is **not** negotiable is that the client readout lands before any
+tuning — `plan_unit_costed_work.md` §11 learned this: *a cost spread with no readout change is
+invisible*. Tuning is therefore **last**, and after §4.8, which changes what the numbers do.
+
+### Landed (PR #557, branch `worktree-route-ladder`)
 
 1. **This design doc.**
-2. **The mechanism.** The upkeep term on the ladder engine — config shape, the per-turn demand, the
-   one-budget priority order, shortfall→decay, the maintain toggle. **No rung declares an upkeep
-   yet**, so the upkeep half is dormant.
-   > **It is NOT pacing-neutral, and the one change it makes is the arc's headline.** The dip and the
-   > budget cannot both be live without double-counting work, so `yield_fraction_while_building`
-   > retires here. That makes slice 2 a single reviewable claim — *the dip is now emergent* — with a
-   > measurable before/after, and leaves slices 3 and 4 as config plus penalty-rewiring on a seam that
-   > already exists.
-3. **The plant web onto it.** `plant:tended` and `plant:field` declare upkeep; the binary bleed
-   retires; the dip dissolves.
-4. **The animal web onto it.** `herders_needed` becomes an upkeep rate; the shed becomes its
-   shortfall penalty; the feed becomes the resource half.
-5. **The client readouts.** What an improvement demands, what the crew supplied, the shortfall, and
-   the maintain toggle. Before any tuning.
-6. **Gear as productivity.** A kit raises what a supplier delivers **per turn** rather than
+2. **The mechanism** — the upkeep term on the ladder engine; `yield_fraction_while_building` retired,
+   because the dip and a work budget cannot both be live without double-counting.
+3. **The plant web onto it** — `plant:tended` / `plant:field` declare upkeep; the binary
+   `tended_this_turn` bleed retires.
+4. **The animal web onto it** — `herders_needed` becomes an upkeep rate; the shed becomes its
+   shortfall penalty.
+5. **The client readouts**, then, after playtest, three rounds of correction: the per-activity worker
+   allocation, the retention bar, pooled keeping, the derived verb, the ∞/holding/rotting estimates,
+   and the hazard rule of §2.6.
+
+### Next, in order
+
+6. **THE BUILDER POOL AND THE BUILD QUEUE.** The per-source build crew retires the way the keeping
+   crew did — off the wire, the commands, `staffed_total` and the sheet's clamps — for a band-level
+   **Builders** pool and a per-band **ordered queue** of declared builds.
+   > **Funding is ALL HANDS ON THE TOP ENTRY until it completes, then the next.** Spread is not
+   > offered here, and the asymmetry with keeping is honest rather than an omission: *keeping has
+   > something to ride out and building does not.* A neglected improvement degrades toward a threshold
+   > you can stay above, so spreading a short keeping pool loses nothing while you recover. A starved
+   > build does not slow down, it **runs backwards** (§2.2) — so spreading a short builder pool would
+   > put every build below its rate and pay several crews to lose ground at once. A queue removes the
+   > choice rather than offering a bad one.
+   >
+   > **It also makes "builders with nothing to do" free.** A build demand ends when its meter fills,
+   > unlike a keeping demand, so a builder pool goes idle in a way a keeping pool never does. An empty
+   > queue beside a staffed pool says that without a warning needing to exist.
+
+   **Two live defects fold in here rather than being fixed twice:**
+   - **A declaration cannot be cleared.** `cultivate <f> <x> <y> 0` *sets* the improvement with zero
+     builders; it does not clear it, so an unwanted declaration is stuck. (The claim that this was the
+     walk-away path was made when `abandon_improvement` was retired, and was wrong.) Pooling makes it
+     sharper: a declaration will carry no crew at all, so unticking is the *only* undo.
+   - **`SourceForecast.build_pace` still maps the rotting sentinel to holding** — amber where it
+     should be red. One branch, pending since the sim's third sentinel landed after that client pass
+     began.
+
+7. **The WORK TAB.** A pool header (Agriculture · Husbandry · Builders, with keeping's spread/priority
+   mode), the **build queue** with drag-to-reorder, and the source list carrying each source's
+   improvement state as a chip. **Keeping moves here from the Band tab** — the pool was on one tab and
+   its consequences on another, which is why it went unnoticed in playtest entirely.
+   > **Take and "what is built" are ONE row.** A tile you gather from is usually the tile you
+   > cultivated; two lists would print it twice and make the player cross-reference.
+   >
+   > **Per source, show COVERED or NOT — never a maintenance number.** Keeping is pooled, so a
+   > per-source work figure would re-imply the per-source allocation §6 deletes, and the player would
+   > start tuning something that is not a lever. The hazard is the per-source fact; the quantities
+   > belong to the pool card, which is the thing that turns.
+   >
+   > The queue sits **above** the sources because it is the one list whose *order is an input*.
+
+8. **Gear as productivity.** A kit raises what a supplier delivers **per turn** rather than
    subtracting from the job. Decided because a job is a pile and an upkeep is a rate: subtraction has
    nothing to subtract from, so the shipped build model needs a second mechanism for upkeep, while one
    supply expression feeds both — a build divides a pile by it, an upkeep compares a demand against
@@ -453,13 +491,16 @@ change is invisible*.
    frees a small job); what it gains is that a tool can no longer drive a job to zero, and a hoe fades
    on a farm by being *insufficient* rather than by arithmetic. **This changes the shipped build
    model**, not only upkeep.
-7. **Priority as a GENERAL per-source property.** Player-ordered, drag-and-drop, its own column — and
-   deliberately not a maintenance-funding list. The auto-assigner sketch (§6) wants tile priority for
+9. **Priority as a GENERAL per-source property.** Player-ordered, drag-and-drop, its own column — and
+   deliberately not a maintenance-funding list. The auto-assigner sketch (§5) wants tile priority for
    its own reasons, and two orderings meaning almost the same thing would drift apart. Pooled
    maintenance is its **first consumer**, not its owner; the shipped most-invested-first ordering
    survives as the **tie-break** beneath an explicit rank, which matters because most sources will sit
    at the default.
-8. **Symmetric partial credit.** A rung's benefit scales with its meter in **both** directions — a
+   > **The build queue of §4.6 IS this property's storage**, not a second ordering beside it. If the
+   > queue ships with a rank of its own, they will drift — so whichever lands first owns the rank and
+   > the other reads it.
+10. **Symmetric partial credit.** A rung's benefit scales with its meter in **both** directions — a
    half-built field pays half a field, as a decayed one does. Wanted; it is what makes the model
    coherent both ways, and it removes the last discontinuity: today a build pays nothing for its whole
    span and then everything at once. **The blast radius is wide but shallow** — the ~100 binary
@@ -469,13 +510,16 @@ change is invisible*.
    *"is this worth it"* does not move — but the payoff starts on turn one, which softens the
    commitment considerably. That may be right, given this arc has been about removing cliffs; it
    should be a deliberate smoothing rather than a discovered one.
-9. **The route branch (#532 proper).** Routes as the ladder's third branch, `infrastructure_cost`
-   wired for the first time, traversal-driven progress from supply links, shipments and movement.
-10. **The tuning spread.** Config-only, once the readouts can show it.
+11. **The route branch (#532 proper).** Routes as the ladder's third branch, `infrastructure_cost`
+    wired for the first time, traversal-driven progress from supply links, shipments and movement.
+12. **The tuning spread.** Config-only, and **last** — §4.10 changes what the numbers do to the curve,
+    so tuning before it would be tuning a shape that is about to move.
 
-Slices 3 and 4 are separable but adjacent; they are kept apart because the two webs' penalties are
-genuinely different code paths (a meter bleed versus a flock shedding), which is where the mechanism
-will actually be tested. Merging them is a merge-time call.
+> **Every number in this arc is provisional until §4.12.** The plant demands of `2.0` / `4.0` are
+> whole-number placeholders chosen to be legible, not balanced; the `retain_fraction` of `0.75` is a
+> playtest dial that §4.10 largely dissolves; the graces of `2` and `1` are inherited from the rung
+> they replaced rather than chosen. Do not tune any of them in an earlier slice — the mechanism is
+> what the earlier slices are for.
 
 ## 5. The allocation layer this arc kept running into
 
