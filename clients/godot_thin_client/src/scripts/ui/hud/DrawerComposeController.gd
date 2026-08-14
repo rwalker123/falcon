@@ -190,8 +190,12 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
 ## **THERE IS ONE COMMAND NOW, AND ITS CREW IS BOTH LEVERS** (`docs/plan_standing_upkeep.md` §2.4).
 ## `abandon_improvement` is retired: it cleared a STORED verb, and the verb is derived from the meter.
 ## So unchecking an offer sends the same set verb **at zero builders** — `cultivate <f> <x> <y> 0` —
-## which is what walking away IS now, and the one thing that can still be said about a rung whose meter
-## has not started. There is no second grammar and no second builder; `Main.format_improvement` is the
+## which is the one thing that can still be said about a rung whose meter has not started.
+## **IT TAKES THE HANDS OFF; IT DOES NOT WITHDRAW THE DECLARATION** — the server sets
+## `improvement = Some(verb)` with a crew of zero on every path, so the rung goes on reading as
+## declared-and-unstaffed and there is currently no undo (`labor-ui.md` → the callout under "RETIRED —
+## `abandon_improvement`"; `docs/plan_standing_upkeep.md` §4.6 owns the fix).
+## There is no second grammar and no second builder; `Main.format_improvement` is the
 ## whole of it, targeted by the VERB (`tame` names a herd; `cultivate`/`sow`/`corral` name a tile —
 ## `corral` being the case that proves the rule, a herd's rung addressed by the pen's place).
 ##
@@ -214,8 +218,9 @@ func _emit_improvement(band: Dictionary, kind: String, composed: String, standin
     var verb := composed
     var crew := workers
     if composed == SourceForecast.IMPROVEMENT_NONE:
-        # The player unchecked what the source was building. The verb still names the job; the crew is
-        # the statement, and zero of them is the walk-away.
+        # The player unchecked what the source was building. The verb still names the job and the crew
+        # is the statement, so this takes every hand off it — which is as far as the command grammar
+        # goes today: the declaration itself stays set (see this function's own note).
         verb = standing
         crew = SourceForecast.BUILD_CREW_NONE
     if verb == standing and crew == standing_workers:
@@ -1070,8 +1075,9 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
     # face is a `Label`, so a player who ticked `cultivate` on a band with no free hands got
     # `Cultivating 0 / 50 work (0%)` and no way back off it. Reported from play.
     #
-    # It is the DECLARED state instead: the same live checkbox, ticked, whose uncheck is the walk-away
-    # `cultivate <faction> <x> <y> 0` the BUILDERS stepper beneath it sends. The *not started* warning
+    # It is the DECLARED state instead: the same live checkbox, ticked, whose uncheck sends the
+    # `cultivate <faction> <x> <y> 0` the BUILDERS stepper beneath it sends — which unstaffs the rung
+    # rather than withdrawing it, the declaration having no clearing command. The *not started* warning
     # travels with it and stays useful — a band that SHRINKS sheds its builders while the declaration
     # stands, which is not a player choice and must still be flagged.
     if running_verb != SourceForecast.IMPROVEMENT_NONE \
@@ -1134,11 +1140,12 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         # sim publishes the terms for; `BUILD_TURNS_NO_ESTIMATE` still renders as no clause at all
         # rather than as a `0` that would promise the build is about to land.
         #
-        # **AND `BUILD_TURNS_NEVER` RENDERS AS `∞ turns`, IN THE WARNING INK** — a crew at or below
-        # this rung's maintenance rate banks nothing, so there is no finish date and the sheet must
-        # not imply one by staying silent beside a meter that is visibly full of work. It is the one
-        # reading on this control that should stop the player, which is why it takes the amber the
-        # shortfall rows wear rather than the neutral ink the larder's own ∞ gets.
+        # **AND BOTH NEVER-FINISHING SENTINELS RENDER AS `∞ turns`, IN A WARNING INK** — a crew at or
+        # below this rung's maintenance rate banks nothing, so there is no finish date and the sheet
+        # must not imply one by staying silent beside a meter that is visibly full of work. It is the
+        # one reading on this control that should stop the player, which is why it never takes the
+        # neutral ink the larder's own ∞ gets. `BUILD_TURNS_HOLDS` is amber and `BUILD_TURNS_ROTS` is
+        # red — the pace below decides which, off the same fork the tile card's row uses.
         var running_turns := SourceForecast.build_turns_at(
             source, prefix, running_verb, build_crew, floor, kit_gear)
         if running_turns != SourceForecast.BUILD_TURNS_NO_ESTIMATE:
@@ -1330,9 +1337,10 @@ func _mount_build_crew_row(target: VBoxContainer, source: Dictionary, prefix: St
 ## warning, over the BUILDERS stepper that is the remedy.
 ##
 ## **IT IS A CHECKBOX BECAUSE IT IS A CHOICE, and that is the whole repair.** The running Label carries
-## no toggle, so a declaration rendered as RUNNING could not be withdrawn — and unticking here sends
-## the same walk-away the stepper does (`cultivate <faction> <x> <y> 0`), so the two levers cannot
-## disagree.
+## no toggle, so a declaration rendered as RUNNING left the player with no control at all — and
+## unticking here sends what the stepper sends (`cultivate <faction> <x> <y> 0`), so the two levers
+## cannot disagree. **Both unstaff the rung; neither withdraws the declaration** — see
+## `_emit_improvement`'s note, and `labor-ui.md` for the fix that owns it.
 ##
 ## **IT IS NEVER DISABLED, however few hands the band has.** The offer one branch down greys out with
 ## no free workers because ticking it would declare an unstaffable build; here the declaration already

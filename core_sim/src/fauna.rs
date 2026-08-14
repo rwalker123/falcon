@@ -4508,18 +4508,20 @@ impl SourceYieldForecast {
 ///   whole animals — so the preview shows the same **pulse**, including the honest `0.00` on a turn
 ///   the herd cannot spare one, rather than a smooth average the sim never actually hands over.
 ///
-/// `collection` is **`workers × per_worker_yield × build_dip(improvement)`** — the build fraction
-/// rides the CREW, not the ceiling (`docs/plan_harvest_floor.md` §3.1). So the whole expression is
+/// `collection` is **`workers × per_worker_yield`** and `workers` is the **take** crew, so the whole
+/// expression is
 ///
 /// ```text
-/// min(workers × per_worker_yield × <rung>BuildFraction, ceiling_at(floor))
+/// min(workers × per_worker_yield, ceiling_at(floor))
 /// ```
 ///
-/// which is also the composition the client draws its curve from: every term ships. A crew big
-/// enough to saturate the source's standing stock therefore pays **no** dip — a build costs yield
-/// only while hands are the scarce thing, which is both the fix for §0.3 (no floor can dodge a
-/// factor that does not touch the floor's term) and the legible reading of it (at 25% carry it takes
-/// four times the people to clear the same standing surplus).
+/// which is also the composition the client draws its curve from: every term ships.
+///
+/// **THERE IS NO BUILD TERM, and that is why the function takes no `improvement`**
+/// (`docs/plan_standing_upkeep.md` §2.2). A rung's `yield_fraction_while_building` is retired on both
+/// webs: a build is staffed in its own right, so what these hands carry cannot depend on what the
+/// builders beside them are doing. `forecast == actual` therefore holds through a build for the
+/// stronger reason that neither side has a build term to get wrong.
 ///
 /// Both branches are in **provisions**-space; the biomass→provisions conversion is linear and
 /// positive, so it factors out of every `min`/`floor` and the quantised branch counts exactly the
@@ -5404,9 +5406,9 @@ pub fn effective_wariness(wariness: f32, dispersion: f32) -> f32 {
 ///
 /// # It prices the TAKE and the CREW, on the same rate
 ///
-/// A hunter's real throughput is `engage_rate × build_dip × stay` — what they reach, dipped, times
-/// what stands — so this term divides into a crew count ([`hunt_engage_workers`]) exactly as it
-/// multiplies into a biomass rate ([`per_hunter_take_biomass`]). **A party that keeps one animal in
+/// A hunter's real throughput is `engage_rate × stay` — what they reach times what stands — so this
+/// term divides into a crew count ([`hunt_engage_workers`]) exactly as it multiplies into a biomass
+/// rate ([`per_hunter_take_biomass`]). **A party that keeps one animal in
 /// four needs four times the hands to draw the same stock down.** Any surface that sizes a hunting
 /// crew reads it here, through the party's own [`HuntingParty::stay_fraction`], so a crew and the
 /// take beside it cannot be resolved at different dispersions.
@@ -6127,11 +6129,11 @@ impl HuntFight {
 /// dangerous) is returned unchanged with no fight and no injuries at all.
 pub fn resolve_hunt_fight(
     stayed: f32,
-    // **The party's EFFECTIVE strength, build dip included** — `workers × build_dip`, the same term
-    // [`animals_engaged`] is handed (`docs/plan_harvest_floor.md` §3.1: the dip multiplies the crew,
-    // never the ceiling). Hands spent gentling a herd are hands not fighting it, so a crew mid-build
-    // brings down proportionally less; passing the raw head count would let a build fight for free
-    // and reopen §0.3's "the harshest stance builds free" through a new door.
+    // **The party's strength — the TAKE crew's head count, and nothing else** (the same term
+    // [`animals_engaged`] is handed, `docs/plan_standing_upkeep.md` §2.2). The retired build dip
+    // scaled it, on the reasoning that hands gentling a herd are hands not fighting it; that is a
+    // statement about a *shared* crew, and the player states the two crews separately now, so the
+    // hunters here are only ever hunters.
     hunters: f32,
     party: &HuntingParty,
     quarry: &QuarryFight,
@@ -6706,12 +6708,11 @@ pub fn hunt_take_bound(
 /// makes *"this crew cannot draw the herd that low"* expressible instead of silently true. Do not
 /// clamp it.
 ///
-/// **`per_worker` is the crew's EFFECTIVE throughput, dip included** — a crew gentling a herd hauls
-/// [`crate::intensification::LadderConfig::build_dip`]`×` what a hunting one does (§3.1 put the dip on
-/// the crew), so it takes proportionally more of them to clear the same room. Every caller passes
-/// `per_worker_biomass_capacity × build_dip`, which is also what the client's
-/// `SourceForecast.max_useful_workers` divides by; passing the undipped rate sizes a harvesting crew
-/// and then pays it the building take.
+/// **`per_worker` is the crew's resolved carry tier and nothing else** — the pen's or the range's,
+/// at the kit the crew was sent out with. The retired build dip used to multiply it, on the reasoning
+/// that a crew gentling a herd hauls less than a hunting one; a build has its own hands now
+/// (`docs/plan_standing_upkeep.md` §2.2), so the haulers are only ever haulers and the same rate
+/// sizes the crew here and divides the client's `SourceForecast.max_useful_workers`.
 ///
 /// Units are free — pass all three in biomass, or all three in provisions (the ratios
 /// are scale-invariant, so the provisions-space call in [`forecast_source_yield`] and the biomass-space
@@ -6741,14 +6742,14 @@ fn peak_animal_drop(ceiling: f32, body: f32) -> f32 {
 /// `max()` (`docs/plan_hunt_through_combat.md` §2).
 ///
 /// ```text
-/// crew = ceil(peak_animal_drop(ceiling, body) / (engage_rate × build_dip × stay))
+/// crew = ceil(peak_animal_drop(ceiling, body) / (engage_rate × stay))
 /// ```
 ///
 /// # The retreat prices the CREW as well as the take
 ///
 /// The divisor is what one hunter actually brings down in a turn — the animals they **reach**
-/// (`engage_rate × build_dip`) times the share of those that **stand** ([`stay_fraction`]) — and not
-/// the raw reach. **A party that keeps one animal in four needs four times the hands to draw the same
+/// (`engage_rate`) times the share of those that **stand** ([`stay_fraction`]) — and not the raw
+/// reach. **A party that keeps one animal in four needs four times the hands to draw the same
 /// stock down**, so the retreat belongs in every sizing of a hunting crew exactly as it already
 /// belongs in the pricing of a hunting take ([`per_hunter_take_biomass`], which divides the same
 /// three terms into a biomass rate).
@@ -6775,12 +6776,12 @@ fn peak_animal_drop(ceiling: f32, body: f32) -> f32 {
 /// the take was short of. The mammoth inverts it (one hunter reaches the peak drop; twenty are needed
 /// to carry it home).
 ///
-/// # The dip rides the crew here too
+/// # There is no build term in the divisor, on this seam or its two siblings
 ///
-/// `build_dip` is the rung's `yield_fraction_while_building`, the same term [`animals_engaged`] and
-/// [`hunt_haul_workers`] apply (`docs/plan_harvest_floor.md` §3.1): hands spent gentling a herd are
-/// hands not stalking it, so it takes proportionally more of them to corner the same drop. Pass
-/// [`crate::intensification::FULL_PRODUCTION_SHARE`] where nothing is being built.
+/// The rung's `yield_fraction_while_building` used to sit between the reach and the stay here, in
+/// [`animals_engaged`] and in [`hunt_haul_workers`] — one statement about a crew doing two jobs at
+/// once. The player states the two crews separately now (`docs/plan_standing_upkeep.md` §2.2), so a
+/// hunter is only ever a hunter and this function takes no rung.
 ///
 /// # A source with no engagement stage reports no engagement crew
 ///

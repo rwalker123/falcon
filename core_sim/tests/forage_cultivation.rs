@@ -1330,6 +1330,100 @@ fn gathering_a_patch_does_not_hold_it_but_one_keeper_does() {
     );
 }
 
+/// **AND A PATCH NOBODY IS GATHERING CAN STILL BE KEPT — the other half of the same separation**
+/// (`docs/plan_standing_upkeep.md` §2.2/§2.5).
+///
+/// The headline above says gathering does not hold a patch. Its mirror is that **holding does not
+/// require gathering**: a band that finishes a Cultivate and moves its foragers to a richer stand
+/// still *holds* that ground, so it still owes the rate and its `agriculture` pool must still be
+/// able to pay it.
+///
+/// It could not. The take crew was the row's licence to exist — `set_assignment` dropped the row at
+/// zero workers, `maintenance_shares` skipped what was left, and the labor loop skipped it again —
+/// so the patch contributed no demand to the pool, drew no share, and bled its **full** rate with
+/// keepers standing idle in the role and **no command the player could issue to aim them at it**.
+/// The wire published `upkeepShortfall = demand` faithfully, so the client's under-kept warning
+/// fired on a state with no remedy.
+///
+/// Asserted as a contrast with the same band, the same patch and the same turns, differing only in
+/// whether anybody is gathering — because *"it did not bleed"* also passes for a patch that cannot
+/// bleed at all.
+#[test]
+fn a_patch_with_no_gatherers_is_still_kept_by_the_bands_pool() {
+    /// Well past the tended rung's grace, so an unfunded patch is visibly bleeding by the end.
+    const TURNS: u32 = 12;
+
+    let progress_after = |keepers: u32, gatherers_leave: bool| -> f32 {
+        let mut app = spawn_world();
+        let (tile, coord) = prime_thriving_patch(&mut app);
+        grant_cultivation_knowledge(&mut app, FactionId(0));
+        seat_tended_patch(&mut app, coord);
+        let band = spawn_forager(&mut app, tile, coord, None);
+        if gatherers_leave {
+            unstaff_the_gatherers(&mut app, band, coord);
+        }
+        set_maintain_workers(&mut app, band, keepers);
+        run_turns_with_forage(&mut app, TURNS);
+        assert!(
+            app.world
+                .get::<LaborAllocation>(band)
+                .expect("band exists")
+                .assignments
+                .iter()
+                .any(|assignment| matches!(
+                    assignment.target,
+                    LaborTarget::Forage { tile, .. } if tile == coord
+                )),
+            "the band's holding of the patch must survive the turn that has no gatherers on it"
+        );
+        progress_of(&app, coord)
+    };
+
+    let seated = {
+        let mut app = spawn_world();
+        let (_tile, coord) = prime_thriving_patch(&mut app);
+        seat_tended_patch(&mut app, coord);
+        progress_of(&app, coord)
+    };
+    let demand_in_hands = app_free()
+        .world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung(RungKey::PlantTended)
+        .upkeep_crew_needed(UNSCALED_UPKEEP);
+
+    /// The gatherers move to a richer stand — the state the whole defect lives in.
+    const THE_GATHERERS_LEAVE: bool = true;
+    /// The same band, still harvesting, as the control the numbers are read against.
+    const THE_GATHERERS_STAY: bool = false;
+
+    let kept = progress_after(demand_in_hands, THE_GATHERERS_LEAVE);
+    assert_eq!(
+        kept, seated,
+        "a pool that covers the demand holds a patch nobody is gathering, exactly as it holds one \
+         somebody is"
+    );
+    // **Liveness**: the same unstaffed patch with an empty pool must still rot, or the equality
+    // above would be reporting a patch that cannot bleed rather than one that is being kept.
+    let unkept = progress_after(NO_CREW_ON_THIS_ACTIVITY, THE_GATHERERS_LEAVE);
+    assert!(
+        unkept < seated,
+        "a patch nobody keeps must still revert, gatherers or no gatherers ({unkept} of {seated})"
+    );
+    // And the keeping is worth exactly the same to it either way: the pool is sized against what the
+    // band *holds*, so whether a crew is harvesting beside it cannot move the bill.
+    assert_eq!(
+        progress_after(demand_in_hands, THE_GATHERERS_STAY),
+        kept,
+        "the keeping costs the same whether or not the patch is being gathered"
+    );
+    assert_eq!(
+        progress_after(NO_CREW_ON_THIS_ACTIVITY, THE_GATHERERS_STAY),
+        unkept,
+        "…and so does going without it"
+    );
+}
+
 /// **MEETING THE DEMAND EXACTLY COSTS THE METER NOTHING, and going short costs it the rung's own
 /// rate scaled by how short** — the property the retired binary flag could not express, and the
 /// reason the standing cost is a *rate*. Under the flag a crew of one on a source wanting two
@@ -1548,6 +1642,27 @@ fn an_abandoned_part_build_is_owed_its_builders_and_bleeds_the_rungs_rate() {
 /// threading an `App` through their closures.
 fn app_free() -> App {
     spawn_world()
+}
+
+/// **Send the gatherers away, and nothing else** — the fixture's stand-in for
+/// `assign_labor <faction> <band> forage <x> <y> 0`. It goes through `set_assignment` rather than
+/// writing the row, because *what happens to the row at zero* is exactly what is under test.
+fn unstaff_the_gatherers(app: &mut App, band: bevy::prelude::Entity, coord: UVec2) {
+    /// A zero take needs no headroom, so the band's size cannot change the answer.
+    const NO_HEADROOM_NEEDED: u32 = 0;
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("band exists")
+        .set_assignment(
+            LaborTarget::Forage {
+                tile: coord,
+                floor: FOOD_PEAK_FLOOR,
+                species: None,
+            },
+            0,
+            NO_HEADROOM_NEEDED,
+            None,
+        );
 }
 
 /// Put `workers` on a band's **agriculture role** — the fixture's stand-in for

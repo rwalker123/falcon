@@ -151,11 +151,30 @@ const RUNG_BUILT_FORMAT := "%s %d%%"
 # overgrazing sentence, all of which already led with it.
 const RUNG_HAZARD_GLYPH := "⚠"
 
-# **HAZARD: staffed at or below the rung's rate** (`SourceForecast.BUILD_TURNS_NEVER`, the wire's own
+# **HAZARD: staffed EXACTLY AT the rung's rate** (`SourceForecast.BUILD_TURNS_HOLDS`, the wire's own
 # `-2`). The `∞` is `DetailFormat.BUILD_TURNS_NEVER_GLYPH`, shared with the larder runway and meaning
 # the opposite there, which is why the ink is what separates them. It wears no `≈`: a meter that does
 # not advance has no distribution to hedge.
-const RUNG_NEVER_FORMAT := "%s %s turns (%d%%)"
+const RUNG_HOLDING_FORMAT := "%s %s turns (%d%%)"
+
+# **HAZARD: staffed UNDER the rung's rate** (`SourceForecast.BUILD_TURNS_ROTS`, the wire's own `-3`) —
+# the crew does not cover the maintenance the meter is billed for, so past the rung's grace the decay
+# takes back work the player has already paid for.
+#
+# **IT WEARS THE SAME `∞` AS THE ROW ABOVE, AND SAYS ONE MORE THING.** Both never finish, so both
+# earn the glyph; what a player has to be able to see is that this one is going BACKWARDS while the
+# other merely stands still, and *holds* against *loses ground* is the plainest way to say it. The
+# INK is the other half — `HudStyle.DANGER` here against the holding row's amber
+# (`DetailFormat.rung_value_hex`) — and neither half stands alone: colour without words is a
+# distinction nobody can name, words in the same amber read as the same severity.
+const RUNG_ROTTING_FORMAT := "%s %s turns, %s (%d%%)"
+
+# The words that tell the two ∞ rows apart, and the NEEDLE `rung_value_hex` keys the red off — passed
+# INTO the format above rather than spelled inside it, so the phrase the row prints and the phrase the
+# tint tests are one string by construction. (The BUILT badges are the same pattern one row down.)
+#
+# Lower-case because it lands mid-value, after the count.
+const RUNG_ROTTING_PHRASE := "losing ground"
 
 # **HAZARD: work banked, and nobody building it.** The plant web's meter is actively rotting back at
 # the rung's decay rate; the animal web's is merely stuck. One word for both, because the ROW's own

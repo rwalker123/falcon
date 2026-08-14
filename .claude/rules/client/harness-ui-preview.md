@@ -1192,3 +1192,63 @@ COLOUR"; what belongs here is the shape of the drive and the two re-pointings it
   claim was never the meter: it is the stale-vs-fresh dict, and the baseline only has to establish
   that the sheet is not ALREADY quoting the taming herd's 4%. It asserts the DECLARED state and the
   absence of that meter instead.
+
+## The rotting build sentinel, and the hand-off window (PR #557 review)
+
+One frame and eight `PASS` across two chapters, for the two client-side defects the sim's
+`BUILD_METER_ROTS` split and the crew-hand-off producer left behind. The behaviour is `labor-ui.md`'s
+and `turn-orb.md`'s; what belongs here is the shape of the drive and the re-aiming it forced.
+
+- **`tile_meter_rotting` is the fourth answer on the tile card**, appended straight after
+  `tile_meter_never`, and it is judged **against** it rather than alone: the two are one step apart on
+  the same patch at the same meter, and the whole claim is that they read DIFFERENTLY — same `∞`, same
+  hazard mark, different words and different INK. Two claims, and the second is the one that would
+  have caught the bug: the positive alone passes on a card rendering BOTH rows, so the holding row's
+  exact value must be ABSENT from this frame.
+- **The claim is word-AND-tint markup, and the tint is the half that was missing.** Both states lead
+  with `RUNG_HAZARD_GLYPH`, so a claim about the mark passes on a rotting build painted amber.
+- **`ForageFx.improvement_face_is_warned` became `improvement_face_stops`** and now answers for BOTH
+  stopping inks. Hard-wired to `WARN` it FAILED on the redder, worse half of the claim it exists to
+  make — which is exactly what happened when the sentinel was honoured, because the lone-builder A/B
+  frames quote a NEGATIVE net (one hand against `plant:tended`'s 2 work) and had only ever read amber
+  because the client flattened the two answers. Where a frame means one specific ink it compares
+  `improvement_face_color` directly.
+- **TWO EXISTING CLAIMS WERE ASSERTING THE FLATTENING.** `improvement_turns_lone_crew`'s pace claim
+  read *"a HOLDING build line is amber"* for a crew the chapter's own constant doc already described
+  as a negative net, and `improvement_never_finishes_unstarted`'s ink claim was the same one rung over.
+  Both name the LOSING red now, and the holding ink's own frame is `tile_meter_never`, on the card,
+  where a crew EXACTLY at the rate is staged.
+- **`UNKNOWN_BUILD_TURNS_SENTINEL` moved `-3` → `-4`.** It stood for *whatever the wire grows next*
+  and the wire grew it, so the harness was holding the client's failure to follow in place, green. **A
+  sentinel-is-unknown claim has to be re-aimed the day the schema spells that value**; it is one past
+  the last one defined, and it moves again the next time the schema grows.
+
+**The hand-off block is PNG-LESS and DRIVEN** (`chapters/turn_orb.gd`, appended last), because both
+failures render a perfectly ordinary popover — correctly shaped, worded and inked rows, just too many
+of them, and only counting says so. The producer is asked directly
+(`AttentionController.build_band_attention([], [])`, counting `crew_handoff` rows) over an events
+array in each of the two shapes the wire really delivers:
+
+| fixture | the failure only IT reaches |
+|---|---|
+| the full snapshot's whole retained RING — this turn's two hand-offs plus older ones | a producer with no `tick` filter re-dates the retention window to now |
+| the mid-tick RECAPTURE, re-shipping this turn's rows at their own `seq`s | a producer with no `seq` set announces each one twice |
+| the same rows re-stamped for the NEXT turn | the vacuity guard — both claims above pass on a producer that has stopped ingesting at all |
+
+**The old rows are hand-offs in every other respect** — same action token, same status tokens — so a
+filter keyed on anything but the tick lets them through; and they are chosen to push the count PAST
+`ATTENTION_HANDOFF_MAX_ROWS`, a flood that stayed under the cap being counted correctly and still
+wrong. **The details are spelled as chapter constants**, copied from `systems::labor`'s completion
+pass, the `_assert_horizon_floor_is_the_whole_trip` rule: an expectation composed through
+`AttentionController`'s own tokens can only agree with itself.
+
+**The restore is load-bearing** — the window is cleared on a turn CHANGE, so an empty array ingested
+against the turn already held leaves it exactly as it was and leaks three rows into every state after.
+
+**Sabotage-verified, disjointly.** Restoring the old flattening in `build_turns_remaining` fails
+exactly the rotting frame's DANGER-ink claim and nothing else in the run (the hazard-mark conjunction
+correctly stays green — a flattened `-3` still reaches the STALLED hazard, which carries the mark,
+which is why that claim cannot stand in for this one). Removing the tick/seq filter fails exactly the
+ring and recapture claims, the vacuity guard correctly staying green.
+
+**A clean run is 332 frames / 1057 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says.

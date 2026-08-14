@@ -192,11 +192,23 @@ live in two slots:
 > **RETIRED with it: `abandon_improvement`** (the command, the alias, `handle_abandon_improvement`,
 > `describe_source`, `improvement_event_kind`, and proto field 46 — **reserved, never reused**). It
 > existed to let a player walk away from a 25-turn commitment while the *verb* was the commitment;
-> the commitment is the **hands** now, so you walk away by unstaffing the builders
-> (`cultivate <faction> <x> <y> 0`). A command that cleared a *derived* value would either do nothing
-> or fight the derivation, and both are worse than not having it. **There is no stored authority left
-> for it to clear**, which is also why the question of "how do abandonment and re-implication
-> interact" has no answer to arbitrate: it was removed rather than settled.
+> the commitment is the **hands** now. A command that cleared a *derived* value would either do
+> nothing or fight the derivation, and both are worse than not having it.
+>
+> > #### ⛔ A DECLARATION CANNOT CURRENTLY BE WITHDRAWN — and the walk-away path stated here was wrong
+> >
+> > This callout used to claim you walk away by unstaffing the builders with
+> > `cultivate <faction> <x> <y> 0`. **That command does not clear anything.** Every path reaches
+> > `set_improvement_on_working_bands(…, Some(verb), workers)` (`bin/server.rs`), so it sets
+> > `improvement = Some(Cultivate)` with `improvement_workers = 0`; `forage::patch_build_verb` honours
+> > a declaration whenever its meter is at zero, so the source reads as **building, forever, with no
+> > builders and no undo**. `set_improvement`'s `None` arm is unreachable from any command.
+> >
+> > The retirement itself still stands — the verb is derived and there is no stored authority worth a
+> > clearing command — but *"the hands are the commitment"* is only true once a declaration with no
+> > hands is inert, and it is not. `docs/plan_standing_upkeep.md` §4.6 owns the fix and folds it into
+> > the builder-pool slice, where pooling makes it sharper still: a declaration will carry no crew at
+> > all, so unticking becomes the **only** undo.
 >
 > **RETIRED with it too: the "nothing left to build" test** (`forage_rung_already_built` /
 > `hunt_rung_already_built`). Its one job was to clear a verb the sim would otherwise have driven on a
@@ -398,16 +410,62 @@ holds on that web. See "MAINTENANCE IS A BAND-LEVEL POOL" below.
 > `core_sim/tests/three_crews_on_the_wire.rs`, at four values that all differ — three slots wired to
 > one source would pass a fixture that staffed the same count everywhere.
 
-Each crew's work is `intensification::activity_work(workers)` = `workers × PER_WORKER_OUTPUT`. There
-is no pool, no priority order and no derived share:
+Each crew's work is `intensification::activity_work(workers)` = `workers × PER_WORKER_OUTPUT`:
 
 ```text
-upkeep_supplied  = maintain_workers × PER_WORKER_OUTPUT
 upkeep_supplied  = this source's share of the band's keeping POOL (§2.5)
 upkeep_shortfall = max(0, upkeep_demand − upkeep_supplied)     // → decay, at the rung's rate
 build_work       = build_workers × PER_WORKER_OUTPUT           // − the crew's gear, off the JOB
 take             = min(take_workers × per_worker_capacity, source_offer)
 ```
+
+> #### A SOURCE ROW IS THE BAND'S **HOLDING**, so it survives losing its take crew
+>
+> `LaborAllocation::set_assignment` used to drop the row outright at `workers == 0`, which made the
+> take crew a source's licence to exist — and therefore **re-coupled the take to the keeping**, the
+> one separation §2.2 is for. A band that finished a Field and moved its gatherers to a richer patch
+> lost the row, so the Field put no demand into the `agriculture` pool, drew no share, and bled its
+> **full** rate with keepers standing idle in the role and **no command that could aim them at it**.
+> The wire published `upkeepShortfall = demand` faithfully, so the client's under-kept warning fired
+> on a state with no remedy. It is the mirror of the arc's own headline: you could neither gather the
+> patch **nor** keep it.
+>
+> **The rule, in one sentence: a source row lasts as long as the band still has something there.**
+>
+> - **`is_source()` splits the two kinds of row.** A band-wide **role** *is* its head count, so
+>   `assign_labor … scout|agriculture 0` still removes it. A **Forage/Hunt** row is the band's
+>   holding of that patch or herd, so zero gatherers only unstaffs the take: the row survives with its
+>   improvement, its build crew and its kit. **A row is never created at zero** — unassigning ground
+>   the band never worked still says nothing.
+> - **What "something there" means is the GROUND's answer, not the row's**:
+>   `systems::source_has_a_meter_at_risk` — a meter carrying progress
+>   (`forage::patch_unwinding_rung` / `fauna::herd_keeping_rung`), which is exactly what the pool
+>   funds and what the decay pass bleeds. A wild stand and an unowned herd answer `false`.
+> - **Asked at two moments, deliberately the same question at both.** The **command** asks it the
+>   instant the take goes to zero, so unstaffing a wild patch clears the row on the spot instead of
+>   leaving a `+0.00` row to age out; the **turn** asks it again in each source arm of
+>   `advance_labor_allocation`, so a holding whose meter finally rots away is retired without the
+>   player touching it. The build crew is part of both tests — a `Cultivate` declared this turn has no
+>   progress yet, so the ground's answer alone would abandon a build just staffed.
+> - **Rows cannot accumulate for the life of a game**: a holding is retired the turn it empties, and
+>   the ordinary out-of-range / past-the-leash lapses reach a zero-crew row like any other, because
+>   the loop now visits it.
+> - **Deriving the demand from OWNERSHIP was the alternative and was rejected.** `ForagePatch::owner`
+>   / `Herd::owner` are **factions**, not bands, so ownership cannot say *which* band keeps a patch —
+>   every band in range would claim it and the `+=` stamp would double-supply it. The assignment list
+>   is the only thing in the sim that answers *"whose"*, which is why the fix is to stop throwing the
+>   row away rather than to look somewhere else.
+> - **A zero-take row takes nothing, builds only what its own crew builds, and learns NOTHING.** The
+>   takes and the wear quanta fall out to zero on their own; the **lesson** does not, because it is
+>   credited once per assignment rather than per worker, so `systems::labor` gates all four earn sites
+>   on the take crew being present (`credit_managed_rung_lesson` takes it as its `eligible`). Free
+>   knowledge from a patch nobody works is the defect that gate exists to prevent.
+> - **Unstaffing the gatherers no longer abandons the build beside them.** The row survives, so the
+>   `Cultivate` and its crew do too — `assign_labor … 0` is *"stop gathering"* and the verb at zero is
+>   how you walk away from a build. Pinned by
+>   `forage_cultivation::a_patch_with_no_gatherers_is_still_kept_by_the_bands_pool` (kept, and the
+>   liveness half that it still rots unfunded) and
+>   `components::tests::a_role_row_still_goes_at_zero_and_an_unworked_source_is_never_created`.
 
 - **They draw on one finite band, and that IS the opportunity cost.**
   `LaborAssignment::staffed_total` sums a row's take and build, `LaborAllocation::assigned_total`
@@ -700,6 +758,10 @@ other row (§2.5).
 - **The band's demand is the SUM** over everything it holds on that web, and **only a BUILT rung
   draws**: a meter still being raised is owed its builders, so it contributes no demand and takes no
   share (`systems::labor::maintenance_shares`).
+  - **HOLDS, not harvests.** A row's eligibility is the *source's* answer (`patch_is_maintaining` /
+    `herd_is_maintaining`) and never its take crew. `maintenance_shares` used to skip rows at
+    `workers == 0`, which is what made a finished improvement's keeping depend on somebody still
+    gathering it — see "A SOURCE ROW IS THE BAND'S HOLDING" above for the whole of that repair.
 - **THE SHORTFALL SPLIT IS A PER-BAND PLAYER OPTION** — `LaborAllocation::upkeep_fund_mode`
   (`intensification::UpkeepFundMode`), set by `upkeep_mode <faction> <band> spread|priority` (proto
   field **56**, `UpkeepModeCommand`, reusing the retired `MaintainCommand`'s slot):

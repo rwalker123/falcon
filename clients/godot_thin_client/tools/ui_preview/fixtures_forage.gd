@@ -352,16 +352,27 @@ static func improvement_face(root: Node, improvement: String) -> String:
 		return (control as Label).text
 	return ""
 
-## **IS THE CONTROL'S FACE IN THE WARNING INK?** — the other half of the `∞` claim, and the half a
-## text assertion structurally cannot make: the larder's runway draws the same glyph in neutral ink
-## for the opposite news, so what says which way a build's `∞` points is the colour.
+## **IS THE CONTROL'S FACE IN A STOPPING INK?** — the other half of the `∞` claim, and the half a text
+## assertion structurally cannot make: the larder's runway draws the same glyph in NEUTRAL ink for the
+## opposite news, so what says which way a build's `∞` points is the colour.
+##
+## **BOTH STOPPING INKS COUNT, and asking only about the amber was a real trap.** The wire spells two
+## never-finishing sentinels — the meter HOLDS at the rate, the meter ROTS under it — and the client
+## paints them amber and red (`HudWidgets.improvement_pace_stops`, whose pair this is). A reader
+## hard-wired to `WARN` therefore FAILS on the redder, worse half of the very claim it exists to make,
+## which is exactly what happened the day `BUILD_METER_ROTS` was honoured: the lone-builder frames
+## quote a NEGATIVE net and had been reading amber only because the client flattened the two.
+##
+## Where a frame means one specific ink, it compares `improvement_face_color` directly — that is the
+## reader for *which* of the three, and this one is for *is this face a stop at all*.
 ##
 ## Read as the RESOLVED font colour off whichever node the state uses (`Label` for running, done and
 ## gated; `CheckBox` for the offer), because `get_theme_color` answers the stock default where no
 ## override is set — an "an override exists" test would pass on the very bug this looks for, which
 ## IS a missing override.
-static func improvement_face_is_warned(root: Node, improvement: String) -> bool:
-	return improvement_face_color(root, improvement) == HudStyle.WARN
+static func improvement_face_stops(root: Node, improvement: String) -> bool:
+	var ink := improvement_face_color(root, improvement)
+	return ink == HudStyle.WARN or ink == HudStyle.DANGER
 
 ## **THE FACE'S RESOLVED INK, for the THREE-state build line** (issue #545 follow-up). The pace is a
 ## colour now — green climbing, amber holding, red losing — so a bool reader can only ever ask about

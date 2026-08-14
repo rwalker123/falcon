@@ -123,6 +123,19 @@ paths:
     `populations` separately and the attention array is rebuilt from the populations pass: a producer
     reading the event array directly would answer empty on every frame but one, and the rows would
     flicker away mid-turn — exactly when the player is deciding what to do with those hands.
+    **THE FRAME IS NOT THE FILTER — THE EVENT'S OWN `tick` IS, and `seq` is the other half.** This
+    producer is a WINDOW on one turn, and it went in reading every row on whatever array the frame
+    brought. `command_events` is per-frame HISTORY whose SHAPE varies by frame kind, so that had two
+    concrete failure modes: a **full snapshot** — the initial connect, or the resync answer to a
+    dropped delta — carries the whole `command_events_retention_turns` ring, which re-dated twenty
+    turns of hand-offs to now and flooded the orb; and a **mid-tick recapture delta** re-ships every
+    row since the turn baseline, announcing this turn's hand-offs twice. So a row joins the window
+    only if its own `tick` is the turn the window describes, and only if its `seq` has not been taken
+    for that turn (`0` being the unsequenced sentinel, admitted rather than dropped — the tick filter
+    already bounds the set). **The two filters answer different questions** — WHICH TURN, and SEEN
+    ALREADY — and neither substitutes for the other. `Main`'s dispatch comment said re-ingesting a
+    ring was harmless because *"both consumers accumulate and de-duplicate"*; this was a **third**
+    consumer that did neither, and that comment now names all three and what each does instead.
     **Non-locating AND affordance-less**, which is a third state beside `Jump →` and `Open ▸`. The
     event names its source in words and carries no coordinates, so a jump would be a guess; and a
     turn may finish several builds, so there is no ONE panel the row could open either. It therefore

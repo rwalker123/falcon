@@ -60,6 +60,15 @@ var _handoffs: Array[Dictionary] = []
 ## when the turn changes rather than accumulating a session's worth of finished builds.
 var _handoff_turn: int = -1
 
+## **THE `seq`s ALREADY TAKEN FOR `_handoff_turn`** — the de-duplication set, dropped with the rows it
+## describes. One frame is not one delivery of a row: a mid-tick RECAPTURE delta re-ships every event
+## appended since the turn's baseline, so the same hand-off arrives twice inside one turn and would
+## otherwise be announced twice.
+##
+## Keyed on the sim's own monotonic `seq` and nothing else — a signature over label+detail would
+## silently collapse two bands that finished the same rung with the same crew size on the same tile.
+var _handoff_seqs: Dictionary = {}
+
 func _init(band_labor: HudBandLaborState, bandpanel: BandPanelController,
         herd_label_for_id: Callable) -> void:
     _band_labor = band_labor
@@ -103,6 +112,23 @@ const HANDOFF_STATUS_CARRIED := "status=carried_to_upkeep"
 
 const HANDOFF_STATUS_FREED := "status=freed"
 
+## The event's own turn, and the sim's own monotonic sequence — two fields the decoder inserts on every
+## command event (`native/src/dict/campaign.rs`) and the two this producer filters on.
+const HANDOFF_TICK_KEY := "tick"
+
+const HANDOFF_SEQ_KEY := "seq"
+
+## **A ROW THE SIM NEVER SEQUENCED.** `seq` is ONE-BASED, so `0` is the FlatBuffers default and means
+## the row never went through `CommandEventLog::push`. There is nothing to de-duplicate on, so such a
+## row is admitted rather than dropped — the same reading `EventDockPanel` gives it, minus that panel's
+## signature fallback, because the tick filter above already bounds this producer to ONE turn's events.
+const HANDOFF_SEQ_UNSEQUENCED := 0
+
+## The tick of an event that states none. Below every real turn, so an unstamped row can never match
+## the current one — which is the honest answer: this producer announces THIS turn's hand-offs, and a
+## row that will not say which turn it belongs to is not evidence about this one.
+const HANDOFF_TICK_NONE := -1
+
 ## **INGEST THE TURN'S BUILD HAND-OFFS** (`docs/plan_standing_upkeep.md` §2.3) — the completions whose
 ## crew moved, off the same `command_events` array the Telling and the event dock read.
 ##
@@ -113,11 +139,27 @@ const HANDOFF_STATUS_FREED := "status=freed"
 ## The `status=` token is what separates the two outcomes: `carried_to_upkeep` means those hands are
 ## now paying the rung's keeping, `freed` means they are idle. Anything else on the stream is not a
 ## hand-off and is left to the surfaces that own it.
+##
+## **THE FRAME IS NOT THE FILTER — THE EVENT'S OWN `tick` IS.** `command_events` is per-frame HISTORY
+## and the array's SHAPE varies by frame kind: a delta carries the rows appended since the client's
+## cursor, and a **full snapshot carries the whole retained ring** — up to
+## `command_events_retention_turns` of them, so an initial connect or a resync after a dropped delta
+## re-delivers every hand-off of the last twenty turns. Taking the array as "what happened this turn"
+## re-dated all of them to now and flooded the orb with builds the player finished long ago. So a row
+## joins `_handoffs` only if its own `tick` IS `_handoff_turn`; the backfill still reaches the surfaces
+## that want history (the Telling, the event dock) and reaches this one as nothing at all, which is
+## correct — a hand-off is a decision about hands that moved THIS turn.
+##
+## **AND ONE TURN'S ROWS CAN ARRIVE TWICE, so the `seq` set is the other half.** A mid-tick recapture
+## delta re-ships every row since the turn baseline, which passes the tick filter by construction; the
+## sim's monotonic `seq` is what says *this is the same row again*. The two filters answer different
+## questions (WHICH TURN vs SEEN ALREADY) and neither substitutes for the other.
 func ingest_command_events(events_variant: Variant, turn: int) -> void:
     if not (events_variant is Array):
         return
     if turn != _handoff_turn:
         _handoffs.clear()
+        _handoff_seqs.clear()
         _handoff_turn = turn
     for entry_variant in events_variant:
         if not (entry_variant is Dictionary):
@@ -129,6 +171,13 @@ func ingest_command_events(events_variant: Variant, turn: int) -> void:
         var carried := detail.contains(HANDOFF_STATUS_CARRIED)
         if not carried and not detail.contains(HANDOFF_STATUS_FREED):
             continue
+        if int(entry.get(HANDOFF_TICK_KEY, HANDOFF_TICK_NONE)) != _handoff_turn:
+            continue
+        var seq := int(entry.get(HANDOFF_SEQ_KEY, HANDOFF_SEQ_UNSEQUENCED))
+        if seq != HANDOFF_SEQ_UNSEQUENCED:
+            if _handoff_seqs.has(seq):
+                continue
+            _handoff_seqs[seq] = true
         _handoffs.append({
             "label": String(entry.get("label", "")).strip_edges(),
             "carried": carried,

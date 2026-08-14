@@ -224,6 +224,14 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
   > `agriculture` pool rather than per tile (§2.5), so a band holding several patches pays the sum and
   > wastes nothing. Pinned by
   > `forage_cultivation::gathering_a_patch_does_not_hold_it_but_one_keeper_does`.
+  >
+  > **AND THE MIRROR HOLDS: keeping a patch does not require gathering it.** A band that finishes a
+  > Cultivate and moves its foragers to a richer stand still *holds* that ground, so its row survives
+  > at zero gatherers and goes on drawing from the pool — `assign_labor forage <x> <y> 0` is *"stop
+  > gathering"*, not *"this band has nothing here"*. Pinned by
+  > `forage_cultivation::a_patch_with_no_gatherers_is_still_kept_by_the_bands_pool`;
+  > `intensification.md` → "A SOURCE ROW IS THE BAND'S HOLDING" owns the seam and the retirement rule
+  > that bounds it.
   - **The grace.** `ForagePatch::neglect_turns` counts **consecutive turns of shortfall** (a single
     turn whose demand was met wipes it — it is not a lifetime budget), and the bleed applies only
     while it **exceeds** the at-risk rung's `upkeep.grace_turns` (`RungDef::upkeep_grace_turns`; the
@@ -323,8 +331,15 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
   below its cost is *building* again with no command issued — the player owes it **hands**, not a
   re-declaration of an intent they never withdrew.
   - **`abandon_improvement` is RETIRED** with the stored authority it used to clear (proto field 46
-    reserved, never reused). The commitment is the hands: a player walks away by unstaffing the
-    builders, `cultivate <faction> <x> <y> 0`.
+    reserved, never reused), because a command that cleared a *derived* value would either do nothing
+    or fight the derivation.
+    > **But a declaration still cannot be withdrawn, and this bullet used to say otherwise.**
+    > `cultivate <faction> <x> <y> 0` **sets** `improvement = Some(Cultivate)` with no builders — it
+    > clears nothing, and `patch_build_verb` honours a declaration at a zero meter, so the patch reads
+    > as *building* permanently with no undo. *"The commitment is the hands"* only holds once a
+    > declaration with no hands is inert, and it is not.
+    > `docs/plan_standing_upkeep.md` §4.6 owns the fix; `intensification.md` → "A DECLARATION CANNOT
+    > CURRENTLY BE WITHDRAWN" carries the detail.
   - **A fully feral patch clears owner, species, cost and rung together** — `reconcile_owner`'s
     "nothing is left of either improvement" and the derivation's "a meter at zero needs a
     declaration" are one notion of empty, pinned by

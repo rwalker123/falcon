@@ -70,26 +70,67 @@ fn credit_rung_lesson(
 ///   a dial that changed nothing about what they took. The lesson runs at the food peak instead,
 ///   where [`crate::intensification::learn_multiplier`] is exactly `×1.0` — *"the pressure axis has
 ///   collapsed here"*, not *"the food peak happens to be right"*;
-/// - **the crew is working it by definition**: there is no standing stock to be above or below, so
-///   the `eligible` predicate every drawn-down branch has to evaluate is vacuously true here.
+/// - **a keeper who is there is working it by definition**: there is no standing stock to be above
+///   or below, so the escapement predicate every drawn-down branch has to evaluate collapses, and
+///   all that is left of `eligible` is `crew_is_present` — *is anybody on the take at all*. A source
+///   a band merely **holds** (`docs/plan_standing_upkeep.md` §2.2 — take, build and keeping are
+///   three allocations) draws its share of the keeping pool and learns nothing, because the lesson
+///   is credited per assignment rather than per worker and would otherwise be free.
 fn credit_managed_rung_lesson(
     rung: &RungDef,
+    crew_is_present: bool,
     knowledge: &LadderKnowledge,
     faction: FactionId,
     discovery: &mut DiscoveryProgressLedger,
 ) {
     /// The floor at which `learn_multiplier` is the identity — the food peak.
     const THE_FLOOR_AXIS_HAS_COLLAPSED: f32 = crate::fauna::MSY_BIOMASS_FRACTION;
-    /// A managed source has no standing stock to stand above, so its keeper is always at work.
-    const A_KEEPER_IS_ALWAYS_WORKING: bool = true;
     credit_rung_lesson(
         rung,
         THE_FLOOR_AXIS_HAS_COLLAPSED,
-        A_KEEPER_IS_ALWAYS_WORKING,
+        crew_is_present,
         knowledge,
         faction,
         discovery,
     );
+}
+
+/// **DOES THIS BAND STILL HAVE ANYTHING AT THIS SOURCE?** — the one predicate that decides whether a
+/// row with no hands on any of its three activities is worth keeping (`docs/plan_standing_upkeep.md`
+/// §2.2/§2.5).
+///
+/// A source row is the band's **holding**, so it survives losing its take crew — that separation is
+/// the whole point of §2.2, and without it a finished Field whose gatherers moved on contributed no
+/// demand to `agriculture`, drew no share, and bled its full rate with keepers idle in the role. What
+/// bounds the rows is this: a holding lasts exactly as long as there is a **meter carrying progress**
+/// on the ground, which is precisely what the keeping pool funds and what the decay pass bleeds
+/// ([`crate::forage::patch_unwinding_rung`] / [`crate::fauna::herd_keeping_rung`]). A wild stand and a
+/// herd nobody owns answer `false`, so unstaffing one really does end the band's business there.
+///
+/// **Asked at two moments, and it must be the same question at both**: the command, so
+/// `assign_labor … 0` on a wild patch clears the row on the spot rather than leaving a `+0.00` row
+/// the player has to watch age out; and the turn, so a holding whose meter finally rots away is
+/// retired without the player having to touch it.
+///
+/// A band-wide role is never a holding — it *is* its head count — and answers `false`.
+pub fn source_has_a_meter_at_risk(
+    target: &LaborTarget,
+    forage_registry: &ForageRegistry,
+    herds: &HerdRegistry,
+    ladder: &LadderConfig,
+) -> bool {
+    match target {
+        LaborTarget::Forage { tile, .. } => forage_registry
+            .patch(*tile)
+            .is_some_and(|patch| crate::forage::patch_unwinding_rung(patch, ladder).is_some()),
+        LaborTarget::Hunt { fauna_id, .. } => herds
+            .find(fauna_id)
+            .is_some_and(|herd| fauna::herd_keeping_rung(herd, ladder).is_some()),
+        LaborTarget::Scout
+        | LaborTarget::Warrior
+        | LaborTarget::Agriculture
+        | LaborTarget::Husbandry => false,
+    }
 }
 
 /// The config handles [`advance_labor_allocation`] reads, bundled into one `SystemParam` so the
@@ -156,11 +197,12 @@ fn maintenance_shares(
     let mut plant: Vec<Claim> = Vec::new();
     let mut animal: Vec<Claim> = Vec::new();
     for (index, assignment) in allocation.assignments.iter().enumerate() {
-        // **A row with nobody on the take is skipped**, exactly as the labor loop skips it: its
-        // supply is never stamped, so funding it would spend the pool on a source no pass reads.
-        if assignment.workers == 0 {
-            continue;
-        }
+        // **THE TAKE CREW IS NOT A TERM HERE, and that separation is the point** (§2.2). A row's
+        // eligibility is the *source's* answer — `patch_is_maintaining` / `herd_is_maintaining` —
+        // never how many gatherers happen to be standing on it this turn. Filtering on
+        // `assignment.workers` made a band that moved its foragers to a richer patch unable to keep
+        // the Field it had just finished: no demand, no share, and a full-rate bleed with idle
+        // keepers in the role.
         match &assignment.target {
             LaborTarget::Forage { tile, .. } => {
                 let Some(patch) = forage_registry.patch(*tile) else {
@@ -429,9 +471,20 @@ pub fn advance_labor_allocation(
         let mut kept_pens: Vec<String> = Vec::new();
         for (idx, assignment) in allocation.assignments.iter().enumerate() {
             let workers = assignment.workers;
-            if workers == 0 {
-                continue;
-            }
+            // **A ROW WITH NO TAKE CREW IS STILL VISITED, because the row is the band's HOLDING**
+            // (`docs/plan_standing_upkeep.md` §2.2/§2.5). The take crew is one of three allocations
+            // on a source, so skipping the row on `workers == 0` withheld the *keeping* from every
+            // improvement whose gatherers had moved on: the pool's share was never stamped and the
+            // meter bled its full rate with keepers idle in the role. Everything below resolves to
+            // nothing on its own for an unstaffed take — the takes are `crew × rate`, the wear
+            // quanta are the biomass taken — so the arms need no zero-crew special case; what they
+            // do need is to **retire a row with nothing left on it**, which each does once its
+            // source is in hand.
+            //
+            // **The one thing that does NOT fall out of the arithmetic is the LESSON**, which is
+            // credited per assignment rather than per worker. A crew that is not there is not
+            // practising, so it rides this predicate at each of the four earn sites.
+            let take_crew_present = workers > NO_CREW_ON_THIS_ACTIVITY;
             // **The player's DECLARATION, which answers only for a meter at zero.** What this crew
             // is actually building is **derived from the source's own meters**
             // (`forage::patch_build_verb` / `fauna::herd_build_verb`), because a meter carrying
@@ -601,6 +654,27 @@ pub fn advance_labor_allocation(
                                 tile.x, tile.y, distance, work_range
                             )),
                         ));
+                        continue;
+                    }
+                    // **A HOLDING ROW LASTS EXACTLY AS LONG AS THERE IS SOMETHING TO HOLD.** With no
+                    // hands on any of the three activities the row says only *"this band's ground"*,
+                    // and the ground answers whether that is still true: a meter carrying progress
+                    // is what the keeping pool funds and what the decay pass bleeds
+                    // (`forage::patch_unwinding_rung`). Once it is empty — the patch went feral, or
+                    // the player unstaffed a wild stand they were only gathering — the band has
+                    // nothing here and the row goes, which is what stops rows accumulating for the
+                    // life of a game. Silently: the player emptied it themselves, and the reversion
+                    // it may have followed announces itself.
+                    if !take_crew_present
+                        && build_workers == NO_CREW_ON_THIS_ACTIVITY
+                        && !source_has_a_meter_at_risk(
+                            &assignment.target,
+                            &forage_registry,
+                            &registry,
+                            &ladder,
+                        )
+                    {
+                        lapsed.push(idx);
                         continue;
                     }
                     let Some(tile_entity) = tile_registry.index(tile.x, tile.y) else {
@@ -898,6 +972,7 @@ pub fn advance_labor_allocation(
                         // still reaches the earn path.
                         credit_managed_rung_lesson(
                             lesson_rung,
+                            take_crew_present,
                             knowledge_dials,
                             faction,
                             &mut discovery,
@@ -1066,7 +1141,7 @@ pub fn advance_labor_allocation(
                     credit_rung_lesson(
                         lesson_rung,
                         *floor,
-                        working_the_patch,
+                        take_crew_present && working_the_patch,
                         knowledge_dials,
                         faction,
                         &mut discovery,
@@ -1503,6 +1578,22 @@ pub fn advance_labor_allocation(
                         ));
                         continue;
                     }
+                    // **A HOLDING ROW LASTS EXACTLY AS LONG AS THERE IS SOMETHING TO HOLD** — the
+                    // animal twin of the Forage arm's, on the animal web's own seam
+                    // (`fauna::herd_keeping_rung`, which is `None` for a herd nobody owns and has
+                    // not penned). A band with no hands on a wild herd is simply not hunting it.
+                    if !take_crew_present
+                        && build_workers == NO_CREW_ON_THIS_ACTIVITY
+                        && !source_has_a_meter_at_risk(
+                            &assignment.target,
+                            &forage_registry,
+                            &registry,
+                            &ladder,
+                        )
+                    {
+                        lapsed.push(idx);
+                        continue;
+                    }
                     let Some(herd) = registry.herds.iter_mut().find(|herd| herd.id == *fauna_id)
                     else {
                         continue;
@@ -1779,6 +1870,7 @@ pub fn advance_labor_allocation(
                         // [`credit_managed_rung_lesson`]; the work is the tending, not the slaughter.
                         credit_managed_rung_lesson(
                             lesson_rung,
+                            take_crew_present,
                             knowledge_dials,
                             faction,
                             &mut discovery,
@@ -2007,7 +2099,7 @@ pub fn advance_labor_allocation(
                     credit_rung_lesson(
                         lesson_rung,
                         *floor,
-                        working_the_herd,
+                        take_crew_present && working_the_herd,
                         knowledge_dials,
                         faction,
                         &mut discovery,

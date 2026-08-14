@@ -641,10 +641,16 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     if snapshot.has("populations") and SnapshotSections.changed(snapshot, "populations"):
         _hud_invoke("update_band_alerts", [snapshot["populations"]])
     # `command_events` is PER-FRAME HISTORY, never reconstructible: a delta carries only the rows
-    # appended since the baseline, a full snapshot carries the whole retained ring. Both consumers
-    # (the Telling, and the event dock) accumulate and de-duplicate, so re-ingesting a full
-    # snapshot's ring is harmless. (The Telling is deliberately NOT reset on a full frame — it keeps
-    # its own scrolled-off history and de-dupes on a signature, not on `seq`.)
+    # appended since the baseline, a full snapshot carries the whole retained ring.
+    #
+    # **THERE ARE THREE CONSUMERS AND EACH DEFENDS ITSELF DIFFERENTLY; re-ingesting a full ring is
+    # harmless only because every one of them does.** The Telling and the event dock ACCUMULATE and
+    # de-duplicate — the Telling deliberately NOT reset on a full frame, keeping its own scrolled-off
+    # history and de-duping on a signature rather than on `seq`; the dock resets and de-dupes on `seq`.
+    # The THIRD is the turn orb's crew-hand-off producer (`AttentionController.ingest_command_events`),
+    # which does neither: it is a WINDOW on one turn, so it filters on the event's own `tick` and
+    # de-duplicates on `seq` itself. It went in reading every matching row on the array, which turned a
+    # resync's twenty-turn ring into twenty turns of hand-offs all dated today.
     if snapshot.has("command_events") and SnapshotSections.changed(snapshot, "command_events"):
         _hud_invoke("ingest_command_events", [snapshot["command_events"]])
     # The dock's four per-frame steps are one seam, because their ORDER is the contract and stating

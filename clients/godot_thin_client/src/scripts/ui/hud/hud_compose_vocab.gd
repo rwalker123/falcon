@@ -405,12 +405,14 @@ const BUILD_TURNS_COUNT_FORMAT := "≈%d turns"
 
 const BUILD_TURNS_COUNT_ONE := "≈1 turn"
 
-# **A CREW THAT NEVER FINISHES, in the same slot the count would have taken** — the ∞ face of
-# `SourceForecast.BUILD_TURNS_NEVER`. It wears no `≈`: every other reading here is an estimate that
-# could come in early or late, and this one is not an estimate at all — at or below the maintenance
-# rate the meter does not advance, so there is no distribution to hedge. The glyph itself is
-# `DetailFormat.BUILD_TURNS_NEVER_GLYPH`, shared with the larder runway and inked amber here because
-# on a build it is the opposite news.
+# **A CREW THAT NEVER FINISHES, in the same slot the count would have taken** — the ∞ face of BOTH
+# `SourceForecast.BUILD_TURNS_HOLDS` and `BUILD_TURNS_ROTS`, which differ on this surface by INK
+# alone (`SourceForecast.build_pace`: amber holding, red losing) because a compose face is one Control
+# and takes one colour. It wears no `≈`: every other reading here is an estimate that could come in
+# early or late, and this one is not an estimate at all — at or below the maintenance rate the meter
+# does not advance, so there is no distribution to hedge. The glyph itself is
+# `DetailFormat.BUILD_TURNS_NEVER_GLYPH`, shared with the larder runway and inked as a warning here
+# because on a build it is the opposite news.
 const BUILD_TURNS_NEVER_FORMAT := "%s turns"
 
 # `50 work, ≈25 turns` — the price with its estimate. Takes the clause ALREADY SPELLED, never a raw
@@ -519,8 +521,9 @@ const IMPROVEMENT_DEAL_DEPLETED_NOTE := "⚠ Too depleted to pen — it would ea
 # **THE TWO ANSWERS NEED DIFFERENT WORDS, which is the whole reason they are two.** Nothing has been
 # built yet — so nothing is being lost, and the remedy is simply hands — versus a meter that already
 # holds work and is bleeding it back, where the same hands are also stopping a loss. A single line
-# covering both would understate one and overstate the other. Neither is the `∞ turns` state one rung
-# over, which is a crew that EXISTS and is too small (`DetailFormat.build_turns_never`).
+# covering both would understate one and overstate the other. Neither is either `∞ turns` state one
+# rung over, both of which are a crew that EXISTS and is too small (`SourceForecast.BUILD_TURNS_HOLDS`
+# at the rate, `BUILD_TURNS_ROTS` under it).
 #
 # They are two flat consts rather than a state-keyed table because a table would put a live
 # `SourceForecast.*` reference in a `const` initializer here, and a vocabulary module is kept a

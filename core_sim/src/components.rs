@@ -1679,6 +1679,27 @@ impl LaborTarget {
             _ => false,
         }
     }
+
+    /// **Is this a SOURCE on the map, or a band-wide standing role?** — the split that decides
+    /// whether a row survives losing its take crew (`docs/plan_standing_upkeep.md` §2.2).
+    ///
+    /// A **role** *is* its head count: `assign_labor … scout 0` says *stop scouting*, and there is
+    /// nothing else for the row to carry. A **source** row is the band's **holding** of a patch or a
+    /// herd, and the take crew is only one of the three allocations on it — so zeroing the gatherers
+    /// is *"stop gathering here"*, never *"this band has nothing here"*. Dropping the row on that
+    /// edge is what made a finished Field ineligible for its own web's keeping pool: no row, no
+    /// demand, no share, and no command the player could issue to fix it.
+    ///
+    /// Stated exhaustively so a new target has to answer the question rather than inherit a default.
+    pub fn is_source(&self) -> bool {
+        match self {
+            LaborTarget::Forage { .. } | LaborTarget::Hunt { .. } => true,
+            LaborTarget::Scout
+            | LaborTarget::Warrior
+            | LaborTarget::Agriculture
+            | LaborTarget::Husbandry => false,
+        }
+    }
 }
 
 /// One staffed labor demand: a target, the whole-worker head-count assigned to it, and **the
@@ -2892,10 +2913,25 @@ impl LaborAllocation {
             .resize(self.assignments.len(), SourceYield::ZERO);
     }
 
-    /// Set/replace the worker count for `target`, keeping `Σ ≤ available`. `workers == 0` removes
-    /// the assignment (per-source unassign — the new "cancel"). An over-budget request is
-    /// **clamped** to the free headroom (not rejected). Returns the worker count actually applied
+    /// Set/replace the **take** crew for `target`, keeping `Σ ≤ available`. An over-budget request
+    /// is **clamped** to the free headroom (not rejected). Returns the worker count actually applied
     /// so the caller can report a clamp.
+    ///
+    /// # `workers == 0` UNSTAFFS THE TAKE; IT DOES NOT ERASE THE BAND FROM THE SOURCE
+    ///
+    /// A **role** row ([`LaborTarget::is_source`] `== false`) *is* its head count, so zero drops it —
+    /// that is what *"stop scouting"* means and there is nothing else for the row to carry.
+    ///
+    /// A **source** row is the band's *holding* of that patch or herd, and the take crew is one of
+    /// three allocations on it (`docs/plan_standing_upkeep.md` §2.2). So an existing source row
+    /// **survives at zero**, carrying its improvement, its build crew and its kit, and the sim
+    /// retires it once the ground has nothing left to hold (`advance_labor_allocation`).
+    ///
+    /// Dropping it here is what made a finished Field ineligible for its own web's keeping pool: a
+    /// band that moved its gatherers to a richer patch lost the row, so the Field contributed no
+    /// demand to `agriculture`, drew no share, and bled its full rate with keepers standing idle in
+    /// the role and no command that could direct them at it. **A source row is never created at
+    /// zero** — `assign_labor … 0` on ground the band never worked still says nothing.
     ///
     /// The touched source's yield telemetry is dropped alongside its assignment and a freshly-staffed
     /// source gets a [`SourceYield::ZERO`] row, which the command handler immediately overwrites with
@@ -2906,8 +2942,10 @@ impl LaborAllocation {
     /// `docs/plan_investment_rung_toggle.md` §6). Editing the stance or the crew is a stance-side
     /// edit; it must not re-assert — or silently drop — a build the player committed 25 turns to.
     /// This is what makes a **paused** build re-staffable: adjusting its crew no longer re-issues the
-    /// improvement through its start gate. `workers == 0` still drops the assignment and the
-    /// improvement with it, which is the one deliberate way to abandon an investment.
+    /// improvement through its start gate — and, since a source row now survives losing its take
+    /// crew, it is what makes `assign_labor … 0` leave a running Cultivate alone. Walking away from a
+    /// build is its own verb at zero (`cultivate <faction> <x> <y> 0`), which is where
+    /// `docs/plan_standing_upkeep.md` §2.4 puts it.
     pub fn set_assignment(
         &mut self,
         target: LaborTarget,
@@ -2939,6 +2977,11 @@ impl LaborAllocation {
         // — see the doc above.
         let mut improvement = None;
         let mut improvement_workers = crate::intensification::NO_CREW_ON_THIS_ACTIVITY;
+        // The kit the row was already working under. It is re-used only when the take crew goes to
+        // **zero**, where the caller resolves no kit at all: an unstaffed row must not silently
+        // forget what its build crew and its keeping were equipped with.
+        let mut standing_kit = None;
+        let mut had_row = false;
         if let Some(idx) = self
             .assignments
             .iter()
@@ -2950,10 +2993,15 @@ impl LaborAllocation {
             // about either. A player nudging the gatherers on a patch must not silently unstaff the
             // Cultivate beside them.
             improvement_workers = self.assignments[idx].improvement_workers;
+            standing_kit = self.assignments[idx].kit.clone();
+            had_row = true;
             self.assignments.remove(idx);
             self.last_yields.remove(idx);
         }
-        if applied > 0 {
+        // **A source the band already held keeps its row at zero** — see the doc above. A role's row
+        // goes, and a source the band never worked is not conjured into existence by an unassign.
+        let keep_holding = applied == 0 && had_row && target.is_source();
+        if applied > 0 || keep_holding {
             self.assignments.push(LaborAssignment {
                 target,
                 workers: applied,
@@ -2963,11 +3011,39 @@ impl LaborAllocation {
                 // `improvement`, which is carried across because it is a build in flight. Naming a
                 // kit is the whole of what this command decides about tier; silently keeping the
                 // previous one would make the selection unchangeable.
-                kit,
+                //
+                // **A row held at zero is not an order about tier**, so it keeps what it had: the
+                // command deliberately resolves no kit when it is unstaffing, and writing that
+                // `None` onto a surviving row would disarm the build crew still on it.
+                kit: if keep_holding { standing_kit } else { kit },
             });
             self.last_yields.push(SourceYield::ZERO);
         }
         applied
+    }
+
+    /// **Remove a source's row outright**, telemetry included — the deliberate end of a band's
+    /// holding, as opposed to [`Self::set_assignment`]'s zero, which only unstaffs the take.
+    ///
+    /// It exists because *"is there still anything of ours here"* is a question about the **ground**
+    /// (`systems::source_has_a_meter_at_risk`), which this type cannot see. The command asks it the
+    /// moment the take crew goes to zero, so unstaffing a wild stand clears the row on the spot
+    /// rather than leaving a `+0.00` row to age out on the next turn; the labor pass asks it again
+    /// every turn, for the holding whose meter finally rots away.
+    ///
+    /// Returns whether a row was found.
+    pub fn drop_source_row(&mut self, target: &LaborTarget) -> bool {
+        self.align_yields();
+        let Some(idx) = self
+            .assignments
+            .iter()
+            .position(|a| a.target.same_source(target))
+        else {
+            return false;
+        };
+        self.assignments.remove(idx);
+        self.last_yields.remove(idx);
+        true
     }
 
     /// Set or clear the **improvement** on the assignment already staffing `target`'s source, leaving
@@ -3272,22 +3348,21 @@ pub fn raid_is_recurring(floor: f32) -> bool {
 /// **The IMPROVEMENT a crew is building on a source** — *what am I building here?* — the second,
 /// independent axis of a labor assignment (issue #442, `docs/plan_investment_rung_toggle.md` §2).
 ///
-/// These are the intensification ladder's **rung-transition verbs**. While one is in flight the crew
-/// carries only the rung's `yield_fraction_while_building ×` what a harvesting crew of the same size
-/// carries — a deliberate **yield dip**, because they are preparing the ground / gentling the herd /
-/// building the pen instead of harvesting it — and the source's build meter
-/// (`ForagePatch::cultivation_progress` / `field_progress`, `Herd::domestication_progress` /
-/// `corral_progress`) accrues the crew's work output. At the job's own cost the source becomes a
+/// These are the intensification ladder's **rung-transition verbs**. A verb is staffed with its
+/// **own crew** ([`LaborAssignment::improvement_workers`], named on the verb itself), and those hands
+/// bank work units into the source's build meter (`ForagePatch::cultivation_progress` /
+/// `field_progress`, `Herd::domestication_progress` / `corral_progress`) — net of the rung's standing
+/// upkeep, which the builders owe like anyone else. At the job's own cost the source becomes a
 /// **tended patch / Field / pastoral herd / penned herd** and pays the full managed yield.
 ///
-/// **The dip multiplies the CREW, never the escapement ceiling** (`docs/plan_harvest_floor.md`
-/// §3.1). On the ceiling it was **floor-dependent**, so the harshest draw built for free: a deeper
-/// floor offers a bigger stock, and a fraction of a bigger stock still filled the baskets. On
-/// throughput it is floor-independent by construction — there is no floor you can pick that dodges it
-/// — and legible: at half carry it takes twice the people to clear the same standing surplus. So a
-/// build costs yield only while *hands* are the scarce thing; a crew the source's own ceiling binds
-/// pays nothing for it, and the honest answer is to hire more people.
-/// [`crate::intensification::LadderConfig::build_dip`] is the one seam both webs read it through.
+/// **THERE IS NO YIELD DIP, and its retirement is what makes the verb legible**
+/// (`docs/plan_standing_upkeep.md` §2.2). A rung's `yield_fraction_while_building` used to scale what
+/// the crew carried, on the reasoning *"they are preparing the ground, not gathering"* — true of a
+/// **shared** crew and of nothing else. With the take and the build stating their own head counts,
+/// what a build costs is simply the people who are clearing instead, so the gatherers beside it carry
+/// exactly what they always did and the price is the same statement at every staffing. Under the dip
+/// it was not: a crew big enough to saturate the source's standing stock paid *nothing*, because the
+/// ceiling bound it either way.
 ///
 /// **At most one is ever in flight, and it is always the source's next rung** — the rungs are
 /// strictly ordered, so you cannot Sow ground you have not tended and a tended patch has nothing left
@@ -3814,11 +3889,50 @@ mod tests {
             Some(Improvement::Cultivate)
         );
 
-        // Unassigning drops the source, and the investment with it.
+        // Unstaffing the TAKE leaves the band's holding of the source standing — the row survives at
+        // zero gatherers with the build in flight on it (`docs/plan_standing_upkeep.md` §2.2), which
+        // is what lets a finished rung stay eligible for its web's keeping pool. Walking away from
+        // the build is its own verb at zero.
         allocation.set_assignment(deplete.clone(), 0, 10, None);
-        assert!(allocation.assignments.is_empty());
-        // Nothing to hang a verb on once the source is unstaffed.
-        assert!(!allocation.set_improvement(&deplete, Some(Improvement::Cultivate), A_BUILD_CREW));
+        assert_eq!(allocation.assignments.len(), 1);
+        assert_eq!(allocation.assignments[0].workers, 0);
+        assert_eq!(
+            allocation.assignments[0].improvement,
+            Some(Improvement::Cultivate),
+            "unstaffing the gatherers must not abandon the build beside them"
+        );
+        assert_eq!(allocation.assignments[0].improvement_workers, A_BUILD_CREW);
+        // And the row is still there for a verb to hang off.
+        assert!(allocation.set_improvement(&deplete, Some(Improvement::Cultivate), A_BUILD_CREW));
+    }
+
+    /// A **role** is its head count, so `assign_labor … scout 0` really does remove the row — the
+    /// half of the rule above that did not move. And a source the band never worked is not conjured
+    /// into a zero row by an unassign.
+    #[test]
+    fn a_role_row_still_goes_at_zero_and_an_unworked_source_is_never_created() {
+        let mut allocation = LaborAllocation::default();
+        allocation.set_assignment(LaborTarget::Scout, 3, 10, None);
+        allocation.set_assignment(LaborTarget::Scout, 0, 10, None);
+        assert!(
+            allocation.assignments.is_empty(),
+            "a standing role IS its head count"
+        );
+
+        allocation.set_assignment(
+            LaborTarget::Forage {
+                tile: UVec2::new(9, 9),
+                floor: DEFAULT_ESCAPEMENT_FLOOR,
+                species: None,
+            },
+            0,
+            10,
+            None,
+        );
+        assert!(
+            allocation.assignments.is_empty(),
+            "unassigning ground nobody worked says nothing"
+        );
     }
 
     /// A thirty-person band earns a fraction of a birth per turn. Per-turn rounding would either

@@ -3201,13 +3201,30 @@ unpaid twin asserted beside it, PNG-less, since only the shortfall separates the
 commitment; the verb is DERIVED from the meter now, so there is no stored authority left to clear and
 a command that cleared a derived value would either do nothing or fight the derivation.
 
-**WALKING AWAY IS `cultivate <faction> <x> <y> 0`** — the same set verb that started the build, with
-its crew at zero. The commitment is the HANDS, so the lever is the BUILDERS stepper, and there is one
-grammar and one builder (`Main.format_improvement`) for both directions.
-`DrawerComposeController._emit_improvement` is where the two meet: an unchecked OFFER sends the
-standing verb at `BUILD_CREW_NONE`, and a source with neither a live meter nor a declaration sends
-nothing at all. `format_abandon_improvement`, `Main._on_hud_improvement`'s empty-improvement branch,
-`IMPROVEMENT_ABANDON_HINTS` and `IMPROVEMENT_TOOLTIP_SEPARATOR` are all deleted.
+**UNSTAFFING SENDS `cultivate <faction> <x> <y> 0`** — the same set verb that started the build, with
+its crew at zero. There is one grammar and one builder (`Main.format_improvement`) for both
+directions. `DrawerComposeController._emit_improvement` is where the two meet: an unchecked OFFER
+sends the standing verb at `BUILD_CREW_NONE`, and a source with neither a live meter nor a
+declaration sends nothing at all. `format_abandon_improvement`, `Main._on_hud_improvement`'s
+empty-improvement branch, `IMPROVEMENT_ABANDON_HINTS` and `IMPROVEMENT_TOOLTIP_SEPARATOR` are all
+deleted.
+
+> #### ⛔ THAT COMMAND TAKES THE HANDS OFF; IT DOES NOT WITHDRAW THE DECLARATION
+>
+> This section claimed the crew-zero command IS the walk-away. It is not. Every server path reaches
+> `set_improvement_on_working_bands(…, Some(verb), workers)`, so the command sets
+> `improvement = Some(Cultivate)` with `improvement_workers = 0`, and `forage::patch_build_verb`
+> honours a declaration whenever its meter is at zero — so the source goes on reading as **building,
+> with no builders**, and **unticking the improvement control does not currently undo it**.
+> `set_improvement`'s `None` arm is unreachable from any command.
+>
+> What the client renders is honest about the state it is left in: a declared, unstaffed rung is
+> `IMPROVEMENT_STATE_DECLARED` — a live, ticked box over the *not started* warning — which is the
+> readout for a build that is going nowhere. What it cannot do is clear it.
+>
+> `docs/plan_standing_upkeep.md` §4.6 owns the fix, folded into the builder-pool slice;
+> `.claude/rules/core_sim/intensification.md` → "A DECLARATION CANNOT CURRENTLY BE WITHDRAWN" carries
+> the server-side mechanism.
 
 **THE RUNNING CONTROL IS A `Label`, and the shape rule the GATED state already stated covers three of
 the five.** The control's TYPE says whether this is a CHOICE or a FACT: a `CheckBox` is a choice
@@ -3230,8 +3247,10 @@ zero-payoff note riding beneath exactly as it rides a running build, that being 
 RUNG rather than about work in flight, which is why one predicate
 (`_rung_pays_nothing_under_its_feed`) serves both.
 
-- **Unticking is the walk-away the stepper already sends** — `cultivate <faction> <x> <y> 0` through
-  `_emit_improvement` — so the two levers agree by construction rather than by convention.
+- **Unticking sends what the stepper sends** — `cultivate <faction> <x> <y> 0` through
+  `_emit_improvement` — so the two levers agree by construction rather than by convention. **Neither
+  of them withdraws the declaration**: the command sets the verb with a crew of zero, so the rung goes
+  on reading as declared-and-unstaffed. See the callout above.
 - **A DECLARED box is NEVER disabled, however few hands the band has.** The offer one branch down
   greys out with no free workers *because ticking it would declare an unstaffable build*; here the
   declaration already stands, and unticking is precisely what a player with no hands needs to do.
@@ -3279,11 +3298,14 @@ the unstaffed state the meters already decided; comparing a composed `work_per_t
 would be a second opinion about a number the sim owns — the drift that once quoted `≈50 turns` for a
 build that never moved.
 
-- **`BUILD_TURNS_NEVER` covers both `∞` states today and answers `HOLDING`.** The wire publishes ONE
-  never-finishes sentinel (`sim_schema::BUILD_NEVER_FINISHES`) for a crew at OR under the rate, so the
-  amber is the conservative reading of the pair; the red/yellow split lands when the sim splits the
-  sentinel. **`LOSING` is reachable today only through `BUILD_UNSTAFFED_SLIDING`** — work banked,
-  nobody on it — which is the meters' own answer rather than an arithmetic sign.
+- **THE WIRE SPELLS BOTH `∞` STATES AND EACH HAS ITS OWN PACE.** `sim_schema::BUILD_METER_HOLDS`
+  (`-2`, the crew exactly at the rate) answers `HOLDING`; `BUILD_METER_ROTS` (`-3`, the crew under it)
+  answers `LOSING`, and that is the red the schema promises for work already bought and now bleeding.
+  The amber covered both for one slice — the conservative reading while there was one sentinel — and
+  reading it that way *after* the split told a player whose build was being destroyed exactly what it
+  tells one merely treading water. `LOSING` is additionally reachable through
+  `BUILD_UNSTAFFED_SLIDING` — work banked, nobody on it — which is the meters' own answer rather than
+  an arithmetic sign.
 - **A CHECKBOX takes only the two stopping paces** (`HudWidgets.improvement_pace_stops`): green on an
   unticked offer would read as an achievement on a rung nobody has started.
 - **The RATE is not lost, which is why the note moved rather than being deleted.** It is a tooltip on
@@ -3430,8 +3452,8 @@ place. It wears no `≈`: every other reading there is an estimate that could co
 this one is not an estimate at all.
 
 **AND ON THE TILE CARD AND THE HERD DRAWER, WHICH IS WHERE IT MATTERS MOST.** It is `-2` on the wire
-(`sim_schema::BUILD_NEVER_FINISHES`, beside `NO_BUILD_TURNS_ESTIMATE`'s `-1`), so
-`SourceForecast.build_turns_remaining` reads it rather than flattening every negative, and
+(`sim_schema::BUILD_METER_HOLDS`, beside `NO_BUILD_TURNS_ESTIMATE`'s `-1` and `BUILD_METER_ROTS`'
+`-3`), so `SourceForecast.build_turns_remaining` reads it rather than flattening every negative, and
 `DetailFormat.rung_row_value` renders it as the rung row itself — `⚠ ∞ turns (42%)`, in the same
 amber. The two were ONE sentinel for a release and this row was silent for it, so the state a player
 has to act on was visible only while dragging a stepper they may never open. **The `at this crew` tail
@@ -3447,8 +3469,55 @@ line reads it here without being taught twice — and the **INK** is what says w
 `HudWidgets.build_improvement_control`'s `warn_face` inks the whole face `HudStyle.WARN`, the
 treatment the shortfall rows wear. A face is one `Label`/`CheckBox` and takes one colour, so the
 warning cannot ride the clause alone, which is the honest treatment anyway: what is wrong is the whole
-proposition on that line. `DetailFormat.build_turns_never` is the single test both faces gate on, so
-the ∞ and the amber cannot appear without each other.
+proposition on that line. The ink is decided by `SourceForecast.build_pace` and applied through
+`HudWidgets.improvement_pace_color`, so the ∞ and its colour cannot appear without each other.
+
+**`DetailFormat.build_turns_never` IS RETIRED, and it was one of the sites the split slipped past.**
+Its doc called it *"the single test both compose faces gate their warning ink on"* and it had been
+reached by nobody since the pace classifier took that job — a three-state fork cannot be gated on a
+bool. What made the corpse worth deleting rather than leaving is that it went on special-casing `-2`
+alone: a reader checking whether this client had followed the sentinel split would have found a *yes*
+that meant nothing.
+
+### THE SECOND `∞` IS RED, AND THE CARD SAYS *losing ground* IN WORDS
+
+`sim_schema` split `BUILD_METER_ROTS` (`-3`) out of `BUILD_METER_HOLDS` (`-2`), and the difference is
+what the player is being told: **holding wastes the crew's turn, rotting destroys work already paid
+for.** The client did not follow, and every symptom of that was a silence in the reassuring direction:
+
+- `SourceForecast.build_turns_remaining` accepted `>= 0` and `-2` and mapped everything else to *no
+  estimate*, so a real, staffed, priced build that was actively bleeding banked work rendered as the
+  STALLED hazard — *a gate refuses this, no crew size fixes it* — when the remedy is precisely more
+  hands. Before issue #545's stalled fallback it rendered as **no row at all**.
+- `build_pace` fell to `BUILD_PACE_UNKNOWN`, i.e. neutral ink on the compose face, for the same value.
+- **It is reachable at the most common early staffing there is**: one builder on a Cultivate against
+  `plant:tended`'s rate of `2.0` nets `−1`. The A/B frames in `chapters/improvements.gd` had been
+  staging it since the pace landed and reading amber.
+
+**BOTH ANSWERS WEAR THE `∞`, because both are true of the meter**; what separates them is the INK, and
+on the card also the WORDS. `HudSelectionVocab.RUNG_ROTTING_FORMAT` renders
+`⚠ ∞ turns, losing ground (42%)` in `HudStyle.DANGER` against the holding row's `⚠ ∞ turns (42%)` in
+amber, and **`RUNG_ROTTING_PHRASE` is passed INTO the format rather than spelled inside it** — the
+phrase the row prints is the needle `DetailFormat.rung_value_hex` keys the red off, the same
+one-definition shape the BUILT badges use. That tint test runs **first**, because the rotting row
+leads with the hazard mark like every other failure state (it must, or the mark stops meaning
+*something is wrong here*), so an amber branch tested first swallows it and the split exists on the
+wire and nowhere on screen.
+
+**A compose FACE gets the ink and not the words**, because it is one Control taking one colour and its
+line already carries the meter and the price. The card has a whole row to spend and spends it.
+
+**`build_turns_at` FORKS ON THE SAME CUT POINT** (`SourceForecast.BUILD_BALANCE_HOLDS`, the client's
+copy of `intensification::BUILD_BALANCE_HOLDS`), which is not optional tidiness: the sheet and the
+card are two producers of one estimate and are required to agree at the committed crew. A sheet
+answering HOLDS where the card answers ROTS quotes amber for the crew the card paints red — the two
+disagreeing about the very decision the stepper is being dragged through.
+
+**The harness was pinning the defect, which is the part worth remembering.**
+`chapters/improvements.gd` declared `UNKNOWN_BUILD_TURNS_SENTINEL := -3` and asserted that value
+*"renders as NO answer"* — a claim written when `-3` really was unspelled, left in place when the wire
+grew it. **A sentinel-is-unknown claim has to be re-aimed the day the schema spells that value**; it
+is now `-4`, one past the last one defined, and it moves again the next time the schema grows.
 
 **ON THE OFFER THE FACE GOES AMBER AND THE BOX STAYS LIVE.** A crew below the rate makes the job
 unfinishable, not illegal — the player may staff it anyway and add hands next turn. **The tint has to

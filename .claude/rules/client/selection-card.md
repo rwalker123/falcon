@@ -345,17 +345,18 @@ reads `Cultivation ≈50 turns (0%)` / `🌾 Tended 100%` / `🌾 Tended 92% ⚠
 
 That is what deleting the `Keeping:` row costs, and it is the rule everything above rests on: **a
 failure state that renders bare reads as success.** It is the same trap as the unstaffed build one
-section down, where a calm `0%` was taken for work in progress. So `rung_row_value` forks four ways
+section down, where a calm `0%` was taken for work in progress. So `rung_row_value` forks FIVE ways
 and every one of them leads with `HudSelectionVocab.RUNG_HAZARD_GLYPH`:
 
 | state | reads | why it is not the one above it |
 |---|---|---|
 | declared, nobody assigned, nothing banked | `⚠ Not started — no builders assigned` | there is no meter to state — `0 / 50 (0%)` is that zero written three ways |
 | work banked, nobody on it | `⚠ Reverting 42%` | the remedy is HANDS, and the plant web is actively losing the work |
-| staffed at or under the rung's rate | `⚠ ∞ turns (42%)` | somebody IS on it; the remedy is MORE of them |
+| staffed exactly AT the rung's rate | `⚠ ∞ turns (42%)` | somebody IS on it; the remedy is MORE of them |
+| staffed UNDER it | `⚠ ∞ turns, losing ground (42%)` | same remedy, and the work already bought is going BACK — so it is RED, not amber |
 | built, and the keeping pool is short | `🌾 Tended 92% ⚠` | the rung is HELD and slipping, which no build crew fixes |
 
-**A FIFTH STATE EXISTS AND IT IS MARKED TOO** — `⚠ Stalled 42%`, the sim's `-1` on a source with
+**A SIXTH STATE EXISTS AND IT IS MARKED TOO** — `⚠ Stalled 42%`, the sim's `-1` on a source with
 builders on it: a rung whose knowledge, site or species gate does not hold, or whose crew stands over
 an empty escapement room. It gets its own word rather than borrowing *Reverting* (which would name
 the wrong remedy) and must not render as a bare percentage, which is the silence this family exists to
@@ -368,10 +369,18 @@ for a bill the Field's builders owe.
 
 **THE TINT IS DECIDED ONCE FOR FOUR ROWS, AND IT KEYS ON THE MARK.** `DetailFormat.rung_value_hex` is
 what `cultivation_value_hex` / `field_value_hex` / `husbandry_value_hex` / `corral_value_hex` all
-delegate to — amber on the hazard glyph, signal green on the rung's own BUILT badge, neutral ink
-otherwise. Each of those used to guess by substring (`no builders`, then `Reverting`, then the badge
-word), so every new hazard state needed its own guess and could ship without its colour. The one case
-above the rule is the STARVING pen, which is DANGER red because the herd is shrinking right now.
+delegate to — **red on the ROTTING row's own phrase**, amber on the hazard glyph, signal green on the
+rung's own BUILT badge, neutral ink otherwise. Each of those used to guess by substring (`no
+builders`, then `Reverting`, then the badge word), so every new hazard state needed its own guess and
+could ship without its colour. The one case above the rule is the STARVING pen, which is DANGER red
+because the herd is shrinking right now.
+
+**THE ROTTING TEST RUNS FIRST, and that ordering is the whole of it.** That row wears BOTH needles —
+it leads with the hazard mark like every other failure state, and must, or the mark stops meaning
+*something is wrong here* — so an amber branch tested first swallows it and the schema's promised
+red/yellow split exists on the wire and nowhere on screen. `HudSelectionVocab.RUNG_ROTTING_PHRASE` is
+passed INTO `RUNG_ROTTING_FORMAT` rather than spelled inside it, so the phrase the row prints and the
+phrase the tint tests are one string — the BUILT badges' own shape.
 
 **AND A FULL-WIDTH SENTENCE THAT LEADS WITH THE MARK IS A WARNING**, which is now a rule in
 `detail_bbcode` rather than a list of known sentences. It tested `line == OVERGRAZING_WARNING` by
@@ -405,16 +414,24 @@ each headlined a row that now leads with a number. The compose sheet keeps its o
 (`HudComposeVocab.IMPROVEMENT_RUNNING_LABELS`), because a sheet is COMPOSING that verb rather than
 reporting it. `Reverting` survives, owned outright by `HudSelectionVocab.RUNG_REVERTING_FORMAT`.
 
-**The three answers `buildTurnsRemaining` publishes are unchanged and all three still render** —
-a count is a finish date, `-2` is `∞`, `-1` is *no answer*. What changed is that `-1` is no longer
-allowed to render as nothing on a row a crew IS on: it is the `Stalled` hazard there, and it stays
+**The FOUR answers `buildTurnsRemaining` publishes all render** — a count is a finish date, `-2` is an
+amber `∞` (`BUILD_METER_HOLDS`, the meter standing still), `-3` a red one saying *losing ground*
+(`BUILD_METER_ROTS`, the meter going backwards), `-1` is *no answer*. **`-3` was split out of `-2` and
+this client did not follow for a release**, flattening it back to *no answer* and so rendering a build
+actively bleeding banked work as the STALLED hazard — *a gate refuses this, no crew size fixes it* —
+when the remedy is precisely more hands; the long form is in `labor-ui.md` → "THE SECOND `∞` IS RED".
+
+**And `-1` is no longer allowed to render as nothing on a row a crew IS on**: it is the `Stalled`
+hazard there, and it stays
 silent only where the row itself does not render. **THE CLIENT DERIVES NONE OF IT**: an unstaffed
 source and a refused gate both reach this reader as `-1`, and re-deriving either would call every idle
 improvement on the map a never-finisher.
 
 **Frames + assertions.** `tile_meter_building` / `tile_meter_reverting` / `tile_meter_never` /
-`tile_build_unstaffed` (`chapters/improvements.gd`) carry the plant hazards as WORD-AND-TINT markup —
-ONE patch at ONE meter value, with only the band's assignment and the published sentinel moving.
+**`tile_meter_rotting`** / `tile_build_unstaffed` (`chapters/improvements.gd`) carry the plant hazards
+as WORD-AND-TINT markup — ONE patch at ONE meter value, with only the band's assignment and the
+published sentinel moving. The last two of those are judged as a PAIR, since they are one step apart
+and the whole claim is that they read differently.
 `tile_two_meters_live` is the both-rows frame, and its third claim is the SILENCE: a patch whose
 keeping is paid must carry no mark on either row, or the mark means nothing on the states that do.
 `improvement_never_finishes_unstarted` is the compose-sheet repro (see `labor-ui.md`). `herd_corral`

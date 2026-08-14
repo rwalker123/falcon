@@ -915,8 +915,10 @@ const IMPROVEMENT_STATE_DONE := "done"
 ## **IT IS A CHOICE, WHICH IS WHY IT IS A BOX AND NOT THE RUNNING LABEL.** Rendering it as RUNNING was
 ## a one-way door: the label carries no toggle, so a player who ticked `cultivate` on a band with no
 ## free hands got `Cultivating 0 / 50 work (0%)` with the *not started* warning and **no way to untick
-## it**. Reported from play. Unticking sends the walk-away command the BUILDERS stepper sends —
-## `cultivate <faction> <x> <y> 0` — so the two levers agree by construction.
+## it**. Reported from play. Unticking sends what the BUILDERS stepper sends —
+## `cultivate <faction> <x> <y> 0` — so the two levers agree by construction. **Both take the hands
+## off and neither withdraws the declaration**, which has no clearing command today
+## (`labor-ui.md` → "RETIRED — `abandon_improvement`").
 const IMPROVEMENT_STATE_DECLARED := "declared"
 ## An offer the source cannot take yet. **A LABEL, not a disabled checkbox** — the control's shape
 ## says whether this is a CHOICE or a FACT, and an unmet prerequisite is a fact. It shipped once as a
@@ -999,7 +1001,7 @@ static func build_improvement_control(improvement: String, state: String, face: 
         if improvement_pace_stops(pace):
             for slot in CHECKBOX_LIVE_FONT_COLOR_SLOTS:
                 box.add_theme_color_override(slot, improvement_pace_color(pace, HudStyle.WARN))
-        # A DECLARED rung opens TICKED — the declaration stands, and unticking it is the walk-away.
+        # A DECLARED rung opens TICKED — the declaration stands, and unticking it unstaffs the rung.
         # Set BEFORE `toggled` is connected, or seeding the box would fire the handler and un-declare
         # the very build being rendered.
         box.button_pressed = state == IMPROVEMENT_STATE_DECLARED

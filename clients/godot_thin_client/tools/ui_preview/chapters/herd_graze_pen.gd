@@ -652,7 +652,7 @@ func run(harness) -> void:
 	var unpaid_tame := _mid_tame_herd_fixture()
 	unpaid_tame["upkeep_supplied"] = 0.0
 	unpaid_tame["upkeep_shortfall"] = float(MID_TAME_UPKEEP_DEMAND)
-	unpaid_tame["build_turns_remaining"] = SourceForecast.BUILD_TURNS_NEVER
+	unpaid_tame["build_turns_remaining"] = SourceForecast.BUILD_TURNS_HOLDS
 	var unpaid_lines := DetailFormat.herd_summary_lines(
 		unpaid_tame, h._hud._band_labor.world_herds())
 	h._assert_hud("…while the same build going UNPAID is marked on its rung row AND priced at risk",

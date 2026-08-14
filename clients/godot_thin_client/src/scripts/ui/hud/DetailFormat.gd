@@ -404,11 +404,15 @@ const FOOD_RUNWAY_UNIT := "turn"
 
 ## **THE SAME GLYPH ON A BUILD ESTIMATE, AND ITS MEANING IS INVERTED.** On the Food line `∞` is good
 ## news — the larder never empties; on a build it is the worst news the sheet can carry — this crew
-## never finishes, because it is at or below the maintenance rate the meter owes every turn
-## (`SourceForecast.BUILD_TURNS_NEVER`). So it takes the AMBER treatment the shortfall rows wear
-## rather than the neutral ink the runway gets: the one readout that should stop the player must not
-## read as reassurance. The glyph is shared deliberately — a player who has learned it on the food
-## line reads it here without being taught twice — and the ink is what says which way it points.
+## never finishes, because it is at or below the maintenance rate the meter owes every turn.
+## So it takes a WARNING treatment rather than the neutral ink the runway gets: the one readout that
+## should stop the player must not read as reassurance. The glyph is shared deliberately — a player
+## who has learned it on the food line reads it here without being taught twice — and the ink is what
+## says which way it points.
+##
+## **BOTH never-finishing sentinels draw it, and the INK is what separates THEM too**: amber for
+## `SourceForecast.BUILD_TURNS_HOLDS` (the meter stands still) and red for `BUILD_TURNS_ROTS` (it is
+## going backwards). One glyph, three meanings, three colours — see `rung_value_hex`.
 const BUILD_TURNS_NEVER_GLYPH := FOOD_UNLIMITED_GLYPH
 
 # ---- Predators Phase 0 — the four RAW combat components (strength ≠ danger). Keys ≤ 16 chars so
@@ -1010,7 +1014,8 @@ static func build_meter_value(verb: String, progress: float,
 ## | built | `🌾 Tended 100%` (+ `⚠` when the keeping is short) | achievement is the stamped retention bar, not the meter's fullness |
 ## | declared, nobody on it, nothing banked | `⚠ Not started — no builders assigned` | there is no meter to state — `0 / 50 (0%)` is that zero written three ways |
 ## | work banked, nobody on it | `⚠ Reverting 42%` | the remedy is HANDS, and the plant web is actively losing the work |
-## | staffed at or under the rate | `⚠ ∞ turns (42%)` | somebody IS on it; the remedy is MORE of them |
+## | staffed exactly AT the rate | `⚠ ∞ turns (42%)` | somebody IS on it; the remedy is MORE of them |
+## | staffed UNDER the rate | `⚠ ∞ turns, losing ground (42%)` | the same remedy, and the work already bought is going back — so it is RED, not amber |
 ## | staffed, and nothing accrues anyway | `⚠ Stalled 42%` | a gate or an empty escapement room, which no crew size fixes |
 ## | otherwise | `≈11 turns (42%)` | the healthy reading, and the only one with no mark |
 ##
@@ -1041,9 +1046,13 @@ static func rung_row_value(src: Dictionary, prefix: String, improvement: String,
         return HudSelectionVocab.RUNG_REVERTING_FORMAT % [
             HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
     var turns := SourceForecast.build_turns_remaining(src, prefix)
-    if turns == SourceForecast.BUILD_TURNS_NEVER:
-        return HudSelectionVocab.RUNG_NEVER_FORMAT % [
+    if turns == SourceForecast.BUILD_TURNS_HOLDS:
+        return HudSelectionVocab.RUNG_HOLDING_FORMAT % [
             HudSelectionVocab.RUNG_HAZARD_GLYPH, BUILD_TURNS_NEVER_GLYPH, percent]
+    if turns == SourceForecast.BUILD_TURNS_ROTS:
+        return HudSelectionVocab.RUNG_ROTTING_FORMAT % [
+            HudSelectionVocab.RUNG_HAZARD_GLYPH, BUILD_TURNS_NEVER_GLYPH,
+            HudSelectionVocab.RUNG_ROTTING_PHRASE, percent]
     if turns == SourceForecast.BUILD_TURNS_NO_ESTIMATE:
         return HudSelectionVocab.RUNG_STALLED_FORMAT % [
             HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
@@ -1055,14 +1064,23 @@ static func rung_row_value(src: Dictionary, prefix: String, improvement: String,
 ## one value at which a rung row states a sentence rather than a number.
 const BUILD_METER_EMPTY := 0.0
 
-## **THE ONE TINT RULE FOR ALL FOUR RUNG ROWS.** A value carrying the hazard mark is amber, a value
-## carrying its rung's BUILT badge is signal green, and everything else is neutral ink — so the four
-## `*_value_hex` leaves are one shape and a new hazard state cannot ship without its colour.
+## **THE ONE TINT RULE FOR ALL FOUR RUNG ROWS.** A value that says the meter is going BACKWARDS under a
+## crew is red, any other value carrying the hazard mark is amber, a value carrying its rung's BUILT
+## badge is signal green, and everything else is neutral ink — so the four `*_value_hex` leaves are one
+## shape and a new hazard state cannot ship without its colour.
 ##
-## `built_needle` is the rung's own badge word, lowercased by the caller's own const so the words and
-## the test cannot drift. The starving pen is the single case that outranks the mark, and it says so
-## in its own leaf rather than here.
+## **THE ROTTING TEST RUNS FIRST BECAUSE THAT ROW WEARS BOTH NEEDLES.** It leads with the hazard mark
+## like every other failure state — it must, or the mark stops meaning *something is wrong here* — so
+## an amber branch tested first would swallow it and the schema's promised red/yellow split would exist
+## in the wire and nowhere on screen.
+##
+## `built_needle` is the rung's own badge word, lowercased by the caller's own const, and
+## `RUNG_ROTTING_PHRASE` is the same idea for the red: the row PRINTS the phrase this tests, so the
+## words and the test cannot drift. The starving pen is the single case that outranks the mark, and it
+## says so in its own leaf rather than here.
 static func rung_value_hex(value: String, built_needle: String) -> String:
+    if value.contains(HudSelectionVocab.RUNG_ROTTING_PHRASE):
+        return HudStyle.DANGER_HEX
     if value.contains(HudSelectionVocab.RUNG_HAZARD_GLYPH):
         return HudStyle.WARN_HEX
     if value.to_lower().contains(built_needle):
@@ -1092,10 +1110,13 @@ static func build_price_clause(work_cost: float, turns: int) -> String:
         return price
     return HudComposeVocab.BUILD_PRICE_TURNS_FORMAT % [price, build_turns_clause(turns)]
 
-## Is this estimate the one that has to STOP the player? The single test both compose faces gate their
-## warning ink on, so the ∞ and the amber can never appear without each other.
-static func build_turns_never(turns: int) -> bool:
-    return turns == SourceForecast.BUILD_TURNS_NEVER
+## RETIRED — **`build_turns_never(turns)`**, which answered *"is this the estimate that has to STOP the
+## player?"*. Its doc called it the single test both compose faces gate their warning ink on, and it had
+## been reached by nobody since `SourceForecast.build_pace` took that job: the pace CLASSIFIES the
+## sentinel and the ink follows from the class (`HudWidgets.improvement_pace_color`), which is what lets
+## the same fork carry three colours where a bool can only carry two. A live-looking test with no
+## callers is the worst kind of stale — it went on special-casing `-2` alone, so a reader checking
+## whether this client had followed the sentinel split would have found a *yes* that meant nothing.
 
 ## **THE COMPOSE SHEET'S TURN CLAUSE — `≈20 turns`, or `≈1 turn`** — the count and its noun, decided in
 ## ONE place for both compose faces (the offered face's price and the running face's tail). They quote
@@ -1103,12 +1124,15 @@ static func build_turns_never(turns: int) -> bool:
 ## tile card's `≈1 turn at this crew` would be the same number worded two ways on one screen.
 ## `HudSelectionVocab.BUILD_TURNS_ROW_ONE` is that card's half of the same pair.
 ##
-## **`BUILD_TURNS_NEVER` TAKES THE SAME SLOT AND READS `∞ turns`** — a crew at or below the source's
-## maintenance rate. It is spelled HERE, beside the counts, because it is an answer to the same
-## question and both faces reach it through this one function; what it does not carry is the ink,
-## which is the host's (see `build_turns_never`).
+## **BOTH NON-FINISHING SENTINELS TAKE THE SAME SLOT AND READ `∞ turns`** — a crew at the source's
+## maintenance rate (`BUILD_TURNS_HOLDS`) and one under it (`BUILD_TURNS_ROTS`). The clause is the same
+## because the fact is: neither ever reaches a turn count. **What tells them apart on this surface is
+## the INK, which is not this function's** — the face is one Control and takes one colour, applied by
+## the host from `SourceForecast.build_pace` (amber holding, red losing). The tile card, which has a
+## whole row to spend, additionally says *losing ground* in words (`rung_row_value`); a compose face
+## has one line already carrying the meter and the price.
 static func build_turns_clause(turns: int) -> String:
-    if turns == SourceForecast.BUILD_TURNS_NEVER:
+    if turns == SourceForecast.BUILD_TURNS_HOLDS or turns == SourceForecast.BUILD_TURNS_ROTS:
         return HudComposeVocab.BUILD_TURNS_NEVER_FORMAT % BUILD_TURNS_NEVER_GLYPH
     if turns == BUILD_TURNS_SINGULAR:
         return HudComposeVocab.BUILD_TURNS_COUNT_ONE

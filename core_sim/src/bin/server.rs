@@ -2818,10 +2818,39 @@ fn handle_assign_labor(
     // put a fictitious row on every yield readout in the game.
     let available = band_workforce(app, band.entity).assignable();
 
+    // **"IS THERE STILL ANYTHING OF OURS HERE?"**, asked before the allocation is borrowed
+    // (`docs/plan_standing_upkeep.md` §2.2). A source row survives losing its take crew — it is the
+    // band's *holding*, and the keeping pool funds what a band holds, not what it happens to be
+    // gathering — but a wild stand nobody has built anything on is not a holding, so unstaffing one
+    // clears its row here rather than leaving a `+0.00` row for the turn to sweep up. The same
+    // predicate retires a holding whose meter has finally rotted away, inside `advance_labor_allocation`.
+    let source_holds_something = {
+        let forage_registry = app.world.resource::<ForageRegistry>();
+        let herds = app.world.resource::<HerdRegistry>();
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        core_sim::source_has_a_meter_at_risk(&target, forage_registry, herds, &ladder)
+    };
+
     let kind_label = target.kind();
     let (applied, assigned_total, improvement) = {
         let mut allocation = band_allocation_mut(app, band.entity);
         let applied = allocation.set_assignment(target.clone(), workers, available, crew_kit);
+        // **Nothing built, nothing being built, nobody on it — the band's business here is over.**
+        // The build crew is part of the test: a `Cultivate` declared this turn has no progress on
+        // its meter yet, so dropping the row on the ground's answer alone would abandon a build the
+        // player had just staffed.
+        if applied == 0
+            && !source_holds_something
+            && allocation
+                .assignments
+                .iter()
+                .find(|assignment| assignment.target.same_source(&target))
+                .is_some_and(|assignment| {
+                    assignment.improvement_workers == core_sim::NO_CREW_ON_THIS_ACTIVITY
+                })
+        {
+            allocation.drop_source_row(&target);
+        }
         // `set_assignment` carries any running improvement across, so the seed must price the dip
         // that is still in flight rather than the undipped stance.
         let improvement = allocation
@@ -11633,8 +11662,12 @@ mod tests {
     /// The kit was resolved **before** the worker count was consulted, so `assign_labor … 0 kit
     /// <id-since-removed>` was refused outright and the band was locked into an assignment by a kit
     /// that had been edited out of `equipment.json`. Nothing downstream even wanted the answer:
-    /// `LaborAllocation::set_assignment` drops the assignment at zero workers and never reads the
-    /// kit.
+    /// `LaborAllocation::set_assignment` never reads the kit at zero workers.
+    ///
+    /// **What "cleared" means is the TAKE CREW, not the row.** This fixture's herd is *owned*, so the
+    /// band still holds it and its row survives at zero hunters to keep drawing from the `husbandry`
+    /// pool (`docs/plan_standing_upkeep.md` §2.2). The defect this pins is the refusal, which is
+    /// visible either way: a refused command leaves the crew exactly where it was.
     ///
     /// The band is staffed by the fixture rather than by a second command, so the precondition
     /// cannot fail for a reason that has nothing to do with kits — and it is asserted, because an
@@ -11653,7 +11686,12 @@ mod tests {
             app.world
                 .query::<&LaborAllocation>()
                 .iter(&app.world)
-                .any(|allocation| !allocation.assignments.is_empty())
+                .any(|allocation| {
+                    allocation
+                        .assignments
+                        .iter()
+                        .any(|assignment| assignment.workers > 0)
+                })
         };
 
         assert!(

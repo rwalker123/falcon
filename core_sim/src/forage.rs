@@ -33,11 +33,12 @@
 //! - A **Sustain** forage on a **Thriving** patch earns the faction **Cultivation knowledge**
 //!   (`CULTIVATION_DISCOVERY_ID`, in the `DiscoveryProgressLedger`) — the gate on the policy below.
 //!   Sustain **never** accrues a patch's `cultivation_progress`.
-//! - Taming a patch means **paying the `Cultivate` policy's investment**: a reduced take
-//!   (the `plant:tended` rung's `yield_fraction_while_building ×` the Sustain/MSY ceiling — read off
-//!   the shared ladder, `crate::intensification`) while `cultivation_progress` accrues
-//!   toward `1.0`. The `cultivate` command only **sets that policy** on bands already foraging the
-//!   tile; it claims nothing.
+//! - Taming a patch means **staffing the `Cultivate` verb**: the player names the build's own crew,
+//!   those hands bank work units toward the `plant:tended` rung's `work_cost` (read off the shared
+//!   ladder, `crate::intensification`), and the gatherers beside them carry exactly what they always
+//!   did — what a Cultivate costs is the people who are clearing instead
+//!   (`docs/plan_standing_upkeep.md` §2.2). The `cultivate` command only **sets that verb** on bands
+//!   already foraging the tile; it claims nothing.
 //! - A completed ("tended") patch pays only the band that **tends it** (a Forage assignment worked it
 //!   this turn — place-local, in `advance_labor_allocation`) a higher-than-wild yield without drawing
 //!   biomass down; `advance_cultivation` takes an **untended** patch **feral** (progress decays back
@@ -2202,15 +2203,17 @@ pub(crate) fn patch_rung_key(patch: &ForagePatch) -> RungKey {
 }
 
 /// The forage counterpart of `fauna::hunt_take`: resolve the **escapement ceiling**, cap it by the
-/// gathering crew's throughput (`workers × per_worker_biomass_capacity × seasonal × build_dip`),
-/// clamp to the patch's remaining biomass, **subtract it from the patch**, and convert the take to
-/// provisions (× the caller's productivity `output_multiplier`). Returns the provisions gathered.
+/// gathering crew's throughput (`workers × per_worker_biomass_capacity × seasonal`), clamp to the
+/// patch's remaining biomass, and convert the take to provisions (× the caller's productivity
+/// `output_multiplier`). Returns the provisions gathered.
 ///
-/// **The two webs' take paths are the same expression** (`docs/plan_harvest_floor.md` §1 + §3.1):
-/// `min(crew throughput × build_dip, max(0, B − floor·K))`. The **floor** is a fraction of `K` the
-/// assignment carries (`0.5` holds the patch on its most productive biomass, `0` strips it); the
-/// **dip** is whatever the crew is building, and it multiplies the *crew* — see
-/// [`forage_escapement_ceiling`] for why it left the ceiling.
+/// **The two webs' take paths are the same expression** (`docs/plan_harvest_floor.md` §1):
+/// `min(crew throughput, max(0, B − floor·K))`. The **floor** is a fraction of `K` the assignment
+/// carries (`0.5` holds the patch on its most productive biomass, `0` strips it).
+///
+/// **`workers` is the TAKE crew and there is no build term in the expression at all**
+/// (`docs/plan_standing_upkeep.md` §2.2). A build on this patch is its own allocation with its own
+/// hands, so what the gatherers carry does not depend on what the builders beside them are doing.
 ///
 /// The take resolves the patch's **conversion rate** off its own basket as well as its ecology, so
 /// it carries the tile's composition and the flora table alongside the forage config — one extra
@@ -2276,15 +2279,12 @@ pub(crate) fn forage_take(
 /// depending on it again. The rung-2 payoff is unchanged in substance and clearer in mechanism: a
 /// tended patch regrows faster, so *next* turn it has more stock standing above the floor.
 ///
-/// **THE BUILD DIP IS NO LONGER HERE — it multiplies the CREW, not the ceiling**
-/// (`docs/plan_harvest_floor.md` §3.1). `yield_fraction_while_building` used to scale this ceiling,
-/// which made the harshest draw build for free: a deeper floor offers a bigger stock, so a fraction
-/// of a bigger stock still filled the crew's baskets and every stance completed a 25-turn Cultivate
-/// on schedule (§0.3). On throughput it is **floor-independent by construction** — there is no floor
-/// you can pick that dodges it, because it no longer touches the floor's term — and it is legible:
-/// at 25% carry it takes four times the people to clear the same standing surplus. The factor is
-/// applied by `forage_take`'s worker cap and by `fauna::forecast_expected_take`, both through the one
-/// [`LadderConfig::build_dip`] seam, so the two webs' dips cannot be applied differently.
+/// **NO BUILD TERM REACHES THIS CEILING, and none reaches the crew term beside it either**
+/// (`docs/plan_standing_upkeep.md` §2.2). A rung's `yield_fraction_while_building` used to scale this
+/// ceiling and then, briefly, the crew; it is retired on both webs. The build has its own crew now,
+/// so *"these hands are clearing, not gathering"* is a fact about where the player put them rather
+/// than a fraction the sim multiplies — and the price is the same statement at every staffing, where
+/// the dip's depended on whether the patch's standing stock happened to be binding.
 pub(crate) fn forage_escapement_ceiling(floor: f32, biomass: f32, carrying_capacity: f32) -> f32 {
     escapement_ceiling(floor, biomass, carrying_capacity)
 }
@@ -2651,10 +2651,9 @@ pub fn tended_take_fodder(
 // at rungs 1, 2 and 3 alike, so the hole this closed stays closed without the scalar.
 
 // **RETIRED: `field_yield_fraction_while_building`** — the `plant:field` rung's dip, looked up here
-// because two plant sites needed it and only one of them went through the shared ceiling helper. It has
-// no callers left: since issue #442 *every* dip on both webs is read through the one
-// `LadderConfig::build_dip(improvement)` seam, which is keyed on the verb rather than hard-coding a
-// `RungKey`, so a per-rung accessor could only ever be a second way to ask the same question.
+// because two plant sites needed it and only one of them went through the shared ceiling helper. The
+// dip itself is gone from both webs (`docs/plan_standing_upkeep.md` §2.2): a build is staffed in its
+// own right, so there is no fraction left for any seam to hand out.
 
 /// `SourceYieldForecast::body_mass_yield` for a plant source (slice 8) — `0` = *do not quantise*.
 ///

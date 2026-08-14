@@ -202,9 +202,13 @@ pub(crate) fn herds_to_array(
         // finite answer, and a `0` in its place is a promise. The client CANNOT compute it (it holds
         // neither the crew's output, nor the floor multiplier, nor the kit's contribution), so the
         // sim answers, exactly as it does for `pen_upkeep` and the yield forecast.
-        // **TWO NEGATIVES, TWO FACTS** — `-1` is *no estimate* and `-2` is *never, at this
-        // staffing* (`sim_schema::{NO_BUILD_TURNS_ESTIMATE, BUILD_NEVER_FINISHES}`). Passed through
-        // verbatim so GDScript reads the sim's own answer rather than deriving a second opinion.
+        // **THREE NEGATIVES, THREE FACTS** — `-1` is *no estimate*, `-2` is *the meter holds
+        // exactly where it is* and `-3` is *the meter is going backwards*
+        // (`sim_schema::{NO_BUILD_TURNS_ESTIMATE, BUILD_METER_HOLDS, BUILD_METER_ROTS}`). Passed
+        // through verbatim so GDScript reads the sim's own answer rather than deriving a second
+        // opinion — and every one of them has to be READ on the other side: the client accepted the
+        // first two and flattened `-3` back to *no estimate*, which rendered a bleeding build as no
+        // line at all.
         let _ = dict.insert("build_turns_remaining", herd.buildTurnsRemaining() as i64);
         // WHAT THE CREW'S TOOLS TOOK OFF THIS BUILD, in work units — the `t` in
         // `effective_cost = work_cost − t`. `0` = no build in
@@ -605,7 +609,7 @@ pub(crate) fn forage_patches_to_array(
         // herd block above, and the same contract: `*_work_done / *_work_cost` IS the `*_progress`
         // fraction beside it, the cost is the resolved price of that job on THIS patch and is
         // published whether or not a build runs, and `build_turns_remaining` of `-1` means NO
-        // ESTIMATE rather than zero. TWO pairs for two rungs, the `cultivate_build_fraction` /
+        // ESTIMATE rather than zero (with `-2` / `-3` the two never-finishing answers). TWO pairs for two rungs, the `cultivate_build_fraction` /
         // `sow_build_fraction` rule: independently tunable jobs must not share a number. ONE
         // turns/gear pair for both, because at most one improvement is ever in flight on one source.
         // MapView cross-refs all six onto `tile_info` (as `patch_*`), like the rest of the payload.
@@ -613,7 +617,7 @@ pub(crate) fn forage_patches_to_array(
         let _ = dict.insert("cultivation_work_cost", patch.cultivationWorkCost());
         let _ = dict.insert("field_work_done", patch.fieldWorkDone());
         let _ = dict.insert("field_work_cost", patch.fieldWorkCost());
-        // The plant twin of the herd row's — `-1` no estimate, `-2` never at this staffing.
+        // The plant twin of the herd row's — `-1` no estimate, `-2` the meter holds, `-3` it rots.
         let _ = dict.insert("build_turns_remaining", patch.buildTurnsRemaining() as i64);
         let _ = dict.insert("build_work_from_gear", patch.buildWorkFromGear());
         // The plant twin of the herd block's estimate TERM — see there for why it rides beside

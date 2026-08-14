@@ -823,10 +823,10 @@ const FORECAST_BUILD_PER_WORKER_TURN_KEY := "build_work_per_worker_turn"
 ## working. A missing line is honest; a zero is a promise the build is about to finish.
 const BUILD_TURNS_NO_ESTIMATE := -1
 
-## **THE ANSWER FOR A STATED CREW THAT NEVER FINISHES** — a build crew at or below the source's own
-## maintenance rate (`docs/plan_standing_upkeep.md` §2.4). The rate is owed every turn, while building
-## and while held alike, so only a crew's SURPLUS is progress: at or under it the meter holds where it
-## is or slides back, and no number of turns is ever reached.
+## **THE ANSWER FOR A STATED CREW THAT EXACTLY PAYS THE RATE** — a build crew whose whole output goes
+## on the source's own maintenance rate (`docs/plan_standing_upkeep.md` §2.4). The rate is owed every
+## turn, while building and while held alike, so only a crew's SURPLUS is progress: at the rate the
+## meter holds exactly where it is, and no number of turns is ever reached.
 ##
 ## **It is its own sentinel and not `BUILD_TURNS_NO_ESTIMATE`, because the two render differently.**
 ## No-estimate means *there is no question here yet* — nobody staffed, no priced job, no room above the
@@ -834,14 +834,50 @@ const BUILD_TURNS_NO_ESTIMATE := -1
 ## the answer is ∞: it must be visible, and visible as a WARNING, because it is the one readout that
 ## should stop them. A large number in its place would read as a promise.
 ##
-## **IT IS THE WIRE'S OWN VALUE** — `sim_schema::BUILD_NEVER_FINISHES`, published on
+## **IT IS THE WIRE'S OWN VALUE** — `sim_schema::BUILD_METER_HOLDS`, published on
 ## `buildTurnsRemaining` beside `NO_BUILD_TURNS_ESTIMATE`'s `-1` and passed through verbatim by the
 ## decoder. The two were ONE sentinel for a release, which is why the tile card and the herd drawer
 ## rendered no line for a fact the player needed and only the compose sheet — which redid the
 ## comparison itself — could show it. Nothing in this client derives it from a source the sim has
 ## answered for; the one place a comparison still happens is `build_turns_at`, which prices a crew
 ## the sim has never seen.
-const BUILD_TURNS_NEVER := -2
+##
+## **IT IS NOT `BUILD_TURNS_ROTS`, AND THE NAME IS THE POINT.** *Holding* wastes the crew's turn;
+## *rotting* destroys work already paid for. This constant was `BUILD_TURNS_NEVER` while it covered
+## both, which is the same one-name-two-facts mistake one level down from the one the pair exists to
+## close — a reader who saw `NEVER` had no way to know a second never-finishing answer existed.
+const BUILD_TURNS_HOLDS := -2
+
+## **THE ANSWER FOR A STATED CREW THAT IS LOSING THE BUILD** — the same real, staffed, priced job with
+## a NEGATIVE net: the crew is under the rung's maintenance rate, so past the rung's grace the decay
+## pass bleeds work the player has already bought (`sim_schema::BUILD_METER_ROTS`,
+## `docs/plan_standing_upkeep.md` §2.4).
+##
+## **IT WAS SPLIT OUT OF `BUILD_TURNS_HOLDS` AND THE CLIENT DID NOT FOLLOW, WHICH IS THE WHOLE REASON
+## THIS NOTE IS LONG.** `build_turns_remaining` accepted `-1` and `-2` and mapped every other negative
+## to *no estimate*, so a real, staffed, priced build that was actively bleeding banked work rendered
+## as **no line at all** on the tile card and the herd drawer — indistinguishable from a source nobody
+## has touched. It is reachable at the most common early staffing there is: one builder on a Cultivate
+## against `plant:tended`'s rate of `2.0` nets `−1`. **An unrecognised sentinel must render as the
+## STALLED hazard, never as silence** — that is what `rung_row_value`'s fallback is for, and it is
+## still no substitute for reading the answer the wire actually sent.
+##
+## Both never-finishing answers wear the same `∞`, because both are true of the meter; what separates
+## them is the INK — `HudStyle.WARN` for holding, `HudStyle.DANGER` for rotting — and the phrase
+## `HudSelectionVocab.RUNG_ROTTING_PHRASE` the rung row adds, so the card says which of the two it is
+## without the player having to know the sentinel.
+const BUILD_TURNS_ROTS := -3
+
+## **THE NET AT WHICH A METER NEITHER GROWS NOR ROTS** — a build crew whose whole output goes on the
+## rung's maintenance rate, so `crew work − demand` is exactly this. The client's copy of the sim's
+## `intensification::BUILD_BALANCE_HOLDS`, and the ONE cut point `build_turns_at` splits its two
+## non-finishing answers on, so the sheet and the card can never disagree about which side of the rate
+## a committed crew is on.
+##
+## Named separately from `BUILD_WORK_NONE` — the same number — because the two are different
+## statements: that one is *no work at all*, this one is the **boundary between two published
+## answers**. Borrowing the other's name here is how the rot case gets asserted away.
+const BUILD_BALANCE_HOLDS := 0.0
 
 ## **A METER NOBODY HAS PUT WORK INTO**, and **a meter standing exactly at its cost** — the two edges
 ## of `build_verb`'s three-state test, in the published fraction's own units (`improvement_progress`
@@ -3186,7 +3222,8 @@ static func improvement_forecast(src: Dictionary, kind: String, prefix: String, 
 ## below its cost re-entered the *building* state with nothing set and could not be repaired until the
 ## player re-issued the command. They never withdrew that intent: **a player who has paid for a rung
 ## and watched it slip adds HANDS, not a re-declaration.** It also retired `abandon_improvement`,
-## which existed to clear a stored verb — walking away is unstaffing the builders now.
+## which existed to clear a stored verb; taking the hands off is what the grammar offers now, and it
+## leaves the declaration standing (`labor-ui.md` → "RETIRED — `abandon_improvement`").
 ##
 ## **THE METER'S FULLNESS AND THE RUNG'S ACHIEVEMENT ARE TWO FACTS AND MUST STAY ORTHOGONAL.** This
 ## reads fullness (`improvement_progress` against its own cost); `improvement_is_done` reads the rung's
@@ -3220,7 +3257,7 @@ static func build_verb(src: Dictionary, prefix: String, kind: String,
 ## as *fine*: a sheet quoting `Cultivating 0 / 50 work (0%)`, a `0%` rung badge on the map, and not one
 ## word anywhere saying nothing was happening. A declared-but-unstaffed build is an **actionable
 ## standing fact**, not an absence of information, exactly as the `∞` one state over is
-## (`BUILD_TURNS_NEVER`, `DetailFormat.build_turns_never`), and the client DERIVES it rather than
+## (`BUILD_TURNS_HOLDS` / `BUILD_TURNS_ROTS`), and the client DERIVES it rather than
 ## asking for a wire field because the declaration, the crew and the meter are all already published.
 ##
 ## **THE THREE UNSTAFFED-LOOKING STATES ARE DIFFERENT NEWS AND ARE KEPT APART HERE, once**:
@@ -3228,7 +3265,7 @@ static func build_verb(src: Dictionary, prefix: String, kind: String,
 ## | crew | meter | state | what it means |
 ## |---|---|---|---|
 ## | 0 | 0 | `BUILD_UNSTAFFED_UNSTARTED` | not started — nobody assigned |
-## | >0, under the rate | any | (not this function's) `BUILD_TURNS_NEVER` → `∞` | never finishes at this crew |
+## | >0, at or under the rate | any | (not this function's) `BUILD_TURNS_HOLDS` / `BUILD_TURNS_ROTS` → `∞` | never finishes at this crew |
 ## | 0 | >0 | `BUILD_UNSTAFFED_SLIDING` | the meter is bleeding back |
 ##
 ## The middle row is a STAFFED build and answers `BUILD_STAFFED` here, so the `∞` face and this
@@ -3283,16 +3320,21 @@ static func build_is_unstaffed(state: String) -> bool:
 ## already decided; comparing a composed `work_per_turn` against zero would be a second opinion about
 ## a number the sim owns, which is the drift that once quoted `≈50 turns` for a build that never moved.
 ##
-## **`BUILD_TURNS_NEVER` COVERS BOTH ∞ STATES TODAY, so it answers `HOLDING`.** The wire publishes one
-## never-finishes sentinel (`sim_schema::BUILD_NEVER_FINISHES`) for a crew at OR under the rate, so
-## holding and losing are not distinguishable on it yet; the amber is the conservative reading of the
-## pair and matches what the face has always worn there. `LOSING` is reachable now only through the
-## SLIDING state, which is the meters' own answer rather than an arithmetic sign: work banked, nobody
-## on it, so the rate is being paid by nothing.
+## **EACH ∞ SENTINEL HAS ITS OWN PACE, because the wire publishes two of them.**
+## `sim_schema::BUILD_METER_HOLDS` is the crew at the rate and answers `HOLDING`;
+## `sim_schema::BUILD_METER_ROTS` is the crew UNDER it and answers `LOSING`, which is the red the
+## schema promises for work already paid for and now bleeding. The amber used to cover both — the
+## conservative reading while there was ONE sentinel — and reading it that way after the split told a
+## player whose build was being destroyed the same thing it tells one merely treading water.
+##
+## `LOSING` is additionally reachable through the SLIDING state, which is the meters' own answer
+## rather than an arithmetic sign: work banked, nobody on it, so the rate is being paid by nothing.
 static func build_pace(turns: int, unstaffed_state: String = BUILD_STAFFED) -> String:
     if unstaffed_state == BUILD_UNSTAFFED_SLIDING:
         return BUILD_PACE_LOSING
-    if turns == BUILD_TURNS_NEVER:
+    if turns == BUILD_TURNS_ROTS:
+        return BUILD_PACE_LOSING
+    if turns == BUILD_TURNS_HOLDS:
         return BUILD_PACE_HOLDING
     if turns == BUILD_TURNS_NO_ESTIMATE:
         return BUILD_PACE_UNKNOWN
@@ -3378,21 +3420,28 @@ static func build_upkeep_demand(src: Dictionary, prefix: String, improvement: St
 ## **THE SIM'S OWN TURN ESTIMATE** for whatever this source is building. Per SOURCE, not per rung, so
 ## it takes no improvement.
 ##
-## **THREE ANSWERS, AND THE CLIENT COMPARES NOTHING TO TELL THEM APART.** A count is a finish date at
-## the crew that is on it; `BUILD_TURNS_NEVER` is *this staffing never finishes*, which renders as an
-## amber `∞`; `BUILD_TURNS_NO_ESTIMATE` is *there is genuinely no answer*, which renders as no line.
-## It flattened every negative to the second of those, which is what left the tile card and the herd
-## drawer silent on the one build state a player must act on.
+## **FOUR ANSWERS, AND THE CLIENT COMPARES NOTHING TO TELL THEM APART.** A count is a finish date at
+## the crew that is on it; `BUILD_TURNS_HOLDS` is *this staffing holds the meter where it is*, an amber
+## `∞`; `BUILD_TURNS_ROTS` is *this staffing is losing work already paid for*, a red one; and
+## `BUILD_TURNS_NO_ESTIMATE` is *there is genuinely no answer*, which renders as no line.
+##
+## **EVERY SENTINEL THE WIRE SPELLS MUST BE PASSED THROUGH, and each new one is a fresh chance to get
+## this wrong.** This read accepted `>= 0` and `-2` and flattened everything else to *no answer*, so
+## when the sim split `-3` out of `-2` a real, staffed, priced build that was actively bleeding banked
+## work rendered as NO LINE — the same silence the tile card and the herd drawer showed for a source
+## nobody had touched. Twice now, silence has read as success on this exact row.
 ##
 ## **THE SIM DRAWS TWO BOUNDARIES HERE THAT A CLIENT-SIDE COMPARISON WOULD BLUR**, and both reach this
 ## reader as `-1`: an UNSTAFFED source has promised nothing (a comparison would call every idle
 ## improvement on the map a never-finisher), and a build whose knowledge, site or species gate does not
 ## hold accrues nothing for a reason that has nothing to do with staffing. Neither is this client's to
-## re-derive — it holds no gates — so any unrecognised negative reads as *no answer* rather than being
-## guessed at.
+## re-derive — it holds no gates — so an unrecognised negative reads as *no answer* rather than being
+## guessed at. **That fallback is a floor, not a licence**: it keeps a future sentinel legible as the
+## STALLED hazard instead of blank, and it is not a substitute for reading a value the wire already
+## publishes.
 static func build_turns_remaining(src: Dictionary, prefix: String) -> int:
     var turns := int(src.get(prefix + FORECAST_BUILD_TURNS_KEY, BUILD_TURNS_NO_ESTIMATE))
-    if turns >= 0 or turns == BUILD_TURNS_NEVER:
+    if turns >= 0 or turns == BUILD_TURNS_HOLDS or turns == BUILD_TURNS_ROTS:
         return turns
     return BUILD_TURNS_NO_ESTIMATE
 
@@ -3556,12 +3605,13 @@ static func is_unbuilt_and_unpaid(src: Dictionary, prefix: String, kind: String)
 ## being raised, and the BUILD crew is what supplies it there, so only the surplus is progress — the
 ## sim's `intensification::net_build_supply`, transcribed. Without the term this quoted a finish date
 ## the crew cannot reach; `core_sim/tests/build_turns_closed_form.rs` pins the two forms equal on the
-## exported snapshot. **A crew at or below the rate answers `BUILD_TURNS_NEVER`**, which is a real
-## answer about a stated crew rather than the absent one `BUILD_TURNS_NO_ESTIMATE` names.
+## exported snapshot. **A crew exactly AT the rate answers `BUILD_TURNS_HOLDS` and one UNDER it
+## answers `BUILD_TURNS_ROTS`** — both real answers about a stated crew, where
+## `BUILD_TURNS_NO_ESTIMATE` names an absent one.
 ##
 ## **THIS IS THE ONE COMPARISON THE CLIENT STILL MAKES, and it survives because the sim cannot answer
-## the question it asks.** `buildTurnsRemaining` publishes all three answers — including
-## `BUILD_TURNS_NEVER` — for the crew ALREADY on the source, and every crewless surface reads it
+## the question it asks.** `buildTurnsRemaining` publishes all four answers — including both
+## non-finishing ones — for the crew ALREADY on the source, and every crewless surface reads it
 ## through `build_turns_remaining` rather than re-deriving anything. A stepper the player is dragging
 ## is a crew the sim has never seen, so there is nothing to read; what makes that safe is that the two
 ## agree exactly at the COMMITTED crew, which is now checkable on three states rather than two.
@@ -3642,8 +3692,15 @@ static func build_turns_at(src: Dictionary, prefix: String, improvement: String,
     # the tile card beside it rendered the sim's own `never finishes`.
     var work_per_turn := float(workers) * per_worker_turn \
         - build_upkeep_demand(src, prefix, improvement)
+    # **AND THE NON-FINISHING ANSWER FORKS ON THE SIGN, exactly where the sim forks it**
+    # (`intensification::build_turns_estimate`, split on `BUILD_BALANCE_HOLDS`). A sheet that answered
+    # `HOLDS` for both would quote an amber `∞` for the crew the tile card renders in red — the two
+    # producers disagreeing about the very decision the stepper is being dragged through, which is the
+    # one thing having two producers is not allowed to cost.
+    if work_per_turn < BUILD_BALANCE_HOLDS:
+        return BUILD_TURNS_ROTS
     if work_per_turn <= BUILD_WORK_NONE:
-        return BUILD_TURNS_NEVER
+        return BUILD_TURNS_HOLDS
     # **THE GEAR TERM SATURATES IN THE CREW, and the `min` is on the HEAD COUNT.** Coverage arms a
     # prefix of the party, so an eleventh worker with ten sets of hurdles between them contributes
     # nothing — without the `min` this would keep crediting gear the band does not hold and quote a

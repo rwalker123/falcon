@@ -14,11 +14,16 @@
 //! rung up the ladder be a *bigger job* than the one below it, and what makes a build finish sooner as
 //! the faction improves.
 //!
-//! **A CREW'S TURN IS ONE BUDGET** (`docs/plan_standing_upkeep.md` §2.2). [`WorkBudget`] is the seam
-//! that splits it: a rung's standing [`RungUpkeep`] draws first (*you hold what you have before you
-//! take from it*), the build in flight takes what is left, and production gets the remainder. That
-//! **dissolved the investment dip** — `yield_fraction_while_building` was a work-budget conflict
-//! hardcoded as a fraction, and under one budget it is arithmetic rather than a dial.
+//! **THE PLAYER SPLITS THE BAND, and the sim splits nothing** (`docs/plan_standing_upkeep.md` §2.2).
+//! A source carries a **take** crew and a **build** crew, each a number the player typed, and the
+//! keeping is a band-level pool beside them; all three draw on one finite band, so the competition
+//! between them is visible in the allocation rather than derived from a fraction. That is what
+//! **dissolved the investment dip** — `yield_fraction_while_building` said *"this crew is preparing
+//! ground, not gathering"*, which is true of a **shared** crew and of nothing else.
+//!
+//! What the build's own output is net of is the rung's standing [`RungUpkeep`]: the rate is owed
+//! every turn, while building and while holding alike, so only a build crew's **surplus** above it is
+//! progress and a crew at or below the rate never finishes.
 //!
 //! This module is the **data + the seam**, not a second copy of the rules:
 //! - [`LadderConfig`] (`data/intensification_ladder.json`) holds one [`RungDef`] record per rung —
@@ -405,8 +410,9 @@ pub const REFERENCE_BUILD_RUNG: RungKey = RungKey::PlantTended;
 pub const SOLE_BUILDER: u32 = 1;
 
 /// **A rung that declares no standing upkeep** — what its `upkeep_demand` answers, and what a crew
-/// with no maintenance allocation supplies. Every shipped rung today (`upkeep: null` on all six
-/// records), so the upkeep half of the model is dormant.
+/// with no maintenance allocation supplies. On the shipped ladder that is the two **wild** rungs and
+/// nothing else: land nobody improved costs nobody anything to hold. All four managed rungs declare
+/// an upkeep.
 pub const NO_UPKEEP_DEMAND: f32 = 0.0;
 
 /// **A shortfall that costs the meter nothing** — what [`RungDef::upkeep_decay`] answers for a rung
@@ -1057,10 +1063,10 @@ pub const UNSCALED_UPKEEP: f32 = 1.0;
 /// (`docs/plan_standing_upkeep.md` §2.1). Both are in work units; the build is a fixed job you finish
 /// once, this is work you must supply **every turn** or the improvement slides back down.
 ///
-/// **`upkeep: null` means this rung has no standing cost**, which is every shipped rung today. The
-/// whole block is optional for the same reason [`RungBuild::decay_fraction_per_turn`] is: a parked
-/// `0` says "no upkeep" while reading like a live dial, so the config states the absence by being
-/// absent.
+/// **`upkeep: null` means this rung has no standing cost** — the two **wild** rungs on the shipped
+/// ladder, where there is nothing built to hold. The whole block is optional for the same reason
+/// [`RungBuild::decay_fraction_per_turn`] is: a parked `0` says "no upkeep" while reading like a live
+/// dial, so the config states the absence by being absent.
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub struct RungUpkeep {
     /// **THE STANDING DEMAND, IN WORK UNITS PER TURN**, before [`Self::scaled_by`] scales it. One
@@ -1190,7 +1196,7 @@ pub struct RungDef {
     /// The build meter's dials, or `None` for a rung with nothing to build.
     pub build: Option<RungBuild>,
     /// **What it costs to HOLD this rung, per turn** ([`RungUpkeep`]). `None` = this rung has no
-    /// standing cost, which is every shipped rung today.
+    /// standing cost — the two **wild** rungs, and only those: all four managed rungs declare one.
     #[serde(default)]
     pub upkeep: Option<RungUpkeep>,
     /// The coded primitives this rung recombines. **Not read yet.**
@@ -1443,8 +1449,8 @@ impl RungDef {
     /// publishes (`docs/plan_standing_upkeep.md` §2.2) — *"hands to keep this standing"*, in its own
     /// unit, beside the take's *"hands to haul the offer"*.
     ///
-    /// `0` for a rung that declares no upkeep, which is every shipped rung today: nobody is needed to
-    /// hold something that costs nothing to hold.
+    /// `0` for a rung that declares no upkeep — the two **wild** rungs: nobody is needed to hold
+    /// something that costs nothing to hold.
     pub fn upkeep_crew_needed(&self, source_measure: f32) -> u32 {
         let demand = self.upkeep_demand(source_measure);
         if demand <= NO_UPKEEP_DEMAND {
@@ -1453,20 +1459,20 @@ impl RungDef {
         (demand / PER_WORKER_OUTPUT).ceil() as u32
     }
 
-    /// **RETIRED: `yield_fraction_while_building()`** — the investment dip, `0.50` on all four rungs
-    /// that declared a build.
-    ///
-    /// It said *"this crew is preparing ground, not gathering"*, which is a **work-budget conflict
-    /// hardcoded as a fraction** (`docs/plan_standing_upkeep.md` §2.2). [`WorkBudget`] makes it
-    /// arithmetic instead: work spent on the build is work not spent on the take, so a building crew
-    /// takes nothing and the split falls out of the worker count rather than out of a dial. Four
-    /// magic numbers retired with it, along with a term nobody ever chose — the plant web sat at
-    /// `0.25` for years purely because that was the pre-move constant's value.
-    ///
+    // **RETIRED: `yield_fraction_while_building()`** — the investment dip, `0.50` on all four rungs
+    // that declared a build. It said *"this crew is preparing ground, not gathering"*, which is true
+    // of a **shared** crew and of nothing else; the player names the build's own crew now
+    // (`docs/plan_standing_upkeep.md` §2.2), so what a build costs is the people who are clearing
+    // instead and the gatherers beside them are untouched. Four magic numbers retired with it, along
+    // with a term nobody ever chose — the plant web sat at `0.25` for years purely because that was
+    // the pre-move constant's value.
+
     /// **The upkeep seam — WHAT THIS RUNG DEMANDS EVERY TURN**, in work units:
     /// `work_per_turn × scaled_by(source_measure)`. [`NO_UPKEEP_DEMAND`] for a rung that declares
-    /// none, which is every shipped rung today — so the term is inert and a crew's whole output
-    /// reaches its build and its take, exactly as it did before the term existed.
+    /// none — the two **wild** rungs, where a crew's whole output reaches its take because there is
+    /// nothing standing on the ground to hold. On the four managed rungs the term is live, and it is
+    /// charged **while building as well as while holding**: the builders pay it out of their own
+    /// output, so a crew at or below the rate never finishes.
     ///
     /// `source_measure` is the source's own scale reading — a herd's head count for
     /// [`UpkeepScale::SourceLoad`], ignored by [`UpkeepScale::Flat`], so a caller with nothing to
