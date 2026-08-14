@@ -16,22 +16,31 @@ use serde::{Deserialize, Serialize};
 pub const NO_BUILD_TURNS_ESTIMATE: i32 = -1;
 
 /// **"The meter holds exactly where it is"** — the wire value of `buildTurnsRemaining` for a **real,
-/// staffed, priced** build whose net supply is exactly **zero**: the crew's whole output is spent on
-/// the rung's maintenance rate, so nothing is banked and nothing is lost.
+/// staffed, priced** build banking exactly what its meter is bleeding, so nothing is gained and
+/// nothing is lost.
 ///
-/// The maintenance rate is a tax on building (`docs/plan_standing_upkeep.md` §2.4), so a crew at the
-/// rate never finishes. **That is an answer, not the absence of one**, and it is the one the player
-/// can act on: add hands. It shipped folded into [`NO_BUILD_TURNS_ESTIMATE`] for one slice, which
+/// **The term it is struck from is the ROT, not the maintenance rate**
+/// (`docs/plan_standing_upkeep.md` §4.6a): a build crew supplies nothing toward the rate, which the
+/// band's keeping pool owes for every meter carrying work at any fullness. What a build can fail to
+/// out-run is the ground going backwards under it, and `meterRotPerTurn` publishes that term.
+/// **That is an answer, not the absence of one**, and it is the one the player can act on: staff the
+/// keeping, or add builders. It shipped folded into [`NO_BUILD_TURNS_ESTIMATE`] for one slice, which
 /// rendered as *no line at all* on the two surfaces a player reads every turn — visible only to a
 /// compose sheet that redid the comparison itself.
 ///
-/// **It is NOT [`BUILD_METER_ROTS`], and the difference is what the player is being told.** Holding
-/// wastes the crew's turn; rotting destroys work already paid for. A reader that renders them alike
-/// is back to one sentinel for two facts, which is the defect this pair exists to close.
+/// **IT IS NOT ONLY A FAILURE, and a reader must not render it as a warning.** With **no builders
+/// and the keeping met** the balance is exactly zero — which is a player **parking** a half-built
+/// improvement, held indefinitely at no risk. That is the state `docs/plan_standing_upkeep.md` §2.4
+/// exists to make possible, and on the shipped ladder it is where this sentinel mostly lives: both
+/// plant rot rates are below one worker-turn, so a *staffed* build always out-runs its own rot.
 ///
-/// **All three conditions are load-bearing.** An **unstaffed** source reads
-/// [`NO_BUILD_TURNS_ESTIMATE`], not this: nobody has promised anything there, and claiming a source
-/// with no crew will never finish would fire on every idle improvement on the map.
+/// **It is NOT [`BUILD_METER_ROTS`], and the difference is what the player is being told.** Holding
+/// costs nothing; rotting destroys work already paid for. `-3` is the unambiguously bad one, and a
+/// reader that renders them alike is back to one sentinel for two facts.
+///
+/// **The no-answer boundary is WORK BANKED, not hands.** A meter at **zero** with nobody on it reads
+/// [`NO_BUILD_TURNS_ESTIMATE`], and so does a build the rung's own gate refuses — nothing has been
+/// promised there. A meter *carrying* work has promised something, whoever is or is not on it.
 ///
 /// Sits outside the `>= 0` range a real estimate lives in, beside its siblings, so no reader has to
 /// guess which negative it is looking at.
@@ -543,13 +552,24 @@ pub struct HerdTelemetryState {
     /// ```text
     /// gear(w)  = min(w, build_work_saturating_crew) × build_work_per_worker
     /// turns(w) = ceil((work_cost − work_done − gear(w))
-    ///                 / (w × build_work_per_worker_turn × floor / food_peak − upkeep))
+    ///                 / (w × build_work_per_worker_turn − meter_rot_per_turn))
     /// ```
     ///
-    /// **`upkeep` is the divisor's second term, and it is not optional**: the maintenance rate is
-    /// owed while building too, so a `w` at or below it never finishes where the un-netted form
-    /// quotes `work_cost / w` turns. Take it from the `*_upkeep_demand` field of the **same rung**
-    /// the `work_cost` came from.
+    /// **`meter_rot_per_turn` IS THE DIVISOR'S SECOND TERM, and `*_upkeep_demand` IS NOT**
+    /// (`docs/plan_standing_upkeep.md` §4.6a). The maintenance rate is owed to the band's **keeping
+    /// pool** for every meter carrying work, at any fullness, and a build crew supplies none of it —
+    /// so the crew's whole output is progress and netting a *rate* here would price the build against
+    /// a bill it does not pay. What a build can fail to out-run is the ground going backwards under
+    /// it, which is exactly [`Self::meter_rot_per_turn`], and it does not vary with `w`.
+    ///
+    /// **THERE IS NO FLOOR FACTOR.** `learn_multiplier(floor)` came off the build accrual when the
+    /// crews separated — a build crew is not pulling on the source — so the crew term is the head
+    /// count and nothing else. A form still carrying `× floor / food_peak` disagrees with the sim at
+    /// every floor but the food peak.
+    ///
+    /// **`*_upkeep_demand` still belongs beside `*_work_cost`**, as the **standing price** of the
+    /// rung being quoted — what holding it will cost every turn, forever, against the one-off pile
+    /// the `work_cost` names. Read it as the second half of the quote, never as a term of this form.
     ///
     /// Appended (append-only).
     #[serde(default)]
@@ -578,6 +598,15 @@ pub struct HerdTelemetryState {
     /// The rung-3 twin of [`Self::tame_upkeep_demand`].
     #[serde(default)]
     pub corral_upkeep_demand: f32,
+    /// **What this herd's at-risk meter will lose on the next decay pass**, in work units — the
+    /// plant twin's field on the same rule, so a client's build estimate is one expression across
+    /// both webs (`docs/plan_standing_upkeep.md` §4.6a).
+    ///
+    /// **It is always `0` on the shipped ladder, and that is not an omission**: neither animal rung
+    /// declares a `meter_decay`, because an under-kept flock **sheds animals** instead. Nothing eats
+    /// an animal build. Appended (append-only).
+    #[serde(default)]
+    pub meter_rot_per_turn: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -659,6 +688,7 @@ impl Default for HerdTelemetryState {
             // A herd nothing has described quotes no rung, so neither rate is owed yet.
             tame_upkeep_demand: 0.0,
             corral_upkeep_demand: 0.0,
+            meter_rot_per_turn: 0.0,
             corral_material: Vec::new(),
             pastoral_material: Vec::new(),
         }
@@ -957,13 +987,24 @@ pub struct ForagePatchState {
     /// ```text
     /// gear(w)  = min(w, build_work_saturating_crew) × build_work_per_worker
     /// turns(w) = ceil((work_cost − work_done − gear(w))
-    ///                 / (w × build_work_per_worker_turn × floor / food_peak − upkeep))
+    ///                 / (w × build_work_per_worker_turn − meter_rot_per_turn))
     /// ```
     ///
-    /// **`upkeep` is the divisor's second term, and it is not optional**: the maintenance rate is
-    /// owed while building too, so a `w` at or below it never finishes where the un-netted form
-    /// quotes `work_cost / w` turns. Take it from the `*_upkeep_demand` field of the **same rung**
-    /// the `work_cost` came from.
+    /// **`meter_rot_per_turn` IS THE DIVISOR'S SECOND TERM, and `*_upkeep_demand` IS NOT**
+    /// (`docs/plan_standing_upkeep.md` §4.6a). The maintenance rate is owed to the band's **keeping
+    /// pool** for every meter carrying work, at any fullness, and a build crew supplies none of it —
+    /// so the crew's whole output is progress and netting a *rate* here would price the build against
+    /// a bill it does not pay. What a build can fail to out-run is the ground going backwards under
+    /// it, which is exactly [`Self::meter_rot_per_turn`], and it does not vary with `w`.
+    ///
+    /// **THERE IS NO FLOOR FACTOR.** `learn_multiplier(floor)` came off the build accrual when the
+    /// crews separated — a build crew is not pulling on the source — so the crew term is the head
+    /// count and nothing else. A form still carrying `× floor / food_peak` disagrees with the sim at
+    /// every floor but the food peak.
+    ///
+    /// **`*_upkeep_demand` still belongs beside `*_work_cost`**, as the **standing price** of the
+    /// rung being quoted — what holding it will cost every turn, forever, against the one-off pile
+    /// the `work_cost` names. Read it as the second half of the quote, never as a term of this form.
     ///
     /// Appended (append-only).
     #[serde(default)]
@@ -989,6 +1030,31 @@ pub struct ForagePatchState {
     /// The rung-3 twin of [`Self::cultivation_upkeep_demand`].
     #[serde(default)]
     pub field_upkeep_demand: f32,
+    /// **What this patch's at-risk meter will lose on the next decay pass**, in work units — the
+    /// rung's own `meter_decay.per_turn` scaled by how short the keeping fell
+    /// (`docs/plan_standing_upkeep.md` §4.6a). `0.0` for as long as the rung's grace still forgives
+    /// the shortfall.
+    ///
+    /// **It is a forecast the sim can make exactly.** The pass it describes judges the supply this
+    /// turn has just stamped, so the bleed is already determined — nothing the player does next turn
+    /// can prevent it, and a positive value here cannot fail to arrive.
+    ///
+    /// **It is therefore not "what the meter just did".** On a turn the keeping is restored the meter
+    /// still loses the *previous* turn's shortfall while this reads `0`, correctly: that loss is
+    /// already spent and the next pass will take nothing. A readout wanting the turn's realised cost
+    /// must read the meter.
+    ///
+    /// **It is what a build's closed form nets, and `upkeep_demand` is not.** A build crew supplies
+    /// nothing toward the maintenance rate — the keeping pool owes that for every meter carrying
+    /// work, at any fullness — so what eats a build is the ground going backwards under it. The rot
+    /// does not vary with the build crew, so a compose sheet re-prices a *proposed* crew against it
+    /// and lands on the sim's own answer for the committed one; the client cannot derive it, holding
+    /// neither the grace state nor the rung's decay rate.
+    ///
+    /// `0` when the keeping covers the demand, inside the grace, and on a rung with no `meter_decay`.
+    /// Appended (append-only).
+    #[serde(default)]
+    pub meter_rot_per_turn: f32,
 }
 
 /// The serde default of a `build_turns_remaining` field — [`crate::NO_BUILD_TURNS_ESTIMATE`], so an

@@ -876,11 +876,9 @@ fn turns_to_tame_with(species_key: &str, keepers: u32, cap_turns: u32) -> u32 {
 /// forgiving warren is the rung's own 50 work units; binding a large migratory herd is 250.
 ///
 /// **This asserts the COST ratio off the ladder, and a live turn ORDERING beside it.** Turns are an
-/// *output* now, and since the maintenance rate became a tax on building
-/// (`docs/plan_standing_upkeep.md` §2.4) they are `cost / (crew − rate)` rather than `cost / crew` —
-/// so a turn *ratio* is no longer the cost ratio at all: the two species want different keeper loads
-/// (`animals_per_herder` differs), so the same head count leaves each a different **net**. What is
-/// invariant is the price, and that the dearer species really does take longer to reach.
+/// *output*, and the published count is a `ceil` of `bar / crew` on a bar the crew's gear has
+/// already paid part of — so a turn *ratio* is not the cost ratio. What is invariant is the price,
+/// and that the dearer species really does take longer to reach.
 #[test]
 fn taming_is_a_per_species_cost_on_the_shared_rung() {
     /// The crew both runs are staffed at. Large enough that neither rebadged species is under-herded
@@ -1011,10 +1009,15 @@ fn a_bigger_keeper_crew_tames_materially_faster() {
         fast < slow,
         "four times the keepers must finish the same job sooner: {fast} vs {slow}"
     );
-    assert_eq!(
-        fast,
-        slow.div_ceil(4),
-        "and in proportion — the crew IS the throughput: {fast} vs {slow}"
+    // **And in proportion — the crew IS the throughput.** Stated with a one-turn allowance because
+    // the published count is a `ceil` of the true span, on a bar the crew's own gear has already
+    // paid part of, and the two arms round **independently**: an exact 4:1 holds only where both
+    // divide. The exact arithmetic is pinned where there is no rounding to confound it, at the seam
+    // (`intensification::tests::a_bigger_crew_finishes_the_same_job_sooner_on_every_rung`).
+    const CEILING_SLACK_TURNS: u32 = 1;
+    assert!(
+        fast <= slow.div_ceil(4) + CEILING_SLACK_TURNS,
+        "four times the hands must bank four times the work: {fast} vs {slow}"
     );
 }
 
@@ -2546,21 +2549,21 @@ fn the_shed_is_continuous_in_the_keeping_shortfall() {
     );
 }
 
-/// **A `Tame` IN FLIGHT IS OWED ITS BUILDERS, NOT KEEPERS** — the rule carried over from the plant
-/// web (`docs/plan_standing_upkeep.md` §2.4, `fauna::herd_upkeep_supply`). A meter still being raised
-/// cannot be *held*; you cannot be billed to keep a tameness you have not finished earning.
+/// **A `Tame` IN FLIGHT IS HELD BY THE BAND'S POOL, EXACTLY AS A TAMED HERD IS**
+/// (`docs/plan_standing_upkeep.md` §4.6a, `fauna::herd_upkeep_supply`). The meter's fullness used to
+/// decide who supplied the rate — the build crew below its cost, the pool at it — and that test is
+/// deleted: the keeping owes the rate from the first work banked, and a build crew supplies nothing.
 ///
 /// And **the verb names the meter**: a `Corral` starting on a herd with no pen progress answers for
 /// `animal:pen` from its very first turn, because the supply is stamped in Population and read by the
 /// *next* Logistics pass — it has to describe the meter that pass will judge.
 #[test]
-fn an_unfinished_rung_is_owed_its_builders_and_a_finished_one_its_keepers() {
-    const A_BUILD_CREWS_TURN: f32 = 4.0;
+fn the_keeping_pool_holds_a_half_tamed_herd_and_a_tamed_one_alike() {
     const A_KEEPERS_TURN: f32 = 1.0;
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
 
-    // --- Mid-Tame: owned, partly gentled, owed the Tame crew. ---------------------------------
+    // --- Mid-Tame: owned, partly gentled, billed to the pool. ----------------------------------
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
@@ -2569,57 +2572,47 @@ fn an_unfinished_rung_is_owed_its_builders_and_a_finished_one_its_keepers() {
         herd.domestication_progress = 25.0;
     }
     let herd = herd_of(&app, &id);
-    assert!(!core_sim::herd_is_maintaining(&herd));
     assert_eq!(
-        core_sim::herd_upkeep_supply(
-            &herd,
-            Some(Improvement::Tame),
-            A_BUILD_CREWS_TURN,
-            A_KEEPERS_TURN
-        ),
-        A_BUILD_CREWS_TURN,
-        "the builders answer for the meter they are filling"
+        core_sim::herd_upkeep_supply(&herd, Some(Improvement::Tame), A_KEEPERS_TURN),
+        A_KEEPERS_TURN,
+        "a meter being raised is held by the pool like any other"
     );
     assert_eq!(
-        core_sim::herd_upkeep_supply(&herd, None, A_BUILD_CREWS_TURN, A_KEEPERS_TURN),
-        0.0,
-        "…and a crew that has stopped taming supplies it nothing, keepers or no keepers — which is \
-         what makes an ABANDONED half-tamed herd shed"
+        core_sim::herd_upkeep_supply(&herd, None, A_KEEPERS_TURN),
+        A_KEEPERS_TURN,
+        "AND A HALF-TAMED HERD NOBODY IS TAMING CAN BE HELD — the builders leave, the keepers stay"
     );
     // **A `Corral` answers for the PEN from its first turn**, before that meter has any progress.
     assert_eq!(
-        core_sim::herd_upkeep_supply(
-            &herd,
-            Some(Improvement::Corral),
-            A_BUILD_CREWS_TURN,
-            A_KEEPERS_TURN
-        ),
-        A_BUILD_CREWS_TURN,
-        "the verb names the meter, so a Corral crew is answering for the pen it is starting"
+        core_sim::herd_upkeep_supply(&herd, Some(Improvement::Corral), A_KEEPERS_TURN),
+        A_KEEPERS_TURN,
+        "the verb names the meter, so a Corral's first turn is credited to the pen it starts"
     );
 
-    // --- Tamed: owed its keepers, whatever verb is still hanging off the assignment. -----------
+    // --- Tamed: the same supplier, whatever verb is still hanging off the assignment. ----------
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
         herd.tame_outright(FactionId(0));
     }
     let herd = herd_of(&app, &id);
-    assert!(core_sim::herd_is_maintaining(&herd));
     assert_eq!(
-        core_sim::herd_upkeep_supply(
-            &herd,
-            Some(Improvement::Tame),
-            A_BUILD_CREWS_TURN,
-            A_KEEPERS_TURN
-        ),
+        core_sim::herd_upkeep_supply(&herd, Some(Improvement::Tame), A_KEEPERS_TURN),
         A_KEEPERS_TURN,
-        "a herd you have tamed is held by keepers"
+        "a herd you have tamed is held by the same pool"
     );
-    // And the maintain activity's published count follows the same split.
+    // And the maintain activity's published count follows the same rate.
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
     assert!(core_sim::herd_upkeep_demand(&herd, &fauna, &ladder) > 0.0);
+    // **AND NOTHING EATS AN ANIMAL BUILD** — neither animal rung declares a `meter_decay`, so a
+    // wholly unkept herd's meter rot is `0` and the shed is what its shortfall costs.
+    let unkept = herd_of(&app, &id);
+    assert_eq!(
+        core_sim::herd_meter_rot(&unkept, &fauna, &ladder),
+        0.0,
+        "the animal web pays a shortfall in animals, never in meter"
+    );
 }
 
 /// **THE SUPPLY STAMP ACCUMULATES ACROSS THE BANDS WORKING ONE HERD.** The demand is per-**source**,
@@ -2663,11 +2656,11 @@ fn set_maintain_workers(app: &mut App, band: bevy::prelude::Entity, workers: u32
         .get_mut::<LaborAllocation>(band)
         .expect("band exists");
     // **SET, not add** — the command it stands in for states a number, and the fixture band already
-    // carries a keeping role from `spawn_crew_of`.
-    allocation
-        .assignments
-        .retain(|assignment| !matches!(assignment.target, LaborTarget::Husbandry));
-    allocation.add_role_workers(LaborTarget::Husbandry, workers);
+    // carries a keeping role from `spawn_crew_of`. `set_assignment` is handed exactly the headroom
+    // this row needs (what every other row holds, plus these keepers), because a fixture stating a
+    // role outright is not testing the refusal a real command can make.
+    let headroom = allocation.assigned_total() + workers;
+    allocation.set_assignment(LaborTarget::Husbandry, workers, headroom, None);
 }
 
 /// **Append the band-wide `husbandry` role to a fixture's rows** — the keeping pool every
@@ -3310,23 +3303,17 @@ fn the_under_herded_notice_fires_inside_the_grace() {
 /// crate-internal.
 const FULLY_HERDED_FIXTURE: f32 = 1.0;
 
-/// **A HALF-TAMED HERD IS OWED THE SAME RATE, AND ITS BUILD CREW IS WHAT SUPPLIES IT** — the animal
-/// half of *the maintenance rate is a tax on building* (`docs/plan_standing_upkeep.md` §2.4), with
-/// **no exception for the animal web**.
+/// **A HALF-TAMED HERD IS OWED THE SAME RATE, AND THE BAND'S KEEPING POOL IS WHAT SUPPLIES IT** —
+/// the animal half of §4.6a (`docs/plan_standing_upkeep.md`), with **no exception for the animal
+/// web**.
 ///
-/// The rule the arc briefly carried — *"the animals are standing there whether or not the fence is
-/// up, so an unfinished animal rung owes its whole keeping from the keepers"* — is gone. It made an
-/// unfinished `Tame` billable to a crew that could not pay it, which is exactly what *you cannot be
-/// billed to hold something you have not finished building* forbids. What is true instead is the
-/// same sentence as on the plant web: the rate is owed either way, and below the meter's cost the
-/// **build crew** is who supplies it.
-///
-/// So a `Tame` staffed **at or above** the rate sheds nothing, and one **below** it sheds — which is
-/// the behaviour change this correction makes on the animal side, and it is intended. **Not "any
-/// build crew holds the flock"**: a crew below the rate leaves a shortfall, and the shortfall sheds
-/// in proportion exactly as an unstaffed one does.
+/// The meter's fullness used to decide who paid — the build crew below its cost, the pool at it —
+/// and that test is deleted: the pool holds every meter carrying work from the first work banked.
+/// So a half-tamed herd whose keeping is met sheds nothing, and one whose keeping is short sheds in
+/// proportion, exactly as an abandoned rung does. Its **builders** are irrelevant to the shed either
+/// way, which is what makes a half-tamed herd holdable at all when the taming crew moves on.
 #[test]
-fn a_half_tamed_herd_sheds_only_when_its_build_crew_is_below_the_rate() {
+fn a_half_tamed_herd_sheds_only_when_its_keeping_is_short() {
     let sheds_with = |supplied_fraction: f32| -> bool {
         let mut app = spawn_world();
         let id = prime_thriving_herd(&mut app);
@@ -3339,17 +3326,17 @@ fn a_half_tamed_herd_sheds_only_when_its_build_crew_is_below_the_rate() {
             herd.domestication_progress = A_REAL_TAMING_JOB / 2.0;
         }
         assert!(
-            !core_sim::herd_is_maintaining(&herd_of(&app, &id)),
-            "fixture: a half-filled meter is BUILDING"
+            !herd_of(&app, &id).is_domesticated(),
+            "fixture: the meter is half-filled, so the rung is NOT finished"
         );
         let before = herd_of(&app, &id).biomass;
-        // The *builders'* supply, stamped where the labor arm would have written it.
+        // The pool's share, stamped where the labor arm would have written it.
         seat_keeping(&mut app, &id, supplied_fraction);
         // Past the rung's grace, so a shortfall genuinely sheds.
         let grace = neglect_grace(&app, &id);
         for _ in 0..=grace + 1 {
             app.world.run_system_once(advance_husbandry);
-            // Re-stamp what the build crew supplies each turn, as the labor arm does.
+            // Re-stamp this turn's share, as the labor arm does.
             seat_keeping(&mut app, &id, supplied_fraction);
         }
         herd_of(&app, &id).biomass < before - 1e-3
@@ -3357,12 +3344,12 @@ fn a_half_tamed_herd_sheds_only_when_its_build_crew_is_below_the_rate() {
 
     assert!(
         !sheds_with(FULLY_HERDED),
-        "a build crew AT the rate holds the flock — nothing leaves"
+        "a keeping that meets the rate holds the flock — nothing leaves"
     );
     assert!(
         sheds_with(NOT_HERDED_FIXTURE),
-        "a build crew below it sheds, exactly as an abandoned rung does — the rate is owed either \
-         way"
+        "and one that falls short sheds, exactly as an abandoned rung does — the rate is owed at \
+         any meter fullness"
     );
 }
 

@@ -88,9 +88,9 @@ static func stressed_tile_fixture() -> Dictionary:
 	tile["patch_biomass"] = 22.0
 	# **THROUGH `BaseFx.unbuilt`, which drops the KEEPING as well as the meter.** It zeroed the
 	# meter by hand and kept the reference tile's `0.5` keeping demand, which is a state the sim
-	# cannot produce (`patch_unwinding_rung` answers `None` with both meters at zero) — harmless
-	# while nothing read the demand, and a halved turn estimate the moment the build's pace became
-	# `crew − rate` (`docs/plan_standing_upkeep.md` §2.4).
+	# cannot produce (`patch_unwinding_rung` answers `None` with both meters at zero). That helper
+	# also restores the meter's ROT to nothing, which is the term the build's pace nets — a wild patch
+	# holds no work, so there is none to lose (`docs/plan_standing_upkeep.md` §2.4).
 	return BaseFx.unbuilt(tile)
 
 ## A fully-tended forage patch: the Tile card shows the "🌾 Tended Patch" badge (SIGNAL tint)

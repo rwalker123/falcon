@@ -125,9 +125,9 @@ static func seed_forage_rows(tile: Dictionary) -> Dictionary:
 ## declares `work_per_turn` **2.0**, `flat`. It was `0.5` here, which is the rung's `meter_decay`
 ## and was its demand too back when SHORTFALL WAS THE DECAY; splitting those two dials is what let
 ## the demand move to two hands while the rot rate stayed exactly where it was
-## (`docs/plan_standing_upkeep.md` §2.4). A stale copy here was harmless while nothing read the
-## demand, and became a HALVED build estimate on every plant frame the moment the build's pace
-## became `crew − rate`.
+## (`docs/plan_standing_upkeep.md` §2.4). A stale copy here is what the offered face would QUOTE as
+## the standing price of a Tended Patch, and for one slice it was also a term of every plant frame's
+## build estimate — so it is the ladder's number, restated nowhere else.
 const PLANT_TENDED_UPKEEP_PER_TURN := 2.0
 
 ## The Field's own, one rung up (`plant:field`, **4.0**/`flat`) — a standing crop wants four hands
@@ -158,10 +158,24 @@ const PLANT_BUILD_WORK_FROM_GEAR := 0.0
 ## as a sum of terms with one term today.
 const BUILD_WORK_PER_WORKER_TURN := 1.0
 
+## **NOTHING IS BLEEDING OFF THIS PATCH'S METER**, which is what a kept source publishes and what
+## every fixture here wants unless it is staging the rot itself (`docs/plan_standing_upkeep.md` §2.4).
+## It is the term the build's closed form nets — `net = crew work − rot` — so a fixture that left it
+## unset would be pricing its builds against an absent field rather than against a stated nothing.
+##
+## **A ROT AND A KEEPING SHORTFALL ARE ONE STATE, so a fixture staging one must state the other**:
+## the rot exists BECAUSE the band's keeping pool came up short past this rung's grace, and a patch
+## bleeding work with `patch_upkeep_shortfall` at zero is a state no sim can produce.
+const PLANT_METER_ROT_NONE := 0.0
+
 ## Price a tile's two plant rungs in WORK, deriving each meter's `work_done` from the fraction the
 ## fixture already states — so a fixture that re-dials its progress cannot end up with a percentage
 ## and an absolute that disagree, which is the one thing this readout exists to make visible.
-static func price_plant_build(tile: Dictionary, turns: int = BUILD_TURNS_REMAINING) -> Dictionary:
+##
+## `rot` is what this patch's at-risk meter is LOSING per turn — the source-level term, published
+## whichever rung is carrying the work, and `PLANT_METER_ROT_NONE` on every kept patch.
+static func price_plant_build(tile: Dictionary, turns: int = BUILD_TURNS_REMAINING,
+        rot: float = PLANT_METER_ROT_NONE) -> Dictionary:
 	tile["patch_cultivation_work_cost"] = PLANT_CULTIVATE_WORK_COST
 	tile["patch_cultivation_work_done"] = \
 		float(tile.get("patch_cultivation_progress", 0.0)) * PLANT_CULTIVATE_WORK_COST
@@ -179,6 +193,11 @@ static func price_plant_build(tile: Dictionary, turns: int = BUILD_TURNS_REMAINI
 	# at one builder, against a rung asking 2 work a turn).
 	tile["patch_cultivation_upkeep_demand"] = PLANT_TENDED_UPKEEP_PER_TURN
 	tile["patch_field_upkeep_demand"] = PLANT_FIELD_UPKEEP_PER_TURN
+	# **AND THE ROT, WHICH IS THE TERM THE BUILD'S PACE ACTUALLY NETS** (slice 6a). The rates above
+	# are the STANDING price the offered face quotes; this is what an under-kept meter is losing right
+	# now, per SOURCE rather than per rung, and it is what decides whether a build climbs, holds or
+	# slides back.
+	tile["patch_meter_rot_per_turn"] = maxf(rot, PLANT_METER_ROT_NONE)
 	return tile
 
 ## **A PATCH NOBODY IS BUILDING — both plant meters at zero, re-priced.**
@@ -196,9 +215,10 @@ static func unbuilt(tile: Dictionary) -> Dictionary:
 	tile["patch_field_progress"] = 0.0
 	tile["patch_is_field"] = false
 	# **AND THE KEEPING GOES WITH THE RUNG.** `patch_unwinding_rung` answers `None` with both meters
-	# at zero, so a wild patch is billed nothing — and since the maintenance rate is a TAX ON
-	# BUILDING now (`docs/plan_standing_upkeep.md` §2.4), a fixture that kept the reference tile's
-	# `0.5` here would halve every turn estimate quoted against a state the sim cannot produce.
+	# at zero, so a wild patch is billed nothing, owes nothing and — with no work banked anywhere on
+	# it — has nothing that could rot. `price_plant_build` below restores the rot to
+	# `PLANT_METER_ROT_NONE` for exactly that reason: a wild patch that kept an inherited bleed would
+	# be quoting a build against work it does not hold (`docs/plan_standing_upkeep.md` §2.4).
 	tile["patch_upkeep_demand"] = 0.0
 	tile["patch_upkeep_supplied"] = 0.0
 	tile["patch_upkeep_shortfall"] = 0.0

@@ -742,17 +742,22 @@ const FORECAST_BUILD_WORK_COST_KEYS := {
     IMPROVEMENT_TAME: "tame_work_cost",
     IMPROVEMENT_CORRAL: "corral_work_cost",
 }
-# **WHAT THAT RUNG COSTS TO HOLD, PER TURN — the second term of the same pre-commit quote**, keyed by
-# improvement exactly as the cost above is and published under the same rule: unconditionally,
-# whether or not a build is in flight.
+# **WHAT THAT RUNG COSTS TO HOLD, PER TURN — the STANDING price beside `workCost`'s one-off one**,
+# keyed by improvement exactly as the cost is and published under the same rule: unconditionally,
+# whether or not a build is in flight. It is what the offered face quotes as *and this much every
+# turn, forever* — the second half of what the player is agreeing to.
 #
-# **`upkeep_demand` IS NOT THIS NUMBER AND USING IT WAS THE BUG.** That field is what the source is
-# BILLED right now, resolved through the rung actually at risk, so it reads `0` on a source with no
-# progress — nothing is at stake yet. The build's pace is `crew − rate`, so a stepper netting against
-# the billed figure quoted `50 work ÷ 1 worker = 50 turns` on a wild patch whose Cultivate rung asks
-# 2 work a turn: a build that can never advance, priced as if it would land in fifty turns, beside a
-# tile card correctly rendering the sim's own `never finishes`. **The rate belongs to the rung being
-# QUOTED**, and it is picked with the same key table the cost is, so price, meter and rate can never
+# **IT IS A PRICE AND NEVER A THRESHOLD** (`docs/plan_standing_upkeep.md` §2.4). It WAS the term the
+# build's closed form subtracted, back when the build crew supplied the rate while a meter was being
+# raised. **The keeping pool owes it at every fullness now** and a build crew's whole output is
+# progress, so a form that still netted it would quote a pace nobody pays — and a note that called it
+# a threshold would name a mechanism that no longer exists. What can still eat a build is the ROT,
+# which is `FORECAST_METER_ROT_KEY` and is a fact about the source rather than about the rung.
+#
+# **`upkeep_demand` IS STILL NOT THIS NUMBER.** That field is what the source is BILLED right now,
+# resolved through the rung actually at risk, so it reads `0` on a source with no progress — the
+# right answer for *what is this source losing* and the wrong one for *what would this rung cost to
+# hold*. The rung is picked with the same key table the cost is, so price, meter and rate can never
 # name three different rungs.
 const FORECAST_BUILD_UPKEEP_DEMAND_KEYS := {
     IMPROVEMENT_CULTIVATE: "cultivation_upkeep_demand",
@@ -789,10 +794,11 @@ const FORECAST_UPKEEP_SHORTFALL_KEY := "upkeep_shortfall"
 # take activity's `SourceYield.workersNeeded` (hands to haul the offer). It is a SIZE, not a staffing
 # order: nobody is assigned here any more, so it reads as *this much of the band's keeping pool*.
 #
-# **IT PUBLISHES ON BOTH SIDES OF COMPLETION, AND MID-BUILD IT IS THE MINIMUM VIABLE BUILD CREW** —
-# the rate is owed whoever supplies it, so the count is one arithmetic with one sentence and the
-# reader has to know which question it is answering (`keepers_wanted` / `min_build_crew`). It read `0`
-# mid-build until this arc, which is why nothing may infer *"a build is in flight"* from a zero here.
+# **IT PUBLISHES ON BOTH SIDES OF COMPLETION, AND IT IS THE SAME NOUN ON BOTH** — the KEEPING pool
+# holds a meter at every fullness (`docs/plan_standing_upkeep.md` §2.4), so a source mid-build wants
+# keepers for exactly the reason a held rung does and the count answers one question throughout. It
+# read `0` mid-build until this arc, which is why nothing may infer *"a build is in flight"* from a
+# zero here.
 const FORECAST_UPKEEP_CREW_KEY := "upkeep_workers_needed"
 # **THE COUNTDOWN, AND THE BOOL THAT MAKES ITS ZERO READABLE.** Both webs ship the pair: the flag says
 # *there is a built rung here that can be lost*, the count says how many more turns of SHORTFALL are
@@ -800,6 +806,27 @@ const FORECAST_UPKEEP_CREW_KEY := "upkeep_workers_needed"
 # *nothing at stake*, which is the same number and the opposite news — read the flag first.
 const FORECAST_NEGLECT_GRACE_FLAG_KEY := "has_neglect_grace"
 const FORECAST_NEGLECT_GRACE_KEY := "neglect_grace_remaining"
+# **WHAT THIS SOURCE'S AT-RISK METER IS LOSING PER TURN, RIGHT NOW**, in work units — the ONE term
+# that can still stop a build finishing (`docs/plan_standing_upkeep.md` §2.4).
+#
+# **IT REPLACED THE RATE IN THE BUILD'S CLOSED FORM, and the two are different questions.** The rung's
+# rate is what HOLDING costs and is owed to the band's keeping pool at every fullness; this is what
+# the keeping FAILED to cover, already resolved through the grace and the rung's own decay rate. So a
+# build crew adds its whole output and the rot is what eats into it: `net = crew work − rot`.
+#
+# **IT IS PER SOURCE, not per rung**, and it takes no improvement — at most one meter on a source is
+# at risk at a time, exactly as `FORECAST_BUILD_TURNS_KEY` is one answer per source. It is also a
+# CONSTANT with respect to the build stepper, which is why the sim publishes it rather than leaving
+# the client to compose it: the crew the player is dragging changes the progress, never the rot.
+#
+# **ALWAYS MEANINGFUL, NEVER A SENTINEL** (the `penUpkeep` rule). `NO_METER_ROT` is a measured
+# nothing, and it is the honest reading in three ordinary states: the keeping covers this source, the
+# source is still inside its grace, or the rung declares no meter decay at all — which is BOTH animal
+# rungs, whose penalty is a shed rather than a bleed, so an animal meter never goes backwards.
+const FORECAST_METER_ROT_KEY := "meter_rot_per_turn"
+## Nothing is bleeding off this meter — the keeping covers it, the grace still holds, or the rung's
+## penalty is not a meter bleed at all. A measured nothing, never *no answer*.
+const NO_METER_ROT := 0.0
 ## No standing cost at all — a wild patch, a wild herd, a rung that declares no upkeep. The demand is
 ## ALWAYS MEANINGFUL (never a sentinel), so this is a measured nothing rather than an absent answer.
 const NO_UPKEEP_DEMAND := 0.0
@@ -823,10 +850,15 @@ const FORECAST_BUILD_PER_WORKER_TURN_KEY := "build_work_per_worker_turn"
 ## working. A missing line is honest; a zero is a promise the build is about to finish.
 const BUILD_TURNS_NO_ESTIMATE := -1
 
-## **THE ANSWER FOR A STATED CREW THAT EXACTLY PAYS THE RATE** — a build crew whose whole output goes
-## on the source's own maintenance rate (`docs/plan_standing_upkeep.md` §2.4). The rate is owed every
-## turn, while building and while held alike, so only a crew's SURPLUS is progress: at the rate the
-## meter holds exactly where it is, and no number of turns is ever reached.
+## **THE ANSWER FOR A STATED CREW THAT EXACTLY MATCHES THE ROT** — a build crew banking precisely
+## what an under-kept meter is losing each turn (`docs/plan_standing_upkeep.md` §2.4). The crew's
+## whole output is progress and the rot is what eats it, so at `crew work == rot` the meter holds
+## exactly where it is and no number of turns is ever reached.
+##
+## **THE TERM IT BALANCES AGAINST CHANGED, AND THE SENTINEL DID NOT.** It used to be the rung's
+## maintenance RATE, which the build crew supplied while the meter was going up; the keeping pool owes
+## that at every fullness now, so what a crew races is the shortfall's own bleed. A meter whose keeping
+## is covered rots at nothing, and every staffed crew on it climbs.
 ##
 ## **It is its own sentinel and not `BUILD_TURNS_NO_ESTIMATE`, because the two render differently.**
 ## No-estimate means *there is no question here yet* — nobody staffed, no priced job, no room above the
@@ -849,16 +881,15 @@ const BUILD_TURNS_NO_ESTIMATE := -1
 const BUILD_TURNS_HOLDS := -2
 
 ## **THE ANSWER FOR A STATED CREW THAT IS LOSING THE BUILD** — the same real, staffed, priced job with
-## a NEGATIVE net: the crew is under the rung's maintenance rate, so past the rung's grace the decay
-## pass bleeds work the player has already bought (`sim_schema::BUILD_METER_ROTS`,
+## a NEGATIVE net: the crew banks less per turn than the meter's own ROT, so the decay pass takes back
+## more work than the builders put in (`sim_schema::BUILD_METER_ROTS`,
 ## `docs/plan_standing_upkeep.md` §2.4).
 ##
 ## **IT WAS SPLIT OUT OF `BUILD_TURNS_HOLDS` AND THE CLIENT DID NOT FOLLOW, WHICH IS THE WHOLE REASON
 ## THIS NOTE IS LONG.** `build_turns_remaining` accepted `-1` and `-2` and mapped every other negative
 ## to *no estimate*, so a real, staffed, priced build that was actively bleeding banked work rendered
 ## as **no line at all** on the tile card and the herd drawer — indistinguishable from a source nobody
-## has touched. It is reachable at the most common early staffing there is: one builder on a Cultivate
-## against `plant:tended`'s rate of `2.0` nets `−1`. **An unrecognised sentinel must render as the
+## has touched. **An unrecognised sentinel must render as the
 ## STALLED hazard, never as silence** — that is what `rung_row_value`'s fallback is for, and it is
 ## still no substitute for reading the answer the wire actually sent.
 ##
@@ -868,8 +899,8 @@ const BUILD_TURNS_HOLDS := -2
 ## without the player having to know the sentinel.
 const BUILD_TURNS_ROTS := -3
 
-## **THE NET AT WHICH A METER NEITHER GROWS NOR ROTS** — a build crew whose whole output goes on the
-## rung's maintenance rate, so `crew work − demand` is exactly this. The client's copy of the sim's
+## **THE NET AT WHICH A METER NEITHER GROWS NOR ROTS** — a build crew banking exactly what the meter
+## is bleeding, so `crew work − rot` is exactly this. The client's copy of the sim's
 ## `intensification::BUILD_BALANCE_HOLDS`, and the ONE cut point `build_turns_at` splits its two
 ## non-finishing answers on, so the sheet and the card can never disagree about which side of the rate
 ## a committed crew is on.
@@ -3248,6 +3279,40 @@ static func build_verb(src: Dictionary, prefix: String, kind: String,
             return rung
     return IMPROVEMENT_NONE
 
+## **WHICH RUNG'S METER IS THE ONE AT RISK — the newest one carrying any work at all**, full or not.
+## The client's transcription of `forage::patch_unwinding_rung` (and its animal twin), and the rung the
+## published `upkeepDemand` / `upkeepShortfall` / `meterRotPerTurn` are resolved THROUGH.
+##
+## **ONLY ONE METER ON A SOURCE IS EVER AT RISK, so only one row may carry the mark**
+## (`docs/plan_standing_upkeep.md` §2.4). A patch mid-Sow is billed for the FIELD; the tended rung
+## underneath it is not being billed at all, so a `⚠` on the tended row points the player at ground
+## that is fine — and the absence of a mark is the only thing that says a rung is healthy, so a false
+## one costs every other row its meaning.
+##
+## **THIS DECIDES WHICH ROW DISPLAYS A NUMBER, NEVER THE NUMBER.** The shortfall is the sim's and is
+## untouched; what the client resolves is where to put it, which is the same job `build_verb` already
+## does for the build verb, off the same table and the same newest-first walk.
+##
+## **IT IS NOT `build_verb`, AND THE DIFFERENCE IS A FULL METER.** That one answers *what is being
+## BUILT*, so it returns `IMPROVEMENT_NONE` at a meter standing at its cost — the source has moved on
+## to maintaining it. Maintaining it is precisely when it is at risk, so this returns the rung.
+##
+## `IMPROVEMENT_NONE` where no meter carries anything: a wild source, which is billed nothing.
+static func at_risk_rung(src: Dictionary, prefix: String, kind: String) -> String:
+    var ladder := _improvement_ladder(kind)
+    for i in range(ladder.size() - 1, -1, -1):
+        var rung := String(ladder[i])
+        if improvement_progress(src, prefix, rung) > BUILD_METER_UNSTARTED:
+            return rung
+    return IMPROVEMENT_NONE
+
+## **IS *THIS* RUNG THE ONE THE SHORTFALL IS ABOUT?** `is_under_kept` answers for the SOURCE — one
+## pool, one shortfall, one at-risk meter — and this is what routes that answer to a row. A rung that
+## is not the at-risk one is not being billed, so it renders its ordinary face.
+static func rung_is_under_kept(src: Dictionary, prefix: String, kind: String,
+        improvement: String) -> bool:
+    return at_risk_rung(src, prefix, kind) == improvement and is_under_kept(src, prefix)
+
 ## **IS THIS RUNG PROMISED AND UNMANNED — AND WHICH OF THE TWO WAYS?** `BUILD_STAFFED` when somebody
 ## is on it (or nothing is declared at all), else one of the two unstaffed states.
 ##
@@ -3260,21 +3325,26 @@ static func build_verb(src: Dictionary, prefix: String, kind: String,
 ## (`BUILD_TURNS_HOLDS` / `BUILD_TURNS_ROTS`), and the client DERIVES it rather than
 ## asking for a wire field because the declaration, the crew and the meter are all already published.
 ##
-## **THE THREE UNSTAFFED-LOOKING STATES ARE DIFFERENT NEWS AND ARE KEPT APART HERE, once**:
+## **IT ANSWERS ONE STATE NOW, AND `BUILD_UNSTAFFED_SLIDING` IS WHY IT USED TO ANSWER TWO**
+## (`docs/plan_standing_upkeep.md` §4.6a):
 ##
 ## | crew | meter | state | what it means |
 ## |---|---|---|---|
-## | 0 | 0 | `BUILD_UNSTAFFED_UNSTARTED` | not started — nobody assigned |
-## | >0, at or under the rate | any | (not this function's) `BUILD_TURNS_HOLDS` / `BUILD_TURNS_ROTS` → `∞` | never finishes at this crew |
-## | 0 | >0 | `BUILD_UNSTAFFED_SLIDING` | the meter is bleeding back |
+## | 0 | 0 | `BUILD_UNSTAFFED_UNSTARTED` | not started — nobody assigned, nothing banked |
+## | 0 | >0 | (not this function's) the wire's `BUILD_TURNS_HOLDS` / `BUILD_TURNS_ROTS` | held on purpose, or losing ground |
+## | >0 | any | `BUILD_STAFFED` | somebody is on it; the estimate speaks for the pace |
 ##
-## The middle row is a STAFFED build and answers `BUILD_STAFFED` here, so the `∞` face and this
-## warning can never both fire on one rung — which is the whole reason the fork lives in one function
-## rather than at each of the four surfaces that render it.
+## **THE MIDDLE ROW LEFT THIS FUNCTION, because it was an INFERENCE and the sim now answers it.**
+## `BUILD_UNSTAFFED_SLIDING` read *work banked + nobody on it ⇒ the meter is bleeding*, which was true
+## while an unbuilt rung was billed to its build crew. **The keeping pool holds a meter at any
+## fullness now**, so a parked build whose keeping is met simply HOLDS — a legitimate thing to do —
+## and one whose keeping is short LOSES. The sim publishes exactly that fork (`-2` / `-3`) for zero
+## builders, and `build_pace` classifies it. A client-side rot test here would be a second opinion
+## about a number the sim owns, and the two would drift.
 ##
 ## `declared` is the assignment's own `improvement`, which `build_verb` honours only where the meter it
-## names is at zero; everything else the meters answer for themselves, so a rung that eroded back with
-## nothing declared is picked up as `SLIDING` and a rung the player has just ticked as `UNSTARTED`.
+## names is at zero; everything else the meters answer for themselves, so a rung the player has just
+## ticked is picked up as `UNSTARTED` and a meter with work on it is left to the wire's own verdict.
 ## `kind` is a SOURCE kind, like `build_verb`'s.
 static func unstaffed_build_state(src: Dictionary, prefix: String, kind: String,
         declared: String, build_workers: int) -> String:
@@ -3289,64 +3359,104 @@ static func unstaffed_build_state(src: Dictionary, prefix: String, kind: String,
 ## second time and without a renderer reaching for a HUD vocabulary module to spell the key prefix.
 ## `unstaffed_build_state` is written in terms of it, so there is one fork and not two.
 static func unstaffed_build_of(progress: float, build_workers: int) -> String:
-    if build_workers > BUILD_CREW_NONE:
+    if build_workers > BUILD_CREW_NONE or progress > BUILD_METER_UNSTARTED:
         return BUILD_STAFFED
-    return BUILD_UNSTAFFED_SLIDING if progress > BUILD_METER_UNSTARTED else BUILD_UNSTAFFED_UNSTARTED
+    return BUILD_UNSTAFFED_UNSTARTED
 
-## Nothing to warn about: the rung has builders on it, or there is no rung in flight at all.
-const BUILD_STAFFED := ""
-## Declared, nobody on it, and the meter has never moved — *not started*.
-const BUILD_UNSTAFFED_UNSTARTED := "unstarted"
-## Nobody on it and the meter carries work — it is going back the way it came.
-const BUILD_UNSTAFFED_SLIDING := "sliding"
-
-## Is this state one of the two the surfaces warn on? One test, so a caller cannot accidentally read
-## `BUILD_STAFFED`'s emptiness as the wrong answer.
-static func build_is_unstaffed(state: String) -> bool:
-    return state == BUILD_UNSTAFFED_UNSTARTED or state == BUILD_UNSTAFFED_SLIDING
-
-## **WHICH WAY THE METER IS MOVING — the three states a build line's INK says**
-## (`docs/plan_standing_upkeep.md` §2.4). A rung's rate is owed every turn while the meter is being
-## raised, so a crew's SURPLUS is the pace and it has a sign:
+## **IS THIS SOURCE'S METER GOING BACKWARDS? — the wire's verdict, asked of a BARE source dict.**
+## The map's badge companion to `unstaffed_build_of`, and it exists for the same reason: a renderer
+## that has already resolved the rung should not have to reach for a HUD vocabulary module to spell a
+## key prefix. `build_pace` is the one classifier, so the map cannot form an opinion the tile card and
+## the compose sheet do not share.
 ##
-## | net | pace | the face reads |
-## |---|---|---|
-## | **> 0** | `BUILD_PACE_GROWING` | a real turn count |
-## | **= 0** | `BUILD_PACE_HOLDING` | `∞` — it holds exactly where it is |
-## | **< 0** | `BUILD_PACE_LOSING` | `∞` — it is going back the way it came |
+## **THE CREW IS PART OF THE QUESTION** — `BUILD_METER_HOLDS` is a crew treading water when there is a
+## crew and a build parked on purpose when there is not, and only the first is news. Both answer
+## `false` here regardless; the crew is passed so that this cannot start meaning *not climbing*.
+static func build_is_losing(src: Dictionary, build_workers: int) -> bool:
+    return build_pace(build_turns_remaining(src, BARE_SOURCE_PREFIX), build_workers) \
+        == BUILD_PACE_LOSING
+
+## A source dict whose forecast keys are UNPREFIXED — a herd, or the raw wire forage patch. The same
+## empty string `HudComposeVocab.BARE_FORECAST_PREFIX` spells for the HUD; it is restated here so the
+## readers above can be reached from the map layer, which holds no HUD vocabulary.
+const BARE_SOURCE_PREFIX := ""
+
+## Nothing for this fork to warn about: builders on it, work already banked (the wire's own verdict
+## covers that), or no rung in flight at all.
+const BUILD_STAFFED := ""
+## Declared, nobody on it, and the meter has never moved — *not started*. **The one state left here**,
+## and it stays because nothing else says it: the sim answers `-1` for it, correctly (there is no crew
+## to estimate for), and an honest absence of information reads as *fine* on a rung the player just
+## ticked and cannot staff.
+const BUILD_UNSTAFFED_UNSTARTED := "unstarted"
+
+## RETIRED — **`BUILD_UNSTAFFED_SLIDING`**, *work banked and nobody on it, so the meter is bleeding*
+## (`docs/plan_standing_upkeep.md` §4.6a). It was an INFERENCE from the staffing, and it is wrong under
+## the pooled keeping: a parked build whose keeping is met holds exactly where it is, indefinitely and
+## on purpose. The sim publishes the real fork for zero builders — `BUILD_TURNS_HOLDS` when the keeping
+## covers it, `BUILD_TURNS_ROTS` when it does not — and `build_pace` is the ONE classifier of it.
+
+## Is this state the one the surfaces warn on? Named rather than compared inline, so a caller cannot
+## accidentally read `BUILD_STAFFED`'s emptiness as the wrong answer.
+static func build_is_unstaffed(state: String) -> bool:
+    return state == BUILD_UNSTAFFED_UNSTARTED
+
+## **WHICH WAY THE METER IS MOVING — the four states a build line's INK says**
+## (`docs/plan_standing_upkeep.md` §2.4). A build crew's whole output is progress and an under-kept
+## meter's ROT is what eats it, so the pace is that difference and it has a sign — plus one state that
+## is not a pace at all but a player's decision:
+##
+## | net | crew | pace | the face reads |
+## |---|---|---|---|
+## | **> 0** | any | `BUILD_PACE_GROWING` | a real turn count |
+## | **= 0** | **none** | `BUILD_PACE_HELD` | held exactly where it was parked — **neutral, no mark** |
+## | **= 0** | on it | `BUILD_PACE_HOLDING` | `∞` — a crew treading water |
+## | **< 0** | any | `BUILD_PACE_LOSING` | `∞` — it is going back the way it came |
 ##
 ## **THE CLIENT DOES NOT DERIVE THE SIGN, and that is the whole discipline of this function.** It
-## classifies the sentinels the estimate already answered with and the unstaffed state the meters
-## already decided; comparing a composed `work_per_turn` against zero would be a second opinion about
-## a number the sim owns, which is the drift that once quoted `≈50 turns` for a build that never moved.
+## classifies the sentinels the estimate already answered with; comparing a composed `work_per_turn`
+## against zero would be a second opinion about a number the sim owns, which is the drift that once
+## quoted `≈50 turns` for a build that never moved. **The crew is not a second opinion** — it is the
+## one fact the wire's single `BUILD_METER_HOLDS` cannot carry, and it decides only whether the reader
+## is being told about a crew or about a parking decision.
+##
+## **PARKING A HALF-BUILT IMPROVEMENT IS A LEGITIMATE THING TO DO** (§2.4). Take the builders off a
+## Cultivate at 50%, keep the keeping staffed, and the meter holds there indefinitely — so it must not
+## wear the hazard treatment. Marking a deliberate hold is how a player is taught to ignore the mark,
+## which costs every OTHER state its meaning (`selection-card.md` → "THE ABSENCE OF A HAZARD IS THE
+## ONLY SIGNAL THAT THINGS ARE FINE").
 ##
 ## **EACH ∞ SENTINEL HAS ITS OWN PACE, because the wire publishes two of them.**
-## `sim_schema::BUILD_METER_HOLDS` is the crew at the rate and answers `HOLDING`;
-## `sim_schema::BUILD_METER_ROTS` is the crew UNDER it and answers `LOSING`, which is the red the
-## schema promises for work already paid for and now bleeding. The amber used to cover both — the
-## conservative reading while there was ONE sentinel — and reading it that way after the split told a
-## player whose build was being destroyed the same thing it tells one merely treading water.
-##
-## `LOSING` is additionally reachable through the SLIDING state, which is the meters' own answer
-## rather than an arithmetic sign: work banked, nobody on it, so the rate is being paid by nothing.
-static func build_pace(turns: int, unstaffed_state: String = BUILD_STAFFED) -> String:
-    if unstaffed_state == BUILD_UNSTAFFED_SLIDING:
-        return BUILD_PACE_LOSING
+## `sim_schema::BUILD_METER_HOLDS` is the meter standing still and `BUILD_METER_ROTS` the meter losing
+## ground — the red the schema promises for work already paid for and now bleeding. The amber used to
+## cover both, which told a player whose build was being destroyed the same thing it tells one merely
+## treading water.
+static func build_pace(turns: int, build_workers: int = BUILD_CREW_ANY) -> String:
     if turns == BUILD_TURNS_ROTS:
         return BUILD_PACE_LOSING
     if turns == BUILD_TURNS_HOLDS:
-        return BUILD_PACE_HOLDING
+        return BUILD_PACE_HOLDING if build_workers > BUILD_CREW_NONE else BUILD_PACE_HELD
     if turns == BUILD_TURNS_NO_ESTIMATE:
         return BUILD_PACE_UNKNOWN
     return BUILD_PACE_GROWING
 
-## No answer about the meter's direction — a crew of nobody, a rung the wire prices nothing on, a
-## stalled build. It renders in the neutral live ink, never as a verdict.
+## **THE CALLER THAT IS NOT TALKING ABOUT A PARTICULAR CREW** — a producer classifying a sentinel with
+## no staffing in hand. It reads as *somebody is on it*, which is the conservative arm: it keeps the
+## `∞` states wearing their warning rather than silently promoting one to a deliberate hold.
+const BUILD_CREW_ANY := 1
+
+## No answer about the meter's direction — a rung the wire prices nothing on, a gated or stalled
+## build. It renders in the neutral live ink, never as a verdict.
 const BUILD_PACE_UNKNOWN := ""
 ## The surplus is positive: the meter climbs and the face quotes a real turn count.
 const BUILD_PACE_GROWING := "growing"
-## The crew banks exactly the rate: the meter holds and no finish date is ever reached.
+## A crew is on it and banks exactly what the meter loses: it holds and no finish date is ever
+## reached. **A wasted turn, so it keeps the warning treatment.**
 const BUILD_PACE_HOLDING := "holding"
+## **NOBODY IS ON IT AND NOTHING IS BEING LOST** — the meter is parked where the player left it, and
+## the band's keeping is covering it. Not a failure, so it takes the neutral ink and no hazard mark;
+## the only thing that distinguishes it from `HOLDING` is that there is no crew to be wasting a turn.
+const BUILD_PACE_HELD := "held"
 ## The rate is going unpaid: the meter is losing ground.
 const BUILD_PACE_LOSING := "losing"
 
@@ -3402,20 +3512,42 @@ static func build_work_cost(src: Dictionary, prefix: String, improvement: String
         prefix + String(FORECAST_BUILD_WORK_COST_KEYS[improvement]), BUILD_WORK_COST_NONE)),
         BUILD_WORK_COST_NONE)
 
-## **WHAT THIS IMPROVEMENT'S RUNG COSTS TO HOLD, PER TURN** — the rate a build crew pays before any
-## of its output is progress, read at the rung being PRICED rather than at the rung the source is
-## billed for today. See `FORECAST_BUILD_UPKEEP_DEMAND_KEYS` for why the difference is the whole
-## point, and `upkeep_state`'s `demand` for the other question — *what is this source billed right
-## now* — which no proposal may be netted against.
+## **WHAT THIS IMPROVEMENT'S RUNG COSTS TO HOLD, PER TURN** — the STANDING price of the rung being
+## quoted, read at the rung being PRICED rather than at the rung the source is billed for today. It
+## sits on the offered face beside `build_work_cost`'s one-off price: *this much to build it, this
+## much every turn to keep it*.
+##
+## **IT IS NOT A TERM OF THE BUILD'S PACE AND MUST NOT BE SUBTRACTED FROM ONE**
+## (`docs/plan_standing_upkeep.md` §2.4). It was, while the build crew supplied the rate below the
+## meter's cost; the keeping pool owes it at every fullness now, so `build_turns_at` nets the
+## `meter_rot_per_turn` instead and this is a price the player reads rather than a bar the crew
+## clears. See `FORECAST_BUILD_UPKEEP_DEMAND_KEYS`, and `upkeep_state`'s `demand` for the other
+## question — *what is this source billed right now*.
 ##
 ## `NO_UPKEEP_DEMAND` for a rung the wire states no rate on, which is an honest measured nothing (the
-## `penUpkeep` rule): a rung that costs nothing to hold makes every hand on it pure progress.
+## `penUpkeep` rule): a rung that costs nothing to hold is free to keep once it is built.
 static func build_upkeep_demand(src: Dictionary, prefix: String, improvement: String) -> float:
     if not FORECAST_BUILD_UPKEEP_DEMAND_KEYS.has(improvement):
         return NO_UPKEEP_DEMAND
     return maxf(float(src.get(
         prefix + String(FORECAST_BUILD_UPKEEP_DEMAND_KEYS[improvement]), NO_UPKEEP_DEMAND)),
         NO_UPKEEP_DEMAND)
+
+## **WHAT THIS SOURCE'S AT-RISK METER IS LOSING PER TURN, IN WORK UNITS** — the one term that can stop
+## a build finishing (`docs/plan_standing_upkeep.md` §2.4), and the term `build_turns_at` nets off the
+## build crew's output.
+##
+## **PER SOURCE, SO IT TAKES NO IMPROVEMENT.** At most one meter on a source carries work at risk, and
+## the sim has already resolved which — through the grace, through the rung's own decay rate and
+## through what the band's keeping pool actually covered. This client re-derives none of that: it is
+## published for the same reason the shortfall is, that a second authority over the number a readout
+## exists to explain is how two surfaces come to disagree about one build.
+##
+## `NO_METER_ROT` is a MEASURED NOTHING and the commonest reading there is — a kept meter, a source
+## inside its grace, or a rung whose penalty is a shed rather than a bleed (both animal rungs). A
+## source rotting at nothing is a source every staffed builder advances.
+static func meter_rot_per_turn(src: Dictionary, prefix: String) -> float:
+    return maxf(float(src.get(prefix + FORECAST_METER_ROT_KEY, NO_METER_ROT)), NO_METER_ROT)
 
 ## **THE SIM'S OWN TURN ESTIMATE** for whatever this source is building. Per SOURCE, not per rung, so
 ## it takes no improvement.
@@ -3498,41 +3630,40 @@ static func upkeep_is_short(state: Dictionary) -> bool:
 ## **`0` IS A REAL ANSWER AND MEANS *NOBODY IS OWED HANDS HERE***: a wild source, standing on no rung
 ## that costs anything to hold.
 ##
-## **IT IS PUBLISHED ON BOTH SIDES OF COMPLETION NOW, AND MID-BUILD IT IS A DIFFERENT NOUN** — the
-## MINIMUM VIABLE BUILD CREW (`docs/plan_standing_upkeep.md` §2.4). The rate is owed whoever supplies
-## it, so `ceil(demand / PER_WORKER_OUTPUT)` is one arithmetic and one sentence — *hands to meet the
-## demand* — and a build crew at or below it banks nothing. It read `0` mid-build on the since-retired
-## premise that an unfinished meter owed no keeping, which is why every reader of it has to say WHICH
-## question it is answering; `build_is_in_flight` is what tells the two apart.
+## **IT IS PUBLISHED ON BOTH SIDES OF COMPLETION NOW, AND IT IS THE SAME NOUN ON BOTH**
+## (`docs/plan_standing_upkeep.md` §2.4). The keeping pool owes the rate from the first work banked
+## until the last, so `ceil(demand / PER_WORKER_OUTPUT)` is one arithmetic and one sentence — *hands
+## to meet the demand* — whether the meter is going up or standing still. It read `0` mid-build on the
+## since-retired premise that an unfinished meter owed no keeping, and for one slice after that it
+## additionally meant *the minimum viable build crew*: that reading is gone with the fullness test,
+## because a build crew supplies nothing towards the rate and its whole output is progress.
 static func keepers_wanted(src: Dictionary, prefix: String) -> int:
     return int(upkeep_state(src, prefix).get("crew", NO_UPKEEP_CREW))
 
-## **THE WORK A BUILD CREW MUST BEAT BEFORE ANY OF IT IS PROGRESS**, for the rung the sheet is
-## quoting — the same `build_upkeep_demand` its own closed form subtracts, so the stepper's threshold
-## note and its turn estimate can never sit on opposite sides of one number. The stepper states it
-## BEFORE the player commits, rather than leaving them to discover it as an ∞ afterwards.
+## RETIRED — **`min_build_work(src, prefix, improvement)`**, *"the work a build crew must beat before
+## any of it is progress"*, which the BUILDERS stepper stated as its threshold
+## (`docs/plan_standing_upkeep.md` §2.4).
 ##
-## **IT IS STATED IN WORK, NOT IN HANDS, AND IT REPLACED A HEAD COUNT** (`min_build_crew`, the
-## published `upkeepWorkersNeeded`). This model is denominated in work units — a rung declares a size
-## in work, a crew produces work per turn, a rung's keeping is a rate of work — so *"2 hold it"*
-## quietly reintroduced the worker as the unit and, worse, was answered by a field that reads `0`
-## before a build starts, which is exactly where the note is needed. The rate is the fact; how many
-## hands it takes is what the stepper beside it is for.
+## **THERE IS NO BUILD-CREW THRESHOLD LEFT TO STATE.** It answered the quoted rung's own upkeep rate,
+## which was the term the closed form subtracted while the build crew supplied the rate; the keeping
+## pool owes that at every fullness now and a builder's whole output is progress, so the smallest
+## useful build crew is one hand. A note naming a threshold that no longer exists is the exact failure
+## this arc keeps producing — a warning outliving its mechanism — so it went, along with
+## `HudWidgets.BUILD_WORK_FLOOR_META` and `HudComposeVocab.CREW_BUILD_FLOOR_TOOLTIP`.
 ##
-## `NO_UPKEEP_DEMAND` for a rung the wire prices no rate on — there is no threshold to clear, and a
-## `0 work a turn holds it` reads as a defect.
-static func min_build_work(src: Dictionary, prefix: String, improvement: String) -> float:
-    return build_upkeep_demand(src, prefix, improvement)
+## The rate itself is not lost and did not merely move: it is the **standing price** on the offered
+## face now (`build_upkeep_demand`, rendered beside `workCost` by `DetailFormat.build_price_clause`),
+## which is what it always was — a price, never a bar to clear.
 
-## **THE ONE UNDER-KEPT TEST** — this source stands on a rung that wants keeping, and the pool did not
-## cover it.
+## **THE ONE UNDER-KEPT TEST, AND IT IS NOW GENUINELY ONE** — this source stands on, or is raising, a
+## rung that wants keeping, and the band's pool did not cover it.
 ##
-## **IT IS A SHORTFALL TEST NOW, AND IT HAD TO BECOME ONE** (`docs/plan_standing_upkeep.md` §2.5).
+## **IT IS A SHORTFALL TEST, AND IT HAD TO BECOME ONE** (`docs/plan_standing_upkeep.md` §2.5).
 ## It compared a CREW COUNT — the `maintain` hands on this source — against `upkeepWorkersNeeded`,
 ## which was the right question while the keeping was staffed per source. Maintenance left the tile:
 ## there are no per-source keepers to count, so that reading went to `0 < wanted` on every managed
 ## source in the game and the ⚠ would have been permanently up, which is worse than absent. What the
-## sim now decides per source is its SHARE of the band's pool, and `upkeepShortfall` is precisely
+## sim decides per source is its SHARE of the band's pool, and `upkeepShortfall` is precisely
 ## *"the share did not cover this one"* — the same number the decay and the animal web's shed read.
 ##
 ## **IT STILL FIRES BEFORE THE ANIMALS GO.** The old objection to a shortfall test was that the
@@ -3540,47 +3671,29 @@ static func min_build_work(src: Dictionary, prefix: String, improvement: String)
 ## what answers it — `neglectGraceRemaining` counts the shortfall turns forgiven before the penalty
 ## begins, and the `At risk:` row beside this warning states it.
 ##
-## **THE METER IS THE GATE, AND A KEEPER COUNT NO LONGER IS.** This test asks about a rung that
-## STANDS, and `upkeepWorkersNeeded` stopped answering that question: it publishes on both sides of
-## completion now (`keepers_wanted`), so a source mid-Tame reports a positive count and a crew-count
-## gate lit the under-herded ⚠ on every build in the game — blaming the keeping pool for a bill the
-## BUILDERS owe. So the gate is `build_is_in_flight`, which is exactly *"is anybody owed keepers
-## here"*, and the positive demand stays beside it because a rung declaring no upkeep can be short of
-## nothing. That keeps this exclusive with `is_unbuilt_and_unpaid` by construction: one requires a
-## build in flight, the other requires none, so the two share a note slot without displacing each
-## other.
-static func is_under_kept(src: Dictionary, prefix: String, kind: String) -> bool:
-    if build_is_in_flight(src, prefix, kind):
-        return false
+## **`is_unbuilt_and_unpaid` MERGED INTO IT, AND THE DISTINCTION IT KEPT HAD NOTHING LEFT UNDER IT**
+## (§4.6a). There were two tests split on `build_is_in_flight` because the two states were owed by
+## DIFFERENT CREWS — a rung that stood was owed its keepers, a rung still going up was owed its
+## builders. **One pool owes both now**, at every fullness, so the shortfall means the same thing and
+## the remedy is the same sentence on either side of completion. Keeping them apart preserved a
+## distinction with nothing under it, and made the work board tell a player to staff BUILDERS for a
+## bill the keeping pool owes.
+##
+## **WHAT THE MERGE COST**: the note no longer distinguishes a rung being RAISED from one being HELD.
+## It does not need to — the player does the same thing either way — and the source's own card still
+## says which, on the rung row that carries the meter.
+##
+## The positive demand stays beside the shortfall because a rung declaring no upkeep can be short of
+## nothing. Reads the same shortfall the `At risk:` row does, so a source warning here always has that
+## row beside it explaining what it costs and how long is left.
+static func is_under_kept(src: Dictionary, prefix: String) -> bool:
     var state := upkeep_state(src, prefix)
     return int(state.get("crew", NO_UPKEEP_CREW)) > NO_UPKEEP_CREW and upkeep_is_short(state)
 
-## **A RUNG STILL GOING UP WHOSE BUILDERS ARE NOT PAYING THE RATE** — the OTHER way a source bleeds.
-##
-## `docs/plan_standing_upkeep.md` §2.4 gives an at-risk meter to **whichever crew owns it**: a rung
-## that STANDS is owed its keepers, a rung still going up is owed its **builders**
-## (`herd_upkeep_supply` / `patch_upkeep_supply` pick by the same state test this makes). Both pay into
-## the same `upkeepSupplied`, and the sim's decay — and, on the animal web, the shed — reads the
-## resulting shortfall without caring which crew failed to pay it. So a player who starts a Tame and
-## re-tasks the crew loses animals AND the meter, and one who leaves a crew that is merely too SMALL
-## watches the same slide at half speed.
-##
-## **THE GATE IS THE METER, NOT A ZERO KEEPER COUNT.** It was `keepers_wanted == 0`, which was
-## *"nobody is owed keepers, so this must be a build"* — an inference that died when
-## `upkeepWorkersNeeded` began publishing on both sides of completion (`keepers_wanted`). Read that way
-## the test went permanently FALSE mid-build, so the warning silently stopped existing on both webs.
-## `build_is_in_flight` states the same thing directly and cannot go stale behind a field's meaning.
-##
-## **THE SHORTFALL IS STILL WHAT IT FIRES ON, and no headcount substitutes.** It is exactly what the
-## meter decays by, and it covers both ways a build starves — nobody on it, and a crew under the rate.
-## The wire publishes no builder requirement, so a count derived by dividing the shortfall would be the
-## client inventing a number the sim never stated; what the sheet CAN state is the published minimum
-## viable crew (`min_build_crew`), which is the threshold rather than a diagnosis.
-##
-## Reads the same shortfall the `At risk:` row does, so a source warning here always has that row
-## beside it explaining what it costs and how long is left.
-static func is_unbuilt_and_unpaid(src: Dictionary, prefix: String, kind: String) -> bool:
-    return build_is_in_flight(src, prefix, kind) and upkeep_is_short(upkeep_state(src, prefix))
+## RETIRED — **`is_unbuilt_and_unpaid(src, prefix, kind)`**, *"a rung still going up whose builders are
+## not paying the rate"*. See `is_under_kept` above: one pool owes an at-risk meter at every fullness,
+## so there was one state wearing two names, and the `build_is_in_flight` split that kept them mutually
+## exclusive went with them.
 
 ## **HOW MANY TURNS THIS RUNG WOULD TAKE AT A CREW AND A FLOOR THE PLAYER IS PROPOSING** — the ONE
 ## home of the client's turn estimate, and the reason the compose sheet's number moves when the
@@ -3597,15 +3710,18 @@ static func is_unbuilt_and_unpaid(src: Dictionary, prefix: String, kind: String)
 ## would lie about the very decision the card then reports.
 ##
 ##     gear(b)  = min(b, kit_gear's saturating crew) × kit_gear's per-worker worth
-##     net(b)   = b × PER_WORKER_TURN − <the QUOTED rung's own upkeep demand>
+##     net(b)   = b × PER_WORKER_TURN − <this SOURCE's meter rot per turn>
 ##     turns(b) = ceil((cost − done − gear(b)) / net(b))
 ##
-## **`work_cost / crew` IS NOT THE BUILD PACE, and the `net` term is what changed that**
-## (`docs/plan_standing_upkeep.md` §2.4). The maintenance rate is owed every turn while the meter is
-## being raised, and the BUILD crew is what supplies it there, so only the surplus is progress — the
-## sim's `intensification::net_build_supply`, transcribed. Without the term this quoted a finish date
-## the crew cannot reach; `core_sim/tests/build_turns_closed_form.rs` pins the two forms equal on the
-## exported snapshot. **A crew exactly AT the rate answers `BUILD_TURNS_HOLDS` and one UNDER it
+## **THE MAINTENANCE RATE IS NOT IN THIS FORM, AND REMOVING IT IS SLICE 6a**
+## (`docs/plan_standing_upkeep.md` §2.4). The build crew used to supply the rate while a meter was
+## below its cost, so the pace was `crew − rate`; the keeping pool owes it at every fullness now and a
+## build crew's whole output is progress. **What can still eat a build is the ROT** — a meter whose
+## keeping is short bleeds work already bought, and builders raising it more slowly than that are
+## losing ground — so the term stayed and its identity changed. `core_sim/tests/
+## build_turns_closed_form.rs` pins the two forms equal on the exported snapshot, and the rot does not
+## vary with the build crew, which is exactly why the sim publishes it rather than the client
+## composing it. **A crew banking exactly the rot answers `BUILD_TURNS_HOLDS` and one under it
 ## answers `BUILD_TURNS_ROTS`** — both real answers about a stated crew, where
 ## `BUILD_TURNS_NO_ESTIMATE` names an absent one.
 ##
@@ -3616,16 +3732,21 @@ static func is_unbuilt_and_unpaid(src: Dictionary, prefix: String, kind: String)
 ## is a crew the sim has never seen, so there is nothing to read; what makes that safe is that the two
 ## agree exactly at the COMMITTED crew, which is now checkable on three states rather than two.
 ##
-## **THE SIM'S TWO BOUNDARIES ARE HONOURED HERE BY CONSTRUCTION, NOT BY A SECOND OPINION.** An
-## UNSTAFFED source answers `BUILD_TURNS_NO_ESTIMATE` at the first branch below, so a proposal of
-## nobody can never claim *never finishes*; and a rung whose knowledge, site or species gate refuses
-## it is never priced at all — a GATED control spends its whole slot on the reason and quotes no
-## price, so this is never reached for one.
+## **THE "NO ANSWER" BOUNDARY IS *IS THERE WORK BANKED*, NOT *IS ANYONE STAFFED*** (§4.6a). A
+## proposal of nobody on a meter carrying work is a real question with a real answer — the meter HOLDS
+## where the keeping covers it and ROTS where it does not — and it is this same form at `b = 0`, which
+## is exactly what the sim publishes for zero builders. Nothing banked and nobody on it is the DECLARED
+## state and stays `BUILD_TURNS_NO_ESTIMATE`, its own *not started* warning speaking for it.
 ##
-## **`b` IS THE BUILD'S OWN CREW, and both terms are quoted at it** (`docs/plan_standing_upkeep.md`
-## §2.2). A source carries three allocations now; the builders are the ones filling this meter, so
-## the rate is theirs and the gear is resolved over them — a tool's contribution is a rate per worker,
-## so it is summed over the *builders*, and the coverage behind it is resolved over the builders too.
+## **THE SIM'S REMAINING BOUNDARY IS HONOURED BY CONSTRUCTION, NOT BY A SECOND OPINION**: a rung whose
+## knowledge, site or species gate refuses it is never priced at all — a GATED control spends its whole
+## slot on the reason and quotes no price, so this is never reached for one.
+##
+## **`b` IS THE BUILD'S OWN CREW, and the gear is quoted at it** (`docs/plan_standing_upkeep.md`
+## §2.2). A source carries three allocations now; the builders are the ones filling this meter, so a
+## tool's contribution — a rate per worker — is summed over the *builders*, and the coverage behind it
+## is resolved over the builders too. The ROT is not quoted at any crew: it is what the KEEPING pool
+## failed to cover, which is a fact about the source that this stepper cannot move.
 ##
 ## **THE FLOOR IS NO LONGER A FACTOR ON THE RATE.** `learn_multiplier(floor)` scaled the accrual while
 ## one crew both gathered and built — *a crew pulling hard on the source it is improving builds
@@ -3650,9 +3771,11 @@ static func is_unbuilt_and_unpaid(src: Dictionary, prefix: String, kind: String)
 ## reached for.
 ##
 ## `BUILD_TURNS_NO_ESTIMATE` — rendering as no clause at all — for every case with no finite answer:
-## a crew of nobody, a rung the wire prices nothing on, a floor (or a per-worker output) at which
-## nothing accrues, and a rung whose crew is standing over an empty escapement room. Each is the
-## sim's own `None`, which it reserves for a build that is **stalled** and for nothing else.
+## a rung the wire prices nothing on, a source banking nothing per worker-turn, a rung standing over an
+## empty escapement room, and a rung with **nothing banked and nobody on it**. Each is the sim's own
+## `None`, which it reserves for a build that is **stalled** and for nothing else. **A crew of nobody
+## is NOT on that list any more** (§4.6a): on a meter carrying work it is a real, common state with a
+## real answer, and the boundary is `is there work banked` — see above.
 ##
 ## **A JOB THE GEAR ALONE ALREADY PAYS OFF IS `BUILD_FINISHES_IN_ONE_TURN`, NOT "no estimate".** A bar
 ## at or below zero completes on the first worked turn (`docs/plan_unit_costed_work.md` §6.2), which is
@@ -3661,7 +3784,17 @@ static func is_unbuilt_and_unpaid(src: Dictionary, prefix: String, kind: String)
 ## six keepers, so the estimate fell 25 → 13 → 4 → 2 → *nothing* as hands were added.
 static func build_turns_at(src: Dictionary, prefix: String, improvement: String, workers: int,
         floor: float, kit_gear: Dictionary) -> int:
-    if workers <= BUILD_CREW_NONE:
+    # **A PROPOSAL OF NOBODY IS AN ANSWER WHEREVER WORK IS BANKED** (`docs/plan_standing_upkeep.md`
+    # §4.6a). It was flatly *no estimate*, on the premise that a crew of nobody has promised nothing;
+    # what the sim now publishes for zero builders is the meter's own fate — it HOLDS where the keeping
+    # covers it and ROTS where it does not — and both are exactly this form evaluated at `b = 0`. So
+    # the boundary moved from *is anyone staffed* to **is there work banked**, which is what the
+    # branches below produce on their own once this early-out stops swallowing them.
+    #
+    # Nothing banked AND nobody on it is still no answer: that is the DECLARED state, and the rung's
+    # own *not started* warning is what speaks for it.
+    if workers <= BUILD_CREW_NONE \
+            and build_work_done(src, prefix, improvement) <= BUILD_WORK_NONE:
         return BUILD_TURNS_NO_ESTIMATE
     var cost := build_work_cost(src, prefix, improvement)
     if cost <= BUILD_WORK_COST_NONE:
@@ -3669,6 +3802,14 @@ static func build_turns_at(src: Dictionary, prefix: String, improvement: String,
     # **THE WORK PREDICATE, on the two rungs that carry it in the sim.** No room above the floor means
     # no build, so no estimate — the same `max(0, B − floor·K)` the yield curve composes, and the only
     # other place the client may compose it.
+    # **IT IS ASKED AT EVERY STAFFING, INCLUDING NONE, BECAUSE THE SIM ASKS IT THAT WAY.**
+    # `RungDef::build_accrual`'s `eligible` carries `crew_is_working_the_source`, which reads the STOCK
+    # against the floor and takes no crew count at all — so a floor above the source's own stock makes
+    # the sim answer `-1` whatever the staffing. It was gated on `workers > BUILD_CREW_NONE` for one
+    # pass, on the reasoning that nothing accrues at zero builders anyway; that is true and it is not
+    # this predicate's question, and the gate made the sheet answer the neutral *held* on a source the
+    # card correctly called `⚠ Stalled`. **Two producers disagreeing about one meter is the exact thing
+    # the closed-form equality exists to prevent.**
     if BUILD_WORK_PREDICATE_IMPROVEMENTS.has(improvement) \
             and escapement_room(src, prefix, floor) <= BUILD_NO_ESCAPEMENT_ROOM:
         return BUILD_TURNS_NO_ESTIMATE
@@ -3676,22 +3817,28 @@ static func build_turns_at(src: Dictionary, prefix: String, improvement: String,
         prefix + FORECAST_BUILD_PER_WORKER_TURN_KEY, BUILD_WORK_NONE)), BUILD_WORK_NONE)
     if per_worker_turn <= BUILD_WORK_NONE:
         # The source banks nothing per worker-turn, so there is no rate to divide by and no crew size
-        # that would change it — an absent question rather than a crew that falls short.
+        # that would change it — an absent question rather than a crew that falls short. Ungated for
+        # the reason the predicate above is: it is a fact about the SOURCE, and gating it on a crew
+        # would answer *held* where the sim answers *no estimate*.
         return BUILD_TURNS_NO_ESTIMATE
-    # **THE MAINTENANCE RATE COMES OFF THE TOP, AND IT IS THE RATE OF THE RUNG BEING QUOTED** — the
-    # published `*_upkeep_demand` for `improvement`, picked with the same key table `build_work_cost`
-    # above used, so price, meter and rate always name ONE rung. Never `demand − supplied`, and never
-    # a rate this client composes. A build crew pays it before any of its output is progress, so the
-    # surplus is the pace.
+    # **THE ROT COMES OFF THE TOP, AND IT IS THE ONLY THING THAT DOES** — the published
+    # `meter_rot_per_turn`, what this source's at-risk meter is losing while the band's keeping pool
+    # falls short of it. Read, never composed: the shortfall, the grace and the rung's decay rate are
+    # all resolved sim-side, and a client re-deriving any of them would be a second authority over the
+    # number the whole readout explains.
     #
-    # **IT WAS THE SOURCE'S `upkeep_demand`, AND THAT FIELD IS `0` ON A SOURCE WITH NO PROGRESS.**
-    # Nothing is at risk on a wild patch, so the billed figure is honestly nothing — and netting
-    # against it made the rate vanish from the form at exactly the moment the sheet is quoting a rung
-    # nobody has started. Reported from play: a wild patch, Cultivate declared, one builder, the sheet
-    # promising ≈50 turns on a rung whose rate is 2, so the meter sat at `0 / 50 (0%)` for ever while
-    # the tile card beside it rendered the sim's own `never finishes`.
-    var work_per_turn := float(workers) * per_worker_turn \
-        - build_upkeep_demand(src, prefix, improvement)
+    # **IT WAS THE QUOTED RUNG'S UPKEEP RATE, AND THE FULLNESS TEST IS WHAT DELETED THAT**
+    # (`docs/plan_standing_upkeep.md` §2.4). The build crew supplied the rate while a meter was below
+    # its cost, so only its surplus was progress; the keeping pool owes the rate at every fullness now
+    # and a builder's whole output is progress. **On a rung nobody has started that leaves
+    # `workCost / crew`** — nothing is banked, so there is nothing to rot — which is the right answer
+    # and not the issue-#545 defect returning: one builder against `plant:tended` really does bank one
+    # work a turn, and the 2.0 is the keeping pool's bill rather than a tax on the build.
+    #
+    # **IT IS CONSTANT WITH RESPECT TO THE STEPPER**, which is why the sim can publish it and the
+    # client can still price a crew the sim has never seen: dragging the builders moves the progress
+    # and never the rot.
+    var work_per_turn := float(workers) * per_worker_turn - meter_rot_per_turn(src, prefix)
     # **AND THE NON-FINISHING ANSWER FORKS ON THE SIGN, exactly where the sim forks it**
     # (`intensification::build_turns_estimate`, split on `BUILD_BALANCE_HOLDS`). A sheet that answered
     # `HOLDS` for both would quote an amber `∞` for the crew the tile card renders in red — the two

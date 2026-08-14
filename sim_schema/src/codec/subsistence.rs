@@ -508,6 +508,7 @@ fn create_herds<'a>(
                 // subtracting zero. Read beside the `*WorkCost` of the same rung.
                 tameUpkeepDemand: herd.tame_upkeep_demand,
                 corralUpkeepDemand: herd.corral_upkeep_demand,
+                meterRotPerTurn: herd.meter_rot_per_turn,
             },
         );
         entries.push(entry);
@@ -605,6 +606,7 @@ fn create_forage_patches<'a>(
                 // patch nets a rate rather than subtracting zero.
                 cultivationUpkeepDemand: patch.cultivation_upkeep_demand,
                 fieldUpkeepDemand: patch.field_upkeep_demand,
+                meterRotPerTurn: patch.meter_rot_per_turn,
             },
         );
         entries.push(entry);

@@ -79,14 +79,13 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
   - **Accrues AFTER the turn's take**, so the turn pays exactly what the pre-commit forecast promised
     (forecast == actual). The turn progress reaches the job's cost is the last preparing take; the full tended
     yield starts the next turn.
-  - **THE BUILD CREW PAYS THE RATE — nobody else can pay it for them**
-    (`docs/plan_standing_upkeep.md` §2.4). The meter under a running `Cultivate` is at risk like any
-    other and is owed the same rate, but the hands that supply it are its **builders**: staffing the
-    band's `agriculture` pool changes nothing about a build, because the pool reaches only sources
-    whose meters are full. So the pace is `work_cost / (crew − rate)`, and a crew at or below the
-    rate holds the meter where it is rather than advancing it. Pinned by
-    `forage_cultivation::the_reference_crew_finishes_a_cultivate_in_its_stated_turns_with_no_keeper`
-    and `a_build_crew_at_the_maintenance_rate_holds_the_meter_where_it_is`.
+  - **THE KEEPING POOL PAYS THE RATE, AND THE BUILDERS PAY NONE OF IT**
+    (`docs/plan_standing_upkeep.md` §4.6a). The meter under a running `Cultivate` is at risk like any
+    other and is owed the same rate — to the band's `agriculture` pool, at any fullness — so the
+    pace is `work_cost / crew` and staffing the pool is what stops the ground rotting under the
+    builders. Pinned by
+    `forage_cultivation::a_kept_cultivate_finishes_in_its_stated_turns_and_an_unkept_one_is_slower`
+    and `every_staffed_build_crew_climbs_when_the_keeping_is_met`.
   - **Break-even, and it is now a CROP choice** (`work_cost` 50). The figures below were measured
     under the retired 0.25 dip and describe **the shape, not today's numbers**: what a build costs is
     now the hands on it, so the forgone yield is whatever those hands would have gathered.
@@ -167,35 +166,26 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
   used to *be* the decay, which welded them: raising a demand made the improvement rot faster in
   exact proportion, so neither could be retuned. Splitting them is what let the plant demands become
   whole numbers a player can staff exactly while the rot rates stayed precisely where they were.
-  - **WHICH CREW OWES IT DEPENDS ON WHETHER THE RUNG IS BUILT** (`forage::patch_upkeep_supply`), and
-    this is the whole of the split:
+  - **THE BAND'S KEEPING POOL OWES IT, AT ANY METER FULLNESS** (`forage::patch_upkeep_supply`,
+    `docs/plan_standing_upkeep.md` §4.6a) — from the **first work banked** until the last. A
+    mid-`Cultivate` patch is billed exactly as a finished one is, and to the same hands.
 
-    | the at-risk meter | who supplies the rate | bleeds when |
-    |---|---|---|
-    | **below its cost** — *building* | the **build** crew | the crew is under the rate |
-    | **at its cost** — *maintaining* | the band's **keeping pool** | the pool is under the rate |
-
-    **The rate itself is the same either way**; only the supplier moves. And the state test is the
-    meter's **fullness** (`forage::patch_is_maintaining`), never `is_cultivated()`: a tended patch
-    eroded to 99% is *building* — a repair its `Cultivate` crew may run — while remaining tended.
-
-    **You cannot be billed to hold something you have not finished building** (§0's own definition of
-    the term). Resolving a mid-build meter's demand as a *maintain* demand charged a crew to keep a
-    tended patch that did not exist yet, and turned the reference 25-turn Cultivate into 34. Billing
-    only *completed* rungs would have been the opposite error: an abandoned half-Cultivate would then
-    cost nothing to walk away from, and the cleared ground would sit there forever — which is exactly
-    what `abandoned_preparation_decays` forbids.
-  - **AND THE RATE IS A TAX ON BUILDING, so a Cultivate's pace is `work_cost / (crew − rate)`.** The
-    builders pay the rate before any of their output is progress
-    (`intensification::net_build_supply`), so **a crew at or below it never finishes** — two hands on
-    a tended patch hold the meter exactly where it is, and one takes it backwards. The shipped plant
-    demands are what set that threshold: **two** hands to move a Cultivate at all, **four** a Sow.
-    `work_cost / crew` was this arc's own earlier headline and is now false; `buildTurnsRemaining`
-    answers *no estimate* at or below the threshold rather than quoting a date that will never
-    arrive.
-  - **The builders only answer for the meter they are filling.** A crew mid-`Cultivate` on a patch
-    whose half-sown Field is the at-risk meter supplies that Field nothing — they are not sowing — so
-    it bleeds exactly as it would with nobody there.
+    **The meter's FULLNESS used to decide who paid** — the build crew below its cost, the pool at it
+    (`forage::patch_is_maintaining`, deleted). Two states reported from ordinary play were wrong under
+    it: a **half-built** meter whose builders had left could not be held at all, bleeding its full
+    rate with keepers idle in the `agriculture` role and no command that could aim them at it; and a
+    completed rung eroded to 99% flipped into *building*, so it stopped being the pool's business at
+    the moment it began needing it. *"You cannot be billed to hold something you have not finished
+    building"* is deleted with it: **you can** — what you cannot be billed for is ground with nothing
+    on it at all.
+  - **AND THE RATE IS NOT A TAX ON BUILDING, so a Cultivate's pace is `work_cost / crew`.** A build
+    crew supplies none of the rate, so its whole output is progress and **a lone builder banks a whole
+    worker-turn** on a rung that costs two hands to hold. What can still eat a build is the **rot** —
+    the ground going backwards while the keeping is short — which is a *countdown* term
+    (`RungDef::build_balance`, published as `meterRotPerTurn`) and never an accrual one.
+  - **The builders' identity no longer changes the supply, but the meter's still does.** A crew
+    mid-`Cultivate` on a patch whose half-sown Field is the at-risk meter is not sowing — and the pool
+    holds the Field anyway, because holding is not building.
   - **THE VERB NAMES THE METER, AND THAT IS WHAT SURVIVES THE ONE-TURN CARRY.** The supply is stamped
     in Population and read by the *next* Logistics pass, so it has to describe the meter that pass
     will judge — not the one that was at risk when it was written. `patch_upkeep_supply` therefore
@@ -208,10 +198,10 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
     top of each turn). The demand is per-**source**, so two bands each put a fraction of it on the
     ground; assigning would let whichever band the loop visited last speak for all of them — a crew
     *gathering* a patch a second crew is sowing would overwrite the sowers' supply with its own zero.
-  - **And the hand-off closes the seam.** When a build completes, the crew that raised it moves onto
-    the **band's `agriculture` role** (the finished rung declares an upkeep), so a band never has to
-    notice that the meter changed who it is owed by. Staffing keepers *during* a build is neither
-    required nor harmful.
+  - **The completion hand-off is RETIRED** (§2.3). It moved a finished build's crew onto the band's
+    `agriculture` role so a brand-new rung did not decay before anybody noticed it cost something —
+    which cannot happen now that the bill starts at the first work banked. Staffing keepers *during* a
+    build is no longer merely harmless: it is what stops the meter rotting under its own builders.
   > #### GATHERING A PATCH NO LONGER HOLDS IT — the behavioural headline
   >
   > The retired `ForagePatch::tended_this_turn` was set by **any** crew on the tile, so a patch
@@ -240,14 +230,14 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
     those cost the investment. The animal twin is the same counter gating the shed in
     `fauna::advance_husbandry` — **one trigger, two penalties**, though the animal branch still
     counts *un-worked* turns until its own slice lands.
-  - **IT IS CONTINUOUS IN THE SHORTFALL, ON BOTH ARMS.** Half the hands a meter needs is half a
-    shortfall and bleeds at half the rung's rate — half the *keepers* on a held rung, half the
-    *builders* on one being raised. The binary flag made a crew of one and a crew of ten equally
+  - **IT IS CONTINUOUS IN THE SHORTFALL, AT ANY METER FULLNESS.** Half the hands a meter needs is
+    half a shortfall and bleeds at half the rung's rate, on a meter being raised exactly as on a held
+    one — one pool, one arithmetic. The binary flag made a crew of one and a crew of ten equally
     sufficient, so under-crewing cost exactly nothing until it reached zero. **A half is reachable on
     the SHIPPED ladder now**, which is most of what the whole-number retune bought: pinned by
     `forage_cultivation::a_half_staffed_keeping_bleeds_at_half_the_rungs_rate` on the shipped
-    demands, and the build arm at the seam by
-    `forage::tests::a_half_staffed_build_is_half_short_on_the_meter_it_is_raising`.
+    demands, and at the seam by
+    `forage::tests::a_half_staffed_keeping_is_half_short_on_the_meter_it_is_raising`.
   - **The bleed is in absolute WORK UNITS** — the rung's `upkeep.meter_decay.per_turn`, `0.5` on
     `plant:tended` and `0.75` on `plant:field`. Both are **the pacing-neutral inversion of the
     retired `0.01 × work_cost`** and were held there through the demand retune, so a wholly
@@ -287,10 +277,10 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
     — what holding this rung costs, what the crew that owes it paid, what went unmet (i.e. what it is
     losing) and how many hands would stop it. **All four are published on BOTH sides of completion**,
     because the rate is owed either way: over a patch mid-Cultivate `upkeepWorkersNeeded` reads as
-    the **minimum viable build crew** — at or below it the meter holds or rots rather than advancing —
-    and over a held one as the keepers that hold it. One arithmetic, one sentence: *hands to meet the
-    demand*, whoever is supplying it. It used to read `0` mid-build, on the since-retired premise that
-    an unfinished meter owed no keeping. Plus
+    the hands that hold a half-built meter, exactly as over a held one it is the keepers that hold a
+    finished rung. One arithmetic, one sentence: *hands to meet the demand*. It is **not** a minimum
+    viable build crew — a build crew supplies none of the rate (§4.6a) — and it used to read `0`
+    mid-build, on the since-retired premise that an unfinished meter owed no keeping. Plus
     `hasNeglectGrace` / `neglectGraceRemaining` — the **countdown**,
     not the counter (`0` = reverting now; a worked patch reads `grace + 1`, the honest *"walk away and
     you have this long"*), published through the *same* `patch_unwinding_rung` seam the pass bleeds

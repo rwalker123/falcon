@@ -41,24 +41,23 @@ use sim_runtime::TerrainType;
 
 // ---- Probe constants (harness parameters, not gameplay levers) --------------------------------
 
-/// **Every build in this probe is staffed to its rung's REFERENCE crew**, so the figures it reports
-/// are the turns the config comment quotes rather than an arbitrary staffing level's. A rung that
-/// declares no `crew_needed` (both animal rungs) is probed at one worker.
+/// **Every build in this probe is staffed to the same stated crew**, so the figures it reports are
+/// comparable rung to rung rather than being an arbitrary staffing level's.
 fn full_crew(rung: &RungDef, source_measure: f32) -> u32 {
     // The rung declares no crew any more (`docs/plan_standing_upkeep.md` §2.2) — the player states
-    // a build's staffing — so the probe states its own: **the minimum viable crew, plus one**.
+    // a build's staffing — so the probe states its own: **the rung's own keeper count, plus one**.
     //
-    // **The maintenance rate is a tax on building** (§2.4), so a lone worker is below the threshold
-    // on every managed rung and would bank nothing at all — a probe of a build that never runs. One
-    // hand *above* the rate keeps every figure reading directly in work units per turn (the net is
-    // exactly `PER_WORKER_OUTPUT`) and puts the threshold itself in the harness's own arithmetic.
+    // It is held at that number rather than dropped to a lone worker only so the figures in this
+    // file stay comparable with the ones recorded against it. **The rate is no longer a tax on
+    // building** (§4.6a): a build crew supplies nothing toward it, so a lone worker would bank its
+    // whole `PER_WORKER_OUTPUT` on every managed rung.
     rung.upkeep_crew_needed(source_measure)
         .saturating_add(SOLE_WORKER)
 }
 
-/// The one hand a probe puts **above** the rung's maintenance rate, so its figures read directly in
-/// work units per turn of *net* progress and any other number would imply the probe had chosen a
-/// staffing level.
+/// The one hand a probe puts above the rung's keeper count, so its figures read directly in work
+/// units per turn of progress and any other number would imply the probe had chosen a staffing
+/// level.
 const SOLE_WORKER: u32 = 1;
 
 /// **What one builder banks on `verb` per turn**, in work units — the term the probe's headers
@@ -67,12 +66,7 @@ const SOLE_WORKER: u32 = 1;
 /// hands that are not on it, and there is no factor left to print.
 fn builder_work_per_turn(ladder: &LadderConfig, verb: Improvement) -> f32 {
     let rung = ladder.rung_for(verb);
-    rung.build_accrual(
-        Some(verb),
-        true,
-        full_crew(rung, UNSCALED_UPKEEP),
-        UNSCALED_UPKEEP,
-    )
+    rung.build_accrual(Some(verb), true, full_crew(rung, UNSCALED_UPKEEP))
 }
 
 /// Turns each run is driven for. Long enough for every stance on both webs to reach its fixed point
@@ -302,12 +296,8 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
                 // health check and no work predicate, deliberately: sown ground draws nothing.
                 _ => true,
             };
-            let accrual = rung.build_accrual(
-                improvement,
-                eligible,
-                full_crew(rung, UNSCALED_UPKEEP),
-                UNSCALED_UPKEEP,
-            );
+            let accrual =
+                rung.build_accrual(improvement, eligible, full_crew(rung, UNSCALED_UPKEEP));
             let cost = rung
                 .build_cost(RUNG_COST_UNSCALED)
                 .expect("a rung a verb builds has a build meter");
@@ -532,8 +522,7 @@ fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOu
             let eligible =
                 herd.can_pen() && herd.is_domesticated() && herd.owner == Some(PROBE_FACTION);
             let pen_load = crate::fauna::herd_keeper_load(&herd, &fauna);
-            let accrual =
-                pen.build_accrual(improvement, eligible, full_crew(pen, pen_load), pen_load);
+            let accrual = pen.build_accrual(improvement, eligible, full_crew(pen, pen_load));
             let cost = pen
                 .build_cost(RUNG_COST_UNSCALED)
                 .expect("the pen rung has a build meter");
@@ -601,12 +590,8 @@ fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutc
             // read pre-take and pre-quantisation, never "an animal died".
             let eligible = herd.can_domesticate() && standing_above_floor > 0.0;
             let tame_load = crate::fauna::herd_keeper_load(&herd, &fauna);
-            let accrual = pastoral.build_accrual(
-                improvement,
-                eligible,
-                full_crew(pastoral, tame_load),
-                tame_load,
-            );
+            let accrual =
+                pastoral.build_accrual(improvement, eligible, full_crew(pastoral, tame_load));
             if accrual > 0.0 {
                 herd.accrue_domestication(PROBE_FACTION, accrual, tame_cost, tame_cost);
                 if herd.is_domesticated() {
@@ -1186,18 +1171,8 @@ fn probe_build_and_teach_axis() {
                 verb.map_or("-", |v| v.as_str()),
                 format!("{floor:.2}K"),
                 rung.build_cost(RUNG_COST_UNSCALED).unwrap_or(0.0),
-                rung.build_accrual(
-                    verb,
-                    true,
-                    full_crew(rung, UNSCALED_UPKEEP),
-                    UNSCALED_UPKEEP
-                ),
-                rung.build_accrual(
-                    verb,
-                    false,
-                    full_crew(rung, UNSCALED_UPKEEP),
-                    UNSCALED_UPKEEP
-                ),
+                rung.build_accrual(verb, true, full_crew(rung, UNSCALED_UPKEEP)),
+                rung.build_accrual(verb, false, full_crew(rung, UNSCALED_UPKEEP)),
                 rung.upkeep_demand(UNSCALED_UPKEEP),
             );
         }

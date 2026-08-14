@@ -1883,29 +1883,18 @@ pub fn patch_upkeep_demand(patch: &ForagePatch, ladder: &LadderConfig) -> f32 {
         .map_or(NO_UPKEEP_DEMAND, |rung| rung.upkeep_demand(UNSCALED_UPKEEP))
 }
 
-/// **IS THIS PATCH BUILDING OR MAINTAINING?** — `true` = maintaining
-/// (`docs/plan_standing_upkeep.md` §2.4). A source is **building** below its meter's cost and
-/// **maintaining** at it, and that one state test decides **nothing but who supplies the maintenance
-/// rate**: the build crew below, the band's keeping pool at it. The rate itself is owed either way.
-///
-/// **It is the METER'S FULLNESS, not the rung's achieved state**, and the two are deliberately
-/// orthogonal. A tended patch whose meter has rotted to 99% is *building* — that 1% is a repair, and
-/// its build crew pays the rate — while remaining, correctly, **tended**: whether the rung is still
-/// held is [`ForagePatch::is_cultivated`]'s retention bar, a separate axis. Folding them together is
-/// what would make a rung's *loss* and a rung's *repair* the same edge.
-///
-/// `false` for a wild patch too: there is no meter there, so there is nothing to maintain. Resolved
-/// for whichever meter [`patch_unwinding_rung`] put at risk — never for the rung the patch *stands*
-/// on, or a half-sown Field would be judged by the tended ground beneath it.
-pub fn patch_is_maintaining(patch: &ForagePatch) -> bool {
-    if patch.field_progress > RUNG_UNSTARTED {
-        patch.field_meter_full()
-    } else if patch.cultivation_progress > RUNG_UNSTARTED {
-        patch.cultivation_meter_full()
-    } else {
-        false
-    }
-}
+// **RETIRED: `patch_is_maintaining`** — *"is this patch building or maintaining"*, the meter's own
+// **fullness**, which used to decide who supplies the maintenance rate: the build crew below the
+// meter's cost, the band's keeping pool at it (`docs/plan_standing_upkeep.md` §4.6a).
+//
+// **NOTHING ABOUT HOW FULL A METER IS DECIDES WHO PAYS.** The keeping pool owes the rate for every
+// meter carrying work, from the first work banked until the last, and a build crew supplies nothing
+// toward it. §2.4's autopsy names the two states the fullness test made unreachable, both reported
+// from ordinary play: a **half-built** meter whose builders left could not be held at all — it was
+// billed to a crew that was not there and bled its full rate with keepers idle in the role and no
+// command that could aim them at it — and a **held** rung eroding to 99% flipped into *building*,
+// where the next slice's queue would have had it displace the build the player actually ordered,
+// then dip again the moment it was topped up.
 
 /// **WHAT HAS BEEN SUNK INTO THE METER AT RISK** — that meter's own stamped cost, in work units, and
 /// [`RUNG_UNSTARTED`] for a wild patch.
@@ -1925,43 +1914,50 @@ pub fn patch_at_risk_cost(patch: &ForagePatch) -> f32 {
     }
 }
 
-/// **THE WORK THE AT-RISK METER WAS OWED THIS TURN, AND WHO OWED IT** — the one place the split
-/// lives (`docs/plan_standing_upkeep.md` §2.4).
+/// **THE WORK THE AT-RISK METER WAS OWED THIS TURN, AND THE KEEPING POOL OWES ALL OF IT**
+/// (`docs/plan_standing_upkeep.md` §2.4/§4.6a).
 ///
-/// A rung's meter bleeds when *the hands it needs are not on it*, and which hands those are depends
-/// on whether the rung is finished:
+/// **A meter carrying work is billed to the band's `agriculture` pool at any fullness** — from the
+/// first work banked until the last — and a build crew supplies nothing toward it. What a crew
+/// mid-`Cultivate` owes is what a finished tended patch owes, and it is owed to the same hands. The
+/// retired fullness test is what made a half-built meter unholdable and a dipped rung the builders'
+/// business again; `patch_is_maintaining`'s gravestone above carries both autopsies.
 ///
-/// | meter | the work it is owed | bleeds when |
-/// |---|---|---|
-/// | **incomplete** — a build in flight, or one walked away from | the **build** crew | no builders |
-/// | **complete** — a rung being held | the **maintain** crew | no keepers |
+/// `keeping_share` is this source's slice of that pool ([`crate::systems::maintenance_shares`]) — a
+/// work amount, not a crew, because a pool does not divide into whole people.
 ///
-/// **You cannot be billed to hold something you have not finished building.** Charging a mid-build
-/// meter the *maintain* demand made a crew pay to keep a tended patch that did not exist yet, which
-/// turned a 25-turn Cultivate into 34 — and it contradicts the term's own definition. Charging only
-/// *completed* rungs would have been the other error: an abandoned half-Cultivate would then cost
-/// nothing to walk away from, and the cleared ground would sit there forever.
-///
-/// **The builders only answer for the meter they are actually filling.** A crew mid-`Cultivate` on a
-/// patch whose half-sown Field is the at-risk meter supplies that Field nothing — they are not sowing
-/// — so it bleeds, exactly as it would with nobody there at all.
-///
-/// It is **continuous on both arms**: half the builders on an incomplete meter is half a shortfall,
-/// precisely as half the keepers is on a complete one.
+/// [`NO_UPKEEP_DEMAND`] where there is no meter to hold and none being started: nothing is owed, so
+/// nothing can be short.
 pub fn patch_upkeep_supply(
     patch: &ForagePatch,
     improvement: Option<Improvement>,
-    build_work: f32,
-    maintain_work: f32,
+    keeping_share: f32,
 ) -> f32 {
-    // **The meter this crew's hands answer for is the NEWEST of two readings**: the one with
-    // progress on it, and the one their verb is filling. The second is what keeps the stamp on the
-    // right meter across the one-turn carry — a crew starting a `Sow` on a finished tended patch is
-    // answering for the **Field** from its very first turn, even though the Field has no progress on
-    // it until that turn's accrual lands. Reading only the first put their work against the tended
-    // rung, and the next Logistics pass — which sees a Field that now *does* have progress — judged
-    // that Field against a supply nobody had credited to it, so a Sow bled 0.75 off its own meter on
-    // its second turn.
+    match patch_meter_answering_for(patch, improvement) {
+        Some(_) => keeping_share,
+        None => NO_UPKEEP_DEMAND,
+    }
+}
+
+/// **WHICH METER THIS TURN'S KEEPING ANSWERS FOR** — the **newest** of two readings: the meter with
+/// progress on it, and the meter this crew's verb is filling.
+///
+/// **The verb half is what survives the one-turn carry.** The supply is stamped in Population and
+/// read by the *next* Logistics pass, so it has to describe the meter that pass will judge — not the
+/// one that was at risk when it was written. A crew starting a `Sow` on a finished tended patch is
+/// answering for the **Field** from its very first turn, even though the Field has no progress on it
+/// until that turn's accrual lands. Reading progress alone put their work against the tended rung,
+/// and the next pass — seeing a Field that now *does* have progress — judged that Field against a
+/// supply nobody had credited to it, so a Sow bled `0.75` off its own meter on turn two.
+///
+/// Since §4.6a the **identity** of the meter no longer changes what is supplied — the keeping share
+/// is the answer for either — but the resolution stays, because *which* meter this describes is what
+/// the carry is about, and because `None` (nothing built, nothing being built) is a real third
+/// answer that must not be paid.
+fn patch_meter_answering_for(
+    patch: &ForagePatch,
+    improvement: Option<Improvement>,
+) -> Option<RungKey> {
     let by_progress = if patch.field_progress > RUNG_UNSTARTED {
         Some(RungKey::PlantField)
     } else if patch.cultivation_progress > RUNG_UNSTARTED {
@@ -1979,29 +1975,35 @@ pub fn patch_upkeep_supply(
         Improvement::Cultivate => Some(RungKey::PlantTended),
         Improvement::Tame | Improvement::Corral => None,
     });
-    let answering_for = match (by_progress, by_verb) {
-        (Some(RungKey::PlantField), _) | (_, Some(RungKey::PlantField)) => RungKey::PlantField,
-        (Some(key), _) => key,
-        (None, Some(key)) => key,
+    match (by_progress, by_verb) {
+        (Some(RungKey::PlantField), _) | (_, Some(RungKey::PlantField)) => {
+            Some(RungKey::PlantField)
+        }
+        (Some(key), _) | (None, Some(key)) => Some(key),
         // Nothing built here and nothing being built, so nothing is owed and nothing can be short.
-        (None, None) => return NO_UPKEEP_DEMAND,
-    };
-    // **The state test decides only who supplies** (`patch_is_maintaining`): the meter's *fullness*,
-    // never the rung's achieved state — a tended patch eroded to 99% is being repaired by builders.
-    let maintaining = match answering_for {
-        RungKey::PlantField => patch.field_meter_full(),
-        _ => patch.cultivation_meter_full(),
-    };
-    if maintaining {
-        maintain_work
-    } else if by_verb == Some(answering_for) {
-        // The builders answer only for the meter they are actually filling: a crew mid-`Cultivate`
-        // beside a half-sown Field supplies that Field nothing, so it bleeds exactly as it would
-        // with nobody there.
-        build_work
-    } else {
-        NO_UPKEEP_DEMAND
+        (None, None) => None,
     }
+}
+
+/// **WHAT THIS PATCH'S AT-RISK METER WILL LOSE ON THE NEXT DECAY PASS**, in work units — what
+/// the **next** [`advance_cultivation`] will take off it, quoted through the rung's own
+/// [`RungDef::meter_rot`] seam so the published number and the pass that applies it cannot use two
+/// different rates.
+///
+/// **It is a forecast the sim can make exactly, not an estimate**: that pass judges the supply this
+/// turn has just stamped, so the bleed is already determined — `RungDef::meter_rot` states the
+/// ordering. It is `0` for as long as the grace forgives the shortfall.
+///
+/// **The build countdown's denominator and the wire's `meterRotPerTurn` are this one number**: what
+/// eats a build is not the maintenance rate (the keeping pool owes that whatever the builders do) but
+/// the ground going backwards under them.
+///
+/// [`NO_UPKEEP_DECAY`] on a wild patch, on one whose keeping covers its demand, and on one still
+/// inside its rung's grace.
+pub fn patch_meter_rot(patch: &ForagePatch, ladder: &LadderConfig) -> f32 {
+    patch_unwinding_rung(patch, ladder).map_or(NO_UPKEEP_DECAY, |rung| {
+        rung.meter_rot(UNSCALED_UPKEEP, patch.upkeep_supplied, patch.neglect_turns)
+    })
 }
 
 /// **WHAT WENT UNMET THIS TURN**, in work units — [`patch_upkeep_demand`] less what the meter's own
@@ -2020,11 +2022,12 @@ pub fn patch_upkeep_shortfall(patch: &ForagePatch, ladder: &LadderConfig) -> f32
 /// [`patch_upkeep_demand`], `0` on a wild patch. The plant twin of the herd row's, and the readout
 /// that makes the standing cost legible: *"this wants 1, you have 0"*.
 ///
-/// **IT IS PUBLISHED WHILE THE METER IS STILL BEING BUILT TOO**, and there it is the **minimum
-/// viable build crew**: the maintenance rate is owed either way, so a build crew at or below this
-/// count banks nothing (`intensification::net_build_supply`) and the meter holds or rots. One
-/// arithmetic, one sentence — *hands to meet the demand* — whoever is supplying it. It used to read
-/// `0` mid-build, on the since-retired premise that an unfinished meter owed no keeping.
+/// **IT IS PUBLISHED WHILE THE METER IS STILL BEING BUILT TOO**, and it means exactly the same thing
+/// there: the keeping pool owes the rate from the first work banked, so these are the hands that
+/// hold a half-built meter as much as a finished one. It is **not** a minimum viable build crew —
+/// a build crew supplies nothing toward the rate (`docs/plan_standing_upkeep.md` §4.6a), so a lone
+/// builder against a demand of `2.0` still banks its whole turn's work. It used to read `0`
+/// mid-build, on the since-retired premise that an unfinished meter owed no keeping.
 pub fn patch_upkeep_workers_needed(patch: &ForagePatch, ladder: &LadderConfig) -> u32 {
     patch_unwinding_rung(patch, ladder).map_or(NO_CREW_ON_THIS_ACTIVITY, |rung| {
         rung.upkeep_crew_needed(UNSCALED_UPKEEP)
@@ -3756,20 +3759,15 @@ mod tests {
         }
     }
 
-    /// **WHICH CREW A METER IS OWED FLIPS ON COMPLETION, and `workers_needed` flips with it**
-    /// (`docs/plan_standing_upkeep.md` §2.4). One rung, one demand, two suppliers:
+    /// **THE KEEPING POOL HOLDS EVERY METER CARRYING WORK, AT ANY FULLNESS**
+    /// (`docs/plan_standing_upkeep.md` §4.6a). One rung, one demand, **one** supplier — the
+    /// fullness test that used to move a meter between two of them is deleted.
     ///
-    /// | meter | owed | asks for keepers? |
-    /// |---|---|---|
-    /// | half-built | the **builders** | no — `0` |
-    /// | finished | the **keepers** | yes — `1` |
-    ///
-    /// The half-built row is the correction this seam exists for: resolving a mid-build meter's
-    /// demand as a *maintain* demand billed a crew to hold ground that did not exist yet, which turned
-    /// the reference 25-turn Cultivate into 34.
+    /// The half-built rows are what it exists for: a meter mid-`Cultivate` was billed to a build
+    /// crew, so taking the builders off it left keepers standing idle in the role with no command
+    /// that could aim them at the ground they were staffed to hold.
     #[test]
-    fn an_unfinished_rung_is_owed_its_builders_and_a_finished_one_its_keepers() {
-        const A_BUILD_CREWS_TURN: f32 = 2.0;
+    fn the_keeping_pool_holds_every_meter_at_any_fullness() {
         const A_KEEPERS_TURN: f32 = 1.0;
         let forage = test_forage_config();
         let ladder = LadderConfig::builtin();
@@ -3784,56 +3782,40 @@ mod tests {
         let mut patch = ForagePatch::new(UVec2::new(1, 1), forage.capacity_for(TEST_BIOME));
         patch.cultivation_cost = cost;
 
-        // --- Half-built: owed the CULTIVATE crew, and asks for no keepers. ---------------------
+        // --- Half-built: billed to the pool, and asking for the same keepers. -------------------
         patch.cultivation_progress = cost / 2.0;
-        assert!(!patch_is_maintaining(&patch));
-        // **THE SAME COUNT ON BOTH SIDES OF COMPLETION** — the maintenance rate is owed while the
-        // meter is being raised too, and only *who supplies it* moves. Mid-build the number reads as
-        // the **minimum viable build crew**: at or below it the meter holds or rots rather than
-        // advancing (`intensification::net_build_supply`).
         assert_eq!(
             patch_upkeep_workers_needed(&patch, &ladder),
             demand.ceil() as u32,
-            "hands to meet the rate, whoever is supplying it"
+            "hands to meet the rate, the same count on both sides of completion"
         );
         assert_eq!(
-            patch_upkeep_supply(
-                &patch,
-                Some(Improvement::Cultivate),
-                A_BUILD_CREWS_TURN,
-                A_KEEPERS_TURN
-            ),
-            A_BUILD_CREWS_TURN,
-            "the builders answer for the meter they are filling"
+            patch_upkeep_supply(&patch, Some(Improvement::Cultivate), A_KEEPERS_TURN),
+            A_KEEPERS_TURN,
+            "a meter being raised is held by the pool like any other"
         );
         assert_eq!(
-            patch_upkeep_supply(&patch, None, A_BUILD_CREWS_TURN, A_KEEPERS_TURN),
-            NO_UPKEEP_DEMAND,
-            "…and a crew that has stopped building supplies it nothing, keepers or no keepers — \
-             which is what makes an ABANDONED part-build decay"
+            patch_upkeep_supply(&patch, None, A_KEEPERS_TURN),
+            A_KEEPERS_TURN,
+            "AND A HALF-BUILT METER NOBODY IS BUILDING CAN BE HELD — the defect the fullness test \
+             made unreachable: the builders leave, the keepers stay, the ground holds"
         );
         // **A crew starting a Sow answers for the FIELD from its first turn**, even before that
         // meter has any progress on it — the verb says which meter their hands are on, and reading
-        // only the progress would credit their work to the rung underneath and then let the next
+        // only the progress would credit the keeping to the rung underneath and then let the next
         // turn's pass bleed the Field they had just started.
         assert_eq!(
-            patch_upkeep_supply(
-                &patch,
-                Some(Improvement::Sow),
-                A_BUILD_CREWS_TURN,
-                A_KEEPERS_TURN
-            ),
-            A_BUILD_CREWS_TURN,
-            "the verb names the meter, so a Sow crew is answering for the Field it is starting"
+            patch_upkeep_supply(&patch, Some(Improvement::Sow), A_KEEPERS_TURN),
+            A_KEEPERS_TURN,
+            "the verb names the meter, so a Sow's first turn is credited to the Field it starts"
         );
 
-        // --- Finished: owed the KEEPERS, and asks for the hands that hold it. -----------------
+        // --- Finished: the same supplier and the same count. ------------------------------------
         // **The rung is EARNED at the full cost and HELD down to its retention bar**, so a fixture
         // that fills the meter by hand has to stamp the bar the completion would have
         // (`RungDef::retention_bar`) — the achieved state and the meter's fullness are two facts.
         patch.cultivation_progress = cost;
         patch.cultivation_retain_bar = ladder.rung(RungKey::PlantTended).retention_bar(cost);
-        assert!(patch_is_maintaining(&patch));
         assert_eq!(
             patch_upkeep_workers_needed(&patch, &ladder),
             ladder
@@ -3842,20 +3824,28 @@ mod tests {
             "a held rung asks for the hands that hold it"
         );
         assert_eq!(
-            patch_upkeep_supply(
-                &patch,
-                Some(Improvement::Cultivate),
-                A_BUILD_CREWS_TURN,
-                A_KEEPERS_TURN
-            ),
+            patch_upkeep_supply(&patch, Some(Improvement::Cultivate), A_KEEPERS_TURN),
             A_KEEPERS_TURN,
-            "a finished rung is held by keepers, whatever verb is still hanging off the assignment"
+            "a finished rung is held by the pool, whatever verb is still hanging off the assignment"
         );
 
-        // --- The WRONG verb is no verb, as far as a meter is concerned. -----------------------
-        // A half-sown Field with a crew doing something else entirely: they are not filling it, so
-        // they supply it nothing and it bleeds exactly as it would with nobody there. This is the
-        // case that keeps `patch_upkeep_supply` from reading as "any builder holds any meter".
+        // --- A rung ERODED BELOW ITS COST is still the pool's, and that is the other autopsy. ---
+        // It used to flip back into *building*, so a one-percent repair became the build crew's
+        // business at the very moment the keeping needed to cover it.
+        patch.cultivation_progress = cost * 0.99;
+        assert_eq!(
+            patch_upkeep_supply(&patch, None, A_KEEPERS_TURN),
+            A_KEEPERS_TURN,
+            "a dipped rung does not stop being the keeping pool's when it starts needing it"
+        );
+        assert!(
+            patch.is_cultivated(),
+            "fixture: …and it is still tended — the retention bar is the separate axis"
+        );
+
+        // --- A crew doing something else no longer withholds the keeping. -----------------------
+        // The meter answered for is the newest (the half-sown Field); the pool holds it whether or
+        // not the hands on the row are the ones filling it.
         let mut half_sown = ForagePatch::new(UVec2::new(3, 3), forage.capacity_for(TEST_BIOME));
         let field_cost = ladder
             .rung(RungKey::PlantField)
@@ -3866,19 +3856,19 @@ mod tests {
         half_sown.field_cost = field_cost;
         half_sown.field_progress = field_cost / 2.0;
         assert_eq!(
-            patch_upkeep_supply(
-                &half_sown,
-                Some(Improvement::Cultivate),
-                A_BUILD_CREWS_TURN,
-                A_KEEPERS_TURN
-            ),
-            NO_UPKEEP_DEMAND,
-            "a crew tending the ground under a half-sown Field is not sowing it"
+            patch_upkeep_supply(&half_sown, Some(Improvement::Cultivate), A_KEEPERS_TURN),
+            A_KEEPERS_TURN,
+            "the pool holds the Field, whatever the crew standing on the tile is doing"
         );
 
         // --- A wild patch: nothing built, nothing owed, nobody wanted. -------------------------
         let wild = ForagePatch::new(UVec2::new(2, 2), forage.capacity_for(TEST_BIOME));
         assert_eq!(patch_upkeep_demand(&wild, &ladder), NO_UPKEEP_DEMAND);
+        assert_eq!(
+            patch_upkeep_supply(&wild, None, A_KEEPERS_TURN),
+            NO_UPKEEP_DEMAND,
+            "ground with nothing on it cannot be billed, so nothing can be short"
+        );
         assert_eq!(
             patch_upkeep_workers_needed(&wild, &ladder),
             NO_CREW_ON_THIS_ACTIVITY
@@ -3889,55 +3879,47 @@ mod tests {
         );
     }
 
-    /// **PARTIAL SUPPLY IS CONTINUOUS ON THE BUILD ARM TOO** — half the builders on an unfinished
-    /// meter is half a shortfall, exactly as half the keepers is on a finished one. The rule moved
-    /// *which crew* answers for a meter; it did not make either arm a step function.
+    /// **PARTIAL SUPPLY IS CONTINUOUS ON A METER BEING RAISED TOO** — half the pool's share on an
+    /// unfinished meter is half a shortfall, exactly as it is on a finished one. Deleting the
+    /// fullness test moved *who* answers for a meter; it did not make the arm a step function.
     ///
-    /// Asserted at the seam rather than through the system because a build's *accrual* also scales
-    /// with its crew, so a system-level comparison would confound the two — this isolates the term
-    /// under test.
+    /// Asserted at the seam rather than through the system because a build's *accrual* scales with
+    /// its own crew, so a system-level comparison would confound the two.
     #[test]
-    fn a_half_staffed_build_is_half_short_on_the_meter_it_is_raising() {
+    fn a_half_staffed_keeping_is_half_short_on_the_meter_it_is_raising() {
         let forage = test_forage_config();
         let ladder = LadderConfig::builtin();
         let rung = ladder.rung(RungKey::PlantTended);
         let cost = rung
             .build_cost(RUNG_COST_UNSCALED)
             .expect("the tended rung builds");
-        // **THE SAME RATE A HELD RUNG OWES** — the maintenance rate never lapses; below the meter's
-        // cost it is simply the **build crew** that supplies it
-        // (`docs/plan_standing_upkeep.md` §2.4). There is no second demand, which is exactly why the
-        // retired `meter_raising_demand` had to go.
+        // **THE SAME RATE A HELD RUNG OWES** — the demand does not move with the meter's fullness,
+        // and neither does the pool that pays it (`docs/plan_standing_upkeep.md` §4.6a). There is no
+        // second demand, which is why the retired `meter_raising_demand` had to go.
         let demand = rung.upkeep_demand(UNSCALED_UPKEEP);
 
         let mut patch = ForagePatch::new(UVec2::new(1, 1), forage.capacity_for(TEST_BIOME));
         patch.cultivation_cost = cost;
         patch.cultivation_progress = cost / 2.0;
 
-        let short_at = |build_work: f32| -> f32 {
-            let supplied = patch_upkeep_supply(
-                &patch,
-                Some(Improvement::Cultivate),
-                build_work,
-                // Keepers are irrelevant here by construction — the meter is not built.
-                demand,
-            );
+        let short_at = |keeping_share: f32| -> f32 {
+            let supplied = patch_upkeep_supply(&patch, Some(Improvement::Cultivate), keeping_share);
             crate::intensification::upkeep_shortfall(patch_upkeep_demand(&patch, &ladder), supplied)
         };
 
         assert_eq!(
             short_at(NO_UPKEEP_DEMAND),
             demand,
-            "no builders, whole demand short"
+            "no keepers, whole demand short"
         );
         assert!(
             (short_at(demand / 2.0) - demand / 2.0).abs() < 1e-6,
-            "half the builders, half short"
+            "half the pool's share, half short"
         );
         assert_eq!(
             short_at(demand),
             NO_UPKEEP_DEMAND,
-            "enough builders, nothing short"
+            "the whole share, nothing short"
         );
     }
 

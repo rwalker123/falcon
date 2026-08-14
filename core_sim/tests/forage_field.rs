@@ -387,6 +387,17 @@ fn spawn_forager_of(
     foragers: u32,
 ) -> bevy::prelude::Entity {
     let policy = 0.5;
+    // **THE BAND KEEPS WHAT IT WORKS** (`docs/plan_standing_upkeep.md` §4.6a). The keeping pool owes
+    // a meter carrying work from the **first work banked**, so a fixture with the role empty is not
+    // measuring a build's pace — it is measuring the build racing the rot. Sized at the dearer plant
+    // rung's own count, so it covers a tended patch and a Field alike; the tests that want an
+    // *unkept* patch unstaff the band or walk it away.
+    let keepers = app
+        .world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung(RungKey::PlantField)
+        .upkeep_crew_needed(core_sim::UNSCALED_UPKEEP);
     app.world
         .spawn((
             PopulationCohort {
@@ -400,7 +411,7 @@ fn spawn_forager_of(
                 // staffed beside it — and `LaborAllocation::normalize` then trims the build away,
                 // leaving a fixture that measures a job nobody is doing. Idle hands cost these
                 // fixtures nothing: every take is capped by the crew the assignment names.
-                working: scalar_from_f32((foragers + foragers) as f32),
+                working: scalar_from_f32((foragers + foragers + keepers) as f32),
                 elders: scalar_zero(),
                 stores: LocalStore::new(),
                 morale: scalar_one(),
@@ -426,23 +437,29 @@ fn spawn_forager_of(
                 tags: Vec::new(),
             },
             LaborAllocation {
-                assignments: vec![LaborAssignment {
-                    target: LaborTarget::Forage {
-                        tile: patch,
-                        floor: policy,
-                        species: None,
+                assignments: vec![
+                    LaborAssignment {
+                        target: LaborTarget::Forage {
+                            tile: patch,
+                            floor: policy,
+                            species: None,
+                        },
+                        workers: foragers,
+                        improvement,
+                        kit: None,
+                        // **The same crew staffs the build** — what this fixture meant when one
+                        // crew did every job (`docs/plan_standing_upkeep.md` §2.2).
+                        improvement_workers: improvement
+                            .map_or(NO_CREW_ON_THIS_ACTIVITY, |_| foragers),
                     },
-                    workers: foragers,
-                    improvement,
-                    kit: None,
-                    // **The same crew staffs the build** — what this fixture meant when one
-                    // crew did every job (`docs/plan_standing_upkeep.md` §2.2).
-                    improvement_workers: improvement.map_or(NO_CREW_ON_THIS_ACTIVITY, |_| foragers),
-                    // **NO KEEPER, and that is the point.** A meter still being raised is owed its
-                    // BUILDERS (`docs/plan_standing_upkeep.md` §2.4), so a Sow runs at its stated
-                    // pace with nobody on the keeping; the completion hand-off then moves the build's
-                    // crew onto it.
-                }],
+                    LaborAssignment {
+                        target: LaborTarget::Agriculture,
+                        workers: keepers,
+                        improvement: None,
+                        kit: None,
+                        improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
+                    },
+                ],
                 ..Default::default()
             },
         ))
@@ -508,12 +525,7 @@ fn field_build(app: &App) -> (f32, f32) {
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let field = ladder.rung(RungKey::PlantField);
     (
-        field.build_accrual(
-            Some(Improvement::Sow),
-            true,
-            sow_crew(app),
-            core_sim::UNSCALED_UPKEEP,
-        ),
+        field.build_accrual(Some(Improvement::Sow), true, sow_crew(app)),
         // **The feral bleed is the rung's own ROT RATE**, not the demand it goes short by: the two
         // are separate dials (`docs/plan_standing_upkeep.md` §2.4). Numerically the same as the
         // retired `decay_fraction_per_turn × work_cost`, which is why the paces below hold.

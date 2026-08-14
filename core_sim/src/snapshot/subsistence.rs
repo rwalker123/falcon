@@ -11,7 +11,7 @@ use crate::forage::{
 };
 use crate::intensification::{
     build_fraction, build_work_per_worker_turn, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY,
-    NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, UNSCALED_UPKEEP,
+    NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, UNSCALED_UPKEEP,
 };
 use sim_schema::{BUILD_METER_HOLDS, BUILD_METER_ROTS, NO_BUILD_TURNS_ESTIMATE};
 
@@ -672,13 +672,14 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 upkeep_shortfall: herd.map_or(NO_UPKEEP_DEMAND, |herd| {
                     crate::fauna::herd_upkeep_shortfall(herd, fauna, ladder)
                 }),
-                // **HANDS TO MEET THE DEMAND, whoever is supplying it** — the same number as
-                // `herders_needed` above, and published while the rung is still being **built** too,
-                // where it is the **minimum viable build crew**: the maintenance rate is owed either
-                // way, so a build crew at or below this count banks nothing and the meter holds or
-                // rots (`intensification::net_build_supply`). It read `0` mid-build on the
-                // since-retired premise that an unfinished meter owed no keeping. The take
-                // activity's answer rides `SourceYield::workers_needed`.
+                // **HANDS TO MEET THE DEMAND** — the same number as `herders_needed` above, and
+                // published while the rung is still being **built** too, where it means exactly the
+                // same thing: the keeping pool owes the rate from the first work banked, so these
+                // are the hands that hold a half-tamed herd as much as a finished one
+                // (`docs/plan_standing_upkeep.md` §4.6a). It is **not** a minimum viable build crew
+                // — a build crew supplies nothing toward the rate — and it read `0` mid-build on the
+                // older premise that an unfinished meter owed no keeping. The take activity's answer
+                // rides `SourceYield::workers_needed`.
                 upkeep_workers_needed: herd.map_or(NO_CREW_ON_THIS_ACTIVITY, |herd| {
                     herd_herders_needed(herd, fauna, ladder)
                 }),
@@ -708,12 +709,15 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     .rung(RungKey::AnimalPen)
                     .build_cost(RUNG_COST_UNSCALED)
                     .unwrap_or(0.0),
-                // **AND THE RATE THAT EATS IT** — the *second* term of the same quote, resolved here
-                // for the same reason and by the same rule as the `*_work_cost` above: off the
-                // **ladder**, per rung, **whether or not a build is in flight**. A price without the
-                // rate that eats it is not a quote — the maintenance rate is owed while building
-                // too, so a crew at or below it never finishes, and a sheet that subtracts nothing
-                // promises `work_cost / crew` turns for a meter that will sit where it is forever.
+                // **AND WHAT HOLDING IT WILL COST** — the *second* term of the same quote, resolved
+                // here for the same reason and by the same rule as the `*_work_cost` above: off the
+                // **ladder**, per rung, **whether or not a build is in flight**. A price with no
+                // standing bell beside it is half a quote: the player is committing to a rate their
+                // keeping pool will owe forever, from the first work banked.
+                //
+                // **It is NOT netted off the build** (`docs/plan_standing_upkeep.md` §4.6a) — the
+                // keeping owes it whatever the builders do, so `work_cost / crew` really is the
+                // pace. What a build's closed form nets is `meter_rot_per_turn`, published below.
                 //
                 // **`upkeep_demand` above cannot answer this**, and deliberately: it resolves
                 // through the **keeping** rung (`fauna::herd_keeping_rung`), which is what this herd
@@ -733,6 +737,13 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     ladder
                         .rung(RungKey::AnimalPen)
                         .upkeep_demand(crate::fauna::herd_keeper_load(herd, fauna))
+                }),
+                // **The plant twin's field**, so a client's build estimate is one expression across
+                // both webs — and **always `0` here**, because neither animal rung declares a
+                // `meter_decay`: an under-kept flock sheds animals instead. Nothing eats an animal
+                // build. See `fauna::herd_meter_rot`; do not read the zero as a gap.
+                meter_rot_per_turn: herd.map_or(NO_UPKEEP_DECAY, |herd| {
+                    crate::fauna::herd_meter_rot(herd, fauna, ladder)
                 }),
                 // **The turns estimate the labor arm stamped this turn** — the running build's, or,
                 // when nothing is being built, the **projection** for the rung this herd would climb
@@ -958,6 +969,20 @@ pub(crate) fn snapshot_forage_patches(
                 field_upkeep_demand: ladder
                     .rung(RungKey::PlantField)
                     .upkeep_demand(UNSCALED_UPKEEP),
+                // **WHAT THE GROUND WILL LOSE UNDER THE BUILDERS** — exactly what the next
+                // decay pass will bleed off the at-risk meter, and the term a build's closed form
+                // nets (`docs/plan_standing_upkeep.md` §4.6a). See `RungDef::meter_rot` for why the
+                // forecast is exact rather than an estimate. It is emphatically not
+                // the two demands above: the keeping pool owes those whatever a build crew does, so
+                // netting a rate off a build would re-price the wrong thing.
+                //
+                // **DERIVED here rather than stamped by the labor arm**, unlike
+                // `build_turns_remaining` beside it, and that is what keeps an *unworked* patch
+                // honest: the labor arm visits only sources some band is assigned to, so a stamped
+                // rot would read a tidy `0` on exactly the abandoned patches that are bleeding. Both
+                // its inputs — `upkeep_supplied` and `neglect_turns` — are stored, so the number is
+                // the same one the labor arm struck its countdown from.
+                meter_rot_per_turn: crate::forage::patch_meter_rot(patch, ladder),
                 // **The turns estimate the labor arm stamped this turn** — the running build's, or,
                 // when nothing is being built, the **projection** for the rung this patch would climb
                 // next, so the compose sheet can quote the job before the player commits. Read it

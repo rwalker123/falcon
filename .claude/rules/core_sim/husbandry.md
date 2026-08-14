@@ -190,6 +190,53 @@ exactly the keepers it always asked for (`every_species_asks_for_the_keepers_it_
   staffings. *"Zero keepers last turn"* — the total-abandonment gate `regrow_biomass` and the bleed-out
   read — is simply `upkeep_supplied <= 0`.
 
+> #### ⛔ THE REGROWTH SUPPRESSION CLOSES A LOOP, AND AN UNKEPT BUILD DOES NOT RECOVER FROM IT
+>
+> `regrow_biomass` zeroing growth at `upkeep_supplied <= 0` is what makes an unkept **build** on the
+> animal web a **permanent** stall rather than a slow one, and the loop is worth stating whole because
+> no single seam contains it:
+>
+> 1. the band's `husbandry` role is empty, so the herd's keeping is unmet;
+> 2. `regrow_biomass` suppresses the flock's growth entirely;
+> 3. the take crew beside the build draws the flock down to its assignment's escapement floor, and
+>    with no growth it never comes back above it;
+> 4. `systems::labor::crew_is_working_the_source` reads that room — `max(0, B − floor·K)` — as `0`, so
+>    the `Tame`'s own `eligible` goes false;
+> 5. `RungDef::build_supply` answers `None`, and the countdown publishes
+>    `NO_BUILD_TURNS_ESTIMATE` (**`-1`**) — *"there is no answer"* — for as long as it lasts, while the
+>    meter sits frozen and the flock bleeds away underneath it.
+>
+> **THE REMEDY IS `assign_labor <faction> <band> husbandry <n>`, and nothing on the build reaches
+> it.** Adding builders, changing the verb and re-issuing the order all leave the room at zero. Step
+> 4 is why: it is an **eligibility** stall, not a balance one, so no term the countdown is struck
+> from — `build_work`, the rot, the keeping share — can see it. **`meterRotPerTurn` is `0` here and
+> honestly so**: neither animal rung declares a `meter_decay`, so nothing is eating the meter; what
+> is being lost is the *herd*.
+>
+> **The plant web does not have this**, and the difference is not the predicate. A patch nobody
+> gathers regrows toward `K`, so its escapement room is large, its gate stays open, and an abandoned
+> half-built meter publishes an honest `-3`
+> (`build_turns_on_the_wire.rs::an_abandoned_half_built_patch_publishes_rotting_and_a_kept_one_holding`).
+> It is the **hunters' draw plus the suppressed regrowth together** that pins an animal source at its
+> floor; neither alone would.
+
+> #### THE HERD'S UPKEEP DEMAND *FALLS* AS AN UNKEPT FLOCK BLEEDS — a readout hazard, not a bug
+>
+> `animal:pastoral` and `animal:pen` both quote their rate per **keeper-load**
+> (`scaled_by: source_load`, `head count / animals_per_herder`), so `upkeepDemand` is a reading of the
+> flock's *current* size. A shedding herd therefore publishes a **shrinking** bill: measured on a
+> half-tamed fixture with its `husbandry` role empty, `upkeepDemand` fell `6.08 → 5.43 → 4.13 → …
+> → 1.22` over eight turns while the herd went `4837 → 974` biomass and the build sat frozen.
+>
+> **A player reading that number alone sees the bill improving while the investment dies.** It is
+> correct — holding what is left really is cheaper — and it is a property of the scale primitive
+> rather than of any one slice, so it is the *pairing* that has to carry the news:
+> `upkeepShortfall` stays non-zero throughout and `neglectGraceRemaining` reads `0` from the first
+> turn. A surface that renders the demand without one of those two is reporting a recovery.
+>
+> **The plant rungs cannot do this** — both declare `scaled_by: flat`, so a patch's demand is the
+> ladder's own number whatever state the ground is in.
+
 ### The shed waits out a NEGLECT GRACE, and the notice does not
 
 `Herd::neglect_turns` counts **consecutive** turns the keeping went unmet, reset outright by any turn
@@ -208,21 +255,24 @@ there is any pen progress, `animal:pastoral` for any other managed herd.
   plant web's.** A plant meter is continuous, so any shortfall bleeds; a herd loses **whole animals**,
   so a shortfall of less than one animal is not under-containment at all — the same whole-animal
   discipline `quantise_animal_take` imposes on the take.
-- **A METER IS OWED BUILDERS WHILE INCOMPLETE AND THE BAND'S KEEPING POOL ONCE HELD**
-  (`fauna::herd_upkeep_supply`, the twin of `forage::patch_upkeep_supply`). A `Tame` in flight owes
-  its build crew — you cannot be billed to keep a tameness you have not finished earning — and a
-  domesticated herd owes the pool.
-  - **THE RATE IS THE SAME EITHER WAY, and the two webs answer identically.** Only the supplier moves
-    (`fauna::herd_is_maintaining`, read off the meter's **fullness**). An earlier cut had the animal
-    web owe its whole keeping while a rung was raised — *"the animals are standing there whether or
-    not the fence is up"* — which billed an unfinished `Tame` to a crew that could not pay it, exactly
-    what §0 forbids. It is deleted; there is no per-web exception left.
-  - **SO THE RATE TAXES AN ANIMAL BUILD TOO** (`docs/plan_standing_upkeep.md` §2.4): a `Tame` or
-    `Corral` staffed **at or above** it sheds nothing and advances by the surplus; one **below** it
-    sheds in proportion, exactly as an abandoned rung does, and never finishes. Because the animal
-    rate scales with the flock, **a big herd is dearer to tame in hands as well as in turns** — the
-    crew has to clear `ceil(keeper_load)` before the meter moves at all. Pinned by
-    `fauna_husbandry::a_half_tamed_herd_sheds_only_when_its_build_crew_is_below_the_rate`.
+- **EVERY METER CARRYING WORK IS OWED THE BAND'S KEEPING POOL, AT ANY FULLNESS**
+  (`fauna::herd_upkeep_supply`, the twin of `forage::patch_upkeep_supply`;
+  `docs/plan_standing_upkeep.md` §4.6a). A `Tame` in flight owes exactly what a tamed herd owes, to
+  the same hands.
+  - **THE RATE AND THE PAYER ARE THE SAME EITHER WAY, and the two webs answer identically.** The
+    meter's **fullness** used to move the supplier (`fauna::herd_is_maintaining`, deleted): a
+    half-tamed herd was billed to its build crew, so taking the taming crew off it left keepers idle
+    in the `husbandry` role with nothing they could be aimed at. Two earlier cuts are both gone — that
+    one, and *"the animals are standing there whether or not the fence is up"* before it.
+  - **SO THE RATE DOES NOT TAX AN ANIMAL BUILD**: a `Tame` or `Corral` banks its crew's whole output,
+    and what a short keeping costs is the **shed**, in proportion, exactly as it costs an abandoned
+    rung. Because the rate scales with the flock, a big herd is dearer to *hold* in hands — but it is
+    no dearer to *build*. Pinned by
+    `fauna_husbandry::a_half_tamed_herd_sheds_only_when_its_keeping_is_short`.
+  - **AND NOTHING EATS AN ANIMAL BUILD'S METER.** Neither animal rung declares a `meter_decay`, so
+    `fauna::herd_meter_rot` is always `0` and a staffed `Tame` or `Corral` always publishes a real
+    finish date however short its keeping is. That is the model — the shortfall is paid in animals —
+    not a missing red on the wire.
   **The verb names the meter**, so a `Corral` starting on a herd with no pen progress answers for
   `animal:pen` from its first turn: the supply is stamped in Population and read by the *next*
   Logistics pass, so it has to describe the meter that pass will judge.

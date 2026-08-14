@@ -2261,16 +2261,25 @@ Frames: `band_panel_under_herded`, and the A/B pair `band_panel_keepers_short` /
 claim rides with them and is PNG-less, because no picture can carry it: a board with twice the
 hunters on it looks exactly like the short frame.
 
-## …AND A PART-BUILT RUNG WHOSE BUILDERS ARE NOT PAYING GETS THE SAME ⚠, NAMING BUILDERS
+## …AND A PART-BUILT RUNG GETS THE SAME ⚠ AND THE SAME NOTE — one test, not two (§4.6a)
 
-`docs/plan_standing_upkeep.md` §2.4 gives an at-risk meter to **whichever crew owns it**: a rung that
-STANDS is owed its keepers, a rung still going up is owed its **BUILDERS**. Both pay into the same
-`upkeepSupplied`, and the sim's decay — and, on the animal web, the shed — reads the resulting
-shortfall without caring which crew failed to pay it. So a player who starts a Tame and re-tasks the
-crew loses animals AND a 25-turn meter, and every keeper-shaped reading on the source says `0` of `0`
-and nothing wrong. **It is the same silent-loss class as the shed and it wears the same ⚠**
-(`SourceForecast.is_unbuilt_and_unpaid`, `HudWorkVocab.WORK_ROW_UNBUILT_NOTE` — *"Nobody is building
-this — staff its BUILDERS."*).
+A player who starts a Tame and re-tasks the crew loses animals AND a 25-turn meter, and every
+keeper-shaped reading on the source used to say `0` of `0` and nothing wrong. **It is the same
+silent-loss class as the shed and it wears the same ⚠** — and, since §4.6a, the **same note**.
+
+**IT WAS A SECOND WARNING AND THE SECOND ONE LIED.** `SourceForecast.is_unbuilt_and_unpaid` and
+`HudWorkVocab.WORK_ROW_UNBUILT_NOTE` (*"Nobody is building this — staff its BUILDERS."*) existed
+because `docs/plan_standing_upkeep.md` §2.4 gave an at-risk meter to **whichever crew owned it** — a
+rung that stood was owed its keepers, a rung still going up was owed its builders. **The keeping pool
+owes it at every fullness now**, so the note pointed at a lever that does not settle the bill.
+`is_under_kept` is the one test on both webs and both sides of completion, the `unbuilt` model flag is
+gone, and the row's note comes from `HudWorkVocab.under_kept_note(kind)`.
+
+**THE PAIR THAT SURVIVES IS PER WEB, NOT PER CREW.** *Animals drifting off — raise this band's
+Husbandry role* on a hunt row, *This ground is slipping — raise this band's Agriculture role* on a
+forage one: the same sentence about different consequences and different role cards. What the merge
+costs is that neither distinguishes a rung being RAISED from one being HELD — it need not, the player
+doing the same thing either way, and the source's own card says which on its rung row.
 
 - **THE WIRE ALREADY CARRIED IT.** Read off the sim rather than assumed: `herd_keeping_rung` answers
   for any owned herd, so `upkeepDemand` is the pastoral rung's `work_per_turn: 1.0 × keeper_load`;
@@ -2278,23 +2287,22 @@ this — staff its BUILDERS."*).
   for the builders when one is); `advance_husbandry` **zeroes `upkeep_supplied` every turn**, so an
   unstaffed build's shortfall is the whole demand. `upkeepShortfall` is published and derived, and
   `hasNeglectGrace` / `neglectGraceRemaining` come with it.
-- **THE GATE IS THE METER, AND IT USED TO BE A ZERO KEEPER COUNT.** `keepers_wanted == 0` meant
-  *"nobody is owed keepers, so this must be a build"* — an inference off a field's meaning, and one
-  that DIED when `upkeepWorkersNeeded` began publishing on both sides of completion: read that way the
-  test goes permanently false mid-build and this warning silently stops existing on both webs, with
-  the keeper warning firing in its place. `SourceForecast.build_is_in_flight` states it directly.
+- **THERE IS NO GATE LEFT.** It was `keepers_wanted == 0` (*"nobody is owed keepers, so this must be
+  a build"* — an inference off a field's meaning, dead the moment `upkeepWorkersNeeded` began
+  publishing on both sides of completion), then `build_is_in_flight` stating the same thing directly.
+  §4.6a removed the need for either: the shortfall alone is the trigger, whatever the meter's
+  fullness.
 - **THE TRIGGER IS STILL THE SHORTFALL, NOT A CREW COMPARISON** — the one place on either surface
-  where that is true, and only because the wire publishes no builder requirement to compare against.
-  It covers both ways a build starves: nobody on it, and **a crew under the maintenance rate**, which
-  is the commoner half now that the rate is a tax on building — hence the note reads *this rung is
-  sliding back* rather than *nobody is building this*. **A count derived by dividing the shortfall
-  would be a client inventing a number the sim never stated**; what the compose sheet CAN state is the
-  published `SourceForecast.min_build_work` — the quoted rung's own RATE, in work rather than in hands
-  (issue #545) — which is the threshold rather than a diagnosis.
-- **IT IS EXCLUSIVE WITH THE KEEPER WARNING BY CONSTRUCTION, not by ordering.** That one requires no
-  build in flight and this one requires one, so the two share the `note` slot without either
-  displacing the other — unlike the overstaff note, which is keyed on something else entirely and had
-  to be given way to.
+  where that is true, and only because the wire publishes no crew requirement to compare against. It
+  is the band's KEEPING pool that came up short, at any fullness (`docs/plan_standing_upkeep.md`
+  §2.4), and what a build crew decides is only whether the meter outruns the resulting rot — hence the
+  note reads *this rung is sliding back* rather than *nobody is building this*. **A count derived by
+  dividing the shortfall would be a client inventing a number the sim never stated**, and there is no
+  build-crew threshold to quote beside it either: the rate a builder had to beat retired with the
+  fullness test, and the compose sheet states the rate as a standing PRICE instead.
+- **IT IS THE KEEPER WARNING**, so there is nothing left to be exclusive with. It still WINS the
+  `note` slot over the overstaff note, which is keyed on something else entirely: some hands bringing
+  nothing home is a smaller thing than the ground or the flock being lost.
 - **BOTH WEBS REACH IT.** The test reads `upkeep_state` off whichever source the row is about, so a
   walked-away Cultivate warns exactly as a walked-away Tame does.
 - **The herd drawer's `Keeping:` row forked with it, and then RETIRED** (issue #545). It said *"the

@@ -10867,11 +10867,10 @@ mod tests {
              say nothing is wrong on a patch the sim is reverting"
         );
         // **And what it would take to stop that — the rate in whole hands, published on BOTH sides
-        // of completion.** The maintenance rate is owed while a meter is being raised too; what the
-        // meter's state decides is only *who supplies it* (`docs/plan_standing_upkeep.md` §2.4). So
-        // over a part-sown Field this number reads as the **minimum viable build crew**: at or below
-        // it the meter holds or rots rather than advancing, which is exactly what the compose sheet
-        // needs to say "this crew is below the threshold".
+        // of completion.** The keeping pool owes the rate for a meter carrying work at any fullness
+        // (`docs/plan_standing_upkeep.md` §4.6a), so over a part-sown Field this number means what it
+        // means over a finished one: the hands that hold the ground. It is **not** a minimum viable
+        // build crew — a build crew supplies none of the rate.
         assert_eq!(
             patch.upkeep_workers_needed,
             field_demand.ceil() as u32,

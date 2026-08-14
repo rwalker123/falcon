@@ -420,19 +420,20 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # cultivation progress; once cultivated it reads as a "Tended Patch" (SIGNAL tint).
     # Mirrors the herd Husbandry row. Only when the snapshot carries the field so we
     # never invent a state on a patch that isn't being worked.
-    # WHICH RUNG THE PLAYER IS ACTUALLY BUILDING HERE — folded across every band, not just the panel
-    # one, because a patch several bands can reach may be worked by none of them in particular. It is
-    # what separates a meter that is FILLING from one that is BLEEDING, which no percentage can show:
-    # an abandoned improvement reverts, and it used to wear the build's own word and ink while doing it.
-    var building_rung := String(_band_labor.forage_effort_at(
-        int(tile_info.get("x", -1)), int(tile_info.get("y", -1))).get("improvement", ""))
-    # **…AND WHETHER ANYBODY IS ACTUALLY ON IT.** A build has its OWN crew now
+    # RETIRED — **`building_rung`**, the assignment's own improvement folded across every band,
+    # which the two rung rows compared themselves against to ask *am I the one being built*
+    # (`docs/plan_standing_upkeep.md` §4.6a). **`SourceForecast.build_verb` answers that, and it is the
+    # answer the sim's own per-source countdown is published for** — a declaration honoured only at a
+    # zero meter, so a rung with banked work answers for itself. Comparing against the raw declaration
+    # instead put the source's ONE countdown on whichever row happened to name the declared verb.
+    # **WHICH RUNG IS DECLARED AND UNMANNED.** A build has its OWN crew now
     # (`docs/plan_standing_upkeep.md` §2.2), so a rung can be declared and unmanned — which is a
     # THIRD thing from filling and from bleeding, and read as neither: at a meter of zero the row
     # below is not rendered at all, and above zero it wore the build's own word and neutral ink.
     # Confirmed-row only, deliberately, so a just-committed build cannot flash this warning — see
-    # `HudBandLaborState.unstaffed_build_forage`. It composes safely with the pending-aware
-    # `building_rung` above: a fresh commit has no confirmed declaration yet, so this answers nothing.
+    # `HudBandLaborState.unstaffed_build_forage`. It is also what the rows hand `rung_row_value` as
+    # their `declared_rung`, from which that producer derives BOTH facts a row needs: whether this rung
+    # is the declared one, and whether it is the one in flight.
     var unstaffed_rung := _band_labor.unstaffed_build_forage(
         int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))
     # **ONE ROW PER LIVE METER, AND THE TURNS LEAD IT** (issue #545). A rung declares a fixed size in
@@ -449,20 +450,26 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # state the old `> 0` gate suppressed entirely while the map drew a `0%` badge over it.
     var cultivate_declared := unstaffed_rung == SourceForecast.IMPROVEMENT_CULTIVATE
     if cultivated or cultivation_progress > DetailFormat.BUILD_METER_EMPTY or cultivate_declared:
-        # **BUILDING MEANS *SOMEBODY IS ON IT*, not merely *somebody declared it*.** The build has its
-        # own crew, so a declaration with no builders leaves the meter bleeding exactly as an
-        # abandoned one does — and wore the filling state's word and ink while doing it.
-        var cultivating := building_rung == SourceForecast.IMPROVEMENT_CULTIVATE \
-            and not cultivate_declared
+        # **THE ROW TAKES THE REAL BUILD CREW, NOT A *THIS RUNG IS IN FLIGHT* BOOL**
+        # (`docs/plan_standing_upkeep.md` §4.6a). It was `building_rung == CULTIVATE and not declared`,
+        # which says *this rung is the one being built* and was being read as *there are builders on
+        # it*. The two part on a state this arc built a whole readout for: a completed Cultivate that
+        # later erodes below its retention bar carries NO declared improvement (completion clears it),
+        # so the bool answered `true` on a meter nobody is touching and the row wore the amber
+        # `⚠ ∞ turns` where the deliberate-hold `Held at 92%` belongs. **The crew is what
+        # `BUILD_METER_HOLDS` cannot carry**, so the crew is what the row is given.
+        var cultivate_crew := _band_labor.build_crew_forage(
+            int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))
         lines.append("Cultivation: %s" % DetailFormat.rung_row_value(tile_info, prefix,
             SourceForecast.IMPROVEMENT_CULTIVATE, SourceForecast.SOURCE_KIND_FORAGE,
             DetailFormat.cultivation_built_label(), cultivated, cultivation_progress,
-            cultivating, cultivate_declared))
-        # **THE GEAR'S SAVING HANGS OFF THE RUNG ACTUALLY BEING BUILT.** The wire field is per SOURCE
-        # (at most one improvement is ever in flight on one), so it attaches to whichever meter a crew
-        # is filling and to nothing else — under a REVERTING meter it would describe a build nobody is
-        # doing.
-        if cultivating:
+            cultivate_crew, unstaffed_rung))
+        # **THE GEAR'S SAVING HANGS OFF THE RUNG ACTUALLY IN FLIGHT.** The wire field is per SOURCE
+        # (at most one improvement is ever in flight on one), so it attaches to whichever meter the
+        # build is on and to nothing else — on the other row it would describe a build nobody is doing,
+        # which is the same per-source-number-on-the-wrong-row mistake the countdown had.
+        if SourceForecast.build_verb(tile_info, prefix, SourceForecast.SOURCE_KIND_FORAGE,
+                unstaffed_rung) == SourceForecast.IMPROVEMENT_CULTIVATE:
             lines.append_array(DetailFormat.build_gear_lines(tile_info, prefix))
     # PLANT RUNG 3 — the Field, on its OWN row beside Cultivation. The patch carries TWO independent
     # build meters (a Field may stand on ground that was never tended: seed travels, so `Sow` needs no
@@ -477,12 +484,15 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     var field_progress := float(tile_info.get("patch_field_progress", 0.0))
     var sow_declared := unstaffed_rung == SourceForecast.IMPROVEMENT_SOW
     if is_field or field_progress > DetailFormat.BUILD_METER_EMPTY or sow_declared:
-        var sowing := building_rung == SourceForecast.IMPROVEMENT_SOW and not sow_declared
+        # The Cultivation branch's own two corrections, on the twin row: the REAL build crew rather
+        # than a *this rung is in flight* bool, and the gear line hung off `build_verb`'s answer.
         lines.append("%s: %s" % [HudFloraVocab.FIELD_ROW, DetailFormat.rung_row_value(
             tile_info, prefix, SourceForecast.IMPROVEMENT_SOW,
             SourceForecast.SOURCE_KIND_FORAGE, DetailFormat.field_built_label(), is_field,
-            field_progress, sowing, sow_declared)])
-        if sowing:
+            field_progress, _band_labor.build_crew_forage(int(tile_info.get("x", -1)),
+                int(tile_info.get("y", -1))), unstaffed_rung)])
+        if SourceForecast.build_verb(tile_info, prefix, SourceForecast.SOURCE_KIND_FORAGE,
+                unstaffed_rung) == SourceForecast.IMPROVEMENT_SOW:
             lines.append_array(DetailFormat.build_gear_lines(tile_info, prefix))
     # **WHAT THIS PATCH IS ABOUT TO LOSE, and how long it has** — the detail behind whichever rung row
     # above it is marked. It sits under both rather than beside either because the shortfall is a
@@ -624,8 +634,12 @@ func _render_occupant_drawer(from_selection: bool = false) -> void:
         # **THE ONE LABOR FACT THE PURE PRODUCER CANNOT SEE IS THREADED IN**: a rung this faction has
         # declared on the herd and put nobody on, which is what makes the Husbandry / Corral row
         # render at a meter of zero instead of vanishing (`DetailFormat.BUILD_UNSTARTED_VALUE`).
+        # **AND THE BUILD CREW BESIDE IT** (`docs/plan_standing_upkeep.md` §4.6a): the wire's
+        # `BUILD_METER_HOLDS` is a crew treading water with a crew on it and a build parked on purpose
+        # without one, and the producer cannot see which from the herd dict alone.
         lines = DetailFormat.herd_summary_lines(_selection.herd(), _band_labor.world_herds(),
-            _band_labor.unstaffed_build_hunt(String(_selection.herd().get("id", ""))))
+            _band_labor.unstaffed_build_hunt(String(_selection.herd().get("id", ""))),
+            _band_labor.build_crew_hunt(String(_selection.herd().get("id", ""))))
     _occupant_detail.text = DetailFormat.detail_bbcode(lines, ctx)
     if is_expedition:
         _build_expedition_panel(_selection.unit())

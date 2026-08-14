@@ -412,41 +412,18 @@ static func build_crew_row(root: Node) -> Control:
 			return found
 	return null
 
-## **THE WORK-PER-TURN THRESHOLD THE BUILDERS ROW STATES**, read off the meta rather than out of any
-## text: the number is the claim and the wording is not (`SourceForecast.min_build_work`).
-## `BUILD_WORK_FLOOR_ABSENT` where the row states no threshold, which is a real answer — a rung whose
-## rate the wire prices at nothing has none to clear.
+## RETIRED — **`BUILD_WORK_FLOOR_ABSENT` / `build_work_floor` / `build_work_floor_tooltip`**, which
+## read the BUILDERS row's threshold off `HudWidgets.BUILD_WORK_FLOOR_META`
+## (`docs/plan_standing_upkeep.md` §2.4).
 ##
-## **IT READS WORK, NOT WORKERS** (issue #545). The meta carried `upkeepWorkersNeeded`, a head count
-## that reads `0` on a source with no progress — so a harness asserting it was asserting the
-## pre-commit case as an ABSENCE, which is exactly the state the threshold exists for.
+## **THE ROW STATES NO THRESHOLD, SO THERE IS NO NUMBER TO READ.** The meta carried the quoted rung's
+## maintenance rate, back when a build crew supplied it and a crew under it banked nothing; the
+## keeping pool owes that rate at every fullness now, so no rung declares a build-crew bar and the
+## meta went with the mechanism. A harness helper that went on scanning for it would answer
+## `BUILD_WORK_FLOOR_ABSENT` on every sheet in the game — an assertion that cannot fail.
 ##
-## **THE META MOVED FROM A NOTE TO THE ROW'S OWN LABEL, and this reader is unchanged by that** — it
-## scans the row's children for whichever one carries it. The visible note is retired (the build line's
-## INK states which side of the rate the crew is on, so the sentence was doing a colour's job) and the
-## rate now rides that label's TOOLTIP; the NUMBER is still asserted here, which is what makes the
-## retirement a re-homing rather than a loss.
-const BUILD_WORK_FLOOR_ABSENT := -1.0
-
-static func build_work_floor(root: Node) -> float:
-	var row := build_crew_row(root)
-	if row == null:
-		return BUILD_WORK_FLOOR_ABSENT
-	for child in row.get_children():
-		if child is Control and (child as Control).has_meta(HudWidgets.BUILD_WORK_FLOOR_META):
-			return float((child as Control).get_meta(HudWidgets.BUILD_WORK_FLOOR_META))
-	return BUILD_WORK_FLOOR_ABSENT
-
-## …and the threshold's own WORDING, off that label's tooltip — the reachability half of the
-## re-homing above. `""` where the row states none.
-static func build_work_floor_tooltip(root: Node) -> String:
-	var row := build_crew_row(root)
-	if row == null:
-		return ""
-	for child in row.get_children():
-		if child is Control and (child as Control).has_meta(HudWidgets.BUILD_WORK_FLOOR_META):
-			return (child as Control).tooltip_text
-	return ""
+## What the rate IS now is the offered face's standing price, which is asserted where every other
+## price on that face is: in the face's own text (`ForageFx.improvement_face`).
 
 ## The indented basket rows, in order. They are the only indented rows the LAND drawer emits.
 static func flora_basket_rows(lines: Array[String]) -> Array[String]:

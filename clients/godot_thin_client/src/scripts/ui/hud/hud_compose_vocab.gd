@@ -143,28 +143,18 @@ const CREW_ROW_BUILD_LABEL := "BUILDERS"
 # The crew row's note separation, beside its label.
 const CREW_ROW_NOTE_SEPARATION := 5
 
-# **THE THRESHOLD, IN WORK — ON THE BUILDERS ROW'S LABEL, AS A TOOLTIP**
-# (`docs/plan_standing_upkeep.md` §2.4). The maintenance rate is owed while the meter is being raised
-# too, and the build crew is what supplies it, so a crew whose output does not beat the rate holds the
-# meter where it is or takes it backwards — a real threshold rather than a slow build. It is published
-# per rung (`SourceForecast.min_build_work`), so the sheet can answer it BEFORE the player commits.
+# RETIRED — **`CREW_BUILD_FLOOR_TOOLTIP`**, `%s work a turn holds this rung — only the surplus is
+# progress`, the BUILDERS row's threshold (`docs/plan_standing_upkeep.md` §2.4).
 #
-# **IT WAS A VISIBLE NOTE AND IT WAS DOING A COLOUR'S JOB.** `2 work a turn holds it — the surplus is
-# progress` rendered beside the stepper, one line under the build line whose INK now states which side
-# of that rate the crew is on — green climbing, amber holding, red losing (`SourceForecast.build_pace`).
-# Prose that restates a state the reader has already been shown is what made the block unreadable, and
-# it is the same lesson the retired `Keeping:` row records one surface over. The RATE is still a fact
-# worth having, so it is a hover rather than a deletion.
+# **THE THRESHOLD IT NAMED NO LONGER EXISTS.** It was the quoted rung's maintenance rate, which the
+# build crew supplied while the meter was below its cost, so a crew under it banked nothing. The
+# keeping pool owes that rate at every fullness now and a builder's whole output is progress — there
+# is no build-crew threshold on any rung, and a hover that stated one would be a warning outliving its
+# mechanism, which is the failure this arc keeps producing. `SourceForecast.min_build_work` and
+# `HudWidgets.BUILD_WORK_FLOOR_META` went with it.
 #
-# **IT IS A RATE OF WORK, AND IT REPLACED A HEAD COUNT.** `2 hold it` named the worker as the unit in
-# a model denominated in work units end to end, and the count behind it (`upkeepWorkersNeeded`) reads
-# `0` on a source with no progress — so it fell silent on exactly the pre-commit quote it exists for.
-# The rate is the fact; how many hands buy it is what the stepper beside it is for.
-#
-# **It says HOLD rather than "needs N", because the rate is where the meter STOPS SLIDING, not where
-# it starts advancing** — a crew banking exactly the rate holds the rung and finishes nothing, which
-# `needs N` would promise it does not.
-const CREW_BUILD_FLOOR_TOOLTIP := "%s work a turn holds this rung — only the surplus is progress."
+# The RATE is not lost: it is the STANDING PRICE on the offered face now
+# (`BUILD_PRICE_UPKEEP_FORMAT`), beside the build's one-off one, which is what it always was.
 
 # **THE REASON A DEAD IMPROVEMENT BOX CARRIES.** Ticking a rung the band cannot staff declares a build
 # that never starts — the sim REFUSES the crew rather than trimming it — so the offer is greyed with
@@ -409,15 +399,45 @@ const BUILD_TURNS_COUNT_ONE := "≈1 turn"
 # `SourceForecast.BUILD_TURNS_HOLDS` and `BUILD_TURNS_ROTS`, which differ on this surface by INK
 # alone (`SourceForecast.build_pace`: amber holding, red losing) because a compose face is one Control
 # and takes one colour. It wears no `≈`: every other reading here is an estimate that could come in
-# early or late, and this one is not an estimate at all — at or below the maintenance rate the meter
+# early or late, and this one is not an estimate at all — at or below what the meter is ROTTING by it
 # does not advance, so there is no distribution to hedge. The glyph itself is
 # `DetailFormat.BUILD_TURNS_NEVER_GLYPH`, shared with the larder runway and inked as a warning here
 # because on a build it is the opposite news.
 const BUILD_TURNS_NEVER_FORMAT := "%s turns"
 
+# **A BUILD PARKED ON PURPOSE — the same `BUILD_METER_HOLDS` with NOBODY on it**
+# (`docs/plan_standing_upkeep.md` §4.6a). It takes a WORD rather than the `∞` above, and the word is
+# the tile card's own (`HudSelectionVocab.RUNG_HELD_FORMAT`), so the two producers say the same thing
+# about the same state.
+#
+# **THE `∞` IS NOT AVAILABLE TO A BENIGN STATE.** That glyph is the larder runway's, shared on the
+# strength of a player learning a mark once and reading it everywhere; spending it where nothing is
+# wrong teaches that it sometimes means nothing is wrong, which costs the two states where it means a
+# great deal. The ink is neutral either way — `BUILD_PACE_HELD` is in no colour table — so without the
+# word this face would be the arc's loudest mark in its quietest colour, saying nothing.
+#
+# It carries no count and no `≈` for the same reason the `∞` does not: a parked meter is not an
+# estimate that could come in early or late, it is a standing fact about ground the player put down.
+const BUILD_TURNS_HELD := "held"
+
 # `50 work, ≈25 turns` — the price with its estimate. Takes the clause ALREADY SPELLED, never a raw
 # count, so the singular can only be decided in one place (`DetailFormat.build_turns_clause`).
 const BUILD_PRICE_TURNS_FORMAT := "%s, %s"
+
+# `50 work, ≈25 turns · 2 work a turn to hold` — **THE STANDING PRICE, BESIDE THE ONE-OFF ONE**
+# (`docs/plan_standing_upkeep.md` §2.4). A rung costs a PILE once and a RATE forever, and an offer
+# that quotes only the pile is quoting half of what the player is agreeing to.
+#
+# **IT IS A PRICE, NOT A THRESHOLD, and the wording carries that.** `to hold` names what the rate
+# buys; the retired `holds this rung — only the surplus is progress` named a bar a build crew had to
+# clear, which is the mechanism slice 6a deleted. Nothing here compares it to a crew.
+#
+# **IN WORK UNITS, because a supplier's output is not one.** How many hands the rate takes depends on
+# what they carry, so a head count here would be a number that goes stale with the band's gear.
+#
+# The `·` separator is the compose sheet's own, dividing two facts about one offer where the comma
+# above divides two halves of one price.
+const BUILD_PRICE_UPKEEP_FORMAT := "%s · %s work a turn to hold"
 
 # `🌱 Cultivate this patch — 50 work, ≈25 turns` — the offered checkbox's face with its price. It
 # takes an em-dash rather than the running face's, because the two halves are a NAME and its PRICE
@@ -522,15 +542,25 @@ const IMPROVEMENT_DEAL_DEPLETED_NOTE := "⚠ Too depleted to pen — it would ea
 # built yet — so nothing is being lost, and the remedy is simply hands — versus a meter that already
 # holds work and is bleeding it back, where the same hands are also stopping a loss. A single line
 # covering both would understate one and overstate the other. Neither is either `∞ turns` state one
-# rung over, both of which are a crew that EXISTS and is too small (`SourceForecast.BUILD_TURNS_HOLDS`
-# at the rate, `BUILD_TURNS_ROTS` under it).
+# rung over, both of which are a crew that EXISTS and is too small to outrun the meter's own rot
+# (`SourceForecast.BUILD_TURNS_HOLDS` matching it, `BUILD_TURNS_ROTS` under it).
 #
 # They are two flat consts rather than a state-keyed table because a table would put a live
 # `SourceForecast.*` reference in a `const` initializer here, and a vocabulary module is kept a
 # cycle-free LEAF; the two-branch pick lives at the one call site that already holds both states.
 const BUILD_UNSTARTED_NOTE := "⚠ Not started — no builders assigned. Set the builders below to begin."
 
-const BUILD_SLIDING_NOTE := "⚠ No builders — this rung is sliding back. Set the builders below to hold it."
+# RETIRED — **`BUILD_SLIDING_NOTE`**, `⚠ No builders — this rung is sliding back. Set the builders
+# below to hold it.` (`docs/plan_standing_upkeep.md` §4.6a).
+#
+# **IT FILLED A SILENCE THAT NO LONGER EXISTS.** At a build crew of zero the sheet's own estimate used
+# to drop out, so the face stopped at the meter and this note said what was happening. `build_turns_at`
+# answers at zero now — the wire's own `∞` in the losing red, or the neutral held reading — so the note
+# would restate the line directly above it.
+#
+# **AND ITS CLAIM WAS WRONG HALF THE TIME.** *No builders* does not mean *sliding back*: with the
+# keeping pool holding a meter at any fullness, a parked build whose keeping is covered stays exactly
+# where it was put, which is a legitimate thing to do and not a warning.
 
 # How a forecast dict SPELLS its field keys — a key spelling, nothing more.
 #

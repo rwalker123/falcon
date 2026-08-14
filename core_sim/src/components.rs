@@ -3101,36 +3101,14 @@ impl LaborAllocation {
         true
     }
 
-    /// **Put more hands on a band-wide standing role**, creating its row if the band had none — what
-    /// a completed build's hand-off needs (`docs/plan_standing_upkeep.md` §2.5).
-    ///
-    /// **Added, never assigned**, and unclamped: the caller has just taken these hands *off* another
-    /// allocation in the same band, so the head count does not move and there is nothing to refuse.
-    /// A path that adds hands the band does not have belongs at a command, where a refusal can be
-    /// read ([`Self::idle_for`]).
-    pub fn add_role_workers(&mut self, role: LaborTarget, workers: u32) {
-        if workers == 0 {
-            return;
-        }
-        if let Some(existing) = self
-            .assignments
-            .iter_mut()
-            .find(|a| a.target.same_source(&role))
-        {
-            existing.workers = existing.workers.saturating_add(workers);
-            return;
-        }
-        self.assignments.push(LaborAssignment {
-            target: role,
-            workers,
-            improvement: None,
-            improvement_workers: crate::intensification::NO_CREW_ON_THIS_ACTIVITY,
-            // A standing role names no kit: the shipped roster gives the keeping jobs the empty
-            // `none` default, and a row created by a hand-off has nobody to choose one.
-            kit: None,
-        });
-        self.align_yields();
-    }
+    // **RETIRED: `add_role_workers`** — put more hands on a band-wide standing role, creating its
+    // row if the band had none. Its only caller was the completion hand-off that moved a finished
+    // build's crew onto its web's keeping role, and that hand-off is retired
+    // (`docs/plan_standing_upkeep.md` §2.3): the keeping bill starts at the first work banked, so
+    // the failure it guarded against — a brand-new improvement decaying on turn one — cannot happen.
+    // **Adding hands off-command is what it existed for**, and with nothing taking hands *off* an
+    // allocation to hand on, an unclamped add would be hands the band does not have. Every remaining
+    // path staffs a role through [`Self::set_assignment`], where the band's headroom is enforced.
 
     // **RETIRED: `set_maintain_workers`** — the `maintain` command's whole effect.
     //
@@ -3717,18 +3695,19 @@ mod tests {
     }
 
     /// **A KEEPING ROLE IS A ROW LIKE ANY OTHER** — it counts against the pool, `workers_on` reads
-    /// its head count, and a completed build's hand-off creates it if the band had none
-    /// (`docs/plan_standing_upkeep.md` §2.5).
+    /// its head count, and it is staffed through `set_assignment` like every other row
+    /// (`docs/plan_standing_upkeep.md` §2.5). The hand-off that used to create it off-command is
+    /// retired with §2.3's carry-over.
     #[test]
     fn a_maintenance_role_is_an_ordinary_row_the_pool_counts() {
+        const BAND: u32 = 12;
         let mut allocation = LaborAllocation {
             assignments: vec![staffed_forage(bevy::math::UVec2::new(1, 1), 4, 0)],
             ..Default::default()
         };
         assert_eq!(allocation.workers_on(&LaborTarget::Agriculture), 0);
 
-        // The hand-off creates the row.
-        allocation.add_role_workers(LaborTarget::Agriculture, 2);
+        allocation.set_assignment(LaborTarget::Agriculture, 2, BAND, None);
         assert_eq!(allocation.workers_on(&LaborTarget::Agriculture), 2);
         assert_eq!(
             allocation.assigned_total(),
@@ -3736,13 +3715,12 @@ mod tests {
             "the keeping draws on the same finite band as the gathering"
         );
 
-        // And a second completion ADDS rather than replacing: a band already keeping other sources
-        // on this web keeps them.
-        allocation.add_role_workers(LaborTarget::Agriculture, 3);
+        // Re-stating the role replaces its head count — a role IS its head count.
+        allocation.set_assignment(LaborTarget::Agriculture, 5, BAND, None);
         assert_eq!(allocation.workers_on(&LaborTarget::Agriculture), 5);
 
         // The two webs are separate pools and never merge.
-        allocation.add_role_workers(LaborTarget::Husbandry, 1);
+        allocation.set_assignment(LaborTarget::Husbandry, 1, BAND, None);
         assert_eq!(allocation.workers_on(&LaborTarget::Agriculture), 5);
         assert_eq!(allocation.workers_on(&LaborTarget::Husbandry), 1);
     }

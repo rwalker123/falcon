@@ -176,9 +176,35 @@ const RUNG_ROTTING_FORMAT := "%s %s turns, %s (%d%%)"
 # Lower-case because it lands mid-value, after the count.
 const RUNG_ROTTING_PHRASE := "losing ground"
 
-# **HAZARD: work banked, and nobody building it.** The plant web's meter is actively rotting back at
-# the rung's decay rate; the animal web's is merely stuck. One word for both, because the ROW's own
-# name already says which rung is losing it.
+# **NOT A HAZARD: work banked, nobody on it, and the band's keeping is covering it** — the wire's own
+# `-2` with no build crew (`SourceForecast.BUILD_PACE_HELD`). Parking a half-built improvement is a
+# legitimate thing to do (`docs/plan_standing_upkeep.md` §2.4): the meter stays exactly where the
+# player left it, indefinitely.
+#
+# **IT CARRIES NO `RUNG_HAZARD_GLYPH` AND TAKES THE NEUTRAL INK, and that is the whole point.** With
+# the `Keeping:` row retired, the ABSENCE of a mark is the only thing that says a rung is fine — so
+# marking a deliberate hold teaches the player to ignore the mark, which costs every other row in this
+# family its meaning.
+#
+# **IT SAYS `Held` RATHER THAN `∞ turns`.** The `∞` states are statements about a CREW, and there is no
+# crew here; a row that quoted a crew's never-finishing to describe a parking decision would be
+# answering a question nobody asked.
+const RUNG_HELD_FORMAT := "Held at %d%%"
+
+# **HAZARD: a rung that is NOT the one in flight, carrying banked work its keeping did not cover.**
+# The half of the old *work banked and nobody on it* row that survived, and it survived because the
+# sim's answer cannot reach it.
+#
+# **THE SOURCE PUBLISHES ONE COUNTDOWN AND THE CARD HAS TWO ROWS** (`docs/plan_standing_upkeep.md`
+# §4.6a). `buildTurnsRemaining` describes whichever rung `build_verb` names, so the OTHER row has no
+# sentinel of its own — `-2` / `-3` replaced this format **for the at-risk meter only**, and for one
+# pass nothing replaced it here, which put the Field's `≈30 turns` on a Cultivation meter nobody was
+# touching. So a row that is not the rung in flight states what it IS: `RUNG_HELD_FORMAT` where the
+# keeping covers it, and this where it does not.
+#
+# **THE FORK IS `SourceForecast.rung_is_under_kept`** — the published shortfall routed through the
+# at-risk rung — so this row derives no number of its own and cannot disagree with the mark on the
+# built row beside it, which uses the same seam.
 const RUNG_REVERTING_FORMAT := "%s Reverting %d%%"
 
 # **HAZARD: builders are on it and the meter is not moving anyway** — the sim's `-1` for a rung whose

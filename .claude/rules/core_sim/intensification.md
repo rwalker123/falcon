@@ -544,25 +544,22 @@ all.
   therefore the loosest the bound can be, which is the safe direction for a guard. Every shipped rung
   still clears it by an order of magnitude (`the_shipped_graces_clear_the_loosened_bound`).
 
-#### Completion hands the build's crew to the keeping
+#### Completion FREES the build's crew — the hand-off onto the keeping is RETIRED
 
-The turn a meter fills, the post-loop pass in `advance_labor_allocation` clears the verb **and moves
-its crew**: onto the band's own keeping role for that web (`RungKey::upkeep_role`,
-`LaborAllocation::add_role_workers`) if the finished rung declares an upkeep
-(`RungDef::declares_upkeep`), otherwise back to the idle pool. Without the carry-over a brand-new pen
-starts decaying on turn one because nobody noticed it had begun costing something — the same
-punishment-for-invisible-arithmetic §2.5 exists to prevent.
+The turn a meter fills, the post-loop pass in `advance_labor_allocation` clears the verb and its crew,
+and those hands go back to the band's idle pool. It is **announced** on the finished verb's own feed
+channel (`improvement_feed_channel`), so a rung's whole life reads on one line and the player can
+re-task.
 
-**The head count does not move**, which is why no refusal is owed: the crew comes off the source's
-`improvement_workers` and lands on the role's row, so `assigned_total` is unchanged. **Added, never
-assigned** — a band already keeping other sources on that web keeps them, and these builders join
-them. The role's row is **created if the band had none**, which is the ordinary case: the first rung a
-band finishes on a web is what puts anybody on that web's keeping.
+**The carry-over onto the web's keeping role is gone** (`docs/plan_standing_upkeep.md` §2.3), and with
+it `RungKey::upkeep_role` and `LaborAllocation::add_role_workers`. It existed so that a brand-new pen
+did not start decaying on turn one because nobody had noticed it had begun costing something —
+**and §4.6a makes that unreachable**: the keeping bill starts at the **first work banked**, not at
+completion, so a player who built the thing at all was already paying to hold it. What is left would
+be the sim quietly moving hands between two rows the player staffs by hand.
 
-**Either way it is announced**, on the finished verb's own feed channel (`improvement_feed_channel`),
-so a rung's whole life reads on one line and the player can re-task. **All four managed rungs declare
-an upkeep, so every completion hands its builders on** — the free-them branch is what a rung with no
-standing cost (a future one) would take.
+**`RungDef::declares_upkeep` survives** as the fork nothing forks on any more; the completion event
+now says *"N of your cultivate crew are free"* on every rung.
 
 ### Standing upkeep — what it costs to HOLD a rung
 
@@ -581,18 +578,26 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
 > | **grace** | how long under-supplied before rot begins | `RungUpkeep::grace_turns` |
 >
 > ```text
-> net = supply − demand
->   net > 0  →  the surplus is BUILD PROGRESS      (`net_build_supply`)
+> rot = (shortfall / demand) × decay_per_turn, past the grace   // the KEEPING came up short
+> net = build_work − rot
+>   net > 0  →  the meter CLIMBS
 >   net = 0  →  the meter HOLDS exactly where it is
->   net < 0  →  it ROTS: (shortfall / demand) × decay_per_turn, past the grace
+>   net < 0  →  it LOSES GROUND — work already bought, bleeding
 > ```
 >
-> **THE RATE IS OWED ALWAYS**, while building and while held alike. What the meter's state decides is
-> **only who supplies it** — the *build crew* below its cost, the band's *keeping pool* at it
-> (`forage::patch_is_maintaining` / `fauna::herd_is_maintaining`, and the state test is the meter's
-> **fullness**, never the rung's achieved state). There is no third concept: an earlier cut gave an
-> unfinished meter its own demand (`meter_raising_demand`), which was the same rate under a second
-> name and carried a per-web exception with no fact under it. Both are deleted.
+> **THE RATE IS OWED ALWAYS, AND ALWAYS BY THE SAME POOL** (`docs/plan_standing_upkeep.md` §4.6a).
+> The band's keeping owes it for **every meter carrying work, at any fullness** — from the first work
+> banked until the last — and a **build crew supplies nothing toward it**: its whole output is
+> progress, so the pace is `work_cost / crew` again.
+>
+> **The meter's FULLNESS used to be the who-pays test** (`forage::patch_is_maintaining` /
+> `fauna::herd_is_maintaining`, both deleted), and §2.4 carries the two autopsies. A **half-built**
+> meter whose builders left could not be held at all — it was billed to a crew that was not there and
+> bled its full rate with keepers idle in the role and no command that could aim them at it; and a
+> **held** rung eroding to 99% flipped into *building*, so it stopped being the pool's business at the
+> moment it started needing it, and would have displaced the player's real build off the head of the
+> next slice's queue. There is no third concept either: an earlier cut gave an unfinished meter its
+> own demand (`meter_raising_demand`), the same rate under a second name.
 >
 > **`shortfall` used to BE the decay**, so raising a demand made the improvement rot faster in exact
 > proportion and neither number could move. Splitting them is what let the plant demands become whole
@@ -609,59 +614,118 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
 > #### THE COUNTDOWN HAS FOUR ANSWERS, AND THREE OF THEM ARE NEGATIVE
 >
 > `intensification::BuildTurns` is what a source stores and
-> `build_turns_estimate(cost, done, balance, staffed)` is what fills it:
+> `build_turns_estimate(cost, done, balance, gate_holds, builders)` is what fills it:
 >
 > | stored | wire | meaning |
 > |---|---|---|
 > | `Some(Turns(n))` | `n` | a real finish date at the crew that is on it |
-> | `Some(Holding)` | `BUILD_METER_HOLDS` (**`-2`**) | **the meter holds exactly where it is** — net supply is exactly `0` |
-> | `Some(Rotting)` | `BUILD_METER_ROTS` (**`-3`**) | **the meter is going backwards** — net supply is negative |
+> | `Some(Holding)` | `BUILD_METER_HOLDS` (**`-2`**) | **the meter holds exactly where it is** — `build_work − rot` is exactly `0` |
+> | `Some(Rotting)` | `BUILD_METER_ROTS` (**`-3`**) | **the meter is going backwards** — that balance is negative |
 > | `None` | `NO_BUILD_TURNS_ESTIMATE` (**`-1`**) | there is genuinely no answer |
 >
 > **All three of the negatives are ANSWERS or the absence of one, never a mix**, and the two the
-> player can act on are the last pair: add hands. Folded into `-1` they rendered as **no line at
-> all** on the tile card and the herd drawer, visible only to a compose sheet that happened to redo
-> the comparison itself.
+> player can act on are the last pair — *staff the keeping*, or add builders. Folded into `-1` they
+> rendered as **no line at all** on the tile card and the herd drawer, visible only to a compose
+> sheet that happened to redo the comparison itself.
 >
 > **AND THE TWO NON-FINISHING STATES COST THE PLAYER DIFFERENTLY, so they are two values.** At the
-> rate exactly, the crew's whole output goes on maintenance: the meter stands still and a turn is
-> wasted. Below it there is a shortfall, and past the rung's grace the decay pass bleeds work the
-> player already bought. One `-2` for both said *"never finishes"* about a build treading water and
-> one losing ground alike — and a client rendering them yellow and red cannot derive the difference,
-> because the difference is a **sign** the sim floors away before any meter sees it.
+> rot exactly the meter stands still — which is **not always a failure**: with no builders and the
+> keeping met it is a player **parking** a half-built improvement, held indefinitely at no risk,
+> which §2.4 exists to make possible. Below it the decay pass takes back work the player already
+> bought, and *that* is unambiguously bad. One `-2` for both said *"never finishes"* about a build
+> treading water and one losing ground alike — and a client rendering them yellow and red cannot
+> derive the difference, because the difference is a **sign**.
 >
 > **The split is a SIGN, so the estimate reads the unfloored net.** `RungDef::build_accrual` is
-> `net_build_supply`-floored — a meter must never be handed a negative amount to add, since the rot
-> is the decay pass's off the same stored supply — and that floor maps *holding* and *rotting* onto
-> one `0.0`. `RungDef::build_balance` is the same subtraction **signed**, off the same
-> `RungDef::build_terms` gate, and it is what every countdown site passes. The meter takes the
-> floored reading, the countdown takes the sign; one gate, one subtraction, two readings.
+> the crew's own output — a meter may only ever be *added* to, since the bleed is the decay pass's
+> off the same meter. `RungDef::build_balance` is that output **less the rot**
+> (`RungDef::meter_rot`), off the same `RungDef::build_supply` gate, and it is what every countdown
+> site passes. The meter takes the accrual, the countdown takes the balance; one gate, two readings.
 >
-> **The boundary is three conditions, all load-bearing**: a **real** (a verb in flight), **staffed**
-> (`build_workers > 0`), **priced** build whose net supply is `<= 0`. An **unstaffed** source reads
-> `None` — nobody has promised anything, and "never" there would fire on every idle improvement on
-> the map. **A refused GATE also reads `None`**, because a build that is not running has not promised
-> anything either — it accrues nothing for a reason that has nothing to do with staffing. The
-> **projection** answers on the same rule at the crew it is quoted for.
+> **The rot does not vary with the build crew**, which is what lets a compose sheet re-price a
+> *proposed* crew against it and land on the sim's own answer for the committed one — and it is
+> published as `meterRotPerTurn` because the client can derive neither the grace state nor the rung's
+> decay rate.
+>
+> > #### ⛔ THE ROT IS WHAT THE **NEXT** PASS WILL BLEED — and reading it backwards withheld a fact
+> >
+> > Logistics runs before Population, so within one turn `T`:
+> >
+> > ```text
+> > Logistics(T):   bleeds  decay(fraction(supplied(T−1)), neglect(T−1) + 1)   ← LAST turn's supply
+> > Population(T):  stamps  supplied(T);  publishes  decay(fraction(supplied(T)), neglect(T) + 1)
+> > ```
+> >
+> > Two lines, **one expression, one turn apart** — so what is published at `T` is exactly what
+> > `Logistics(T+1)` bleeds. Measured on `plant:tended` (grace `2`), on a half-built meter with nobody
+> > on it, the published rot at each turn against the movement of the **next**:
+> >
+> > | turn | published rot | `neglectGraceRemaining` | `buildTurnsRemaining` | meter moved that turn | meter moved NEXT turn |
+> > |---|---|---|---|---|---|
+> > | 1 | `0.00` | 2 | `-2` | `+0.00` | `+0.00` |
+> > | 2 | `0.50` | 1 | `-3` | `+0.00` | `−0.50` |
+> > | 3 | `0.50` | 0 | `-3` | `−0.50` | `−0.50` |
+> > | 4+ | `0.50` | 0 | `-3` | `−0.50` | `−0.50` |
+> >
+> > **THE BLEED IS ALREADY DETERMINED WHEN IT IS PUBLISHED, and that is the non-obvious part a future
+> > reader will re-derive incorrectly.** The next pass judges the supply *this* turn has just stamped,
+> > so a shortfall standing at `T` cannot be undone by anything the player does at `T+1`. The backward
+> > reading therefore **withheld a fact** rather than declining to predict one — it published `0.00`
+> > and `-2` on turn 2, *the meter holds*, about a meter that was already going to lose `0.50`. It
+> > looks like the cautious reading; it is the wrong one.
+> >
+> > **It cannot over-warn**: a positive rot needs a shortfall in the just-stamped supply, which is
+> > exactly the condition the next pass tests. Restore the keeping and both go to `0` on the same turn.
+> >
+> > **What it gives up, deliberately**: it is not *"what the meter just did"*. On a turn the keeping is
+> > **restored** the meter still loses the previous turn's shortfall while this reads `0` — correct,
+> > because that loss is already spent and the next pass takes nothing. A surface wanting the turn's
+> > realised cost reads the meter, not this.
+> >
+> > Pinned on the encoded snapshot by
+> > `build_turns_on_the_wire.rs::the_published_rot_is_exactly_what_the_next_decay_pass_bleeds`, whose
+> > **rescue arm** is what makes the other two mean anything: a form that always predicted a bleed
+> > would pass the boundary and the steady state alike.
+>
+> #### ⛔ THE NO-ANSWER BOUNDARY IS **WORK BANKED**, NOT HANDS ON THE JOB
+>
+> | state | answer |
+> |---|---|
+> | no build in flight, or the rung's own gate refuses it | `None` |
+> | a build in flight, meter at **zero**, no builders | `None` — nobody has promised anything yet |
+> | otherwise | the sign of `build_work − rot` |
+>
+> **A meter carrying work has promised something — the player paid for it.** The rule used to be
+> *"an **unstaffed** source reads `None`, because nobody has promised anything"*, which was written
+> when unstaffed meant *nobody has declared anything*. Since §4.6a a half-built meter with nobody on
+> it is exactly *the meter holds* (the keeping covers it) or *the meter is losing ground* (it does
+> not) — which is what the two sentinels mean.
+>
+> **That is not a nicety: on the shipped ladder ZERO BUILDERS IS WHERE THE TWO STATES LIVE.** Both
+> plant rot rates (`0.5`, `0.75`) are **below one worker-turn**, so a *staffed* plant build always
+> out-runs its own rot; and neither animal rung declares a `meter_decay` at all, so nothing eats an
+> animal build. Under the old boundary the pair was unreachable in ordinary play, and the only way to
+> exercise them was a fixture rung with an invented `meter_decay` — a fixture bent until the
+> assertion passed. **A refused GATE still reads `None`**, at any staffing and any meter: a build
+> that is not running has promised nothing. The **projection** answers on the same rule.
 >
 > Pinned on the encoded snapshot, four states pairwise distinct, by
-> `core_sim/tests/build_turns_on_the_wire.rs`. **The exact-equality arm is the one that carries the
-> test**: rotting is reached by a `< 0` comparison and holding by falling through it, so a fixture
-> staffed only *below* the rate passes with both wired to the same branch. The shipped
-> `plant:tended` demand of `2.0` is what makes a patch the fixture — at a rate of one hand the only
-> staffing under it is no staffing at all, which is `None` by design.
+> `core_sim/tests/build_turns_on_the_wire.rs`, **on the shipped ladder**: a half-built `plant:tended`
+> meter with no builders and the `agriculture` role staffed → `-2`, the same meter with the role
+> empty and the grace spent → `-3`, and a refused gate → `-1`. **The exact-equality arm is the one
+> that carries the test**: rotting is reached by a `< 0` comparison and holding by falling through
+> it, so a suite staged only *below* the line passes with both wired to the same branch.
 
-- **THE MAINTENANCE RATE IS A TAX ON BUILDING, so `work_cost / crew` is NOT the pace.** It is
-  `work_cost / (crew − rate)` (`RungDef::build_accrual` → `net_build_supply`), and **a crew at or
-  below the rate never finishes** — it holds the meter or takes it backwards. That is a
-  minimum-viable-crew threshold rather than a slow build, so `build_turns_remaining` answers **no
-  estimate** — or, once a crew is actually on it, **`Never`** (above) — at a non-positive net rather
-  than a large number, and the **projection**
-  (`LadderConfig::projected_build_turns`) quotes the net too: a finish date that will never arrive is
-  a promise, not an estimate. **`<rung>UpkeepDemand` is the threshold a compose sheet reads** — it
-  names the rung being quoted, so the sheet can say *"this crew is below it"* on a source nobody has
-  started. `upkeepDemand` / `upkeepWorkersNeeded` publish the *billed* rung's on both sides of
-  completion; see "A price without the rate that eats it is not a quote".
+- **THE MAINTENANCE RATE IS NOT A TAX ON BUILDING — `work_cost / crew` IS the pace** (§4.6a). A build
+  crew supplies nothing toward the rate, so `RungDef::build_accrual` is `activity_work(workers)` and
+  a lone builder banks a whole worker-turn on the dearest rung on the ladder. **There is no
+  minimum-viable-crew threshold**; the only no-estimate state a staffed build can reach is the
+  countdown's, and its term is the **rot**. `LadderConfig::projected_build_turns` nets the same rot,
+  and on ground nobody has started there is nothing banked and therefore nothing to rot — which is how
+  issue #545's repro (one builder against `plant:tended`'s demand of `2.0`, quoted `-3`) resolves to
+  an honest 50 turns. **`<rung>UpkeepDemand` still answers what holding the quoted rung will cost the
+  keeping pool** — a real cost the player must see before committing — it is simply not netted off the
+  build; see "A price without the rate that eats it is not a quote".
 - **ALL FOUR MANAGED RUNGS DECLARE ONE.** `upkeep_demand` is an honest `0` on the two `wild` rungs
   rather than a sentinel — `HerdTelemetryState::pen_upkeep`'s rule.
 - **THE DECAY IS PROPORTIONAL, continuously** (§2.4). Meet the demand and the net is zero and the
@@ -669,20 +733,19 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
   the upkeep's own `grace_turns`. Half the hands a meter needs means it slides at half rate — not at
   the full neglect rate and not at nothing, which the binary `tended_this_turn` /
   `tamed_this_turn` flags could not express.
-  - **WHICH HANDS those are depends on whether the rung is BUILT** — its **builders** while the meter
-    is still being raised, the band's **keeping pool** once it is held
-    (`forage::patch_upkeep_supply` / `fauna::herd_upkeep_supply`, one rule and two seams of the same
-    shape). *You cannot be billed to hold something you have not finished building*, which is §0's own
-    definition of the term; and an **abandoned** part-build still owes, because the hands it needed
-    are not on it either. **The verb names the meter** on both webs, so a `Sow` or a `Corral` answers
-    for the rung it is starting from its first turn — the supply is stamped in Population and read by
-    the next Logistics pass, so it has to describe the meter that pass will judge.
-  - **WHAT IT IS OWED DOES NOT MOVE — only who pays.** The rate is the same on both sides of
-    completion and on both webs; an unfinished meter is simply billed to its **builders**, whose
-    surplus over it is the build's progress. **The state test is the meter's FULLNESS**
-    (`patch_is_maintaining` / `herd_is_maintaining`), deliberately not the rung's achieved state: a
-    tended patch eroded to 99% is *building* — that 1% is a repair its build crew may run — while
-    remaining, correctly, tended.
+  - **THE HANDS ARE ALWAYS THE BAND'S KEEPING POOL** (`forage::patch_upkeep_supply` /
+    `fauna::herd_upkeep_supply`, one rule and two seams of the same shape), from the **first work
+    banked** until the last. An **abandoned** part-build still owes, and can now still be *held*.
+    **The verb names the meter** on both webs, so a `Sow` or a `Corral` answers for the rung it is
+    starting from its first turn — the supply is stamped in Population and read by the next Logistics
+    pass, so it has to describe the meter that pass will judge. (Since the fullness test went, the
+    resolved meter's *identity* no longer changes what is supplied; what it still decides is that
+    ground with **nothing** on it is billed nothing.)
+  - **NEITHER WHAT IS OWED NOR WHO PAYS IT MOVES.** The rate is the same on both sides of completion
+    and on both webs, and so is the payer. *"You cannot be billed to hold something you have not
+    finished building"* is **deleted** — you can, and that is what makes a half-built meter holdable
+    at all. A tended patch eroded to 99% is short of its cost, still tended, and still the pool's:
+    three facts, none of them each other.
   - **THE PENALTY DIFFERS BY WEB, and only the penalty does.** A plant meter **bleeds** the shortfall
     (`forage::advance_cultivation`); an animal flock **sheds** the animals the missing hands cannot
     hold (`fauna::advance_husbandry`, `uncontained_overage` = `shortfall_in_loads ×
@@ -753,15 +816,16 @@ other row (§2.5).
   unit either meets a demand or is still in the pool
   (`intensification::tests::a_short_pool_is_spent_whole_under_both_modes`).
 - **One role per WEB because the two webs are already separate ladders** — this is their existing
-  split, not a new axis. `RungKey::upkeep_role` is a reading of `RungKey::branch`, so it cannot drift
-  from it.
-- **The band's demand is the SUM** over everything it holds on that web, and **only a BUILT rung
-  draws**: a meter still being raised is owed its builders, so it contributes no demand and takes no
-  share (`systems::labor::maintenance_shares`).
-  - **HOLDS, not harvests.** A row's eligibility is the *source's* answer (`patch_is_maintaining` /
-    `herd_is_maintaining`) and never its take crew. `maintenance_shares` used to skip rows at
-    `workers == 0`, which is what made a finished improvement's keeping depend on somebody still
-    gathering it — see "A SOURCE ROW IS THE BAND'S HOLDING" above for the whole of that repair.
+  split, not a new axis. (`RungKey::upkeep_role`, which read it off `RungKey::branch`, retired with
+  the completion hand-off that was its only caller.)
+- **The band's demand is the SUM** over everything it holds on that web, and **every meter carrying
+  work draws, at any fullness** (`systems::labor::maintenance_shares`, §4.6a). A source claims a share
+  exactly where it has a meter at risk — which is `systems::source_has_a_meter_at_risk`, the **one
+  seam** the row's own survival is decided by, so what the pool funds, what the decay pass bleeds and
+  what keeps a holding alive cannot come to be three questions.
+  - **HOLDS, not harvests.** A row's eligibility is the *ground's* answer and never its take crew.
+    `maintenance_shares` used to skip rows at `workers == 0`, which made a finished improvement's
+    keeping depend on somebody still gathering it — see "A SOURCE ROW IS THE BAND'S HOLDING" above.
 - **THE SHORTFALL SPLIT IS A PER-BAND PLAYER OPTION** — `LaborAllocation::upkeep_fund_mode`
   (`intensification::UpkeepFundMode`), set by `upkeep_mode <faction> <band> spread|priority` (proto
   field **56**, `UpkeepModeCommand`, reusing the retired `MaintainCommand`'s slot):
@@ -1068,12 +1132,12 @@ Appended (append-only) on both tables:
 > `corralUpkeepDemand` carry the herd's own **keeper load**, ownership-independent, for
 > `herdersNeededIfManaged`'s reason: a quote has to exist before the herd is anyone's.
 >
-> **`buildTurnsRemaining` was never wrong.** `LadderConfig::projected_build_turns` nets the rate off
-> the rung it is *quoting* (`RungDef::build_accrual` → `net_build_supply`), so the sim already
-> published `-3` **the meter rots** for the repro above (one builder against a demand of `2.0` is
-> under the rate, not at it). The defect was that the client had
-> no field to reproduce that with, and the closed form it evaluates for a *proposed* crew therefore
-> divided by an un-netted crew output.
+> **`buildTurnsRemaining` WAS wrong, and §4.6a is what fixed it.** The projection netted the quoted
+> rung's *rate* off the crew, so one builder against a demand of `2.0` published `-3` **the meter
+> rots** about a build that finishes perfectly well in 50 turns (issue #545). The rate is the keeping
+> pool's bill; what the projection nets now is the **rot**, which is `0` on ground nobody has started.
+> The client's closed form nets the published `meterRotPerTurn` for the same reason and lands on the
+> same number.
 - **`buildWorkFromGear` is quoted BESIDE the raw price, never folded into it.** `workCost` stays
   the job as the ladder prices it, so a readout can say *"your hurdles: −17 work"* against a number
   that does not move under the crew's kit — and the estimate beside it already reflects the tooled
@@ -1086,8 +1150,13 @@ Appended (append-only) on both tables:
   ```text
   gear(w)  = min(w, buildWorkSaturatingCrew) × buildWorkPerWorker      ← the band's kitTiers row
   turns(w) = ceil((workCost − workDone − gear(w))
-                  / (w × buildWorkPerWorkerTurn × floor / foodPeak − <rung>UpkeepDemand))
+                  / (w × buildWorkPerWorkerTurn − meterRotPerTurn))
   ```
+
+  **The divisor's second term is the ROT, and there is no floor factor.** `<rung>UpkeepDemand` is the
+  keeping pool's bill and is never netted off a build (§4.6a); `learn_multiplier(floor)` came off the
+  build accrual with the crews' separation, so the crew term is the head count and nothing else. Both
+  producers must carry the same expression or the sheet and the card disagree at every floor.
 
   - **The GEAR pair rides `PopulationCohortState.kitTiers[]`, not a source row**, because both of its
     terms — units held, and each unit's reach — are facts about the **band's ledger**. That is what
@@ -1173,9 +1242,17 @@ Appended (append-only) on both tables:
     unquotable.
 - **`-1` now means there is genuinely NO ANSWER** (`sim_schema::NO_BUILD_TURNS_ESTIMATE`): the source
   is at the top of its ladder (a Field, a penned herd), one of the gates above refuses it for this
-  faction, or **no crew is working the source** (the labor arm never visits it, so nothing is stamped).
-  A **staffed** crew that cannot clear the rate is not this — it publishes `-2` or `-3`, per "THE
-  COUNTDOWN HAS FOUR ANSWERS".
+  faction, or **the rung's meter is at zero and nobody is building it** — nothing banked and nobody on
+  it has promised nothing. A source with **work already banked** is otherwise never this, staffed or
+  not: it publishes `-2` or `-3`, per "THE NO-ANSWER BOUNDARY IS WORK BANKED".
+  > **A source nobody is standing on is NOT one of those.** The gate's work term
+  > (`systems::labor::crew_is_working_the_source`) reads the **escapement room** — `max(0, B −
+  > floor·K)`, a fact about the *stock against the assignment's floor* — and not about crew presence.
+  > A patch nobody gathers regrows toward `K`, so its room is large, its gate is open, and an
+  > abandoned half-built meter publishes an honest `-3`. **Only the animal web can lose that room and
+  > not get it back**, because the hunters' draw and the suppressed regrowth of an unkept flock pin it
+  > at the floor together — an *eligibility* stall no term the countdown is struck from can see. See
+  > `.claude/rules/core_sim/husbandry.md` → "THE REGROWTH SUPPRESSION CLOSES A LOOP".
 - **`workCost` and the turns must name ONE rung**, because they are read as a pair (*"50 work, ≈25
   turns"*). Both rungs' costs ship per source, so the client picks: the verb on
   `LaborAssignment.improvement`, or — when that is empty — the rung above the one the source's own

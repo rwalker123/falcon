@@ -1631,7 +1631,7 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     # policy glyph).
     marks.add_theme_color_override("font_color",
         HudStyle.WARN if bool(model.get("warn", false)) or bool(model.get("under_herded", false)) \
-            or bool(model.get("unbuilt", false)) else HudStyle.INK_DIM)
+            else HudStyle.INK_DIM)
     marks.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     marks.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(marks)
@@ -1921,46 +1921,36 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         var marks := FoodIcons.for_floor_zone(SourceForecast.floor_zone(floor))
         if bool(yld.get("warn", false)):
             marks += " " + HudComposeVocab.OVERHUNT_FLAG
-        # UNDER-CONTAINED managed herd (fauna neglect-escape arc): fewer KEEPERS staffed than the herd
-        # needs → it sheds whole animals into the wild. Flag it wherever the herd is LISTED, not only in
-        # its drawer, with the established overhunt ⚠.
-        # **IT MEASURES THIS HERD'S SHARE OF THE POOL AGAINST ITS KEEPING DEMAND**
-        # (`docs/plan_standing_upkeep.md` §2.5) — `SourceForecast.is_under_kept` is the one test, and
-        # the herd drawer's `Keepers` row calls the same one, so the two surfaces cannot disagree.
-        # It counted the per-source `maintain` crew until maintenance left the tile; that crew no
-        # longer exists, so the count went to `0` on every managed herd and the ⚠ would have been
-        # permanently up — a warning measuring the wrong thing, which is worse than none.
-        # **THE NOTE NAMES THE BAND'S HUSBANDRY ROLE, NOT THIS ROW'S `+`** — the stepper beside it
-        # moves the TAKE crew and no keeper crew exists on this source, so the remedy is the
-        # WORKFORCE zone's Husbandry card; `WORK_ROW_UNDER_HERDED_NOTE` carries the instruction and
-        # `WORK_ROW_UNDER_HERDED_TOOLTIP` the reason.
-        var under_herded := SourceForecast.is_under_kept(
-            live_herd, HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.SOURCE_KIND_HERD)
-        if under_herded:
+        # **THE ONE AT-RISK MARK, AND IT USED TO BE TWO** (`docs/plan_standing_upkeep.md` §4.6a).
+        # `SourceForecast.is_under_kept` is the single test on both webs and on both sides of
+        # completion: the band's keeping pool owes an at-risk meter at any fullness, so a half-built
+        # rung and a held one are short for the same reason and have the same remedy. It was split on
+        # `build_is_in_flight` into a keeper warning and a builder warning — a distinction that existed
+        # only while an unbuilt rung was billed to its BUILD crew, and which had the board telling a
+        # player to staff builders for a bill the keeping pool owes.
+        #
+        # **IT MEASURES THIS SOURCE'S SHARE OF THE POOL AGAINST ITS KEEPING DEMAND** (§2.5) — the herd
+        # drawer's `Keepers` row and the source card's rung mark call the same test, so no two surfaces
+        # can disagree. It counted the per-source `maintain` crew until maintenance left the tile; that
+        # crew no longer exists, so the count went to `0` on every managed source and the ⚠ would have
+        # been permanently up.
+        #
+        # **THE NOTE NAMES THE BAND ROLE THAT MOVES IT, NOT THIS ROW'S `+`** — the stepper beside it
+        # moves the TAKE crew, so the remedy is the WORKFORCE zone's Husbandry or Agriculture card.
+        # The two are the same sentence about different webs, which is why the pair is keyed on `kind`
+        # rather than spelled twice.
+        var under_kept := SourceForecast.is_under_kept(
+            rung_source, HudComposeVocab.BARE_FORECAST_PREFIX)
+        if under_kept:
             if not marks.contains(HudComposeVocab.OVERHUNT_FLAG):
                 marks += " " + HudComposeVocab.OVERHUNT_FLAG
             # **IT TAKES THE SLOT, where it used to yield to whatever was already in it.** The two
             # notes could not co-occur while containment came off the hunting crew — a herd could not
             # be short of hunters and overstaffed with them at once — and with the crews split they
-            # can: an overstaffed TAKE crew on a herd nobody keeps is an ordinary state. They are not
-            # equal in weight, so the slot is not first-come: the overstaff note says some hunters
-            # bring nothing home, and this one says the animals are leaving.
-            note = HudWorkVocab.WORK_ROW_UNDER_HERDED_NOTE
-        # …AND THE OTHER WAY A SOURCE BLEEDS: a part-built rung whose builders are not covering its
-        # rate (`SourceForecast.is_unbuilt_and_unpaid`). An at-risk meter is owed the crew that OWNS
-        # it, so a rung still going up is owed BUILDERS — and the sim's decay, and the animal web's
-        # shed, read the resulting shortfall without caring which crew failed to pay. Both webs reach
-        # it: a walked-away Tame sheds animals, a walked-away Cultivate slides back toward wild.
-        # **EXCLUSIVE WITH THE KEEPER CASE BY CONSTRUCTION** — that one needs the meter FULL and this
-        # one needs it still climbing — so the two share the `note` slot without either displacing the
-        # other, and the `elif` states an exclusivity rather than a precedence.
-        var unbuilt := not under_herded and SourceForecast.is_unbuilt_and_unpaid(
-            rung_source, HudComposeVocab.BARE_FORECAST_PREFIX,
-            SourceForecast.source_kind_for_labor(kind))
-        if unbuilt:
-            if not marks.contains(HudComposeVocab.OVERHUNT_FLAG):
-                marks += " " + HudComposeVocab.OVERHUNT_FLAG
-            note = HudWorkVocab.WORK_ROW_UNBUILT_NOTE
+            # can: an overstaffed TAKE crew on a source nobody keeps is an ordinary state. They are not
+            # equal in weight, so the slot is not first-come: the overstaff note says some hands bring
+            # nothing home, and this one says the ground or the flock is being lost.
+            note = HudWorkVocab.under_kept_note(kind)
         models.append({
             "key": String(key), "kind": kind, "icon": icon, "icon_texture": icon_texture,
             "label": label,
@@ -1980,11 +1970,12 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # standing there — a row reading `0 assigned` with three hands on its meter is the same
             # miscount the idle counter had, one surface along.
             "build_workers": build_workers,
-            "under_herded": under_herded,
-            # The build-crew twin of the flag above — a part-built rung nobody is paying for. Its own
-            # key rather than a merged "something is bleeding" bool, because the row TINT wants either
-            # and the assertions want to tell them apart.
-            "unbuilt": unbuilt,
+            # **ONE FLAG, WHERE THERE WERE TWO** (`docs/plan_standing_upkeep.md` §4.6a). It was
+            # `under_herded` beside `unbuilt` — a keeper warning and a builder warning, split on
+            # whether the meter was full — and one keeping pool owes both now, so the second key was a
+            # distinction with nothing under it. The name keeps the animal web's because that is the
+            # web every reader of it is on; what it means is *this source's keeping came up short*.
+            "under_herded": under_kept,
             "note": note, "muted_note": String(yld.get("muted_note", "")), "marks": marks,
             # The source's STANDING RUNG — orthogonal to `marks`, which carries the verb in flight.
             "rung_glyph": String(rung.get("glyph", "")), "rung_tooltip": String(rung.get("tooltip", "")),
@@ -2005,7 +1996,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "schedule": HudBandLaborState.as_schedule(m.get("arrival_schedule", null)),
             "tooltip": HudFormat.join_tooltip_lines([String(yld.get("tooltip", "")),
                 HudFormat.floor_hint(floor, kind), String(cap.get("note", "")),
-                HudWorkVocab.WORK_ROW_UNDER_HERDED_TOOLTIP if under_herded else "",
+                HudWorkVocab.under_kept_tooltip(kind) if under_kept else "",
                 "" if ready.is_empty() else HudWorkVocab.WORK_ROW_READY_TOOLTIP_FORMAT % HudFormat.policy_face(String(ready.get("policy", ""))),
                 "" if building.is_empty() else HudWorkVocab.WORK_ROW_BUILDING_TOOLTIP_FORMAT % [
                     HudFormat.policy_face(String(building.get("policy", ""))),

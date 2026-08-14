@@ -29,8 +29,8 @@ use crate::{
     hashing::FnvHasher,
     intensification::{
         LadderConfig, LadderConfigHandle, RungDef, RungKey, RungMovement, FABRICATED_BUILD_COST,
-        NEGLECT_NONE, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_NEGLECT_GRACE, NO_UPKEEP_DEMAND,
-        RUNG_UNSTARTED,
+        NEGLECT_NONE, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_NEGLECT_GRACE, NO_UPKEEP_DECAY,
+        NO_UPKEEP_DEMAND, RUNG_UNSTARTED,
     },
     mapgen::WorldGenSeed,
     orders::FactionId,
@@ -3763,25 +3763,11 @@ pub fn herd_build_verb(
     (declared == Some(Improvement::Tame)).then_some(Improvement::Tame)
 }
 
-/// **IS THIS HERD BUILDING OR MAINTAINING?** — `true` = maintaining, the animal twin of
-/// `forage::patch_is_maintaining` and **the same rule with no exception**
-/// (`docs/plan_standing_upkeep.md` §2.4).
-///
-/// A source is **building** below its meter's cost and **maintaining** at it, and the test decides
-/// **nothing but who supplies the maintenance rate**: the build crew below, the band's `husbandry`
-/// pool at it. The rate is owed either way — *"the animals are standing there whether or not the
-/// fence is up"* was an exception with no fact under it, and it is gone.
-///
-/// `false` for a wild herd, which has no meter at all.
-pub fn herd_is_maintaining(herd: &Herd) -> bool {
-    if herd.is_corralled() || herd.corral_progress > RUNG_UNSTARTED {
-        herd.corral_meter_full()
-    } else if herd.owner.is_some() {
-        herd.is_domesticated()
-    } else {
-        false
-    }
-}
+// **RETIRED: `herd_is_maintaining`** — the animal twin of the retired `forage::patch_is_maintaining`,
+// and retired for the same reason (`docs/plan_standing_upkeep.md` §4.6a). The meter's **fullness**
+// decided who supplied the maintenance rate; nothing about how full a meter is decides who pays. The
+// band's `husbandry` pool owes the rate for every meter carrying work, at any fullness, and a build
+// crew supplies nothing toward it.
 
 /// **WHAT HAS BEEN SUNK INTO THE METER AT RISK** — the animal twin of `forage::patch_at_risk_cost`,
 /// and the ordering key of [`crate::intensification::UpkeepFundMode::Priority`]: a band short of
@@ -3796,24 +3782,37 @@ pub fn herd_at_risk_cost(herd: &Herd) -> f32 {
     }
 }
 
-/// **THE WORK THE AT-RISK METER WAS OWED THIS TURN, AND WHO OWED IT** — the animal twin of
-/// `forage::patch_upkeep_supply`, and the same rule stated on the same seam:
+/// **THE WORK THE AT-RISK METER WAS OWED THIS TURN, AND THE KEEPING POOL OWES ALL OF IT** — the
+/// animal twin of `forage::patch_upkeep_supply` (`docs/plan_standing_upkeep.md` §2.4/§4.6a).
 ///
-/// | meter | the work it is owed | sheds when |
-/// |---|---|---|
-/// | **incomplete** — a `Tame` or `Corral` in flight, or one walked away from | the **build** crew | no builders |
-/// | **complete** — a rung being held | the **maintain** crew | no keepers |
+/// **A meter carrying work is billed to the band's `husbandry` pool at any fullness** — from the
+/// first work banked until the last — and a build crew supplies nothing toward it. A `Tame` in
+/// flight owes what a tamed herd owes, to the same hands.
+///
+/// `keeping_share` is this herd's slice of that pool; [`NO_UPKEEP_DEMAND`] where there is no meter
+/// to hold and none being started.
+pub fn herd_upkeep_supply(
+    herd: &Herd,
+    improvement: Option<crate::components::Improvement>,
+    keeping_share: f32,
+) -> f32 {
+    match herd_meter_answering_for(herd, improvement) {
+        Some(_) => keeping_share,
+        None => NO_UPKEEP_DEMAND,
+    }
+}
+
+/// **WHICH METER THIS TURN'S KEEPING ANSWERS FOR** — the newest of the meter with progress on it and
+/// the meter this crew's verb is filling, the animal twin of `forage::patch_meter_answering_for`.
 ///
 /// **The verb names the meter**, exactly as it does on the plant web and for the same reason: the
 /// supply is stamped in Population and read by the *next* Logistics pass, so it has to describe the
 /// meter that pass will judge. A `Corral` starting on a herd with no pen progress answers for
 /// `animal:pen` from its very first turn.
-pub fn herd_upkeep_supply(
+fn herd_meter_answering_for(
     herd: &Herd,
     improvement: Option<crate::components::Improvement>,
-    build_work: f32,
-    maintain_work: f32,
-) -> f32 {
+) -> Option<RungKey> {
     let by_progress = if herd.is_corralled() || herd.corral_progress > RUNG_UNSTARTED {
         Some(RungKey::AnimalPen)
     } else if herd.owner.is_some() {
@@ -3832,26 +3831,32 @@ pub fn herd_upkeep_supply(
             Improvement::Cultivate | Improvement::Sow => None,
         }
     });
-    let answering_for = match (by_progress, by_verb) {
-        (Some(RungKey::AnimalPen), _) | (_, Some(RungKey::AnimalPen)) => RungKey::AnimalPen,
-        (Some(key), _) => key,
-        (None, Some(key)) => key,
+    match (by_progress, by_verb) {
+        (Some(RungKey::AnimalPen), _) | (_, Some(RungKey::AnimalPen)) => Some(RungKey::AnimalPen),
+        (Some(key), _) | (None, Some(key)) => Some(key),
         // Nothing owned here and nothing being built, so nothing is owed and nothing can be short.
-        (None, None) => return NO_UPKEEP_DEMAND,
-    };
-    // **Only who supplies moves** (`herd_is_maintaining`) — the meter's fullness, never the rung's
-    // achieved state.
-    let maintaining = match answering_for {
-        RungKey::AnimalPen => herd.corral_meter_full(),
-        _ => herd.is_domesticated(),
-    };
-    if maintaining {
-        maintain_work
-    } else if by_verb == Some(answering_for) {
-        build_work
-    } else {
-        NO_UPKEEP_DEMAND
+        (None, None) => None,
     }
+}
+
+/// **WHAT THIS HERD'S AT-RISK METER WILL LOSE ON THE NEXT DECAY PASS**, in work units — the plant twin's
+/// shape (`forage::patch_meter_rot`), through the same [`RungDef::meter_rot`] seam.
+///
+/// **IT IS ALWAYS `0` ON THE SHIPPED LADDER, AND THAT IS NOT AN OMISSION.** Neither animal rung
+/// declares a `meter_decay`: an under-kept flock **sheds animals** at `fauna_config`'s own escape
+/// fractions, which are already the rate, so a second one on the rung would be two numbers for one
+/// mechanic. Nothing eats an animal build — a `Tame` or `Corral` with any crew on it publishes a real
+/// finish date however short its keeping is, and the price of that shortfall is paid in animals
+/// rather than in meter. The seam exists so the countdown and the wire read one number on both webs;
+/// do not "fix" the missing red.
+pub fn herd_meter_rot(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> f32 {
+    herd_keeping_rung(herd, ladder).map_or(NO_UPKEEP_DECAY, |rung| {
+        rung.meter_rot(
+            herd_keeper_load(herd, fauna),
+            herd.upkeep_supplied,
+            herd.neglect_turns,
+        )
+    })
 }
 
 /// **WHAT IT COSTS TO HOLD THIS HERD THIS TURN**, in work units — the keeping rung's

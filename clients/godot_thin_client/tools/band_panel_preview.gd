@@ -3176,9 +3176,11 @@ func _unbuilt_work_herd_fixtures() -> Array:
 	_set_managed_herders(taming, UNDER_HERDED_WORK_HERDERS_NEEDED)
 	return [taming]
 
-## GUARD: the unbuilt-rung ⚠ and the note that names BUILDERS — plus the claim that it is NOT wearing
-## the keeper note, which is the failure mode the pair exists to prevent (telling a player to staff
-## KEEPERS on a rung that wants builders).
+## GUARD: **a HALF-BUILT rung whose keeping is short wears the SAME ⚠ and the SAME note as a held one**
+## (`docs/plan_standing_upkeep.md` §4.6a). It was the other way round — its own `unbuilt` flag and a
+## note naming BUILDERS — because an unbuilt rung was billed to its build crew; one keeping pool owes
+## both now, so the mid-build state is not a second kind of warning and pointing at builders sent the
+## player to a lever that does not settle the bill.
 func _assert_unbuilt_warning(state_name: String) -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
 	var found := false
@@ -3188,20 +3190,18 @@ func _assert_unbuilt_warning(state_name: String) -> void:
 		if String(model.get("herd_id", "")) != UNBUILT_WORK_HERD_ID:
 			continue
 		found = true
-		if not bool(model.get("unbuilt", false)):
-			failures.append("unbuilt is false on a part-built rung nobody is building")
-		if bool(model.get("under_herded", false)):
-			failures.append("under_herded is true on a rung that owes no keepers")
+		if not bool(model.get("under_herded", false)):
+			failures.append("the at-risk flag is false on a part-built rung the pool did not cover")
 		if not String(model.get("marks", "")).contains(HudComposeVocab.OVERHUNT_FLAG):
 			failures.append("expected the ⚠ mark, got marks %s" % [model.get("marks", "")])
 		var note := String(model.get("note", ""))
-		if note != HudWorkVocab.WORK_ROW_UNBUILT_NOTE:
-			failures.append("expected the BUILDERS note, got %s" % [note])
+		if note != HudWorkVocab.under_kept_note(SourceForecast.LABOR_KIND_HUNT):
+			failures.append("expected the keeping note, got %s" % [note])
 	if not found:
 		_fail("%s — no Hunt work row for %s" % [state_name, UNBUILT_WORK_HERD_ID])
 		return
 	if failures.is_empty():
-		print("band_panel_preview: assert OK — %s the unbuilt rung warns and names its BUILDERS"
+		print("band_panel_preview: assert OK — %s the part-built rung warns and names its KEEPING"
 			% state_name)
 		return
 	for failure in failures:
@@ -3237,9 +3237,9 @@ func _assert_keeper_warning(state_name: String, expect_warned: bool) -> void:
 		if expect_warned:
 			if not marks.contains(HudComposeVocab.OVERHUNT_FLAG):
 				failures.append("expected the ⚠ mark, got marks %s" % [marks])
-			if note != HudWorkVocab.WORK_ROW_UNDER_HERDED_NOTE:
+			if note != HudWorkVocab.under_kept_note(SourceForecast.LABOR_KIND_HUNT):
 				failures.append("expected the Husbandry note, got %s" % [note])
-		elif note == HudWorkVocab.WORK_ROW_UNDER_HERDED_NOTE:
+		elif note == HudWorkVocab.under_kept_note(SourceForecast.LABOR_KIND_HUNT):
 			failures.append("the Husbandry note survived a herd the pool covers")
 	if not found:
 		_fail("%s — no Hunt work row for %s" % [state_name, UNDER_HERDED_WORK_HERD_ID])

@@ -63,71 +63,83 @@ An improvement may declare up to three things. All are in **work units**
 building the term against routes, because an architecture that assumes every improvement produces
 something breaks on the first one that does not.
 
-### 2.2 The PLAYER allocates workers per activity — TWO on the source, ONE on the band
+### 2.2 The PLAYER allocates workers per activity — ONE on the source, THREE on the band
 
-**A source carries two independent worker allocations from a band, and the player states each.**
-There is no split rule to derive, because there is nothing to derive.
+**A source carries exactly one worker allocation from a band: the crew that TAKES from it.** The
+other two activities are band-level standing roles, because neither of them divides sensibly at the
+tile (§2.5).
 
-| Activity | Set by | Was |
+| Activity | Where the hands stand | Set by |
 |---|---|---|
-| **take** | `assign_labor` — unchanged; its `workers` is the take crew | the only allocation |
-| **build** | the improvement verb, which now takes a worker count | rode the take crew |
+| **take** | on the **source** | `assign_labor` — unchanged; its `workers` is the take crew |
+| **keeping** | a **band** role, one per food web | `assign_labor <faction> <band> agriculture\|husbandry <workers>` |
+| **building** | a **band** role, one for the whole band | `assign_labor <faction> <band> builders <workers>` |
 
-**The KEEPING is not one of them — it left the tile.** It is a band-level standing role, one per food
-web; §2.5 is now that decision's home.
+**A verb therefore names no crew.** `cultivate` / `sow` / `tame` / `corral` — and `extend_pen` — say
+*what* to build and put it in the band's build queue; *how fast* is the Builders pool, and *when* is
+where the entry sits in the queue.
 
-`extend_pen` takes a worker count on the same grammar and routes through the **build** allocation: a
-ring rides the same `animal:pen` rung as the pen it widens, so it cannot be the one build in the game
-that is free.
+They all draw on the same finite band, so **competition between them is the opportunity cost**. **No
+cap** means no cap on any *one* activity — fifty hands may build and fifty more gather beside them,
+and the constraint is what those hands are not doing elsewhere — but the whole allocation can never
+exceed the band. Two rules hold that line, and they answer different questions:
 
-They draw on the same finite band, so **competition between them is the opportunity cost** — and it
-is visible in the numbers the player typed rather than buried in a fraction or in an ordering they
-cannot see. **No cap** means no cap on any *one* activity — fifty hands may widen a pen and fifty more
-gather beside it, and the constraint is what those hands are not doing elsewhere — but the whole
-allocation can never exceed the band. Two rules hold that line, and they answer different questions:
+- **A role's stepper clamps on the band's idle count**, exactly as scout's and warrior's do. The
+  refusal the four verbs used to make retires with the crew they used to name: an order that states
+  no head count cannot ask for hands the band has not got.
+- **A band that SHRANK sheds**, tail-first, and a role is a row like any other — so where a band's
+  builders fall in the shedding order is where the player put that row in the list.
 
-- **A command that asks for more hands than the band has idle is REFUSED**, naming what is available
-  (*"Cultivating needs 9 workers — the band has 4 idle."*). It refuses where `assign_labor` clamps,
-  because a smaller *gathering* crew is a coherent version of the same order while a quietly-smaller
-  *build* crew is a commitment the player believes they made.
-- **A band that SHRANK sheds**, tail-first and **build → take** within the row: a band that has just
-  lost people keeps gathering longest, because the build is an investment and the food is not. A
-  keeping role is a row of its own, so it is shed with the tail like any other.
-
-**The gear a build's crew carries is quoted at that crew, not at the band's crew on the source.** A
-tool's contribution is a rate per worker, so it is summed over the *builders*; the coverage behind it
-is resolved over the builders too.
+**The gear the builders carry is the Builders role's own**, read off that row like every other role's,
+and the coverage behind it is resolved over the pool.
 
 The arithmetic is then trivial:
 
 ```text
-supply           = the build crew below the meter's cost, the band's keeping POOL at it (§2.4/§2.5)
-net              = supply − upkeep_demand
-build_work       = max(0, net)                                  // − what the crew's gear takes off the job
+keeping_supply   = this source's share of the band's keeping POOL for its web (§2.5)
+rot              = the shortfall against upkeep_demand, at the rung's own rate (§2.4)
+build_work       = the band's BUILDER pool — on the HEAD of its queue and nowhere else (§2.5)
+net              = build_work − rot
 take             = min(take_workers × per_worker_capacity, source_offer)
 ```
 
-> #### `work_cost / crew` IS NOT THE BUILD PACE, and this arc is what changed that
+> #### THE RATE IS NOT A TAX ON BUILDING, and reversing that is what made the pools coherent
 >
-> The maintenance rate is owed **every turn, while building and while held alike**, so a build crew is
-> paying it too and only its **surplus** is progress: `turns = work_cost / (crew − rate)`. Earlier
-> prose in this file asserted `work_cost / crew`; that identity is gone, deliberately.
+> An earlier cut of this arc had the **build** crew supply the maintenance rate while a meter was
+> being raised, so only its surplus was progress and the pace was `work_cost / (crew − rate)`. That
+> was sound while the build crew stood **on the tile** — the crew was already there, so letting it
+> cover the rate cost nothing. **It stops being sound the moment both crews are pools**, because the
+> boundary between them then moves a whole band's builders around under the player. §2.4 is where
+> that is worked through; the consequence here is that **the pace is `work_cost / builders` again**,
+> and the two pools are stated separately because they are separately staffed.
 >
-> **A crew at or below the rate never finishes**, and *which* of the two it is is its own piece of
-> news. At the rate **exactly** the meter holds where it is: nothing banked, nothing lost, the turn
-> wasted. **Below** it the meter goes backwards — past the rung's grace the decay pass bleeds work
-> the player has already bought. Both are real minimum-viable-crew thresholds rather than slow
-> builds, and they are sharper than anything else in the game, so each gets **its own published
-> answer**: `buildTurnsRemaining` reads `-2` (**the meter holds**) or `-3` (**the meter rots**)
-> rather than the `-1` that means *there is no answer*. A staffed crew that cannot clear the rate is
-> a standing fact the player can act on — add hands — where the `-1` is a transient absence of
-> information; an **unstaffed** source has promised nothing and still reads `-1`, and so does one
-> whose knowledge / site / species gate refuses the build even with hands on it.
-> **`<rung>UpkeepDemand` publishes the threshold itself for the rung being
-> QUOTED**, beside that rung's `workCost`, so a compose sheet can say *"this crew is below it"* before
-> the player commits — `upkeepDemand` / `upkeepWorkersNeeded` answer for the rung the source stands on
-> or is raising, and are therefore `0` on a source nobody has started, which is the source the sheet
-> is looking at.
+> **A build can still fail to finish, and it is still worth its own published answer** — but the term
+> that eats it is the **rot**, not the rate. A meter whose keeping is short loses ground every turn,
+> and builders raising it more slowly than that are losing work already bought. So the three answers
+> stand with a new denominator: `buildTurnsRemaining` reads a count while `build_work > rot`, `-2`
+> (**the meter holds**) at equality, and `-3` (**the meter rots**) below it.
+>
+> > #### ⛔ AND THE NO-ANSWER BOUNDARY IS **WORK BANKED**, NOT *IS ANYONE STAFFED*
+> >
+> > `-1` used to mean, among other things, *this source is unstaffed, and nobody has promised
+> > anything*. **A meter carrying work has promised something — the player paid for it** — so the
+> > test is now whether anything is banked (or anyone is building), and a rung merely *declared* on an
+> > empty meter is the one that still answers `-1`.
+> >
+> > **Without that move both sentinels are dead on the shipped ladder.** The rot is capped at the
+> > rung's own decay — `0.5` and `0.75` on the plant rungs, structurally **zero** on both animal ones —
+> > while a single builder banks a whole worker-turn, so no staffed crew can ever net `<= 0`. The
+> > states did not vanish with the rate; they moved to **zero builders**, which is exactly where the
+> > model now expects to find them.
+> >
+> > **So `-2` is no longer only a failure.** With no builders and the keeping met it is the player
+> > **parking a half-built improvement** — §2.4's own case — held indefinitely at no risk, and a
+> > surface that marks it with a hazard teaches the player to ignore the mark everywhere else. `-3`
+> > stays unambiguously bad: an abandoned meter, bleeding.
+> >
+> > **The animal web can still stall in a way no countdown term sees**, and that is an *eligibility*
+> > stall rather than a balance one — `husbandry.md` → "THE REGROWTH SUPPRESSION CLOSES A LOOP" owns
+> > it. §4.6b's queue is where a permanently-stalled head entry has to be answered.
 
 #### This is what dissolved the dip
 
@@ -170,82 +182,92 @@ nobody chose.
 - **Pacing is unchanged**: `learn_multiplier` is exactly `×1.0` at the food peak, which is the floor a
   fresh assignment carries. Only sub-peak floors build faster now.
 
-### 2.3 Build completion hands the crew to the KEEPING ROLE
+### 2.3 RETIRED — build completion no longer hands a crew anywhere
 
-The turn a build completes, its crew has finished the thing it was staffed for. **If the finished rung
-declares an upkeep, those hands move onto that web's standing role on the band**; if it declares none,
-they free up.
+This section used to move a finished build's crew onto its web's keeping role, so that a brand-new pen
+did not start decaying on turn one because nobody noticed it had begun costing something.
 
-Without the carry-over a brand-new pen starts decaying on turn one because nobody noticed it had begun
-costing something — a punishment for arithmetic the player cannot see, which is the same failure §2.5
-exists to prevent.
+**It has nothing left to move.** The builders are a band-level pool (§2.5), so completion does not free
+a per-source crew — it frees the *queue's head*, and the same pool starts on the next entry. And the
+failure it guarded against cannot happen either: under §2.4 the keeping bill starts at the **first work
+banked**, not at completion, so a player who built the thing at all was already paying to hold it. A
+carry-over would now be the sim quietly moving hands between two roles the player staffs by hand.
 
-**The head count does not move**, so no refusal is owed: the crew comes off the source's build
-allocation and lands on the band's role. **Added, never assigned** — a band already keeping other
-sources on that web keeps them.
+### 2.4 KEEPING HOLDS, BUILDING ADDS — and a rung is not lost on the first dip
 
-**Either way it is announced.** The completion already pushes a feed line; the hand-off rides the same
-channel, because a crew moving is a thing the player has to re-task around and a silent re-allocation
-is only ever discovered later.
+Two pools, two questions, and **no test that moves a source from one to the other**:
 
-### 2.4 ONE FORMULA: net = supply − rate. And a rung is not lost on the first dip
-
-Meet the rate and the net is zero and the improvement holds. Go over and the surplus is progress. Go
-under and it rots, in proportion to how short you are.
+| pool | owes | for how long |
+|---|---|---|
+| the web's **keeping** (`agriculture` / `husbandry`) | the rung's rate, to hold what is on the meter | from the **first work banked** until the last |
+| the band's **builders** | nothing — its whole output is **progress** | while the source is the **head of the queue** |
 
 ```text
-net = supply − maintenance_rate
-  net > 0  →  the surplus is BUILD PROGRESS
+rot = (shortfall / demand) × the rung's own decay rate, past the grace   // keeping came up short
+net = build_work − rot
+  net > 0  →  the meter CLIMBS
   net = 0  →  the meter HOLDS exactly where it is
-  net < 0  →  it ROTS: (shortfall / demand) × the rung's own decay rate, past the grace
+  net < 0  →  the meter LOSES GROUND — work already bought, bleeding
 ```
 
-**The rate is owed ALWAYS.** What the meter's state decides is **only who supplies it**:
+**A source at 10% and a source at 100% are billed the same and billed to the same pool.** Nothing about
+how full the meter is decides who pays.
 
-| the meter | state | who supplies the rate |
-|---|---|---|
-| **below its cost** | *building* | the **build crew** — surplus above the rate is progress |
-| **at its cost** | *maintaining* | the band's **keeping pool** — surplus does nothing, shortfall rots |
+> #### WHY THE FULLNESS TEST HAD TO GO
+>
+> It used to: the **build crew** supplied the rate below the meter's cost and the **keeping pool** at
+> it. That was defensible while the build crew stood on the tile. Pooling both crews broke it in two
+> directions at once, and both were reported as ordinary play:
+>
+> - **A half-built meter nobody was building could not be held.** Take the builders off a Cultivate at
+>   50% and the patch is billed to a crew that is not there, so it bleeds its full rate — with keepers
+>   standing idle in the role and **no command that can aim them at it**. That is the exact defect this
+>   arc already fixed once for a finished Field, wearing the other half's clothes.
+> - **A held rung that dipped commandeered the band's builders.** A completed rung eroding to 99% is
+>   *below its cost*, so it flipped into *building* and jumped a queue funded all-hands-on-the-head — a
+>   one-percent repair displacing the Cultivate the player actually ordered. Topped back up, it
+>   returned to a keeping pool that was still short, and dipped again. **It oscillates**, and the
+>   player's real build stands still through every cycle.
+>
+> **It costs the player nothing to delete.** Four builders against a rate of two used to bank two turns
+> of progress a turn; two builders and two work of keeping bank the same two. Same hands, same pace —
+> the player states which row each hand stands in, and the sim stops moving the line between them.
 
-#### AND THE VERB IS DERIVED FROM THE METER TOO
+#### AND THE QUEUE IS THE DECLARATION — the meter no longer makes one
 
-The same state test answers *which rung is being built*, so nothing needs to be stored or restated:
+The build verb stays **derived from the meters** in the sense that matters — *which rung* a queue entry
+names is the newest meter with room on it, so an entry on ground that has moved on is **dead rather
+than stalled**. What the meters no longer do is *create* an entry nobody asked for.
 
-| meter | state | who declares |
-|---|---|---|
-| **zero** | nothing in flight | **the player** — a wild patch could climb to tended *or* be sown, and the sim cannot guess |
-| **between zero and its cost** | building that rung, **implied** | nobody — the progress banked on it *is* the answer |
-| **at its cost** | maintaining | nobody |
+| meter | what it means |
+|---|---|
+| **zero** | nothing banked; the entry names the rung the player picked |
+| **between zero and its cost** | that rung is what this entry is raising |
+| **at its cost** | there is nothing left to raise — **the entry leaves the queue** |
 
-**Per METER, not per source**: a completed tended patch the player wants to sow is still a
-declaration, because its field meter is at zero. **Newest meter first**, so a Field with progress on
-it governs the tended ground beneath — a `Cultivate` on a Field is dead rather than stalled.
+**A rung that erodes back below its cost is NOT re-adopted.** It is held — or, unstaffed, lost — by the
+keeping pool, and repairing it is a fresh decision the player makes by putting it back in the queue.
+The earlier cut adopted it automatically, which was right when adoption cost nothing and is wrong now
+that it costs the head of a queue.
 
-**What it fixed.** A build banks nothing unless the rung's verb is in flight, and completion freed the
-declaration — so a completed rung that eroded back below its cost re-entered the *building* state with
-nothing set and could not be repaired until the player re-issued `cultivate`. They never withdrew that
-intent. **A player who has paid for a rung and watched it slip adds hands, not a command.**
-
-**`abandon_improvement` is RETIRED**, not arbitrated. It existed to let a player walk away from a
-25-turn commitment while the *verb* was the commitment; the commitment is the **hands** now, so you
-walk away by unstaffing the builders (`cultivate <faction> <x> <y> 0`). A command that cleared a
-derived value would either do nothing or fight the derivation. Its proto field is reserved, never
-reused — and the "nothing left to build" test went with it, since a stale declaration on a finished
-meter derives to `None` on its own.
+**`abandon_improvement` stays retired; what came back is disposal, not arbitration.** §2.5's
+`abandon` drops a band's *holding* of a source outright — the row, its declaration and its queue entry
+— because a half-built meter the player has lost interest in otherwise draws keepers forever. It is one
+bit per source, never a number, so it smuggles no per-source staffing back in.
 
 **A meter at exactly zero clears back to "the player must declare"** together with everything else
 that empties: `reconcile_owner` drops the owner and the committed crop on the same edge, and the
 stamped cost goes with them. One notion of empty, not three.
 
-That is one state test and two costs. There is no third concept: an earlier cut of this arc gave an
-unfinished meter its *own* demand (`meter_raising_demand`), which was redundant — it is the same rate
-throughout — and carried a per-web exception with no fact under it. Both are deleted. *You cannot be
-billed to hold something you have not finished building* is answered by **who pays**, never by
-discounting the bill.
+There is no third concept: an earlier cut gave an unfinished meter its *own* demand
+(`meter_raising_demand`), which was the same rate under a second name. Deleted then, and the rule that
+replaced it — *you cannot be billed to hold something you have not finished building* — is deleted now
+too. **You can.** From the first work banked, holding it is what the keeping pool is for; what you
+cannot be billed for is ground with nothing on it at all.
 
-**Both webs answer identically.** An unfinished rung on either web is owed the same rate from its
-builders; an under-supplied one decays, which is a **meter bleed** on plants and a **shed** on
-animals. There is no "the animals are standing there whether or not the fence is up" exception.
+**Both webs answer identically.** An under-supplied meter decays, which is a **meter bleed** on plants
+and a **shed** on animals. There is no "the animals are standing there whether or not the fence is up"
+exception.
 
 #### THREE DIALS, because the decay must decouple from the demand
 
@@ -286,10 +308,14 @@ test rather than a rate**.
 - Shipped at **0.75** on both plant rungs: a completed tended patch survives **28** wholly
   unmaintained turns and a Field **27**, against `grace + 1` — three and two — before, and re-earning
   the rung then costs only the work that rotted.
-- **KEEP IT ORTHOGONAL TO THE STATE TEST.** *Building vs maintaining* is the meter's fullness and
-  decides who pays the rate; *is the rung still achieved* is the retention bar and decides what the
-  ground pays out. A patch at 99% is **building** (a repair, which its build crew may run) and
-  **still tended**. Folding the two would make a rung's loss and a rung's repair the same edge.
+- **KEEP IT ORTHOGONAL TO THE METER.** *How full is the meter* decides what a repair would cost and
+  whether there is anything left to raise; *is the rung still achieved* is the retention bar and
+  decides what the ground pays out. A patch at 99% is **still tended** and is **also** short of its
+  cost. Folding the two would make a rung's loss and a rung's repair the same edge.
+  > **It used to be orthogonal to a third thing — the who-pays test — and that test is gone** (§2.4).
+  > Note what does *not* follow from a dipped meter any more: it does not change which pool is
+  > billed, and it does not put the source back in the build queue. It is a fact about the ground, and
+  > acting on it is the player's.
 - **No animal rung needs a bar**: `domestication_progress` is monotone-up and a pen is held by a
   stored flag, so no animal rung can be lost by a meter dipping.
 - **A rung's BENEFIT stays binary on the achieved state.** Scaling a rung's payout with its meter is a
@@ -298,17 +324,49 @@ test rather than a rate**.
 `grace_turns` survives unchanged in meaning: consecutive turns of shortfall forgiven before decay
 begins.
 
-### 2.5 MAINTENANCE IS A BAND-LEVEL ROLE, and the shortfall split is the player's
+### 2.5 KEEPING AND BUILDING ARE BOTH BAND-LEVEL ROLES, and neither is a crew on the tile
 
-**The keeping is not a crew on the tile.** It is a **standing role on the band**, in the same family
-as the local scout and warrior dials: `agriculture` keeps the plant web, `husbandry` the animal one,
-each staffed with `assign_labor <faction> <band> agriculture|husbandry <workers>`.
+**Three standing roles on the band**, in the same family as the local scout and warrior dials:
+`agriculture` keeps the plant web, `husbandry` the animal one, and `builders` raises whatever the band
+has queued — each staffed with `assign_labor <faction> <band> agriculture|husbandry|builders <workers>`.
 
-- **One role per WEB, because the two webs are already separate ladders.** This is their existing
-  split, not a new axis.
-- **The band's demand is the SUM** over everything it holds on that web, and the pool supplies against
-  that total. Only a **built** rung draws: a meter still being raised is owed its builders.
-- **`0` is still how you say "stop maintaining"** — for a whole web rather than for one source.
+- **One keeping role per WEB, because the two webs are already separate ladders.** This is their
+  existing split, not a new axis. **The builders are ONE pool for both**, because a build is a job
+  rather than a standing charge and the queue already says which one is being worked.
+- **The keeping demand is the SUM** over everything the band holds on that web that carries work on a
+  meter — at any fullness (§2.4).
+- **`0` is still how you say "stop"** — for a whole role rather than for one source.
+
+#### THE BUILDERS FUND ONE ENTRY: the HEAD of the band's queue
+
+A band holds an **ordered queue** of the builds it has declared, and the **whole** Builders pool goes
+on the first entry until its meter fills, then on the next. **Spread is not offered here, and the
+asymmetry with keeping is honest rather than an omission:** *keeping has something to ride out and
+building does not.* An under-kept improvement degrades toward a threshold you can stay above, so
+spreading a short keeping pool loses nothing while you recover; splitting a builder pool across three
+jobs just means nothing finishes. A queue removes the choice rather than offering a bad one.
+
+- **A verb declares; it does not staff.** `cultivate` / `sow` / `tame` / `corral` / `extend_pen` append
+  an entry. Where it sits is the player's, and re-ordering is the one input a list can carry that a
+  stepper cannot.
+- **Membership is the player's too** (§2.4) — nothing enrols itself, and completion retires the entry.
+- **An entry that is waiting costs nothing and loses nothing**, because its meter is held by the
+  keeping pool like everything else. That is what makes a queue safe to fill.
+- **"Builders with nothing to do" needs no warning.** A build demand ends when its meter fills, unlike
+  a keeping demand, so an empty queue beside a staffed pool says that by itself.
+
+#### AND A SOURCE CAN BE PUT DOWN: `abandon`
+
+**`abandon <faction> <source>` drops the band's holding of it** — the row, its declaration and its
+queue entry go together. The ground keeps whatever is on its meter and, with nobody holding it, rots
+back down at the rung's own rate over the following turns exactly as an unkept improvement already
+does.
+
+It exists because §2.4 bills a meter from the first work banked, so a half-built patch the player has
+lost interest in otherwise draws keepers forever. **It is one bit per source, never a number** — the
+per-source *funding* lever stays deleted, and this is a disposal rather than a smaller share. Nothing
+is destroyed on the spot, so it needs no confirmation and no second destruction path: the player stops
+paying and the land goes back to what it was.
 
 #### WHY IT LEFT THE TILE: an indivisible supplier WASTES what it does not spend
 
@@ -412,13 +470,16 @@ hauling: that work is the upkeep, not a second line beside it.
 | the shed (`shed_uncontained_animals`) | the animal web's **shortfall penalty** |
 | `decay_fraction_per_turn` as an independent dial | `upkeep.meter_decay.per_turn` — the rung's own rot rate, scaled by **how short** you are rather than being the shortfall itself |
 | `tended_this_turn` / `tamed_this_turn` binary flags | retired — shortfall is continuous |
-| `RungBuild::crew_needed` (a staffing floor) | retired — the player states the build's crew |
+| `RungBuild::crew_needed` (a staffing floor) | retired — a build is staffed by the band's Builders pool, and there is no per-source crew for a floor to raise |
 | the `maintain` command + `LaborAssignment::maintain_workers` | the **band-level** `agriculture` / `husbandry` roles and `upkeep_mode` (§2.5) |
+| `LaborAssignment::improvement_workers` (the build's own crew) | the **band-level** `builders` role and its **ordered queue** (§2.5) |
+| the meter's FULLNESS as the who-pays test | retired — the keeping pool holds every meter carrying work, at any fullness; the builders only ever add (§2.4) |
+| build completion handing its crew to the keeping role | retired — there is no per-source crew to hand, and the keeping bill already started at the first work banked (§2.3) |
 | `progress >= cost` as the LOSS test | `upkeep.meter_decay.retain_fraction` — a rung is earned at its cost and held to a stated fraction of it (§2.4) |
-| `abandon_improvement` + the "nothing left to build" test | retired — the build verb is **derived from the meter** (§2.4), so there is no stored authority to clear |
-| `work_cost / crew` as the build pace | `work_cost / (crew − maintenance_rate)` — the rate is a tax on building, and a crew at or below it never finishes (§2.4) |
+| `abandon_improvement` + the "nothing left to build" test | retired — completion retires the queue entry, so there is no stale authority to clear. **`abandon` is a different command**: it puts a whole source down (§2.5) |
+| `work_cost / crew` as the build pace | **restored**, with the rot as the term that eats it: `work_cost / (builders − rot)` (§2.2/§2.4) |
 | `learn_multiplier(floor)` on the build rate | retired — a build crew is not pulling on the source |
-| `yield_fraction_while_building` (×4 rungs) | retired — the build has its own crew, so what it costs is the hands on it |
+| `yield_fraction_while_building` (×4 rungs) | retired — the build has its own hands, so what it costs is the pool it draws on |
 | `pen.upkeep_per_biomass` + the pasture/hay/larder split | the **resource half** of the pen rung's upkeep (hay and larder), with pasture as its **offset** — unchanged in behavior |
 | `TerrainDefinition::infrastructure_cost` (never read) | the route rung's **scale term** |
 
@@ -445,29 +506,49 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
 
 ### Next, in order
 
-6. **THE BUILDER POOL AND THE BUILD QUEUE.** The per-source build crew retires the way the keeping
-   crew did — off the wire, the commands, `staffed_total` and the sheet's clamps — for a band-level
-   **Builders** pool and a per-band **ordered queue** of declared builds.
-   > **Funding is ALL HANDS ON THE TOP ENTRY until it completes, then the next.** Spread is not
-   > offered here, and the asymmetry with keeping is honest rather than an omission: *keeping has
-   > something to ride out and building does not.* A neglected improvement degrades toward a threshold
-   > you can stay above, so spreading a short keeping pool loses nothing while you recover. A starved
-   > build does not slow down, it **runs backwards** (§2.2) — so spreading a short builder pool would
-   > put every build below its rate and pay several crews to lose ground at once. A queue removes the
-   > choice rather than offering a bad one.
-   >
-   > **It also makes "builders with nothing to do" free.** A build demand ends when its meter fills,
-   > unlike a keeping demand, so a builder pool goes idle in a way a keeping pool never does. An empty
-   > queue beside a staffed pool says that without a warning needing to exist.
+6. **THE BUILDER POOL AND THE BUILD QUEUE — in TWO steps, one PR.** The first is a model correction
+   the second cannot be built on the seam of; they land together because neither is playable alone.
 
-   **Two live defects fold in here rather than being fixed twice:**
+   **6a — KEEPING HOLDS EVERY METER, AT ANY FULLNESS.** The who-pays test — the meter's own fullness
+   — is deleted (§2.4). The keeping pool owes the rate from the first work banked; a build crew
+   supplies nothing and only adds. `patch_is_maintaining` / `herd_is_maintaining` go, the build's net
+   stops netting the rate off, and the ∞ pair re-aims at the **rot** as the term that eats a build.
+   > **It is stated separately because it is worth having regardless, not because it ships alone.**
+   > Two states reported from ordinary play are wrong today and neither needs a pool to reach: a
+   > half-built meter whose builders left cannot be held by idle keepers, and a held rung that dips
+   > below its cost stops being the keeping pool's business at the moment it starts needing it. §2.4
+   > carries both autopsies.
+   >
+   > **The hands do not move.** Four builders against a rate of two banked two turns of progress a
+   > turn; two builders and two work of keeping bank the same two. What changes is which row the
+   > player states them in — which is the whole reason 6b can then pool them.
+
+   **6b — THE POOL AND THE QUEUE.** The per-source build crew retires the way the keeping crew did —
+   off the wire, the commands, `staffed_total` and the sheet's clamps — for a band-level **Builders**
+   pool and a per-band **ordered queue** of declared builds. Funding is **all hands on the head entry
+   until it completes, then the next**; §2.5 carries the asymmetry with keeping and why "builders
+   with nothing to do" needs no warning.
+
+   > **A WAITING ENTRY GETS A REAL FINISH DATE, not a queued badge.** The queue is deterministic —
+   > the head takes the whole pool until it fills, then the next one does — so the sim can chain the
+   > answer down the list: an entry's turns are the sum of everything above it plus its own span at
+   > the full pool. Under 6a a waiting entry does not rot (the keeping pool holds it), so that
+   > chained number is **exact** rather than an estimate that drifts. It also propagates the bad news
+   > for free: if the head never finishes, nothing below it does either, so the head's `-2` / `-3`
+   > is what every entry below it publishes. **Playtest is what decides whether all-hands-on-one is
+   > right**; the chained date is what makes that judgeable.
+
+   **One live defect folds in here rather than being fixed twice:**
    - **A declaration cannot be cleared.** `cultivate <f> <x> <y> 0` *sets* the improvement with zero
      builders; it does not clear it, so an unwanted declaration is stuck. (The claim that this was the
      walk-away path was made when `abandon_improvement` was retired, and was wrong.) Pooling makes it
-     sharper: a declaration will carry no crew at all, so unticking is the *only* undo.
-   - **`SourceForecast.build_pace` still maps the rotting sentinel to holding** — amber where it
-     should be red. One branch, pending since the sim's third sentinel landed after that client pass
-     began.
+     sharper: a declaration carries no crew at all, so unticking — dropping the queue entry — is the
+     *only* undo, and `abandon` (§2.5) is how a source with work already on it is put down.
+
+   > **`SourceForecast.build_pace` mapping the rotting sentinel to holding was the second defect
+   > listed here, and it is FIXED** — `build_pace` forks `BUILD_TURNS_ROTS → BUILD_PACE_LOSING`, and
+   > `labor-ui.md` → "THE SECOND `∞` IS RED" is the autopsy. It landed in PR #557's later corrections
+   > after this line was written.
 
 7. **The WORK TAB.** A pool header (Agriculture · Husbandry · Builders, with keeping's spread/priority
    mode), the **build queue** with drag-to-reorder, and the source list carrying each source's
@@ -497,13 +578,19 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    maintenance is its **first consumer**, not its owner; the shipped most-invested-first ordering
    survives as the **tie-break** beneath an explicit rank, which matters because most sources will sit
    at the default.
-   > **The build queue of §4.6 IS this property's storage**, not a second ordering beside it. If the
+   > **The build queue of §4.6b IS this property's storage**, not a second ordering beside it. If the
    > queue ships with a rank of its own, they will drift — so whichever lands first owns the rank and
    > the other reads it.
 10. **Symmetric partial credit.** A rung's benefit scales with its meter in **both** directions — a
    half-built field pays half a field, as a decayed one does. Wanted; it is what makes the model
    coherent both ways, and it removes the last discontinuity: today a build pays nothing for its whole
-   span and then everything at once. **The blast radius is wide but shallow** — the ~100 binary
+   span and then everything at once.
+   > **THE COST SIDE IS PART OF THIS, and §4.6a is what put it there.** Once the keeping pool holds a
+   > meter at any fullness, a patch 10% into a Cultivate is billed the whole rung's rate to hold a
+   > tenth of a thing. The natural pairing is that it owes a tenth — the same fraction, applied to
+   > what it costs rather than to what it pays. It is deliberately **not** in 6a: the benefit and the
+   > cost should move together or the interim is a worse asymmetry than the flat rate is.
+   **The blast radius is wide but shallow** — the ~100 binary
    predicates stay (they answer *"has this rung been achieved"*, which still gates the verbs and the
    knowledge); every *payout* branching on them becomes an interpolation on the meter-over-cost
    fraction already published. **What to watch:** the total work is unchanged, so the arithmetic of
@@ -574,14 +661,32 @@ cheap answer is to make reassignment observable so it would be noticed rather th
   declares a maintenance contribution, which none does today, so splitting now would invent a
   distinction nothing can express. It becomes a config-shaped change the moment §4's gear-as-
   productivity lands.
+- **AN UNKEPT ANIMAL BUILD STALLS PERMANENTLY, and §4.6b's queue has to answer for it.** Measured:
+  a half-tamed herd with an empty `husbandry` role advances for three turns and then freezes — the
+  hunters draw the flock to their floor, the unmet keeping suppresses its regrowth, the escapement
+  room never returns and the `Tame`'s own gate closes. It is not self-correcting and the only remedy
+  is staffing the keeping, which nothing on the build line points at. **The plant web does not have
+  it** (an ungathered patch regrows, so its gate stays open and it publishes an honest `-3`), and the
+  mechanism is `husbandry.md`'s. What makes it §4.6b's problem rather than a curiosity: **a stalled
+  entry at the head of a queue funded all-hands-on-the-head holds every builder the band has**, on a
+  build that can never advance, while everything behind it waits. Whether the queue should pass over
+  an ineligible head, or say loudly that it is stuck, is that slice's to decide.
+- **Whether ALL-HANDS-ON-THE-HEAD is the right funding rule** (§4.6b). Ray: *"that is logical, we
+  will have to play test and see how it goes."* The thing to watch is a band with several worthwhile
+  builds queued behind one long one, and whether re-ordering feels like a decision or like a chore.
+  The chained finish date is what makes it judgeable — if the answer turns out to be *"let me run two
+  at once"*, that is a spread with a stated split rather than a return to per-source crews.
 
-> **Two items were retired rather than answered, and both are worth recording as such.** *"What the
-> maintain toggle does to a build in flight"* went with the toggle itself — keeping is a band-level
-> pool, so *"stop maintaining this one thing"* is no longer expressible, and that is deliberate. And
-> *"a building crew takes nothing"*, which this section flagged as the first thing to check in play,
-> was true only of the one-budget model it was written under: with the crews stated separately, the
-> gatherers beside a build carry exactly what gatherers carry, and what a build costs is the hands on
-> it. Neither warning survives its mechanism.
+> **Three items were retired rather than answered, and all three are worth recording as such.**
+> *"What the maintain toggle does to a build in flight"* went with the toggle itself — keeping is a
+> band-level pool, so *"stop maintaining this one thing"* is no longer expressible, and that is
+> deliberate; **`abandon` is not that lever coming back**, it puts the whole source down rather than
+> tuning its share. *"A building crew takes nothing"* was true only of the one-budget model it was
+> written under: with the crews separate, the gatherers beside a build carry exactly what gatherers
+> carry. And *"a crew at or below the maintenance rate never finishes"* went with the fullness test
+> in §4.6a — a build crew supplies no rate now, so the threshold it names does not exist. **The `∞`
+> pair survives with a different denominator** (the rot, §2.2), which is why the readout was not
+> deleted with the rule that first justified it.
 
 ---
 

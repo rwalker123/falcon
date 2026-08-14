@@ -7,17 +7,32 @@
 //! | published | meaning |
 //! |---|---|
 //! | `>= 0` | a real finish date at the crew that is on it |
-//! | `BUILD_METER_HOLDS` (`-2`) | a real, staffed, priced build whose net supply is **exactly zero** — the crew's whole output goes on the maintenance rate |
-//! | `BUILD_METER_ROTS` (`-3`) | the same build with a **negative** net — banked work is being lost |
+//! | `BUILD_METER_HOLDS` (`-2`) | a real, staffed, priced build banking **exactly** what its meter is bleeding — the ground stands still |
+//! | `BUILD_METER_ROTS` (`-3`) | the same build banking **less** than the bleed — work already bought is being lost |
 //! | `NO_BUILD_TURNS_ESTIMATE` (`-1`) | there is genuinely no answer — nobody is on the source |
 //!
-//! The maintenance rate is a tax on building, so a crew at or below it never finishes. **That is
-//! actionable and permanent** — the player adds hands — where the no-answer state is transient.
-//! Folding it into `-1` made it visible only to a compose sheet that redid the comparison itself.
+//! **THE ROT IS THE DENOMINATOR** (`docs/plan_standing_upkeep.md` §4.6a). A build crew supplies
+//! nothing toward the maintenance rate — the band's keeping pool owes that for every meter carrying
+//! work, at any fullness — so what a build can fail to out-run is the **rot**: what the keeping
+//! failed to cover, bleeding off the very meter the builders are raising. **That is actionable and
+//! permanent** — the player staffs the keeping — where the no-answer state is transient. Folding it
+//! into `-1` made it visible only to a compose sheet that redid the comparison itself.
 //!
-//! **AND "NEVER FINISHES" WAS ITSELF TWO PIECES OF NEWS.** Holding wastes a crew's turn; rotting
+//! **AND "NEVER FINISHES" IS ITSELF TWO PIECES OF NEWS.** Holding wastes a crew's turn; rotting
 //! destroys progress the player has already bought, and the client renders them yellow and red
 //! against a real count's green. One `-2` for both made the worse of them unspeakable.
+//!
+//! **BOTH NON-FINISHING ARMS ARE STAGED BY THE KEEPING POOL AND NO BUILDERS, ON THE SHIPPED
+//! LADDER.** The boundary is *work banked*, not hands on the job: a meter carrying work has promised
+//! something — the player paid for it — so a half-built meter nobody is building is exactly *the
+//! meter holds* (the keeping covers it) or *the meter is losing ground* (it does not). Both plant rot
+//! rates are below one worker-turn, so a **staffed** plant build always out-runs its own rot; staging
+//! these arms with a small build crew, or with an invented `meter_decay`, would be bending a fixture
+//! until the assertion passed rather than describing a state the game reaches.
+//!
+//! **`-2` IS NOT ONLY A FAILURE.** With no builders and the keeping met it is the player **parking**
+//! a half-built improvement — held indefinitely, at no risk, which `docs/plan_standing_upkeep.md`
+//! §2.4 exists to make possible. `-3` is the unambiguously bad one.
 //!
 //! **Asserted on the ENCODED envelope, never on the in-process value**, the discipline
 //! `source_crews_on_the_wire.rs` follows: a field can be right in the capture and wrong in the
@@ -42,8 +57,7 @@ use core_sim::{
     build_headless_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
     FactionId, ForageRegistry, GenerationId, LaborAllocation, LaborAssignment, LaborTarget,
     LadderConfigHandle, LocalStore, MoraleCause, PopulationCohort, ResidentBand, RungKey,
-    SnapshotHistory, StartingUnit, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR,
-    NO_CREW_ON_THIS_ACTIVITY, UNSCALED_UPKEEP,
+    SnapshotHistory, StartingUnit, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR, UNSCALED_UPKEEP,
 };
 use sim_schema::{BUILD_METER_HOLDS, BUILD_METER_ROTS, NO_BUILD_TURNS_ESTIMATE};
 
@@ -89,13 +103,63 @@ fn a_cultivable_site(app: &mut App) -> UVec2 {
         .expect("worldgen curated a gathering site whose basket the tended rung can commit to")
 }
 
-/// **The hands a real countdown is quoted at** — comfortably above `plant:tended`'s maintenance
-/// rate, so the net is positive and the job takes several turns.
-const NET_ABOVE_THE_RATE: u32 = 2;
+/// **The hands a real countdown is quoted at** — more than one, so the job takes several turns and
+/// the count is a count rather than `1`.
+const A_MULTI_TURN_CREW: u32 = 2;
 
-/// `plant:tended`'s maintenance rate in whole hands — the minimum viable build crew. A build staffed
-/// **at** it banks nothing and never finishes (`intensification::net_build_supply`).
-fn rate_in_hands(app: &App) -> u32 {
+/// **NOBODY ON THE BUILD** — the staffing both non-finishing arms run at, because the boundary is
+/// *work banked* rather than hands: a half-built meter has promised something and answers for itself.
+const NOBODY_BUILDING: u32 = core_sim::NO_CREW_ON_THIS_ACTIVITY;
+
+/// A headless world whose `SOURCE` tile carries a patch, with `builders` on a running `Cultivate`.
+/// `builders == 0` leaves the source unstaffed for the build.
+fn world_with_a_cultivate_staffed_at(builders: u32) -> (App, UVec2) {
+    world_with_a_patch(builders, HALF_BUILT)
+}
+
+/// **Put `keepers` on the band's `agriculture` role** — the fixture's stand-in for
+/// `assign_labor <faction> <band> agriculture <workers>`, which is the only thing that differs
+/// between the holding arm and the rotting one. The band is sized to afford the row, or
+/// `LaborAllocation::normalize` trims the very role under measurement.
+fn staff_the_keeping(app: &mut App, source: UVec2, keepers: u32) {
+    // **The band that holds THIS patch**, not the first one the query hands back: worldgen's own
+    // starting units are bands too, and staffing one of those would leave the fixture's own
+    // `agriculture` pool empty while the test believed it was full.
+    let band = {
+        let mut query = app
+            .world
+            .query::<(bevy::ecs::entity::Entity, &LaborAllocation)>();
+        query
+            .iter(&app.world)
+            .find(|(_, allocation)| {
+                allocation.assignments.iter().any(|assignment| {
+                    matches!(assignment.target, LaborTarget::Forage { tile, .. } if tile == source)
+                })
+            })
+            .map(|(entity, _)| entity)
+            .expect("the fixture's band holds the source patch")
+    };
+    let headroom = {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band keeps its allocation");
+        let headroom = allocation.assigned_total() + keepers;
+        allocation.set_assignment(LaborTarget::Agriculture, keepers, headroom, None);
+        headroom
+    };
+    let mut cohort = app
+        .world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the band keeps its cohort");
+    if cohort.working.to_f32() < headroom as f32 {
+        cohort.working = scalar_from_f32(headroom as f32);
+    }
+}
+
+/// **`plant:tended`'s keeping demand in whole hands** — what the holding arm staffs, read straight
+/// off the shipped ladder so a retune moves the fixture with the game.
+fn keeping_demand_in_hands(app: &App) -> u32 {
     app.world
         .resource::<LadderConfigHandle>()
         .get()
@@ -103,10 +167,15 @@ fn rate_in_hands(app: &App) -> u32 {
         .upkeep_crew_needed(UNSCALED_UPKEEP)
 }
 
-/// A headless world whose `SOURCE` tile carries a patch, with `builders` on a running `Cultivate`.
-/// `builders == 0` leaves the source unstaffed for the build.
-fn world_with_a_cultivate_staffed_at(builders: u32) -> (App, UVec2) {
-    world_with_a_patch(builders, HALF_BUILT)
+/// Turns enough to outlast `plant:tended`'s own grace, so the rotting arm is genuinely bleeding
+/// rather than being forgiven. Both arms run the same span, so they differ in the keeping alone.
+fn turns_past_the_grace(app: &App) -> u32 {
+    app.world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung(RungKey::PlantTended)
+        .upkeep_grace_turns()
+        + 2
 }
 
 /// **The meter of a patch NOBODY HAS STARTED** — the state a compose sheet is by definition looking
@@ -118,8 +187,33 @@ const NOTHING_BANKED: f32 = core_sim::RUNG_UNSTARTED;
 const HALF_BUILT: f32 = 0.5;
 
 /// A headless world whose `SOURCE` tile carries a patch with `banked × cost` on its tended meter and
-/// `builders` on the build allocation.
+/// `builders` on the build allocation, with the Cultivation gate **open** and a gatherer beside the
+/// build.
 fn world_with_a_patch(builders: u32, banked: f32) -> (App, UVec2) {
+    world_with_a_patch_knowing(builders, banked, THE_GATE_IS_OPEN, A_GATHERER)
+}
+
+/// **The gathering crew beside the build** — a real take, so the row is a worked source. It is
+/// deliberately a *parameter*, because the abandoned arm below has to take it to zero.
+const A_GATHERER: u32 = 1;
+
+/// **Nobody gathering it either** — a patch the band merely **holds**
+/// (`docs/plan_standing_upkeep.md` §2.2: take, build and keeping are separate allocations).
+const NOBODY_GATHERING: u32 = 0;
+
+/// **The faction knows Cultivation** — every arm but the no-answer one, so `eligible` turns on the
+/// staffing and the meter rather than on a gate.
+const THE_GATE_IS_OPEN: bool = true;
+
+/// [`world_with_a_patch`] with the rung's own knowledge gate stated, because a **refused gate** is
+/// the one state that genuinely has no answer however much work is banked and however many hands are
+/// on it.
+fn world_with_a_patch_knowing(
+    builders: u32,
+    banked: f32,
+    knows_cultivation: bool,
+    gatherers: u32,
+) -> (App, UVec2) {
     let mut app = build_headless_app();
     // One `update()` runs the Startup worldgen chain, which seeds the tile registry and the patches.
     app.update();
@@ -129,14 +223,15 @@ fn world_with_a_patch(builders: u32, banked: f32) -> (App, UVec2) {
         .resource::<TileRegistry>()
         .index(source.x, source.y)
         .expect("the fixture tile resolves");
-    // **The gate's knowledge half**, so `eligible` turns on the staffing and nothing else.
-    app.world
-        .resource_mut::<core_sim::DiscoveryProgressLedger>()
-        .add_progress(
-            FactionId(0),
-            core_sim::CULTIVATION_DISCOVERY_ID,
-            scalar_one(),
-        );
+    if knows_cultivation {
+        app.world
+            .resource_mut::<core_sim::DiscoveryProgressLedger>()
+            .add_progress(
+                FactionId(0),
+                core_sim::CULTIVATION_DISCOVERY_ID,
+                scalar_one(),
+            );
+    }
 
     // **The meter the arms are quoted from.** At [`HALF_BUILT`] the source is genuinely *building* by
     // derivation, so the countdown arms are about the staffing rather than about whether a build
@@ -189,15 +284,13 @@ fn world_with_a_patch(builders: u32, banked: f32) -> (App, UVec2) {
         patch.species = (banked > NOTHING_BANKED).then_some(crop);
     }
 
-    /// The gathering crew beside the build — a real take, so the row is a worked source either way.
-    const GATHERERS: u32 = 1;
     app.world.spawn((
         PopulationCohort {
             home: tile,
             current_tile: tile,
             size: 30,
             children: scalar_zero(),
-            working: scalar_from_f32((GATHERERS + builders + 8) as f32),
+            working: scalar_from_f32((gatherers + builders + 8) as f32),
             elders: scalar_zero(),
             stores: LocalStore::new(),
             morale: scalar_one(),
@@ -230,7 +323,7 @@ fn world_with_a_patch(builders: u32, banked: f32) -> (App, UVec2) {
                     floor: DEFAULT_ESCAPEMENT_FLOOR,
                     species: None,
                 },
-                workers: GATHERERS,
+                workers: gatherers,
                 // The verb is derived from the meter, so this states nothing: what decides the arm
                 // under test is the **crew**.
                 improvement: None,
@@ -289,68 +382,77 @@ fn resolve_a_turn(app: &mut App, source: UVec2) -> i32 {
     published_build_turns(app, source)
 }
 
-/// **A CREW ONE HAND SHORT OF THE RATE** — the staffing that makes the net strictly negative, so the
-/// meter is bled rather than merely held. Named because `rate - 1` at a call site reads as
-/// arithmetic when what it states is *"under the rate, by the smallest step a player can take"*.
-const ONE_HAND_UNDER_THE_RATE: u32 = 1;
-
 /// **THE FOUR STATES, PAIRWISE DISTINCT, ON ONE FIXTURE.**
 #[test]
 fn the_build_countdown_publishes_a_count_holding_rotting_and_no_estimate_as_four_states() {
-    let rate = {
-        let probe = build_headless_app();
-        rate_in_hands(&probe)
-    };
-    // **The rate must be at least two hands, or the rotting arm is unreachable**: at a rate of one,
-    // the only staffing below it is no staffing at all, which is `NO_BUILD_TURNS_ESTIMATE` by
-    // design. The shipped `plant:tended` demand of `2.0` is exactly why this fixture is a patch.
-    assert!(
-        rate > ONE_HAND_UNDER_THE_RATE,
-        "fixture: the rung must charge a rate of at least two hands, or 'under it' is unreachable"
-    );
-
-    // (1) **A crew above the rate publishes a real count.**
-    let (mut app, source) = world_with_a_cultivate_staffed_at(rate + NET_ABOVE_THE_RATE);
+    // (1) **A staffed build on the SHIPPED ladder publishes a real count** — and it does so with
+    // nobody on the keeping, which is the §4.6a headline: the rate is not the builders' bill.
+    let (mut app, source) = world_with_a_cultivate_staffed_at(A_MULTI_TURN_CREW);
     let counted = resolve_a_turn(&mut app, source);
     assert!(
         counted >= 0,
-        "a crew above the maintenance rate is quoted a finish date, got {counted}"
+        "a staffed build is quoted a finish date whatever its keeping, got {counted}"
     );
 
-    // (2) **A crew EXACTLY AT the rate publishes HOLDING** — a real, staffed, priced build whose net
-    // supply is precisely zero, so the meter stands still: nothing is banked and nothing is lost.
+    // (2) **A HALF-BUILT METER NOBODY IS BUILDING, WITH THE KEEPING MET, PUBLISHES HOLDING** — the
+    // ground stands still: nothing is gained and nothing is lost, and it stays that way for as long
+    // as the player leaves it. That is a **parked improvement**, not a failure.
     //
     // **THIS IS THE ARM THE SPLIT LIVES OR DIES ON.** Rotting is reached by a `< 0` comparison and
-    // holding by falling through it, so a suite that only staffed *below* the rate would pass with
-    // both wired to the same branch. Pinning the exact equality is what makes them two answers.
-    let (mut app, source) = world_with_a_cultivate_staffed_at(rate);
-    let holding = resolve_a_turn(&mut app, source);
+    // holding by falling through it, so a suite staged only *below* the line would pass with both
+    // wired to the same branch. Pinning the exact equality — a rot of exactly zero against a build of
+    // exactly zero — is what makes them two answers.
+    let (mut app, source) = world_with_a_cultivate_staffed_at(NOBODY_BUILDING);
+    let keepers = keeping_demand_in_hands(&app);
+    assert!(
+        keepers > NOBODY_BUILDING,
+        "fixture: the rung must cost something to hold, or both arms are the same arm"
+    );
+    staff_the_keeping(&mut app, source, keepers);
+    let span = turns_past_the_grace(&app);
+    let mut holding = NO_BUILD_TURNS_ESTIMATE;
+    for _ in 0..span {
+        holding = resolve_a_turn(&mut app, source);
+    }
     assert_eq!(
         holding, BUILD_METER_HOLDS,
-        "a crew whose whole output pays the rate holds the meter where it is, and says so"
+        "a half-built meter the keeping covers holds where it is, indefinitely, and says so"
     );
 
-    // (3) **A crew BELOW it publishes ROTTING** — it is going backwards, not standing still, and the
-    // player is losing work already bought rather than merely wasting a turn.
-    let (mut app, source) = world_with_a_cultivate_staffed_at(rate - ONE_HAND_UNDER_THE_RATE);
-    let rotting = resolve_a_turn(&mut app, source);
+    // (3) **The same meter with the `agriculture` role EMPTY publishes ROTTING** — past the rung's
+    // own grace the ground is going backwards, and the player is losing work already bought rather
+    // than merely waiting.
+    let (mut app, source) = world_with_a_cultivate_staffed_at(NOBODY_BUILDING);
+    let span = turns_past_the_grace(&app);
+    let mut rotting = NO_BUILD_TURNS_ESTIMATE;
+    for _ in 0..span {
+        rotting = resolve_a_turn(&mut app, source);
+    }
     assert_eq!(
         rotting, BUILD_METER_ROTS,
-        "a crew under the rate leaves a shortfall — the meter loses ground, and says so"
+        "an unkept half-built meter loses bought work — the meter goes backwards, and says so"
     );
 
-    // (4) **An UNSTAFFED source publishes NO ESTIMATE, neither holding nor rotting.** Nobody has
-    // promised anything there; claiming it will never finish would fire on every idle improvement on
-    // the map.
-    let (mut app, source) = world_with_a_cultivate_staffed_at(NO_CREW_ON_THIS_ACTIVITY);
-    let unstaffed = resolve_a_turn(&mut app, source);
+    // (4) **A REFUSED GATE publishes NO ESTIMATE**, neither holding nor rotting — the state that
+    // genuinely has no answer. It is asserted at a real crew on a half-built meter, i.e. the exact
+    // fixture that reaches every other arm, so it pins that the gate beats all three: a build that is
+    // not running has promised nothing, for a reason that has nothing to do with staffing or with the
+    // keeping.
+    //
+    // **The boundary MOVED off "unstaffed"**, which is why this arm is a gate rather than an empty
+    // crew: work already banked promises as much as a crew does, so an unstaffed half-built meter is
+    // arm (2) or arm (3). The other no-answer states — a meter at zero with nobody on it, and the top
+    // of the ladder — take the same branch.
+    let (mut app, source) =
+        world_with_a_patch_knowing(A_MULTI_TURN_CREW, HALF_BUILT, !THE_GATE_IS_OPEN, A_GATHERER);
+    let refused = resolve_a_turn(&mut app, source);
     assert_eq!(
-        unstaffed, NO_BUILD_TURNS_ESTIMATE,
-        "an unstaffed build has no answer — it has not promised one"
+        refused, NO_BUILD_TURNS_ESTIMATE,
+        "a build the rung's own gate refuses has promised nothing, whatever is banked or staffed"
     );
 
     // **Pairwise distinct**, which is what stops a new sentinel being wired to the wrong branch.
-    let published = [counted, holding, rotting, unstaffed];
+    let published = [counted, holding, rotting, refused];
     for (index, left) in published.iter().enumerate() {
         for right in published.iter().skip(index + 1) {
             assert_ne!(
@@ -359,6 +461,194 @@ fn the_build_countdown_publishes_a_count_holding_rotting_and_no_estimate_as_four
             );
         }
     }
+}
+
+/// **A PATCH NOBODY IS ON AT ALL STILL ANSWERS — `-3` UNKEPT, `-2` KEPT.** The commonest rotting
+/// state in the game, and the one the boundary move exists for
+/// (`docs/plan_standing_upkeep.md` §4.6a).
+///
+/// **No gatherers, no builders, work on the meter.** Under the old boundary this was `-1` on the
+/// *unstaffed* rule; it is now the sign of `build_work − rot`, which with no builders is the rot's
+/// own sign — so the wire says *the ground is going backwards* to a player who walked away, and says
+/// *it is being held* to one who staffed the keeping and parked the build deliberately.
+///
+/// **AND `crew_is_working_the_source` DOES NOT REFUSE IT**, which is the load-bearing half: that
+/// predicate takes the **escapement room** (`max(0, B − floor·K)`), a fact about the *stock against
+/// the assignment's floor* and not about who is standing there. A patch nobody gathers regrows toward
+/// `K`, so its room is large and the gate is **open** — the plant web's abandoned meters answer
+/// honestly. (The animal web's do not, and the difference is not this predicate: there the hunters
+/// draw the flock to its floor and the unmet keeping suppresses regrowth, so the room really does go
+/// to zero and stays there. That is an **eligibility** stall no balance term can see —
+/// `.claude/rules/core_sim/husbandry.md` carries it.)
+///
+/// The other term of the same conjunction is `patch.species.is_some()`, so the fixture commits a
+/// crop exactly as a worked patch does — an uncommitted patch would refuse for a reason that is not
+/// the one under test.
+#[test]
+fn an_abandoned_half_built_patch_publishes_rotting_and_a_kept_one_holding() {
+    // (1) **UNKEPT — nobody anywhere near it.** Past the rung's own grace, the meter is losing
+    // ground and the wire says so.
+    let (mut app, source) = world_with_a_patch_knowing(
+        NOBODY_BUILDING,
+        HALF_BUILT,
+        THE_GATE_IS_OPEN,
+        NOBODY_GATHERING,
+    );
+    let span = turns_past_the_grace(&app);
+    let mut abandoned = NO_BUILD_TURNS_ESTIMATE;
+    for _ in 0..span {
+        abandoned = resolve_a_turn(&mut app, source);
+    }
+    assert_eq!(
+        abandoned, BUILD_METER_ROTS,
+        "a half-built patch nobody gathers, builds or keeps is losing bought work, and says so"
+    );
+    // …and it is the ROT that says it, not an absent crew: the term is published beside the
+    // sentinel and is exactly the rung's own bleed.
+    assert!(
+        published_patch_field(&app, source, |patch| patch.meterRotPerTurn())
+            > core_sim::NO_UPKEEP_DECAY,
+        "the meter is bleeding, which is what `-3` is struck from"
+    );
+
+    // (2) **KEPT — the same patch, the same empty build, the `agriculture` role staffed.** The
+    // liveness half: it holds exactly, which is a player PARKING a half-built improvement rather
+    // than a failure.
+    let (mut app, source) = world_with_a_patch_knowing(
+        NOBODY_BUILDING,
+        HALF_BUILT,
+        THE_GATE_IS_OPEN,
+        NOBODY_GATHERING,
+    );
+    let keepers = keeping_demand_in_hands(&app);
+    staff_the_keeping(&mut app, source, keepers);
+    let span = turns_past_the_grace(&app);
+    let mut parked = NO_BUILD_TURNS_ESTIMATE;
+    for _ in 0..span {
+        parked = resolve_a_turn(&mut app, source);
+    }
+    assert_eq!(
+        parked, BUILD_METER_HOLDS,
+        "…and the same patch with its keeping staffed is held, indefinitely, at no risk"
+    );
+    assert_eq!(
+        published_patch_field(&app, source, |patch| patch.meterRotPerTurn()),
+        core_sim::NO_UPKEEP_DECAY,
+        "nothing is bleeding there, which is what `-2` is struck from"
+    );
+}
+
+/// **THE PUBLISHED ROT IS EXACTLY WHAT THE NEXT DECAY PASS BLEEDS.**
+///
+/// Logistics runs before Population, so the pass that bleeds judges the supply the *previous* turn
+/// stamped. `RungDef::meter_rot` therefore advances the neglect count by one and publishes what that
+/// pass will take — an exact forecast rather than an estimate, because the supply it is struck from
+/// is already stamped and nothing the player does next turn can change it.
+///
+/// **The invariant, asserted turn after turn: `rot published at T == −(the meter's movement at
+/// T+1)`.** Three arms, and the third is what makes the other two mean anything:
+///
+/// - **the boundary** — the last grace turn publishes the rot the *next* turn actually bleeds, and
+///   `buildTurnsRemaining` reads `-3` there rather than `-2`;
+/// - **the steady state** — the relation holds every turn once the bleed has started;
+/// - **the rescue** — keeping staffed mid-grace publishes `0` and the following turn bleeds `0`, so
+///   the forward form is shown **not** to over-warn. Without it, a form that always predicted a bleed
+///   would pass both the others.
+#[test]
+fn the_published_rot_is_exactly_what_the_next_decay_pass_bleeds() {
+    let (mut app, source) = world_with_a_patch_knowing(
+        NOBODY_BUILDING,
+        HALF_BUILT,
+        THE_GATE_IS_OPEN,
+        NOBODY_GATHERING,
+    );
+    let grace = app
+        .world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung(RungKey::PlantTended)
+        .upkeep_grace_turns();
+    assert!(
+        grace > 0,
+        "fixture: the rung must forgive something, or there is no boundary to pin"
+    );
+
+    // **`source` is a PARAMETER, not a capture** — the rescue arm below opens a second world, and a
+    // closure holding the first world's tile would read a patch that is not in it.
+    let work_done =
+        |app: &App, source| published_patch_field(app, source, |p| p.cultivationWorkDone());
+    let rot_now = |app: &App, source| published_patch_field(app, source, |p| p.meterRotPerTurn());
+
+    // --- (1) THE BOUNDARY, and (2) the steady state, on one walk. ---------------------------------
+    //
+    // Every turn: take the rot this turn publishes, resolve the next turn, and assert the meter moved
+    // by exactly that. `grace + 3` turns covers the forgiven span, the last grace turn (where the
+    // published rot first goes positive while the meter has still not moved) and two steady ones.
+    recapture_snapshot_in_place(&mut app.world);
+    let mut forecast = rot_now(&app, source);
+    let mut before = work_done(&app, source);
+    let mut saw_a_forecast_of_a_bleed_before_the_meter_moved = false;
+    for turn in 1..=(grace + 3) {
+        let published = resolve_a_turn(&mut app, source);
+        let now = work_done(&app, source);
+        assert!(
+            (before - now - forecast).abs() < 1e-4,
+            "turn {turn}: the rot published last turn ({forecast}) must be exactly what this turn \
+             bled ({})",
+            before - now
+        );
+        let next = rot_now(&app, source);
+        // **THE LAST GRACE TURN IS THE ARM THE FORM LIVES ON**: the meter has not moved yet, and the
+        // wire already says it is about to — `-3`, not `-2`.
+        if next > core_sim::NO_UPKEEP_DECAY && (before - now).abs() < 1e-4 {
+            saw_a_forecast_of_a_bleed_before_the_meter_moved = true;
+            assert_eq!(
+                published, BUILD_METER_ROTS,
+                "turn {turn}: a meter with a bleed already determined is LOSING, not holding"
+            );
+        }
+        forecast = next;
+        before = now;
+    }
+    assert!(
+        saw_a_forecast_of_a_bleed_before_the_meter_moved,
+        "fixture: the walk must cross the grace boundary, or the forward claim is untested"
+    );
+
+    // --- (3) THE RESCUE — the arm that proves it does not over-warn. -------------------------------
+    //
+    // Staff the keeping while the grace is still counting. The forward form must publish `0` on that
+    // turn and the next turn must bleed `0` — where a form that merely always predicted a bleed would
+    // have promised one that never arrives.
+    let (mut app, source) = world_with_a_patch_knowing(
+        NOBODY_BUILDING,
+        HALF_BUILT,
+        THE_GATE_IS_OPEN,
+        NOBODY_GATHERING,
+    );
+    for _ in 1..grace.max(2) {
+        resolve_a_turn(&mut app, source);
+    }
+    let keepers = keeping_demand_in_hands(&app);
+    staff_the_keeping(&mut app, source, keepers);
+    resolve_a_turn(&mut app, source);
+    assert_eq!(
+        rot_now(&app, source),
+        core_sim::NO_UPKEEP_DECAY,
+        "the turn the keeping is restored, nothing is forecast — the next pass will take nothing"
+    );
+    let before = work_done(&app, source);
+    resolve_a_turn(&mut app, source);
+    assert_eq!(
+        work_done(&app, source),
+        before,
+        "…and the next turn really does bleed nothing: the forecast cannot over-warn"
+    );
+    assert_eq!(
+        rot_now(&app, source),
+        core_sim::NO_UPKEEP_DECAY,
+        "…and it stays zero while the keeping holds"
+    );
 }
 
 /// **THE THREE SENTINELS ARE OUTSIDE THE RANGE A REAL COUNT LIVES IN, and are not each other** — the
@@ -424,14 +714,21 @@ fn an_unstarted_patch_publishes_the_quoted_rungs_upkeep_where_the_billed_one_is_
         "the rung the patch would CLIMB costs the ladder's rate to hold, quoted before the commit"
     );
 
-    // **And the projection agrees with it**: a crew that cannot clear the rate never finishes, so
-    // the sim publishes the answer rather than a turn count computed against a rate of zero. One
-    // builder against a demand of `2.0` is *under* the rate, not at it, so the honest answer is that
-    // the meter rots — the quote states which of the two it is.
+    // **AND THE PROJECTION IS `work_cost / crew`, WHICH IS ISSUE #545 CLOSED** (§4.6a). One builder
+    // against `plant:tended`'s demand of `2.0` really does bank 1 a turn: the `2.0` is the keeping
+    // pool's bill, not a tax on the build, and on ground nobody has started there is nothing banked
+    // and therefore nothing to rot. The quote used to read `-3` here — *"the meter never reaches its
+    // cost"* — about a build that finishes perfectly well.
+    let cost = published_patch_field(&app, source, |patch| patch.cultivationWorkCost());
     assert_eq!(
         published_build_turns(&app, source),
-        BUILD_METER_ROTS,
-        "one builder is under the tended rung's rate — the meter never reaches its cost"
+        (cost / core_sim::PER_WORKER_OUTPUT).ceil() as i32,
+        "one builder is quoted `work_cost / crew` turns — the rate is the keeping's bill"
+    );
+    assert_eq!(
+        published_patch_field(&app, source, |patch| patch.meterRotPerTurn()),
+        core_sim::NO_UPKEEP_DECAY,
+        "…and nothing is banked here, so there is nothing to rot"
     );
 
     // **MID-BUILD, THE TWO ARE ONE NUMBER.** Same rung on both sides, so a drift between the seams
