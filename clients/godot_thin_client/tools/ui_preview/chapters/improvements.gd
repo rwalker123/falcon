@@ -9,6 +9,7 @@ extends RefCounted
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
+const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
@@ -20,6 +21,21 @@ var h
 ## floor was pacing. Spelled as a LITERAL because the vocabulary const is gone: a needle recomposed
 ## from a live format could only ever describe whatever the code still says.
 const RETIRED_PAUSED_NOTE_NEEDLE := "ease off and it resumes"
+
+## **THE FULLY-COMMITTED BAND'S TAKE CREW — the patch's OWN max-useful, not a number picked here.**
+## The take stepper is capped at `min(pool − builders, max-useful)`, so a crew above this one is
+## clamped away by the usefulness ceiling and the state stops being about the POOL at all. Reading it
+## off the sim's published `workers_needed` for this patch is what keeps the two in step if the
+## fixture is ever re-dialled.
+const POOL_TAKE_CREW := ForageFx.CULTIVATE_SIM_WORKERS_NEEDED
+
+## What the take is dropped to inside the sheet. Two below the crew above, so the hands the builders
+## gain are COUNTABLE rather than a single step that a stepper reading either end would satisfy.
+const POOL_REDUCED_TAKE := POOL_TAKE_CREW - 2
+
+## A meter that has never moved — the state a DECLARED build with no builders sits in, and the one a
+## `0%` badge and a suppressed rung row made indistinguishable from a build that had just begun.
+const POOL_UNSTARTED_METER := 0.0
 
 ## **ANY TURN ESTIMATE AT ALL, on either compose face.** Both count forms open with the approximation
 ## mark (`HudComposeVocab.BUILD_TURNS_COUNT_FORMAT` / `_ONE`) and nothing else on those faces carries
@@ -880,6 +896,175 @@ func run(harness) -> void:
 
 	_arrow_is_gated_on_what_is_SHOWN()
 	await _a_rung_that_slipped_is_building_again()
+	await _the_sheets_two_crews_share_one_pool()
+	await _a_reopened_sheet_shows_the_LIVE_crew()
+	await _a_declared_build_with_no_builders_says_so()
+
+## **THE SHEET IS ONE TRANSACTION OVER A SOURCE'S TWO CREWS, AND IT IS CLAMPED AS ONE.** Reported
+## from play: a band with every hand on a herd, HUNTERS dropped 4 → 2, and BUILDERS still dead at a
+## maximum of 0 — the two hands freed inside the sheet were invisible to the other stepper until the
+## player committed, closed and reopened.
+##
+## **THE PRECONDITION IS `idle_workers == 0`, and every claim here is worthless without it.** With
+## spare hands in the band both steppers are live for reasons that have nothing to do with each other,
+## so the frame would pass against the pre-fix per-activity ceilings.
+##
+## **THE TWO HALVES ARE THE CLAIM, not either one.** A `+` that is dead at a full take passes on a
+## builders row that is dead always; a `+` that is live at a reduced take passes on one that never
+## clamps at all. So the state asks both, and finishes by pressing the `+` through the sheet's own
+## handler until the pool is spent — which is the third claim, that the clamp still refuses to offer
+## a crew this band does not have.
+func _the_sheets_two_crews_share_one_pool() -> void:
+	var tile := BaseFx.food_tile_fixture()
+	tile["patch_cultivation_progress"] = POOL_UNSTARTED_METER
+	BaseFx.price_plant_build(tile, SourceForecast.BUILD_TURNS_NO_ESTIMATE)
+	var band := _fully_committed_forage_band(tile, POOL_TAKE_CREW, SourceForecast.BUILD_CREW_NONE)
+	h._hud._band_labor._player_band = band
+	h._hud._band_labor._player_bands = [band]
+	h._hud._compose.reset_forage_source()
+	h._show_tile(tile)
+	h._compose_forage(tile)
+	await h._settle()
+	await h._save("compose_pool_take_full")
+	var sheet = h._hud._drawercompose._compose_sheet
+	h._assert_hud("the band has NO idle hands — every claim below is about the pool, not about slack",
+		int(band["idle_workers"]) == 0)
+	h._assert_hud("…and the sheet opens on the crew the band really has — %d" % POOL_TAKE_CREW,
+		Readout.stepper_value(sheet) == POOL_TAKE_CREW)
+	h._assert_hud("…with the BUILDERS stepper at nobody",
+		Readout.build_crew_value(sheet) == SourceForecast.BUILD_CREW_NONE)
+	h._assert_hud("…and its `+` dead, the take holding every hand the pool has",
+		not Readout.build_crew_can_add(sheet))
+	# DROP THE TAKE, IN THE SHEET, WITHOUT COMMITTING — which is the whole gesture under test.
+	h._hud._compose.set_forage_count(POOL_REDUCED_TAKE)
+	h._compose_forage(tile)
+	await h._settle()
+	await h._save("compose_pool_take_freed")
+	sheet = h._hud._drawercompose._compose_sheet
+	h._assert_hud("dropping the take to %d frees hands INSIDE the sheet" % POOL_REDUCED_TAKE,
+		Readout.stepper_value(sheet) == POOL_REDUCED_TAKE)
+	h._assert_hud("…so the BUILDERS `+` comes live with no commit, close and reopen",
+		Readout.build_crew_can_add(sheet))
+	# …AND STOPS EXACTLY WHERE THE BAND DOES. Pressed rather than written, so the ceiling clamp in the
+	# sheet's own handler is what answers. **Each press rebuilds the controls and the old row is
+	# `queue_free`d, i.e. still in the tree until the frame ends** — so the settle between presses is
+	# load-bearing: without it the second press lands on the freed row and the count never moves.
+	for _i in range(POOL_TAKE_CREW - POOL_REDUCED_TAKE):
+		Readout.build_crew_plus(h._hud._drawercompose._compose_sheet).pressed.emit()
+		await h._settle()
+	sheet = h._hud._drawercompose._compose_sheet
+	print("ui_preview: shared pool  take=%d  builders=%d  can_add=%s" % [
+		Readout.stepper_value(sheet), Readout.build_crew_value(sheet),
+		Readout.build_crew_can_add(sheet)])
+	h._assert_hud("…up to the %d the take gave back" % (POOL_TAKE_CREW - POOL_REDUCED_TAKE),
+		Readout.build_crew_value(sheet) == POOL_TAKE_CREW - POOL_REDUCED_TAKE)
+	h._assert_hud("…and no further — the sheet never offers a crew the sim would refuse",
+		not Readout.build_crew_can_add(sheet))
+
+## **AN UNCOMMITTED EDIT MUST NOT OUTLIVE ITS SHEET.** Reported from play beside the pool bug: drop
+## HUNTERS 4 → 2, close WITHOUT committing, reopen — and the sheet still showed 2 over a band that
+## still had 4 on the herd. The composition was keyed on the source and the close only ever dropped
+## *which sheet is open*, so the dialled number survived as a promise nothing was keeping.
+##
+## **THE CLOSE IS DRIVEN THROUGH THE REAL PATH** (`close_compose_sheet` → the sheet's `closed` →
+## `_on_compose_sheet_closed`), because the reset rides that signal; poking `ComposeState` here would
+## assert the harness's own write.
+##
+## The PAIR is the claim: the edit must be visible while the sheet is open, or "it shows 4 on reopen"
+## passes on a sheet that never took the edit at all.
+func _a_reopened_sheet_shows_the_LIVE_crew() -> void:
+	var tile := BaseFx.food_tile_fixture()
+	var band := _fully_committed_forage_band(tile, POOL_TAKE_CREW, SourceForecast.BUILD_CREW_NONE)
+	h._hud._band_labor._player_band = band
+	h._hud._band_labor._player_bands = [band]
+	h._hud._compose.reset_forage_source()
+	h._show_tile(tile)
+	h._compose_forage(tile)
+	h._hud._compose.set_forage_count(POOL_REDUCED_TAKE)
+	h._compose_forage(tile)
+	await h._settle()
+	h._assert_hud("the uncommitted edit really is on the open sheet — %d" % POOL_REDUCED_TAKE,
+		Readout.stepper_value(h._hud._drawercompose._compose_sheet) == POOL_REDUCED_TAKE)
+	h._hud._drawercompose.close_compose_sheet()
+	h._compose_forage(tile)
+	await h._settle()
+	await h._save("compose_reopen_reseeds")
+	h._assert_hud("…and reopening seeds from the band's own row again — %d" % POOL_TAKE_CREW,
+		Readout.stepper_value(h._hud._drawercompose._compose_sheet) == POOL_TAKE_CREW)
+
+## **A DECLARED BUILD WITH NOBODY ON IT LOOKED EXACTLY LIKE ONE THAT HAD JUST STARTED.** The sim
+## publishes `buildTurnsRemaining = -1` for an unstaffed source — correctly, nobody having promised
+## anything there — and every meter surface renders `-1` as no line, so the tile card printed no rung
+## row at all (its rows are gated on `progress > 0`), the sheet quoted `Cultivating 0 / 50 work (0%)`
+## and stopped, and the map drew a `0%` plate over it.
+##
+## **THE FRAME CARRIES THE TILE CARD AND THE SHEET; THE BADGE IS DRIVEN BESIDE IT.** A plate is drawn
+## to a canvas and no assertion can read a glyph back off one, so the map half asks
+## `SourceForecast.unstaffed_build_of` — the fork `BandOverlayRenderer._queue_source_badge` reads —
+## for both of its answers, plus the staffed control that stops "always warn" passing.
+func _a_declared_build_with_no_builders_says_so() -> void:
+	var tile := BaseFx.food_tile_fixture()
+	tile["patch_cultivation_progress"] = POOL_UNSTARTED_METER
+	BaseFx.price_plant_build(tile, SourceForecast.BUILD_TURNS_NO_ESTIMATE)
+	var band := _fully_committed_forage_band(tile, POOL_TAKE_CREW, SourceForecast.BUILD_CREW_NONE)
+	h._hud._band_labor._player_band = band
+	h._hud._band_labor._player_bands = [band]
+	h._hud._compose.reset_forage_source()
+	h._show_tile(tile)
+	h._compose_forage(tile)
+	await h._settle()
+	await h._save("tile_build_unstaffed")
+	# **WORD AND TINT IN ONE NEEDLE**, the treatment the building/reverting A/B takes: the row was not
+	# merely missing, and a version of it in the build's own neutral ink would be the same lie.
+	h._assert_hud("a declared build with no builders states its rung row at a meter of ZERO",
+		h._hud.tile_detail.text.contains("[color=#%s]%s[/color]" % [
+			HudStyle.WARN_HEX, DetailFormat.BUILD_UNSTARTED_VALUE]))
+	h._assert_hud("…and the compose sheet says the same thing in its own register",
+		Q.has_label_containing(h._hud._drawercompose._compose_sheet,
+			HudComposeVocab.BUILD_UNSTARTED_NOTE))
+	# THE NEGATIVE that names the defect: the word a rung nobody is building must not wear anywhere on
+	# the card, in any ink — that word is what read as work in progress.
+	h._assert_hud("…and never the build's own word, which is what read as work in progress",
+		not h._hud.tile_detail.text.contains(HudFloraVocab.CULTIVATION_PREPARING_LABEL))
+	# THE MAP's own fork, asked directly — all three answers, or "always warn" passes the first two.
+	h._assert_hud("the map badge reads an unstarted rung as NOT WORKING",
+		SourceForecast.unstaffed_build_of(POOL_UNSTARTED_METER, SourceForecast.BUILD_CREW_NONE)
+			== SourceForecast.BUILD_UNSTAFFED_UNSTARTED)
+	h._assert_hud("…a meter with work banked and nobody on it as SLIDING BACK",
+		SourceForecast.unstaffed_build_of(REVERTING_METER_PROGRESS, SourceForecast.BUILD_CREW_NONE)
+			== SourceForecast.BUILD_UNSTAFFED_SLIDING)
+	h._assert_hud("…and a staffed one as neither, so the plate keeps its percentage",
+		not SourceForecast.build_is_unstaffed(SourceForecast.unstaffed_build_of(
+			POOL_UNSTARTED_METER, BandFx.CULTIVATING_BAND_BUILDERS)))
+	# **THE ANIMAL WEB'S OWN ROW, driven** — `herd_summary_lines` is pure, and no herd fixture in this
+	# chapter is on screen, so the pair is asked of the producer. It is a PAIR because a Husbandry row
+	# rendered unconditionally would satisfy the positive on its own: at a meter of zero with nothing
+	# declared, that row must still be absent.
+	var untamed := HerdFx.taming_herd_fixture()
+	untamed["domestication"] = POOL_UNSTARTED_METER
+	var promised := "\n".join(DetailFormat.herd_summary_lines(untamed,
+		h._hud._band_labor.world_herds(), SourceForecast.IMPROVEMENT_TAME))
+	var untouched := "\n".join(DetailFormat.herd_summary_lines(untamed,
+		h._hud._band_labor.world_herds(), SourceForecast.IMPROVEMENT_NONE))
+	h._assert_hud("the herd drawer states a Tame promised with no keepers on it",
+		promised.contains(DetailFormat.BUILD_UNSTARTED_VALUE))
+	h._assert_hud("…and says nothing at all about a herd nobody has promised anything",
+		not untouched.contains(DetailFormat.BUILD_UNSTARTED_VALUE))
+
+## **A BAND WITH EVERY HAND ON ONE PATCH** — `idle_workers == 0`, the take and the build stated
+## explicitly, which is the only shape in which the two steppers' shared pool is observable at all.
+func _fully_committed_forage_band(tile: Dictionary, take: int, builders: int) -> Dictionary:
+	var band: Dictionary = BandFx.forage_range_bands()[0].duplicate(true)
+	band["idle_workers"] = 0
+	band["working_age"] = take + builders
+	band["labor_assignments"] = [{
+		"kind": "forage", "workers": take,
+		"target_x": int(tile["x"]), "target_y": int(tile["y"]),
+		"floor": SourceForecast.FLOOR_FOOD_PEAK,
+		"improvement": SourceForecast.IMPROVEMENT_CULTIVATE, "improvement_workers": builders,
+		"workers_needed": ForageFx.CULTIVATE_SIM_WORKERS_NEEDED, "overdraws": false,
+	}]
+	return band
 
 ## **THE REPAIR — a completed rung whose meter has eroded, BUILDING again with nothing declared**
 ## (`docs/plan_standing_upkeep.md` §2.4). It is the state the derivation exists for, and the one no

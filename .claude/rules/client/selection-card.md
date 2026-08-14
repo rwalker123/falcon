@@ -392,3 +392,70 @@ gate fails the plant negative alone, and reading the gear as zero fails the anim
 **The fixtures DERIVE `work_done` from the fraction they already state** (`BaseFx.price_plant_build` /
 `HerdFx.price_animal_build`), so a fixture that re-dials a meter cannot end up with a percentage and
 an absolute that disagree — which is the one thing this readout exists to make visible.
+
+### A build DECLARED with nobody on it is a fourth state, and it said nothing at all
+
+The `-1` rule above is right and it left a hole. A source **nobody has staffed** answers
+`BUILD_TURNS_NO_ESTIMATE`, correctly — nobody has promised anything there — so every meter surface
+rendered no line; and a rung row is gated on `progress > 0`, so at a meter of zero the tile card and
+the herd drawer rendered **no row either**. Reported from play: commit a Cultivate with BUILDERS at
+0 and everything reads as though work is under way — the compose sheet quoting
+`Cultivating 0 / 50 work (0%)`, a `0%` rung plate on the map — with nothing anywhere saying nothing
+is happening. **A declared-but-unstaffed build is an actionable standing fact, not an absence of
+information**, exactly as the `∞` one state over is.
+
+**`SourceForecast.unstaffed_build_state` is the ONE fork, and it keeps three states apart:**
+
+| crew | meter | answer | what it means |
+|---|---|---|---|
+| 0 | 0 | `BUILD_UNSTAFFED_UNSTARTED` | **not started — nobody assigned** |
+| >0, at or under the rate | any | `BUILD_STAFFED`, and `BUILD_TURNS_NEVER` → `∞ turns` | **never finishes at this crew** |
+| 0 | >0 | `BUILD_UNSTAFFED_SLIDING` | **the meter is sliding back** |
+
+The middle row is a STAFFED build here, so the `∞` face and this warning can never both fire on one
+rung — which is why the fork is one function rather than four surfaces each deciding for themselves.
+`unstaffed_build_of(progress, crew)` is the same fork asked of an ALREADY-RESOLVED rung, for the map
+badge, which has just resolved both through `RungGates.rung_in_progress`.
+
+**Nothing new is asked of the wire.** The declaration (`LaborAssignment.improvement`), the crew
+(`improvementWorkers`) and the meter are all published; the client derives the state.
+
+Four surfaces, and each says it in its own register:
+
+- **The tile card** renders the rung row it used to suppress, valued
+  `DetailFormat.BUILD_UNSTARTED_VALUE` (`⚠ Not started — no builders assigned`) in WARN. Above zero
+  the row keeps the words it already had: `building` in `cultivation_label` / `field_label` now means
+  *somebody is on it* rather than *somebody declared it*, so a declared rung with no builders reads
+  `Reverting` exactly as an abandoned one does.
+- **The herd drawer** takes the rung as a parameter — `herd_summary_lines`' trailing
+  `unstaffed_build` — because a pure producer over one herd dict cannot see the player's labor row.
+- **The compose sheet** puts it in the improvement control's WARN note slot, forked on the meter
+  (`HudComposeVocab.BUILD_UNSTARTED_NOTE` / `BUILD_SLIDING_NOTE`), and inks the face amber through
+  the same `warn_face` the `∞` uses.
+- **The map badge** drops the percentage for `🌱⚠` in `HudStyle.WARN` — see `overlay-channels.md`.
+
+**The tint is decided ONCE for four rows.** `DetailFormat.BUILD_UNSTAFFED_NEEDLE` is what
+`cultivation_value_hex` / `field_value_hex` / `husbandry_value_hex` / `corral_value_hex` all match,
+and `BUILD_UNSTARTED_VALUE` is BUILT from it, so the words and the test cannot drift.
+
+**THE DECLARATION AND THE CREW ARE READ OFF ONE CONFIRMED WIRE ROW, and that is not an oversight.**
+They are two fields of one `LaborAssignment`, so reading them from one row is the only way the pair
+can describe one moment. `HudBandLaborState.unstaffed_build_forage` / `_hunt` therefore walk
+`labor_assignments` directly rather than the pending-aware `effective_worker_map`: that overlay
+carries a declaration but no build crew, so a pending-aware read would fire this warning at the
+player for the turn after they committed a build **with** builders. Silence for one snapshot is the
+honest degrade. It composes safely with the pending-aware `building_rung` beside it on the tile card
+— a fresh commit has no confirmed declaration yet, so this reader answers nothing.
+
+**Declaring with no builders stays LEGAL.** It commits the crop and the player may staff it next
+turn; the bug was that it was invisible, not that it was possible, so nothing here blocks a commit.
+
+**Frames + assertions.** `tile_build_unstaffed` (`chapters/improvements.gd`) carries the tile card's
+row as word-AND-tint markup, the sheet's note, and the NEGATIVE that names the defect — the build's
+own word must appear nowhere on the card, in any ink. The map's three answers and the herd drawer's
+pair are DRIVEN beside it: a plate is drawn to a canvas and no assertion can read a glyph back off
+one, and the herd's producer is pure. Each group is a pair or a triple, because "always warn" passes
+any lone positive. Sabotage-verified on two DISJOINT mutations: making `unstaffed_build_of` always
+answer `BUILD_STAFFED` fails exactly the sheet's note and the map's two unstaffed answers, while the
+card claims stay green (a different seam); making `HudBandLaborState._unstaffed_build` always answer
+`IMPROVEMENT_NONE` fails exactly the card's row.

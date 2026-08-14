@@ -426,6 +426,15 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # an abandoned improvement reverts, and it used to wear the build's own word and ink while doing it.
     var building_rung := String(_band_labor.forage_effort_at(
         int(tile_info.get("x", -1)), int(tile_info.get("y", -1))).get("improvement", ""))
+    # **…AND WHETHER ANYBODY IS ACTUALLY ON IT.** A build has its OWN crew now
+    # (`docs/plan_standing_upkeep.md` §2.2), so a rung can be declared and unmanned — which is a
+    # THIRD thing from filling and from bleeding, and read as neither: at a meter of zero the row
+    # below is not rendered at all, and above zero it wore the build's own word and neutral ink.
+    # Confirmed-row only, deliberately, so a just-committed build cannot flash this warning — see
+    # `HudBandLaborState.unstaffed_build_forage`. It composes safely with the pending-aware
+    # `building_rung` above: a fresh commit has no confirmed declaration yet, so this answers nothing.
+    var unstaffed_rung := _band_labor.unstaffed_build_forage(
+        int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))
     # **THE METER SAYS WORK, NOT JUST PERCENT** (`docs/plan_unit_costed_work.md` §11). A rung declares
     # a fixed size in work units and a crew produces work units per turn, so the same 42% is a
     # different job on every rung — which a bare percentage cannot say. The absolutes come off the
@@ -433,10 +442,19 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     var prefix: String = HudComposeVocab.FORAGE_FORECAST_PREFIX
     if bool(tile_info.get("patch_is_cultivated", false)):
         lines.append("Cultivation: %s" % DetailFormat.cultivation_label(1.0, true))
+    elif unstaffed_rung == SourceForecast.IMPROVEMENT_CULTIVATE \
+            and float(tile_info.get("patch_cultivation_progress", 0.0)) <= 0.0:
+        # DECLARED AND UNMANNED, with nothing banked — the row the `> 0` gate below suppressed, which
+        # is exactly the state that needs saying (the map was drawing a `0%` badge over it).
+        lines.append("Cultivation: %s" % DetailFormat.BUILD_UNSTARTED_VALUE)
     elif tile_info.has("patch_cultivation_progress"):
         var cultivation_progress := float(tile_info["patch_cultivation_progress"])
         if cultivation_progress > 0.0:
-            var cultivating := building_rung == SourceForecast.IMPROVEMENT_CULTIVATE
+            # **BUILDING MEANS *SOMEBODY IS ON IT*, not merely *somebody declared it*.** The build has
+            # its own crew, so a declaration with no builders leaves the meter bleeding exactly as an
+            # abandoned one does — and wore the filling state's word and ink while doing it.
+            var cultivating := building_rung == SourceForecast.IMPROVEMENT_CULTIVATE \
+                and unstaffed_rung != SourceForecast.IMPROVEMENT_CULTIVATE
             lines.append("Cultivation: %s" % DetailFormat.cultivation_label(cultivation_progress,
                 false, cultivating,
                 SourceForecast.build_work_done(
@@ -457,10 +475,15 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # ground. Both rows are the source's own, and both decay if the patch is abandoned.
     if bool(tile_info.get("patch_is_field", false)):
         lines.append("%s: %s" % [HudFloraVocab.FIELD_ROW, DetailFormat.field_label(1.0, true)])
+    elif unstaffed_rung == SourceForecast.IMPROVEMENT_SOW \
+            and float(tile_info.get("patch_field_progress", 0.0)) <= 0.0:
+        # The Sow twin of the Cultivation branch above.
+        lines.append("%s: %s" % [HudFloraVocab.FIELD_ROW, DetailFormat.BUILD_UNSTARTED_VALUE])
     elif tile_info.has("patch_field_progress"):
         var field_progress := float(tile_info["patch_field_progress"])
         if field_progress > 0.0:
-            var sowing := building_rung == SourceForecast.IMPROVEMENT_SOW
+            var sowing := building_rung == SourceForecast.IMPROVEMENT_SOW \
+                and unstaffed_rung != SourceForecast.IMPROVEMENT_SOW
             lines.append("%s: %s" % [HudFloraVocab.FIELD_ROW, DetailFormat.field_label(
                 field_progress, false, sowing,
                 SourceForecast.build_work_done(tile_info, prefix, SourceForecast.IMPROVEMENT_SOW),
@@ -605,7 +628,11 @@ func _render_occupant_drawer(from_selection: bool = false) -> void:
         # drawer used to be handed the `maintain` crews summed across the player's bands; maintenance
         # left the tile, so the herd's own published upkeep — its share of the band's husbandry pool —
         # is the whole of what the keeping rows read, and the producer resolves it from the herd dict.
-        lines = DetailFormat.herd_summary_lines(_selection.herd(), _band_labor.world_herds())
+        # **THE ONE LABOR FACT THE PURE PRODUCER CANNOT SEE IS THREADED IN**: a rung this faction has
+        # declared on the herd and put nobody on, which is what makes the Husbandry / Corral row
+        # render at a meter of zero instead of vanishing (`DetailFormat.BUILD_UNSTARTED_VALUE`).
+        lines = DetailFormat.herd_summary_lines(_selection.herd(), _band_labor.world_herds(),
+            _band_labor.unstaffed_build_hunt(String(_selection.herd().get("id", ""))))
     _occupant_detail.text = DetailFormat.detail_bbcode(lines, ctx)
     if is_expedition:
         _build_expedition_panel(_selection.unit())

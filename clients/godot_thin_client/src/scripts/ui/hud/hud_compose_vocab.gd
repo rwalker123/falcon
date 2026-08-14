@@ -493,6 +493,26 @@ const IMPROVEMENT_DONE_UPKEEP_FORMAT := "%s %s · %s fodder/turn upkeep"
 # this, there is no flow here", used by the band ledger's rows and by this note alike.)
 const IMPROVEMENT_DEAL_DEPLETED_NOTE := "⚠ Too depleted to pen — it would eat feed and pay nothing until the herd rebuilds."
 
+# **A RUNG WITH NOBODY ON IT SAYS SO, IN THE SAME NOTE SLOT AND THE SAME AMBER**, keyed by
+# `SourceForecast.unstaffed_build_state`'s two answers. Declaring a build and staffing nobody is a
+# LEGAL, meaningful order — it commits the crop, and the player may staff it next turn — so this
+# never blocks the commit; what it fixes is that the order was invisible. The sheet quoted
+# `Cultivating 0 / 50 work (0%)` and nothing else, because a crew of nobody has no turn estimate to
+# print, and an honest absence of information read as *fine*.
+#
+# **THE TWO ANSWERS NEED DIFFERENT WORDS, which is the whole reason they are two.** Nothing has been
+# built yet — so nothing is being lost, and the remedy is simply hands — versus a meter that already
+# holds work and is bleeding it back, where the same hands are also stopping a loss. A single line
+# covering both would understate one and overstate the other. Neither is the `∞ turns` state one rung
+# over, which is a crew that EXISTS and is too small (`DetailFormat.build_turns_never`).
+#
+# They are two flat consts rather than a state-keyed table because a table would put a live
+# `SourceForecast.*` reference in a `const` initializer here, and a vocabulary module is kept a
+# cycle-free LEAF; the two-branch pick lives at the one call site that already holds both states.
+const BUILD_UNSTARTED_NOTE := "⚠ Not started — no builders assigned. Set the builders below to begin."
+
+const BUILD_SLIDING_NOTE := "⚠ No builders — this rung is sliding back. Set the builders below to hold it."
+
 # How a forecast dict SPELLS its field keys — a key spelling, nothing more.
 #
 # Two dict shapes carry them BARE and so share one prefix: a herd dict, and the RAW wire

@@ -951,6 +951,11 @@ const MAX_USEFUL_CAPPED_TOOLTIP := "Fully staffed — this source can use at mos
 # not usefulness. Named in the "N of M" spirit (N = the labor cap you're at, M = the useful ceiling),
 # so a capped `+` reads as "fixable by reassigning labor" rather than as a silent bug.
 const LABOR_BOUND_NOTE_FORMAT := "%d of %d useful — free up idle workers to send more"
+# **THE SAME CAP WHEN THE HANDS ARE ON THIS SHEET'S OWN BUILD**, which the pool clamp made reachable:
+# the take stepper is bound by labor, and some of that labor is standing on the BUILDERS stepper two
+# rows down. Sending the player off to "free up idle workers" would point past the lever they are
+# looking at, so the nearer remedy leads and the farther one still closes the line.
+const BUILD_BOUND_NOTE_FORMAT := "%d of %d useful — take hands off the build, or free up idle workers"
 
 # **THE RAID'S ROW IS THE ONE ANSWER THE SIM STILL COMPUTES FOR US, and for the opposite reason to the
 # retired ceiling lists.** A resident band's ceiling has a closed form the client can evaluate at any
@@ -3187,6 +3192,63 @@ static func build_verb(src: Dictionary, prefix: String, kind: String,
             # The meter is at zero, which is the one state the player's declaration answers for.
             return rung
     return IMPROVEMENT_NONE
+
+## **IS THIS RUNG PROMISED AND UNMANNED — AND WHICH OF THE TWO WAYS?** `BUILD_STAFFED` when somebody
+## is on it (or nothing is declared at all), else one of the two unstaffed states.
+##
+## **THE SILENCE THIS EXISTS TO BREAK.** The sim publishes `buildTurnsRemaining = -1` for an unstaffed
+## source and that is CORRECT — nobody has promised anything there, so there is genuinely no estimate
+## — and every meter surface renders `-1` as no line at all. So a declared build with no builders read
+## as *fine*: a sheet quoting `Cultivating 0 / 50 work (0%)`, a `0%` rung badge on the map, and not one
+## word anywhere saying nothing was happening. A declared-but-unstaffed build is an **actionable
+## standing fact**, not an absence of information, exactly as the `∞` one state over is
+## (`BUILD_TURNS_NEVER`, `DetailFormat.build_turns_never`), and the client DERIVES it rather than
+## asking for a wire field because the declaration, the crew and the meter are all already published.
+##
+## **THE THREE UNSTAFFED-LOOKING STATES ARE DIFFERENT NEWS AND ARE KEPT APART HERE, once**:
+##
+## | crew | meter | state | what it means |
+## |---|---|---|---|
+## | 0 | 0 | `BUILD_UNSTAFFED_UNSTARTED` | not started — nobody assigned |
+## | >0, under the rate | any | (not this function's) `BUILD_TURNS_NEVER` → `∞` | never finishes at this crew |
+## | 0 | >0 | `BUILD_UNSTAFFED_SLIDING` | the meter is bleeding back |
+##
+## The middle row is a STAFFED build and answers `BUILD_STAFFED` here, so the `∞` face and this
+## warning can never both fire on one rung — which is the whole reason the fork lives in one function
+## rather than at each of the four surfaces that render it.
+##
+## `declared` is the assignment's own `improvement`, which `build_verb` honours only where the meter it
+## names is at zero; everything else the meters answer for themselves, so a rung that eroded back with
+## nothing declared is picked up as `SLIDING` and a rung the player has just ticked as `UNSTARTED`.
+## `kind` is a SOURCE kind, like `build_verb`'s.
+static func unstaffed_build_state(src: Dictionary, prefix: String, kind: String,
+        declared: String, build_workers: int) -> String:
+    var verb := build_verb(src, prefix, kind, declared)
+    if verb == IMPROVEMENT_NONE:
+        return BUILD_STAFFED
+    return unstaffed_build_of(improvement_progress(src, prefix, verb), build_workers)
+
+## **THE SAME FORK ASKED OF AN ALREADY-RESOLVED RUNG** — the caller holds the verb's meter and knows
+## a build is in flight, so there is nothing left to derive. It exists so the MAP's badge, which has
+## just resolved both through `RungGates.rung_in_progress`, can ask without resolving the verb a
+## second time and without a renderer reaching for a HUD vocabulary module to spell the key prefix.
+## `unstaffed_build_state` is written in terms of it, so there is one fork and not two.
+static func unstaffed_build_of(progress: float, build_workers: int) -> String:
+    if build_workers > BUILD_CREW_NONE:
+        return BUILD_STAFFED
+    return BUILD_UNSTAFFED_SLIDING if progress > BUILD_METER_UNSTARTED else BUILD_UNSTAFFED_UNSTARTED
+
+## Nothing to warn about: the rung has builders on it, or there is no rung in flight at all.
+const BUILD_STAFFED := ""
+## Declared, nobody on it, and the meter has never moved — *not started*.
+const BUILD_UNSTAFFED_UNSTARTED := "unstarted"
+## Nobody on it and the meter carries work — it is going back the way it came.
+const BUILD_UNSTAFFED_SLIDING := "sliding"
+
+## Is this state one of the two the surfaces warn on? One test, so a caller cannot accidentally read
+## `BUILD_STAFFED`'s emptiness as the wrong answer.
+static func build_is_unstaffed(state: String) -> bool:
+    return state == BUILD_UNSTAFFED_UNSTARTED or state == BUILD_UNSTAFFED_SLIDING
 
 ## Is a build in flight on this source at all? The bare question three warnings and the keeping row
 ## ask, named so none of them spells the `!= IMPROVEMENT_NONE` for itself.

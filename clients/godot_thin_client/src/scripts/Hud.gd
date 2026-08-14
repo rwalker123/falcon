@@ -786,7 +786,7 @@ func _on_zoom_fit_pressed() -> void:
 ##
 ## **It is re-resolved LIVE by entity rather than returned as stored, and the stored dict is never
 ## returned at all.** `set_panel_band` keeps a deep copy taken at render time, and this answer feeds
-## `assignable_hunt_workers` / `assignable_forage_workers` — the very idle counts the steppers cap
+## `source_crew_pool_hunt` / `source_crew_pool_forage` — the very idle counts the steppers cap
 ## against — so handing that copy back would put a stale-by-one-turn crew under the same steppers this
 ## exists to fix. And an entity the roster no longer lists is not merely stale, it is a band that is
 ## GONE: the panel band is only ever set from `player_bands()` and re-resolved by `refresh_snapshot`,

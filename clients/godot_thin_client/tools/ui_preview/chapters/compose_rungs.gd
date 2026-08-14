@@ -1312,6 +1312,14 @@ const OVER_GEARED_KEEPERS := 6
 
 const OVER_GEARED_ARMS_CREW := OVER_GEARED_KEEPERS
 
+## The band this state stands up has to field `OVER_GEARED_KEEPERS` on BOTH of the sheet's crews at
+## once — the take and the build — since they draw on one pool.
+const OVER_GEARED_CREWS := 2
+
+## Hands the fixture keeps OUT of the idle pool, so `working_age > idle_workers` the way a real
+## cohort's does and nothing here reads as a band with every soul standing free.
+const OVER_GEARED_SPARE_NON_IDLE := 4
+
 ## The OFFERED face's price CLAUSE alone — `50 work, ≈17 turns` — composed through the shipped
 ## formats, so the assertion pins the count this chapter derived and not the wording.
 func _kit_swap_price_clause(turns: int) -> String:
@@ -1398,6 +1406,15 @@ func _kit_swap_turn_estimate_states() -> void:
 	# hands and watch it drop* — the estimate fell 25 → 13 → 4 → 2 → nothing — while the tile card beside
 	# it, reading the sim's own answer, said `≈1 turn at this crew`.
 	var stocked := _pen_axis_band(BandFx.hunt_preview_local_band(), false, OVER_GEARED_ARMS_CREW)
+	# **AND HANDS FOR BOTH CREWS, because the sheet's two steppers share ONE pool** — the take is
+	# capped at `pool − builders` and the build at `pool − take`
+	# (`HudBandLaborState.source_crew_pool_hunt`). The shared fixture's ten idle workers cannot field
+	# six hunters AND six keepers, so the take stepper clamped to four and the state below stopped
+	# being about an over-geared BUILD at all. Staged rather than worked around: this frame's claim is
+	# that six armed keepers pay a 50-unit Tame off outright, and a band that cannot field six of them
+	# beside its hunters is not the band that claim is about.
+	stocked["idle_workers"] = OVER_GEARED_KEEPERS * OVER_GEARED_CREWS
+	stocked["working_age"] = int(stocked["idle_workers"]) + OVER_GEARED_SPARE_NON_IDLE
 	h._hud._band_labor._player_band = stocked
 	h._hud._band_labor._player_bands = [stocked]
 	h._hud._compose.reset_hunt_source()

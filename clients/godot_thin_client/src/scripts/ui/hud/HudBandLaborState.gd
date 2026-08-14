@@ -876,26 +876,66 @@ func build_workers_for_hunt(band: Dictionary, herd_id: String) -> int:
 func species_for_forage(band: Dictionary, x: int, y: int) -> String:
 	return String(forage_assignment_of(band, x, y).get("species", "")).strip_edges()
 
-## Max workers a band can commit to ONE source: its idle workers plus any it already has on that
-## source (the assign REPLACES that count, so re-editing an existing assignment isn't capped below its
-## current staffing). Reduces to `idle_workers` for a fresh source.
-func assignable_hunt_workers(band: Dictionary, herd_id: String) -> int:
-	return int(band.get("idle_workers", 0)) + workers_for_hunt(band, herd_id)
-
-func assignable_forage_workers(band: Dictionary, x: int, y: int) -> int:
-	return int(band.get("idle_workers", 0)) + workers_for_forage(band, x, y)
-
-## **THE SAME CEILING FOR THE BUILD ACTIVITY**, and the reason it exists beside the take's rather than
-## being folded into it: the sim gives back only the crew on the SOURCE for the ACTIVITY being
-## restated (`LaborAllocation::idle_for`), so a build's ceiling is `idle + this source's builders`.
-## Crossing the two would offer a crew the sim refuses.
+## **THE HANDS ONE COMPOSE SHEET MAY SPEND — idle, plus EVERY crew this band has committed on THIS
+## source.** The sheet edits a source's take and its build together and commits them as one
+## transaction, so it is clamped as one: each stepper's ceiling is this pool minus what the OTHER
+## stepper currently proposes (`DrawerComposeController`), which is what makes two hands dropped off
+## the take available to the builders in the same gesture rather than a commit-and-reopen later.
 ##
-## **THIS IS WHAT MAKES A FULLY-ALLOCATED BAND EDITABLE AT ALL.** With the wire silent on the build
-## crew the client could only clamp at `idle`, so a band with every hand committed capped the stepper
-## at `0`: the player could take a build crew to nothing and could never put it back, on the one
-## source where the decision matters most.
-func assignable_build_workers_forage(band: Dictionary, x: int, y: int) -> int:
-	return int(band.get("idle_workers", 0)) + build_workers_for_forage(band, x, y)
+## **IT REPLACED A PAIR OF PER-ACTIVITY CEILINGS, and the pair is what the bug was.** `idle + this
+## source's take` and `idle + this source's builders` are each the ceiling the sim judges ONE command
+## against (`LaborAllocation::idle_for` gives back only the activity being restated), and read on
+## their own they are correct; read side by side on a sheet that edits both, they describe a band with
+## more hands than it has in one direction and fewer in the other. A fully-allocated band's BUILDERS
+## stepper sat dead at `0` no matter what the player did to the take beside it.
+##
+## It reads the published `idleWorkers` — `BandWorkforce::idle()`, every committed hand netted out,
+## the bench included — rather than `effective_idle`, which sums the wire's per-assignment `workers`
+## and so counts only the TAKE crews.
+func source_crew_pool_hunt(band: Dictionary, herd_id: String) -> int:
+	return maxi(int(band.get("idle_workers", 0)) + workers_for_hunt(band, herd_id)
+		+ build_workers_for_hunt(band, herd_id), 0)
 
-func assignable_build_workers_hunt(band: Dictionary, herd_id: String) -> int:
-	return int(band.get("idle_workers", 0)) + build_workers_for_hunt(band, herd_id)
+func source_crew_pool_forage(band: Dictionary, x: int, y: int) -> int:
+	return maxi(int(band.get("idle_workers", 0)) + workers_for_forage(band, x, y)
+		+ build_workers_for_forage(band, x, y), 0)
+
+## **A RUNG THIS FACTION HAS DECLARED AND PUT NOBODY ON** — the declared verb when every band working
+## the source has zero builders on it, `IMPROVEMENT_NONE` otherwise. The client half of the
+## declared-but-unstaffed readout (`SourceForecast.unstaffed_build_state` decides which of the two
+## unstaffed states it is; this only answers *is anybody building it*).
+##
+## **IT IS READ OFF THE CONFIRMED WIRE ROW ALONE, and that is not an oversight.** The declaration and
+## the crew are two fields of ONE `LaborAssignment`, so reading them from one row is the only way the
+## pair can describe one moment. The optimistic overlay carries a declaration but no build crew
+## (`assign_labor` never states one), so a pending-aware read would report *declared, nobody on it* for
+## the turn after a player committed a build WITH builders — a warning fired at exactly the person who
+## did the right thing. Silence for one snapshot is the honest degrade: this is a standing fact, and it
+## renders from the frame the sim confirms it.
+##
+## **FOLDED ACROSS EVERY BAND, because a source several bands can reach may be built by any of them.**
+## The verb is the first non-empty declaration (at most one rung is ever in flight on one source); the
+## crew is the SUM, so one band's builders cover another band's bare declaration.
+func unstaffed_build_forage(x: int, y: int, bands: Array = []) -> String:
+	return _unstaffed_build(bands,
+		func(band: Dictionary) -> String: return improvement_for_forage(band, x, y),
+		func(band: Dictionary) -> int: return build_workers_for_forage(band, x, y))
+
+func unstaffed_build_hunt(herd_id: String, bands: Array = []) -> String:
+	return _unstaffed_build(bands,
+		func(band: Dictionary) -> String: return improvement_for_hunt(band, herd_id),
+		func(band: Dictionary) -> int: return build_workers_for_hunt(band, herd_id))
+
+func _unstaffed_build(bands: Array, declared_of: Callable, builders_of: Callable) -> String:
+	var declared := SourceForecast.IMPROVEMENT_NONE
+	var builders := 0
+	for band_variant in (bands if not bands.is_empty() else current_player_bands()):
+		if not (band_variant is Dictionary):
+			continue
+		var band: Dictionary = band_variant
+		if declared == SourceForecast.IMPROVEMENT_NONE:
+			declared = String(declared_of.call(band))
+		builders += int(builders_of.call(band))
+	if builders > SourceForecast.BUILD_CREW_NONE:
+		return SourceForecast.IMPROVEMENT_NONE
+	return declared

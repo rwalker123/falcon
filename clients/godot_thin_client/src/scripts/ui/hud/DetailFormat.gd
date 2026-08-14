@@ -1185,6 +1185,29 @@ const BUILD_TURNS_SINGULAR := 1
 ## helps), and the gear row is not rendered at all.
 const BUILD_GEAR_WORK_NONE := 0.0
 
+## **A RUNG DECLARED WITH NOBODY ON IT AND NOTHING BUILT YET, AS A ROW VALUE** —
+## `SourceForecast.BUILD_UNSTAFFED_UNSTARTED` on whichever rung row would otherwise say nothing at
+## all. It is a SENTENCE rather than a meter because there is no meter to state: the job has not
+## moved, so `0 / 50 work (0%)` would be three ways of writing the same zero, and that zero beside a
+## verb is exactly the *"it looks like it is working"* reading this row exists to remove.
+##
+## **THE ROW APPEARS AT A METER OF ZERO, which is the whole point.** Every rung row is gated on
+## `progress > 0`, so a declared build nobody has staffed printed nothing on the tile card and nothing
+## in the herd drawer, while the map drew a `0%` badge over it — a standing commitment that said
+## *fine* on all three surfaces. The sim is not withholding anything here: it publishes the
+## declaration and the crew, and the absence of a `buildTurnsRemaining` for an unstaffed source is
+## correct (`SourceForecast.unstaffed_build_state` carries the full autopsy).
+##
+## **The OTHER unstaffed state keeps the words it already had.** A meter above zero with nobody on it
+## is `RUNG_REVERTING_LABEL` in the same WARN ink, because a rung sliding back is losing work off the
+## same job and the existing three-state rows already say so.
+## The needle every rung row's tint registry matches this value on, so the amber is decided once for
+## four rows rather than by four independent substring guesses. The value is BUILT FROM it
+## (`RECOVERY_GUIDANCE_TEXT`'s idiom) so the words and the test cannot drift apart.
+const BUILD_UNSTAFFED_NEEDLE := "no builders"
+
+const BUILD_UNSTARTED_VALUE := "⚠ Not started — %s assigned" % BUILD_UNSTAFFED_NEEDLE
+
 ## Player-facing husbandry label from domestication progress (0.0–1.0). Fully tamed shows a livestock
 ## glyph; in-progress shows the verb, the work the Tame has absorbed and what it costs on THIS herd
 ## (a Steppe Runner is several times a rabbit's job). `detail_bbcode` tints a Domesticated value via
@@ -1199,7 +1222,10 @@ static func husbandry_label(progress: float,
 ## BBCode hex for a "Husbandry" value: signal (positive) for a domesticated herd, normal ink while
 ## it's still being tamed. Matched on the label produced by `husbandry_label`.
 static func husbandry_value_hex(value: String) -> String:
-    if value.to_lower().contains("domesticated"):
+    var normalized := value.to_lower()
+    if normalized.contains(BUILD_UNSTAFFED_NEEDLE):
+        return HudStyle.WARN_HEX
+    if normalized.contains("domesticated"):
         return HudStyle.SIGNAL_HEX
     return HudStyle.INK_HEX
 
@@ -1263,6 +1289,8 @@ static func cultivation_label(progress: float, cultivated: bool, building: bool 
 ## Matched on the label from `cultivation_label`.
 static func cultivation_value_hex(value: String) -> String:
     var normalized := value.to_lower()
+    if normalized.contains(BUILD_UNSTAFFED_NEEDLE):
+        return HudStyle.WARN_HEX
     if normalized.contains("tended"):
         return HudStyle.SIGNAL_HEX
     if normalized.contains(HudFloraVocab.RUNG_REVERTING_LABEL.to_lower()):
@@ -1291,6 +1319,8 @@ static func field_label(progress: float, is_field: bool, building: bool = false,
 ## `cultivation_value_hex`.
 static func field_value_hex(value: String) -> String:
     var normalized := value.to_lower()
+    if normalized.contains(BUILD_UNSTAFFED_NEEDLE):
+        return HudStyle.WARN_HEX
     if normalized.contains(FIELD_BADGE_LABEL.to_lower()):
         return HudStyle.SIGNAL_HEX
     if normalized.contains(HudFloraVocab.RUNG_REVERTING_LABEL.to_lower()):
@@ -1446,6 +1476,8 @@ static func pen_feed_label(upkeep: float, fed_fraction: float) -> String:
 ## `corral_label`, mirroring `cultivation_value_hex`.
 static func corral_value_hex(value: String) -> String:
     var normalized := value.to_lower()
+    if normalized.contains(BUILD_UNSTAFFED_NEEDLE):
+        return HudStyle.WARN_HEX
     if normalized.contains("starving"):
         return HudStyle.DANGER_HEX
     if normalized.contains("corralled"):
@@ -1930,7 +1962,13 @@ static func food_breakdown_row(value: float, label: String) -> String:
 ## is held out of its band's `husbandry` pool, so the drawer's own `Keeping:` row states this herd's
 ## share of it and the `Keepers:` row states the demand alone. Nothing in this producer needs a
 ## caller-supplied head count any more.
-static func herd_summary_lines(herd_data: Dictionary, world_herds: Array) -> Array[String]:
+## **`unstaffed_build` IS THREADED IN FOR THE SAME REASON `world_herds` IS** — it is a fact about the
+## player's LABOR ROW, which a pure producer over one herd dict cannot see, and it is the herd drawer's
+## half of the declared-but-unstaffed readout: the rung a band has promised here and put nobody on
+## (`HudBandLaborState.unstaffed_build_hunt`, `IMPROVEMENT_NONE` for none). It renders the Husbandry or
+## Corral row that a meter of zero would otherwise suppress entirely; see `BUILD_UNSTARTED_VALUE`.
+static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
+        unstaffed_build: String = SourceForecast.IMPROVEMENT_NONE) -> Array[String]:
     var lines: Array[String] = []
     # A predator is a hunter, not quarry — the SAME `prey_sense_radius > 0` signal the map's prey-sense
     # ring keys on (carnivore == 4, herbivore == 0). A herbivore's drawer is byte-for-byte unchanged.
@@ -2016,6 +2054,11 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array) -> Arr
             # once taming is done. A herd nobody works reports no estimate and renders no line.
             if domestication < HUSBANDRY_PROGRESS_COMPLETE:
                 lines.append_array(build_estimate_lines(herd_data, herd_prefix))
+        elif unstaffed_build == SourceForecast.IMPROVEMENT_TAME:
+            # **A TAME PROMISED AND UNMANNED.** The branch above is gated on the meter, so at zero the
+            # herd's own drawer said nothing at all about a rung the player had committed to — the
+            # animal half of the silence `BUILD_UNSTARTED_VALUE` documents.
+            lines.append("Husbandry: %s" % BUILD_UNSTARTED_VALUE)
         # Staffing deficit (fauna neglect-escape arc). A managed herd needs keeping every turn to HOLD
         # its animals — underfunded, it SHEDS whole animals over its labor capacity into a nearby wild
         # herd (they drift off; tameness leaves with them, it is never decayed). The number is the
@@ -2087,6 +2130,10 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array) -> Arr
                 # row above this cost carries no species multiplier, and the estimate beside it moves
                 # only with the keeper crew, their floor and their kit.
                 lines.append_array(build_estimate_lines(herd_data, herd_prefix))
+            elif unstaffed_build == SourceForecast.IMPROVEMENT_CORRAL:
+                # The pen twin of the Husbandry branch above: a Corral promised with no keepers on it
+                # has no fence going up and, at a meter of zero, had no row to say so.
+                lines.append("Corral: %s" % BUILD_UNSTARTED_VALUE)
         elif ceiling == SourceForecast.HUSBANDRY_CEILING_PASTORAL:
             lines.append(HUSBANDRY_PASTORAL_HINT)
     # **NO `Position` ROW.** These lines render in ONE place — the tile card's subject drawer — and

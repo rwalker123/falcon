@@ -565,7 +565,44 @@ built from the code under test can only agree with itself. **They are the SIM's 
 from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
 payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-**A clean run is 322 frames / 996 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
+### The compose sheet's SHARED POOL, its reset on close, and the unstaffed build
+
+Four frames and twenty `PASS` in `chapters/improvements.gd`, appended last — the two playtest bugs
+and their readouts. The behaviour is `labor-ui.md`'s and `selection-card.md`'s; what belongs here is
+the shape of the drive.
+
+- **`compose_pool_take_full` / `compose_pool_take_freed` are an A/B on ONE band, and the PRECONDITION
+  is `idle_workers == 0`.** With spare hands both steppers are live for reasons that have nothing to
+  do with each other, so the state would pass against the per-activity ceilings it exists to replace.
+  The take crew is `ForageFx.CULTIVATE_SIM_WORKERS_NEEDED` — the patch's OWN max-useful, read off the
+  sim's published count rather than picked — because a crew above it is clamped away by the
+  usefulness ceiling and the state stops being about the pool at all.
+- **The ceiling is finished by PRESSING the builders `+`**, so the clamp in the sheet's own handler is
+  what answers rather than a model write. **Each press rebuilds the controls and `queue_free`s the old
+  row, which stays in the tree until the frame ends** — so the settle between presses is load-bearing:
+  without it the second press lands on the freed row and the count never moves.
+  `Readout.build_crew_value` / `build_crew_can_add` / `build_crew_plus` are the readers that reach it
+  (`Readout.stepper_value` takes the FIRST `−` on the sheet, which is the take crew's).
+- **`compose_reopen_reseeds` drives the close through the real path** (`close_compose_sheet` → the
+  sheet's `closed` → `_on_compose_sheet_closed`), because the reset rides that signal; poking
+  `ComposeState` would assert the harness's own write. The PAIR is the claim — the edit must be
+  visible while the sheet is open, or "it shows the live crew on reopen" passes on a sheet that never
+  took the edit.
+- **`tile_build_unstaffed`'s map and herd claims are DRIVEN** — a badge is drawn to a canvas and no
+  assertion reads a glyph back off one, and `herd_summary_lines` is pure. Each group is a pair or a
+  triple, "always warn" passing any lone positive.
+
+**One existing state was re-pointed**: `forage_crop_picker_sow` dialled its rung before the first
+open, which `_show_tile`'s close now re-seeds away — the plant twin of the trap `_compose_herd`'s
+docstring records. Open, dial, re-open.
+
+**And ONE fixture had to grow hands**: `herd_kit_swap_over_geared` staged six hunters AND six keepers
+on a band of ten idle, which the shared pool correctly refuses (the take clamped to four and the state
+stopped being about an over-geared BUILD). Staged rather than worked around — that frame's claim is
+about six armed keepers, and a band that cannot field six beside its hunters is not the band the claim
+is about.
+
+**A clean run is 328 frames / 1033 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
 three times in one arc and once across a merge, and a running total kept by addition would be wrong
 by now. (The measurement above came back FIVE higher than the 895 recorded before it while the arc
 #527 review added exactly ONE claim — the `Carrying:` mass one. Four `PASS`es had accumulated

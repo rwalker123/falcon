@@ -841,7 +841,12 @@ func run(harness) -> void:
 	# that will take seed. `can_sow` is a DIFFERENT flag from `can_cultivate`, so only Wild Emmer stays
 	# legal here and Hazel/Ground Nut join the greyed rows: the two frames side by side are what prove
 	# the gate reads the composed rung's own flag rather than one "can be farmed" bit.
+	# **DIALLED AFTER THE FIRST OPEN, THEN RE-OPENED — the plant twin of `_compose_herd`'s contract.**
+	# `_show_tile` closes any open sheet, and a close now ENDS the composition
+	# (`DrawerComposeController._on_compose_sheet_closed`), so a rung dialled before the first open is
+	# re-seeded away by the source-changed branch exactly as a pre-open `set_hunt_count` always was.
 	h._show_tile(_sowable_long_basket_tile_fixture())
+	h._compose_forage(_sowable_long_basket_tile_fixture())
 	h._hud._compose.set_forage_improvement("sow")
 	h._hud._compose.set_forage_species("")
 	h._compose_forage(_sowable_long_basket_tile_fixture())

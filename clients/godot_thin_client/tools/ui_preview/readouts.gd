@@ -260,6 +260,53 @@ static func stepper_value(root: Node) -> int:
 	var value: Node = siblings[index + 1]
 	return int((value as Label).text) if value is Label else STEPPER_VALUE_ABSENT
 
+## **THE BUILDERS STEPPER — the SECOND one on the sheet, which `stepper_value` above cannot reach.**
+## That reader takes the first `−` it finds, which is the TAKE crew's, so a claim about the build
+## crew's own value or its `+` needs a reader scoped to the BUILD CREW ROW
+## (`HudWidgets.BUILD_CREW_ROW_META`, the row `_mount_build_crew_row` stamps).
+##
+## They exist because the two steppers now share ONE pool
+## (`HudBandLaborState.source_crew_pool_forage` / `_hunt`): "dropping the take crew immediately raises
+## the build's ceiling" is a claim about the OTHER stepper's `+`, and nothing here could see it.
+const BUILD_CREW_VALUE_ABSENT := -1
+
+static func build_crew_value(root: Node) -> int:
+	var minus := _build_crew_minus(root)
+	if minus == null:
+		return BUILD_CREW_VALUE_ABSENT
+	var siblings := minus.get_parent().get_children()
+	var value: Node = siblings[siblings.find(minus) + 1]
+	return int((value as Label).text) if value is Label else BUILD_CREW_VALUE_ABSENT
+
+## Can the BUILDERS stepper still take a hand? `false` where the row is not rendered at all, which is
+## the honest answer for a control offering no build to staff.
+static func build_crew_can_add(root: Node) -> bool:
+	var plus := build_crew_plus(root)
+	return plus != null and not plus.disabled
+
+## The BUILDERS stepper's `+` itself, so a state can PRESS it rather than write the model behind it —
+## the press is what runs the ceiling clamp in the sheet's own handler.
+static func build_crew_plus(root: Node) -> Button:
+	var minus := _build_crew_minus(root)
+	if minus == null:
+		return null
+	var siblings := minus.get_parent().get_children()
+	var index := siblings.find(minus) + STEPPER_MINUS_TO_PLUS
+	if index >= siblings.size():
+		return null
+	var plus: Node = siblings[index]
+	return plus as Button if plus is Button else null
+
+## The `−` and the `+` sit either side of the value Label (`HudWidgets.add_stepper_controls`).
+const STEPPER_MINUS_TO_PLUS := 2
+
+static func _build_crew_minus(root: Node) -> Button:
+	var row := Q.find_meta_node(root, HudWidgets.BUILD_CREW_ROW_META)
+	if row == null:
+		return null
+	var minus := Q.find_button_by_text(row, Spine.COMPOSE_STEPPER_MINUS_FACE)
+	return minus if minus != null and minus.get_parent() != null else null
+
 ## How many characters of a detail card's BBCode `detail_excerpt` returns around the key it found —
 ## enough to carry the row's whole value cell into the run log, short enough not to swallow the rows
 ## either side of it (which is what would let an assertion match a neighbour's number).
