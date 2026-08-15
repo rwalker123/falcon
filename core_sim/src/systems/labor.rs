@@ -186,6 +186,95 @@ pub struct LaborConfigs<'w> {
 /// per-source key (a tile's coordinates, a herd's id). Two sources of equal investment therefore
 /// fund in the same order on a restored world as on the original, which is the whole reason the
 /// tie-break exists.
+/// **WHAT THE BAND'S BUILDERS TOOK OFF A JOB, RESOLVED PER FOOD WEB.**
+///
+/// One pool, one queue — but **two kits**, because a hoe and a set of hurdles are tools for
+/// different work and `EquipmentStat::BuildWork` is a per-worker *sum*. Without the split a bundle
+/// carrying both would take `8.5 + 8.5` off a plant build, and a single builders kit would have to
+/// serve every rung on both ladders (which is how the husbandry kit came to be offered for a
+/// Cultivate).
+///
+/// # The kit is DERIVED PER ENTRY, and the row's own choice OVERRIDES it
+///
+/// 1. **A kit named on the `builders` row wins**, `none` included — that is how a player sends the
+///    pool out bare-handed to conserve gear, and it is the same *"an absent `kitId` means the job's
+///    default"* rule every other row follows.
+/// 2. **Otherwise the roster answers**, per branch, through
+///    [`EquipmentConfig::build_kit_for_branch`] — the shape `fauna::kit_supplying` already uses for a
+///    penned herd's default kit. ⛔ **No `BuildJob → kit id` match exists in Rust**, so a third build
+///    tool is a roster edit.
+/// 3. **`default_kits.builders` is the fall-back**, not the answer: a roster with no kit serving a
+///    web leaves that web's builds on whatever the job's default is (`none` today).
+///
+/// A source's own branch decides which reading it gets — a patch is plant, a herd is animal — so the
+/// **head** entry is the one whose branch is actually funded, and everything below it is *dated* at
+/// the gear it would be raised with when its turn comes.
+struct BuildersGear {
+    plant: BuildersBranchGear,
+    animal: BuildersBranchGear,
+}
+
+/// One web's answer: the kit the pool works it with, and what that kit is worth over the pool.
+struct BuildersBranchGear {
+    /// **The kit resolved for this web, narrowed to the tools that actually served it** — which is
+    /// what the wear
+    /// is charged against ([`crate::equipment_config::EquipmentConfig::build_gear_kit`]).
+    ///
+    /// **Wear follows the work actually done.** A player who names `hurdling` on the builders row and
+    /// then raises a Cultivate takes *nothing* off that job — the branch filter zeroes the hurdles'
+    /// contribution — so charging them would run a tool down for work it did not do. The full kit is
+    /// not kept here because nothing downstream may price a build from it: the wire's own copy is
+    /// resolved once, at capture, through [`LaborAllocation::builders_kit`].
+    wear_kit: crate::equipment_config::KitChoice,
+    /// The coverage-weighted per-worker contribution, for the projections' closed form.
+    work_per_worker: f32,
+    /// That contribution summed over the whole pool — the work units off **any** job on this web.
+    pool_gear: f32,
+}
+
+impl BuildersGear {
+    fn resolve(
+        equipment: &crate::equipment_config::EquipmentConfig,
+        row_kit: Option<crate::equipment_config::KitChoice>,
+        builders: u32,
+        band_kit: &BandEquipment,
+    ) -> Self {
+        let on = |branch: crate::intensification::RungBranch| {
+            let kit = equipment.builders_kit_for(row_kit.as_ref(), Some(branch));
+            // **The coverage is over the POOL**, so the offset the wire publishes and the offset the
+            // bar is struck with are one number for the whole band.
+            let coverage = equipment.coverage(&kit, builders as f32, band_kit);
+            let work_per_worker = coverage
+                .weighted_rate(|crew| equipment.build_work_per_worker(crew, band_kit, branch));
+            BuildersBranchGear {
+                wear_kit: equipment.build_gear_kit(&kit, band_kit, branch),
+                work_per_worker,
+                pool_gear: build_work_from_gear(work_per_worker, builders),
+            }
+        };
+        Self {
+            plant: on(crate::intensification::RungBranch::Plant),
+            animal: on(crate::intensification::RungBranch::Animal),
+        }
+    }
+
+    fn on(&self, branch: crate::intensification::RungBranch) -> &BuildersBranchGear {
+        match branch {
+            crate::intensification::RungBranch::Plant => &self.plant,
+            crate::intensification::RungBranch::Animal => &self.animal,
+        }
+    }
+
+    /// **The web a source belongs to is a fact about the source**, so the chain pass needs no second
+    /// authority to decide which reading a queued entry is stamped with.
+    fn for_source(&self, source: &BuildSource) -> &BuildersBranchGear {
+        self.on(match source {
+            BuildSource::Patch(_) => crate::intensification::RungBranch::Plant,
+            BuildSource::Herd(_) => crate::intensification::RungBranch::Animal,
+        })
+    }
+}
+
 fn maintenance_shares(
     allocation: &LaborAllocation,
     forage_registry: &ForageRegistry,
@@ -477,18 +566,16 @@ pub fn advance_labor_allocation(
         // The queue as it stands for this turn, read inside the assignment loop (which borrows the
         // allocation's assignments) and walked again by the chain pass after it.
         let build_queue = allocation.build_queue.clone();
-        // **THE BUILDERS' OWN KIT**, resolved off their own row like every other role's (§2.2 of the
-        // slice brief). It used to ride the *source* row's kit, because the builders stood on the
-        // tile — so a `Corral` was priced off the hunt row's husbandry gear. One coverage, over the
-        // pool, so the offset the wire publishes and the offset the bar is struck with are one
-        // number for the whole band.
-        let builders_kit = allocation.kit_on(&LaborTarget::Builders, &equipment_cfg);
-        let builders_coverage = equipment_cfg.coverage(&builders_kit, builders as f32, &band_kit);
-        let builders_work_per_worker = builders_coverage
-            .weighted_rate(|kit| equipment_cfg.build_work_per_worker(kit, &band_kit));
-        // What the pool's tools take off **any** job this band is raising, in work units. One value
-        // per band per turn: every entry is quoted at the full pool, so they all carry it.
-        let pool_gear = build_work_from_gear(builders_work_per_worker, builders);
+        // **THE BUILDERS' OWN GEAR, ONE READING PER FOOD WEB.** It is read off their own row like
+        // every other role's (§2.2 of the slice brief) — it used to ride the *source* row's kit,
+        // because the builders stood on the tile — but *which* kit is a question the row can decline
+        // to answer, and then the entry being worked answers it. See [`BuildersGear`].
+        let builders_gear = BuildersGear::resolve(
+            &equipment_cfg,
+            allocation.named_kit_on(&LaborTarget::Builders),
+            builders,
+            &band_kit,
+        );
         // **WHAT EACH SOURCE CONTRIBUTED TO THE CHAIN**, recorded as the loop goes and evaluated in
         // **queue order** afterwards — the loop visits assignments, and the queue's order is the
         // player's.
@@ -1307,7 +1394,8 @@ pub fn advance_labor_allocation(
                         // saving is a share of *this* job's size (`docs/plan_unit_costed_work.md`
                         // §6.1). The stamped cost stays the raw one; only the bar moves.
                         // **The pool's gear, not this row's** — the builders carry their own kit.
-                        let cultivate_bar = ladder.effective_build_cost(cultivate_cost, pool_gear);
+                        let cultivate_bar = ladder
+                            .effective_build_cost(cultivate_cost, builders_gear.plant.pool_gear);
                         // **The feed line rides the TRANSITION, not the state.** `accrue_cultivation`
                         // answers "did this call finish it", so a second band working an
                         // already-tended patch clears its verb (above) without announcing the
@@ -1315,10 +1403,11 @@ pub fn advance_labor_allocation(
                         // **The gear is charged for the progress the METER TOOK, not the progress
                         // the rung offered** — measured as the meter's own delta across the accrual,
                         // so a build the patch refuses (another faction owns it) is structurally
-                        // free rather than free-if-the-caller-remembered. The handling gear's
-                        // `build_progress` quantum; nothing on the forage job declares it yet
-                        // (issue #539), so today this is a no-op on the plant web that will become
-                        // live the day a hoe ships without touching this call site.
+                        // free rather than free-if-the-caller-remembered. Charged on the
+                        // `build_progress` quantum against the **branch-restricted** kit
+                        // (`BuildersBranchGear::wear_kit`), so a pool carrying the animal web's
+                        // hurdles to a Cultivate spends none of them — wear follows the work
+                        // actually done, and the branch filter zeroed their contribution.
                         let progress_before = patch.cultivation_progress;
                         let cultivated = accrual > 0.0
                             && patch.accrue_cultivation(
@@ -1350,7 +1439,7 @@ pub fn advance_labor_allocation(
                         charge_build_wear(
                             band_equipment.as_deref_mut(),
                             &equipment_cfg,
-                            &builders_kit,
+                            &builders_gear.plant.wear_kit,
                             patch.cultivation_progress - progress_before,
                         );
                         if cultivated {
@@ -1393,11 +1482,11 @@ pub fn advance_labor_allocation(
                             *tile,
                             build_workers,
                             builders,
-                            pool_gear,
+                            builders_gear.plant.pool_gear,
                             &ladder,
                             band_equipment.as_deref_mut(),
                             &equipment_cfg,
-                            &builders_kit,
+                            &builders_gear.plant.wear_kit,
                             &mut build_quotes,
                             meter_rot,
                         )
@@ -1467,7 +1556,7 @@ pub fn advance_labor_allocation(
                                 RUNG_COST_UNSCALED,
                                 banked,
                                 builders,
-                                builders_work_per_worker,
+                                builders_gear.plant.work_per_worker,
                                 eligible,
                                 // **The SOURCE's live bleed**, not the quoted rung's rate — a build
                                 // crew supplies nothing toward the rate, so what nets off a quote is
@@ -1965,7 +2054,8 @@ pub fn advance_labor_allocation(
                         let ring_cost = pen_rung
                             .build_cost(RUNG_COST_UNSCALED)
                             .expect("the pen rung has a build meter");
-                        let ring_bar = ladder.effective_build_cost(ring_cost, pool_gear);
+                        let ring_bar =
+                            ladder.effective_build_cost(ring_cost, builders_gear.animal.pool_gear);
                         // Accrue the extension ring **after** the take (mirroring `accrue_corral`), so
                         // this turn pays exactly the dipped yield the forecast promised; the completed
                         // larger footprint's higher K arrives on the next `advance_herds`.
@@ -1983,7 +2073,7 @@ pub fn advance_labor_allocation(
                             charge_build_wear(
                                 band_equipment.as_deref_mut(),
                                 &equipment_cfg,
-                                &builders_kit,
+                                &builders_gear.animal.wear_kit,
                                 pen_extend_accrual,
                             );
                         }
@@ -2224,7 +2314,8 @@ pub fn advance_labor_allocation(
                         // butchering stone are animal-handling tools, and a `Tame` is exactly the
                         // turns a band spends handling animals. Each equipped keeper takes its worth
                         // off the job; a keeper who left it at camp takes nothing off.
-                        let tame_bar = ladder.effective_build_cost(tame_cost, pool_gear);
+                        let tame_bar =
+                            ladder.effective_build_cost(tame_cost, builders_gear.animal.pool_gear);
                         // The TRANSITION, not the state (the Cultivate arm's rule): a second band
                         // taming the same herd clears its verb via the already-built check above
                         // without re-announcing the taming.
@@ -2253,7 +2344,7 @@ pub fn advance_labor_allocation(
                         charge_build_wear(
                             band_equipment.as_deref_mut(),
                             &equipment_cfg,
-                            &builders_kit,
+                            &builders_gear.animal.wear_kit,
                             herd.domestication_progress - progress_before,
                         );
                         if tamed {
@@ -2310,7 +2401,8 @@ pub fn advance_labor_allocation(
                         let pen_cost = pen_rung
                             .build_cost(RUNG_COST_UNSCALED)
                             .expect("a rung a verb builds has a build meter");
-                        let pen_bar = ladder.effective_build_cost(pen_cost, pool_gear);
+                        let pen_bar =
+                            ladder.effective_build_cost(pen_cost, builders_gear.animal.pool_gear);
                         // **Charged off the pen meter's own delta** (the Tame arm's rule): the
                         // owner-lock lives in `accrue_corral`, so a keeper the herd refuses spends
                         // nothing structurally rather than by this site re-checking the gate.
@@ -2330,7 +2422,7 @@ pub fn advance_labor_allocation(
                         charge_build_wear(
                             band_equipment.as_deref_mut(),
                             &equipment_cfg,
-                            &builders_kit,
+                            &builders_gear.animal.wear_kit,
                             herd.corral_progress - progress_before,
                         );
                         if penned {
@@ -2392,7 +2484,7 @@ pub fn advance_labor_allocation(
                                 cost_multiplier,
                                 banked,
                                 builders,
-                                builders_work_per_worker,
+                                builders_gear.animal.work_per_worker,
                                 eligible,
                                 // The source's live bleed — always `0` on the animal web, whose
                                 // rungs declare no `meter_decay`. See the Forage arm.
@@ -2704,7 +2796,7 @@ pub fn advance_labor_allocation(
             &allocation,
             &build_quotes,
             builders,
-            pool_gear,
+            &builders_gear,
             &mut forage_registry,
             &mut registry,
             &mut patch_build_claims,
@@ -2745,7 +2837,7 @@ fn publish_build_chain(
     allocation: &LaborAllocation,
     quotes: &[(BuildSource, BuildQuote)],
     builders: u32,
-    pool_gear: f32,
+    builders_gear: &BuildersGear,
     forage_registry: &mut ForageRegistry,
     herds: &mut HerdRegistry,
     patch_claims: &mut BuildEstimateClaims<UVec2>,
@@ -2799,7 +2891,7 @@ fn publish_build_chain(
             &entry.source,
             position,
             published,
-            pool_gear,
+            builders_gear,
             forage_registry,
             herds,
             patch_claims,
@@ -2848,7 +2940,7 @@ fn publish_entry(
     source: &BuildSource,
     position: usize,
     turns: Option<BuildTurns>,
-    pool_gear: f32,
+    builders_gear: &BuildersGear,
     forage_registry: &mut ForageRegistry,
     herds: &mut HerdRegistry,
     patch_claims: &mut BuildEstimateClaims<UVec2>,
@@ -2856,7 +2948,7 @@ fn publish_entry(
 ) {
     let answer = BuildEstimate {
         turns,
-        gear: pool_gear,
+        gear: builders_gear.for_source(source).pool_gear,
         position: position as i32,
     };
     match source {
@@ -4205,13 +4297,34 @@ mod labor_yield_tests {
             .expect("the fixture band has an allocation");
         allocation.assignments.push(LaborAssignment {
             target: LaborTarget::Builders,
+            // ⛔ **THE HARNESS'S BUILDERS GO OUT BARE, AND THAT IS AN ISOLATION RATHER THAN A
+            // DEFAULT.** An absent kit means *derive per entry*, and the roster's answer — `tillage`
+            // on a plant build, `hurdling` on an animal one — takes `8.5` off the job **per covered
+            // worker**. A start-stocked band holds `ceil(workers × start_stock_fraction)` of each
+            // tool, so at [`WORKERS`] hands the whole pool is armed and `10 × 8.5 = 85` pays off
+            // every shipped rung outright: every pace fixture below would become a one-turn build
+            // and *"completion is a transition"* would have no before.
+            //
+            // Naming `none` holds the gear axis at its identity so these fixtures measure the
+            // *meter*, exactly as `FaunaConfig::without_retreat` holds the retreat at its identity
+            // across the hunt suites. **The geared default has its own tests** —
+            // `the_builders_pool_derives_its_kit_from_the_head_entry`, and
+            // `equipment_config::tests::a_build_tool_serves_its_own_web_and_two_of_them_do_not_compound`.
+            kit: Some(bare_builders()),
             workers: builders,
-            kit: None,
         });
         assert!(
             allocation.enqueue_build(source, declared),
             "fixture: a build is declared on a source the band already works"
         );
+    }
+
+    /// **The roster's empty kit** — every predicate reads false, so a party carrying it runs at the
+    /// unequipped tiers throughout and spends no durability on anything.
+    fn bare_builders() -> crate::equipment_config::KitChoice {
+        crate::equipment_config::EquipmentConfig::builtin()
+            .kit("none")
+            .expect("the shipped roster carries the empty kit")
     }
 
     /// [`declare_build`]'s plant half, by tile.
@@ -6053,7 +6166,7 @@ mod labor_yield_tests {
         // Each item's wear divided by its own per-use rate is the biomass its quantum was charged
         // over — the claim under test, and rate-independent so retuning either item cannot move it.
         //
-        // **It names the quantum**, because `husbandry_gear` wears on two of them (issue #515) and
+        // **It names the quantum**, because `hurdles` wear on two of them (issue #515) and
         // dividing its condition by the `build_progress` rate would answer a number about a build
         // this fixture never runs. Nothing is corralling here, so the whole charge is the
         // butchering one — which is exactly the assumption worth making explicit.
@@ -6067,7 +6180,7 @@ mod labor_yield_tests {
                     .amount
         };
         let butchered = charged_over(
-            "husbandry_gear",
+            HURDLES,
             crate::equipment_config::WearQuantum::BiomassCollected,
         );
         let hauled = charged_over("sled", crate::equipment_config::WearQuantum::BiomassHauled);
@@ -7217,6 +7330,21 @@ mod labor_yield_tests {
     // handling gear. The claim is about the JOB, so it is measured on the job — see part (3) of
     // `the_handling_kit_takes_work_off_the_job_rather_than_speeding_the_crew`.
 
+    /// **The animal web's builders kit** — `hurdles` and nothing else. Named because the fixtures
+    /// below put it on the **builders** row, where a build's gear offset is read from: the
+    /// `husbandry` kit carries the same hurdles for the *hunt* job (a pen's `pen_carry`) and no
+    /// longer builds anything.
+    const HURDLING_KIT: &str = "hurdling";
+
+    /// The item both of those kits carry — what a build's wear is charged against on the animal web.
+    const HURDLES: &str = "hurdles";
+
+    /// **The PLANT web's builders kit and its tool.** Named so an animal-build fixture can assert
+    /// that neither is touched: a hoe brought to a `Tame` takes nothing off the job, so it must be
+    /// charged nothing.
+    const TILLAGE_KIT: &str = "tillage";
+    const HOES: &str = "hoes";
+
     /// What one turn of a `Tame` assignment left behind — the build meter, the gear it spent, and the
     /// two liveness handles that tell a *refused* build apart from a fixture that never ran at all:
     /// `tame_arm_ran` is the herd's `tamed_this_turn`, which the `Tame` arm sets on entry, and
@@ -7229,6 +7357,10 @@ mod labor_yield_tests {
         // crew supplies none of it, so `progress` **is** the crew's output and the two arms are
         // comparable outright.
         gear_wear: f32,
+        /// **The HOES' condition after the turn** — the *other* web's build tool, which an animal
+        /// build must never charge. `wear` is a per-item ledger, so this is a different number from
+        /// [`Self::gear_wear`] and not a re-reading of it.
+        hoe_wear: f32,
         /// **What the crew's tools took off the job this turn** — `Herd::build_work_from_gear`, the
         /// `t` the effective bar subtracts. `0` for a crew carrying nothing that helps.
         gear_work: f32,
@@ -7302,7 +7434,11 @@ mod labor_yield_tests {
         let gear_wear = world
             .get::<crate::components::BandEquipment>(band)
             .expect("the band's ledger survives the turn")
-            .wear_of("husbandry_gear");
+            .wear_of(HURDLES);
+        let hoe_wear = world
+            .get::<crate::components::BandEquipment>(band)
+            .expect("the band's ledger survives the turn")
+            .wear_of(HOES);
         let tame_arm_ran = world
             .resource::<HerdRegistry>()
             .find(HERD_ID)
@@ -7321,6 +7457,7 @@ mod labor_yield_tests {
         TameTurn {
             progress,
             gear_wear,
+            hoe_wear,
             gear_work,
             tame_arm_ran,
             still_queued,
@@ -7346,17 +7483,18 @@ mod labor_yield_tests {
         let equipment = crate::equipment_config::EquipmentConfig::builtin();
         let declared = equipment.build_work_per_worker(
             &equipment
-                .kit("husbandry")
-                .expect("the shipped roster carries the husbandry kit"),
+                .kit(HURDLING_KIT)
+                .expect("the shipped roster carries the hurdling kit"),
             &crate::components::BandEquipment::start_stocked(&equipment),
+            crate::intensification::RungBranch::Animal,
         );
         assert!(
             declared > crate::intensification::NO_BUILD_GEAR,
-            "fixture: the husbandry kit must declare a build contribution above neutral, got \
+            "fixture: the hurdling kit must declare a build contribution above neutral, got \
              {declared}"
         );
 
-        let geared = tame_one_turn_on_herd_owned_by("husbandry", None);
+        let geared = tame_one_turn_on_herd_owned_by(HURDLING_KIT, None);
         let bare = tame_one_turn_on_herd_owned_by("big_game", None);
 
         // (1) The ACCRUAL is untouched — the crew's hands are worth what they are worth.
@@ -7452,14 +7590,14 @@ mod labor_yield_tests {
     /// **no build verb** spends none of it over the same turn.
     #[test]
     fn a_build_wears_the_handling_gear_and_a_turn_without_one_does_not() {
-        let (progress, charged) = tame_one_turn_on("husbandry");
+        let (progress, charged) = tame_one_turn_on(HURDLING_KIT);
         assert!(
             progress > 0.0,
             "fixture: the crew must actually have built something to be charged for"
         );
         let rate = crate::equipment_config::EquipmentConfig::builtin()
-            .item("husbandry_gear")
-            .expect("the shipped roster carries the handling gear")
+            .item(HURDLES)
+            .expect("the shipped roster carries the hurdles")
             .wear_for(crate::equipment_config::WearQuantum::BuildProgress)
             .expect("the handling gear wears on build progress")
             .amount;
@@ -7488,8 +7626,8 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: Some(
                     equipment
-                        .kit("husbandry")
-                        .expect("the shipped roster carries the husbandry kit"),
+                        .kit(HURDLING_KIT)
+                        .expect("the shipped roster carries the hurdling kit"),
                 ),
             }],
         );
@@ -7507,9 +7645,50 @@ mod labor_yield_tests {
         // wild herd, so its sled is being dragged and that is real work. The handling gear is not
         // charged at a wild hunt on any quantum, which is what makes a bare `wear_of` honest here.
         assert_eq!(
-            ledger.wear_of("husbandry_gear"),
+            ledger.wear_of(HURDLES),
             0.0,
             "a crew holding the gear with no build in flight must spend none of it"
+        );
+    }
+
+    /// ⛔ **THE OTHER WEB'S TOOL IS NEITHER CREDITED NOR CHARGED** — `wear` follows the work
+    /// actually done, and a hoe does none of a `Tame`.
+    ///
+    /// The two halves are one rule seen from both ends. `EquipmentEffect::branch` zeroes the hoes'
+    /// contribution to an animal build, so charging them would run a tool down against a job it did
+    /// not move — which is exactly the phantom charge
+    /// [`a_build_the_source_refuses_spends_no_gear`] closes one axis over. The **liveness** arm is
+    /// the hurdling pool beside it: without it, *"the hoes spent nothing"* would also be what a
+    /// fixture that never reached the build seam reported.
+    #[test]
+    fn a_pool_carrying_the_other_webs_tool_neither_speeds_nor_spends_it() {
+        let hoed = tame_one_turn_on_herd_owned_by(TILLAGE_KIT, None);
+        assert!(
+            hoed.progress > 0.0,
+            "fixture: the crew must actually be taming, or both assertions are vacuous"
+        );
+        assert_eq!(
+            hoed.gear_work,
+            crate::intensification::NO_BUILD_GEAR,
+            "a hoe takes nothing off a Tame — the branch qualifier's whole job"
+        );
+        assert_eq!(
+            hoed.hoe_wear, 0.0,
+            "…and so it is charged nothing: wear follows the work actually done"
+        );
+
+        // **Liveness — the animal web's own kit on the same fixture does both.**
+        let hurdled = tame_one_turn_on_herd_owned_by(HURDLING_KIT, None);
+        assert!(
+            hurdled.gear_work > crate::intensification::NO_BUILD_GEAR && hurdled.gear_wear > 0.0,
+            "fixture: hurdles on the same Tame must take work off it AND be spent for it, or the \
+             two zeroes above prove nothing (took {} spent {})",
+            hurdled.gear_work,
+            hurdled.gear_wear
+        );
+        assert_eq!(
+            hurdled.hoe_wear, 0.0,
+            "and the hurdling pool holds no hoes at all, so nothing charges them either"
         );
     }
 
@@ -7534,7 +7713,7 @@ mod labor_yield_tests {
         /// [`BAND_FACTION`], whose claim the arm would honour.
         const RIVAL_FACTION: FactionId = FactionId(7);
 
-        let refused = tame_one_turn_on_herd_owned_by("husbandry", Some(RIVAL_FACTION));
+        let refused = tame_one_turn_on_herd_owned_by(HURDLING_KIT, Some(RIVAL_FACTION));
         assert_eq!(
             refused.progress, 0.0,
             "a herd another faction owns banks none of the offered accrual"
@@ -7557,7 +7736,7 @@ mod labor_yield_tests {
         );
 
         // **Liveness — the same fixture on the band's OWN herd both accrues and spends.**
-        let owned = tame_one_turn_on_herd_owned_by("husbandry", Some(BAND_FACTION));
+        let owned = tame_one_turn_on_herd_owned_by(HURDLING_KIT, Some(BAND_FACTION));
         assert!(
             owned.progress > 0.0,
             "fixture: the same crew on its own herd must actually tame it"

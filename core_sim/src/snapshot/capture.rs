@@ -1923,6 +1923,14 @@ fn kit_roster_states(
                 // number in these units would read as a rate on a field the client renders as one.
                 build_rate: sim_schema::RETIRED_BUILD_RATE,
                 build_work_per_worker: tiers.build_work_per_worker,
+                // **WHICH WEB THAT WORTH IS FOR**, `""` for a kit carrying no build tool. The pair
+                // is one reading: a hoe is worth `8.5` on a Cultivate and nothing at all on a
+                // `Tame`, so a picker greys the kit where the branches disagree rather than quoting
+                // a saving the sim will never pay.
+                build_work_branch: tiers
+                    .build_work_branch
+                    .map(|branch| branch.as_str().to_string())
+                    .unwrap_or_default(),
                 // **The attack's size window**, so the client's pre-launch gate resolves this kit
                 // against the quarry in front of it rather than against the kit's best case. `0` on
                 // either end is unbounded, which every weapon but the passive device is.

@@ -63,7 +63,7 @@ use std::{
 };
 
 use bevy::prelude::Resource;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::config_load::{load_config_from_env, ConfigLoadError};
@@ -484,9 +484,11 @@ pub const RUNG_COST_UNSCALED: f32 = 1.0;
 /// either free or unbuildable, which is why the two live on the stat
 /// ([`crate::equipment_config::EquipmentStat::neutral`]) rather than at the call sites.
 ///
-/// It is [`crate::equipment_config::EquipmentConfig::build_work_per_worker`]'s answer for every plant
-/// build today (no plant item declares the stat yet — issue #539) and for every animal build whose
-/// crew went out on a kit without handling gear. Named rather than a bare `0.0` at the call sites
+/// It is [`crate::equipment_config::EquipmentConfig::build_work_per_worker`]'s answer for a crew
+/// that went out bare **and for one carrying the other web's tool** — a hoe takes nothing off a
+/// `Tame` and hurdles take nothing off a Cultivate, because a `build_work` effect names the branch
+/// it serves ([`crate::equipment_config::EquipmentEffect::branch`]). Named rather than a bare `0.0`
+/// at the call sites
 /// that have no band to resolve a kit against — a forecast probe, a test fixture — so *"this crew
 /// brought nothing"* reads as a stated fact rather than an unexplained literal.
 pub const NO_BUILD_GEAR: f32 = 0.0;
@@ -721,7 +723,7 @@ pub fn distribute_upkeep_pool(pool: f32, demands: &[f32], mode: UpkeepFundMode) 
 
 /// Which food web a rung belongs to. The two webs are separate ladders that never share a rung — a
 /// master rancher isn't automatically a farmer (`plan_intensification_ladder.md` §4.2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RungBranch {
     /// The **human** food web: forage patches (`forage.rs`).
@@ -729,6 +731,10 @@ pub enum RungBranch {
     /// The **animal** food web: herds (`fauna.rs`).
     Animal,
 }
+
+/// **Both food webs, in ladder order** — the one list a caller sweeping the branches iterates, so a
+/// third web could not be added without every sweep seeing it.
+pub const BOTH_BRANCHES: [RungBranch; 2] = [RungBranch::Plant, RungBranch::Animal];
 
 impl RungBranch {
     /// Stable key (the JSON `branch` value), used in validation messages.
@@ -2783,7 +2789,7 @@ mod tests {
     #[test]
     fn a_tools_saving_shrinks_as_the_job_grows() {
         let ladder = LadderConfig::builtin();
-        /// A fully-geared reference keeper crew: two hands, `husbandry_gear`'s 8.5 each.
+        /// A fully-geared reference keeper crew: two hands, the hurdles' 8.5 each.
         const GEAR_WORK: f32 = 17.0;
         /// The shipped `plant:tended` cost, and a stand-in for the ~300-unit Farm rung 4 is born at.
         const GARDEN: f32 = 50.0;
@@ -2823,7 +2829,7 @@ mod tests {
     }
 
     /// **A FULLY-GEARED ANIMAL BUILD IS UNMOVED, and that is this slice's pacing proof** — the
-    /// calibration §6.2 sets `husbandry_gear`'s 8.5 by: the retired `build_rate` ×1.5 on a 50-unit
+    /// calibration §6.2 sets the hurdles' 8.5 by: the retired `build_rate` ×1.5 on a 50-unit
     /// job at the reference keeper crew of 2 saved 8.33 of 25 turns, i.e. it was worth ≈17 units of
     /// the job, which is 8.5 **per worker**.
     #[test]
@@ -2833,7 +2839,7 @@ mod tests {
         /// The reference keeper crew the animal costs were priced against — see
         /// `the_food_peak_preserves_every_rungs_stated_build_length`.
         const KEEPERS: u32 = 2;
-        /// What `husbandry_gear`'s flint tier declares, per equipped worker.
+        /// What the hurdles' flint tier declares, per equipped worker.
         const PER_WORKER: f32 = 8.5;
         /// What the retired ×1.5 multiplier bought at this crew: `ceil(50 / (2 × 1.5))`.
         const GEARED_TURNS: u32 = 17;
@@ -2842,7 +2848,7 @@ mod tests {
             .build_cost(RUNG_COST_UNSCALED)
             .expect("the pastoral rung builds");
         // **The gear is resolved at the reference KEEPERS, and so is the crew.** The calibration is
-        // about what `husbandry_gear` is worth *in units of the job* (17); the crew's own supply is
+        // about what the hurdles are worth *in units of the job* (17); the crew's own supply is
         // the 2 worker-turns it was priced against, with nothing netted off it (§4.6a).
         let accrual = pastoral.build_accrual(pastoral.verb_improvement(), true, KEEPERS);
         let bar = ladder.effective_build_cost(cost, build_work_from_gear(PER_WORKER, KEEPERS));

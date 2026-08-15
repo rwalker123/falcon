@@ -3815,10 +3815,17 @@ static func is_under_kept(src: Dictionary, prefix: String) -> bool:
 ## KNOWLEDGE accrual, which is where *how much you leave standing shapes what you learn* still holds —
 ## and that is why `floor` stays a parameter here: the work PREDICATE below reads it.
 ##
-## `kit_gear` is the CREW'S kit, as `BUILD_GEAR_PER_WORKER` / `BUILD_GEAR_SATURATING_CREW` off the
-## band's own resolved row (`KitRoster.build_gear`) — the caller passes it because which kit the crew
-## carries is the sheet's picker's answer, not the source's, and it is what lets a kit swap re-price
-## the whole estimate. `{}` is a legal reading and means the crew carries nothing that helps.
+## `kit_gear` is the BUILDERS' kit, as `BUILD_GEAR_PER_WORKER` / `BUILD_GEAR_SATURATING_CREW` off the
+## band's own resolved row (`KitRoster.build_gear`) — the caller passes it because which kit the pool
+## carries is a fact about the BAND'S `builders` row rather than about this source, and it is what
+## lets a kit swap re-price the whole estimate. `{}` is a legal reading and means the crew carries
+## nothing that helps.
+##
+## ⛔ **IT IS NOT THE COMPOSE SHEET'S OWN PICKER, which chooses what the TAKE crew carries.** Both
+## sheets passed their own selection for a release — the GATHERING kit on the forage sheet, which
+## declares no build axis at all — and `DrawerComposeController._build_gear_for` is the seam that
+## resolves the entry's own kit and its web instead (`labor-ui.md` → "A BUILD IS PRICED AT THE
+## **BUILDERS'** KIT").
 ##
 ## **THE WORK PREDICATE IS PART OF THE FORM, and leaving it out is a lie at the loudest end of the
 ## slider.** `RungDef::build_accrual`'s `eligible` carries `crew_is_working_the_source` on Cultivate

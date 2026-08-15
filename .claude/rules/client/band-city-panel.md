@@ -1954,6 +1954,24 @@ the same `_build_role_card`; nothing about the keeping is a parallel surface.
   (`attack 1.0 · carry 12.0 per hunter`) on a role that fights nothing, and `_role_effect_phrase`
   renders NOTHING at the neutral tier, so a band with no build gear reads a bare card rather than a
   boast of zero.
+- **…AND ITS PICKER STATES A LIVE FACT RATHER THAN A STORED ONE.** There are two builders kits, one
+  per web, and which one a queue entry gets is DERIVED from that entry's branch (`labor-ui.md` → "A
+  BUILD IS PRICED AT THE **BUILDERS'** KIT"). So the card opens on the kit the band's QUEUE HEAD
+  implies — the sim publishes it resolved on the `builders` row, and an unstaffed row is derived
+  client-side through `KitRoster.build_kit_for_branch` rather than left to whichever kit the roster
+  authors first — and the kit whose tool serves the OTHER web is greyed with its reason. `none` stays
+  selectable: it is how a player sends the pool out bare to conserve gear.
+- **⛔ THE STEPPER SENDS THE PICK AND NOTHING ELSE, and that is this card's own rule.** A `kit` token
+  on the `builders` row **wins over the derivation for good**, so echoing back the DERIVED id — which
+  is what the other role cards do, harmlessly, their rows carrying either a stored kit or a job
+  default — would pin the pool to whichever web it happened to be building the moment the player
+  pressed `+`. `_commanded_role_kit_id` forks on the role for exactly this: the picker's FACE reads
+  `_role_kit_id` (derivation included) and the command carries `_composed_role_kit_id` (the player's
+  own pick, or nothing).
+- **THE ROLE ALSO NEEDED A BRANCH IN `Main.format_assign_labor`, which had never named it.** The
+  `assign_labor` builder matched `scout` / `warrior` / `agriculture` / `husbandry` and answered `{}`
+  for anything else, so the Builders card's stepper emitted NO COMMAND AT ALL and the pool could not
+  be staffed from the UI. The sim has parsed `builders` since §2.5.
 - **THE FUND-MODE ROW IS THE ONE DECISION THE ROLES CANNOT EXPRESS** — `Spread` (fund every source in
   proportion, so everything degrades a little) against `Priority` (fund the biggest investments in
   full and let the marginal ones rot), emitting `upkeep_mode <faction> <band> <mode>` through

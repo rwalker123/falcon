@@ -641,7 +641,14 @@ clubs assertion, naming `attack 20 defending the camp`.
 
 ### The HANDLING GEAR's row says BOTH the jobs it does
 
-`husbandry_gear` bounds a slaughter at a pen **and** takes work off the `Tame` and `Corral` builds
+**The item is `hurdles` now, and the client's own label reads *Hurdles*** — it was `husbandry_gear`,
+a name describing the KIT it sat in rather than the object, and the object is portable fence panels
+you work a beast into. `DetailFormat.KIT_LABEL_HURDLES` moved with the id, so the popover row and the
+roster's own display name cannot disagree about one item; `hoes` joined `KIT_ITEM_LABELS` beside it
+and deliberately has **no breakdown row**, the build axis having no flat per-band field for a row to
+pair it with (`labor-ui.md` → "THE BUILDERS' KIT IS DERIVED PER QUEUE ENTRY" on the client side).
+
+`hurdles` bound a slaughter at a pen **and** take work off the `Tame` and `Corral` builds
 (issue #515, `.claude/rules/core_sim/equipment.md` → "The build axis"), so a row quoting only the pen
 rate describes the payoff at the top of the ladder and says nothing about the climb that produces it.
 It reads `pen collection 40.0 per keeper · 8.5 work off a tame or a pen, per keeper`.
@@ -654,6 +661,9 @@ It reads `pen collection 40.0 per keeper · 8.5 work off a tame or a pen, per ke
   `1` on the wire and no longer decoded at all**. That is not tidiness: a reader left on it renders
   `> 1.0` for no kit in the game, so the clause silently disappears **and** `KitRoster.kit_offer`
   stops offering the husbandry kit on a herd being tamed, which is the one job the gear is for.
+  **The gear's worth is now qualified by a `build_work_branch`** — hurdles serve the ANIMAL web and
+  hoes the PLANT one — and this row is unaffected, being about a herd either way; what reads the pair
+  is the Builders card's picker, which greys the other web's kit.
 - **The clause is appended only ABOVE NEUTRAL, and its absence is a real reading.** A contribution of
   `0` means the gear is changing no build — because it is spent, or because this band's hunt job is
   on a kit that does not carry it — and `0 work` costs a line's width to say *no*. The row's own

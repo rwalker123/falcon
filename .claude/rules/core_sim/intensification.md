@@ -899,16 +899,21 @@ worked; a second axis would ask the player to state the same thing twice.
   `KitCoverage`, resolved over the pool, at the pool's count. It used to ride the *source row's* kit
   — a `Corral` priced off whatever the hunt row was carrying — because the builders stood on the
   tile.
-  - **⛔ A kit that declares `EquipmentStat::BuildWork` MUST list the `builders` job**, or the pool
-    cannot be sent out with it and the offset is dead config. On the shipped roster that is
-    `husbandry` (the only kit whose items declare the stat), which now lists `builders` beside
-    `hunt`. Pinned by
-    `equipment_config::tests::every_kit_that_supplies_build_work_offers_the_builders_job`, liveness
-    half included.
-  - **`default_kits.builders` is `none`**, matching the other two standing roles: a band that names
-    no kit builds bare-handed exactly as it did, and naming `husbandry` on the role is how the
-    player brings the hurdles. Defaulting the pool onto `husbandry` would hand a *plant* build an
-    animal-handling offset no forage crew has ever had.
+  - **⛔ THERE ARE TWO BUILDERS KITS, ONE PER WEB, AND THE POOL DERIVES ITS OWN PER QUEUE ENTRY.**
+    `tillage` carries the hoes and `hurdling` the hurdles; a `build_work` effect names the branch it
+    serves, so a hoe takes nothing off a `Tame` and hurdles take nothing off a Cultivate. A queue
+    item is one job, so the kit is resolved from **the entry being worked** — the head's branch is
+    what is actually funded, and everything below it is dated at the gear it will be raised with.
+    A kit **named** on the `builders` row overrides that, `none` included. `equipment.md` → "THE
+    BUILDERS' KIT IS DERIVED PER QUEUE ENTRY" owns the seam; the guard is
+    `equipment_config::tests::every_branch_of_the_ladder_has_a_builders_kit_that_serves_only_it`,
+    which replaced *"every kit that supplies `build_work` offers the `builders` job"* — no longer the
+    invariant, since `husbandry` keeps its hurdles for the **hunt** (a pen is collected on
+    `pen_carry`) and gave the building up.
+  - **`default_kits.builders` is `none`, as a FALL-BACK rather than the answer.** It is what the pool
+    resolves when the row named nothing and either the queue is empty or no roster entry serves that
+    web. **The shipped opening moves here**: a start-stocked band's builders are geared from turn one
+    on both webs, where before this slice every build was bare-handed unless the player named a kit.
 - **THE QUEUE'S THREE INPUTS**, all on one source grammar — **two integer tokens name a tile, one
   token names a herd id**, the tile form parsed first:
 
@@ -1273,8 +1278,8 @@ Appended (append-only) on both tables:
 - **`buildWorkFromGear` is quoted BESIDE the raw price, never folded into it.** `workCost` stays
   the job as the ladder prices it, so a readout can say *"your hurdles: −17 work"* against a number
   that does not move under the crew's kit — and the estimate beside it already reflects the tooled
-  bar. `0` = no build in flight, or nothing in the crew's hands that helps, which is every **plant**
-  build today (issue #539).
+  bar. `0` = no build in flight, or nothing in the crew's hands that helps — which since the hoes
+  shipped means a pool the player deliberately sent out bare, or one carrying the *other* web's tool.
 - **`buildWorkPerWorkerTurn` IS THE CREW-OUTPUT TERM OF THE TURN ESTIMATE'S CLOSED FORM**, and it
   exists because `buildTurnsRemaining` beside it answers for the **committed** crew: a compose sheet
   drags a crew stepper and needs the answer for a crew the player is *proposing*.

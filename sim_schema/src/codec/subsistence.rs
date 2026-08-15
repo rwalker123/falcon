@@ -314,6 +314,9 @@ fn create_kits<'a>(
             .map(|item| builder.create_string(item))
             .collect();
         let item_ids = builder.create_vector(&item_ids);
+        // Which web this kit's build gear serves — `""` for a kit carrying none, which is most of
+        // the roster.
+        let build_work_branch = builder.create_string(&state.build_work_branch);
         entries.push(fb::KitOption::create(
             builder,
             &fb::KitOptionArgs {
@@ -336,6 +339,7 @@ fn create_kits<'a>(
                 exposure: state.exposure,
                 buildRate: state.build_rate,
                 buildWorkPerWorker: state.build_work_per_worker,
+                buildWorkBranch: Some(build_work_branch),
             },
         ));
     }

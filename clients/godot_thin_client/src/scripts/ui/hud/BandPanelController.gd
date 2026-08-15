@@ -1145,6 +1145,11 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
     # chose. `NO_KIT_ID` omits the token and leaves the sim to resolve its own default, which is the
     # honest statement of what this card knows.
     var kit_id := _role_kit_id(band, kind) if kind in KIT_PICKER_ROLES else KitRoster.NO_KIT_ID
+    # **WHAT THE PICKER SHOWS AND WHAT THE STEPPER SENDS ARE TWO QUESTIONS ON THE BUILDERS ROW.** The
+    # face states the kit the pool is holding this turn, derivation included; the command carries only
+    # a kit the player CHOSE, because a token pins the row against the derivation for good.
+    var commanded_kit_id := _commanded_role_kit_id(band, kind) if kind in KIT_PICKER_ROLES \
+        else KitRoster.NO_KIT_ID
     var stepper := HBoxContainer.new()
     stepper.alignment = BoxContainer.ALIGNMENT_CENTER
     stepper.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
@@ -1155,7 +1160,7 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
         # player who never touched the picker emits the byte-identical line they always did.
         func(n: int) -> void: _emit_assign_labor(
             band, kind, n, -1, -1, "", SourceForecast.DEFAULT_HARVEST_FLOOR,
-            "", SourceForecast.IMPROVEMENT_NONE, kit_id))
+            "", SourceForecast.IMPROVEMENT_NONE, commanded_kit_id))
     col.add_child(stepper)
     # **THE KEEPING ROLES MOUNT NO KIT PICKER** (`docs/plan_standing_upkeep.md` §2.5, open item 3).
     # Two facts, either of which is enough on its own: the wire names no default kit for the
@@ -1168,7 +1173,7 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
         var kit_row := KitRoster.build_kit_row(_band_labor.kits(), kind, kit_id,
             _band_labor.default_kit_id(kind), band,
             func(picked: String) -> void: _on_role_kit_picked(band, kind, picked, workers),
-            {}, "", ROLE_CARD_KIT_KEY_TEXT, true)
+            {}, "", ROLE_CARD_KIT_KEY_TEXT, true, _role_build_branch(band, kind))
         if kit_row != null:
             col.add_child(kit_row)
             _lift_role_gear_line(kit_row)
@@ -1208,13 +1213,15 @@ const ROLE_CARD_KIT_KEY_TEXT := ""
 ##
 ## **THE KEEPING PAIR IS DELIBERATELY ABSENT AND THE BUILDERS ARE DELIBERATELY PRESENT**, and the
 ## difference is whether a kit moves a number the player can see. No shipped kit declares a
-## maintenance contribution, so an `agriculture` picker would change nothing; **`husbandry` is the one
-## kit whose items declare `build_work`** (`docs/plan_standing_upkeep.md` §2.5), so putting it on the
-## BUILDERS row is the only way a band brings its hurdles to a Tame or a Corral — the gear offset used
-## to ride the source row's kit and rides this role's own row now.
+## maintenance contribution, so an `agriculture` picker would change nothing; the roster carries **two
+## builders kits, one per web** — `hurdling` (hurdles, animal) and `tillage` (hoes, plant) — so this
+## picker decides what the pool brings to a Tame, a Corral, a Cultivate or a Sow, and `none` is how a
+## player sends it out bare to conserve gear.
 ##
 ## ⚠ **It is the one entry here the wire names no default kit for** — see `KitRoster.JOB_BUILDERS`.
-## Nothing is marked `(default)`, and the picker opens on the band's own `builders` row.
+## Nothing is marked `(default)`; the picker opens on the band's own `builders` row, which the sim has
+## already resolved from the queue HEAD's web, and a kit whose tool serves the OTHER web is greyed
+## with its reason (`_role_build_branch`).
 const KIT_PICKER_ROLES := [HudConst.LABOR_KIND_SCOUT, HudConst.LABOR_KIND_WARRIOR,
     HudConst.LABOR_KIND_BUILDERS]
 
@@ -1233,19 +1240,52 @@ func _role_kit_key(band: Dictionary, kind: String) -> String:
 ## role has no assignment row at all, and `resolve_selection` then lands on the job default, which is
 ## exactly what the sim would resolve for the first `+`.
 func _role_kit_id(band: Dictionary, kind: String) -> String:
-    var composed := String(_role_kit_ids.get(_role_kit_key(band, kind), KitRoster.NO_KIT_ID))
+    var branch := _role_build_branch(band, kind)
+    var composed := _composed_role_kit_id(band, kind)
     if composed == KitRoster.NO_KIT_ID:
-        composed = _wire_role_kit_id(band, kind)
+        composed = HudBandLaborState.role_kit_id(band, kind)
+    # **AN UNSTAFFED BUILDERS ROW IS DERIVED, not left to the list's first entry.** The wire states a
+    # kit only where a row exists, and the roster's own answer for the queue head's web is exactly
+    # what the sim will resolve for that role's first `+` — so the card opens on the kit the pool
+    # would actually be handed, rather than on whichever builders kit the roster happens to author
+    # first.
+    if composed == KitRoster.NO_KIT_ID and kind == HudConst.LABOR_KIND_BUILDERS:
+        composed = KitRoster.build_kit_for_branch(_band_labor.kits(), branch)
     return KitRoster.resolve_selection(_band_labor.kits(), kind,
-        _band_labor.default_kit_id(kind), composed)
+        _band_labor.default_kit_id(kind), composed, {}, "", branch)
 
-## The kit the sim has this role RESOLVED to, off the band's own assignment row; `NO_KIT_ID` when the
-## role is unstaffed (no row) or the snapshot predates the band-wide kit axis.
-func _wire_role_kit_id(band: Dictionary, kind: String) -> String:
-    for entry in HudBandLaborState.labor_assignments_of(band):
-        if entry is Dictionary and String((entry as Dictionary).get("kind", "")).to_lower() == kind:
-            return String((entry as Dictionary).get("kit_id", KitRoster.NO_KIT_ID))
-    return KitRoster.NO_KIT_ID
+## The pick the PLAYER made on this card in this session, `NO_KIT_ID` when they have made none — a
+## different question from `_role_kit_id`, which falls back to the wire. The BUILDERS row is where
+## the two must not be confused; see `_commanded_role_kit_id`.
+func _composed_role_kit_id(band: Dictionary, kind: String) -> String:
+    return String(_role_kit_ids.get(_role_kit_key(band, kind), KitRoster.NO_KIT_ID))
+
+## **THE KIT THE STEPPER'S COMMAND CARRIES — the player's own pick, and on the BUILDERS row NOTHING
+## ELSE.**
+##
+## Every other role publishes either the kit named on its row or its job's default, so re-stating it
+## on a `+` is a no-op. The builders row is not that: the sim resolves it **per queue entry** and
+## publishes the DERIVED answer (`equipment.md` → "THE WIRE STATES THE DERIVED KIT"), while a named
+## `kit` token on that row WINS over the derivation from then on. Echoing the derived id back would
+## therefore PIN the pool to whichever web it happened to be building the moment the player touched
+## the stepper — the derivation defeated by the one control that was not choosing a kit at all.
+##
+## `Main._kit_token` omits an empty selection, so an untouched picker emits the line it always did and
+## the sim keeps deriving. Picking a kit deliberately is still a pin, which is the point of the picker.
+func _commanded_role_kit_id(band: Dictionary, kind: String) -> String:
+    if kind == HudConst.LABOR_KIND_BUILDERS:
+        return _composed_role_kit_id(band, kind)
+    return _role_kit_id(band, kind)
+
+## **THE WEB THIS ROLE'S PICKER IS CHOOSING FOR** — the build branch of the band's queue HEAD on the
+## builders row, and `BUILD_BRANCH_NONE` on every other role, none of which raises anything. It is
+## what greys a builders kit whose tool serves the other web (`KitRoster.kit_offer`'s third rule): a
+## hoe in front of a `Tame` is as inapplicable as a snare in front of a Red Deer, and the player is
+## better told so than shown a choice that moves no number.
+func _role_build_branch(band: Dictionary, kind: String) -> String:
+    if kind != HudConst.LABOR_KIND_BUILDERS:
+        return KitRoster.BUILD_BRANCH_NONE
+    return _band_labor.head_build_branch(band)
 
 ## A kit picked on a role card. **It EMITS on the press, like the work inspector's policy picker and
 ## unlike a compose sheet's** — this card has no Send to commit at, so a pick that only sat in client

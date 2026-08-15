@@ -2721,12 +2721,25 @@ fn set_maintain_workers(app: &mut App, band: bevy::prelude::Entity, workers: u32
 /// **Append the band-wide `builders` pool to a fixture's rows** — the hands a declared build is
 /// raised by since the build crew left the tile (`docs/plan_standing_upkeep.md` §2.5). A pool of
 /// zero adds no row, which is the honest reading of *"this band is building nothing"*.
+///
+/// ⛔ **THE POOL GOES OUT BARE, and that is an isolation rather than a default.** An absent kit means
+/// *derive per entry*, and the roster's answer for a herd — `hurdling` — takes `8.5` off the job per
+/// covered worker. A start-stocked band holds a unit per worker and a half, so at the crews these
+/// fixtures staff the gear alone pays a whole `Tame` off and every pacing claim here collapses to
+/// *"one turn versus one turn"*. Naming `none` holds the gear axis at its identity so these arms
+/// measure the **crew**, exactly as `FaunaConfig::without_retreat` holds the retreat at its identity
+/// across the hunt suites; the geared default is pinned in
+/// `core_sim/tests/build_turns_closed_form.rs` and in `equipment_config`'s own unit tests.
 fn with_builders_pool(mut rows: Vec<LaborAssignment>, builders: u32) -> Vec<LaborAssignment> {
     if builders > 0 {
         rows.push(LaborAssignment {
             target: LaborTarget::Builders,
             workers: builders,
-            kit: None,
+            kit: Some(
+                core_sim::EquipmentConfig::builtin()
+                    .kit("none")
+                    .expect("the shipped roster carries the empty kit"),
+            ),
         });
     }
     rows

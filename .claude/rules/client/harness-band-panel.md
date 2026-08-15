@@ -118,8 +118,23 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 242 `assert OK` lines, 348 `: PASS` ones and ZERO `FAIL` ones, over
-95 frames.** (It was 240 / 341 / 94 before **`band_panel_builders_segment`** — the BUILDERS segment
+**A clean run exits 0 and prints 246 `assert OK` lines, 356 `: PASS` ones and ZERO `FAIL` ones, over
+97 frames.**
+
+(It was 242 / 348 / 95 before the BUILDERS KIT PAIR — `band_panel_builders_kit_plant` /
+`band_panel_builders_kit_animal`, the frames on which the Builders card's picker is judged. Their four
+`assert OK`s are the two states' own bounds/content-fits pairs and their eight `PASS`es are
+`_assert_builders_kit_picker`'s four, twice. **The PAIR is the claim, and the fixture is what makes it
+one**: ONE band, whose forage row and hunt row already name the two sources, with the head moving by
+dialling those SOURCES' own `buildQueuePosition` — so the two frames differ in the queue head's WEB
+and in nothing else. Each state asserts the face, the withheld kit AND ITS REASON, the serving kit
+beside it, and `none`. Sabotage-verified on two DISJOINT mutations: an unconditional offer fails
+exactly the two withheld claims, leaving both liveness claims and both faces green; greying every
+builders kit fails exactly the four liveness claims — the two faces falling back to `No kit` — and
+leaves the withheld and `none` claims green. The rule is `band-city-panel.md` → "…AND ITS PICKER
+STATES A LIVE FACT RATHER THAN A STORED ONE".)
+
+(It was 240 / 341 / 94 before **`band_panel_builders_segment`** — the BUILDERS segment
 state, whose two `assert OK`s are its own bounds/content-fits pair and whose seven `PASS`es are
 `_assert_people_matches_workforce`'s four plus three of its own. **Its fixture IS the claim**: the
 reference band's four assignments spend 13 of 16 workers, so putting THREE builders on its forage row
@@ -263,7 +278,7 @@ move" guards and correctly stay green.
 
 **THE PEN AND THE VANTAGE JOINED `BandKitTiers`, and that contributes FOUR `PASS` to `ui_preview`,
 ZERO frames and nothing at all to `band_panel_preview`.** Those two axes were the ones a per-kit
-readout had to answer off the ROSTER's fresh tier, so a dry-`husbandry_gear` band's pen compose
+readout had to answer off the ROSTER's fresh tier, so a dry-`hurdles` band's pen compose
 sheet read `pen 40.0 per keeper` against a sim collecting 12 and a Scout card read 2 tiles of sight
 against a reveal at 1. `BandFx.kit_tiers_rows` states all five axes now (it stated three, and a row
 that omits an axis exercises the absence path rather than the real one), and

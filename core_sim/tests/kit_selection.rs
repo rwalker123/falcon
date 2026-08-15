@@ -976,7 +976,7 @@ fn a_bands_published_pen_and_vantage_tiers_step_down_per_kit_at_the_item_that_su
          further than no kit at all"
     );
 
-    wear_to_the_cliff(&mut app, band, "husbandry_gear");
+    wear_to_the_cliff(&mut app, band, "hurdles");
     wear_to_the_cliff(&mut app, band, "wayfinding");
     recapture_snapshot_in_place(&mut app.world);
     let worn = published_kit_tiers(&app, band);

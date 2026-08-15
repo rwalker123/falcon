@@ -1263,6 +1263,33 @@ ring and recapture claims, the vacuity guard correctly staying green.
 
 **A clean run is 333 frames / 1077 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says.
 
+## The kit swap's A/B moved to the BUILDERS' row (the builders-kits arc)
+
+No frame added or removed, no assertion added or removed, and **both of `chapters/compose_rungs.gd`'s
+kit-swap frames now stage a different input** — the sheet no longer prices a build at its own picker's
+kit, which was the defect (`labor-ui.md` → "A BUILD IS PRICED AT THE **BUILDERS'** KIT"). The hunt
+picker is held FIXED across `herd_kit_swap_bare_build` / `_geared_build` and what moves is the band's
+`builders` row: unnamed on the bare frame (the sheet derives the roster's animal kit, for which that
+band publishes no resolved row, so the crew builds bare at `≈17 turns`) and `husbandry` on the geared
+one (a kit the band DOES publish a row for, so `≈11`). The counts are unchanged, which is the point —
+the same two readings, off the row that actually decides them.
+
+- **`BandFx.staff_builders` / `builders_role_row` take the row's `kit_id`**, defaulting to `""`, the
+  honest fixture for a pool the sim has resolved no kit for.
+- **The chapter's own husbandry entry and its `kit_tiers` row state `build_work_branch: animal`.** A
+  worth without a branch serves NO web, so the geared frame would have read the bare answer for a
+  reason that has nothing to do with the row under test.
+- **`BandFx.kit_roster_fixture()` gained `hurdling` and `tillage`** — both list `builders` ALONE, so
+  every hunt and forage picker in both harnesses is byte-identical and only the Builders role card can
+  see them — and `hoes` joined the condition rows beside `hurdles`, the wire's list being the CONFIG's
+  item table rather than the band's holdings (without it the Builders card read `Hoes dry` on a band
+  nobody had asked about hoes).
+
+**A clean run is 332 frames / 1075 `PASS`, exit 0 — RE-MEASURED.** The recorded figure above was one
+frame and two `PASS` higher before this arc, which touched neither: `git diff` over
+`tools/ui_preview/**` adds and removes no `_save` and no assertion, so the previous record had already
+drifted — which is this line's own instruction being earned again.
+
 ## The rate is not a tax on building (`docs/plan_standing_upkeep.md` §4.6a)
 
 No frame added, no frame removed, and **one frame renamed because its claim inverted**. The behaviour

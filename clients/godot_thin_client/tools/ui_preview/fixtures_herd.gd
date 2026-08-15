@@ -384,7 +384,7 @@ const ANIMAL_CORRAL_WORK_COST := 75.0
 ## reading and renders as no line at all.
 const ANIMAL_BUILD_TURNS_REMAINING := 6
 
-## What this herd's KEEPERS took off the job with the handling gear — the shipped `husbandry_gear`
+## What this herd's KEEPERS took off the job with the handling gear — the shipped `hurdles`
 ## flint tier at 8.5 per equipped worker, over the reference two-keeper crew. **The animal web is
 ## where this readout is judged**, no plant item declaring the stat yet (issue #539).
 const ANIMAL_BUILD_WORK_FROM_GEAR := 17.0

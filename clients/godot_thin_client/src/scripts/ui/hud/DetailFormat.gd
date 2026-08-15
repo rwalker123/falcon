@@ -243,12 +243,29 @@ const KIT_LABEL_TRAPS := "Traps"
 # keeper, a scout's vantage or a warrior — so a row could only have quoted a number the sim never
 # sent. The wire carries all three now (see `KIT_TIER_KEY_PEN_CARRY` and its two neighbours), so the
 # player can finally see a scout kit and a warrior kit dying instead of only its consequences.
-const KIT_LABEL_HUSBANDRY_GEAR := "Handling gear"
+## **THE HANDLING GEAR IS `hurdles` NOW, ITEM ID AND LABEL BOTH.** It was `husbandry_gear` — a name
+## that described the KIT it happened to sit in rather than the object — and the object is portable
+## fence panels you work a beast into, the same thing whether you are raising the pen or butchering
+## in it. The client's own label followed: naming it *Handling gear* while the roster called it
+## *Hurdles* left the popover row and the picker's hint disagreeing about one item.
+const KIT_LABEL_HURDLES := "Hurdles"
 const KIT_LABEL_WAYFINDING := "Wayfinding"
 const KIT_LABEL_CLUBS := "Clubs"
-const KIT_DURABILITY_KEY_HUSBANDRY_GEAR := "husbandry_gear"
+const KIT_DURABILITY_KEY_HURDLES := "hurdles"
 const KIT_DURABILITY_KEY_WAYFINDING := "wayfinding"
 const KIT_DURABILITY_KEY_CLUBS := "clubs"
+
+## **THE PLANT WEB'S BUILD TOOL** — a bone blade hafted with fibre, and the second item in the game to
+## declare `build_work`. It carries the `tillage` kit and nothing else, so a band that wants both
+## webs' tools holds both items.
+##
+## **IT HAS A LABEL BUT NO BREAKDOWN ROW OF ITS OWN**, and that is the popover's standing rule rather
+## than an omission: a row pairs an item with the resolved tier it sets, and the build axis has no
+## flat per-band field to quote — it rides the `kit_tiers` row of whichever kit is selected, which is
+## what the Builders card's own gear line states. The hoes still NAME themselves wherever the band's
+## items are listed, which is the `Gear` summary row and the picker's condition clauses.
+const KIT_LABEL_HOES := "Hoes"
+const KIT_DURABILITY_KEY_HOES := "hoes"
 
 # What a trap line is FOR, on the disclosure row. It sets no tier the cohort publishes — reach and
 # stand-off are properties of the kit, not of the band — so unlike the other three this row states
@@ -264,7 +281,8 @@ const KIT_ITEM_LABELS := {
     "sled": KIT_LABEL_SLED,
     "baskets": KIT_LABEL_BASKETS,
     "traps": KIT_LABEL_TRAPS,
-    "husbandry_gear": KIT_LABEL_HUSBANDRY_GEAR,
+    KIT_DURABILITY_KEY_HURDLES: KIT_LABEL_HURDLES,
+    KIT_DURABILITY_KEY_HOES: KIT_LABEL_HOES,
     "wayfinding": KIT_LABEL_WAYFINDING,
     "clubs": KIT_LABEL_CLUBS,
 }
@@ -347,8 +365,9 @@ const KIT_ROLE_BUILD_WORK_SUFFIX := " · %s work off a tame or a pen, per keeper
 # imply a precision the number does not have.
 const KIT_BUILD_WORK_DECIMALS := 1
 # **The value that means "this gear changes no build"** — the schema's own default and what every kit
-# but `husbandry` resolves to. Named so the suffix's suppression reads as a stated rule rather than a
-# comparison against a bare literal.
+# carrying no build tool resolves to (which is every kit but `hurdling`, `tillage` and the `husbandry`
+# bundle the hurdles also ride). Named so the suffix's suppression reads as a stated rule rather than
+# a comparison against a bare literal.
 const KIT_BUILD_WORK_NEUTRAL := 0.0
 # Written as `2-tile sight`, not `sight 2 tiles`, because the tier is a small whole number and the
 # unit would otherwise have to be pluralized: a bare-handed scout sees `1`, and `sight 1 tiles` is
@@ -359,8 +378,8 @@ const KIT_ROLE_WARRIOR_ATTACK_FORMAT := "attack %s defending the camp"
 ## **THE BUILDERS ROLE CARD'S OWN GEAR LINE** (`docs/plan_standing_upkeep.md` §2.5) — what the selected
 ## kit takes off a build, per builder. It is `KIT_ROLE_BUILD_WORK_SUFFIX`'s figure stated as a line
 ## rather than as a clause on the handling gear's popover row, because on this card the build axis is
-## the WHOLE of what the kit buys: `husbandry` is the one kit whose items declare `build_work`, and
-## putting it on this row is the only way a band brings its hurdles to a Tame or a Corral.
+## the WHOLE of what the kit buys: a builders kit carries its tool and nothing else — `hurdling` the
+## hurdles, `tillage` the hoes — so this line is the only number the card's picker moves.
 ##
 ## It takes the WORK-UNIT decimals rather than the carries' — a contribution is a quantity of work
 ## against a job priced in work, and `format_work_units` is where that rule lives.

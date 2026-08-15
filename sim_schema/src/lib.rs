@@ -80,6 +80,8 @@ mod tests {
                     // Carrying nothing takes NOTHING off a build — the additive stat's neutral is
                     // `0`, not the retired multiplier's `1`.
                     build_work_per_worker: 0.0,
+                    // ...and names no web, because there is no tool here to serve one.
+                    build_work_branch: String::new(),
                     // Carrying nothing is a real answer, and an EMPTY vector is how it is said.
                     item_ids: Vec::new(),
                 },

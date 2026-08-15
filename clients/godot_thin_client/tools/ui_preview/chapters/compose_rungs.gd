@@ -999,7 +999,7 @@ func _assert_husbandry_hint_states_the_pen() -> void:
 	var sled := HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [
 		BandFx.KIT_ITEM_SLED, int(BandFx.KIT_CONDITION_SLED)]
 	var handling_gear := HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [
-		BandFx.KIT_ITEM_HUSBANDRY_GEAR, int(BandFx.KIT_CONDITION_HUSBANDRY_GEAR)]
+		BandFx.KIT_ITEM_HURDLES, int(BandFx.KIT_CONDITION_HURDLES)]
 	# --- the WILD column: byte-identical to what this line rendered before the pen axis existed ----
 	var wild_stalking := KitRoster.tier_hint(kits, stalking, band, KitRoster.JOB_HUNT, wild)
 	var wild_handling := KitRoster.tier_hint(kits, handling, band, KitRoster.JOB_HUNT, wild)
@@ -1049,7 +1049,7 @@ func _assert_the_appended_axes_read_the_band() -> void:
 	var want_worn := HudComposeVocab.KIT_HINT_SEPARATOR.join([
 		HudComposeVocab.KIT_HINT_PEN_CARRY_FORMAT % String.num(
 			BandFx.KIT_PEN_CARRY_BARE, HudComposeVocab.KIT_TIER_DECIMALS),
-		HudComposeVocab.KIT_HINT_DRY_FORMAT % BandFx.KIT_ITEM_HUSBANDRY_GEAR,
+		HudComposeVocab.KIT_HINT_DRY_FORMAT % BandFx.KIT_ITEM_HURDLES,
 		HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [
 			BandFx.KIT_ITEM_SLED, int(BandFx.KIT_CONDITION_SLED)]])
 	h._assert_hud("…and once it is DRY the same pen reads the BARE keeper's tier — \"%s\"" % worn_hint,
@@ -1156,7 +1156,7 @@ func _assert_the_gear_row_states_the_build_it_speeds(band: Dictionary) -> void:
 ## The handling gear's line out of the band's own gear breakdown, `""` when no row carries the label.
 func _gear_row(band: Dictionary) -> String:
 	for line in h._hud._disclosures.kit_breakdown_lines(band):
-		if String(line).contains(DetailFormat.KIT_LABEL_HUSBANDRY_GEAR):
+		if String(line).contains(DetailFormat.KIT_LABEL_HURDLES):
 			return String(line)
 	return ""
 
@@ -1187,9 +1187,13 @@ func _pen_axis_roster() -> Array:
 		# pen tier above is read on a corralled herd and nowhere else; this one is read on any herd
 		# with a rung left to climb, which is the work hurdles and halters are physically for.
 		"build_work_per_worker": BandFx.KIT_BUILD_WORK_HANDLING,
+		# **AND THE WEB THAT WORTH IS FOR.** Hurdles serve the ANIMAL branch, so this kit takes work
+		# off a Tame and nothing at all off a Cultivate; an entry stating the worth without the branch
+		# reads as serving NO web and its gear silently disappears from every build estimate.
+		"build_work_branch": KitRoster.BUILD_BRANCH_ANIMAL,
 		# Handling gear, then the sled it also carries — config order, and the list the hint's condition
 		# clauses are read off. See the trapping entry above for why an entry without one is inert.
-		"item_ids": [BandFx.KIT_ITEM_HUSBANDRY_GEAR, BandFx.KIT_ITEM_SLED],
+		"item_ids": [BandFx.KIT_ITEM_HURDLES, BandFx.KIT_ITEM_SLED],
 	})
 	return kits
 
@@ -1237,6 +1241,10 @@ func _pen_axis_band(band: Dictionary, handling_gear_dry: bool = false,
 		# a worth with no crew behind it would credit a build the band cannot staff.
 		KitRoster.KIT_BUILD_SATURATING_CREW_KEY: (BandFx.KIT_BUILD_SATURATING_CREW_NONE
 			if handling_gear_dry else arms_crew),
+		# **THE BRANCH RIDES THE ROW TOO, and it does NOT step down with the gear.** Which web a tool
+		# serves is a fact about the tool; spent hurdles are still animal handling gear, and the worth
+		# above is what goes to zero.
+		KitRoster.KIT_BUILD_BRANCH_KEY: KitRoster.BUILD_BRANCH_ANIMAL,
 	})
 	kitted[KitRoster.BAND_KIT_TIERS_KEY] = rows
 	if handling_gear_dry:
@@ -1250,7 +1258,7 @@ func _dry_handling_gear_conditions(band: Dictionary) -> Array:
 	var out: Array = []
 	for row_variant in band.get(KitRoster.BAND_ITEM_CONDITIONS_KEY, []):
 		var row: Dictionary = (row_variant as Dictionary).duplicate()
-		if String(row.get(KitRoster.ITEM_CONDITION_ID_KEY, "")) == BandFx.KIT_ITEM_HUSBANDRY_GEAR:
+		if String(row.get(KitRoster.ITEM_CONDITION_ID_KEY, "")) == BandFx.KIT_ITEM_HURDLES:
 			row[KitRoster.ITEM_CONDITION_REMAINING_KEY] = KitRoster.CONDITION_DRY
 		out.append(row)
 	return out
@@ -1259,15 +1267,20 @@ func _dry_handling_gear_conditions(band: Dictionary) -> Array:
 #  THE TURN ESTIMATE MOVES WITH THE KIT, NOT ONLY WITH THE CREW
 # =====================================================================================
 # The compose sheet evaluates `turns(workers)` itself, and its GEAR term is
-# `min(workers, the kit's saturating crew) × that kit's per-worker worth` — **both halves off the kit
-# row the picker is OFFERING**, which is what makes a kit swap re-price the whole estimate. The crew
-# A/B in `chapters/improvements.gd` exercises the ungeared arm and nothing else (no plant item
-# declares the build stat yet), so this is the half of the form no frame in that set can reach.
+# `min(workers, the kit's saturating crew) × that kit's per-worker worth` — both halves off a kit ROW,
+# which is what makes a kit swap re-price the whole estimate. The crew A/B in
+# `chapters/improvements.gd` exercises the ungeared arm and nothing else, so this is the half of the
+# form no frame in that set can reach.
 #
-# **THE PAIR IS THE CLAIM, at ONE crew on ONE herd.** A gear term read off a WORKED SOURCE rather
-# than off the kit row answers the same number for both kits — a perfectly plausible sheet, quoting
-# the committed crew's tools under a name the player has just changed — and only the second frame can
-# tell that from a working one.
+# ⛔ **THE KIT IS THE BUILDERS', NOT THE SHEET'S OWN PICKER** (the builders-kits arc). This A/B moved
+# the HUNT picker for a release, which was the defect: the picker under the crew stepper chooses what
+# the TAKE crew carries, and what speeds a build is what the BUILDERS carry — two different rows. The
+# sheet reads the band's `builders` row through `KitRoster.builders_kit_for` now, so the frames dial
+# THAT row's kit and the hunt picker is held fixed across both.
+#
+# **THE PAIR IS THE CLAIM, at ONE crew on ONE herd.** A gear term read off a WORKED SOURCE — or off
+# the take crew's kit — answers the same number for both, a perfectly plausible sheet quoting the
+# wrong crew's tools, and only the second frame can tell that from a working one.
 
 ## The crew both kit frames staff. **Above the handling gear's saturating crew on purpose**, so the
 ## `min` is doing real work in the geared frame rather than being inert.
@@ -1282,9 +1295,11 @@ const KIT_SWAP_KEEPERS := 3
 ## cost — and the keeping pool owes it at every fullness now, so a builder's whole output is progress.
 ## What the form nets instead is the meter's ROT, which on this web is structurally nothing
 ## (`HerdFx.ANIMAL_METER_ROT`: no animal rung declares a `meter_decay`, their penalty being a shed).
-## So three keepers bank 3: the stalking kit arms nobody for a build, so ⌈50 ÷ 3⌉; the handling gear
-## arms two of the three at 8.5 apiece, so ⌈(50 − 17) ÷ 3⌉. **They read 25 and 17 while the rate was a
-## term**, and the A/B's claim is untouched either way — the two kits still differ by the gear alone.
+## So three builders bank 3: with the builders row naming nothing the sheet derives the roster's
+## ANIMAL kit and this band holds no row for it, so the crew is bare and owes ⌈50 ÷ 3⌉; with the
+## handling kit named on that row it arms two of the three at 8.5 apiece, so ⌈(50 − 17) ÷ 3⌉. **They
+## read 25 and 17 while the rung's rate was a term**, and the A/B's claim is untouched either way —
+## the two readings still differ by the gear alone.
 const KIT_SWAP_TURNS_BARE := 17
 
 const KIT_SWAP_TURNS_GEARED := 11
@@ -1325,7 +1340,7 @@ const KIT_SWAP_UPKEEP_PER_TURN := 1.0
 
 ## **THE OVER-GEARED CREW, and both halves of it are the fixture's claim.** Six keepers at the handling
 ## gear's 8.5 apiece take 51 work off a 50-unit Tame — the shipped start-stock case, a band holding 26
-## `husbandry_gear` units — so the bar is at or below zero and the job finishes on the first worked
+## `hurdles` units — so the bar is at or below zero and the job finishes on the first worked
 ## turn. The crew and the gear's saturating crew are EQUAL on purpose: the `min` on the head count is
 ## already pinned by the saturation claim above, and a mismatch here would leave this frame asserting
 ## that term a second time instead of the answer at the boundary.
@@ -1394,6 +1409,9 @@ func _kit_swap_turn_estimate_states() -> void:
 	# frames dial the builders rather than the take crew — and dial them AFTER the first open, the
 	# `_compose_herd` re-open contract, since a source change re-seeds the composition. The gear term
 	# is resolved over these same hands, which is the whole of what the kit swap moves.
+	#
+	# **THE ROW NAMES NO KIT HERE**, so the sheet derives the roster's answer for this entry's web —
+	# the `hurdling` kit, which this band publishes no resolved row for — and the crew builds bare.
 	BandFx.staff_builders(h._hud._band_labor, KIT_SWAP_KEEPERS)
 	h._compose_herd(warren)
 	await h._settle()
@@ -1401,8 +1419,9 @@ func _kit_swap_turn_estimate_states() -> void:
 	var bare_face := ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
 		SourceForecast.IMPROVEMENT_TAME)
 
-	#   (b) THE HANDLING KIT — the SAME herd, the SAME crew, the SAME floor. Only the picker moved.
-	h._hud._compose.set_hunt_kit_id(HUSBANDRY_KIT_ID)
+	#   (b) THE HANDLING KIT — the SAME herd, the SAME crew, the SAME floor, the SAME hunt kit under
+	# the stepper. Only the BUILDERS row moved, which is the row a build's gear comes off.
+	BandFx.staff_builders(h._hud._band_labor, KIT_SWAP_KEEPERS, HUSBANDRY_KIT_ID)
 	h._compose_herd(warren)
 	await h._settle()
 	await h._save("herd_kit_swap_geared_build")
@@ -1421,7 +1440,7 @@ func _kit_swap_turn_estimate_states() -> void:
 	# **THE `min` IS ON THE HEAD COUNT, and it is asked of the PRODUCER** — a crew above the gear's own
 	# saturating crew cannot be staged on a frame without putting the claim at the mercy of the
 	# stepper's cap. A fourth keeper carries no hurdles, so the gear term does not grow with them.
-	var geared := KitRoster.build_gear(keepers, HUSBANDRY_KIT_ID)
+	var geared := KitRoster.build_gear(keepers, HUSBANDRY_KIT_ID, KitRoster.BUILD_BRANCH_ANIMAL)
 	var overstaffed := SourceForecast.build_turns_at(warren, HudComposeVocab.BARE_FORECAST_PREFIX,
 		SourceForecast.IMPROVEMENT_TAME, KIT_SWAP_KEEPERS + 1, SourceForecast.FLOOR_FOOD_PEAK,
 		geared)
@@ -1454,10 +1473,9 @@ func _kit_swap_turn_estimate_states() -> void:
 	var stocked_warren := _kit_swap_herd()
 	h._show_herd(stocked_warren)
 	h._compose_herd(stocked_warren, OVER_GEARED_KEEPERS, SourceForecast.FLOOR_FOOD_PEAK)
-	h._hud._compose.set_hunt_kit_id(HUSBANDRY_KIT_ID)
-	# The BUILD's crew, dialled after the open — see (a) above. The gear is resolved over these hands,
-	# so the "gear alone pays the job off" regime is a claim about the BUILDERS' coverage.
-	BandFx.staff_builders(h._hud._band_labor, OVER_GEARED_KEEPERS)
+	# The BUILD's crew AND its kit, dialled after the open — see (a) above. The gear is resolved over
+	# these hands, so the "gear alone pays the job off" regime is a claim about the BUILDERS' coverage.
+	BandFx.staff_builders(h._hud._band_labor, OVER_GEARED_KEEPERS, HUSBANDRY_KIT_ID)
 	h._compose_herd(stocked_warren)
 	await h._settle()
 	await h._save("herd_kit_swap_over_geared")

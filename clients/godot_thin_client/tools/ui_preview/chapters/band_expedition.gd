@@ -1003,10 +1003,10 @@ func _kit_states() -> void:
 	# them apart. This band keeps no pen, so its handling gear reaches nobody because nobody needed
 	# it; a reader that divided by that head count, or read the numerator alone, would light up a
 	# perfectly sound item at `0 of 0`.
-	var keeper_line := _kit_breakdown_line(short_popover, DetailFormat.KIT_LABEL_HUSBANDRY_GEAR)
+	var keeper_line := _kit_breakdown_line(short_popover, DetailFormat.KIT_LABEL_HURDLES)
 	h._assert_hud("a job NOBODY is staffed on states no shortfall — 0 of 0 is not a warning",
 		not keeper_line.contains(DetailFormat.KIT_COVERAGE_SHORT_NEEDLE)
-			and keeper_line.contains(String.num(BandFx.KIT_CONDITION_HUSBANDRY_GEAR,
+			and keeper_line.contains(String.num(BandFx.KIT_CONDITION_HURDLES,
 				DetailFormat.KIT_CONDITION_DECIMALS)))
 	h._assert_hud("…and it keeps the SOUND glyph, where the short spears wear the warning one",
 		keeper_line.contains(DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH)

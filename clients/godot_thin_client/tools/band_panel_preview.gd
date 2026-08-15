@@ -2178,6 +2178,8 @@ func _ready() -> void:
 
 	await _render_builders_segment_state()
 
+	await _render_builders_kit_states()
+
 	await _assert_action_registry()
 
 	_assert_herd_field_pairs()
@@ -5240,13 +5242,13 @@ func _assert_gear_breakdown_states_every_kit() -> void:
 		BandFx.KIT_PEN_CARRY_BARE, DetailFormat.KIT_CARRY_DECIMALS)
 	var sled_role := DetailFormat.KIT_ROLE_PEN_CARRY_FORMAT % String.num(
 		BandFx.KIT_HUNT_CARRY_EQUIPPED, DetailFormat.KIT_CARRY_DECIMALS)
-	var gear_line := _kit_breakdown_line(popover, DetailFormat.KIT_LABEL_HUSBANDRY_GEAR)
+	var gear_line := _kit_breakdown_line(popover, DetailFormat.KIT_LABEL_HURDLES)
 	_assert_band_panel("HANDLING GEAR states the PEN's collection rate (%s), never the sled's (%s) — \"%s\""
 			% [pen_role, sled_role, gear_line],
 		gear_line.contains(pen_role) and not gear_line.contains(sled_role))
 	_assert_band_panel("…beside its own condition (%s)" % String.num(
-			BandFx.KIT_CONDITION_HUSBANDRY_GEAR, DetailFormat.KIT_CONDITION_DECIMALS),
-		gear_line.contains(String.num(BandFx.KIT_CONDITION_HUSBANDRY_GEAR,
+			BandFx.KIT_CONDITION_HURDLES, DetailFormat.KIT_CONDITION_DECIMALS),
+		gear_line.contains(String.num(BandFx.KIT_CONDITION_HURDLES,
 			DetailFormat.KIT_CONDITION_DECIMALS)))
 	# **THE VANTAGE IS TILES, and the assertion says so in both directions.** A biomass-rate format
 	# string here would print `2.0`, which reads as a rate and is not one.
@@ -9795,7 +9797,7 @@ func _map_path_snapshot() -> Dictionary:
 ## partition assertion says nothing about. Every value below is DISTINCT from every other tier on the
 ## band, so the gear popover's rows cannot pass with two of them swapped: the pen's rate is not the
 ## sled's 2.5, and the warriors' attack is not the hunters' 2.
-const MAP_PATH_HUSBANDRY_GEAR_CONDITION := 45.0
+const MAP_PATH_HURDLES_CONDITION := 45.0
 const MAP_PATH_WAYFINDING_CONDITION := 66.0
 const MAP_PATH_CLUBS_CONDITION := 22.0
 const MAP_PATH_PEN_CARRY := 3.5
@@ -9806,7 +9808,7 @@ const MAP_PATH_WARRIOR_ATTACK := 5.0
 
 func _kit_band_fixture() -> Dictionary:
 	var band := _band_fixture()
-	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": 74.5}, {"item_id": "sled", "remaining": 58.0}, {"item_id": "baskets", "remaining": 91.0}, {"item_id": "traps", "remaining": 83.0}, {"item_id": "husbandry_gear", "remaining": MAP_PATH_HUSBANDRY_GEAR_CONDITION}, {"item_id": "wayfinding", "remaining": MAP_PATH_WAYFINDING_CONDITION}, {"item_id": "clubs", "remaining": MAP_PATH_CLUBS_CONDITION}]
+	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": 74.5}, {"item_id": "sled", "remaining": 58.0}, {"item_id": "baskets", "remaining": 91.0}, {"item_id": "traps", "remaining": 83.0}, {"item_id": "hurdles", "remaining": MAP_PATH_HURDLES_CONDITION}, {"item_id": "hoes", "remaining": BandFx.KIT_CONDITION_HOES}, {"item_id": "wayfinding", "remaining": MAP_PATH_WAYFINDING_CONDITION}, {"item_id": "clubs", "remaining": MAP_PATH_CLUBS_CONDITION}]
 	band["hunter_attack"] = 2.0
 	band["hunt_carry_per_worker_biomass"] = 2.5
 	band["forage_carry_per_worker_biomass"] = 1.75
@@ -9860,7 +9862,7 @@ func _kit_worn_band_fixture() -> Dictionary:
 	# The list is REPLACED rather than extended, so the expanded roster's three are restated here —
 	# a cohort the server publishes carries one row per item in the config's table, and dropping three
 	# of them would render a band no live world produces.
-	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": KIT_FRAME_SPEARS_CONDITION}, {"item_id": "sled", "remaining": KIT_FRAME_SLED_DRY}, {"item_id": "baskets", "remaining": KIT_FRAME_BASKETS_CONDITION}, {"item_id": "traps", "remaining": KIT_FRAME_SPEARS_CONDITION}, {"item_id": "husbandry_gear", "remaining": BandFx.KIT_CONDITION_HUSBANDRY_GEAR}, {"item_id": "wayfinding", "remaining": BandFx.KIT_CONDITION_WAYFINDING}, {"item_id": "clubs", "remaining": BandFx.KIT_CONDITION_CLUBS}]
+	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": KIT_FRAME_SPEARS_CONDITION}, {"item_id": "sled", "remaining": KIT_FRAME_SLED_DRY}, {"item_id": "baskets", "remaining": KIT_FRAME_BASKETS_CONDITION}, {"item_id": "traps", "remaining": KIT_FRAME_SPEARS_CONDITION}, {"item_id": "hurdles", "remaining": BandFx.KIT_CONDITION_HURDLES}, {"item_id": "hoes", "remaining": BandFx.KIT_CONDITION_HOES}, {"item_id": "wayfinding", "remaining": BandFx.KIT_CONDITION_WAYFINDING}, {"item_id": "clubs", "remaining": BandFx.KIT_CONDITION_CLUBS}]
 	# The band's OWN resolved tiers, i.e. what it gets under the JOB DEFAULT. They are the cohort's
 	# statement and the `Kit` row reads them; the picker does NOT — it resolves the SELECTED kit's
 	# tiers off the roster — so they are set consistently with the conditions above rather than being
@@ -9954,7 +9956,7 @@ func _band_fixture() -> Dictionary:
 		# Three DIFFERENT conditions on the 0-100 scale, so an assertion cannot pass with two
 		# accessors swapped; none dry, so the row's DANGER tint keeps its meaning and the frames that
 		# judge a spent kit stay the ones that state one.
-		"kit_item_conditions": [{"item_id": "spears", "remaining": KIT_SHARED_SPEARS_CONDITION}, {"item_id": "sled", "remaining": KIT_SHARED_SLED_CONDITION}, {"item_id": "baskets", "remaining": KIT_SHARED_BASKETS_CONDITION}, {"item_id": "traps", "remaining": KIT_SHARED_SPEARS_CONDITION}, {"item_id": "husbandry_gear", "remaining": BandFx.KIT_CONDITION_HUSBANDRY_GEAR}, {"item_id": "wayfinding", "remaining": BandFx.KIT_CONDITION_WAYFINDING}, {"item_id": "clubs", "remaining": BandFx.KIT_CONDITION_CLUBS}],
+		"kit_item_conditions": [{"item_id": "spears", "remaining": KIT_SHARED_SPEARS_CONDITION}, {"item_id": "sled", "remaining": KIT_SHARED_SLED_CONDITION}, {"item_id": "baskets", "remaining": KIT_SHARED_BASKETS_CONDITION}, {"item_id": "traps", "remaining": KIT_SHARED_SPEARS_CONDITION}, {"item_id": "hurdles", "remaining": BandFx.KIT_CONDITION_HURDLES}, {"item_id": "hoes", "remaining": BandFx.KIT_CONDITION_HOES}, {"item_id": "wayfinding", "remaining": BandFx.KIT_CONDITION_WAYFINDING}, {"item_id": "clubs", "remaining": BandFx.KIT_CONDITION_CLUBS}],
 		# The RESOLVED tiers the sim publishes beside them. Equipped throughout, matching the
 		# conditions above — `hunter_attack` well clear of `QUARRY_DEFENSE`, so no compose sheet on
 		# this band reads the combat gate's refusal and the frames that judge that refusal stay the
@@ -10523,3 +10525,121 @@ func _builders_band_fixture() -> Dictionary:
 		"target_x": -1, "target_y": -1, "fauna_id": "",
 	})
 	return band
+
+# =====================================================================================
+#  THE BUILDERS CARD OFFERS ITS WEB'S OWN KIT, AND GREYS THE OTHER WEB'S
+# =====================================================================================
+# There are two builders kits — `hurdling` (hurdles, ANIMAL) and `tillage` (hoes, PLANT) — and which
+# one a queue entry gets is DERIVED from that entry's own web (`equipment.md` → "THE BUILDERS' KIT IS
+# DERIVED PER QUEUE ENTRY"). So this picker cannot have one standing answer: it opens on the kit the
+# band's queue HEAD implies, and the kit whose tool serves the other web is GREYED WITH ITS REASON —
+# a hoe is as inapplicable to a `Tame` as a snare is to a Red Deer, and hiding it teaches nothing.
+#
+# **THE PAIR IS THE CLAIM, on ONE band with only the queue head moving.** A rule that greys nothing
+# passes either frame's withheld claim by never reaching it; a rule that greys EVERYTHING passes the
+# withheld half of both. Each state therefore asserts the withheld kit, the SERVING one beside it,
+# and `none` — which carries nothing, so there is no build it can be inapplicable to.
+
+## The two sources the reference band already works, one per web. The head moves by dialling those
+## SOURCES' own `buildQueuePosition`, so the band itself is byte-identical across the pair.
+const BUILDERS_KIT_PATCH := Vector2i(71, 18)
+const BUILDERS_KIT_HERD := "game_deer_07"
+const BUILDERS_KIT_HERD_TILE := Vector2i(70, 17)
+
+func _render_builders_kit_states() -> void:
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"band")
+
+	#   (a) A PLANT build at the head — the Cultivate this band has declared on its own patch.
+	_set_forage_patches([_builders_kit_patch(SourceForecast.BUILD_QUEUE_HEAD)])
+	_set_world_herds([_builders_kit_herd(SourceForecast.NOT_IN_ANY_BUILD_QUEUE)])
+	_push_bands([_builders_band_fixture()])
+	await _settle()
+	await _save("band_panel_builders_kit_plant")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_builders_kit_picker("plant", BandFx.KIT_ID_TILLAGE, BandFx.KIT_ID_HURDLING,
+		KitRoster.BUILD_BRANCH_PLANT)
+
+	#   (b) THE SAME BAND with an ANIMAL build at the head: the patch leaves the queue and the herd
+	# takes it, so nothing but the head's web moves between the two frames.
+	_set_forage_patches([_builders_kit_patch(SourceForecast.NOT_IN_ANY_BUILD_QUEUE)])
+	_set_world_herds([_builders_kit_herd(SourceForecast.BUILD_QUEUE_HEAD)])
+	_push_bands([_builders_band_fixture()])
+	await _settle()
+	await _save("band_panel_builders_kit_animal")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_builders_kit_picker("animal", BandFx.KIT_ID_HURDLING, BandFx.KIT_ID_TILLAGE,
+		KitRoster.BUILD_BRANCH_ANIMAL)
+
+	# Put the roster and the reference band back — `update_band_alerts` diffs against the last roster
+	# pushed, and the states below read whatever this block leaves behind.
+	_set_world_herds(_herd_fixtures())
+	_push_bands([_band_fixture()])
+	await _settle()
+
+## The band's own forage patch at a stated place in the build queue: `0` is the HEAD — the entry the
+## whole pool is actually on — and `-1` is "no band has queued it".
+func _builders_kit_patch(queue_position: int) -> Dictionary:
+	return {
+		"x": BUILDERS_KIT_PATCH.x, "y": BUILDERS_KIT_PATCH.y,
+		"build_queue_position": queue_position,
+	}
+
+## …and its animal twin, the herd this band's hunt row names.
+func _builders_kit_herd(queue_position: int) -> Dictionary:
+	return {
+		"id": BUILDERS_KIT_HERD,
+		"x": BUILDERS_KIT_HERD_TILE.x, "y": BUILDERS_KIT_HERD_TILE.y,
+		"build_queue_position": queue_position,
+	}
+
+## **THE PICKER OPENS ON THE HEAD'S OWN KIT AND GREYS THE OTHER WEB'S, WITH ITS REASON.**
+##
+## Four claims, and no one of them is worth anything alone: the FACE (what the card opens on), the
+## withheld entry (disabled AND carrying its reason on its own label, a disabled popup row being the
+## one control a player cannot reliably hover), the SERVING entry beside it, and `none`.
+func _assert_builders_kit_picker(web: String, serving_id: String, withheld_id: String,
+		branch: String) -> void:
+	var card := _find_role_card(HudWorkVocab.ROLE_NAME_BUILDERS)
+	if card == null:
+		_fail("the Builders card is missing on the %s head" % web)
+		return
+	var picker := _find_meta_control(card, KitRoster.KIT_PICKER_META) as OptionButton
+	if picker == null:
+		_fail("the Builders card has no kit picker on the %s head" % web)
+		return
+	var kits: Array = _hud._band_labor.kits()
+	var face := HudComposeVocab.KIT_PICKER_FACE_FORMAT % [
+		String(HudComposeVocab.KIT_JOB_GLYPHS.get(KitRoster.JOB_BUILDERS,
+			HudComposeVocab.KIT_JOB_GLYPH_FALLBACK)),
+		KitRoster.display_name_for_id(kits, serving_id)]
+	_assert_band_panel(
+		"a build on the %s web at the queue head opens the Builders card on that web's own kit — \"%s\""
+			% [web, picker.text], picker.text == face)
+	var withheld := _builders_picker_entry(picker,
+		KitRoster.display_name_for_id(kits, withheld_id))
+	var reason := HudComposeVocab.KIT_WITHHELD_REASON_BUILD_BRANCH_FORMAT \
+		% KitRoster.build_branch_noun(branch)
+	_assert_band_panel(
+		"…the OTHER web's kit is greyed and says why — \"%s\"" % String(withheld.get("text", "")),
+		bool(withheld.get("disabled", false))
+			and String(withheld.get("text", "")).contains(reason))
+	var serving := _builders_picker_entry(picker,
+		KitRoster.display_name_for_id(kits, serving_id))
+	_assert_band_panel("…while THIS web's own kit stays selectable — \"%s\""
+			% String(serving.get("text", "")), serving.get("disabled", true) == false)
+	var bare := _builders_picker_entry(picker,
+		KitRoster.display_name_for_id(kits, BandFx.KIT_ID_NONE))
+	_assert_band_panel("…and `none` is never withheld, carrying nothing to be inapplicable with",
+		bare.get("disabled", true) == false)
+
+## One popup entry, found by the kit NAME its label leads with — never by index, the roster's order
+## being config. `{}` when the picker does not list it at all, which every claim above then fails on.
+func _builders_picker_entry(picker: OptionButton, kit_name: String) -> Dictionary:
+	var popup := picker.get_popup()
+	for i in range(popup.item_count):
+		if popup.get_item_text(i).begins_with(kit_name):
+			return {"text": popup.get_item_text(i), "disabled": popup.is_item_disabled(i)}
+	return {}

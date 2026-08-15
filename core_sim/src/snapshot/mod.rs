@@ -1630,8 +1630,8 @@ mod tests {
         let state = labor_assignment_to_state(
             &assignment,
             &SourceYield::ZERO,
-            &crate::equipment_config::EquipmentConfig::builtin(),
             NOTHING_QUEUED_HERE.to_string(),
+            assignment.kit_choice(&crate::equipment_config::EquipmentConfig::builtin()),
         );
         assert_eq!(state.floor, UNNAMED_FLOOR, "the floor crosses verbatim");
         // Only the outbound leg is asserted now. `labor_allocation_from_state` was the decoder,
@@ -1661,10 +1661,10 @@ mod tests {
         let state = labor_assignment_to_state(
             &assignment,
             &SourceYield::ZERO,
-            &crate::equipment_config::EquipmentConfig::builtin(),
             crate::components::Improvement::Cultivate
                 .as_str()
                 .to_string(),
+            assignment.kit_choice(&crate::equipment_config::EquipmentConfig::builtin()),
         );
         assert_eq!(state.floor, 0.15, "the pressure rides `floor`");
         assert_eq!(
@@ -1676,8 +1676,8 @@ mod tests {
         let state = labor_assignment_to_state(
             &assignment,
             &SourceYield::ZERO,
-            &crate::equipment_config::EquipmentConfig::builtin(),
             NOTHING_QUEUED_HERE.to_string(),
+            assignment.kit_choice(&crate::equipment_config::EquipmentConfig::builtin()),
         );
         assert_eq!(
             state.floor, 0.15,

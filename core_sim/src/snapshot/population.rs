@@ -14,11 +14,13 @@ pub(crate) fn pending_migration_to_state(migration: &PendingMigration) -> Pendin
 pub(crate) fn labor_assignment_to_state(
     assignment: &LaborAssignment,
     yields: &SourceYield,
-    equipment: &crate::equipment_config::EquipmentConfig,
     // **The RESOLVED job this row's source is being raised on** — see [`resolved_build_job`]. Passed
     // in rather than derived here because the resolution needs both webs' registries, which a row
     // has no business holding.
     build_job: String,
+    // **The kit this row is priced at**, resolved by the caller — `LaborAssignment::kit_choice` for
+    // every ordinary row, and the band's own builders resolution for the `builders` role.
+    resolved_kit: crate::equipment_config::KitChoice,
 ) -> LaborAssignmentState {
     let mut state = LaborAssignmentState {
         kind: assignment.target.kind().to_string(),
@@ -63,7 +65,11 @@ pub(crate) fn labor_assignment_to_state(
         // so the wire states the kit rather than "the player named none". **Every role now names
         // one**, including the two band-wide ones: this used to publish `""` for Scout/Warrior
         // because neither had a kit axis, and the roster giving them one is what changed.
-        kit_id: assignment.kit_choice(equipment).id().to_string(),
+        //
+        // **The builders' resolution is handed in**, because theirs is the one default that is not
+        // a property of the row: it is derived from the head queue entry's web, which a single
+        // assignment cannot see.
+        kit_id: resolved_kit.id().to_string(),
         ..Default::default()
     };
     match &assignment.target {
@@ -593,15 +599,30 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 // number in these units would read as a rate on a field the client renders as one.
                 build_rate: sim_schema::RETIRED_BUILD_RATE,
                 build_work_per_worker: tiers.build_work_per_worker,
+                // **WHICH WEB THAT WORTH IS FOR**, `""` when the kit carries no build tool. The two
+                // are one reading: a hoe takes nothing off a `Tame`, so a sheet that priced a build
+                // off the worth alone would quote a saving the sim will never pay.
+                build_work_branch: tiers
+                    .build_work_branch
+                    .map(|branch| branch.as_str().to_string())
+                    .unwrap_or_default(),
                 // **The gear term's other half** — how many of this band's workers this kit could
                 // actually equip for a build, out of what the band holds. Resolved **beside**
                 // `resolve_kit_tiers` rather than inside it, and deliberately: the tiers describe
                 // *what a kit grants a worker* and are quoted over a fresh ledger by
                 // `kit_roster_states`, where a unit count is not a fact about the kit at all. This
                 // is a fact about **this band's ledger**, so it is answered only here.
-                build_work_saturating_crew: kit_levers
-                    .config
-                    .build_work_saturating_crew(&choice, &kit),
+                //
+                // **At the kit's own branch**, so it caps the worth published beside it; a kit with
+                // no build tool has no branch and saturates nobody.
+                build_work_saturating_crew: tiers
+                    .build_work_branch
+                    .map(|branch| {
+                        kit_levers
+                            .config
+                            .build_work_saturating_crew(&choice, &kit, branch)
+                    })
+                    .unwrap_or(crate::equipment_config::NO_SATURATING_CREW),
             })
         })
         .collect();
@@ -643,8 +664,14 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     labor_assignment_to_state(
                         assignment,
                         a.last_yields.get(i).unwrap_or(&NO_YIELD),
-                        kit_levers.config,
                         resolved_build_job(&assignment.target, a, build_sources),
+                        // **The builders row is the one whose default is not on the row.** Its kit
+                        // is derived from the head queue entry's web, so a card reading this field
+                        // states what the pool is holding this turn rather than a stored `none`.
+                        match assignment.target {
+                            LaborTarget::Builders => a.builders_kit(kit_levers.config),
+                            _ => assignment.kit_choice(kit_levers.config),
+                        },
                     )
                 })
                 .collect()

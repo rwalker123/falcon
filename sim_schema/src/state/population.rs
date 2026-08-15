@@ -367,6 +367,19 @@ pub struct BandKitTiersState {
     /// turn — a different question, and not one a stepper can move. Appended (append-only).
     #[serde(default)]
     pub build_work_saturating_crew: u32,
+    /// **WHICH FOOD WEB [`Self::build_work_per_worker`] IS FOR** — `"plant"` or `"animal"`, and
+    /// **`""`** when this kit carries no build tool at all (in which case the worth beside it is the
+    /// neutral `0`).
+    ///
+    /// **The three build fields are ONE reading, and a consumer that takes the worth without this is
+    /// wrong.** A hoe takes `8.5` off a Cultivate and *nothing* off a `Tame`; hurdles do the reverse.
+    /// A sheet pricing a build must compare this against the branch of the rung the entry names and
+    /// treat a mismatch as `0` — the same discipline `attack_min_body_mass` imposes on `attack`.
+    ///
+    /// **A free-form string** on the `species` / `ecology_phase` convention, so a third web needs no
+    /// schema change. Appended (append-only).
+    #[serde(default)]
+    pub build_work_branch: String,
 }
 
 /// The neutral value of [`BandKitTiersState`]'s three multipliers — `1.0`, never `0`.
@@ -410,6 +423,9 @@ impl Default for BandKitTiersState {
             build_rate: kit_multiplier_neutral(),
             build_work_per_worker: 0.0,
             build_work_saturating_crew: 0,
+            // An empty branch is the honest reading of a kit with no build tool, and the safe one:
+            // naming a web here would price a build off gear the kit does not hold.
+            build_work_branch: String::new(),
         }
     }
 }
@@ -864,7 +880,7 @@ pub struct PopulationCohortState {
     /// **This band's per-KEEPER pen collection rate** (biomass/turn), husbandry gear resolved in —
     /// the term a corralled herd's harvest is capped by. Equipped it is `labor_config.json`'s
     /// `hunt.per_worker_biomass_capacity` (the rate a pen has always collected at); bare it is
-    /// `equipment.json`'s `husbandry_gear` unequipped tier.
+    /// `equipment.json`'s `hurdles` unequipped tier.
     ///
     /// **Not a second reading of [`Self::hunt_carry_per_worker_biomass`]**: a sled drags a carcass in
     /// off the range and a pen stands at the camp, so a band whose Hunt row is on the stalking kit

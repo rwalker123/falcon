@@ -1180,6 +1180,22 @@ const KIT_WITHHELD_REASON_CANNOT_HURT := "nothing it carries can bring down a %s
 ## collected on. Worded for the AXIS rather than for the husbandry kit by name: the rule is that the
 ## source cannot read the stat, and a second kit supplying it tomorrow gets the same sentence.
 const KIT_WITHHELD_REASON_PEN_ONLY := "what it adds is only used on a penned herd"
+## The BUILD-BRANCH rule's reason — this kit's tool serves the other food web, so on the build in
+## front of it the contribution is the neutral zero. `%s` is the web the entry is on, as a noun a
+## player recognises from the ladder rather than as the wire's `plant` / `animal` token.
+##
+## Worded for the ENTRY rather than for the tool by name, the pen rule's discipline one axis over:
+## the fact is that this job cannot read what the kit adds, so `tillage` in front of a `Tame` and
+## whatever ships next both get the same sentence.
+const KIT_WITHHELD_REASON_BUILD_BRANCH_FORMAT := "its tools are no use on %s"
+## The two webs as the picker says them. The wire's tokens are `plant` / `animal`; a player is
+## choosing between a garden and a flock, so the reason line says that instead.
+##
+## **KEYED BY BRANCH IN `KitRoster`, NOT HERE.** A vocabulary leaf must not read a const off a module
+## that reads one off it — `const` initializers evaluate at class load, so that cycle fails to load
+## the whole client — and `KitRoster` already reads this file.
+const KIT_BUILD_BRANCH_PLANT_NOUN := "a crop build"
+const KIT_BUILD_BRANCH_ANIMAL_NOUN := "an animal build"
 
 ## **THE JOB'S DEFAULT IS MARKED, NOT SEPARATED.** The player needs to know which kit the verb takes
 ## when they name none; that is a note on an ordinary entry, and a divider would imply the roster has

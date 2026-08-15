@@ -132,7 +132,7 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
                 LaborAssignment {
                     target: LaborTarget::Builders,
                     workers: BUILD_CREW,
-                    kit: None,
+                    kit: Some(bare_builders()),
                 },
             ],
             // The declaration the source row's `improvement` token is derived from.
@@ -328,4 +328,19 @@ fn a_bare_gathering_row_publishes_an_empty_job_token() {
         (TAKE_CREW, ""),
         "a pure gather states its take crew and an honest empty job"
     );
+}
+
+/// **THE EMPTY KIT, NAMED ON A FIXTURE'S `builders` ROW** — an isolation, not a default.
+///
+/// An absent kit means *derive per entry*, and the roster's answer (`tillage` for a patch,
+/// `hurdling` for a herd) takes `8.5` off the job per covered worker. A start-stocked band holds a
+/// unit per worker and a half, so at the crews these fixtures staff the gear alone pays a whole rung
+/// off and every pacing claim below collapses to *"one turn versus one turn"*. Naming `none` holds
+/// the gear axis at its identity so these arms measure the **crew**, exactly as
+/// `FaunaConfig::without_retreat` holds the retreat at its identity across the hunt suites. The
+/// geared default is pinned in `core_sim/tests/build_turns_closed_form.rs`.
+fn bare_builders() -> core_sim::KitChoice {
+    core_sim::EquipmentConfig::builtin()
+        .kit("none")
+        .expect("the shipped roster carries the empty kit")
 }

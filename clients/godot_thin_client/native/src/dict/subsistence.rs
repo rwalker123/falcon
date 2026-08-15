@@ -532,6 +532,13 @@ pub(crate) fn kits_to_array(kits: Vector<'_, ForwardsUOffset<fb::KitOption<'_>>>
         // crew cancels the job's cost and so saves the same PERCENTAGE of turns on a garden and on a
         // farm; subtracted from the job, the job's own size decides what the tool is worth.
         let _ = dict.insert("build_work_per_worker", kit.buildWorkPerWorker() as f64);
+        // **WHICH FOOD WEB THAT BUILD AXIS IS FOR** — `"plant"` | `"animal"`, and `""` for a kit
+        // carrying no build tool at all. The pair is ONE reading: a hoe takes 8.5 off a Cultivate and
+        // NOTHING off a Tame, so a picker offering builders kits must grey the one whose branch
+        // disagrees with the entry in front of it, exactly as it greys a snare against a Red Deer.
+        // Decoding the worth without the branch is how a single number comes to be believed on both
+        // webs — the same failure `attack_max_body_mass` exists to prevent one axis over.
+        let _ = dict.insert("build_work_branch", kit.buildWorkBranch().unwrap_or(""));
         // What the kit does BESIDES the tiers. `dispersion` multiplies the quarry's own retreat and
         // `exposure` the hunt's injury hazard, both neutral at 1. The two mass bounds say which
         // quarry `attack` above actually applies to — 0 on an end is unbounded — so a picker can
@@ -647,8 +654,9 @@ pub(crate) fn forage_patches_to_array(
         // The plant twin of the herd block's estimate TERM — see there for why it rides beside
         // `build_turns_remaining` rather than replacing it, why the figure is read rather than
         // assumed, and why the gear half is on the kit row instead. Every forage kit's saturating
-        // crew is `0` today (no plant item declares the build stat yet, issue #539), which the closed
-        // form handles as the ungeared case rather than as a missing term.
+        // crew is `0` (a basket is not a build tool); the plant web's build gear rides the
+        // `tillage` kit's row, and a row whose `build_work_branch` disagrees with the entry in front
+        // of the player is the ungeared case rather than a missing term.
         let _ = dict.insert("build_work_per_worker_turn", patch.buildWorkPerWorkerTurn());
         // WHY this ground will not take seed — "" when it will. "too_poor" / "too_dry" /
         // "too_poor_and_too_dry", resolved server-side through the SAME `RungSiteRequirement::refusal`

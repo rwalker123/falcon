@@ -317,6 +317,8 @@ fn create_populations<'a>(
                     .iter()
                     .map(|tiers| {
                         let kit_id = builder.create_string(&tiers.kit_id);
+                        // Which web this kit's build gear serves — `""` for a kit carrying none.
+                        let build_work_branch = builder.create_string(&tiers.build_work_branch);
                         fb::BandKitTiers::create(
                             builder,
                             &fb::BandKitTiersArgs {
@@ -333,6 +335,7 @@ fn create_populations<'a>(
                                 buildRate: tiers.build_rate,
                                 buildWorkPerWorker: tiers.build_work_per_worker,
                                 buildWorkSaturatingCrew: tiers.build_work_saturating_crew,
+                                buildWorkBranch: Some(build_work_branch),
                             },
                         )
                     })

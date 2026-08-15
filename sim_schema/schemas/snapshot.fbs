@@ -1290,6 +1290,14 @@ table BandKitTiers {
   // The source rows publish `buildWorkFromGear`, which is the RESOLVED contribution for the crew
   // that worked the source this turn - a different question, and not one a stepper can move.
   buildWorkSaturatingCrew:uint = 0;
+  // WHICH FOOD WEB `buildWorkPerWorker` IS FOR (appended) - "plant" | "animal", and "" when this kit
+  // carries no build tool at all.
+  //
+  // THE THREE BUILD FIELDS ARE ONE READING. A hoe takes 8.5 off a Cultivate and NOTHING off a Tame;
+  // hurdles do the reverse. A sheet pricing a build must compare this against the branch of the rung
+  // the queue entry names and treat a mismatch as 0 - the same discipline attackMaxBodyMass imposes
+  // on attack, and for the same reason: the number is real, it is simply not real HERE.
+  buildWorkBranch:string;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
@@ -2175,8 +2183,9 @@ table ForagePatchState {
   //
   // PER EQUIPPED WORKER, SUMMED: a worker holding a tool contributes its worth, a worker without one
   // contributes nothing (the partly-equipped-party rule the carries already run on). `0` = no build
-  // in flight, or the crew carries nothing that helps - which is every PLANT build today, since no
-  // plant item declares the stat yet (issue #539).
+  // in flight, or the crew carries nothing that helps - which, since each web got its own builders
+  // kit, means a pool the player deliberately sent out bare or one carrying the OTHER web's tool
+  // (a hoe takes nothing off a Tame, and hurdles take nothing off a Cultivate).
   buildWorkFromGear:float = 0;
   // THE WORK ONE WORKER BANKS ON THIS SOURCE PER TURN, at the food peak, before the floor
   // multiplier and before any gear (appended). Today `PER_WORKER_OUTPUT` (1.0).
@@ -3310,7 +3319,7 @@ table HerdTelemetryState {
   // PER EQUIPPED WORKER, SUMMED: a worker holding a tool contributes its worth, a worker without one
   // contributes nothing (the partly-equipped-party rule the carries already run on). `0` = no build
   // in flight, or the crew carries nothing that helps - which is every PLANT build today, since no
-  // plant item declares the stat yet (issue #539).
+  // WHICH WEB a kit's build gear serves rides `buildWorkBranch` on the kit row beside the worth.
   buildWorkFromGear:float = 0;
   // THE WORK ONE WORKER BANKS ON THIS SOURCE PER TURN, at the food peak, before the floor
   // multiplier and before any gear (appended). Today `PER_WORKER_OUTPUT` (1.0).
@@ -3800,6 +3809,13 @@ table KitOption {
   // The slot above is kept rather than deprecated so a client still compiles against it; a consumer
   // rendering a build axis should read THIS field, and read it as work units rather than a factor.
   buildWorkPerWorker:float = 0;
+  // WHICH FOOD WEB `buildWorkPerWorker` IS FOR (appended) - "plant" | "animal", and "" when this kit
+  // carries no build tool at all.
+  //
+  // THE PAIR IS ONE READING. A hoe speeds a Cultivate and does nothing for a Tame, so a picker must
+  // grey a builders kit whose branch disagrees with the build it is being offered for, exactly as it
+  // greys a snare against a Red Deer.
+  buildWorkBranch:string;
 }
 
 // ==============================================================================================

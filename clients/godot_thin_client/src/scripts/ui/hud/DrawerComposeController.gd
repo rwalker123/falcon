@@ -1027,7 +1027,8 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int) -> Dictionary:
 ## branching keeps this function free of flora knowledge.
 ##
 ## **`workers`, `floor` AND `kit_gear` ARE THE PROPOSAL, not the standing assignment** — the stepper's
-## count, the slider's floor and the gear terms of the kit the picker is OFFERING. Both faces price
+## count, the slider's floor and the gear terms of the kit THIS ENTRY'S BUILDERS would carry (never
+## the sheet's own picker — see `_build_gear_for`). Both faces price
 ## their turn estimate against them through `SourceForecast.build_turns_at`, which is the whole reason
 ## this control is rebuilt by the live-refresh registry at its call sites: the sim's own
 ## `buildTurnsRemaining` answers for the crew already there and cannot move under any of the three.
@@ -1041,6 +1042,25 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int) -> Dictionary:
 ## ⛔ **DO NOT GIVE IT A HYPOTHETICAL CREW SLIDER.** With the pool at zero the sim honestly publishes
 ## *no estimate*, and the tempting repair is a proposed crew to re-price it — which is exactly the
 ## per-source build staffing this slice deletes, re-implied by a control.
+## **THE GEAR TERM OF THIS SHEET'S BUILD, AT THE KIT THE QUEUE ENTRY IMPLIES** — never at the kit the
+## sheet's own picker is showing.
+##
+## The picker above this control chooses what the TAKE crew carries; what speeds a build is what the
+## BUILDERS carry, and those are two different rows. Both sheets used to pass their own selection —
+## so a Cultivate was priced at the Gathering kit's build axis (nothing at all) and a Tame at
+## whichever hunt kit was picked — which is the whole of §1.2's defect.
+##
+## **The kit is derived per ENTRY, and the entry's web is the sheet's own** (`KitRoster.builders_kit_for`
+## → `equipment.md` → "THE BUILDERS' KIT IS DERIVED PER QUEUE ENTRY"): a patch is a plant build and a
+## herd an animal one, so the sheet knows its branch from the job it composes. `build_gear` then zeroes
+## a row whose branch disagrees, exactly as the sim's own `serves_branch` does.
+func _build_gear_for(band: Dictionary, kind: String) -> Dictionary:
+    var branch := KitRoster.build_branch_for_kind(kind)
+    var builders_kit := KitRoster.builders_kit_for(_band_labor.kits(),
+        HudBandLaborState.role_kit_id(band, HudConst.LABOR_KIND_BUILDERS), branch,
+        _band_labor.head_build_branch(band))
+    return KitRoster.build_gear(band, builders_kit, branch)
+
 func _build_improvement_control(kind: String, source: Dictionary, prefix: String, floor: float,
         composed: String, band: Dictionary, workers: int, kit_gear: Dictionary,
         on_toggle: Callable, target: VBoxContainer, build_crew: int = 0,
@@ -2206,7 +2226,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                     _build_improvement_control(SourceForecast.LABOR_KIND_HUNT, herd,
                         HudComposeVocab.BARE_FORECAST_PREFIX, _live_floor(live),
                         composed_improvement, band, crew,
-                        KitRoster.build_gear(band, kit_id),
+                        _build_gear_for(band, SourceForecast.LABOR_KIND_HUNT),
                         on_improvement_toggled, host as VBoxContainer,
                         # **THE ESTIMATE IS QUOTED AT THE ACTING BAND'S OWN `builders` POOL**
                         # (`docs/plan_standing_upkeep.md` §4). It was this sheet's retired BUILDERS
@@ -2214,7 +2234,16 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                         # player staffs that role and never when they touch this sheet. It is the
                         # PICKED band's, not a fold across the source's workers: this is the band the
                         # commit names, so it is the band whose hands would raise the entry.
-                        _band_labor.workers_for_role(band, HudConst.LABOR_KIND_BUILDERS)))
+                        #
+                        # **AND IT IS PENDING-AWARE, like the Builders card beside it.** It read the
+                        # CONFIRMED row, so a player who had just staffed the role read a card saying
+                        # `2` next to a sheet saying *"nobody is on this band's Builders role"* until
+                        # the turn resolved — two surfaces on one screen, and the stale one phrased as
+                        # an accusation. A pending role edit cannot be refused (`assign_labor` clamps
+                        # rather than rejects), so the optimistic read can never suppress a real
+                        # warning.
+                        int(_band_labor.effective_role_workers(
+                            band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))))
         # THE ONE RESOLUTION OF THIS SHEET'S DEAL, spent by the readout below. An unassign quotes
         # none: the control above is not built either, so there would be no rung on the card for the
         # rows to be about.
@@ -2954,10 +2983,12 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
             func(host: Container, live: Dictionary, crew: int) -> void:
                 _build_improvement_control(SourceForecast.LABOR_KIND_FORAGE, tile_info,
                     HudComposeVocab.FORAGE_FORECAST_PREFIX, _live_floor(live), composed_improvement,
-                    band, crew, KitRoster.build_gear(band, forage_kit_id),
+                    band, crew, _build_gear_for(band, SourceForecast.LABOR_KIND_FORAGE),
                     on_improvement_toggled, host as VBoxContainer,
-                    # The plant twin — the ACTING band's own pool; see the hunt sheet's note.
-                    _band_labor.workers_for_role(band, HudConst.LABOR_KIND_BUILDERS), crop_rows))
+                    # The plant twin — the ACTING band's own pool, pending-aware; see the hunt
+                    # sheet's note for both halves.
+                    int(_band_labor.effective_role_workers(
+                        band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0)), crop_rows))
     # **THE PAYOFF FOLLOWS THE SELECTED CROP, AND IT IS RESOLVED EXACTLY ONCE** (issue #419). The
     # readout's payoff row and the crop picker one control up must read ONE seam or they quote
     # different crops — which is the whole defect that issue named, in its second home. `deal_rung` is

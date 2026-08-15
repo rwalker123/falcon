@@ -589,15 +589,32 @@ Four surfaces, and each says it in its own register:
 `cultivation_value_hex` / `field_value_hex` / `husbandry_value_hex` / `corral_value_hex` all match,
 and `BUILD_UNSTARTED_VALUE` is BUILT from it, so the words and the test cannot drift.
 
-**THE DECLARATION AND THE CREW ARE TWO DIFFERENT ROWS NOW, AND BOTH ARE THE CONFIRMED ONES** (§2.5).
-The declaration is the SOURCE's `LaborAssignment.improvement`; the hands are the band's own `builders`
-role row, which names no source at all. So `HudBandLaborState.unstaffed_build_forage` / `_hunt` walk
-`labor_assignments` for the declaration and `workers_for_role(band, "builders")` for the pool — both
-off the CONFIRMED list rather than the pending-aware `effective_worker_map`, because that overlay
-carries a declaration and not a role edit, so a pending-aware read would fire this warning at the
-player for the turn after they staffed the role. Silence for one snapshot is the honest degrade. It
-composes safely with the pending-aware `building_rung` beside it on the tile card — a fresh commit has
-no confirmed declaration yet, so this reader answers nothing.
+**THE DECLARATION AND THE CREW ARE TWO DIFFERENT ROWS NOW, AND ONLY ONE OF THEM CAN BE READ
+OPTIMISTICALLY** (§2.5). The declaration is the SOURCE's `LaborAssignment.improvement`; the hands are
+the band's own `builders` role row, which names no source at all. So
+`HudBandLaborState.unstaffed_build_forage` / `_hunt` walk `labor_assignments` for the CONFIRMED
+declaration and read the pool through **`effective_role_workers(band, "builders")`**, which is
+pending-aware.
+
+**THE CREW HALF WAS CONFIRMED FOR A RELEASE, AND THE REASON WRITTEN HERE FOR IT WAS WRONG.** It said
+the pending overlay "carries a declaration and not a role edit" — true of `effective_worker_map`, the
+per-SOURCE map, and FALSE of `effective_role_workers`, the ROLE reader, which has always existed and
+answers exactly this question off `pending_assigns_for`. What the confirmed read actually bought was
+the defect: a player who had just staffed the role read a Builders card saying `2` beside a compose
+sheet saying *"⚠ Not started — nobody is on this band's Builders role"* until the turn resolved — two
+surfaces on one screen, and the stale one phrased as an accusation. **A pending role edit cannot be
+refused** (`assign_labor` clamps the count rather than rejecting it), so the optimistic read can only
+ever silence a warning that was about to stop being true.
+
+**The DECLARATION stays confirmed**, and that is not the same compromise: there is no pending overlay
+for it to read, and it composes safely with the pending-aware `building_rung` beside it on the tile
+card — a fresh commit has no confirmed declaration yet, so this reader answers nothing.
+
+**`build_crew_forage` / `build_crew_hunt` beside it stay CONFIRMED, deliberately.** They do not decide
+whether to warn; they choose the WORDING of a verdict the wire already computed (`BUILD_METER_HOLDS`
+is a crew treading water or a build parked on purpose), and that verdict was resolved against the
+confirmed crew. Reading an optimistic crew there would classify last turn's number with next turn's
+hands.
 
 **THE POOL IS FOLDED OVER THE BANDS THAT WORK THE SOURCE, NEVER OVER EVERY BAND.**
 `HudBandLaborState.build_crew_forage` / `build_crew_hunt` sum `workers_for_role(band, "builders")`

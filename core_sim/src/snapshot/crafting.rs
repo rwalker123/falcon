@@ -982,11 +982,9 @@ mod tests {
     /// **THE BUILD QUANTUM IS THE ONE WHOSE UNIT IS NOT ITS NOUN**, and this pins the divisor that
     /// turns one into the other — `quantum_units_per_noun`'s only non-identity arm.
     ///
-    /// **It is unreachable from the shipped roster today**, which is exactly why it is pinned here
-    /// rather than left to a wire test: `husbandry_gear` is the only item that wears on a build and
-    /// it declares `biomass_collected` first, so no published `equipmentBatches` row currently
-    /// divides by anything. The arm goes live the day an item **leads** with `build_progress` (issue
-    /// #539's hoe), and an untested conversion would quote that item's whole life in bare work units.
+    /// **`hoes` are the item that made it reachable** — they wear on `build_progress` and on nothing
+    /// else, so theirs is the first published `equipmentBatches` row that divides by anything. The
+    /// hurdles beside them declare `biomass_collected` first and still quote the slaughter.
     #[test]
     fn the_build_quanta_are_quoted_against_the_ladders_reference_job() {
         let reference = crate::intensification::LadderConfig::builtin().reference_build_cost();
@@ -1016,23 +1014,32 @@ mod tests {
         }
     }
 
-    /// **THE SHIPPED HANDLING GEAR HEADLINES THE SLAUGHTER, NOT THE BUILD** — `wear[0]` is the
-    /// entry a life gauge quotes (`ItemDefinition::headline_wear`), and the order is the model.
+    /// **THE HURDLES HEADLINE THE SLAUGHTER, NOT THE BUILD** — `wear[0]` is the entry a life gauge
+    /// quotes (`ItemDefinition::headline_wear`), and the order is the model.
     ///
     /// Pinned because it is a **readout** decision a config reorder would silently make: the gauge
     /// would flip from *"≈2500 biomass butchered"* to *"≈12 gardens' worth"*, quoting a keeper's kit
     /// in the plant web's reference job. `docs/plan_unit_costed_work.md` §6.3 assumed this item
-    /// already led with the build; it never has.
+    /// already led with the build; it never has. **The hoes beside it are the item that does**, and
+    /// the second arm pins that too — the two orderings are one decision seen from both sides.
     #[test]
     fn the_handling_gears_life_gauge_reads_in_butchered_biomass() {
         let equipment = EquipmentConfig::builtin();
         let gear = equipment
-            .item("husbandry_gear")
-            .expect("the shipped roster carries the handling gear");
+            .item("hurdles")
+            .expect("the shipped roster carries the hurdles");
+        let hoes = equipment
+            .item("hoes")
+            .expect("the shipped roster carries the hoes");
+        assert_eq!(
+            hoes.headline_wear().per,
+            WearQuantum::BuildProgress,
+            "a hoe does one job, so its gauge reads in gardens' worth"
+        );
         assert_eq!(
             gear.headline_wear().per,
             WearQuantum::BiomassCollected,
-            "the handling gear's gauge reads in butchered biomass"
+            "the hurdles' gauge reads in butchered biomass"
         );
         assert!(
             gear.wears_on(WearQuantum::BuildProgress),

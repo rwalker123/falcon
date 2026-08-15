@@ -393,6 +393,121 @@ fn published_patch_field<T>(
 }
 
 /// **The patch row's `buildTurnsRemaining`, off the encoded buffer.**
+/// ⛔ **A HOE SPEEDS A CULTIVATE AND HURDLES DO NOTHING FOR ONE — and the pool picks the tool off
+/// the ENTRY, not off a stored id.**
+///
+/// Four arms on one fixture, read off the encoded patch row's `buildWorkFromGear`, which is the
+/// number the sim actually struck the bar with:
+///
+/// | the `builders` row says | the pool works with | why |
+/// |---|---|---|
+/// | nothing | `tillage` | an absent kit means *derive per entry*, and the head is a patch |
+/// | `tillage` | `tillage` | an explicit choice wins, and here it agrees |
+/// | `hurdling` | `hurdling`, worth **nothing** | hurdles are animal-handling gear; `build_work` names its web |
+/// | `none` | nothing | going bare is a real selection, and it must not fall back to the derivation |
+///
+/// **The first arm is the liveness half and it is not optional**: a branch filter that zeroed
+/// *everything* would pass arms three and four on its own, and a derivation that ignored the entry
+/// would pass arm two. Every arm is compared against the *same* fixture, so the only thing that
+/// differs between them is the kit.
+#[test]
+fn a_plant_build_is_geared_by_the_hoe_and_by_nothing_else() {
+    /// The pool raising the Cultivate. More than one, so a per-worker sum is visible as a sum.
+    const BUILDERS: u32 = 2;
+
+    let published = |kit_id: Option<&str>| -> f32 {
+        let (mut app, source) = world_with_a_patch(BUILDERS, HALF_BUILT);
+        if let Some(kit_id) = kit_id {
+            let kit = core_sim::EquipmentConfig::builtin()
+                .kit(kit_id)
+                .unwrap_or_else(|| panic!("the shipped roster carries '{kit_id}'"));
+            // **The FIXTURE band, found by its builders row** — the start profile's own band is in
+            // this world too, and re-kitting that one would leave the measurement untouched.
+            let mut query = app.world.query::<&mut LaborAllocation>();
+            let mut found = false;
+            for mut allocation in query.iter_mut(&mut app.world) {
+                if let Some(row) = allocation
+                    .assignments
+                    .iter_mut()
+                    .find(|assignment| assignment.target == LaborTarget::Builders)
+                {
+                    row.kit = Some(kit.clone());
+                    found = true;
+                }
+            }
+            assert!(found, "the fixture band carries a builders row");
+        }
+        core_sim::run_turn(&mut app);
+        recapture_snapshot_in_place(&mut app.world);
+        published_patch_field(&app, source, |patch| patch.buildWorkFromGear())
+    };
+
+    let derived = published(None);
+    assert!(
+        derived > core_sim::NO_BUILD_GEAR,
+        "**LIVENESS**: an unnamed builders row derives the plant web's own kit, so a Cultivate is \
+         geared — got {derived}"
+    );
+    assert_eq!(
+        published(Some("tillage")),
+        derived,
+        "naming the kit the derivation would have picked changes nothing"
+    );
+    assert_eq!(
+        published(Some("hurdling")),
+        core_sim::NO_BUILD_GEAR,
+        "hurdles are animal-handling gear and take NOTHING off a Cultivate — the branch qualifier's \
+         whole job"
+    );
+    assert_eq!(
+        published(Some("none")),
+        core_sim::NO_BUILD_GEAR,
+        "going out bare is a real selection and must not fall back to the derived kit"
+    );
+}
+
+/// **WHAT THE POOL'S DERIVED KIT TAKES OFF A PLANT BUILD AT `builders` HANDS** — the client's own
+/// gear term, `min(crew, buildWorkSaturatingCrew) × buildWorkPerWorker`, off the band's `tillage`
+/// row. `build_turns_closed_form.rs` is where that form is pinned against the sim; here it is only
+/// the number this arm's quote has to net.
+fn published_tillage_gear(app: &App, builders: u32) -> f32 {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let populations = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the band list");
+    let row = populations
+        .iter()
+        .find_map(|population| {
+            population.kitTiers()?.iter().find(|kit| {
+                kit.kitId().is_some_and(|id| id == TILLAGE_KIT)
+                    && kit.buildWorkPerWorker() > core_sim::NO_BUILD_GEAR
+            })
+        })
+        .expect("some band publishes a live tillage tier row");
+    assert_eq!(
+        row.buildWorkBranch(),
+        Some("plant"),
+        "the tillage kit's build gear must publish the web it serves"
+    );
+    builders.min(row.buildWorkSaturatingCrew()) as f32 * row.buildWorkPerWorker()
+}
+
+/// The plant web's builders kit — hoes.
+const TILLAGE_KIT: &str = "tillage";
+
 fn published_build_turns(app: &App, source: UVec2) -> i32 {
     published_patch_field(app, source, |patch| patch.buildTurnsRemaining())
 }
@@ -756,10 +871,20 @@ fn an_unstarted_patch_publishes_the_quoted_rungs_upkeep_where_the_billed_one_is_
     // and therefore nothing to rot. The quote used to read `-3` here — *"the meter never reaches its
     // cost"* — about a build that finishes perfectly well.
     let cost = published_patch_field(&app, source, |patch| patch.cultivationWorkCost());
+    // **LESS WHAT THE POOL'S TOOLS TAKE OFF IT.** The builders row names no kit, so the pool derives
+    // one per queue entry and the roster answers `tillage` for a patch — the hoes are the plant web's
+    // build tool. Read off the band's own kit row rather than stated as a literal, so retuning the
+    // tool moves the fixture with the game.
+    let gear = published_tillage_gear(&app, A_CREW_UNDER_THE_RATE);
+    assert!(
+        gear > core_sim::NO_BUILD_GEAR,
+        "fixture: the derived builders kit must take real work off a plant build, or this arm is \
+         the un-geared quote wearing a gear term's clothes (gear {gear})"
+    );
     assert_eq!(
         published_build_turns(&app, source),
-        (cost / core_sim::PER_WORKER_OUTPUT).ceil() as i32,
-        "one builder is quoted `work_cost / crew` turns — the rate is the keeping's bill"
+        ((cost - gear) / core_sim::PER_WORKER_OUTPUT).ceil() as i32,
+        "one builder is quoted `(work_cost − gear) / crew` turns — the rate is the keeping's bill"
     );
     assert_eq!(
         published_patch_field(&app, source, |patch| patch.meterRotPerTurn()),

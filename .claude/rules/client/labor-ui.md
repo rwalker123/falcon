@@ -2199,13 +2199,63 @@ the handling gear's condition and the SLED's.
   kits"). `role_gear` reads the same row, so the WARRIOR card reads the band's sim-resolved `attack`
   under the warrior kit — clubs, not spears — and the SCOUT card its sim-resolved vantage under the
   wayfinding kit, 1 tile once that gear is spent rather than the roster's fresh 2.
-- **`husbandry_gear` / `wayfinding` / `clubs` also joined `DetailFormat.KIT_ITEM_LABELS`**, so the
+- **`hurdles` / `hoes` / `wayfinding` / `clubs` also joined `DetailFormat.KIT_ITEM_LABELS`**, so the
   band's `Gear` summary row names them instead of falling through to the raw wire ids — and each has a
   row in the kit BREAKDOWN too, that popover pairing an item with the resolved tier it sets and the
   cohort publishing all three (`band-readouts.md` → "The other three tiers, and the kit each is quoted
   at"). **The popover's rows and the picker's hint answer different questions off different fields**:
   the popover states this band's tier at each JOB'S DEFAULT kit (the cohort's flat fields), the hint
   states what the kit under the cursor would grant (that kit's `kitTiers` row).
+
+### A BUILD IS PRICED AT THE **BUILDERS'** KIT, WHICH IS NOT THE ONE UNDER THE CREW STEPPER
+
+Reported from play: the Builders card offered the **Husbandry kit** to raise a Cultivate. The roster
+now carries **two builders kits, one per web** — `hurdling` (hurdles, `animal`) and `tillage` (hoes,
+`plant`) — `husbandry` has given up the `builders` job entirely, and which kit a queue entry gets is
+DERIVED from that entry's own branch (`equipment.md` → "THE BUILDERS' KIT IS DERIVED PER QUEUE
+ENTRY"). Three client consequences, and the first is a defect the sheets shipped:
+
+- **BOTH COMPOSE SHEETS PRICED THE BUILD AT THEIR OWN PICKER'S KIT** —
+  `KitRoster.build_gear(band, kit_id)` with the hunt sheet's selection, and with the GATHERING kit on
+  the forage sheet, which declares no build axis at all. The picker under the crew stepper chooses
+  what the TAKE crew carries; what speeds a build is what the BUILDERS carry, and those are two
+  different rows. `DrawerComposeController._build_gear_for(band, kind)` is the one seam now:
+  `KitRoster.builders_kit_for` resolves the entry's kit and `build_gear` is asked for the entry's
+  BRANCH, so a row serving the other web contributes the neutral `0.0` exactly as the sim's
+  `serves_branch` does.
+- **THE ENTRY'S BRANCH IS THE SHEET'S OWN WEB** (`KitRoster.build_branch_for_kind`) — a patch is a
+  plant build and a herd an animal one, the same fact `systems::labor` stamps a queue entry with — so
+  no new wire field was needed to know which web a sheet is composing for.
+- **`kit_offer` GREYS A BUILDERS KIT WHOSE TOOL SERVES THE OTHER WEB**, with its reason, and that is
+  the same rule as the snare against a Red Deer asked one job over: it takes a `build_branch`
+  parameter rather than a quarry, because the builders stand on no source. Greyed rather than hidden —
+  a player should learn that a hoe is not for stock — and `none` is never withheld, carrying nothing
+  to be inapplicable with.
+
+> #### THE ROW PUBLISHES THE **RESOLVED** KIT, AND ONE CASE IS THEREFORE UNRESOLVABLE HERE
+>
+> `LaborAssignment.kitId` on the `builders` row is the sim's answer *after* the derivation — a kit
+> named on the row, else the roster's answer for the queue HEAD's web — so the client cannot see
+> whether it was NAMED. `KitRoster.builders_kit_for` recovers every case but one, and the recovery
+> is what preserves sending the pool out bare:
+>
+> | the row publishes | the head's web | this entry gets |
+> |---|---|---|
+> | a kit serving THIS entry's web | any | that kit |
+> | a kit serving NEITHER this entry's web NOR the head's | a web with a kit | that kit — it can only be a **pin** |
+> | `none`, with a head queued | a web with a kit | `none` — a **deliberate** bare-handed pool |
+> | `none`, with the queue EMPTY | — | the roster's kit for this web (the FIRST build a player declares) |
+> | a kit serving the HEAD's web but not this entry's | a web with a kit | the roster's kit for this web ⚠ |
+>
+> **The last row is the one that can be wrong**, and only for a player who pinned the kit the head
+> would have derived anyway: the sheet quotes `tillage` on a plant entry where the sim will keep the
+> pin and take nothing off it. Closing it is SERVER-side — the stored id, or a "was it named" flag,
+> beside the resolved one.
+>
+> **The empty-queue row is why the derivation cannot simply be skipped.** Until the player commits
+> there is no queue, so the row publishes `default_kits.builders` (`none`), and a sheet reading that
+> literally quotes the very first Cultivate in a game as bare-handed — then jumps the moment the
+> decision has already been taken.
 
 ### THE SHEET OPENS ON THE KIT **THIS QUARRY** WANTS (`equipment.md` → "Which kit a QUARRY wants is DERIVED")
 
@@ -3775,7 +3825,7 @@ states: the work is already banked, or the crew's gear covers the job outright
 zero). Both finish on the first worked turn (`docs/plan_unit_costed_work.md` §6.2), which is an
 ANSWER — and the two constants must not be conflated, because withholding the line broke this arc's
 own headline claim at exactly the crew that demonstrates it: **it is reachable on shipped config**, a
-start-stocked band's 26 `husbandry_gear` units at 8.5 apiece covering a 50-unit Tame at six keepers,
+start-stocked band's 26 `hurdles` at 8.5 apiece covering a 50-unit Tame at six keepers,
 so the estimate fell 25 → 13 → 4 → 2 → *nothing* as hands were added, beside a tile card correctly
 reading `≈1 turn at this crew`.
 

@@ -701,7 +701,7 @@ fn spawn_resident_crew(
                     LaborAssignment {
                         target: LaborTarget::Builders,
                         workers,
-                        kit: None,
+                        kit: Some(bare_builders()),
                     },
                 ],
                 build_queue: improvement
@@ -2394,3 +2394,15 @@ fn the_exported_crew_pays_for_the_retreat() {
 /// A wary, light-bodied quarry — the reach term binds (so the exported crew *is* the engagement
 /// count) and the shipped `wariness 0.65` is high enough that the retreat moves it by a lot.
 const WARY_SPECIES: &str = SMALL_BODIED_SPECIES;
+
+/// **THE EMPTY KIT, NAMED ON A FIXTURE'S `builders` ROW** — an isolation, not a default.
+///
+/// An absent kit means *derive per entry*, and the roster's answer (`tillage` for a patch,
+/// `hurdling` for a herd) takes `8.5` off the job per covered worker. Naming `none` holds the gear
+/// axis at its identity so these arms measure what they say they measure; the geared default is
+/// pinned in `core_sim/tests/build_turns_closed_form.rs`.
+fn bare_builders() -> core_sim::KitChoice {
+    core_sim::EquipmentConfig::builtin()
+        .kit("none")
+        .expect("the shipped roster carries the empty kit")
+}

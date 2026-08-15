@@ -258,8 +258,8 @@ pub struct ForagePatch {
     /// price that does not move under it.
     ///
     /// [`crate::intensification::NO_BUILD_GEAR`] when no build is in flight or the crew carries
-    /// nothing that helps — which is **every plant build today**, since no plant item declares
-    /// `EquipmentStat::BuildWork` yet (issue #539). Transient per-turn scratch on
+    /// nothing that helps — a pool sent out bare, or one carrying the animal web's `hurdles`, whose
+    /// `build_work` names the branch it serves. Transient per-turn scratch on
     /// [`Self::build_turns_remaining`]'s cycle, and for its reason: the kit is re-read every turn, so
     /// no state may record *"this build was geared"*.
     pub build_work_from_gear: f32,

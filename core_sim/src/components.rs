@@ -2981,6 +2981,53 @@ impl LaborAllocation {
             .unwrap_or_else(|| config.default_kit(target.kit_job()))
     }
 
+    /// **The kit the player NAMED on a singleton role, or `None` for "whatever the job wants"** —
+    /// [`Self::kit_on`]'s other half, and the distinction the builders' per-entry derivation turns
+    /// on (`docs/plan_standing_upkeep.md` §2.5).
+    ///
+    /// `kit_on` collapses *"the player chose `none`"* and *"the player chose nothing"* into one
+    /// answer, which is right for every role whose default is a single id. The builders' default is
+    /// **per queue entry** — a hoe for a Cultivate, hurdles for a `Tame` — so the pool needs to know
+    /// whether the row carries a real selection to override that derivation with. An absent choice
+    /// already means *"the job's default"* everywhere else; this is what lets that default vary.
+    ///
+    /// **`none` is a real selection and answers `Some`**, which is what preserves deliberately
+    /// sending the builders out bare-handed to conserve gear.
+    pub fn named_kit_on(&self, target: &LaborTarget) -> Option<crate::equipment_config::KitChoice> {
+        self.assignments
+            .iter()
+            .find(|a| a.target.same_source(target))
+            .and_then(|a| a.kit.clone())
+    }
+
+    /// **THE WEB THE BAND'S BUILDERS ARE ACTUALLY WORKING ON** — the head entry's, since the whole
+    /// pool goes on the head. `None` when the queue is empty, which is *"nothing is being raised"*
+    /// rather than a web.
+    pub fn head_build_branch(&self) -> Option<crate::intensification::RungBranch> {
+        self.build_queue.first().map(|entry| match entry.source {
+            BuildSource::Patch(_) => crate::intensification::RungBranch::Plant,
+            BuildSource::Herd(_) => crate::intensification::RungBranch::Animal,
+        })
+    }
+
+    /// **The kit this band's builders are working with**, resolved through the one seam
+    /// ([`crate::equipment_config::EquipmentConfig::builders_kit_for`]) — the row's own choice, else
+    /// the kit the roster says the **head entry's** web wants, else the job default.
+    ///
+    /// **The wire states this rather than the row's stored id**, on `kit_id`'s existing rule (*"the
+    /// wire states the kit rather than 'the player named none'"*): the builders' default is per
+    /// entry, so a row that named nothing would otherwise publish `none` while the pool was out with
+    /// hurdles.
+    pub fn builders_kit(
+        &self,
+        config: &crate::equipment_config::EquipmentConfig,
+    ) -> crate::equipment_config::KitChoice {
+        config.builders_kit_for(
+            self.named_kit_on(&LaborTarget::Builders).as_ref(),
+            self.head_build_branch(),
+        )
+    }
+
     /// Keep the derived `last_yields` the same length as `assignments` — the snapshot **zips the two
     /// by index**, so a mutation that adds/removes an assignment without touching the telemetry would
     /// hand one source's yield row to another. Padding with [`SourceYield::ZERO`] is the correct

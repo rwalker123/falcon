@@ -1013,8 +1013,8 @@ pub(crate) fn snapshot_forage_patches(
                 build_turns_remaining: patch
                     .build_turns_remaining
                     .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),
-                // The plant twin — `NO_BUILD_GEAR` on every plant build today, since no plant item
-                // declares `EquipmentStat::BuildWork` yet (issue #539).
+                // The plant twin — the hoes' contribution, or `NO_BUILD_GEAR` for a pool sent
+                // out bare or carrying the animal web's hurdles.
                 build_work_from_gear: patch.build_work_from_gear,
                 // The plant twin — see the herd row.
                 build_queue_position: patch.build_queue_position,

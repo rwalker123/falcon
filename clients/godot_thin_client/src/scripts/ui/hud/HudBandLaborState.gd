@@ -793,6 +793,53 @@ func workers_for_role(band: Dictionary, kind: String) -> int:
 			return int((entry as Dictionary).get("workers", 0))
 	return 0
 
+## **THE KIT THE SIM HAS THIS ROLE RESOLVED TO** — the band's own row's `LaborAssignment.kitId`,
+## `KitRoster.NO_KIT_ID` when the role is unstaffed (no row at all).
+##
+## **ON THE `builders` ROW IT IS THE DERIVED ANSWER, NOT A STORED ONE** (`equipment.md` → "THE WIRE
+## STATES THE DERIVED KIT"). The sim resolves that row per queue entry at capture — a kit named on the
+## row wins, else the roster answers for the HEAD entry's web — so a card reading this field states
+## what the pool is holding this turn. Every other role publishes the row's own kit, resolved to its
+## job default when the player named none.
+##
+## `static` because it reads the band dict and nothing else: the role CARD and the two compose sheets
+## both need it, and a second private copy is how one of them comes to read `kit_id` off the wrong
+## row.
+static func role_kit_id(band: Dictionary, kind: String) -> String:
+	for entry in labor_assignments_of(band):
+		if entry is Dictionary and String((entry as Dictionary).get("kind", "")).to_lower() == kind:
+			return String((entry as Dictionary).get("kit_id", KitRoster.NO_KIT_ID))
+	return KitRoster.NO_KIT_ID
+
+## **WHICH WEB THIS BAND'S BUILDERS ARE ACTUALLY OUT ON** — the branch of the entry at the HEAD of its
+## build queue, `KitRoster.BUILD_BRANCH_NONE` when it has nothing queued.
+##
+## The whole pool goes on the head entry until its meter fills, so the head is the one entry whose
+## gear is being spent — which is what the Builders card's picker is choosing for, and therefore what
+## its greying is asked about (`KitRoster.kit_offer`'s third rule).
+##
+## **THE HEAD IS READ OFF THE SOURCE, not off the row.** `buildQueuePosition` is published per source
+## and `0` is the head, so the branch falls out of which WEB that source is on — a patch is plant, a
+## herd animal, the same fact `systems::labor` stamps an entry with. It is the acting band's own rows
+## that are walked, so the answer is about this band's queue and no other's; the position itself rides
+## the winning band's queue, the same reading `_build_improvement_control` already takes off
+## `SourceForecast.build_is_queue_head`.
+func head_build_branch(band: Dictionary) -> String:
+	for entry in labor_assignments_of(band):
+		if not (entry is Dictionary):
+			continue
+		var assignment: Dictionary = entry
+		var kind := String(assignment.get("kind", "")).to_lower()
+		var branch := KitRoster.build_branch_for_kind(kind)
+		if branch == KitRoster.BUILD_BRANCH_NONE:
+			continue
+		var source := _upkeep_source_for(assignment, kind)
+		if source.is_empty():
+			continue
+		if SourceForecast.build_is_queue_head(source, HudComposeVocab.BARE_FORECAST_PREFIX):
+			return branch
+	return KitRoster.BUILD_BRANCH_NONE
+
 ## Coerce a wire `arrival_schedule` to a PackedFloat32Array. The native decoder already hands over a
 ## packed array; a fixture (or an absent field) may hand over a plain Array or null.
 static func as_schedule(value: Variant) -> PackedFloat32Array:
@@ -992,6 +1039,15 @@ func build_crew_hunt(herd_id: String, bands: Array = []) -> int:
 
 ## `works_source` says whether this band holds the source at all — the same restriction
 ## `build_crew_*` applies, asked as a predicate so one band's pool is visited once.
+##
+## **THE POOL IS READ PENDING-AWARE, and the DECLARATION is not.** They are two different rows and
+## only one of them can be edited optimistically here: the crew is the band's own `builders` role,
+## which the role card stages through `pending_assigns_for`, while the declaration is the SOURCE's
+## `LaborAssignment.improvement` and has no pending overlay to read. Reading the confirmed crew is
+## what made this warning fire at a player for the turn AFTER they staffed the role — the accusation
+## beside a Builders card already reading `2`. **A pending role edit cannot be refused**
+## (`assign_labor` clamps the count rather than rejecting it), so the optimistic read can only ever
+## silence a warning that was about to stop being true anyway.
 func _unstaffed_build(bands: Array, declared_of: Callable, works_source: Callable) -> String:
 	var declared := SourceForecast.IMPROVEMENT_NONE
 	var builders := 0
@@ -1003,7 +1059,8 @@ func _unstaffed_build(bands: Array, declared_of: Callable, works_source: Callabl
 			continue
 		if declared == SourceForecast.IMPROVEMENT_NONE:
 			declared = String(declared_of.call(band))
-		builders += workers_for_role(band, HudConst.LABOR_KIND_BUILDERS)
+		builders += int(effective_role_workers(
+			band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))
 	if builders > SourceForecast.BUILD_CREW_NONE:
 		return SourceForecast.IMPROVEMENT_NONE
 	return declared

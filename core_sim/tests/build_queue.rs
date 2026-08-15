@@ -188,7 +188,7 @@ fn world_with_a_queue_knowing(
     assignments.push(LaborAssignment {
         target: LaborTarget::Builders,
         workers: builders,
-        kit: None,
+        kit: Some(bare_builders()),
     });
     if keepers > 0 {
         assignments.push(LaborAssignment {
@@ -805,7 +805,7 @@ fn world_with_a_half_tamed_herd(keepers: u32, floor: f32) -> (App, Entity, Strin
         LaborAssignment {
             target: LaborTarget::Builders,
             workers: BUILDERS,
-            kit: None,
+            kit: Some(bare_builders()),
         },
     ];
     if keepers > 0 {
@@ -1347,4 +1347,19 @@ fn every_build_job_and_source_kind_is_stated() {
     ] {
         assert_eq!(BuildSource::of(&role), None, "{role:?} works no source");
     }
+}
+
+/// **THE EMPTY KIT, NAMED ON A FIXTURE'S `builders` ROW** — an isolation, not a default.
+///
+/// An absent kit means *derive per entry*, and the roster's answer (`tillage` for a patch,
+/// `hurdling` for a herd) takes `8.5` off the job per covered worker. A start-stocked band holds a
+/// unit per worker and a half, so at the crews these fixtures staff the gear alone pays a whole rung
+/// off and every pacing claim below collapses to *"one turn versus one turn"*. Naming `none` holds
+/// the gear axis at its identity so these arms measure the **crew**, exactly as
+/// `FaunaConfig::without_retreat` holds the retreat at its identity across the hunt suites. The
+/// geared default is pinned in `core_sim/tests/build_turns_closed_form.rs`.
+fn bare_builders() -> core_sim::KitChoice {
+    core_sim::EquipmentConfig::builtin()
+        .kit("none")
+        .expect("the shipped roster carries the empty kit")
 }

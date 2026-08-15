@@ -363,6 +363,15 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 "build_work_saturating_crew",
                 row.buildWorkSaturatingCrew() as i64,
             );
+            // …and **WHICH WEB THE TWO ABOVE ARE FOR**, at this band's live wear: `"plant"` |
+            // `"animal"`, `""` for a kit holding no live build tool. The three fields are one
+            // reading — a kit's worth off a build is real and simply not real HERE when the branch
+            // disagrees — which is what lets a picker grey `tillage` in front of a `Tame` and what
+            // stops a compose sheet quoting the hurdles' 8.5 against a Cultivate.
+            let _ = entry.insert(
+                "build_work_branch",
+                row.buildWorkBranch().unwrap_or_default(),
+            );
             kit_tiers.push(&entry.to_variant());
         }
     }

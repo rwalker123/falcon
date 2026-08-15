@@ -581,7 +581,8 @@ pub struct HerdTelemetryState {
     ///
     /// **Per equipped worker, summed**: a worker holding a tool contributes its worth, a worker
     /// without one contributes nothing. `0` = no build in flight, or the crew carries nothing that
-    /// helps — which is every **plant** build today (issue #539). Appended (append-only).
+    /// helps — which, since each web got its own builders kit, means a pool sent out bare or one
+    /// carrying the **other** web's tool. Appended (append-only).
     #[serde(default)]
     pub build_work_from_gear: f32,
     /// **The work ONE worker banks on this source per turn at the food peak**, before the floor
@@ -1050,7 +1051,8 @@ pub struct ForagePatchState {
     ///
     /// **Per equipped worker, summed**: a worker holding a tool contributes its worth, a worker
     /// without one contributes nothing. `0` = no build in flight, or the crew carries nothing that
-    /// helps — which is every **plant** build today (issue #539). Appended (append-only).
+    /// helps — which, since each web got its own builders kit, means a pool sent out bare or one
+    /// carrying the **other** web's tool. Appended (append-only).
     #[serde(default)]
     pub build_work_from_gear: f32,
     /// **The work ONE worker banks on this source per turn at the food peak**, before the floor
@@ -1462,6 +1464,18 @@ pub struct KitOptionState {
     /// workers**, never averaged over the crew.
     #[serde(default)]
     pub build_work_per_worker: f32,
+    /// **WHICH FOOD WEB [`Self::build_work_per_worker`] IS FOR** — `"plant"` or `"animal"`, and
+    /// **`""`** when this kit carries no build tool at all.
+    ///
+    /// **The pair is one reading.** A hoe takes work off a Cultivate and *nothing* off a `Tame`, so
+    /// a picker must compare this against the branch of the build it is offering the kit for and
+    /// grey the kit where they disagree — the same discipline
+    /// [`Self::attack_max_body_mass`] imposes on [`Self::attack`], and for the same reason: the
+    /// number is real, it is simply not real *here*.
+    ///
+    /// A free-form string on the `species` / `ecology_phase` convention. Appended (append-only).
+    #[serde(default)]
+    pub build_work_branch: String,
 }
 
 /// **Hand-written rather than derived, for the same reason [`HerdTelemetryState`]'s is**: three of
@@ -1492,6 +1506,9 @@ impl Default for KitOptionState {
             item_ids: Vec::new(),
             build_rate: multiplier_neutral(),
             build_work_per_worker: 0.0,
+            // Empty is the honest reading of a kit with no build tool — naming a web by omission
+            // would price a build off gear the kit does not hold.
+            build_work_branch: String::new(),
         }
     }
 }
