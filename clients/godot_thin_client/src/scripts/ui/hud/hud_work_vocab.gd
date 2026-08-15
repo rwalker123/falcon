@@ -511,6 +511,11 @@ const ROLE_CARD_NAME_FONT_SIZE := 12
 ## hint wraps to.
 const ROLE_CARD_HINT_HEIGHT := 28.0
 
+## The Builders card's READ-ONLY gear line, as meta — the stable handle for the preview harnesses.
+## It is not `KitRoster.KIT_HINT_META`: that one marks the hint a kit PICKER mounts, and telling the
+## two apart is the whole of the claim that this card states its kit without offering a choice.
+const ROLE_CARD_GEAR_META := "role_card_gear"
+
 ## WORK BOARD geometry. Every one of these heights is BOTH what the element reserves in
 ## `_work_board_capacity` and what it actually draws at, so the page can never overflow its zone.
 const WORK_ROW_HEIGHT := 28.0
@@ -936,8 +941,9 @@ const BUILD_QUEUE_MARKER_WIDTH := 10.0
 const BUILD_QUEUE_DATE_WIDTH := 118.0
 
 ## `3 builders · Tillage kit` — the head's readout, naming the pool that funds the queue and the kit
-## it is holding. The kit comes from the SAME resolution the Builders role card's picker opens on, so
-## the card and this header cannot disagree about which web's tool the pool is carrying.
+## it is holding. The kit comes from the SAME resolution the Builders role card's gear line states
+## (`BandPanelController._role_kit_id`), so the card and this header cannot disagree about which web's
+## tool the pool is carrying.
 const BUILD_QUEUE_BUILDERS_FORMAT := "%d builders · %s"
 
 ## …and the same slot when nobody is on the role. **This branch is the direct answer to a playtest

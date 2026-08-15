@@ -753,7 +753,11 @@ static func kit_supplies_any(kit: Dictionary) -> bool:
 ##    kit's `build_work_branch` is its tool's; outside its branch the contribution is the neutral
 ##    `0.0`, so the kit is exactly as inapplicable as a snare on a Red Deer. This rule needs no
 ##    quarry — a builders row stands on no source — which is why it is answered before the two above
-##    and off its own parameter.
+##    and off its own parameter. **Its live reader is `resolve_selection`'s selectable list, not a
+##    picker**: the Builders role card mounts no control (`band-city-panel.md`), so what this rule
+##    does today is keep that card's gear line and the build queue's header off a kit the head
+##    entry's web cannot use. The withheld REASON it composes has no display surface until the
+##    per-entry picker lands on the queue row.
 ##
 ## **THE PEN RULE IS ASKED FIRST, so a kit reads the same reason on every quarry.** The husbandry kit
 ## fails both tests on a Red Deer (it carries no weapon either), and *"what it adds is only used on a
@@ -1220,6 +1224,25 @@ static func role_hint(kits: Array, kit: Dictionary, band: Dictionary, job: Strin
 				DetailFormat.kit_item_label(item_id), DetailFormat.kit_condition_face(band, item_id)])
 	return HudComposeVocab.KIT_HINT_SEPARATOR.join(parts)
 
+## **A ROLE CARD'S READ-ONLY GEAR LINE — the kit's NAME and then what it buys**, e.g.
+## `Tillage kit · 8.5 work off a build, per builder · Hoes 100`.
+##
+## **IT CARRIES THE NAME BECAUSE THERE IS NO PICKER LEFT TO CARRY IT.** `role_hint` alone states the
+## effect and the condition of the gear; the kit those are true OF was the picker's own face, so a
+## card that drops the control and keeps only the hint stops naming the tool its pool is holding.
+## Joined with `KIT_HINT_SEPARATOR`, so the name reads as the first clause of one line rather than as
+## a second row competing with the description beneath it.
+##
+## **A KIT WITH NOTHING TO SAY IS ITS NAME ALONE.** The bare entry takes nothing off a build and
+## carries no item, so `role_hint` is empty and this reads `No kit` — the same face the build queue's
+## own header states for that band, both being `BandPanelController._role_kit_id`'s one answer.
+static func role_gear_line(kits: Array, kit_id: String, band: Dictionary, job: String) -> String:
+	var display := display_name_for_id(kits, kit_id)
+	var hint := role_hint(kits, kit_by_id(kits, kit_id), band, job)
+	if hint == "":
+		return display
+	return HudComposeVocab.KIT_HINT_SEPARATOR.join([display, hint])
+
 ## What this role's tier BUYS, in words. **A vantage is a DISTANCE and the camp's attack is a small
 ## whole number**, so each takes the rounding the Gear popover already gives it — the vantage its own
 ## (the sim reveals in whole tiles), the attack the popover's shared whole-number face — and neither
@@ -1286,9 +1309,7 @@ static func _tier_face(value: float) -> String:
 ##   spent the band's gear is, because the step-down is already said in the HINT and a picker that
 ##   dropped a kit as it wore out would reshuffle between turns.
 ## - **A kit that cannot change THIS quarry's outcome is greyed** (`kit_offer`, resolved at the fresh
-##   tier) — a snare against a Red Deer, handling gear against a herd with no pen, and on a BUILDERS
-##   row a kit whose tool serves the other web (`build_branch`, which a role card passes instead of a
-##   quarry because the builders stand on no source). It is greyed rather
+##   tier) — a snare against a Red Deer, handling gear against a herd with no pen. It is greyed rather
 ##   than hidden, and it states its REASON on its own row, because *"a snare cannot hold a Red Deer"*
 ##   is a fact about the world worth teaching once and invisibility is what let the sheet quote a
 ##   take for a hunt that brought home nothing. A greyed entry is not selectable.
@@ -1327,8 +1348,7 @@ static func _tier_face(value: float) -> String:
 static func build_kit_row(kits: Array, job: String, selected_id: String, default_id: String,
 		band: Dictionary, on_pick: Callable, quarry: Dictionary = {},
 		prefix: String = "", key_text: String = HudComposeVocab.COMPOSE_FIELD_KIT,
-		compact_chrome: bool = false,
-		build_branch: String = BUILD_BRANCH_NONE) -> VBoxContainer:
+		compact_chrome: bool = false) -> VBoxContainer:
 	var offered := kits_for_job(kits, job)
 	if offered.is_empty():
 		return null
@@ -1358,7 +1378,7 @@ static func build_kit_row(kits: Array, job: String, selected_id: String, default
 			label += HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX
 		if kit_id == selected_id:
 			selected_index = entries.size()
-		var offer := kit_offer(kits, kit, job, quarry, prefix, build_branch)
+		var offer := kit_offer(kits, kit, job, quarry, prefix)
 		var reason := String(offer[OFFER_REASON_KEY])
 		# The reason rides the ENTRY'S OWN FACE, not only its tooltip: a disabled popup row is the one
 		# control in this HUD a player cannot hover to interrogate on every platform, and a grey row

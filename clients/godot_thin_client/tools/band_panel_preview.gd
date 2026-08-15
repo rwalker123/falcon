@@ -1157,6 +1157,7 @@ func _ready() -> void:
 	_assert_role_card_gear()
 	_assert_role_cards_are_level()
 	_assert_role_kit_command_carries_the_pick()
+	_assert_builders_stepper_sends_no_kit()
 	# Put the shared band back exactly as the later states expect it: the pick above is real zone
 	# state and its emit is a real pending assign, and either one left behind would render a `No kit`
 	# Scout card with an amber title in every band frame from here down.
@@ -5443,6 +5444,76 @@ func _assert_role_kit_command_carries_the_pick() -> void:
 	var restored := _emitted_assign_line(picker, default_entry)
 	_assert_band_panel("…while picking the job DEFAULT back omits the tail — \"%s\"" % restored,
 		restored != "" and not restored.contains(" kit "))
+
+## **THE BUILDERS STEPPER SENDS NO `kit` TOKEN AT ALL, AND A PINNED SCOUT'S BESIDE IT STILL DOES.**
+##
+## This is the whole point of retiring that card's picker: a `kit` token on the `builders` row is an
+## override that WINS over the sim's per-entry derivation for good, so the honest line is one that
+## names no kit and leaves the sim to keep deriving. Read off `Main.format_assign_labor`, the same
+## builder the real send goes through.
+##
+## **THE SCOUT HALF IS NOT DECORATION — it is what stops the claim passing on a client that dropped
+## the tail everywhere.** `Main._kit_token` omits a selection equal to the job default, so an
+## untouched Scout emits no tail either; the Scout's picker is therefore driven onto its NON-default
+## entry first, which is the one state in which a role stepper must carry `kit <id>`.
+##
+## Both presses go through the REAL `+` button (found by `HudWorkVocab.STEPPER_PLUS_FACE`, the
+## stepper's own face) and the REAL `assign_labor_requested` payload.
+func _assert_builders_stepper_sends_no_kit() -> void:
+	var scout_card := _find_role_card(HudWorkVocab.ROLE_NAME_SCOUT)
+	var picker := _find_meta_control(scout_card, KitRoster.KIT_PICKER_META) as OptionButton \
+		if scout_card != null else null
+	if picker == null:
+		_fail("no Scout kit picker to pin a non-default kit with")
+		return
+	var other := -1
+	for i in picker.item_count:
+		if not picker.get_item_text(i).contains(HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX):
+			other = i
+			break
+	if other < 0:
+		_fail("the Scout picker offers no non-default kit to pin")
+		return
+	_emitted_assign_line(picker, other)
+	var scout_line := _emitted_stepper_line(HudWorkVocab.ROLE_NAME_SCOUT)
+	_assert_band_panel("a Scout stepper on a PINNED kit still carries its tail — \"%s\"" % scout_line,
+		scout_line != "" and scout_line.contains(" kit "))
+	var builders_line := _emitted_stepper_line(HudWorkVocab.ROLE_NAME_BUILDERS)
+	_assert_band_panel("…while the Builders stepper emits a line at all — \"%s\"" % builders_line,
+		builders_line.contains(" %s " % HudConst.LABOR_KIND_BUILDERS))
+	_assert_band_panel("…carrying NO kit token, so the sim keeps deriving per queue entry — \"%s\""
+			% builders_line, builders_line != "" and not builders_line.contains(" kit "))
+
+## Press one role card's `+` and hand back the command line the HUD's emit produced, `""` when
+## nothing was emitted. The card is re-found on every call because each press rebuilds the zone.
+func _emitted_stepper_line(role_name: String) -> String:
+	var card := _find_role_card(role_name)
+	if card == null:
+		_fail("no %s card to drive the stepper on" % role_name)
+		return ""
+	var plus := _find_stepper_plus(card)
+	if plus == null:
+		_fail("the %s card has no `+` to press" % role_name)
+		return ""
+	var seen: Array[Dictionary] = []
+	var sink := func(payload: Dictionary) -> void: seen.append(payload)
+	_hud.assign_labor_requested.connect(sink)
+	plus.pressed.emit()
+	_hud.assign_labor_requested.disconnect(sink)
+	if seen.is_empty():
+		return ""
+	return String(MAIN_SCRIPT.format_assign_labor(seen[0]).get("line", ""))
+
+## The stepper's `+`, found by the FACE `HudWidgets.add_stepper_controls` gives it — the one handle a
+## card's two identical ghost Buttons can be told apart by, `−` carrying the other face.
+func _find_stepper_plus(node: Node) -> Button:
+	for child in node.get_children():
+		if child is Button and (child as Button).text == HudWorkVocab.STEPPER_PLUS_FACE:
+			return child as Button
+		var found := _find_stepper_plus(child)
+		if found != null:
+			return found
+	return null
 
 ## Drive one entry of a live picker and hand back the command line the HUD's emit produced, `""` when
 ## nothing was emitted. The picker is re-found after the pick because the card rebuilds on it.
@@ -10537,18 +10608,20 @@ func _builders_band_fixture() -> Dictionary:
 	return band
 
 # =====================================================================================
-#  THE BUILDERS CARD OFFERS ITS WEB'S OWN KIT, AND GREYS THE OTHER WEB'S
+#  THE BUILDERS CARD STATES ITS DERIVED KIT, AND OFFERS NO PICKER
 # =====================================================================================
 # There are two builders kits — `hurdling` (hurdles, ANIMAL) and `tillage` (hoes, PLANT) — and which
 # one a queue entry gets is DERIVED from that entry's own web (`equipment.md` → "THE BUILDERS' KIT IS
-# DERIVED PER QUEUE ENTRY"). So this picker cannot have one standing answer: it opens on the kit the
-# band's queue HEAD implies, and the kit whose tool serves the other web is GREYED WITH ITS REASON —
-# a hoe is as inapplicable to a `Tame` as a snare is to a Red Deer, and hiding it teaches nothing.
+# DERIVED PER QUEUE ENTRY"). So the card cannot have one standing answer, and it does not offer one:
+# it STATES the kit the band's queue HEAD implies, on a read-only gear line, and mounts no control at
+# all. A per-BAND pick could only be sent as a `kit` token on the `builders` row, which the sim treats
+# as an override that wins permanently — so the one thing the control could express is the one thing
+# the derivation must not be told.
 #
-# **THE PAIR IS THE CLAIM, on ONE band with only the queue head moving.** A rule that greys nothing
-# passes either frame's withheld claim by never reaching it; a rule that greys EVERYTHING passes the
-# withheld half of both. Each state therefore asserts the withheld kit, the SERVING one beside it,
-# and `none` — which carries nothing, so there is no build it can be inapplicable to.
+# **THE PAIR IS THE CLAIM, on ONE band with only the queue head moving.** A resolver stuck on one web
+# satisfies either frame alone. Each state asserts the gear line's whole text by EQUALITY — the kit's
+# name AND what it buys — beside the ABSENCE of any picker on that card, which is a claim about the
+# CONTROL and not about the label's wording.
 
 ## The two sources the reference band already works, one per web. The head moves by dialling those
 ## SOURCES' own `buildQueuePosition`, so the band itself is byte-identical across the pair.
@@ -10568,8 +10641,7 @@ func _render_builders_kit_states() -> void:
 	await _save("band_panel_builders_kit_plant")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
-	_assert_builders_kit_picker("plant", BandFx.KIT_ID_TILLAGE, BandFx.KIT_ID_HURDLING,
-		KitRoster.BUILD_BRANCH_PLANT)
+	_assert_builders_gear_line("a PLANT queue head", BandFx.KIT_ID_TILLAGE)
 
 	#   (b) THE SAME BAND with an ANIMAL build at the head: the patch leaves the queue and the herd
 	# takes it, so nothing but the head's web moves between the two frames.
@@ -10580,8 +10652,7 @@ func _render_builders_kit_states() -> void:
 	await _save("band_panel_builders_kit_animal")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
-	_assert_builders_kit_picker("animal", BandFx.KIT_ID_HURDLING, BandFx.KIT_ID_TILLAGE,
-		KitRoster.BUILD_BRANCH_ANIMAL)
+	_assert_builders_gear_line("an ANIMAL queue head", BandFx.KIT_ID_HURDLING)
 
 	# Put the roster and the reference band back — `update_band_alerts` diffs against the last roster
 	# pushed, and the states below read whatever this block leaves behind.
@@ -10605,54 +10676,56 @@ func _builders_kit_herd(queue_position: int) -> Dictionary:
 		"build_queue_position": queue_position,
 	}
 
-## **THE PICKER OPENS ON THE HEAD'S OWN KIT AND GREYS THE OTHER WEB'S, WITH ITS REASON.**
+## **THE CARD STATES THE HEAD'S OWN KIT, AND MOUNTS NOTHING TO CHANGE IT WITH.**
 ##
-## Four claims, and no one of them is worth anything alone: the FACE (what the card opens on), the
-## withheld entry (disabled AND carrying its reason on its own label, a disabled popup row being the
-## one control a player cannot reliably hover), the SERVING entry beside it, and `none`.
-func _assert_builders_kit_picker(web: String, serving_id: String, withheld_id: String,
-		branch: String) -> void:
+## Two claims, and neither is worth anything alone: the gear line's WHOLE TEXT by equality (a
+## `contains` on the kit name passes on a line that has lost what the kit buys), and the ABSENCE of a
+## kit picker on that card. The second is asked of the CONTROL — `KitRoster.KIT_PICKER_META` — never
+## of the label, because a picker mounted beside an honest gear line renders as an ordinary card and
+## the whole defect is that pressing it pins the pool for good.
+##
+## **THE EXPECTATION IS COMPOSED FROM THE VOCABULARY AND THE FIXTURE, never through
+## `KitRoster.role_gear_line`** — re-deriving it through the code under test agrees with itself.
+func _assert_builders_gear_line(where: String, kit_id: String) -> void:
 	var card := _find_role_card(HudWorkVocab.ROLE_NAME_BUILDERS)
 	if card == null:
-		_fail("the Builders card is missing on the %s head" % web)
+		_fail("the Builders card is missing on %s" % where)
 		return
-	var picker := _find_meta_control(card, KitRoster.KIT_PICKER_META) as OptionButton
-	if picker == null:
-		_fail("the Builders card has no kit picker on the %s head" % web)
+	_assert_band_panel("the Builders card mounts NO kit picker on %s" % where,
+		_find_meta_control(card, KitRoster.KIT_PICKER_META) == null)
+	var gear := _find_meta_control(card, HudWorkVocab.ROLE_CARD_GEAR_META) as Label
+	if gear == null:
+		_fail("the Builders card has no gear line on %s" % where)
 		return
-	var kits: Array = _hud._band_labor.kits()
-	var face := HudComposeVocab.KIT_PICKER_FACE_FORMAT % [
-		String(HudComposeVocab.KIT_JOB_GLYPHS.get(KitRoster.JOB_BUILDERS,
-			HudComposeVocab.KIT_JOB_GLYPH_FALLBACK)),
-		KitRoster.display_name_for_id(kits, serving_id)]
-	_assert_band_panel(
-		"a build on the %s web at the queue head opens the Builders card on that web's own kit — \"%s\""
-			% [web, picker.text], picker.text == face)
-	var withheld := _builders_picker_entry(picker,
-		KitRoster.display_name_for_id(kits, withheld_id))
-	var reason := HudComposeVocab.KIT_WITHHELD_REASON_BUILD_BRANCH_FORMAT \
-		% KitRoster.build_branch_noun(branch)
-	_assert_band_panel(
-		"…the OTHER web's kit is greyed and says why — \"%s\"" % String(withheld.get("text", "")),
-		bool(withheld.get("disabled", false))
-			and String(withheld.get("text", "")).contains(reason))
-	var serving := _builders_picker_entry(picker,
-		KitRoster.display_name_for_id(kits, serving_id))
-	_assert_band_panel("…while THIS web's own kit stays selectable — \"%s\""
-			% String(serving.get("text", "")), serving.get("disabled", true) == false)
-	var bare := _builders_picker_entry(picker,
-		KitRoster.display_name_for_id(kits, BandFx.KIT_ID_NONE))
-	_assert_band_panel("…and `none` is never withheld, carrying nothing to be inapplicable with",
-		bare.get("disabled", true) == false)
+	var wanted := _builders_gear_line_text(kit_id)
+	_assert_band_panel("…and states the derived kit and what it buys on %s — \"%s\" (got \"%s\")"
+			% [where, wanted, gear.text], gear.text == wanted)
 
-## One popup entry, found by the kit NAME its label leads with — never by index, the roster's order
-## being config. `{}` when the picker does not list it at all, which every claim above then fails on.
-func _builders_picker_entry(picker: OptionButton, kit_name: String) -> Dictionary:
-	var popup := picker.get_popup()
-	for i in range(popup.item_count):
-		if popup.get_item_text(i).begins_with(kit_name):
-			return {"text": popup.get_item_text(i), "disabled": popup.is_item_disabled(i)}
-	return {}
+## The gear line this roster's builders kit must produce for THIS harness's band — the kit's name,
+## what its tool takes off a build, and the condition of the item behind it.
+##
+## **Composed from the vocabulary and the fixture's OWN authored numbers**, item by item, so a
+## producer that dropped the effect clause or quoted the wrong item's wear fails rather than agreeing
+## with itself. The bare kit takes nothing off a build and carries no item, so its whole line is its
+## name — which is what makes the EMPTY-queue state a real third claim rather than a restatement.
+func _builders_gear_line_text(kit_id: String) -> String:
+	var display := KitRoster.display_name_for_id(_hud._band_labor.kits(), kit_id)
+	var item := ""
+	var condition := 0.0
+	match kit_id:
+		BandFx.KIT_ID_TILLAGE:
+			item = BandFx.KIT_ITEM_HOES
+			condition = BandFx.KIT_CONDITION_HOES
+		BandFx.KIT_ID_HURDLING:
+			item = BandFx.KIT_ITEM_HURDLES
+			condition = BandFx.KIT_CONDITION_HURDLES
+		_:
+			return display
+	return HudComposeVocab.KIT_HINT_SEPARATOR.join([display,
+		DetailFormat.KIT_ROLE_BUILDERS_BUILD_FORMAT % DetailFormat.format_work_units(
+			BandFx.KIT_BUILD_WORK_HANDLING),
+		HudComposeVocab.KIT_HINT_ROLE_ITEM_FORMAT % [DetailFormat.kit_item_label(item),
+			String.num(condition, DetailFormat.KIT_CONDITION_DECIMALS)]])
 
 # =====================================================================================
 #  THE BUILD QUEUE BLOCK — the band's ordered list, above the work board's chips
@@ -10971,13 +11044,15 @@ func _assert_unqueue_command_grammar() -> void:
 			% [herd_line, String(lines.get(1, ""))],
 		String(lines.get(1, "")) == herd_line)
 
-## **THE BUILDERS CARD OPENS ON THE KIT THE QUEUE HEAD IMPLIES, and on `No kit` when there is no head
-## to imply one.** Three states, PNG-LESS and by EQUALITY, because a resolver stuck on ONE web
-## satisfies any one of them: a plant head, an animal head, and the EMPTY queue — which is the state
-## that shipped wrong, `KitRoster.resolve_selection`'s terminal fall-through being ROSTER ORDER, so
-## the card presented `hurdling` as a decision the player had never made.
+## **THE BUILDERS CARD STATES THE KIT THE QUEUE HEAD IMPLIES, and `No kit` when there is no head to
+## imply one.** Three states, PNG-LESS and by EQUALITY, because a resolver stuck on ONE web satisfies
+## any one of them: a plant head, an animal head, and the EMPTY queue — which is the state that
+## shipped wrong, `KitRoster.resolve_selection`'s terminal fall-through being ROSTER ORDER, so the
+## card presented `hurdling` as a decision the player had never made.
+##
+## **It re-asserts the picker's absence in all three**, which the rendered pair above asserts in two:
+## the empty queue is the state a card that had regrown a control would look most ordinary in.
 func _assert_builders_card_kit_faces() -> void:
-	var kits: Array = _hud._band_labor.kits()
 	var cases := [
 		["a PLANT queue head", SourceForecast.BUILD_QUEUE_HEAD,
 			SourceForecast.NOT_IN_ANY_BUILD_QUEUE, BandFx.KIT_ID_TILLAGE],
@@ -10991,18 +11066,7 @@ func _assert_builders_card_kit_faces() -> void:
 		_set_world_herds([_builders_kit_herd(int(case[2]))])
 		_push_bands([_builders_band_fixture()])
 		await _settle()
-		var card := _find_role_card(HudWorkVocab.ROLE_NAME_BUILDERS)
-		var picker: OptionButton = null if card == null \
-			else _find_meta_control(card, KitRoster.KIT_PICKER_META) as OptionButton
-		if picker == null:
-			_fail("the Builders card has no kit picker on %s" % String(case[0]))
-			continue
-		var wanted := HudComposeVocab.KIT_PICKER_FACE_FORMAT % [
-			String(HudComposeVocab.KIT_JOB_GLYPHS.get(KitRoster.JOB_BUILDERS,
-				HudComposeVocab.KIT_JOB_GLYPH_FALLBACK)),
-			KitRoster.display_name_for_id(kits, String(case[3]))]
-		_assert_band_panel("the Builders card opens on \"%s\" with %s (got \"%s\")"
-				% [wanted, String(case[0]), picker.text], picker.text == wanted)
+		_assert_builders_gear_line(String(case[0]), String(case[3]))
 
 # =====================================================================================
 #  THE WORK ROW'S BUILD STATES — AND THE MAP BADGE'S SAME VERDICT

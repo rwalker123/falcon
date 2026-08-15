@@ -1115,6 +1115,14 @@ func _band_predator_threat_present(band: Dictionary) -> bool:
 ## SELECTED kit buys (`2-tile sight per vantage · Wayfinding 100`) and changes when the picker
 ## changes; `build_kit_row` returns the pair as ONE block, which is what makes that adjacency
 ## structural rather than a convention this function has to remember.
+##
+## **THE BUILDERS CARD MOUNTS THE GEAR LINE WITHOUT THE PICKER, and that is the whole of its
+## difference.** The kit its pool carries is derived PER QUEUE ENTRY from that entry's own web
+## (`equipment.md` → "THE BUILDERS' KIT IS DERIVED PER QUEUE ENTRY"), so a per-BAND control was
+## answering a question the row does not ask — and the only thing it could express, a `kit` token on
+## the `builders` row, is an OVERRIDE that wins permanently. The information is not the problem and
+## stays: `_build_builders_gear_line` reads the same `_role_kit_id` the BUILD QUEUE header states, so
+## the two surfaces cannot name two different webs' tools for one pool.
 func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: String, effective: Dictionary, idle: int, alert: bool = false) -> PanelContainer:
     var workers := int(effective.get("workers", 0))
     var pending := bool(effective.get("pending", false))
@@ -1150,11 +1158,12 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
     # unequal and every `assign_labor … agriculture <n>` would carry a `kit` tail the player never
     # chose. `NO_KIT_ID` omits the token and leaves the sim to resolve its own default, which is the
     # honest statement of what this card knows.
-    var kit_id := _role_kit_id(band, kind) if kind in KIT_PICKER_ROLES else KitRoster.NO_KIT_ID
-    # **WHAT THE PICKER SHOWS AND WHAT THE STEPPER SENDS ARE TWO QUESTIONS ON THE BUILDERS ROW.** The
-    # face states the kit the pool is holding this turn, derivation included; the command carries only
-    # a kit the player CHOSE, because a token pins the row against the derivation for good.
-    var commanded_kit_id := _commanded_role_kit_id(band, kind) if kind in KIT_PICKER_ROLES \
+    var kit_id := _role_kit_id(band, kind) if _role_states_a_kit(kind) else KitRoster.NO_KIT_ID
+    # **WHAT THE CARD SHOWS AND WHAT THE STEPPER SENDS ARE TWO QUESTIONS ON THE BUILDERS ROW.** The
+    # gear line states the kit the pool is holding this turn, derivation included; the command carries
+    # only a kit the player CHOSE, because a token pins the row against the derivation for good — and
+    # with no picker on this card there is nothing to choose, so it carries none.
+    var commanded_kit_id := _commanded_role_kit_id(band, kind) if _role_states_a_kit(kind) \
         else KitRoster.NO_KIT_ID
     var stepper := HBoxContainer.new()
     stepper.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -1179,10 +1188,12 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
         var kit_row := KitRoster.build_kit_row(_band_labor.kits(), kind, kit_id,
             _band_labor.default_kit_id(kind), band,
             func(picked: String) -> void: _on_role_kit_picked(band, kind, picked, workers),
-            {}, "", ROLE_CARD_KIT_KEY_TEXT, true, _role_build_branch(band, kind))
+            {}, "", ROLE_CARD_KIT_KEY_TEXT, true)
         if kit_row != null:
             col.add_child(kit_row)
             _lift_role_gear_line(kit_row)
+    elif kind == HudConst.LABOR_KIND_BUILDERS:
+        col.add_child(_build_builders_gear_line(band, kit_id))
     var hint_label := HudWidgets.alloc_hint_label(hint)
     if alert:
         hint_label.add_theme_color_override("font_color", HudStyle.THREAT_ACCENT)
@@ -1212,34 +1223,66 @@ func _lift_role_gear_line(kit_row: Control) -> void:
             (child as Label).add_theme_color_override("font_color", HudStyle.INK_DIM)
             return
 
+## **THE BUILDERS CARD'S GEAR LINE — the picker's help text, kept after the picker went.** It names
+## the kit the pool is carrying and what that buys, and it is READ-ONLY: there is nothing on this card
+## to change it with.
+##
+## **IT READS `_role_kit_id`, WHICH IS THE BUILD QUEUE HEADER'S OWN CALL.** One resolution, two
+## surfaces, so the card and the `3 builders · Tillage kit` line above the queue cannot name two
+## different webs' tools for one pool — and an empty queue derives nothing, so both honestly read the
+## bare kit's `No kit` face rather than the roster's first entry.
+##
+## **It takes the lifted ink the picker's hint takes** (`_lift_role_gear_line`, same reason): this is
+## the one line on the card that MOVES as the queue head changes and as gear wears, and the standing
+## description beneath it is copy the player reads once.
+func _build_builders_gear_line(band: Dictionary, kit_id: String) -> Label:
+    var line := HudWidgets.alloc_hint_label(KitRoster.role_gear_line(
+        _band_labor.kits(), kit_id, band, KitRoster.JOB_BUILDERS))
+    line.set_meta(HudWorkVocab.ROLE_CARD_GEAR_META, true)
+    line.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    return line
+
 ## The role card mounts the shared kit row with NO field key — see `_build_role_card`.
 const ROLE_CARD_KIT_KEY_TEXT := ""
 
 ## The standing roles whose card offers a KIT PICKER.
 ##
-## **THE KEEPING PAIR IS DELIBERATELY ABSENT AND THE BUILDERS ARE DELIBERATELY PRESENT**, and the
-## difference is whether a kit moves a number the player can see. No shipped kit declares a
-## maintenance contribution, so an `agriculture` picker would change nothing; the roster carries **two
-## builders kits, one per web** — `hurdling` (hurdles, animal) and `tillage` (hoes, plant) — so this
-## picker decides what the pool brings to a Tame, a Corral, a Cultivate or a Sow, and `none` is how a
-## player sends it out bare to conserve gear.
+## **THE KEEPING PAIR IS ABSENT BECAUSE A PICK WOULD MOVE NOTHING.** No shipped kit declares a
+## maintenance contribution, so an `agriculture` or `husbandry` picker would change no number the
+## player can see, and the wire names no default kit for either job — so its `(default)` mark would be
+## a guess that fell through to the HUNT default.
 ##
-## ⚠ **It is the one entry here the wire names no default kit for** — see `KitRoster.JOB_BUILDERS`.
-## Nothing is marked `(default)`; the picker opens on the band's own `builders` row, which the sim has
-## already resolved from the queue HEAD's web, and a kit whose tool serves the OTHER web is greyed
-## with its reason (`_role_build_branch`).
-const KIT_PICKER_ROLES := [HudConst.LABOR_KIND_SCOUT, HudConst.LABOR_KIND_WARRIOR,
-    HudConst.LABOR_KIND_BUILDERS]
+## ⛔ **THE BUILDERS ARE ABSENT FOR THE OPPOSITE REASON: a pick there moves too much, permanently.**
+## The roster carries two builders kits, one per web, and the sim derives which one a build gets from
+## **that queue ENTRY's** own branch — a per-ENTRY fact this per-BAND control could not express. The
+## one thing it COULD say, a `kit` token on the `builders` row, is an override that wins over the
+## derivation from then on: reported from play, one click put `kit hurdling` on every later builders
+## command and pinned a band raising a plant Cultivate to the animal web's tool with no way back
+## (`none` means bare-handed, which is a different statement). The card states the derived kit on a
+## read-only line instead (`_build_builders_gear_line`); the per-entry override belongs on the QUEUE
+## ROW, where each entry can answer for itself.
+const KIT_PICKER_ROLES := [HudConst.LABOR_KIND_SCOUT, HudConst.LABOR_KIND_WARRIOR]
+
+## Does this role's card NAME a kit at all — the two pickers above, plus the BUILDERS, whose card
+## states its derived kit on a read-only line. The keeping pair names none, and that is not the same
+## as naming the default: see `_build_role_card`.
+func _role_states_a_kit(kind: String) -> bool:
+    return kind in KIT_PICKER_ROLES or kind == HudConst.LABOR_KIND_BUILDERS
 
 ## The `_role_kit_ids` key for one band's one role. Two terms because the cycler walks bands: a
 ## per-role key alone would carry the pick made on one band onto every other band's card.
 func _role_kit_key(band: Dictionary, kind: String) -> String:
     return "%d:%s" % [int(band.get("entity", -1)), kind]
 
-## **THE KIT THIS ROLE CARD OPENS ON** — the player's own pick where they have made one, else the kit
+## **THE KIT THIS ROLE CARD STATES** — the player's own pick where they have made one, else the kit
 ## the SIM is already running this role at (the row's own resolved `LaborAssignment.kitId`), else the
 ## job default. Resolved through `KitRoster.resolve_selection` like every compose sheet, so an id held
-## over from a previous world can never reach the picker or the command.
+## over from a previous world can never reach a picker, a gear line or the command.
+##
+## **IT IS ALSO THE BUILD QUEUE HEADER'S CALL** (`_build_build_queue_head`) and the Builders card's
+## read-only gear line's, which is what keeps those two from naming different webs' tools for one
+## pool. On the builders row the player's own pick is always absent — that card mounts no picker —
+## so the row below is the whole of the answer there.
 ##
 ## **THE WIRE IS THE SEED, NOT THE FALLBACK ORDER'S END.** Reading the assignment first is what makes
 ## a fresh session show what is actually running rather than what a default would be; an UNSTAFFED
@@ -1252,20 +1295,17 @@ func _role_kit_id(band: Dictionary, kind: String) -> String:
         composed = HudBandLaborState.role_kit_id(band, kind)
     # **AN UNSTAFFED BUILDERS ROW IS DERIVED, not left to the list's first entry.** The wire states a
     # kit only where a row exists, and the roster's own answer for the queue head's web is exactly
-    # what the sim will resolve for that role's first `+` — so the card opens on the kit the pool
-    # would actually be handed, rather than on whichever builders kit the roster happens to author
-    # first.
+    # what the sim will resolve for that role's first `+` — so the card states the kit the pool would
+    # actually be handed, rather than whichever builders kit the roster happens to author first.
     if composed == KitRoster.NO_KIT_ID and kind == HudConst.LABOR_KIND_BUILDERS:
         composed = KitRoster.build_kit_for_branch(_band_labor.kits(), branch)
         # **…AND AN EMPTY QUEUE DERIVES NOTHING, WHICH IS THE `No kit` FACE AND NOT ROSTER ORDER.**
         # `resolve_selection`'s terminal fall-through is `selectable[0]` — the first entry the roster
         # authors for the job, `hurdling` on the shipped config — so with nothing composed, nothing on
-        # the wire and no queue head to derive from, the card opened on the ANIMAL web's kit and
-        # presented it as a choice the player had made. Reported from play twice over: "the Builders
-        # card says Hurdling kit" on a band raising a Cultivate, and "it is still forcing me to select
-        # 1 kit" on a band with nothing queued at all. The bare kit is the honest answer to *nothing
-        # is chosen and nothing can be derived*, and it stays selectable throughout — sending the pool
-        # out bare is how a player conserves gear.
+        # the wire and no queue head to derive from, the card read the ANIMAL web's kit on a band
+        # raising a Cultivate. Reported from play. The bare kit is the honest answer to *nothing is
+        # chosen and nothing can be derived*, and it is what the sim itself falls back to
+        # (`equipment.md` → rule 3, `default_kits.builders` being `none`).
         if composed == KitRoster.NO_KIT_ID:
             composed = KitRoster.bare_kit_id(_band_labor.kits(), kind)
     return KitRoster.resolve_selection(_band_labor.kits(), kind,
@@ -1287,18 +1327,27 @@ func _composed_role_kit_id(band: Dictionary, kind: String) -> String:
 ## therefore PIN the pool to whichever web it happened to be building the moment the player touched
 ## the stepper — the derivation defeated by the one control that was not choosing a kit at all.
 ##
-## `Main._kit_token` omits an empty selection, so an untouched picker emits the line it always did and
-## the sim keeps deriving. Picking a kit deliberately is still a pin, which is the point of the picker.
+## `Main._kit_token` omits an empty selection, so the line carries no `kit` token and the sim keeps
+## deriving.
+##
+## ⛔ **ON THE BUILDERS ROW THIS FORK NOW ALWAYS ANSWERS `NO_KIT_ID`, AND THAT IS THE POINT — do not
+## "simplify" it away.** With the picker gone nothing writes `_role_kit_ids` for `builders`, so
+## `_composed_role_kit_id` has nothing to return and the stepper emits `assign_labor … builders <n>`
+## with no tail at all. The fork is what STATES that the omission is deliberate rather than an
+## oversight: collapsing it to the other roles' `_role_kit_id` would echo the DERIVED id back and pin
+## the pool to whichever web it happened to be building the moment the player pressed `+`.
 func _commanded_role_kit_id(band: Dictionary, kind: String) -> String:
     if kind == HudConst.LABOR_KIND_BUILDERS:
         return _composed_role_kit_id(band, kind)
     return _role_kit_id(band, kind)
 
-## **THE WEB THIS ROLE'S PICKER IS CHOOSING FOR** — the build branch of the band's queue HEAD on the
-## builders row, and `BUILD_BRANCH_NONE` on every other role, none of which raises anything. It is
-## what greys a builders kit whose tool serves the other web (`KitRoster.kit_offer`'s third rule): a
-## hoe in front of a `Tame` is as inapplicable as a snare in front of a Red Deer, and the player is
-## better told so than shown a choice that moves no number.
+## **THE WEB THIS ROLE'S KIT IS RESOLVED AGAINST** — the build branch of the band's queue HEAD on the
+## builders row, and `BUILD_BRANCH_NONE` on every other role, none of which raises anything.
+##
+## It rides `_role_kit_id`'s `KitRoster.resolve_selection`, whose selectable list applies
+## `kit_offer`'s build-branch rule: a hoe in front of a `Tame` is as inapplicable as a snare in front
+## of a Red Deer, so the card and the queue header land on the kit the SIM would hand this pool
+## rather than on one its tool cannot serve.
 func _role_build_branch(band: Dictionary, kind: String) -> String:
     if kind != HudConst.LABOR_KIND_BUILDERS:
         return KitRoster.BUILD_BRANCH_NONE
@@ -1681,7 +1730,7 @@ func _build_build_queue_block(band: Dictionary, queued: Array) -> VBoxContainer:
 ## reason a queue moves, so its absence is stated where the queue is, in the WARN ink and naming the
 ## card that fixes it.
 ##
-## **THE KIT COMES FROM `_role_kit_id`, THE SAME RESOLUTION THE BUILDERS CARD'S PICKER OPENS ON.**
+## **THE KIT COMES FROM `_role_kit_id`, THE SAME RESOLUTION THE BUILDERS CARD'S GEAR LINE STATES.**
 ## One call, so the header and the card cannot name two different webs' tools for one pool.
 func _build_build_queue_head(band: Dictionary, builders: int) -> HBoxContainer:
     if builders <= 0:

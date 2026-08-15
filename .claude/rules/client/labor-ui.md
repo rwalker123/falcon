@@ -2247,11 +2247,16 @@ ENTRY"). Three client consequences, and the first is a defect the sheets shipped
 - **THE ENTRY'S BRANCH IS THE SHEET'S OWN WEB** (`KitRoster.build_branch_for_kind`) — a patch is a
   plant build and a herd an animal one, the same fact `systems::labor` stamps a queue entry with — so
   no new wire field was needed to know which web a sheet is composing for.
-- **`kit_offer` GREYS A BUILDERS KIT WHOSE TOOL SERVES THE OTHER WEB**, with its reason, and that is
-  the same rule as the snare against a Red Deer asked one job over: it takes a `build_branch`
-  parameter rather than a quarry, because the builders stand on no source. Greyed rather than hidden —
-  a player should learn that a hoe is not for stock — and `none` is never withheld, carrying nothing
-  to be inapplicable with.
+- **`kit_offer` WITHHOLDS A BUILDERS KIT WHOSE TOOL SERVES THE OTHER WEB**, with its reason, and that
+  is the same rule as the snare against a Red Deer asked one job over: it takes a `build_branch`
+  parameter rather than a quarry, because the builders stand on no source. **What it feeds is a
+  RESOLUTION, not a picker.** It reached a control while the Builders role card mounted one, which
+  greyed the inapplicable kit and stated why; that card now states its kit on a read-only line
+  (`band-city-panel.md` → "THE BUILDERS CARD MOUNTS NO PICKER EITHER"), so the rule's one live reader
+  is `KitRoster.resolve_selection`'s selectable list — which is what keeps the card and the build
+  queue's header off a kit the entry's web cannot use. `build_kit_row` no longer takes the parameter
+  at all, no caller having one to pass. `none` is still never withheld, carrying nothing to be
+  inapplicable with.
 
 > #### THE ROW PUBLISHES THE **RESOLVED** KIT, AND ONE CASE IS THEREFORE UNRESOLVABLE HERE
 >

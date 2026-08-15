@@ -517,9 +517,12 @@ stretch, and widening it into that gap would put it over a live HUD column.
   rather than being deleted. `FactionRollup`'s bar takes the same clause off the same
   `HudBandLaborState.band_party_workers` sum. **FIVE standing roles are CARDS** — Scout + Warrior
   here, Agriculture + Husbandry + **Builders** in the KEEPING block below, in rows of two — (bordered, name · the `−/+` stepper and its
-  `assign_labor` emit · **the kit picker and its gear line** · the role's description LAST), not rows
-  in a list — the fix for a standing role being indistinguishable from a worked source. See "The role
-  cards carry the band's OTHER two kits" below for the picker half and for why the prose trails.
+  `assign_labor` emit · **the kit row, where the role has one** · the role's description LAST), not rows
+  in a list — the fix for a standing role being indistinguishable from a worked source. That middle
+  slot differs by role and the difference is a rule rather than a layout: Scout and Warrior mount a
+  PICKER over its gear line, Builders the gear line ALONE (a per-band pick over a per-entry
+  derivation), and the keeping pair neither. See "The role cards carry the band's OTHER two kits"
+  below for the picker half and for why the prose trails, and "THE KEEPING BLOCK" for the other two.
   **The Warrior card carries a LIVE THREAT ALERT** (Predators Phase 3): when
   `_band_predator_threat_present(band)` is true its static hint is replaced by the crimson
   (`HudStyle.THREAT_ACCENT`) `HudWorkVocab.WARRIOR_THREAT_ALERT_FORMAT` — `⚠ Predator nearby — N on
@@ -1944,30 +1947,38 @@ the same `_build_role_card`; nothing about the keeping is a parallel surface.
   default — and no shipped kit declares a maintenance contribution, so every entry the picker could
   offer moves no number the player can see. `KIT_PICKER_ROLES` is the gate. A picker whose selection
   changes nothing and whose default mark is wrong is worse than none.
-- **THE BUILDERS CARD DOES MOUNT ONE, and both of those facts fall the other way for it** (§4.6b).
-  Gear really does move a build — `buildWorkPerWorker` is a kit tier the closed form reads
-  (`labor-ui.md` → "The build's closed form") — so the picker changes a number the player watches. Its
-  default is `KitRoster.NO_KIT_ID` rather than the hunt fall-through, which is the honest reading of a
-  wire that names no `defaultBuildersKitId`: *nothing is presumed*, not *a hunt kit is presumed*.
-  `KitRoster.ROLE_AXES` carries the role's build axis so `build_kit_row` prices it on that axis rather
-  than falling through to `tier_hint` — without the entry the card rendered the HUNT hint
-  (`attack 1.0 · carry 12.0 per hunter`) on a role that fights nothing, and `_role_effect_phrase`
-  renders NOTHING at the neutral tier, so a band with no build gear reads a bare card rather than a
-  boast of zero.
-- **…AND ITS PICKER STATES A LIVE FACT RATHER THAN A STORED ONE.** There are two builders kits, one
-  per web, and which one a queue entry gets is DERIVED from that entry's branch (`labor-ui.md` → "A
-  BUILD IS PRICED AT THE **BUILDERS'** KIT"). So the card opens on the kit the band's QUEUE HEAD
-  implies — the sim publishes it resolved on the `builders` row, and an unstaffed row is derived
-  client-side through `KitRoster.build_kit_for_branch` rather than left to whichever kit the roster
-  authors first — and the kit whose tool serves the OTHER web is greyed with its reason. `none` stays
-  selectable: it is how a player sends the pool out bare to conserve gear.
-- **⛔ THE STEPPER SENDS THE PICK AND NOTHING ELSE, and that is this card's own rule.** A `kit` token
-  on the `builders` row **wins over the derivation for good**, so echoing back the DERIVED id — which
-  is what the other role cards do, harmlessly, their rows carrying either a stored kit or a job
-  default — would pin the pool to whichever web it happened to be building the moment the player
-  pressed `+`. `_commanded_role_kit_id` forks on the role for exactly this: the picker's FACE reads
-  `_role_kit_id` (derivation included) and the command carries `_composed_role_kit_id` (the player's
-  own pick, or nothing).
+- **⛔ THE BUILDERS CARD MOUNTS NO PICKER EITHER, AND ITS REASON IS THE OPPOSITE ONE: a pick there
+  moves too much, permanently.** The roster carries two builders kits, one per web — `hurdling`
+  (hurdles, animal) and `tillage` (hoes, plant) — and which one a build gets is DERIVED from **that
+  queue ENTRY's** own branch (`labor-ui.md` → "A BUILD IS PRICED AT THE **BUILDERS'** KIT"). A card is
+  per BAND, so it could only answer a per-ENTRY question with one standing answer; and the only way
+  to *send* that answer, a `kit` token on the `builders` row, is an override the sim honours **over
+  the derivation from then on**. Measured in play: one click put `kit hurdling` on every later
+  builders command and pinned a band raising a plant Cultivate to the animal web's tool with no way
+  back — `none` being bare-handed rather than a way to un-pin. **The control was the defect, not its
+  rendering**, so `KIT_PICKER_ROLES` no longer names the role and `build_kit_row` is never called for
+  it. **The per-entry override lands on the QUEUE ROW** (§7's ② — one job, one kit, `(default)`
+  marked as hunting's is), which is where an entry can answer for itself.
+- **…BUT THE CARD STILL STATES WHAT THE POOL IS CARRYING, on a read-only gear line.** Removing the
+  selection is not removing the information: `KitRoster.role_gear_line` renders
+  `Tillage kit · 8.5 work off a build, per builder · Hoes 38` — the kit's name, then the picker's old
+  help text. **`KitRoster.ROLE_AXES` carries the role's build axis** so that hint prices the build
+  rather than falling through to `tier_hint`'s hunt wording (`attack 1.0 · carry 12.0 per hunter`, on
+  a role that fights nothing), and `_role_effect_phrase` renders NOTHING at the neutral tier, so a
+  band with no build gear reads a bare card rather than a boast of zero.
+- **IT IS `_role_kit_id`, THE BUILD QUEUE HEADER'S OWN CALL** — one resolution, two surfaces, so the
+  card and `3 builders · Tillage kit` cannot name two different webs' tools for one pool. The sim
+  publishes the `builders` row's kit already resolved; an unstaffed row is derived client-side through
+  `KitRoster.build_kit_for_branch`; and an EMPTY queue derives nothing and reads the bare kit's
+  `No kit`, rather than `resolve_selection`'s terminal fall-through to roster order, which presented
+  `hurdling` as a decision the player had never made.
+- **⛔ THE BUILDERS STEPPER SENDS NO `kit` TOKEN AT ALL, and that is this card's own rule.** Every
+  other role's `+` re-states either a stored kit or its job default, so the token is a no-op; echoing
+  the DERIVED id back here would pin the pool to whichever web it happened to be building the moment
+  the player pressed `+`. `_commanded_role_kit_id` forks on the role for exactly this and answers
+  `NO_KIT_ID` on the builders branch — which, with nothing left to write `_role_kit_ids` for that
+  role, it now always does. **The fork is kept because it is what STATES the omission is deliberate**;
+  collapsing it into the other roles' `_role_kit_id` restores the pin.
 - **THE ROLE ALSO NEEDED A BRANCH IN `Main.format_assign_labor`, which had never named it.** The
   `assign_labor` builder matched `scout` / `warrior` / `agriculture` / `husbandry` and answered `{}`
   for anything else, so the Builders card's stepper emitted NO COMMAND AT ALL and the pool could not
@@ -2011,7 +2022,9 @@ Posts scouts that see around …             Guards the band — matters once �
 read every turn and acted on with two controls; the description is what a player reads ONCE, to learn
 what the role is. The gear line states what the SELECTED kit buys and moves when the picker moves, so
 nothing may come between the two — `build_kit_row` returns them as ONE block, which makes that
-adjacency structural rather than a rule this call site has to remember.
+adjacency structural rather than a rule this call site has to remember. **The Builders card keeps the
+help text after losing the control it helped**, one slot up in the same order, because what the pool
+is carrying is a fact worth stating whether or not the player may change it.
 
 **BOTH CARDS DRAW TO THE HEIGHT OF THE TALLER ONE, and nothing was ever shrinking them.** The row's
 `HBoxContainer` stretches a child to the row height wherever the child asks to FILL its cross axis,

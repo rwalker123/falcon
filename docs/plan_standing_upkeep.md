@@ -564,6 +564,71 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    >
    > The queue sits **above** the sources because it is the one list whose *order is an input*.
 
+   **7a — BUILDING IS A BAND ACTIVITY, so its whole loop belongs on ONE tab.**
+   **This slice is what makes 6b playable, and 6b's playtest is what decided its shape.** The pool,
+   the queue and the funding rule are all band-level since §4.6b — a build is *a job on the band's
+   list that happens to name a tile* — but the loop the player walks is still spread across the tile's
+   compose sheet, the Band tab and a turn boundary. Three decisions, taken with Ray on the 6b
+   playtest, close it:
+
+   **① THE DECLARATION MOVES TO THE WORK TAB, and the `⌃` ready mark is the control.** A work row
+   already carries `⌃<verb glyph>` meaning *this source can climb its next rung* — the same
+   `RungGates.next_rung_ready` answer the compose sheet's checkbox is gated on — so clicking it queues
+   the job. One click, on the tab that owns the pool and the queue.
+   > **The compose sheet keeps the FORECAST and stops being the commit.** *"Should I cultivate this?"*
+   > is answered by the patch's own `ONCE TENDED 1.20 food`, its crop basket and its refusals, and a
+   > 28px work row cannot hold any of that — so the sheet remains where a rung is JUDGED. What leaves
+   > it is the committing act, and with it the trap 6b shipped: the `🌱 Cultivate this patch` checkbox
+   > is not the action, and the only thing that commits it is a button reading **`Forage`**. Ticking
+   > the box and closing the sheet does nothing at all. Reported from play, repeatedly, as *"I just
+   > click cultivate and not the Forage button — that seems completely unnatural."*
+   >
+   > **The sim's ordering constraint is what welded them, and it does not survive the move.**
+   > `cultivate` / `sow` / `tame` / `corral` reach only bands **already working the source**, which is
+   > why one press has to send `assign_labor` first and the verb second. Declaring from a work row is
+   > declaring on a source the band demonstrably works, so the constraint is satisfied by
+   > construction. **A source the band does NOT work has no row, and therefore no way to declare** —
+   > which is a real limit and this slice's to answer: either the ready mark reaches un-worked sources
+   > (needing the sim to relax that rule) or declaring stays gated on working the ground, which is
+   > defensible and should then be SAID rather than left as a missing control.
+
+   **② THE KIT MOVES TO THE QUEUE ROW, one per job.** The sim already resolves a builders kit **per
+   queue entry** from that entry's own web; the Builders card forced a per-BAND answer onto it, and
+   that mismatch was not a rendering bug but the whole defect — naming a kit on the `builders` row is
+   the one thing the derivation cannot express, so the sim treats it as an **override that wins
+   permanently**. Measured in play: one click pinned `kit hurdling` onto every later builders command,
+   locking a band raising a *plant* Cultivate to the *animal* web's tool with no way back (`none`
+   means bare-handed, which is a different statement). **§4.6b deleted that picker rather than leave
+   it harmful**; this slice gives the override its correct home, where each entry derives its own kit,
+   marks it `(default)` as hunting does, and a pick changes **that job alone**.
+   > **A GLOBAL "default builders kit" was considered and REJECTED.** The per-entry derivation is
+   > already the better answer — it is right per web automatically — so a configurable default would
+   > be a coarser second answer competing with a working one. `default_kits.builders` already exists
+   > in config for anyone who wants the blunt version.
+
+   **③ THE CROP MOVES THERE TOO, which is what makes ① and ② one design.** `Sow` needs a species and
+   `Cultivate` needs the committed one, so the queue row becomes **the job's settings — kit and
+   crop** — and the loop reads *declare from the source list, configure on the queue row, fund from
+   the pool header above it*. Without this, ① would have to open the compose sheet anyway for any rung
+   that needs a crop, and the move would buy nothing.
+
+   **7b — WHAT §4.6b LEFT STANDING, and this slice is where it lands.**
+   Each is reachable in play today and none is a defect in the model. The first three are one shape —
+   a band-level act with no band-level surface — and the fourth is an asymmetry the pending rows
+   introduced.
+
+   - **Nothing on the Work tab declares a build** (①), so the tile sheet is still the only door.
+   - **The kit override has no home** (②) — the card's picker is deleted, so the derivation currently
+     stands alone and cannot be overridden at all.
+   - **The queue cannot be reordered from the UI.** `build_order` is command-line only, as is
+     `abandon`; the block caps at three rows plus a `+N more` overflow, chosen so the board keeps
+     legible rows in a height-capped horizontal dock. Drag-to-reorder is this slice's, and the cap
+     should be re-measured against whatever the pool header costs the zone.
+   - **UNQUEUE IS NOT OPTIMISTIC.** A declaration made this turn shows immediately (a pending row at
+     the tail, `○`, no date), but unticking a **confirmed** entry does not leave the block until the
+     turn resolves — the queue's positions are wire state and the optimistic overlay carries
+     additions only. The asymmetry is visible and should be closed with the row's own controls.
+
 8. **Gear as productivity.** A kit raises what a supplier delivers **per turn** rather than
    subtracting from the job. Decided because a job is a pile and an upkeep is a rate: subtraction has
    nothing to subtract from, so the shipped build model needs a second mechanism for upkeep, while one
@@ -669,13 +734,44 @@ cheap answer is to make reassignment observable so it would be noticed rather th
   it** (an ungathered patch regrows, so its gate stays open and it publishes an honest `-3`), and the
   mechanism is `husbandry.md`'s. What makes it §4.6b's problem rather than a curiosity: **a stalled
   entry at the head of a queue funded all-hands-on-the-head holds every builder the band has**, on a
-  build that can never advance, while everything behind it waits. Whether the queue should pass over
-  an ineligible head, or say loudly that it is stuck, is that slice's to decide.
+  build that can never advance, while everything behind it waits.
+  > **DECIDED in §4.6b — the head STAYS PUT and says loudly that it is stuck.** Ray: *"stay put and
+  > say loudly it is stuck."* A head whose own gate refuses it while builders stand on it publishes
+  > `BUILD_QUEUE_BLOCKED` (`-4`), and **every entry behind it carries that same answer** — if the head
+  > never finishes, nothing below it does either, so the chained date is telling the truth rather than
+  > taking a special case. **Passing over an ineligible head was the rejected alternative**: it would
+  > silently re-order the one list whose order is the player's own input, and it would hide the stall
+  > that the remedy depends on being visible. The remedy — staff the keeping — is named on the row,
+  > and gated on the keeping actually being short so it cannot fire on a rung stalled for some other
+  > reason.
 - **Whether ALL-HANDS-ON-THE-HEAD is the right funding rule** (§4.6b). Ray: *"that is logical, we
   will have to play test and see how it goes."* The thing to watch is a band with several worthwhile
   builds queued behind one long one, and whether re-ordering feels like a decision or like a chore.
   The chained finish date is what makes it judgeable — if the answer turns out to be *"let me run two
   at once"*, that is a spread with a stated split rather than a return to per-source crews.
+
+> **THREE THINGS §4.6b's PLAYTEST FOUND THAT THIS ARC DOES NOT OWN.** They are recorded here because
+> that playtest is where they surfaced and because each of them made the arc's own behaviour hard to
+> read — not because a later slice of it should absorb them. None is a build or an upkeep question.
+
+- **The map's `⚠` cannot be interrogated.** `BandOverlayRenderer._draw_source_badge` paints it with
+  `_view.draw_string` onto the map canvas, so it is not a `Control` and takes no `tooltip_text`;
+  §4.6b put the sentence on the tile card's `At risk:` row instead, which is reachable but is not
+  where the player is looking. Making the mark itself interrogable is a MapView hover mechanism —
+  there is no such thing today — and it would serve every map badge rather than this one.
+- **The event dock PINS a transport alert indefinitely.** A failed send at turn 12 was still the
+  pinned Alert at turn 13 with the turn stamp the only thing distinguishing it from a live failure,
+  so a single dropped command read as a permanent disconnection and made the arc's own readouts look
+  like they were lying. Whether a pinned alert should expire, or be stamped as stale, is
+  `event-dock.md`'s question.
+- **THE CLIENT CANNOT WARN BEFORE A SEND FAILS.** `Inspector._ensure_command_connection` checks only
+  that the native command bridge OBJECT exists, never that a socket is live, so a dead command socket
+  is discovered by a failed write and not before. §4.6b closed the half that was actively misleading
+  — a failed send now rolls back its own optimistic overlay entry, so the panel stops showing hands
+  the sim never received (`hud-modules.md` → "AN OPTIMISTIC WRITE NEEDS A ROLLBACK") — and it
+  deliberately added **no retry, no reconnect and no queue of unsent commands**, a resend the player
+  did not ask for being worse than a dropped one. Making the connection's health *knowable* is the
+  part left, and it belongs with the transport rather than with any gameplay arc.
 
 > **Three items were retired rather than answered, and all three are worth recording as such.**
 > *"What the maintain toggle does to a build in flight"* went with the toggle itself — keeping is a

@@ -118,14 +118,20 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 254 `assert OK` lines, 377 `: PASS` ones and ZERO `FAIL` ones, over
-101 frames.**
+**A clean run exits 0 and prints 260 `assert OK` lines, 420 `: PASS` ones and ZERO `FAIL` ones, over
+104 frames — RE-MEASURED, into an emptied `ui_preview_out/`.** The figure recorded here before the
+Builders card lost its kit picker read 254 / 377 / 101 and was already three frames and forty-three
+`PASS` behind the harness, so the delta of that change is not recoverable by subtracting them: it is
+**+2 `: PASS`, no `assert OK` and no frame** — eight of `_assert_builders_kit_picker`'s claims retired
+with the control, ten gear-line/absence claims and three stepper claims in their place.
 
 (It was 246 / 356 / 97 before the BUILD QUEUE BLOCK — `docs/plan_standing_upkeep.md` §4.6b, specified
 in `band-city-panel.md` → "THE BUILD QUEUE BLOCK". Its four states —
 `band_panel_build_queue` / `_blocked` / `_none` / `_wide` — account for the eight `assert OK`s (each
 state's own bounds/content-fits pair) and eighteen of the twenty-one `PASS`es; the other three are
-`_assert_builders_card_kit_faces`, PNG-less, which fixed the Builders card's roster-order fall-through.
+`_assert_builders_card_kit_faces`, PNG-less, which fixed the Builders card's roster-order
+fall-through. (It has since grown to six, that helper's picker-face claim having become a gear-line +
+picker-absence pair per state — see the BUILDERS KIT PAIR paragraph below.)
 **`band_panel_build_queue_none` is the PAIRED NEGATIVE and is what makes the other three worth
 anything** — a block drawn unconditionally passes every positive claim above it and fails only there,
 which is exactly what sabotage produced (28 failures: that one claim plus 27 zones the block's own
@@ -133,17 +139,30 @@ which is exactly what sabotage produced (28 failures: that one claim plus 27 zon
 work zone comes out **300px of a 300px box, 0 spare**, with the board still paging two rows.)
 
 (It was 242 / 348 / 95 before the BUILDERS KIT PAIR — `band_panel_builders_kit_plant` /
-`band_panel_builders_kit_animal`, the frames on which the Builders card's picker is judged. Their four
-`assert OK`s are the two states' own bounds/content-fits pairs and their eight `PASS`es are
-`_assert_builders_kit_picker`'s four, twice. **The PAIR is the claim, and the fixture is what makes it
-one**: ONE band, whose forage row and hunt row already name the two sources, with the head moving by
-dialling those SOURCES' own `buildQueuePosition` — so the two frames differ in the queue head's WEB
-and in nothing else. Each state asserts the face, the withheld kit AND ITS REASON, the serving kit
-beside it, and `none`. Sabotage-verified on two DISJOINT mutations: an unconditional offer fails
-exactly the two withheld claims, leaving both liveness claims and both faces green; greying every
-builders kit fails exactly the four liveness claims — the two faces falling back to `No kit` — and
-leaves the withheld and `none` claims green. The rule is `band-city-panel.md` → "…AND ITS PICKER
-STATES A LIVE FACT RATHER THAN A STORED ONE".)
+`band_panel_builders_kit_animal`, the frames on which the Builders card's gear line is judged. **The
+PAIR is the claim, and the fixture is what makes it one**: ONE band, whose forage row and hunt row
+already name the two sources, with the head moving by dialling those SOURCES' own
+`buildQueuePosition` — so the two frames differ in the queue head's WEB and in nothing else.
+
+**They asserted a PICKER's face, its greyed entry and the reason on it until slice 6b retired that
+control** (`band-city-panel.md` → "THE BUILDERS CARD MOUNTS NO PICKER EITHER"). Re-aimed rather than
+deleted, since the states themselves still matter: each now asserts the read-only gear line's WHOLE
+TEXT by equality — the kit's name, what its tool takes off a build, and the condition of the item
+behind it, composed from the vocabulary and the fixture's own numbers rather than through
+`KitRoster.role_gear_line` — beside the ABSENCE of a picker on that card, which is asked of the
+CONTROL (`KitRoster.KIT_PICKER_META`) and never of the label. `_assert_builders_card_kit_faces` runs
+the same helper over three states PNG-LESS, the EMPTY queue included, a resolver stuck on one web
+satisfying any one of them alone.
+
+**`_assert_builders_stepper_sends_no_kit` is the claim that made the retirement worth making**, and
+it is a PAIR: driving the Builders `+` must emit a line carrying no `kit` token at all — read off
+`Main.format_assign_labor`, so the sim keeps deriving per entry — while a Scout stepper driven onto
+its NON-default kit first still carries `kit none`. Without the Scout half the claim passes on a
+client that dropped the tail everywhere, `Main._kit_token` omitting a selection equal to the job
+default. Sabotage-verified on two DISJOINT mutations: collapsing `_commanded_role_kit_id`'s builders
+fork fails **exactly one**, naming `assign_labor 0 4904 builders 1 kit none`; restoring `builders` to
+`KIT_PICKER_ROLES` fails **ten** — the five picker-absence claims and the five gear lines that then
+have no label to read — and leaves the stepper pair green.)
 
 (It was 240 / 341 / 94 before **`band_panel_builders_segment`** — the BUILDERS segment
 state, whose two `assert OK`s are its own bounds/content-fits pair and whose seven `PASS`es are

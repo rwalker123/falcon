@@ -663,7 +663,8 @@ It reads `pen collection 40.0 per keeper · 8.5 work off a tame or a pen, per ke
   stops offering the husbandry kit on a herd being tamed, which is the one job the gear is for.
   **The gear's worth is now qualified by a `build_work_branch`** — hurdles serve the ANIMAL web and
   hoes the PLANT one — and this row is unaffected, being about a herd either way; what reads the pair
-  is the Builders card's picker, which greys the other web's kit.
+  is `KitRoster.build_kit_for_branch`, which the Builders card and the build queue's header both
+  resolve their stated kit through.
 - **The clause is appended only ABOVE NEUTRAL, and its absence is a real reading.** A contribution of
   `0` means the gear is changing no build — because it is spent, or because this band's hunt job is
   on a kit that does not carry it — and `0 work` costs a line's width to say *no*. The row's own
