@@ -384,7 +384,7 @@ const ANIMAL_CORRAL_WORK_COST := 75.0
 ## reading and renders as no line at all.
 const ANIMAL_BUILD_TURNS_REMAINING := 6
 
-## What this herd's KEEPERS took off the job with the handling gear — the shipped `husbandry_gear`
+## What this herd's KEEPERS took off the job with the handling gear — the shipped `hurdles`
 ## flint tier at 8.5 per equipped worker, over the reference two-keeper crew. **The animal web is
 ## where this readout is judged**, no plant item declaring the stat yet (issue #539).
 const ANIMAL_BUILD_WORK_FROM_GEAR := 17.0
@@ -419,6 +419,10 @@ static func price_animal_build(fixture: Dictionary,
 	fixture["corral_upkeep_demand"] = upkeep
 	# **AND THE ROT, WHICH ON THIS WEB IS STRUCTURALLY NOTHING** — see `ANIMAL_METER_ROT` below.
 	fixture["meter_rot_per_turn"] = ANIMAL_METER_ROT
+	# **AND WHERE IT SITS IN THE BAND'S QUEUE** (`docs/plan_standing_upkeep.md` §4.6b), the plant
+	# twin's rule: the sim publishes a countdown only for a source some band has queued, so a priced
+	# build with the sentinel position would stage a countdown belonging to no entry.
+	fixture["build_queue_position"] = SourceForecast.BUILD_QUEUE_HEAD
 	return fixture
 
 ## **NO ANIMAL RUNG CAN LOSE METER, SO THIS IS A CONSTANT AND NOT A PARAMETER**

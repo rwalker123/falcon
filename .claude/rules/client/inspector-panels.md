@@ -188,6 +188,20 @@ control. The command
 `autoplay_timer`) is Inspector-level and carries every command the game sends, so it long outlives
 the tab.
 
+**A FAILED SEND HERE IS A TRANSPORT FAILURE AND CAN BE NOTHING ELSE, so it says so.** The line read
+`Command failed (assign_labor 0 1 builders 1): can't connect`, and reported from play it sent the
+player looking for a rules problem that does not exist. `CommandClient.send_line` answers
+`ERR_CANT_ACQUIRE_RESOURCE` when there is no bridge and `ERR_CANT_CONNECT` when the bridge could not
+deliver — **those are its only two values** — because a command the SIM refuses has already been
+written to the socket and its refusal arrives later on the server's own event stream. So there is no
+sim-refusal branch to fork against: the site has one meaning and states it, through
+`HudEventVocab.COMMAND_NOT_SENT_FORMAT` — `Not connected to the server — "assign_labor 0 1 builders
+1" was not sent.` The error CODE is not quoted (the two mean the same thing here and a player can act
+on neither); `CommandClient` already `push_warning`s the bridge's own message for a developer, and
+the Logs console keeps this line verbatim. `_ensure_command_connection`'s two messages are untouched
+— *"Command pending: command socket still connecting."* and *"Command unavailable (…)"* already name
+the socket rather than a refusal.
+
 **Capability gating** (`Inspector._apply_capability_gating`): most tabs enable only when the matching `CapabilityFlags` bit is set. **Terrain is exempt** — it is an always-available inspection tab with no capability-gated actions (the former Found Camp action + its CAP_CONSTRUCTION gate were removed with the retired `found_camp` command). **Migrated tab panels don't grey out** — instead of disabling the tab (confusing: a dead tab with no explanation), the coordinator calls `panel.set_available(has_flag)` and the panel stays clickable, rendering a "🔒 Locked — unlocks via …" message while gated (see `PowerPanel`). `_set_tab_enabled` is still used for tabs not yet migrated to the panel contract. Its **terrain-type highlight** dropdown lists every defined terrain (via `TerrainDefinitions`), and selecting one calls `MapView.set_terrain_highlight(id)`, which outlines/tints all matching hexes map-wide (ignoring Fog of War) — handy for spotting a biome or confirming one is absent. Selecting "none" (`-1`) clears it.
 
 The overview text draws a **full biome histogram** (`_render_terrain` → `_histogram_bar`): every present biome, sorted by count, with a monospace `[code]` bar scaled to the most common biome plus its tile count and percentage — all computed client-side from the streamed `_terrain_counts`. The **Export Map** button (`_on_export_map_button_pressed`) sends the fire-and-forget `export_map` runtime command; the server writes the current map (terrain snapshot + resolved seed) to its `exports/` scratch dir as JSON (see `sim_schema` `MapExport`). Tile coordinates shown here as `@x,y` (`_format_tile_coords`) index straight into the export's row-major samples, so the same coordinate names a hex in the client, in the export file, and in tests.

@@ -324,7 +324,7 @@ impl RecipesConfig {
     /// or the item's own id when no recipe does.
     ///
     /// **The book is the item's name because `equipment.json` carries none.** An item id is a key
-    /// (`bone_awl`, `husbandry_gear`); the recipe that makes it is where a human already wrote the
+    /// (`bone_awl`, `tanning_frame`); the recipe that makes it is where a human already wrote the
     /// player-facing words, so a refusal that has to say *"No bone awl"* asks here rather than
     /// growing a second name table beside the first. The fallback is the id, which is the honest
     /// answer for a thing the book cannot make.

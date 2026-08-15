@@ -772,6 +772,12 @@ const FORECAST_BUILD_UPKEEP_DEMAND_KEYS := {
 # control renders — the tile card and the herd drawer. It cannot answer for a crew the player is
 # PROPOSING, which is what a compose sheet's stepper asks; that is the terms below.
 const FORECAST_BUILD_TURNS_KEY := "build_turns_remaining"
+# **WHERE THIS SOURCE SITS IN THE WINNING BAND'S BUILD QUEUE** — 0-based, `NOT_IN_ANY_BUILD_QUEUE`
+# when no band has queued it (`docs/plan_standing_upkeep.md` §4.6b). It rides the SAME winning band
+# as `FORECAST_BUILD_TURNS_KEY` and `FORECAST_BUILD_GEAR_WORK_KEY`, so the three are read as one set;
+# the countdown is a CHAINED date — everything ahead of this entry plus its own span at the full
+# builders pool — and this is what makes that number explicable.
+const FORECAST_BUILD_QUEUE_POSITION_KEY := "build_queue_position"
 const FORECAST_BUILD_GEAR_WORK_KEY := "build_work_from_gear"
 # **WHAT IT COSTS TO HOLD THIS SOURCE AT THE RUNG IT STANDS ON**, in work units per turn — the RATE
 # half of the ladder beside the build's PILE (`docs/plan_standing_upkeep.md` §2). All four ship on
@@ -898,6 +904,33 @@ const BUILD_TURNS_HOLDS := -2
 ## `HudSelectionVocab.RUNG_ROTTING_PHRASE` the rung row adds, so the card says which of the two it is
 ## without the player having to know the sentinel.
 const BUILD_TURNS_ROTS := -3
+
+## **THE ANSWER FOR AN ENTRY THE QUEUE IS STUCK ON** — `sim_schema::BUILD_QUEUE_BLOCKED`
+## (`docs/plan_standing_upkeep.md` §4.6b). The band's builders are STAFFED and standing on this
+## entry, and the rung's own gate refuses it, so nothing banks — and, because the whole pool goes on
+## the head of the queue until it fills, **nothing behind it moves either**: every entry queued
+## behind a blocked head publishes this too.
+##
+## **IT IS NOT `BUILD_TURNS_NO_ESTIMATE`, AND THAT IS THE WHOLE POINT OF THE FOURTH SENTINEL.** `-1`
+## is *there is no question here* — a waiting entry whose gate may well hold by the time it reaches
+## the head, a source at the top of its ladder — and renders as no line at all. This one is a
+## STANDING FAULT with a remedy, and rendering it as silence is how a stuck queue reads as a working
+## one.
+##
+## **NOR IS IT `BUILD_TURNS_HOLDS` OR `_ROTS`.** Those are answers about the METER's arithmetic under
+## a crew; this is an answer about the QUEUE, and its remedy is on a different line entirely — the
+## band's keeping, not its builders. A client rendering three of the four cannot derive the fourth:
+## the wire is the only thing that knows a refusing gate is sitting at the head of a staffed pool
+## rather than merely waiting its turn.
+const BUILD_TURNS_QUEUE_BLOCKED := -4
+
+## **THIS SOURCE IS IN NO BAND'S BUILD QUEUE** — the neutral of `FORECAST_BUILD_QUEUE_POSITION_KEY`,
+## the client's copy of `sim_schema::NOT_IN_ANY_BUILD_QUEUE`. A real position is 0-based, so the
+## sentinel sits outside the range exactly as the countdown's negatives do.
+const NOT_IN_ANY_BUILD_QUEUE := -1
+
+## The head of a band's build queue — the one entry its whole builders pool is funding.
+const BUILD_QUEUE_HEAD := 0
 
 ## **THE NET AT WHICH A METER NEITHER GROWS NOR ROTS** — a build crew banking exactly what the meter
 ## is bleeding, so `crew work − rot` is exactly this. The client's copy of the sim's
@@ -1036,11 +1069,11 @@ const MAX_USEFUL_CAPPED_TOOLTIP := "Fully staffed — this source can use at mos
 # not usefulness. Named in the "N of M" spirit (N = the labor cap you're at, M = the useful ceiling),
 # so a capped `+` reads as "fixable by reassigning labor" rather than as a silent bug.
 const LABOR_BOUND_NOTE_FORMAT := "%d of %d useful — free up idle workers to send more"
-# **THE SAME CAP WHEN THE HANDS ARE ON THIS SHEET'S OWN BUILD**, which the pool clamp made reachable:
-# the take stepper is bound by labor, and some of that labor is standing on the BUILDERS stepper two
-# rows down. Sending the player off to "free up idle workers" would point past the lever they are
-# looking at, so the nearer remedy leads and the farther one still closes the line.
-const BUILD_BOUND_NOTE_FORMAT := "%d of %d useful — take hands off the build, or free up idle workers"
+# RETIRED — **`BUILD_BOUND_NOTE_FORMAT`**, the same cap worded to name the sheet's OWN builders
+# stepper (`docs/plan_standing_upkeep.md` §2.5). It existed because the take and the build shared one
+# source pool, so the nearer lever for freeing a hand was sometimes two rows down on the same sheet.
+# A verb states no crew now: the sheet has one stepper, so there is one remedy and
+# `LABOR_BOUND_NOTE_FORMAT` is it.
 
 # **THE RAID'S ROW IS THE ONE ANSWER THE SIM STILL COMPUTES FOR US, and for the opposite reason to the
 # retired ceiling lists.** A resident band's ceiling has a closed form the client can evaluate at any
@@ -3376,6 +3409,25 @@ static func build_is_losing(src: Dictionary, build_workers: int) -> bool:
     return build_pace(build_turns_remaining(src, BARE_SOURCE_PREFIX), build_workers) \
         == BUILD_PACE_LOSING
 
+## **IS THIS BUILD STALLED? — THE ONE VERDICT EVERY SURFACE THAT MARKS A BUILD WEARS A `⚠` FOR.**
+## `true` when the rung is declared-and-never-started with nobody on it, OR when the wire says its
+## meter is going backwards; `false` for a climbing build AND for one merely PARKED with its keeping
+## covered, whose number is honest and whose state is a decision rather than a failure.
+##
+## **IT EXISTS BECAUSE THE MAP AND THE WORK BOARD ANSWERED DIFFERENTLY.** The map's source badge forked
+## on this pair and dropped the percentage; `BandPanelController._build_work_row` had no such fork and
+## printed a confident `▦45%` whatever the staffing — one screen, two verdicts, and the wrong one was
+## the one with the number on it. Both surfaces call THIS now: two producers of one verdict is exactly
+## how they came apart, and the fix is one producer rather than two careful copies.
+##
+## `src` is the BARE source dict (the raw wire patch or herd) and `progress` is the meter the caller
+## has already resolved through `RungGates.rung_in_progress` — asked, not re-derived, so the plate's
+## warning and its glyph provably describe the same verb. `build_workers` is the BAND's `builders`
+## POOL, not a per-source crew (§2.5): a verb declares and names no hands.
+static func build_is_stalled(src: Dictionary, progress: float, build_workers: int) -> bool:
+    return build_is_losing(src, build_workers) \
+        or build_is_unstaffed(unstaffed_build_of(progress, build_workers))
+
 ## A source dict whose forecast keys are UNPREFIXED — a herd, or the raw wire forage patch. The same
 ## empty string `HudComposeVocab.BARE_FORECAST_PREFIX` spells for the HUD; it is restated here so the
 ## readers above can be reached from the map layer, which holds no HUD vocabulary.
@@ -3432,6 +3484,8 @@ static func build_is_unstaffed(state: String) -> bool:
 ## cover both, which told a player whose build was being destroyed the same thing it tells one merely
 ## treading water.
 static func build_pace(turns: int, build_workers: int = BUILD_CREW_ANY) -> String:
+    if turns == BUILD_TURNS_QUEUE_BLOCKED:
+        return BUILD_PACE_BLOCKED
     if turns == BUILD_TURNS_ROTS:
         return BUILD_PACE_LOSING
     if turns == BUILD_TURNS_HOLDS:
@@ -3459,6 +3513,11 @@ const BUILD_PACE_HOLDING := "holding"
 const BUILD_PACE_HELD := "held"
 ## The rate is going unpaid: the meter is losing ground.
 const BUILD_PACE_LOSING := "losing"
+## **THE QUEUE IS STUCK ON THIS ENTRY** — the band's builders are staffed and standing here, its own
+## gate refuses it, and nothing behind it moves either (`BUILD_TURNS_QUEUE_BLOCKED`). A FOURTH arm,
+## because blocked ≠ holding ≠ rotting ≠ silent: it is a hazard like the two `∞` states, and unlike
+## either of them no number of builders fixes it — the remedy is off the build line entirely.
+const BUILD_PACE_BLOCKED := "blocked"
 
 ## Is a build in flight on this source at all? The bare question three warnings and the keeping row
 ## ask, named so none of them spells the `!= IMPROVEMENT_NONE` for itself.
@@ -3552,10 +3611,12 @@ static func meter_rot_per_turn(src: Dictionary, prefix: String) -> float:
 ## **THE SIM'S OWN TURN ESTIMATE** for whatever this source is building. Per SOURCE, not per rung, so
 ## it takes no improvement.
 ##
-## **FOUR ANSWERS, AND THE CLIENT COMPARES NOTHING TO TELL THEM APART.** A count is a finish date at
+## **FIVE ANSWERS, AND THE CLIENT COMPARES NOTHING TO TELL THEM APART.** A count is a finish date at
 ## the crew that is on it; `BUILD_TURNS_HOLDS` is *this staffing holds the meter where it is*, an amber
-## `∞`; `BUILD_TURNS_ROTS` is *this staffing is losing work already paid for*, a red one; and
-## `BUILD_TURNS_NO_ESTIMATE` is *there is genuinely no answer*, which renders as no line.
+## `∞`; `BUILD_TURNS_ROTS` is *this staffing is losing work already paid for*, a red one;
+## `BUILD_TURNS_QUEUE_BLOCKED` is *the builders are standing here and this rung's own gate refuses
+## them*, a hazard whose remedy is off the build line entirely; and `BUILD_TURNS_NO_ESTIMATE` is
+## *there is genuinely no answer*, which renders as no line.
 ##
 ## **EVERY SENTINEL THE WIRE SPELLS MUST BE PASSED THROUGH, and each new one is a fresh chance to get
 ## this wrong.** This read accepted `>= 0` and `-2` and flattened everything else to *no answer*, so
@@ -3573,9 +3634,27 @@ static func meter_rot_per_turn(src: Dictionary, prefix: String) -> float:
 ## publishes.
 static func build_turns_remaining(src: Dictionary, prefix: String) -> int:
     var turns := int(src.get(prefix + FORECAST_BUILD_TURNS_KEY, BUILD_TURNS_NO_ESTIMATE))
-    if turns >= 0 or turns == BUILD_TURNS_HOLDS or turns == BUILD_TURNS_ROTS:
+    if turns >= 0 or turns == BUILD_TURNS_HOLDS or turns == BUILD_TURNS_ROTS \
+            or turns == BUILD_TURNS_QUEUE_BLOCKED:
         return turns
     return BUILD_TURNS_NO_ESTIMATE
+
+## **WHERE THIS SOURCE SITS IN THE WINNING BAND'S BUILD QUEUE** — 0-based, `NOT_IN_ANY_BUILD_QUEUE`
+## when no band has queued it (`docs/plan_standing_upkeep.md` §4.6b).
+##
+## It is read BESIDE `build_turns_remaining`, never instead of it: the countdown is the sum of every
+## entry ahead of this one plus its own span at the full builders pool, so on its own it cannot tell
+## forty turns of work from eight turns of work queued behind four other jobs. Anything below zero is
+## normalised to the sentinel — a negative position is not a place in a line.
+static func build_queue_position(src: Dictionary, prefix: String) -> int:
+    var position := int(src.get(prefix + FORECAST_BUILD_QUEUE_POSITION_KEY, NOT_IN_ANY_BUILD_QUEUE))
+    return position if position >= BUILD_QUEUE_HEAD else NOT_IN_ANY_BUILD_QUEUE
+
+## Is this source at the HEAD of the queue that funds it — the one entry the whole builders pool is
+## on? The distinction a chained date cannot carry: a waiting entry's countdown is mostly other
+## people's work.
+static func build_is_queue_head(src: Dictionary, prefix: String) -> bool:
+    return build_queue_position(src, prefix) == BUILD_QUEUE_HEAD
 
 ## **THE WORK UNITS THE CREW'S TOOLS TOOK OFF THE RUNNING BUILD.** `0` when no build is in flight or
 ## the crew carries nothing that helps, which is what every readout gates its gear line on — a
@@ -3755,10 +3834,17 @@ static func is_under_kept(src: Dictionary, prefix: String) -> bool:
 ## KNOWLEDGE accrual, which is where *how much you leave standing shapes what you learn* still holds —
 ## and that is why `floor` stays a parameter here: the work PREDICATE below reads it.
 ##
-## `kit_gear` is the CREW'S kit, as `BUILD_GEAR_PER_WORKER` / `BUILD_GEAR_SATURATING_CREW` off the
-## band's own resolved row (`KitRoster.build_gear`) — the caller passes it because which kit the crew
-## carries is the sheet's picker's answer, not the source's, and it is what lets a kit swap re-price
-## the whole estimate. `{}` is a legal reading and means the crew carries nothing that helps.
+## `kit_gear` is the BUILDERS' kit, as `BUILD_GEAR_PER_WORKER` / `BUILD_GEAR_SATURATING_CREW` off the
+## band's own resolved row (`KitRoster.build_gear`) — the caller passes it because which kit the pool
+## carries is a fact about the BAND'S `builders` row rather than about this source, and it is what
+## lets a kit swap re-price the whole estimate. `{}` is a legal reading and means the crew carries
+## nothing that helps.
+##
+## ⛔ **IT IS NOT THE COMPOSE SHEET'S OWN PICKER, which chooses what the TAKE crew carries.** Both
+## sheets passed their own selection for a release — the GATHERING kit on the forage sheet, which
+## declares no build axis at all — and `DrawerComposeController._build_gear_for` is the seam that
+## resolves the entry's own kit and its web instead (`labor-ui.md` → "A BUILD IS PRICED AT THE
+## **BUILDERS'** KIT").
 ##
 ## **THE WORK PREDICATE IS PART OF THE FORM, and leaving it out is a lie at the loudest end of the
 ## slider.** `RungDef::build_accrual`'s `eligible` carries `crew_is_working_the_source` on Cultivate

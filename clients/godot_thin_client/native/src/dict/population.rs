@@ -363,6 +363,15 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 "build_work_saturating_crew",
                 row.buildWorkSaturatingCrew() as i64,
             );
+            // …and **WHICH WEB THE TWO ABOVE ARE FOR**, at this band's live wear: `"plant"` |
+            // `"animal"`, `""` for a kit holding no live build tool. The three fields are one
+            // reading — a kit's worth off a build is real and simply not real HERE when the branch
+            // disagrees — which is what lets a picker grey `tillage` in front of a `Tame` and what
+            // stops a compose sheet quoting the hurdles' 8.5 against a Cultivate.
+            let _ = entry.insert(
+                "build_work_branch",
+                row.buildWorkBranch().unwrap_or_default(),
+            );
             kit_tiers.push(&entry.to_variant());
         }
     }
@@ -484,24 +493,19 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             if let Some(kind) = assignment.kind() {
                 let _ = entry.insert("kind", kind);
             }
-            // **THE TWO CREWS THIS SOURCE CARRIES**, read as one set
-            // (`docs/plan_standing_upkeep.md` §2.2): the hands on the take and on the build. The
-            // build crew was write-only from the client's side until it shipped — the client could
-            // send `cultivate … <workers>` and never read back what a band already had, so a compose
-            // sheet clamped to IDLE workers offered a fully-allocated band a maximum of `0` and the
-            // player could not re-state a crew they had. With it the clamp is the honest
-            // `idle + this source's own build crew`.
+            // **THE ONE CREW THIS ROW CARRIES** — the hands on the **take**.
             //
-            // `0` is a real reading and the common one — no verb in flight means no builders.
+            // **`improvement_workers` and `maintain_workers` ARE BOTH GONE**: the build and the
+            // keeping left the tile (`docs/plan_standing_upkeep.md` §2.5). Each is a band-level
+            // standing role now and arrives as its own row of this very list, with
+            // `kind == "builders"` / `"agriculture"` / `"husbandry"` and its hands in `workers`.
+            // The wire slots stay `(deprecated)` because FlatBuffers field ids are positional, and
+            // this reader stops inserting the keys — a client that still read one would be showing
+            // a per-source crew the sim has stopped having.
             //
-            // **`maintain_workers` IS GONE**: maintenance left the tile (§2.5). The keeping is a
-            // band-level standing role now and arrives as its own row of this very list, with
-            // `kind == "agriculture"` / `"husbandry"` and its hands in `workers`.
+            // What survives per source is `improvement`, which the sim **derives** from that band's
+            // build queue: the resolved job token, or `""` when nothing is queued here.
             let _ = entry.insert("workers", assignment.workers() as i64);
-            let _ = entry.insert(
-                "improvement_workers",
-                assignment.improvementWorkers() as i64,
-            );
             let _ = entry.insert("target_x", assignment.targetX() as i64);
             let _ = entry.insert("target_y", assignment.targetY() as i64);
             // Per-source food yield (food/turn): `actual_yield` is this turn's realized take, headlined

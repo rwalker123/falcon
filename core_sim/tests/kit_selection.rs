@@ -15,7 +15,6 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 
-use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     advance_expeditions, advance_herds, advance_labor_allocation, advance_tick, build_headless_app,
     recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero, BandEquipment,
@@ -257,9 +256,7 @@ fn spawn_hunting_band(
                         floor: DEFAULT_ESCAPEMENT_FLOOR,
                     },
                     workers: CREW,
-                    improvement: None,
                     kit,
-                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },
@@ -510,9 +507,7 @@ fn a_gather_crew_wears_only_the_baskets_and_a_kitless_one_wears_nothing() {
                             species: None,
                         },
                         workers: CREW,
-                        improvement: None,
                         kit: Some(chosen),
-                        improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
                     }],
                     ..Default::default()
                 },
@@ -981,7 +976,7 @@ fn a_bands_published_pen_and_vantage_tiers_step_down_per_kit_at_the_item_that_su
          further than no kit at all"
     );
 
-    wear_to_the_cliff(&mut app, band, "husbandry_gear");
+    wear_to_the_cliff(&mut app, band, "hurdles");
     wear_to_the_cliff(&mut app, band, "wayfinding");
     recapture_snapshot_in_place(&mut app.world);
     let worn = published_kit_tiers(&app, band);
@@ -1374,17 +1369,13 @@ fn every_labor_row_publishes_the_kit_it_is_priced_at() {
                             floor: DEFAULT_ESCAPEMENT_FLOOR,
                         },
                         workers: CREW,
-                        improvement: None,
                         // Named nothing — the wire must still say which kit it is working under.
                         kit: None,
-                        improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
                     },
                     LaborAssignment {
                         target: LaborTarget::Scout,
                         workers: CREW,
-                        improvement: None,
                         kit: None,
-                        improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
                     },
                 ],
                 ..Default::default()
@@ -1772,9 +1763,7 @@ fn spawn_gathering_band(app: &mut App, baskets_owned: u32) -> (bevy::prelude::En
                         species: None,
                     },
                     workers: CREW,
-                    improvement: None,
                     kit: None,
-                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },

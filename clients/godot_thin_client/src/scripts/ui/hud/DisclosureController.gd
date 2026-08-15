@@ -274,7 +274,7 @@ func kit_breakdown_lines(band: Dictionary) -> Array[String]:
         husbandry_role += DetailFormat.KIT_ROLE_BUILD_WORK_SUFFIX % String.num(
             build_work, DetailFormat.KIT_BUILD_WORK_DECIMALS)
     lines.append(DetailFormat.kit_breakdown_row(band,
-        DetailFormat.KIT_DURABILITY_KEY_HUSBANDRY_GEAR, DetailFormat.KIT_LABEL_HUSBANDRY_GEAR,
+        DetailFormat.KIT_DURABILITY_KEY_HURDLES, DetailFormat.KIT_LABEL_HURDLES,
         husbandry_role))
     # **WAYFINDING STATES TILES, NOT A BIOMASS RATE**, so it takes the vantage's own rounding rather
     # than the carries'. It is how far each POSTED vantage sees — how far out they are posted is not

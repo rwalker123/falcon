@@ -96,6 +96,9 @@ const FOW_EXEMPT_KEYS := {
 	"patch_committed_species":
 		"read only under the Forage line, which is already past the discovered early-return",
 	"patch_committed_display_name": "as patch_committed_species",
+	"patch_cultivation_upkeep_demand":
+		"the LADDER's rate for that rung, not this patch's bill — both plant rungs are `scaled_by: flat`, so it reads identically on every patch in the game and carries no live state to leak",
+	"patch_field_upkeep_demand": "as patch_cultivation_upkeep_demand",
 }
 
 ## The two vectors whose absence was the reported bug. Asserted NON-EMPTY on the fixture before

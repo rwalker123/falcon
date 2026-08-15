@@ -356,6 +356,27 @@ FAILURE state leads with `HudSelectionVocab.RUNG_HAZARD_GLYPH`:
 | a crew on it banking exactly the ROT | `⚠ ∞ turns (42%)` | somebody IS on it and their turn is being wasted; the remedy is MORE of them |
 | under the rot, staffed or not | `⚠ ∞ turns, losing ground (42%)` | the work already bought is going BACK — so it is RED, not amber |
 | built, and the keeping pool is short | `🌾 Tended 92% ⚠` | the rung is HELD and slipping, which no build crew fixes |
+| **the band's builders are ON it and its own gate refuses** | **`⚠ Blocked 96% — your builders are held here`**, over an indented remedy | **the hands are staffed and STUCK** — see below |
+
+> #### ⛔ THE BLOCKED ROW NAMES THE REMEDY, AND THE REMEDY IS THE KEEPING ROLE (§4.6b)
+>
+> `BUILD_QUEUE_BLOCKED` (`-4`) is the band's `builders` pool standing on the HEAD of its queue with the
+> gate on that entry refusing — so the pool is spending its turns on an entry that cannot advance and
+> **every entry behind it is waiting on the block**, which is the cost no other hazard on this table
+> carries. It is not the `Stalled` row: that one is a crew of nobody meeting a `-1`, where the wasted
+> resource is the rung, and this one wastes the WHOLE POOL.
+>
+> **The measured remedy is `assign_labor <f> <b> husbandry <n>` — the keeping role — ALONE.** The gate
+> that produces this is the keeping shortfall's, so staffing the web's own keeping role clears it; the
+> copy names that role and nothing else, and deliberately does not hedge with *"and stop hunting"* or
+> any second lever the player would then have to rank. `DetailFormat.build_blocked_lines` renders the
+> indented second line and is the ONE producer of it, on both webs — `HudWorkVocab.ROLE_NAME_HUSBANDRY`
+> on a herd, `ROLE_NAME_AGRICULTURE` on a patch, so the sentence names the card the player will press.
+>
+> **It renders NOTHING when the keeping is paid**, which is the pairing that keeps the remedy honest: a
+> `-4` whose shortfall has cleared is a block with some other cause, and pointing at a fully-staffed
+> role would be the warning-outlives-its-mechanism failure this arc keeps producing. The row's own
+> hazard mark still stands; only the remedy is withheld.
 
 > #### ⛔ THE HELD ROW IS THE ONE STATE HERE THAT MUST **NOT** BE MARKED (§4.6a)
 >
@@ -462,9 +483,25 @@ including `HERDERS_SHED_FORMAT`, the one line in the client that says animals ar
 - **`At risk:` is WARN-inked now** (`_value_hex`'s own case). It fell through to neutral INK for as
   long as the calm `Keeping:` row above it carried the context; as the whole detail behind a marked
   rung, a shortfall stated in the same ink as a stock reading is the reassuring direction again.
-- **It takes no `kind`.** The row above states WHICH rung is in trouble and the four-hazard fork
-  decides the mark; this states what the trouble costs, off the published shortfall alone, so it covers
-  both sides of the meter without re-deciding which side it is on.
+- **The ROW itself takes no `kind`.** The rung row above states WHICH rung is in trouble and the
+  four-hazard fork decides the mark; this states what the trouble costs, off the published shortfall
+  alone, so it covers both sides of the meter without re-deciding which side it is on.
+- **…BUT IT NOW CARRIES A REMEDY SUB-ROW, AND THAT ONE DOES** (§4.6b). `at_risk_lines(src, prefix,
+  kind)` appends the work board's own note — `HudWorkVocab.under_kept_note_for_source` — indented
+  under the countdown: *"This ground is slipping — raise this band's Agriculture role."* The row
+  stated what was being LOST and never where the hands come from, and one surface up the map's `⚠`
+  badge could not be interrogated at all: `BandOverlayRenderer._draw_source_badge` paints it with
+  `draw_string` into `MapView`'s canvas, so it is not a Control and can hold no `tooltip_text`. **The
+  source's own card is therefore where that mark is interrogated**, and the words are the work row's,
+  so the two surfaces cannot phrase one hazard differently.
+  - **`under_kept_note_for_source` exists because the two kind vocabularies COLLIDE SILENTLY.**
+    `SOURCE_KIND_HERD` is `"herd"` and `LABOR_KIND_HUNT` is `"hunt"`, so handing a source kind
+    straight to the labor-keyed picker answers with the PLANT web's sentence on an animal source — a
+    wrong answer that looks like a right one. It delegates rather than re-spelling the pair.
+  - **A BLOCKED QUEUE SUPPRESSES IT**, because `build_blocked_lines` is already saying it on the row
+    the countdown is about; both would be one instruction twice on one card.
+  - Asserted on `improvement_rung_slipped` and sabotage-verified by dropping the append — exactly
+    that one claim fails.
 
 **The four per-rung BUILD VERBS went too** — `Preparing` / `Sowing` / `Domesticating` / `Building`
 each headlined a row that now leads with a number. The compose sheet keeps its own participles
@@ -472,9 +509,10 @@ each headlined a row that now leads with a number. The compose sheet keeps its o
 reporting it. **`Reverting` went too, in §4.6a** — `HudSelectionVocab.RUNG_HELD_FORMAT` is what a
 parked meter reads now, and the losing half is the rotting row's.
 
-**The FOUR answers `buildTurnsRemaining` publishes all render** — a count is a finish date, `-2` is an
+**The FIVE answers `buildTurnsRemaining` publishes all render** — a count is a finish date, `-2` is an
 amber `∞` (`BUILD_METER_HOLDS`, the meter standing still), `-3` a red one saying *losing ground*
-(`BUILD_METER_ROTS`, the meter going backwards), `-1` is *no answer*. **`-3` was split out of `-2` and
+(`BUILD_METER_ROTS`, the meter going backwards), `-4` is `Blocked` (`BUILD_QUEUE_BLOCKED`, §4.6b — the
+pool staffed and refused, above), `-1` is *no answer*. **`-3` was split out of `-2` and
 this client did not follow for a release**, flattening it back to *no answer* and so rendering a build
 actively bleeding banked work as the STALLED hazard — *a gate refuses this, no crew size fixes it* —
 when the remedy is precisely more hands; the long form is in `labor-ui.md` → "THE SECOND `∞` IS RED".
@@ -486,10 +524,12 @@ source and a refused gate both reach this reader as `-1`, and re-deriving either
 improvement on the map a never-finisher.
 
 **Frames + assertions.** `tile_meter_building` / `tile_meter_held` / `tile_meter_never` /
-**`tile_meter_rotting`** / `tile_build_unstaffed` (`chapters/improvements.gd`) carry the plant hazards
-as WORD-AND-TINT markup — ONE patch at ONE meter value, with only the band's assignment and the
-published sentinel moving. The last two of those are judged as a PAIR, since they are one step apart
-and the whole claim is that they read differently.
+**`tile_meter_rotting`** / **`tile_meter_blocked`** / `tile_build_unstaffed`
+(`chapters/improvements.gd`) carry the plant hazards as WORD-AND-TINT markup — ONE patch at ONE meter
+value, with only the band's assignment and the published sentinel moving. `tile_meter_held` and
+`tile_meter_never` are judged as a PAIR, since they are one step apart and the whole claim is that
+they read differently; `tile_meter_blocked` carries its own PNG-less negative — the same `-4` with the
+keeping PAID, which must render the hazard row and no remedy line at all.
 `tile_two_meters_live` is the both-rows frame, and its third claim is the SILENCE: a patch whose
 keeping is paid must carry no mark on either row, or the mark means nothing on the states that do.
 `improvement_unstarted_standing_price` is the compose-sheet pre-commit quote (see `labor-ui.md`). `herd_corral`
@@ -532,8 +572,10 @@ function rather than four surfaces each deciding for themselves.
 `unstaffed_build_of(progress, crew)` is the same fork asked of an ALREADY-RESOLVED rung, for the map
 badge, which has just resolved both through `RungGates.rung_in_progress`.
 
-**Nothing new is asked of the wire.** The declaration (`LaborAssignment.improvement`), the crew
-(`improvementWorkers`) and the meter are all published; the client derives the state.
+**Nothing new is asked of the wire.** The declaration (`LaborAssignment.improvement`, which the sim
+**derives** from the band's build queue), the hands (the band's `builders` row of
+`laborAssignments`, since the per-source `improvementWorkers` retired with the crew it counted —
+`docs/plan_standing_upkeep.md` §2.5) and the meter are all published; the client derives the state.
 
 Four surfaces, and each says it in its own register:
 
@@ -563,17 +605,45 @@ Four surfaces, and each says it in its own register:
 `cultivation_value_hex` / `field_value_hex` / `husbandry_value_hex` / `corral_value_hex` all match,
 and `BUILD_UNSTARTED_VALUE` is BUILT from it, so the words and the test cannot drift.
 
-**THE DECLARATION AND THE CREW ARE READ OFF ONE CONFIRMED WIRE ROW, and that is not an oversight.**
-They are two fields of one `LaborAssignment`, so reading them from one row is the only way the pair
-can describe one moment. `HudBandLaborState.unstaffed_build_forage` / `_hunt` therefore walk
-`labor_assignments` directly rather than the pending-aware `effective_worker_map`: that overlay
-carries a declaration but no build crew, so a pending-aware read would fire this warning at the
-player for the turn after they committed a build **with** builders. Silence for one snapshot is the
-honest degrade. It composes safely with the pending-aware `building_rung` beside it on the tile card
-— a fresh commit has no confirmed declaration yet, so this reader answers nothing.
+**THE DECLARATION AND THE CREW ARE TWO DIFFERENT ROWS NOW, AND ONLY ONE OF THEM CAN BE READ
+OPTIMISTICALLY** (§2.5). The declaration is the SOURCE's `LaborAssignment.improvement`; the hands are
+the band's own `builders` role row, which names no source at all. So
+`HudBandLaborState.unstaffed_build_forage` / `_hunt` walk `labor_assignments` for the CONFIRMED
+declaration and read the pool through **`effective_role_workers(band, "builders")`**, which is
+pending-aware.
 
-**Declaring with no builders stays LEGAL.** It commits the crop and the player may staff it next
-turn; the bug was that it was invisible, not that it was possible, so nothing here blocks a commit.
+**THE CREW HALF WAS CONFIRMED FOR A RELEASE, AND THE REASON WRITTEN HERE FOR IT WAS WRONG.** It said
+the pending overlay "carries a declaration and not a role edit" — true of `effective_worker_map`, the
+per-SOURCE map, and FALSE of `effective_role_workers`, the ROLE reader, which has always existed and
+answers exactly this question off `pending_assigns_for`. What the confirmed read actually bought was
+the defect: a player who had just staffed the role read a Builders card saying `2` beside a compose
+sheet saying *"⚠ Not started — nobody is on this band's Builders role"* until the turn resolved — two
+surfaces on one screen, and the stale one phrased as an accusation. **A pending role edit cannot be
+refused** (`assign_labor` clamps the count rather than rejecting it), so the optimistic read can only
+ever silence a warning that was about to stop being true.
+
+**The DECLARATION stays confirmed**, and that is not the same compromise: there is no pending overlay
+for it to read, and it composes safely with the pending-aware `building_rung` beside it on the tile
+card — a fresh commit has no confirmed declaration yet, so this reader answers nothing.
+
+**`build_crew_forage` / `build_crew_hunt` beside it stay CONFIRMED, deliberately.** They do not decide
+whether to warn; they choose the WORDING of a verdict the wire already computed (`BUILD_METER_HOLDS`
+is a crew treading water or a build parked on purpose), and that verdict was resolved against the
+confirmed crew. Reading an optimistic crew there would classify last turn's number with next turn's
+hands.
+
+**THE POOL IS FOLDED OVER THE BANDS THAT WORK THE SOURCE, NEVER OVER EVERY BAND.**
+`HudBandLaborState.build_crew_forage` / `build_crew_hunt` sum `workers_for_role(band, "builders")`
+across the bands holding an assignment on THIS source, because the question these surfaces ask is *is
+anybody building this* — a fact about the source. Folding the whole faction's builders would put a
+crew on every source on the map the moment one band staffed the role. The COMPOSE SHEET asks a
+different question (*what would MY band's pool make of it*) and answers it with one band's, which is
+why the two readings differ and must (`labor-ui.md` → "The build's closed form").
+
+**Declaring with no builders stays LEGAL, and withdrawing is `unqueue`.** Ticking the box appends a
+queue entry, which costs nothing and loses nothing while it waits; unticking sends
+`unqueue <faction> <source>` and drops it. The bug this state was written for was that a declaration
+was invisible, not that it was possible, so nothing here blocks a commit.
 
 **Frames + assertions.** `tile_build_unstaffed` (`chapters/improvements.gd`) carries the tile card's
 row as word-AND-tint markup, the sheet's note, and the NEGATIVE that names the defect — the build's

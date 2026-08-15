@@ -1290,6 +1290,14 @@ table BandKitTiers {
   // The source rows publish `buildWorkFromGear`, which is the RESOLVED contribution for the crew
   // that worked the source this turn - a different question, and not one a stepper can move.
   buildWorkSaturatingCrew:uint = 0;
+  // WHICH FOOD WEB `buildWorkPerWorker` IS FOR (appended) - "plant" | "animal", and "" when this kit
+  // carries no build tool at all.
+  //
+  // THE THREE BUILD FIELDS ARE ONE READING. A hoe takes 8.5 off a Cultivate and NOTHING off a Tame;
+  // hurdles do the reverse. A sheet pricing a build must compare this against the branch of the rung
+  // the queue entry names and treat a mismatch as 0 - the same discipline attackMaxBodyMass imposes
+  // on attack, and for the same reason: the number is real, it is simply not real HERE.
+  buildWorkBranch:string;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
@@ -1486,24 +1494,20 @@ table LaborAssignment {
   // species. The number a player decides on is the herd row's materialPerBiomass /
   // perWorkerMaterial, which are rates and need no take.
   materialYield:[MaterialPayoff];
-  // --- THE BUILD'S OWN CREW (appended last, docs/plan_standing_upkeep.md 2.2) -------------------
-  // `workers` above is the TAKE crew. This is the other allocation a source carries: the hands on
-  // the BUILD (the improvement verb's own crew). Two independent numbers on one source, drawing on
-  // one finite band, which is what makes competing for hands the opportunity cost and makes it
-  // visible in what the player typed.
+  // RETIRED: `improvementWorkers`, the per-source BUILD crew - the twin of the keeper crew below,
+  // retired one slice after it. THE BUILD LEFT THE TILE TOO (docs/plan_standing_upkeep.md 2.5): a
+  // verb names no crew any more, it appends an entry to the band's ORDERED BUILD QUEUE, and the
+  // hands stand on the band-level `builders` role - which arrives as an ordinary row in this very
+  // list, kind="builders", head count in `workers`, exactly like agriculture, husbandry, scout and
+  // warrior. The slot stays because FlatBuffers field ids are positional.
   //
-  // THE CLIENT CANNOT DERIVE IT, and without it the build allocation is WRITE-ONLY from its side: it
-  // can send `cultivate ... <workers>` and never read back what a band already has. Two things broke
-  // on that. A compose sheet clamps its steppers to the band's IDLE workers (the sim refuses an
-  // over-staffed command), so a fully-allocated band showed a maximum of 0 and the player could not
-  // RE-STATE a crew they already had - only take it to zero, a trap with no way out. And a sheet
-  // reopened on a source with 2 builders read `0`.
-  //
-  // With it the clamp becomes the honest `idle + this source's own build crew`, and the steppers
-  // seed at what the band actually has.
-  //
-  // 0 IS A REAL VALUE and it is the common one: no verb in flight means no builders.
-  improvementWorkers:uint = 0;
+  // WHAT SURVIVES PER SOURCE IS `improvement` above, and it is DERIVED AT CAPTURE from that band's
+  // queue entry - the resolved job token (cultivate/sow/tame/corral, or "extend_pen" for a ring),
+  // "" when the band has nothing queued here. So a client still reads "what is being raised on this
+  // source" off the row and still does no arithmetic to get it. The place in the line and the finish
+  // date are the SOURCE's own fields: ForagePatchState / HerdTelemetryState carry
+  // `buildQueuePosition` beside `buildTurnsRemaining`.
+  improvementWorkers:uint = 0 (deprecated);
   // RETIRED: `maintainWorkers`, the per-source KEEPER crew. MAINTENANCE LEFT THE TILE
   // (docs/plan_standing_upkeep.md 2.5). An indivisible supplier meeting a per-source demand wastes
   // whatever it does not spend, and the waste grows as gear makes a hand worth more; a band-level
@@ -2126,7 +2130,7 @@ table ForagePatchState {
   // (`isCultivated`/`isField`) when that is empty — the pair reads "50 work, ~25 turns", so they
   // must name one rung.
   //
-  // THREE NEGATIVES, THREE FACTS, and they must not be collapsed:
+  // FOUR NEGATIVES, FOUR FACTS, and they must not be collapsed:
   //
   //   -1  NO ESTIMATE — there genuinely is no answer: this is already a Field, the next rung's own
   //       site/knowledge/species gates refuse it for this faction, or the rung's meter is at ZERO
@@ -2136,6 +2140,12 @@ table ForagePatchState {
   //   -3  THE METER ROTS — the same build banking LESS than the bleed, so past the rung's grace the
   //       decay pass takes back work the player already bought. Render as INFINITY too, but NOT the
   //       same way as `-2`.
+  //   -4  THE QUEUE IS BLOCKED HERE — the band's builders are STAFFED AND STANDING ON THIS BUILD and
+  //       the rung's own gate refuses it, so nothing banks and nothing behind it moves. It is NOT
+  //       `-1`: `-1` is the absence of an answer and renders as no line, which is exactly the
+  //       silence this state must not be read as. THE REMEDY IS OFF THE BUILD LINE - pair it with
+  //       this source's own `upkeepShortfall`/`neglectGraceRemaining`, because what unsticks it is
+  //       staffing the KEEPING. Every entry behind a blocked head publishes `-4` too.
   //
   // `-2` IS NOT ONLY A FAILURE, and this is the one a reader gets wrong. With NO BUILDERS and the
   // keeping met it is the player PARKING a half-built improvement — held indefinitely, at no risk,
@@ -2173,8 +2183,9 @@ table ForagePatchState {
   //
   // PER EQUIPPED WORKER, SUMMED: a worker holding a tool contributes its worth, a worker without one
   // contributes nothing (the partly-equipped-party rule the carries already run on). `0` = no build
-  // in flight, or the crew carries nothing that helps - which is every PLANT build today, since no
-  // plant item declares the stat yet (issue #539).
+  // in flight, or the crew carries nothing that helps - which, since each web got its own builders
+  // kit, means a pool the player deliberately sent out bare or one carrying the OTHER web's tool
+  // (a hoe takes nothing off a Tame, and hurdles take nothing off a Cultivate).
   buildWorkFromGear:float = 0;
   // THE WORK ONE WORKER BANKS ON THIS SOURCE PER TURN, at the food peak, before the floor
   // multiplier and before any gear (appended). Today `PER_WORKER_OUTPUT` (1.0).
@@ -2200,9 +2211,9 @@ table ForagePatchState {
   // `meterRotPerTurn`, and it does not vary with `w`.
   //
   // THERE IS NO FLOOR FACTOR. `learn_multiplier(floor)` came off the build accrual with the crews'
-  // separation - a build crew is not pulling on the source - so the crew term is the head count and
-  // nothing else. A form still carrying `x floor / foodPeak` disagrees with the sim at every floor
-  // but the food peak.
+  // separation - builders are not pulling on the source - so the crew term is the POOL's head count
+  // and nothing else. A form still carrying `x floor / foodPeak` disagrees with the sim at every
+  // floor but the food peak.
   //
   // READ IT BESIDE `buildTurnsRemaining`, NEVER INSTEAD OF IT. That field is the sim's answer for
   // the COMMITTED crew and is what a card with no stepper renders; this is a term a sheet WITH a
@@ -2302,6 +2313,20 @@ table ForagePatchState {
   // correctly says the meter is losing ground, and `buildTurnsRemaining`'s `-2`/`-3` are struck from
   // a term the sheet cannot see.
   meterRotPerTurn:float = 0;
+  // WHERE THIS SOURCE SITS IN THE WINNING BAND'S BUILD QUEUE (appended,
+  // docs/plan_standing_upkeep.md 4.6b) - 0-BASED, and `-1` when no band has queued it.
+  //
+  // The whole `builders` pool goes on the HEAD of a band's queue until that entry's meter fills,
+  // then on the next - so `buildTurnsRemaining` above is a CHAINED date: everything above this entry
+  // plus its own span at the full pool. WITHOUT THIS FIELD that date is an exact number with no
+  // explanation, and the player cannot tell 40 turns of work from 8 turns of work behind four other
+  // jobs.
+  //
+  // IT RIDES THE SAME WINNER as `buildTurnsRemaining` and `buildWorkFromGear`: several bands may
+  // work one source, the sooner estimate wins, and all three come from that band. Reading a date
+  // from one band's queue beside a position from another's would be two answers pretending to be
+  // one.
+  buildQueuePosition:int = -1;
 }
 
 // One STANCE's ceiling on one tile, in every account the tile's basket pays (issue #426). The plant
@@ -3255,7 +3280,7 @@ table HerdTelemetryState {
   // assignment's own `improvement`, or for the next rung up (`domestication`/`corralled`) when that
   // is empty.
   //
-  // THREE NEGATIVES, THREE FACTS — the same set the plant twin on `ForagePatchState` documents in
+  // FOUR NEGATIVES, FOUR FACTS — the same set the plant twin on `ForagePatchState` documents in
   // full:
   //   -1  NO ESTIMATE — already penned, the next rung's ceiling/knowledge/ownership gates refuse it,
   //       or the rung's meter is at ZERO with nobody building it.
@@ -3263,9 +3288,16 @@ table HerdTelemetryState {
   //       ground stands still. With NO builders and the keeping met that is a PARKED improvement,
   //       held at no risk - not a warning.
   //   -3  THE METER ROTS — the same build banking less, so banked work is being lost.
-  // Render the last two as INFINITY, and not as each other. The boundary is WORK BANKED rather than
+  //   -4  THE QUEUE IS BLOCKED HERE — the band's builders are staffed and standing on this build and
+  //       the rung's own gate refuses it. THIS IS THE ANIMAL WEB'S OWN FAILURE: a half-tamed herd
+  //       with an empty `husbandry` role advances three turns and then freezes, because the hunters
+  //       draw the flock to their floor, the unmet keeping suppresses its regrowth, and the Tame's
+  //       escapement gate never reopens. Adding builders does NOTHING. Pair it with this herd's
+  //       `upkeepShortfall`/`neglectGraceRemaining` and say STAFF THE KEEPING.
+  // Render -2/-3 as INFINITY, and not as each other. The boundary is WORK BANKED rather than
   // hands, so an unstaffed HALF-BUILT meter answers `-2`/`-3`; `-1` is a meter at zero with nobody
-  // on it, or a gate that refuses. The client cannot compute any of them.
+  // on it, or a gate that refuses somewhere other than a staffed queue's head. The client cannot
+  // compute any of them.
   //
   // ON THE ANIMAL WEB `-3` IS UNREACHABLE, and honestly so: neither animal rung declares a
   // `meter_decay`, so `meterRotPerTurn` is always 0 and nothing eats an animal build - an under-kept
@@ -3287,7 +3319,7 @@ table HerdTelemetryState {
   // PER EQUIPPED WORKER, SUMMED: a worker holding a tool contributes its worth, a worker without one
   // contributes nothing (the partly-equipped-party rule the carries already run on). `0` = no build
   // in flight, or the crew carries nothing that helps - which is every PLANT build today, since no
-  // plant item declares the stat yet (issue #539).
+  // WHICH WEB a kit's build gear serves rides `buildWorkBranch` on the kit row beside the worth.
   buildWorkFromGear:float = 0;
   // THE WORK ONE WORKER BANKS ON THIS SOURCE PER TURN, at the food peak, before the floor
   // multiplier and before any gear (appended). Today `PER_WORKER_OUTPUT` (1.0).
@@ -3313,9 +3345,9 @@ table HerdTelemetryState {
   // `meterRotPerTurn`, and it does not vary with `w`.
   //
   // THERE IS NO FLOOR FACTOR. `learn_multiplier(floor)` came off the build accrual with the crews'
-  // separation - a build crew is not pulling on the source - so the crew term is the head count and
-  // nothing else. A form still carrying `x floor / foodPeak` disagrees with the sim at every floor
-  // but the food peak.
+  // separation - builders are not pulling on the source - so the crew term is the POOL's head count
+  // and nothing else. A form still carrying `x floor / foodPeak` disagrees with the sim at every
+  // floor but the food peak.
   //
   // READ IT BESIDE `buildTurnsRemaining`, NEVER INSTEAD OF IT. That field is the sim's answer for
   // the COMMITTED crew and is what a card with no stepper renders; this is a term a sheet WITH a
@@ -3397,6 +3429,10 @@ table HerdTelemetryState {
   // See the ForagePatchState twin for why the field exists at all: the build's closed form nets the
   // ROT, never `<rung>UpkeepDemand`, and the client cannot derive the rot.
   meterRotPerTurn:float = 0;
+  // WHERE THIS HERD SITS IN THE WINNING BAND'S BUILD QUEUE (appended,
+  // docs/plan_standing_upkeep.md 4.6b) - 0-BASED, `-1` when no band has queued it. The animal twin
+  // of `ForagePatchState.buildQueuePosition`; that field carries the full rationale.
+  buildQueuePosition:int = -1;
 }
 
 table CommandEventState {
@@ -3773,6 +3809,13 @@ table KitOption {
   // The slot above is kept rather than deprecated so a client still compiles against it; a consumer
   // rendering a build axis should read THIS field, and read it as work units rather than a factor.
   buildWorkPerWorker:float = 0;
+  // WHICH FOOD WEB `buildWorkPerWorker` IS FOR (appended) - "plant" | "animal", and "" when this kit
+  // carries no build tool at all.
+  //
+  // THE PAIR IS ONE READING. A hoe speeds a Cultivate and does nothing for a Tame, so a picker must
+  // grey a builders kit whose branch disagrees with the build it is being offered for, exactly as it
+  // greys a snare against a Red Deer.
+  buildWorkBranch:string;
 }
 
 // ==============================================================================================

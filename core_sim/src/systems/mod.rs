@@ -21,12 +21,12 @@ use crate::{
     combat_config::CombatConfigHandle,
     components::{
         available_workers, floor_overdraws, fragments_from_contract, fragments_to_contract,
-        raid_is_recurring, BandEquipment, BandId, BandTravel, DeathCause,
-        DemographicFlowAccumulator, ElementKind, Expedition, ExpeditionMission, ExpeditionPhase,
-        Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
-        MoraleCause, MoraleContributions, MountainMetadata, PendingMigration, PopulationCohort,
-        PowerNode, ResidentBand, SourceYield, StartingUnit, Tile, YieldRange,
-        DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, STRIP_IT_BARE,
+        raid_is_recurring, BandEquipment, BandId, BandTravel, BuildJob, BuildQueueEntry,
+        BuildSource, DeathCause, DemographicFlowAccumulator, ElementKind, Expedition,
+        ExpeditionMission, ExpeditionPhase, Improvement, KnowledgeFragment, LaborAllocation,
+        LaborAssignment, LaborTarget, LocalStore, MoraleCause, MoraleContributions,
+        MountainMetadata, PendingMigration, PopulationCohort, PowerNode, ResidentBand, SourceYield,
+        StartingUnit, Tile, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, STRIP_IT_BARE,
     },
     creatures_config::CreaturesConfigHandle,
     culture::{
@@ -57,8 +57,8 @@ use crate::{
     hydrology::HydrologyState,
     influencers::{InfluencerCultureResonance, InfluencerImpacts},
     intensification::{
-        activity_work, build_turns_estimate, build_work_from_gear, distribute_upkeep_pool, knows,
-        BuildTurns, LadderConfig, LadderConfigHandle, LadderKnowledge, RungDef, RungKey,
+        activity_work, build_work_from_gear, distribute_upkeep_pool, knows, BuildQuote, BuildTurns,
+        LadderConfig, LadderConfigHandle, LadderKnowledge, RungDef, RungKey,
         NO_CREW_ON_THIS_ACTIVITY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED,
     },
     labor_config::{LaborConfig, LaborConfigHandle},
@@ -190,7 +190,7 @@ pub fn reset_transfer_ledger(mut allocations: Query<&mut LaborAllocation>) {
 mod crafting;
 mod expeditions;
 mod fission;
-mod labor;
+pub(crate) mod labor;
 mod population;
 mod power;
 mod trade;

@@ -457,6 +457,17 @@ const AGRICULTURE_ROLE_HINT := "Keeps every tended patch and Field this band wor
 
 const HUSBANDRY_ROLE_HINT := "Keeps every tamed herd and pen this band works. Short of the sum, animals drift off."
 
+## **THE BUILDING ROLE** (`docs/plan_standing_upkeep.md` §2.5) — the third band-level pool, and the
+## card that replaced the per-source BUILDERS stepper the compose sheet used to carry.
+const ROLE_NAME_BUILDERS := "Builders"
+
+## **IT NAMES THE QUEUE, BECAUSE THE QUEUE IS WHERE THE HANDS GO.** Unlike the keeping pair this pool
+## is NOT split across everything the band holds: the whole of it goes on the HEAD of the band's build
+## queue until that entry's meter fills, then on the next. A hint that said "keeps every build" would
+## promise a spread the model deliberately does not offer — and *"builders with nothing to do"* needs
+## no warning, a build demand ending when its meter fills.
+const BUILDERS_ROLE_HINT := "Raises whatever this band has queued, one job at a time, head of the queue first."
+
 ## **THE FUND-MODE CONTROL** — how this band splits a keeping pool it cannot stretch, `spread` or
 ## `priority` (`upkeep_mode <faction> <band> …`). It renders under the two keeping cards and ONLY
 ## where the band holds something on either web: the choice is meaningless with nothing to fund, and
@@ -499,6 +510,11 @@ const ROLE_CARD_NAME_FONT_SIZE := 12
 ## Two lines of hint at ALLOC_SECTION_FONT_SIZE, so the two cards stay the same height whatever the
 ## hint wraps to.
 const ROLE_CARD_HINT_HEIGHT := 28.0
+
+## The Builders card's READ-ONLY gear line, as meta — the stable handle for the preview harnesses.
+## It is not `KitRoster.KIT_HINT_META`: that one marks the hint a kit PICKER mounts, and telling the
+## two apart is the whole of the claim that this card states its kit without offering a choice.
+const ROLE_CARD_GEAR_META := "role_card_gear"
 
 ## WORK BOARD geometry. Every one of these heights is BOTH what the element reserves in
 ## `_work_board_capacity` and what it actually draws at, so the page can never overflow its zone.
@@ -679,6 +695,34 @@ const WORK_ROW_BUILDING_FORMAT := "%s%d%%"
 
 const WORK_ROW_BUILDING_TOOLTIP_FORMAT := "%s in progress — %d%% done."
 
+## …and the SAME rung under way while nobody is raising it, or while it is losing ground: the verb
+## glyph and a `⚠`, with **the percentage dropped**. A percent on a build nobody is staffing implies
+## progress that is not happening, and a percent that is falling is the same lie one state over — so
+## the slot still says WHICH rung is promised here and stops saying it is being worked.
+##
+## **IT IS THE MAP BADGE'S FACE, RESTATED RATHER THAN SHARED.** `BandOverlayRenderer`'s
+## `BADGE_UNSTAFFED_FORMAT` is the identical `%s⚠` plus the trailing space its plate needs for the
+## crew count that follows it, which this row's own reserved slot does not. A HUD controller must not
+## import a MAP renderer, so the two faces are deliberate twins — but the VERDICT behind them is
+## genuinely one function: both fork on `SourceForecast.build_is_stalled`, neither re-derives it from
+## a crew count or a percentage, and that is what stops the map showing an alert the WORK tab does not.
+##
+## **A PARKED BUILD IS NOT THIS.** `BUILD_PACE_HELD` — a `-2` with nobody on it and its keeping
+## covered — keeps its number and its ordinary ink, because that number is honest and the state is a
+## decision rather than a failure (`labor-ui.md` → "THE BUILD LINE'S STATE IS ITS COLOUR").
+const WORK_ROW_BUILDING_UNSTAFFED_FORMAT := "%s⚠"
+
+## …and its tooltip, which drops the percent for the reason the face does and names both remedies —
+## the two ways a meter comes to a stop have two different fixes, and the row cannot tell which
+## without stating a number it has just refused to state.
+const WORK_ROW_BUILDING_UNSTAFFED_TOOLTIP_FORMAT := "%s in progress — it is NOT advancing. Staff the band's Builders role, or cover this source's keeping."
+
+## **THE ROW'S RUNG-AXIS SLOT, VALUED THE FACE IT RENDERED.** Every claim about that slot is a STRING
+## composed at render time, so a harness that found it by its text would only confirm the string it
+## had already assumed — and the three build states differ by one glyph at a thumbnail's size. The
+## meta is what lets an assertion find the Label first and read it second.
+const WORK_ROW_BUILD_STATE_META := "work_row_build_state"
+
 const WORK_CHIP_TOOLTIP := "Filter the board to these sources."
 
 const WORK_SOURCES_FORMAT := "%d sources"
@@ -802,6 +846,26 @@ static func under_kept_tooltip(kind: String) -> String:
     return WORK_ROW_UNDER_HERDED_TOOLTIP if kind == SourceForecast.LABOR_KIND_HUNT \
         else WORK_ROW_UNDER_KEPT_TOOLTIP
 
+## **THE SAME PAIR ASKED WITH A *SOURCE* KIND** (`SOURCE_KIND_HERD` / `SOURCE_KIND_FORAGE`), which is
+## what the card-side producers hold. `SOURCE_KIND_HERD` is `"herd"` and `LABOR_KIND_HUNT` is
+## `"hunt"`, so handing one straight to the labor-keyed pickers above silently answers with the PLANT
+## web's sentence on an animal source — a wrong answer that looks like a right one. It delegates
+## rather than re-spelling the pair, so the two webs' wording still has exactly one home.
+static func under_kept_note_for_source(source_kind: String) -> String:
+    return under_kept_note(_labor_kind_of(source_kind))
+
+## **WHICH BAND ROLE PAYS THIS SOURCE'S KEEPING** — `Husbandry` on the animal web, `Agriculture` on
+## the plant one. It is the role NAME the two notes above already name in prose, pulled out so the
+## surfaces that need the bare word (the compose sheet's standing price, the blocked-queue remedy)
+## read the same table rather than spelling the pair a third time.
+static func keeping_role_name(source_kind: String) -> String:
+    return ROLE_NAME_HUSBANDRY if source_kind == SourceForecast.SOURCE_KIND_HERD \
+        else ROLE_NAME_AGRICULTURE
+
+static func _labor_kind_of(source_kind: String) -> String:
+    return SourceForecast.LABOR_KIND_HUNT if source_kind == SourceForecast.SOURCE_KIND_HERD \
+        else SourceForecast.LABOR_KIND_FORAGE
+
 const WORK_EMPTY_HINT := ALLOC_NO_SOURCES_HINT
 
 ## The inspector strip (the row's second/third lines, relocated to one place).
@@ -819,10 +883,10 @@ const WORK_INSPECT_OVERDRAW_LINE := "⚠ Overdraws the source at this policy."
 
 const WORK_INSPECT_ASSIGNED_FORMAT := "%d assigned"
 
-## …and the source's OTHER crew beside it (`docs/plan_standing_upkeep.md` §2.2), rendered only where
-## there are builders on it. A row admitted to the board on its builders alone would otherwise read
-## `0 assigned` with three hands standing on its meter.
-const WORK_INSPECT_BUILDERS_FORMAT := "%d building"
+## **RETIRED — `WORK_INSPECT_BUILDERS_FORMAT`, the `N building` clause**
+## (`docs/plan_standing_upkeep.md` §2.5). It named the SOURCE's own build crew, and a source has none:
+## a verb declares and the hands stand on the band's `builders` pool, which funds the head of its
+## queue. The count belongs to the queue, which is a list of its own.
 
 const WORK_INSPECT_SENTENCE_SEPARATOR := " · "
 
@@ -843,4 +907,145 @@ const PAGER_NEXT_TOOLTIP := "Next page"
 const PAGER_FORMAT := "Page %d / %d"
 
 const PAGER_RANGE_FORMAT := "%d–%d of %d"
+
+# ---- The BUILD QUEUE block (`docs/plan_standing_upkeep.md` §4.6b) ---------------------------------
+#
+# The band's ordered build queue, above the filter chips in the WORK zone. **Above them deliberately:**
+# the chips filter the BOARD, and the queue is the band's own list rather than a view of that board —
+# a block below them would read as a filtered subset of it.
+#
+# **NO QUEUE MEANS NO BLOCK AT ALL** — zero nodes, zero height, zero chrome. That is the common
+# early-game state and it must cost nothing, which is also why `build_queue_block_height` answers 0
+# there rather than reserving a bare header.
+
+## The block's own head, uppercased by `HudWidgets.alloc_section_label` like every other zone head.
+const ZONE_HEADER_BUILD_QUEUE := "Build queue"
+
+## **ENTRIES DRAWN BEFORE THE OVERFLOW ROW TAKES OVER.** Three, because the block is paid for out of
+## the WORK zone's own clipped box: at four entries plus the overflow row it costs 132px of a ~300px
+## horizontal dock, which still leaves the board rows to page through. A deeper cap buys a longer
+## list at the price of the board it sits above.
+const BUILD_QUEUE_ROWS_MAX := 3
+
+## The HEAD marker — the one entry the whole builders pool is standing on. Its slot is reserved on
+## EVERY row (`BUILD_QUEUE_MARKER_WIDTH`) so the job faces line up down the block; a conditionally
+## omitted Label would shift every row behind the head.
+const BUILD_QUEUE_HEAD_MARKER := "▸"
+
+const BUILD_QUEUE_MARKER_WIDTH := 10.0
+
+## The date column. Fixed and CLIPPING: `HudSelectionVocab.RUNG_BLOCKED_FORMAT` is a whole sentence,
+## and letting it size the row would squeeze the job face to nothing on a left dock. The Label's
+## `text` still carries the full value (clipping is visual only) and the row tooltip repeats it, so
+## nothing is unreachable.
+const BUILD_QUEUE_DATE_WIDTH := 118.0
+
+## `3 builders · Tillage kit` — the head's readout, naming the pool that funds the queue and the kit
+## it is holding. The kit comes from the SAME resolution the Builders role card's gear line states
+## (`BandPanelController._role_kit_id`), so the card and this header cannot disagree about which web's
+## tool the pool is carrying.
+const BUILD_QUEUE_BUILDERS_FORMAT := "%d builders · %s"
+
+## …and the same slot when nobody is on the role. **This branch is the direct answer to a playtest
+## report** — a Cultivate that was not progressing, with nothing on any surface saying why — so it
+## names the remedy rather than merely stating the zero, and it takes the WARN ink.
+const BUILD_QUEUE_NO_BUILDERS_NOTE := "⚠ No builders — staff the Builders role"
+
+const BUILD_QUEUE_BUILDERS_TOOLTIP := "The band's builders pool funds the HEAD of this queue until its meter fills, then the next. Staff it on the Builders card in the WORKFORCE zone."
+
+## A queued PLANT entry's face — the declared verb (glyph and word, `HudFormat.policy_face`) plus the
+## tile it stands on. The verb's vocabulary is the board row's in-progress axis's own, so a rung under
+## way reads the same word here and there.
+const BUILD_QUEUE_PLANT_FACE_FORMAT := "%s (%d, %d)"
+
+## …and its animal twin, naming the herd rather than a tile.
+const BUILD_QUEUE_ANIMAL_FACE_FORMAT := "%s %s"
+
+## The truncation row. **A truncated list with nothing under it reads as the whole list**, which is
+## the faction page's standing rule for a capped list, applied to the band's own.
+const BUILD_QUEUE_OVERFLOW_FORMAT := "+%d more"
+
+const BUILD_QUEUE_OVERFLOW_TOOLTIP := "More entries are queued than this zone can show. Reorder from the command line with `build_order`."
+
+## The withdrawal. Same `✕` and same steady DANGER ink the parties zone's recall control wears — a
+## destructive control reads as one — and, like that one, it asks nothing first: `unqueue` withdraws a
+## DECLARATION, the banked meter survives it, and re-declaring is one tick of the compose control.
+const BUILD_QUEUE_UNQUEUE_GLYPH := "✕"
+
+const BUILD_QUEUE_UNQUEUE_WIDTH := 22.0
+
+const BUILD_QUEUE_UNQUEUE_TOOLTIP := "Withdraw this build. The work already banked is kept, and the source keeps its crew."
+
+## The row's own tooltip: the job face and its date in full, since both columns clip.
+const BUILD_QUEUE_ROW_TOOLTIP_FORMAT := "%s — %s"
+
+# ---- A DECLARATION THE WIRE HAS NOT PLACED YET ---------------------------------------------------
+#
+# `buildQueuePosition` is a WIRE field, so an entry the player declared this turn has no position
+# until the sim resolves the turn — and the block, derived from that field alone, stayed empty until
+# the next tick. Reported from play as *"it is very confusing if it doesn't show up the moment I
+# create it."* The optimistic overlay already carries the declaration (`record_pending_assign` takes
+# the `improvement`, and `effective_worker_map` merges it), so a source whose EFFECTIVE improvement
+# is a live verb while its WIRE position is `NOT_IN_ANY_BUILD_QUEUE` is exactly a pending entry.
+#
+# **THREE THINGS IT DOES NOT DO, each because it would state a fact the sim has not made:**
+#   • it does not INTERLEAVE — pending rows sort to the TAIL, after every confirmed entry, because
+#     the sim APPENDS and the tail is the only honest position for an entry with none;
+#   • it states NO DATE — there is no chained answer for an entry that is not in the chain, and a
+#     number there would be invented;
+#   • it wears NO HEAD MARKER, even when the queue is otherwise empty — the head is the entry the
+#     pool is actually funding, which the sim decides.
+#
+# **ITS `✕` STILL WORKS**, and needs nothing of its own: `unqueue` names a SOURCE, so withdrawing a
+# declaration made a second ago is the same command as withdrawing one placed ten turns back — which
+# is also the most likely thing a player wants from this row.
+#
+# **IT COSTS A FULL ROW**, so it goes into the SAME list `build_queue_block_height` counts and
+# `_work_board_capacity` subtracts. There is exactly one expression for the drawn height and the
+# reserved height, and a pending row that was drawn outside it would slice the board silently.
+#
+# **IT RECONCILES AWAY FOR FREE**: `reconcile_pending` drops the overlay entry on the first snapshot
+# with a newer turn, by which time the wire carries a real position — so nothing has to remove it.
+
+## The pending row's date slot carries the CLIENT'S ONE SPELLING OF PENDING instead of a countdown —
+## `FoodIcons.for_status(FoodIcons.STATUS_PENDING)`, the `○` in amber that the work rows' status
+## clause and the map's dashed-amber overlays already use. Named here only so the rule is stated
+## where the block is; the GLYPH itself is never re-typed, and the tooltip is
+## `HudFormat.status_tooltip_line`'s own words ("Pending — starts when you advance the turn").
+const BUILD_QUEUE_PENDING_STATUS := FoodIcons.STATUS_PENDING
+
+## **THE BLOCK'S STABLE HANDLES.** Every claim this block owes is a STRING composed at render time —
+## the head marker, the job face, the date — so a harness that found them by their text would only
+## confirm the string it had already assumed. The metas are what let it find the controls first and
+## read them second; `BUILD_QUEUE_BLOCK_META` additionally makes the block's ABSENCE assertable,
+## which is the no-queue-no-block rule's whole claim and one no picture can carry.
+const BUILD_QUEUE_BLOCK_META := "build_queue_block"
+
+## Valued the entry's own queue POSITION, so a harness can tell the head from the rest without
+## reading the marker it is trying to assert.
+const BUILD_QUEUE_ROW_META := "build_queue_row"
+
+const BUILD_QUEUE_OVERFLOW_META := "build_queue_overflow"
+
+const BUILD_QUEUE_MARKER_META := "build_queue_marker"
+
+const BUILD_QUEUE_FACE_META := "build_queue_face"
+
+const BUILD_QUEUE_DATE_META := "build_queue_date"
+
+const BUILD_QUEUE_UNQUEUE_META := "build_queue_unqueue"
+
+## **THE HEIGHT THE BLOCK RESERVES *AND* DRAWS AT — one function, two callers.** The work zone
+## `clip_contents`, so a block that drew without being paid for in `_work_board_capacity`'s chrome
+## term would silently slice board rows off the bottom of the zone. Reserving and drawing from one
+## expression is what makes the two unable to disagree.
+##
+## `0` for an empty queue, which is the no-block-at-all rule stated in arithmetic.
+static func build_queue_block_height(entries: int) -> float:
+    if entries <= 0:
+        return 0.0
+    var rows := mini(entries, BUILD_QUEUE_ROWS_MAX)
+    if entries > BUILD_QUEUE_ROWS_MAX:
+        rows += 1
+    return ZONE_HEAD_HEIGHT + float(rows) * WORK_ROW_HEIGHT
 

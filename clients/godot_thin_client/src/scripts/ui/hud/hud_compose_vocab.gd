@@ -137,9 +137,10 @@ const CREW_ROW_SEPARATION := 6
 # stated by `DetailFormat.at_risk_lines` where the source itself is described — and only when it is
 # going UNPAID, the standing bill having been retired with the `Keeping:` row (issue #545).
 #
-# The BUILD crew's row label — the second of a source's two allocations, stated on the improvement
-# control that names the verb these hands are filling.
-const CREW_ROW_BUILD_LABEL := "BUILDERS"
+# RETIRED — **`CREW_ROW_BUILD_LABEL`** (`BUILDERS`), the row label of the build crew's own stepper
+# (`docs/plan_standing_upkeep.md` §2.5). A verb DECLARES and names no hands: the stepper is gone with
+# the trailing worker count the improvement commands used to take, and the pool it would have staffed
+# is a standing role card on the Band panel.
 # The crew row's note separation, beside its label.
 const CREW_ROW_NOTE_SEPARATION := 5
 
@@ -156,14 +157,11 @@ const CREW_ROW_NOTE_SEPARATION := 5
 # The RATE is not lost: it is the STANDING PRICE on the offered face now
 # (`BUILD_PRICE_UPKEEP_FORMAT`), beside the build's one-off one, which is what it always was.
 
-# **THE REASON A DEAD IMPROVEMENT BOX CARRIES.** Ticking a rung the band cannot staff declares a build
-# that never starts — the sim REFUSES the crew rather than trimming it — so the offer is greyed with
-# this rather than left live for a click that does nothing.
-#
-# **It names BOTH levers, because the sheet's build pool is not the band's idle count**: it is the
-# source's crew pool less the take the player has just composed, so hands are freed either by idling
-# some of the band or by taking some off the crew row above.
-const BUILD_NO_HANDS_REASON := "No free workers to build with — free up idle hands, or take some off the crew above."
+# RETIRED — **`BUILD_NO_HANDS_REASON`**, the reason a dead improvement box carried
+# (`docs/plan_standing_upkeep.md` §2.5). Ticking a rung used to declare a build WITH a crew, and the
+# sim refused a count the band could not staff — so an empty build pool greyed the offer out. A verb
+# names no crew now: ticking APPENDS a queue entry, which is legal and free whether or not anybody is
+# on the `builders` role. What says nobody is on it is the rung row's own *not started* warning.
 
 # A crew TARGET is a PILL, and the shape is the point: the stepper beside it is a boxed control you
 # operate, a target is a value you can jump to. Its face carries two registers — the COUNT (what you
@@ -260,10 +258,10 @@ const POLICY_TOOLTIP_NAME_FORMAT := "%s — %s"
 # feed message, so the client does not pre-gate on those (max radius is not on the wire).
 const PEN_EXTEND_LABEL := "Extend pen"
 
-const PEN_EXTEND_TOOLTIP := "Fence another ring around the pen, worked off by the crew you name: a ring rides the same pen rung as the pen it widens, so it costs the same work and claims hands from the same band as the gathering and the keeping. Then the pen grazes more land and feeds itself further. Rejected at the pen-radius maximum, and refused outright if the band has fewer idle hands than you asked for."
-# The ring's crew row-label. Its own word rather than KEEPERS: these hands are FENCING, not holding
-# the herd, and the two allocations sit on the same card.
-const PEN_EXTEND_CREW_LABEL := "Fencers"
+const PEN_EXTEND_TOOLTIP := "Queue another ring around the pen. A ring rides the same pen rung as the pen it widens, so it joins the band's build queue like any other job and its builders raise it when it reaches the head. Then the pen grazes more land and feeds itself further. Rejected at the pen-radius maximum."
+# RETIRED — **`PEN_EXTEND_CREW_LABEL`** (`Fencers`), the ring's own crew row-label. The verb took a
+# trailing worker count for one slice; `extend_pen <faction> <x> <y>` is closed at three tokens again
+# (`docs/plan_standing_upkeep.md` §2.5), so there is no crew to name.
 
 const PEN_FENCING_LABEL := "Fencing %d%%"
 
@@ -424,20 +422,35 @@ const BUILD_TURNS_HELD := "held"
 # count, so the singular can only be decided in one place (`DetailFormat.build_turns_clause`).
 const BUILD_PRICE_TURNS_FORMAT := "%s, %s"
 
-# `50 work, ≈25 turns · 2 work a turn to hold` — **THE STANDING PRICE, BESIDE THE ONE-OFF ONE**
-# (`docs/plan_standing_upkeep.md` §2.4). A rung costs a PILE once and a RATE forever, and an offer
-# that quotes only the pile is quoting half of what the player is agreeing to.
+# `50 work, ≈25 turns · 2 work a turn from Agriculture to hold` — **THE STANDING PRICE, BESIDE THE
+# ONE-OFF ONE** (`docs/plan_standing_upkeep.md` §2.4). A rung costs a PILE once and a RATE forever,
+# and an offer that quotes only the pile is quoting half of what the player is agreeing to.
 #
-# **IT IS A PRICE, NOT A THRESHOLD, and the wording carries that.** `to hold` names what the rate
-# buys; the retired `holds this rung — only the surplus is progress` named a bar a build crew had to
-# clear, which is the mechanism slice 6a deleted. Nothing here compares it to a crew.
+# **IT NAMES THE POOL THAT PAYS, and it did not for a release.** The clause read `· 2 work a turn to
+# hold`, and reported from play it was meaningless in that context: the rate never said WHO owes it,
+# so on a sheet whose every other number is about the crew under the stepper it read as a demand on
+# that crew. It is not — it is the band's AGRICULTURE or HUSBANDRY role, and those are the only two
+# controls that move it. The role word is `HudWorkVocab.keeping_role_name`, i.e. the same per-web
+# pair the work row's under-kept note already names, so the two surfaces cannot send the player to
+# different cards.
+#
+# **IT IS A PRICE, NOT A THRESHOLD, and the wording still carries that.** `to hold` names what the
+# rate buys and `from <role>` who supplies it; the retired `holds this rung — only the surplus is
+# progress` named a bar a build crew had to clear, which is the mechanism slice 6a deleted. Nothing
+# here compares it to a crew.
 #
 # **IN WORK UNITS, because a supplier's output is not one.** How many hands the rate takes depends on
 # what they carry, so a head count here would be a number that goes stale with the band's gear.
 #
 # The `·` separator is the compose sheet's own, dividing two facts about one offer where the comma
 # above divides two halves of one price.
-const BUILD_PRICE_UPKEEP_FORMAT := "%s · %s work a turn to hold"
+#
+# **IT DELIBERATELY DOES NOT SAY `then`.** `· then ` is the RETIRED payoff clause's own phrase — the
+# `🌱 Cultivate this patch · then 1.20 food` face this arc replaced with the readout's labelled row —
+# and it is still the needle every "the face quotes no payoff" assertion greps for. A standing price
+# wearing it makes those assertions find this clause instead, on a sheet where both would be
+# legitimate. Same avoidance, same reason, as the crew note's refusal to say `while building`.
+const BUILD_PRICE_UPKEEP_FORMAT := "%s · %s work a turn from %s to hold"
 
 # `🌱 Cultivate this patch — 50 work, ≈25 turns` — the offered checkbox's face with its price. It
 # takes an em-dash rather than the running face's, because the two halves are a NAME and its PRICE
@@ -548,7 +561,12 @@ const IMPROVEMENT_DEAL_DEPLETED_NOTE := "⚠ Too depleted to pen — it would ea
 # They are two flat consts rather than a state-keyed table because a table would put a live
 # `SourceForecast.*` reference in a `const` initializer here, and a vocabulary module is kept a
 # cycle-free LEAF; the two-branch pick lives at the one call site that already holds both states.
-const BUILD_UNSTARTED_NOTE := "⚠ Not started — no builders assigned. Set the builders below to begin."
+# **IT NAMES THE ROLE, BECAUSE THERE IS NO STEPPER BELOW IT ANY MORE**
+# (`docs/plan_standing_upkeep.md` §2.5). It read *"Set the builders below to begin"* while this
+# control carried a BUILDERS stepper of its own; that stepper is retired, so the sentence pointed at
+# a control the player cannot find — the warning-outliving-its-mechanism failure this arc keeps
+# producing. The lever is the band's Builders role card, and the line says so.
+const BUILD_UNSTARTED_NOTE := "⚠ Not started — nobody is on this band's Builders role."
 
 # RETIRED — **`BUILD_SLIDING_NOTE`**, `⚠ No builders — this rung is sliding back. Set the builders
 # below to hold it.` (`docs/plan_standing_upkeep.md` §4.6a).
@@ -1177,6 +1195,22 @@ const KIT_WITHHELD_REASON_CANNOT_HURT := "nothing it carries can bring down a %s
 ## collected on. Worded for the AXIS rather than for the husbandry kit by name: the rule is that the
 ## source cannot read the stat, and a second kit supplying it tomorrow gets the same sentence.
 const KIT_WITHHELD_REASON_PEN_ONLY := "what it adds is only used on a penned herd"
+## The BUILD-BRANCH rule's reason — this kit's tool serves the other food web, so on the build in
+## front of it the contribution is the neutral zero. `%s` is the web the entry is on, as a noun a
+## player recognises from the ladder rather than as the wire's `plant` / `animal` token.
+##
+## Worded for the ENTRY rather than for the tool by name, the pen rule's discipline one axis over:
+## the fact is that this job cannot read what the kit adds, so `tillage` in front of a `Tame` and
+## whatever ships next both get the same sentence.
+const KIT_WITHHELD_REASON_BUILD_BRANCH_FORMAT := "its tools are no use on %s"
+## The two webs as the picker says them. The wire's tokens are `plant` / `animal`; a player is
+## choosing between a garden and a flock, so the reason line says that instead.
+##
+## **KEYED BY BRANCH IN `KitRoster`, NOT HERE.** A vocabulary leaf must not read a const off a module
+## that reads one off it — `const` initializers evaluate at class load, so that cycle fails to load
+## the whole client — and `KitRoster` already reads this file.
+const KIT_BUILD_BRANCH_PLANT_NOUN := "a crop build"
+const KIT_BUILD_BRANCH_ANIMAL_NOUN := "an animal build"
 
 ## **THE JOB'S DEFAULT IS MARKED, NOT SEPARATED.** The player needs to know which kit the verb takes
 ## when they name none; that is a note on an ordinary entry, and a divider would imply the roster has

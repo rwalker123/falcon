@@ -399,18 +399,11 @@ static func find_improvement_control(root: Node, improvement: String) -> Control
 			return found
 	return null
 
-## The BUILDERS row — the build crew's stepper and the threshold note beside it. `null` where the
-## control mounts none (the DONE and GATED states have no build to staff).
-static func build_crew_row(root: Node) -> Control:
-	if root == null:
-		return null
-	if root is Control and (root as Control).has_meta(HudWidgets.BUILD_CREW_ROW_META):
-		return root as Control
-	for child in root.get_children():
-		var found := build_crew_row(child)
-		if found != null:
-			return found
-	return null
+## **RETIRED — `build_crew_row`, the BUILDERS stepper's own finder** (`docs/plan_standing_upkeep.md`
+## §2.5). The row is gone with the per-source build crew a verb used to carry, and so is the meta it
+## was found by. What replaced every claim made through it is `Readout.stepper_count`: a compose sheet
+## mounts exactly ONE stepper — the take's — and asserting the COUNT is what catches a hypothetical
+## build slider being added back under any name (§3.1).
 
 ## RETIRED — **`BUILD_WORK_FLOOR_ABSENT` / `build_work_floor` / `build_work_floor_tooltip`**, which
 ## read the BUILDERS row's threshold off `HudWidgets.BUILD_WORK_FLOOR_META`

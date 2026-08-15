@@ -126,20 +126,38 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "tame",
         aliases: &[],
-        summary: "Set the Tame improvement on the bands hunting a wild herd (their harvest stance is left alone): an investment that pays a reduced take while the herd is gentled, then makes it pastoral livestock (needs Herding knowledge, earned by Sustain hunting, and a species that can be domesticated).",
-        usage: "tame <faction_id> <herd_id> <workers>",
+        summary: "DECLARE a Tame on a wild herd: it is appended to the build queue of every band hunting it, and the band's `builders` pool raises whatever is at the HEAD of that queue - so this names no workers. Staff the pool with `assign_labor <faction> <band> builders <n>`, re-order it with `build_order`, withdraw this declaration with `unqueue`, and put the whole source down with `abandon`. An investment that pays a reduced take while the herd is gentled, then makes it pastoral livestock (needs Herding knowledge, earned by Sustain hunting, and a species that can be domesticated).",
+        usage: "tame <faction_id> <herd_id>",
     },
     CommandVerbHelp {
         verb: "cultivate",
         aliases: &[],
-        summary: "Set the Cultivate improvement on the bands foraging a Thriving patch (their harvest stance is left alone): an investment that pays a reduced yield while the crop is prepared, then a higher tended yield (needs Cultivation knowledge, earned by Sustain foraging).",
-        usage: "cultivate <faction_id> <x> <y> <workers>",
+        summary: "DECLARE a Cultivate on a Thriving patch: appended to the build queue of every band foraging it, and raised by the band's `builders` pool when it reaches the HEAD of that queue - so this names no workers. See `tame` for the rest of the queue's verbs. An investment that pays a reduced yield while the crop is prepared, then a higher tended yield (needs Cultivation knowledge, earned by Sustain foraging).",
+        usage: "cultivate <faction_id> <x> <y>",
     },
     CommandVerbHelp {
         verb: "sow",
         aliases: &[],
-        summary: "Set the Sow improvement on the bands foraging a tile (their harvest stance is left alone): an investment that builds a Field, out-yielding a tended patch. It PLACES the source — even ground with no forage site on it will take seed — but only where the land is ALREADY very fertile and near fresh water (the river valleys, ~1% of the map): rung 3 can carry seed, not water or fertilizer. Needs Seed Selection knowledge, earned by working tended patches.",
-        usage: "sow <faction_id> <x> <y> <workers>",
+        summary: "DECLARE a Sow, appended to the build queue of every band foraging the tile and raised by the band's `builders` pool at the head of that queue - this names no workers. Sets the Sow improvement (their harvest stance is left alone): an investment that builds a Field, out-yielding a tended patch. It PLACES the source — even ground with no forage site on it will take seed — but only where the land is ALREADY very fertile and near fresh water (the river valleys, ~1% of the map): rung 3 can carry seed, not water or fertilizer. Needs Seed Selection knowledge, earned by working tended patches.",
+        usage: "sow <faction_id> <x> <y>",
+    },
+    CommandVerbHelp {
+        verb: "abandon",
+        aliases: &[],
+        summary: "PUT A SOURCE DOWN: drop your bands' holding of it - the labor row AND its build-queue entry - on every band of the faction working it. THE METERS ARE UNTOUCHED: the ground keeps whatever is on it and, with nobody holding it, rots back down at the rung's own rate over the following turns exactly as an unkept improvement does. It exists because a meter is billed to the keeping pool from the first work banked, so a half-built patch you have lost interest in otherwise draws keepers forever. ONE BIT PER SOURCE, never a number - this is disposal, not a smaller share. Nothing is destroyed on the spot, so it needs no confirmation. Two integer tokens name a TILE; one token names a HERD id.",
+        usage: "abandon <faction_id> <x> <y> | abandon <faction_id> <herd_id>",
+    },
+    CommandVerbHelp {
+        verb: "unqueue",
+        aliases: &[],
+        summary: "WITHDRAW A DECLARATION: drop a source's build-queue entry only, on every band of the faction working it. The row, its take crew, its kit and the meter are all left exactly as they are - this is the undo for `cultivate`/`sow`/`tame`/`corral`/`extend_pen`. Use `abandon` instead to put down a source with work already banked on it. Two integer tokens name a TILE; one token names a HERD id.",
+        usage: "unqueue <faction_id> <x> <y> | unqueue <faction_id> <herd_id>",
+    },
+    CommandVerbHelp {
+        verb: "build_order",
+        aliases: &[],
+        summary: "RE-ORDER ONE BAND'S BUILD QUEUE: move its entry for the named source to a 0-based position, clamped to the queue's length. THE ORDER IS THE FUNDING DECISION - the whole `builders` pool goes on the HEAD entry until that one's meter fills, then on the next, so putting a job first is how you say 'do this one'. Two integer tokens name a TILE; one token names a HERD id; the trailing number is the position.",
+        usage: "build_order <faction_id> <band_id> <x> <y> <position> | build_order <faction_id> <band_id> <herd_id> <position>",
     },
     CommandVerbHelp {
         verb: "upkeep_mode",
@@ -168,14 +186,14 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "corral",
         aliases: &[],
-        summary: "Set the Corral improvement on the bands hunting your domesticated herd at a tile (their harvest stance is left alone): an investment that pays a reduced take while the pen is built, then pins the herd there (needs Penning knowledge, earned by working herds you have already TAMED — Herding gates tame, not corral).",
-        usage: "corral <faction_id> <x> <y> <workers>",
+        summary: "DECLARE a Corral on your domesticated herd at a tile: appended to the build queue of every band hunting it and raised by the band's `builders` pool at the head of that queue - this names no workers. An investment that pays a reduced take while the pen is built, then pins the herd there (needs Penning knowledge, earned by working herds you have already TAMED — Herding gates tame, not corral).",
+        usage: "corral <faction_id> <x> <y>",
     },
     CommandVerbHelp {
         verb: "extend_pen",
         aliases: &[],
-        summary: "Grow the fenced footprint of your built pen at a tile by one ring, worked off by the crew you name: a ring rides the same animal:pen rung as the pen it widens, so it costs the same work and claims hands from the same band as the gathering and the keeping. Needs Penning, an owned penned herd, a band already keeping it, and room below the pen-radius max.",
-        usage: "extend_pen <faction_id> <x> <y> <workers>",
+        summary: "Grow the fenced footprint of your built pen at a tile by one ring. A ring rides the same animal:pen rung as the pen it widens, so it queues and is funded exactly like every other build: appended to the build queue of every band keeping the pen, raised by that band's `builders` pool when it reaches the head - this names no workers. Needs Penning, an owned penned herd, a band already keeping it, and room below the pen-radius max.",
+        usage: "extend_pen <faction_id> <x> <y>",
     },
     CommandVerbHelp {
         verb: "answer_fork",
@@ -747,13 +765,9 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let herd_id = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("herd_id"))?;
-            let crew_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("workers"))?;
             Ok(CommandPayload::Tame {
                 faction_id: parse_u32(faction_str, "tame faction")?,
                 herd_id: herd_id.to_string(),
-                workers: parse_u32(crew_str, "tame workers")?,
             })
         }
         "cultivate" => {
@@ -766,14 +780,10 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let y_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("target_y"))?;
-            let crew_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("workers"))?;
             Ok(CommandPayload::Cultivate {
                 faction_id: parse_u32(faction_str, "cultivate faction")?,
                 target_x: parse_u32(x_str, "cultivate target_x")?,
                 target_y: parse_u32(y_str, "cultivate target_y")?,
-                workers: parse_u32(crew_str, "cultivate workers")?,
             })
         }
         "sow" => {
@@ -786,14 +796,58 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let y_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("target_y"))?;
-            let crew_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("workers"))?;
             Ok(CommandPayload::Sow {
                 faction_id: parse_u32(faction_str, "sow faction")?,
                 target_x: parse_u32(x_str, "sow target_x")?,
                 target_y: parse_u32(y_str, "sow target_y")?,
-                workers: parse_u32(crew_str, "sow workers")?,
+            })
+        }
+        // **SOURCE ADDRESSING, one grammar for all three queue verbs**: two integer tokens name a
+        // tile, one token names a herd id. The TILE FORM IS PARSED FIRST — a herd id that is a bare
+        // number would otherwise be ambiguous, and the tile form is the one with two tokens, so
+        // trying it first is what makes the shapes distinguishable rather than a guess.
+        "abandon" | "unqueue" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let faction_id = parse_u32(faction_str, "faction")?;
+            let tail: Vec<&str> = parts.collect();
+            let source = parse_build_source(&tail)?;
+            if verb == "abandon" {
+                Ok(CommandPayload::Abandon {
+                    faction_id,
+                    target_x: source.target_x,
+                    target_y: source.target_y,
+                    herd_id: source.herd_id,
+                })
+            } else {
+                Ok(CommandPayload::Unqueue {
+                    faction_id,
+                    target_x: source.target_x,
+                    target_y: source.target_y,
+                    herd_id: source.herd_id,
+                })
+            }
+        }
+        "build_order" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let tail: Vec<&str> = parts.collect();
+            let Some((position_str, source)) = tail.split_last() else {
+                return Err(CommandParseError::MissingArgument("position"));
+            };
+            let source = parse_build_source(source)?;
+            Ok(CommandPayload::BuildOrder {
+                faction_id: parse_u32(faction_str, "build_order faction")?,
+                band_id: parse_u64(band_str, "build_order band")?,
+                target_x: source.target_x,
+                target_y: source.target_y,
+                herd_id: source.herd_id,
+                position: parse_u32(position_str, "build_order position")?,
             })
         }
         "upkeep_mode" => {
@@ -886,14 +940,10 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let y_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("target_y"))?;
-            let crew_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("workers"))?;
             Ok(CommandPayload::Corral {
                 faction_id: parse_u32(faction_str, "corral faction")?,
                 target_x: parse_u32(x_str, "corral target_x")?,
                 target_y: parse_u32(y_str, "corral target_y")?,
-                workers: parse_u32(crew_str, "corral workers")?,
             })
         }
         "extend_pen" => {
@@ -906,14 +956,10 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let y_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("target_y"))?;
-            let crew_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("workers"))?;
             Ok(CommandPayload::ExtendPen {
                 faction_id: parse_u32(faction_str, "extend_pen faction")?,
                 target_x: parse_u32(x_str, "extend_pen target_x")?,
                 target_y: parse_u32(y_str, "extend_pen target_y")?,
-                workers: parse_u32(crew_str, "extend_pen workers")?,
             })
         }
         "cancel_order" => {
@@ -1397,6 +1443,42 @@ fn take_named_token(
     Ok(Some(value))
 }
 
+/// The parsed source of a build-queue verb — exactly one of the two forms is filled. A named struct
+/// rather than a triple, because three `Option`s in a row are a shape a caller can mis-order.
+struct BuildSourceTokens {
+    target_x: Option<u32>,
+    target_y: Option<u32>,
+    herd_id: Option<String>,
+}
+
+/// **WHICH SOURCE A BUILD-QUEUE VERB NAMES** — two integer tokens are a **tile**, one token is a
+/// **herd id** (`docs/plan_standing_upkeep.md` §2.5's three queue commands share one grammar).
+///
+/// **The tile form is tested first**, and that is what makes the two shapes distinguishable rather
+/// than a guess: a herd id is free-form, so a one-token tail can only be a herd, and a two-token
+/// tail can only be a tile — a herd id containing a space is not expressible on this line anyway.
+///
+/// Returns a [`BuildSourceTokens`] with exactly one form filled.
+fn parse_build_source(tokens: &[&str]) -> Result<BuildSourceTokens, CommandParseError> {
+    match tokens {
+        [herd] => Ok(BuildSourceTokens {
+            target_x: None,
+            target_y: None,
+            herd_id: Some((*herd).to_string()),
+        }),
+        [x, y] => Ok(BuildSourceTokens {
+            target_x: Some(parse_u32(x, "target_x")?),
+            target_y: Some(parse_u32(y, "target_y")?),
+            herd_id: None,
+        }),
+        [] => Err(CommandParseError::MissingArgument("source")),
+        // Three or more is neither shape. Failing closed rather than taking the first two is the
+        // `cancel_order` rule: guessing which source the player meant is how a destructive verb
+        // lands on the wrong one.
+        [_, _, extra, ..] => Err(CommandParseError::UnexpectedToken((*extra).to_string())),
+    }
+}
+
 fn parse_u32(value: &str, context: &'static str) -> Result<u32, CommandParseError> {
     value
         .parse::<u32>()
@@ -1832,11 +1914,10 @@ mod tests {
     #[test]
     fn parse_tame_command() {
         assert_eq!(
-            parse_command_line("tame 0 game_deer_07 4").unwrap(),
+            parse_command_line("tame 0 game_deer_07").unwrap(),
             CommandPayload::Tame {
                 faction_id: 0,
                 herd_id: "game_deer_07".to_string(),
-                workers: 4,
             }
         );
         // herd_id is required.
@@ -1957,23 +2038,19 @@ mod tests {
     #[test]
     fn parse_cultivate_command() {
         assert_eq!(
-            parse_command_line("cultivate 0 7 3 4").unwrap(),
+            parse_command_line("cultivate 0 7 3").unwrap(),
             CommandPayload::Cultivate {
                 faction_id: 0,
                 target_x: 7,
                 target_y: 3,
-                workers: 4,
             }
         );
-        // Both coordinates are required, and so is the build's crew — a verb with no crew names
-        // no decision, and guessing one would staff a build the player did not staff.
+        // Both coordinates are required. **The crew is not a token any more** — a verb declares
+        // and does not staff (`docs/plan_standing_upkeep.md` §2.5), so a trailing number is a typo
+        // rather than a crew and is refused rather than swallowed.
         assert!(matches!(
             parse_command_line("cultivate 0 7"),
             Err(CommandParseError::MissingArgument("target_y"))
-        ));
-        assert!(matches!(
-            parse_command_line("cultivate 0 7 3"),
-            Err(CommandParseError::MissingArgument("workers"))
         ));
     }
 
@@ -1982,70 +2059,53 @@ mod tests {
     #[test]
     fn parse_sow_command() {
         assert_eq!(
-            parse_command_line("sow 0 7 3 4").unwrap(),
+            parse_command_line("sow 0 7 3").unwrap(),
             CommandPayload::Sow {
                 faction_id: 0,
                 target_x: 7,
                 target_y: 3,
-                workers: 4,
             }
         );
-        // Both coordinates are required, and so is the build's crew — a verb with no crew names
-        // no decision, and guessing one would staff a build the player did not staff.
+        // See `parse_cultivate_command` — the crew is not a token any more.
         assert!(matches!(
             parse_command_line("sow 0 7"),
             Err(CommandParseError::MissingArgument("target_y"))
-        ));
-        assert!(matches!(
-            parse_command_line("sow 0 7 3"),
-            Err(CommandParseError::MissingArgument("workers"))
         ));
     }
 
     #[test]
     fn parse_corral_command() {
         assert_eq!(
-            parse_command_line("corral 0 7 3 4").unwrap(),
+            parse_command_line("corral 0 7 3").unwrap(),
             CommandPayload::Corral {
                 faction_id: 0,
                 target_x: 7,
                 target_y: 3,
-                workers: 4,
             }
         );
-        // Both coordinates are required, and so is the build's crew — a verb with no crew names
-        // no decision, and guessing one would staff a build the player did not staff.
+        // See `parse_cultivate_command` — the crew is not a token any more.
         assert!(matches!(
             parse_command_line("corral 0 7"),
             Err(CommandParseError::MissingArgument("target_y"))
         ));
-        assert!(matches!(
-            parse_command_line("corral 0 7 3"),
-            Err(CommandParseError::MissingArgument("workers"))
-        ));
     }
 
-    /// A ring rides the same `animal:pen` rung as the pen it widens, so it takes a crew on the same
-    /// grammar as the four improvement verbs (`docs/plan_standing_upkeep.md` §2.2) — and, like them,
-    /// refuses to guess one.
+    /// A ring rides the same `animal:pen` rung as the pen it widens, so it queues on the same
+    /// grammar as the four improvement verbs and, like them, names no crew
+    /// (`docs/plan_standing_upkeep.md` §2.5).
     #[test]
     fn parse_extend_pen_command() {
         assert_eq!(
-            parse_command_line("extend_pen 0 7 3 4").unwrap(),
+            parse_command_line("extend_pen 0 7 3").unwrap(),
             CommandPayload::ExtendPen {
                 faction_id: 0,
                 target_x: 7,
                 target_y: 3,
-                workers: 4,
             }
         );
         assert!(matches!(
             parse_command_line("extend_pen 0 7"),
             Err(CommandParseError::MissingArgument("target_y"))
-        ));
-        assert!(matches!(
-            parse_command_line("extend_pen 0 7 3"),
-            Err(CommandParseError::MissingArgument("workers"))
         ));
     }
 

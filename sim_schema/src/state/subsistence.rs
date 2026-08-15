@@ -64,6 +64,37 @@ pub const BUILD_METER_HOLDS: i32 = -2;
 /// Appended below its siblings (append-only wire; the two existing values keep their numbers).
 pub const BUILD_METER_ROTS: i32 = -3;
 
+/// **"THE QUEUE IS BLOCKED AT THIS ENTRY"** — the wire value of `buildTurnsRemaining` when the band's
+/// builders are **staffed and standing on this build** and the rung's own gate refuses it, so nothing
+/// banks and nothing behind it moves (`docs/plan_standing_upkeep.md` §4.6b).
+///
+/// **It is NOT [`NO_BUILD_TURNS_ESTIMATE`], and that is the whole reason it exists.** `-1` is the
+/// *absence* of an answer and renders as **no line at all**, which is exactly the silence this state
+/// must not be read as: the player has committed a pool, the pool is producing nothing, and the game
+/// is saying so.
+///
+/// **THE REMEDY IS OFF THE BUILD LINE ENTIRELY.** The measured case is a half-tamed herd with an
+/// empty `husbandry` role: the hunters draw the flock to their floor, the unmet keeping suppresses
+/// its regrowth, and the `Tame`'s own escapement gate never reopens. Adding builders does nothing.
+/// A surface showing this must therefore pair it with the source's own `upkeepShortfall` /
+/// `neglectGraceRemaining`, because *"staff the keeping"* is the sentence — on the animal web,
+/// `assign_labor <faction> <band> husbandry <n>`.
+///
+/// **Every entry BEHIND a blocked head publishes it too**, since nothing below a head that never
+/// finishes finishes either. A *waiting* entry whose own gate refuses publishes the honest
+/// [`NO_BUILD_TURNS_ESTIMATE`] instead: it may well be eligible by the time it reaches the head.
+///
+/// Appended below its siblings (append-only wire; the three existing values keep their numbers).
+pub const BUILD_QUEUE_BLOCKED: i32 = -4;
+
+/// **"THIS SOURCE IS IN NO BAND'S BUILD QUEUE"** — the neutral of `buildQueuePosition`, whose real
+/// values are **0-based** places in the winning band's queue.
+///
+/// It shares `-1` with [`NO_BUILD_TURNS_ESTIMATE`] by the same convention rather than by
+/// coincidence: both say *"outside the range a real answer lives in"*, on two fields that are read
+/// together.
+pub const NOT_IN_ANY_BUILD_QUEUE: i32 = -1;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct SedentarizationState {
     pub faction: u32,
@@ -505,20 +536,38 @@ pub struct HerdTelemetryState {
     /// **next rung up** when that is empty (`is_cultivated` / `is_field`, `domestication` /
     /// `corralled`): the pair is read as *"50 work, ≈13 turns"*, so they must name one rung.
     ///
-    /// **THREE NEGATIVES, THREE FACTS.** [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**,
+    /// **IT IS A CHAINED DATE** (`docs/plan_standing_upkeep.md` §4.6b). The band's whole `builders`
+    /// pool goes on the **head** of its queue until that entry's meter fills, then on the next — so
+    /// a count here is *everything above this entry plus its own span at the full pool*, and
+    /// [`Self::build_queue_position`] beside it is what makes that number explicable. A source with
+    /// nothing queued is quoted at the **back of the line**, which is where a newly queued build
+    /// would actually go.
+    ///
+    /// **FOUR NEGATIVES, FOUR FACTS.** [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**,
     /// where there is genuinely no answer: the source is at the top of its ladder, the next rung's
     /// own gates refuse it for this faction (a projection must never quote a job the command would
-    /// reject), or **no crew is working the source**. [`crate::BUILD_METER_HOLDS`] (`-2`) = a real,
-    /// **staffed**, priced build whose net supply is exactly **zero** — the crew's whole output goes
-    /// on the maintenance rate, so the meter holds where it is. [`crate::BUILD_METER_ROTS`] (`-3`) =
-    /// the same build with a **negative** net: the meter is going backwards and banked work is being
-    /// lost. Render the last two as **infinity**, and distinguish them — both are answers, and one
-    /// of them is costing the player progress they already paid for.
+    /// reject), or a gate refuses a *waiting* entry — which may well be eligible by the time it
+    /// reaches the head. [`crate::BUILD_METER_HOLDS`] (`-2`) = a real, priced build whose net supply
+    /// is exactly **zero**, so the meter holds where it is. [`crate::BUILD_METER_ROTS`] (`-3`) = the
+    /// same build with a **negative** net: the meter is going backwards and banked work is being
+    /// lost. [`crate::BUILD_QUEUE_BLOCKED`] (`-4`) = the band's builders are **staffed and standing
+    /// on this entry** and its own gate refuses it, so nothing banks and nothing behind it moves.
     ///
-    /// **The client cannot compute this** — it holds neither the crew's output, nor the floor
-    /// multiplier, nor the kit's build rate — so the sim answers, the `pen_feed_upkeep` discipline.
-    /// One field for both of a web's rungs: at most one improvement is ever in flight on one source,
-    /// and at most one rung is ever next. Appended (append-only).
+    /// Render `-2`/`-3` as **infinity**, and distinguish them — both are answers, and one of them is
+    /// costing the player progress they already paid for. `-4` is neither: it is a **stuck queue**,
+    /// and its remedy is off the build line entirely (pair it with this source's own
+    /// `upkeep_shortfall` / `neglect_grace_remaining`).
+    ///
+    /// ⛔ **WHAT THE NET IS STRUCK FROM IS THE ROT, NOT THE MAINTENANCE RATE** (§4.6a). The band's
+    /// keeping pool owes that rate for every meter carrying work, at any fullness, and a build
+    /// supplies none of it — so a reader that nets `*_upkeep_demand` here prices the build against a
+    /// bill it does not pay. The term is [`Self::meter_rot_per_turn`], and it does not vary with the
+    /// pool.
+    ///
+    /// **The client cannot compute this** — it holds neither the pool's output, nor the queue, nor
+    /// the kit's build rate — so the sim answers, the `pen_feed_upkeep` discipline. One field for
+    /// both of a web's rungs: at most one improvement is ever in flight on one source, and at most
+    /// one rung is ever next. Appended (append-only).
     #[serde(default = "no_build_turns_estimate")]
     pub build_turns_remaining: i32,
     /// **What the crew's TOOLS took off this build**, in work units — the `t` in
@@ -532,7 +581,8 @@ pub struct HerdTelemetryState {
     ///
     /// **Per equipped worker, summed**: a worker holding a tool contributes its worth, a worker
     /// without one contributes nothing. `0` = no build in flight, or the crew carries nothing that
-    /// helps — which is every **plant** build today (issue #539). Appended (append-only).
+    /// helps — which, since each web got its own builders kit, means a pool sent out bare or one
+    /// carrying the **other** web's tool. Appended (append-only).
     #[serde(default)]
     pub build_work_from_gear: f32,
     /// **The work ONE worker banks on this source per turn at the food peak**, before the floor
@@ -607,6 +657,21 @@ pub struct HerdTelemetryState {
     /// an animal build. Appended (append-only).
     #[serde(default)]
     pub meter_rot_per_turn: f32,
+    /// **WHERE THIS SOURCE SITS IN THE WINNING BAND'S BUILD QUEUE** — 0-based, and
+    /// [`crate::NOT_IN_ANY_BUILD_QUEUE`] (`-1`) when no band has queued it
+    /// (`docs/plan_standing_upkeep.md` §4.6b).
+    ///
+    /// The whole `builders` pool goes on the **head** of a band's queue until that entry's meter
+    /// fills, then on the next — so [`Self::build_turns_remaining`] beside it is a **chained** date:
+    /// everything above this entry plus its own span at the full pool. **Without this field that
+    /// date is an exact number with no explanation**, and the player cannot tell forty turns of work
+    /// from eight turns of work behind four other jobs.
+    ///
+    /// **It rides the same winner** as [`Self::build_turns_remaining`] and
+    /// [`Self::build_work_from_gear`]: several bands may work one source, the sooner estimate wins,
+    /// and all three come from that band. Appended (append-only).
+    #[serde(default = "not_in_any_build_queue")]
+    pub build_queue_position: i32,
 }
 
 impl Default for HerdTelemetryState {
@@ -689,6 +754,7 @@ impl Default for HerdTelemetryState {
             tame_upkeep_demand: 0.0,
             corral_upkeep_demand: 0.0,
             meter_rot_per_turn: 0.0,
+            build_queue_position: crate::NOT_IN_ANY_BUILD_QUEUE,
             corral_material: Vec::new(),
             pastoral_material: Vec::new(),
         }
@@ -837,8 +903,8 @@ pub struct ForagePatchState {
     // **RETIRED: `cultivate_crew_needed` / `sow_crew_needed`** — each rung's `crew_needed`, a floor
     // under the compose sheet's worker cap. The cap was inverted out of the TAKE and a building crew
     // was paid a dipped take, so a 25-turn improvement asked for fewer hands than gathering the same
-    // ground. **The player states the build's crew now** (`docs/plan_standing_upkeep.md` §2.2), so
-    // there is no blended count for a rung-level floor to raise. The wire slots
+    // ground. **The player staffs the band's `builders` pool now** (`docs/plan_standing_upkeep.md`
+    // §2.5), so there is no blended count for a rung-level floor to raise. The wire slots
     // `cultivateCrewNeeded` / `sowCrewNeeded` stay `(deprecated)`.
     /// **What ONE UNIT of this patch's standing crop is worth**, in each account, at the patch's own
     /// basket-averaged rates (`patch_provisions_per_biomass` and its siblings — the seams
@@ -940,20 +1006,38 @@ pub struct ForagePatchState {
     /// **next rung up** when that is empty (`is_cultivated` / `is_field`, `domestication` /
     /// `corralled`): the pair is read as *"50 work, ≈13 turns"*, so they must name one rung.
     ///
-    /// **THREE NEGATIVES, THREE FACTS.** [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**,
+    /// **IT IS A CHAINED DATE** (`docs/plan_standing_upkeep.md` §4.6b). The band's whole `builders`
+    /// pool goes on the **head** of its queue until that entry's meter fills, then on the next — so
+    /// a count here is *everything above this entry plus its own span at the full pool*, and
+    /// [`Self::build_queue_position`] beside it is what makes that number explicable. A source with
+    /// nothing queued is quoted at the **back of the line**, which is where a newly queued build
+    /// would actually go.
+    ///
+    /// **FOUR NEGATIVES, FOUR FACTS.** [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**,
     /// where there is genuinely no answer: the source is at the top of its ladder, the next rung's
     /// own gates refuse it for this faction (a projection must never quote a job the command would
-    /// reject), or **no crew is working the source**. [`crate::BUILD_METER_HOLDS`] (`-2`) = a real,
-    /// **staffed**, priced build whose net supply is exactly **zero** — the crew's whole output goes
-    /// on the maintenance rate, so the meter holds where it is. [`crate::BUILD_METER_ROTS`] (`-3`) =
-    /// the same build with a **negative** net: the meter is going backwards and banked work is being
-    /// lost. Render the last two as **infinity**, and distinguish them — both are answers, and one
-    /// of them is costing the player progress they already paid for.
+    /// reject), or a gate refuses a *waiting* entry — which may well be eligible by the time it
+    /// reaches the head. [`crate::BUILD_METER_HOLDS`] (`-2`) = a real, priced build whose net supply
+    /// is exactly **zero**, so the meter holds where it is. [`crate::BUILD_METER_ROTS`] (`-3`) = the
+    /// same build with a **negative** net: the meter is going backwards and banked work is being
+    /// lost. [`crate::BUILD_QUEUE_BLOCKED`] (`-4`) = the band's builders are **staffed and standing
+    /// on this entry** and its own gate refuses it, so nothing banks and nothing behind it moves.
     ///
-    /// **The client cannot compute this** — it holds neither the crew's output, nor the floor
-    /// multiplier, nor the kit's build rate — so the sim answers, the `pen_feed_upkeep` discipline.
-    /// One field for both of a web's rungs: at most one improvement is ever in flight on one source,
-    /// and at most one rung is ever next. Appended (append-only).
+    /// Render `-2`/`-3` as **infinity**, and distinguish them — both are answers, and one of them is
+    /// costing the player progress they already paid for. `-4` is neither: it is a **stuck queue**,
+    /// and its remedy is off the build line entirely (pair it with this source's own
+    /// `upkeep_shortfall` / `neglect_grace_remaining`).
+    ///
+    /// ⛔ **WHAT THE NET IS STRUCK FROM IS THE ROT, NOT THE MAINTENANCE RATE** (§4.6a). The band's
+    /// keeping pool owes that rate for every meter carrying work, at any fullness, and a build
+    /// supplies none of it — so a reader that nets `*_upkeep_demand` here prices the build against a
+    /// bill it does not pay. The term is [`Self::meter_rot_per_turn`], and it does not vary with the
+    /// pool.
+    ///
+    /// **The client cannot compute this** — it holds neither the pool's output, nor the queue, nor
+    /// the kit's build rate — so the sim answers, the `pen_feed_upkeep` discipline. One field for
+    /// both of a web's rungs: at most one improvement is ever in flight on one source, and at most
+    /// one rung is ever next. Appended (append-only).
     #[serde(default = "no_build_turns_estimate")]
     pub build_turns_remaining: i32,
     /// **What the crew's TOOLS took off this build**, in work units — the `t` in
@@ -967,7 +1051,8 @@ pub struct ForagePatchState {
     ///
     /// **Per equipped worker, summed**: a worker holding a tool contributes its worth, a worker
     /// without one contributes nothing. `0` = no build in flight, or the crew carries nothing that
-    /// helps — which is every **plant** build today (issue #539). Appended (append-only).
+    /// helps — which, since each web got its own builders kit, means a pool sent out bare or one
+    /// carrying the **other** web's tool. Appended (append-only).
     #[serde(default)]
     pub build_work_from_gear: f32,
     /// **The work ONE worker banks on this source per turn at the food peak**, before the floor
@@ -1055,12 +1140,35 @@ pub struct ForagePatchState {
     /// Appended (append-only).
     #[serde(default)]
     pub meter_rot_per_turn: f32,
+    /// **WHERE THIS PATCH SITS IN THE WINNING BAND'S BUILD QUEUE** — 0-based, and
+    /// [`crate::NOT_IN_ANY_BUILD_QUEUE`] (`-1`) when no band has queued it
+    /// (`docs/plan_standing_upkeep.md` §4.6b).
+    ///
+    /// The whole `builders` pool goes on the **head** of a band's queue until that entry's meter
+    /// fills, then on the next — so [`Self::build_turns_remaining`] beside it is a **chained** date:
+    /// everything above this entry plus its own span at the full pool. **Without this field that
+    /// date is an exact number with no explanation**, and the player cannot tell forty turns of work
+    /// from eight turns of work behind four other jobs.
+    ///
+    /// **It rides the same winner** as [`Self::build_turns_remaining`] and
+    /// [`Self::build_work_from_gear`]: several bands may work one source, the sooner estimate wins,
+    /// and all three come from that band. Appended (append-only).
+    #[serde(default = "not_in_any_build_queue")]
+    pub build_queue_position: i32,
 }
 
 /// The serde default of a `build_turns_remaining` field — [`crate::NO_BUILD_TURNS_ESTIMATE`], so an
 /// absent value reads as *"no estimate"* rather than as a build finishing this turn.
 fn no_build_turns_estimate() -> i32 {
     crate::NO_BUILD_TURNS_ESTIMATE
+}
+
+/// The serde default of `build_queue_position` — [`crate::NOT_IN_ANY_BUILD_QUEUE`], because a source
+/// nobody has described is in nobody's queue. It is named rather than left to a bare
+/// `#[serde(default)]`, which would answer `0` — the **head** of the queue, the
+/// reassuring-direction wrong answer and one a client would render as *"next up"*.
+fn not_in_any_build_queue() -> i32 {
+    crate::NOT_IN_ANY_BUILD_QUEUE
 }
 
 /// **One material a commitment would pay, and how much of it per turn** — a row of
@@ -1356,6 +1464,18 @@ pub struct KitOptionState {
     /// workers**, never averaged over the crew.
     #[serde(default)]
     pub build_work_per_worker: f32,
+    /// **WHICH FOOD WEB [`Self::build_work_per_worker`] IS FOR** — `"plant"` or `"animal"`, and
+    /// **`""`** when this kit carries no build tool at all.
+    ///
+    /// **The pair is one reading.** A hoe takes work off a Cultivate and *nothing* off a `Tame`, so
+    /// a picker must compare this against the branch of the build it is offering the kit for and
+    /// grey the kit where they disagree — the same discipline
+    /// [`Self::attack_max_body_mass`] imposes on [`Self::attack`], and for the same reason: the
+    /// number is real, it is simply not real *here*.
+    ///
+    /// A free-form string on the `species` / `ecology_phase` convention. Appended (append-only).
+    #[serde(default)]
+    pub build_work_branch: String,
 }
 
 /// **Hand-written rather than derived, for the same reason [`HerdTelemetryState`]'s is**: three of
@@ -1386,6 +1506,9 @@ impl Default for KitOptionState {
             item_ids: Vec::new(),
             build_rate: multiplier_neutral(),
             build_work_per_worker: 0.0,
+            // Empty is the honest reading of a kit with no build tool — naming a web by omission
+            // would price a build off gear the kit does not hold.
+            build_work_branch: String::new(),
         }
     }
 }

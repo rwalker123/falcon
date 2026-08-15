@@ -22,7 +22,6 @@ use bevy::math::UVec2;
 use bevy::prelude::Entity;
 use bevy::MinimalPlugins;
 
-use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     advance_graze_regrowth, advance_herd_grazing, advance_herds, advance_husbandry,
     advance_labor_allocation, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_graze,
@@ -221,9 +220,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2, policy: f32) -> Entit
                         floor: policy,
                     },
                     workers: KEEPER_WORKERS,
-                    improvement: None,
                     kit: None,
-                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },

@@ -42,15 +42,13 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 
-use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     animals_affordable, animals_engaged, build_headless_app, herd_capacity, herd_hunt_yield,
     hunt_escapement_ceiling, hunt_take, recapture_snapshot_in_place, retreat_seed, scalar_from_f32,
     scalar_one, scalar_zero, spawn_initial_herds, CombatConfig, CombatConfigHandle, FactionId,
     FaunaConfig, FaunaConfigHandle, GenerationId, Herd, HerdRegistry, HuntDraw, HuntingParty,
     LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LocalStore, MoraleCause,
-    PopulationCohort, ResidentBand, SnapshotHistory, TileRegistry, NO_IMPROVEMENT_UNDERWAY,
-    NO_RETREAT,
+    PopulationCohort, ResidentBand, SnapshotHistory, TileRegistry, NO_RETREAT,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -295,10 +293,7 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
                         floor,
                     },
                     workers: CREW,
-                    improvement: NO_IMPROVEMENT_UNDERWAY,
                     kit: None,
-                    improvement_workers: NO_IMPROVEMENT_UNDERWAY
-                        .map_or(NO_CREW_ON_THIS_ACTIVITY, |_| CREW),
                 }],
                 ..Default::default()
             },

@@ -32,7 +32,6 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 
-use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     advance_cultivation, advance_herds, advance_labor_allocation, build_fraction,
     build_headless_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
@@ -60,6 +59,14 @@ const UNSCALED_TAMEABLE_SPECIES: &str = "Crag Goats";
 /// `EquipmentStat::BuildWork`, so the gear term under test is non-zero rather than a term the
 /// arithmetic never exercises.
 const HANDLING_KIT: &str = "husbandry";
+
+/// **The kit the BUILDERS are sent out with** — the animal web's builders kit, whose hurdles are the
+/// gear term under test. It is not [`HANDLING_KIT`]: since the builders-kits slice `husbandry` lists
+/// only `hunt` (a pen is collected on `pen_carry`), and what raises a `Tame` is `hurdling`.
+const BUILDERS_KIT: &str = "hurdling";
+
+/// **The plant web's builders kit** — hoes, which take work off a Cultivate and nothing off a `Tame`.
+const TILLAGE_KIT: &str = "tillage";
 
 /// **The escapement floor the crew holds, and it is deliberately NOT the food peak.** The build
 /// carries no floor term at all now, but the *guard against one being re-added* is exactly this:
@@ -244,6 +251,9 @@ fn spawn_keepers_of(
     let kit = equipment
         .kit(HANDLING_KIT)
         .expect("the shipped roster carries the handling kit");
+    let builders_kit = equipment
+        .kit(BUILDERS_KIT)
+        .expect("the shipped roster carries the hurdling kit");
     app.world
         .spawn((
             PopulationCohort {
@@ -287,27 +297,112 @@ fn spawn_keepers_of(
                 }
             },
             LaborAllocation {
-                assignments: vec![LaborAssignment {
-                    target: LaborTarget::Hunt {
-                        fauna_id: fauna_id.to_string(),
-                        floor: BUILDER_FLOOR,
+                assignments: vec![
+                    LaborAssignment {
+                        target: LaborTarget::Hunt {
+                            fauna_id: fauna_id.to_string(),
+                            floor: BUILDER_FLOOR,
+                        },
+                        // **The crews are stated GROSS here**, and the herd is sized so the
+                        // maintenance rate is a single hand ([`TEST_CAPACITY`]) — so both rows still
+                        // clear it comfortably and the nets stay multi-turn, which is what a `ceil`
+                        // check needs.
+                        workers: KEEPERS,
+                        kit: Some(kit.clone()),
                     },
-                    // **The crews are stated GROSS here**, and the herd is sized so the maintenance
-                    // rate is a single hand ([`TEST_CAPACITY`]) — so both allocations still clear it
-                    // comfortably and the nets stay multi-turn, which is what a `ceil` check needs.
-                    workers: KEEPERS,
-                    improvement,
-                    kit: Some(kit),
-                    // **The build is staffed by the same keepers**, which is what this fixture meant
-                    // when one crew did both jobs (`docs/plan_standing_upkeep.md` §2.2). The
-                    // published turns estimate and the gear stamp are both quoted at the BUILD's
-                    // crew, so the two have to agree for a closed-form check to mean anything.
-                    improvement_workers: improvement.map_or(NO_CREW_ON_THIS_ACTIVITY, |_| builders),
-                }],
+                    // **The build is staffed by the band's own POOL**, at the crew the caller
+                    // named (`docs/plan_standing_upkeep.md` §2.5) — and **the kit rides this row**,
+                    // since that is where a build's gear offset is read from now. The published
+                    // turns estimate and the gear stamp are both quoted at the pool, so the two
+                    // have to agree for a closed-form check to mean anything.
+                    LaborAssignment {
+                        target: LaborTarget::Builders,
+                        workers: builders,
+                        kit: Some(builders_kit),
+                    },
+                ],
+                build_queue: improvement
+                    .map(|declared| core_sim::BuildQueueEntry {
+                        source: core_sim::BuildSource::Herd(fauna_id.to_string()),
+                        declared: core_sim::BuildJob::Rung(declared),
+                    })
+                    .into_iter()
+                    .collect(),
                 ..Default::default()
             },
         ))
         .id()
+}
+
+/// ⛔ **HURDLES SPEED A TAME AND A HOE DOES NOTHING FOR ONE** — the animal mirror of
+/// `build_turns_on_the_wire.rs::a_plant_build_is_geared_by_the_hoe_and_by_nothing_else`, read off
+/// the encoded herd row's `buildWorkFromGear`.
+///
+/// The two files together are the whole of the `branch` qualifier's claim: each tool is worth
+/// something on **its** web and exactly nothing on the other, and the pool picks the tool off the
+/// **entry** rather than off a stored id. The liveness arm carries them both — a filter that zeroed
+/// everything would pass the negatives on its own.
+#[test]
+fn an_animal_build_is_geared_by_the_hurdles_and_by_nothing_else() {
+    let published = |kit_id: Option<&str>| -> f32 {
+        let (mut app, id, pos) = world_with_a_tameable_herd();
+        let keepers = spawn_taming_keepers(&mut app, pos, &id, GearHeld::APartysWorth, KEEPERS);
+        set_builders_kit(&mut app, keepers, kit_id);
+        app.world.run_system_once(advance_herds);
+        app.world.run_system_once(advance_labor_allocation);
+        recapture_snapshot_in_place(&mut app.world);
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        snapshot
+            .herds
+            .iter()
+            .find(|row| row.id == id)
+            .expect("the watched herd is on the wire")
+            .build_work_from_gear
+    };
+
+    let derived = published(None);
+    assert!(
+        derived > core_sim::NO_BUILD_GEAR,
+        "**LIVENESS**: an unnamed builders row derives the animal web's own kit, so a Tame is \
+         geared — got {derived}"
+    );
+    assert_eq!(
+        published(Some(BUILDERS_KIT)),
+        derived,
+        "naming the kit the derivation would have picked changes nothing"
+    );
+    assert_eq!(
+        published(Some(TILLAGE_KIT)),
+        core_sim::NO_BUILD_GEAR,
+        "a hoe is a plant tool and takes NOTHING off a Tame — the branch qualifier's whole job"
+    );
+    assert_eq!(
+        published(Some("none")),
+        core_sim::NO_BUILD_GEAR,
+        "going out bare is a real selection and must not fall back to the derived kit"
+    );
+}
+
+/// Re-kit a band's `builders` row after the fact — `None` clears it, which is *derive per entry*.
+fn set_builders_kit(app: &mut App, band: bevy::prelude::Entity, kit_id: Option<&str>) {
+    let kit = kit_id.map(|id| {
+        EquipmentConfig::builtin()
+            .kit(id)
+            .unwrap_or_else(|| panic!("the shipped roster carries '{id}'"))
+    });
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the fixture band keeps its allocation")
+        .assignments
+        .iter_mut()
+        .find(|assignment| assignment.target == LaborTarget::Builders)
+        .expect("the fixture band carries a builders row")
+        .kit = kit;
 }
 
 /// **THE CLIENT'S GEAR TERM, transcribed** — `min(workers, buildWorkSaturatingCrew) ×
@@ -417,7 +512,7 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
         let tiers = band
             .kit_tiers
             .iter()
-            .find(|row| row.kit_id == HANDLING_KIT)
+            .find(|row| row.kit_id == BUILDERS_KIT)
             .expect("the band publishes a tier row per roster kit");
         let build_work_per_worker = tiers.build_work_per_worker;
         let saturating_crew = tiers.build_work_saturating_crew;
@@ -480,8 +575,8 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
             build_work_per_worker,
             saturating_crew,
             herd.build_work_per_worker_turn,
-            // **The crew the wire publishes**, which is the net the fixture stated plus the rate it
-            // also pays — the same number `improvementWorkers` carries.
+            // **The pool the wire publishes** — the band's `builders` row, which is where a
+            // client reads the count for this form since `docs/plan_standing_upkeep.md` §2.5.
             staffed,
             // **THE ROT, not either rate.** On the animal web it is always `0` — neither animal
             // rung declares a `meter_decay`, because an under-kept flock sheds animals instead — so
@@ -517,23 +612,31 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
     );
 }
 
-/// **THE GEAR OFFSET IS QUOTED AT THE BUILD'S CREW, NOT THE BAND'S CREW ON THE SOURCE**
-/// (`docs/plan_standing_upkeep.md` §2.2).
+/// **THE GEAR OFFSET IS QUOTED AT THE BUILDERS POOL, NOT AT THE BAND'S CREW ON THE SOURCE**
+/// (`docs/plan_standing_upkeep.md` §2.5).
 ///
 /// `buildWorkPerWorker` is a **rate per worker**, so the count it multiplies has to be the workers
-/// actually doing the job. Reading the take crew instead was reachable the moment the two crews
-/// came apart, and — since `LadderConfig::effective_build_cost` is deliberately unfloored — it let a
+/// actually doing the job. Reading the take crew instead was reachable the moment the two came
+/// apart, and — since `LadderConfig::effective_build_cost` is deliberately unfloored — it let a
 /// **single** builder standing beside a large gathering party take that whole party's tools off the
 /// job, in the worst case paying a rung off outright on its first turn.
 ///
-/// Asserted on three things at once, because each fails independently:
-/// 1. the stamp **scales with the build crew** — one builder takes one worker's worth off the job;
-/// 2. it **saturates** at the units the band actually holds, so a builder with no gear left to pick
+/// ⛔ **THE POOL CARRIES ITS OWN KIT NOW, and this is the test that catches the wiring if it does
+/// not.** The offset used to ride the *source row's* kit, because the builders stood on the tile; it
+/// is read off the `builders` role's own row and coverage since §2.5. A kit that declares
+/// `build_work` but does not list `builders` among its `jobs` would resolve the neutral `0.0` — so
+/// every arm below would be a comparison of zeroes, which the **liveness** assertion is here to
+/// refuse.
+///
+/// Asserted on four things at once, because each fails independently:
+/// 1. the offset is **non-zero at all** — the liveness half, and the kit-wiring guard;
+/// 2. it **scales with the pool** — one builder takes one worker's worth off the job;
+/// 3. it **saturates** at the units the band actually holds, so a builder with no gear left to pick
 ///    up adds nothing further; and
-/// 3. it **does not move when only the take crew moves** — the negative control, and the one a form
+/// 4. it **does not move when only the take crew moves** — the negative control, and the one a form
 ///    reading the wrong crew fails.
 #[test]
-fn the_gear_offset_scales_with_the_build_crew_and_ignores_the_take_crew() {
+fn the_gear_offset_scales_with_the_builders_pool_and_ignores_the_take_crew() {
     // `GearHeld::OneSet` is the band's reference ledger: it arms a **prefix** of the party, so the
     // saturation point sits well below the crews swept here and both regimes are exercised.
     let saturating = gear_stamped_for(GearHeld::OneSet, KEEPERS, SOLE_BUILDER);
@@ -546,6 +649,12 @@ fn the_gear_offset_scales_with_the_build_crew_and_ignores_the_take_crew() {
     // (1) Two builders take more off the job than one — up to the point the gear runs out.
     let two_builders = gear_stamped_for(GearHeld::APartysWorth, KEEPERS, TWO_BUILDERS);
     let one_builder = gear_stamped_for(GearHeld::APartysWorth, KEEPERS, SOLE_BUILDER);
+    assert!(
+        one_builder > NO_GEAR_AT_ALL,
+        "**LIVENESS**: the pool's own kit must take something off the job. A `build_work` item in a \
+         kit that does not list the `builders` job resolves the neutral 0.0, and every comparison \
+         below then holds over a dead term (offset {one_builder})"
+    );
     assert!(
         two_builders > one_builder,
         "the offset must scale with the BUILD crew (one {one_builder}, two {two_builders})"
@@ -587,6 +696,7 @@ fn gear_stamped_for(gear: GearHeld, take: u32, builders: u32) -> f32 {
             .world
             .get_mut::<LaborAllocation>(keepers)
             .expect("the keeper band keeps its allocation");
+        // Row 0 is the worked source; the `builders` row beside it carries the pool and its kit.
         allocation.assignments[0].workers = take;
     }
     // The band has to afford both crews, or `normalize` trims the build away and the arm measures
@@ -635,15 +745,22 @@ fn set_improvement(app: &mut App, band: bevy::prelude::Entity, improvement: Impr
     let mut allocation = band
         .get_mut::<LaborAllocation>()
         .expect("the keeper band keeps its allocation across the completed build");
-    let assignment = allocation
+    let LaborTarget::Hunt { fauna_id, .. } = allocation
         .assignments
-        .first_mut()
-        .expect("the keeper band keeps its one assignment");
-    assignment.improvement = Some(improvement);
-    // **A verb needs a crew** (`docs/plan_standing_upkeep.md` §2.2): completion frees the previous
-    // build's hands, so re-staffing the next rung is part of setting it — exactly what the
-    // `corral` command does.
-    assignment.improvement_workers = KEEPERS;
+        .first()
+        .expect("the keeper band keeps its one worked source")
+        .target
+        .clone()
+    else {
+        panic!("the keeper band hunts");
+    };
+    // **A verb DECLARES; it does not staff** (`docs/plan_standing_upkeep.md` §2.5) — completion
+    // retires the previous entry, so declaring the next rung is the whole of what `corral` does.
+    // The `builders` row the fixture spawned is untouched and simply moves to the new head.
+    assert!(allocation.enqueue_build(
+        core_sim::BuildSource::Herd(fauna_id),
+        core_sim::BuildJob::Rung(improvement),
+    ));
 }
 
 /// **TWO FIELDS DESCRIBING ONE METER MUST AGREE IN THE FRAME THEY SHIP IN.**
@@ -882,7 +999,7 @@ fn a_crew_whose_gear_pays_the_tame_off_is_quoted_one_turn_on_the_wire() {
         let tiers = band
             .kit_tiers
             .iter()
-            .find(|row| row.kit_id == HANDLING_KIT)
+            .find(|row| row.kit_id == BUILDERS_KIT)
             .expect("the band publishes a tier row per roster kit");
 
         // **The fixture is only about anything if the gear genuinely over-pays the job**, which is
@@ -941,9 +1058,9 @@ fn a_crew_whose_gear_pays_the_tame_off_is_quoted_one_turn_on_the_wire() {
 /// grace, so the published rot is the rung's real `meter_decay.per_turn` and the client's transcribed
 /// form has to net exactly it to land on `buildTurnsRemaining`.
 ///
-/// **The gear term is `0` here and that is not a gap** — no plant item declares
-/// `EquipmentStat::BuildWork` (issue #539), and the two gear regimes are pinned on the herd arms
-/// above. What is under test is the *other* term.
+/// **The gear term is LIVE here now**, and that is what the hoes bought: the plant web has a build
+/// tool, so this arm exercises the rot and the gear together — which is the only place on the wire
+/// where both terms of the divisor and both terms of the numerator are non-zero at once.
 #[test]
 fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
     /// Builders on the Cultivate. More than one, so the quote is a multi-turn count and `ceil` is
@@ -951,8 +1068,10 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
     const BUILDERS: u32 = 2;
     /// A gathering crew beside them, so the rung's own work predicate holds.
     const GATHERERS: u32 = 1;
-    /// How far the meter is into its job when the walk starts — room to move in either direction.
-    const HALF_BUILT: f32 = 0.5;
+    /// How far the meter is into its job when the walk starts — room to move in either direction,
+    /// and low enough that the tooled bar is still several turns off when the walk ends (the hoes
+    /// take a third of a garden off the job before the crew banks a unit).
+    const HALF_BUILT: f32 = 0.1;
     /// Well above the escapement floor, so `crew_is_working_the_source` stays true every turn.
     const STOCKED: f32 = 0.8;
 
@@ -1028,49 +1147,70 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
     }
 
     // The band: gatherers, builders, and **no `agriculture` role** — which is what makes the rot real.
-    app.world.spawn((
-        PopulationCohort {
-            home: tile,
-            current_tile: tile,
-            size: 30,
-            children: scalar_zero(),
-            working: scalar_from_f32((GATHERERS + BUILDERS + 8) as f32),
-            elders: scalar_zero(),
-            stores: LocalStore::new(),
-            morale: scalar_one(),
-            last_food_consumption: 0.0,
-            last_turn_transfer_received: 0.0,
-            last_turn_transfer_sent: 0.0,
-            last_morale_delta: scalar_zero(),
-            last_morale_cause: MoraleCause::None,
-            last_morale_contributions: Default::default(),
-            last_fertility_factors: Default::default(),
-            discontent_fraction: scalar_zero(),
-            grievance: scalar_zero(),
-            last_emigrated: 0,
-            last_immigrated: 0,
-            age_turns: 0,
-            generation: 0 as GenerationId,
-            faction: FactionId(0),
-            knowledge: Vec::new(),
-            migration: None,
-        },
-        ResidentBand,
-        LaborAllocation {
-            assignments: vec![LaborAssignment {
-                target: LaborTarget::Forage {
-                    tile: source,
-                    floor: DEFAULT_ESCAPEMENT_FLOOR,
-                    species: None,
-                },
-                workers: GATHERERS,
-                improvement: None,
-                kit: None,
-                improvement_workers: BUILDERS,
-            }],
-            ..Default::default()
-        },
-    ));
+    let band_entity = app
+        .world
+        .spawn((
+            PopulationCohort {
+                home: tile,
+                current_tile: tile,
+                size: 30,
+                children: scalar_zero(),
+                working: scalar_from_f32((GATHERERS + BUILDERS + 8) as f32),
+                elders: scalar_zero(),
+                stores: LocalStore::new(),
+                morale: scalar_one(),
+                last_food_consumption: 0.0,
+                last_turn_transfer_received: 0.0,
+                last_turn_transfer_sent: 0.0,
+                last_morale_delta: scalar_zero(),
+                last_morale_cause: MoraleCause::None,
+                last_morale_contributions: Default::default(),
+                last_fertility_factors: Default::default(),
+                discontent_fraction: scalar_zero(),
+                grievance: scalar_zero(),
+                last_emigrated: 0,
+                last_immigrated: 0,
+                age_turns: 0,
+                generation: 0 as GenerationId,
+                faction: FactionId(0),
+                knowledge: Vec::new(),
+                migration: None,
+            },
+            ResidentBand,
+            // **THE LEDGER IS STATED, NOT LEFT ABSENT.** An absent component resolves to one reference
+            // ledger in the labor system (sized to the band's workers) and another at capture (one unit
+            // of each), so the gear the sim charges and the gear the kit row publishes would be two
+            // different numbers — and this arm's whole claim is that they are one.
+            BandEquipment::start_stocked(&EquipmentConfig::builtin()),
+            LaborAllocation {
+                assignments: vec![
+                    LaborAssignment {
+                        target: LaborTarget::Forage {
+                            tile: source,
+                            floor: DEFAULT_ESCAPEMENT_FLOOR,
+                            species: None,
+                        },
+                        workers: GATHERERS,
+                        kit: None,
+                    },
+                    // **The builders are a band-level pool** since `docs/plan_standing_upkeep.md` §2.5,
+                    // and the whole of it goes on the head of the queue below — which is this patch.
+                    // **NO KIT NAMED, so the pool derives one per queue entry** — the head is a patch,
+                    // so the roster answers `tillage` and the hoes are what the gear term below reads.
+                    LaborAssignment {
+                        target: LaborTarget::Builders,
+                        workers: BUILDERS,
+                        kit: None,
+                    },
+                ],
+                build_queue: vec![core_sim::BuildQueueEntry {
+                    source: core_sim::BuildSource::Patch(source),
+                    declared: core_sim::BuildJob::Rung(Improvement::Cultivate),
+                }],
+                ..Default::default()
+            },
+        ))
+        .id();
 
     // Walk past the rung's own grace in the real stage order, so the neglect counter is spent and the
     // published rot is the rung's live `meter_decay.per_turn`.
@@ -1105,13 +1245,50 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
         row.build_turns_remaining
     );
 
+    // **THE GEAR PAIR, off the band's own `tillage` row** — the kit the pool derived for this entry,
+    // which the client reads the same way it reads a hunt kit's. Publishing the branch beside the
+    // worth is what lets it: a `hurdling` row states the same `8.5` and is worth nothing here.
+    let band = snapshot
+        .populations
+        .iter()
+        .find(|population| population.entity == band_entity.to_bits())
+        .expect("the building band is on the wire");
+    let tiers = band
+        .kit_tiers
+        .iter()
+        .find(|kit| kit.kit_id == TILLAGE_KIT)
+        .expect("the band publishes a tier row per roster kit");
+    assert_eq!(
+        tiers.build_work_branch, "plant",
+        "the tillage kit's build gear must publish the web it serves, or the client cannot tell it \
+         apart from hurdles"
+    );
+    assert!(
+        tiers.build_work_per_worker > 0.0 && tiers.build_work_saturating_crew > 0,
+        "fixture: the hoes must publish a live gear pair, or the term under test is inert \
+         (per-worker {} crew {})",
+        tiers.build_work_per_worker,
+        tiers.build_work_saturating_crew
+    );
+    let gear = client_gear_term(
+        tiers.build_work_per_worker,
+        tiers.build_work_saturating_crew,
+        BUILDERS,
+    );
+    assert!(
+        (gear - row.build_work_from_gear).abs() < 1e-3,
+        "the tillage row's `min({BUILDERS}, {}) × {}` must equal what the sim stamped on the patch: \
+         {gear} vs {}",
+        tiers.build_work_saturating_crew,
+        tiers.build_work_per_worker,
+        row.build_work_from_gear
+    );
+
     let quoted = client_turns_estimate(
         row.cultivation_work_cost,
         row.cultivation_work_done,
-        // No plant item declares a build contribution, so the gear term is neutral here by
-        // construction — the two gear regimes are the herd arms' business.
-        core_sim::NO_BUILD_GEAR,
-        NO_CREW_ON_THIS_ACTIVITY,
+        tiers.build_work_per_worker,
+        tiers.build_work_saturating_crew,
         row.build_work_per_worker_turn,
         BUILDERS,
         row.meter_rot_per_turn,
@@ -1120,7 +1297,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
         quoted,
         u32::try_from(row.build_turns_remaining).ok(),
         "the client's closed form must net the published rot and land on the sim's own answer: \
-         cost {} done {} per-worker-turn {} builders {BUILDERS} rot {}",
+         cost {} done {} gear {gear} per-worker-turn {} builders {BUILDERS} rot {}",
         row.cultivation_work_cost,
         row.cultivation_work_done,
         row.build_work_per_worker_turn,
@@ -1133,8 +1310,8 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
         client_turns_estimate(
             row.cultivation_work_cost,
             row.cultivation_work_done,
-            core_sim::NO_BUILD_GEAR,
-            NO_CREW_ON_THIS_ACTIVITY,
+            tiers.build_work_per_worker,
+            tiers.build_work_saturating_crew,
             row.build_work_per_worker_turn,
             BUILDERS,
             core_sim::NO_UPKEEP_DECAY,

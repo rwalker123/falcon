@@ -1,15 +1,16 @@
-//! **THE BUILD COUNTDOWN'S FOUR STATES, ON THE WIRE** (`docs/plan_standing_upkeep.md` §2.4).
+//! **THE BUILD COUNTDOWN'S FIVE STATES, ON THE WIRE** (`docs/plan_standing_upkeep.md` §2.4/§4.6b).
 //!
-//! `buildTurnsRemaining` shipped as one sentinel covering four different situations, so the tile card
-//! and the herd drawer — the two surfaces a player reads every turn — rendered **no line at all** for
-//! all of them. Three of those situations are not an absence of information:
+//! `buildTurnsRemaining` shipped as one sentinel covering several different situations, so the tile
+//! card and the herd drawer — the two surfaces a player reads every turn — rendered **no line at
+//! all** for all of them. Most of those situations are not an absence of information:
 //!
 //! | published | meaning |
 //! |---|---|
-//! | `>= 0` | a real finish date at the crew that is on it |
-//! | `BUILD_METER_HOLDS` (`-2`) | a real, staffed, priced build banking **exactly** what its meter is bleeding — the ground stands still |
+//! | `>= 0` | a real finish date, **chained** behind everything above it in the band's queue |
+//! | `BUILD_METER_HOLDS` (`-2`) | a real, priced build banking **exactly** what its meter is bleeding — the ground stands still |
 //! | `BUILD_METER_ROTS` (`-3`) | the same build banking **less** than the bleed — work already bought is being lost |
-//! | `NO_BUILD_TURNS_ESTIMATE` (`-1`) | there is genuinely no answer — nobody is on the source |
+//! | `BUILD_QUEUE_BLOCKED` (`-4`) | the band's builders are **staffed and standing on this entry** and its own gate refuses it — nothing banks, and nothing behind it moves |
+//! | `NO_BUILD_TURNS_ESTIMATE` (`-1`) | there is genuinely no answer — nothing queued here, or a gate refusing a *waiting* entry |
 //!
 //! **THE ROT IS THE DENOMINATOR** (`docs/plan_standing_upkeep.md` §4.6a). A build crew supplies
 //! nothing toward the maintenance rate — the band's keeping pool owes that for every meter carrying
@@ -59,7 +60,9 @@ use core_sim::{
     LadderConfigHandle, LocalStore, MoraleCause, PopulationCohort, ResidentBand, RungKey,
     SnapshotHistory, StartingUnit, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR, UNSCALED_UPKEEP,
 };
-use sim_schema::{BUILD_METER_HOLDS, BUILD_METER_ROTS, NO_BUILD_TURNS_ESTIMATE};
+use sim_schema::{
+    BUILD_METER_HOLDS, BUILD_METER_ROTS, BUILD_QUEUE_BLOCKED, NO_BUILD_TURNS_ESTIMATE,
+};
 
 /// **A GATHERING SITE THE CULTIVATE GATE ADMITS.** Every plant rung requires one
 /// (`RungSiteRequirement::requires_gathering_site`), and a refused gate publishes *no estimate* for a
@@ -317,19 +320,38 @@ fn world_with_a_patch_knowing(
         },
         ResidentBand,
         LaborAllocation {
-            assignments: vec![LaborAssignment {
-                target: LaborTarget::Forage {
-                    tile: source,
-                    floor: DEFAULT_ESCAPEMENT_FLOOR,
-                    species: None,
+            assignments: vec![
+                LaborAssignment {
+                    target: LaborTarget::Forage {
+                        tile: source,
+                        floor: DEFAULT_ESCAPEMENT_FLOOR,
+                        species: None,
+                    },
+                    workers: gatherers,
+                    kit: None,
                 },
-                workers: gatherers,
-                // The verb is derived from the meter, so this states nothing: what decides the arm
-                // under test is the **crew**.
-                improvement: None,
-                kit: None,
-                improvement_workers: builders,
-            }],
+                // **The builders are a band-level POOL** (`docs/plan_standing_upkeep.md` §2.5), and
+                // the whole of it goes on the head of the queue below. `builders == 0` is the
+                // unstaffed arm — a role row still stands at zero, which is how a player says
+                // *stop building* without withdrawing what they declared.
+                LaborAssignment {
+                    target: LaborTarget::Builders,
+                    workers: builders,
+                    kit: None,
+                },
+            ],
+            // **THE DECLARATION, and only where there is something to declare it on.** A patch with
+            // **nothing banked** is exactly the state a compose sheet is looking at — the player has
+            // not queued it yet — and that is what makes the wire publish a *projection* rather than
+            // a running countdown. A half-built meter is a build in flight and carries its entry.
+            build_queue: if banked > core_sim::RUNG_UNSTARTED {
+                vec![core_sim::BuildQueueEntry {
+                    source: core_sim::BuildSource::Patch(source),
+                    declared: core_sim::BuildJob::Rung(core_sim::Improvement::Cultivate),
+                }]
+            } else {
+                Vec::new()
+            },
             ..Default::default()
         },
     ));
@@ -371,6 +393,121 @@ fn published_patch_field<T>(
 }
 
 /// **The patch row's `buildTurnsRemaining`, off the encoded buffer.**
+/// ⛔ **A HOE SPEEDS A CULTIVATE AND HURDLES DO NOTHING FOR ONE — and the pool picks the tool off
+/// the ENTRY, not off a stored id.**
+///
+/// Four arms on one fixture, read off the encoded patch row's `buildWorkFromGear`, which is the
+/// number the sim actually struck the bar with:
+///
+/// | the `builders` row says | the pool works with | why |
+/// |---|---|---|
+/// | nothing | `tillage` | an absent kit means *derive per entry*, and the head is a patch |
+/// | `tillage` | `tillage` | an explicit choice wins, and here it agrees |
+/// | `hurdling` | `hurdling`, worth **nothing** | hurdles are animal-handling gear; `build_work` names its web |
+/// | `none` | nothing | going bare is a real selection, and it must not fall back to the derivation |
+///
+/// **The first arm is the liveness half and it is not optional**: a branch filter that zeroed
+/// *everything* would pass arms three and four on its own, and a derivation that ignored the entry
+/// would pass arm two. Every arm is compared against the *same* fixture, so the only thing that
+/// differs between them is the kit.
+#[test]
+fn a_plant_build_is_geared_by_the_hoe_and_by_nothing_else() {
+    /// The pool raising the Cultivate. More than one, so a per-worker sum is visible as a sum.
+    const BUILDERS: u32 = 2;
+
+    let published = |kit_id: Option<&str>| -> f32 {
+        let (mut app, source) = world_with_a_patch(BUILDERS, HALF_BUILT);
+        if let Some(kit_id) = kit_id {
+            let kit = core_sim::EquipmentConfig::builtin()
+                .kit(kit_id)
+                .unwrap_or_else(|| panic!("the shipped roster carries '{kit_id}'"));
+            // **The FIXTURE band, found by its builders row** — the start profile's own band is in
+            // this world too, and re-kitting that one would leave the measurement untouched.
+            let mut query = app.world.query::<&mut LaborAllocation>();
+            let mut found = false;
+            for mut allocation in query.iter_mut(&mut app.world) {
+                if let Some(row) = allocation
+                    .assignments
+                    .iter_mut()
+                    .find(|assignment| assignment.target == LaborTarget::Builders)
+                {
+                    row.kit = Some(kit.clone());
+                    found = true;
+                }
+            }
+            assert!(found, "the fixture band carries a builders row");
+        }
+        core_sim::run_turn(&mut app);
+        recapture_snapshot_in_place(&mut app.world);
+        published_patch_field(&app, source, |patch| patch.buildWorkFromGear())
+    };
+
+    let derived = published(None);
+    assert!(
+        derived > core_sim::NO_BUILD_GEAR,
+        "**LIVENESS**: an unnamed builders row derives the plant web's own kit, so a Cultivate is \
+         geared — got {derived}"
+    );
+    assert_eq!(
+        published(Some("tillage")),
+        derived,
+        "naming the kit the derivation would have picked changes nothing"
+    );
+    assert_eq!(
+        published(Some("hurdling")),
+        core_sim::NO_BUILD_GEAR,
+        "hurdles are animal-handling gear and take NOTHING off a Cultivate — the branch qualifier's \
+         whole job"
+    );
+    assert_eq!(
+        published(Some("none")),
+        core_sim::NO_BUILD_GEAR,
+        "going out bare is a real selection and must not fall back to the derived kit"
+    );
+}
+
+/// **WHAT THE POOL'S DERIVED KIT TAKES OFF A PLANT BUILD AT `builders` HANDS** — the client's own
+/// gear term, `min(crew, buildWorkSaturatingCrew) × buildWorkPerWorker`, off the band's `tillage`
+/// row. `build_turns_closed_form.rs` is where that form is pinned against the sim; here it is only
+/// the number this arm's quote has to net.
+fn published_tillage_gear(app: &App, builders: u32) -> f32 {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let populations = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the band list");
+    let row = populations
+        .iter()
+        .find_map(|population| {
+            population.kitTiers()?.iter().find(|kit| {
+                kit.kitId().is_some_and(|id| id == TILLAGE_KIT)
+                    && kit.buildWorkPerWorker() > core_sim::NO_BUILD_GEAR
+            })
+        })
+        .expect("some band publishes a live tillage tier row");
+    assert_eq!(
+        row.buildWorkBranch(),
+        Some("plant"),
+        "the tillage kit's build gear must publish the web it serves"
+    );
+    builders.min(row.buildWorkSaturatingCrew()) as f32 * row.buildWorkPerWorker()
+}
+
+/// The plant web's builders kit — hoes.
+const TILLAGE_KIT: &str = "tillage";
+
 fn published_build_turns(app: &App, source: UVec2) -> i32 {
     published_patch_field(app, source, |patch| patch.buildTurnsRemaining())
 }
@@ -382,9 +519,9 @@ fn resolve_a_turn(app: &mut App, source: UVec2) -> i32 {
     published_build_turns(app, source)
 }
 
-/// **THE FOUR STATES, PAIRWISE DISTINCT, ON ONE FIXTURE.**
+/// **THE FIVE STATES, PAIRWISE DISTINCT, ON ONE FIXTURE.**
 #[test]
-fn the_build_countdown_publishes_a_count_holding_rotting_and_no_estimate_as_four_states() {
+fn the_build_countdown_publishes_five_distinct_states_on_the_wire() {
     // (1) **A staffed build on the SHIPPED ladder publishes a real count** — and it does so with
     // nobody on the keeping, which is the §4.6a headline: the rate is not the builders' bill.
     let (mut app, source) = world_with_a_cultivate_staffed_at(A_MULTI_TURN_CREW);
@@ -433,31 +570,41 @@ fn the_build_countdown_publishes_a_count_holding_rotting_and_no_estimate_as_four
         "an unkept half-built meter loses bought work — the meter goes backwards, and says so"
     );
 
-    // (4) **A REFUSED GATE publishes NO ESTIMATE**, neither holding nor rotting — the state that
-    // genuinely has no answer. It is asserted at a real crew on a half-built meter, i.e. the exact
-    // fixture that reaches every other arm, so it pins that the gate beats all three: a build that is
-    // not running has promised nothing, for a reason that has nothing to do with staffing or with the
-    // keeping.
-    //
-    // **The boundary MOVED off "unstaffed"**, which is why this arm is a gate rather than an empty
-    // crew: work already banked promises as much as a crew does, so an unstaffed half-built meter is
-    // arm (2) or arm (3). The other no-answer states — a meter at zero with nobody on it, and the top
-    // of the ladder — take the same branch.
+    // (4) **A REFUSED GATE AT THE HEAD OF A STAFFED QUEUE IS BLOCKED** (`docs/plan_standing_upkeep.md`
+    // §4.6b). The player has committed a pool, the pool is standing on this entry, its own gate
+    // refuses it, and so nothing banks and nothing behind it moves. That is a state to say **loudly**
+    // — which is exactly what `-1` cannot do, because it renders as no line at all.
     let (mut app, source) =
         world_with_a_patch_knowing(A_MULTI_TURN_CREW, HALF_BUILT, !THE_GATE_IS_OPEN, A_GATHERER);
+    let blocked = resolve_a_turn(&mut app, source);
+    assert_eq!(
+        blocked, BUILD_QUEUE_BLOCKED,
+        "the head of a staffed queue whose gate refuses it says so, rather than falling silent"
+    );
+
+    // (5) **AND THE SAME REFUSED GATE WITH NOBODY ON THE POOL IS STILL NO ESTIMATE.** The blocked
+    // reading is about a **committed pool** getting nowhere; with the pool empty there is no
+    // commitment to report on, and the honest answer is the absence of one.
+    //
+    // **The boundary MOVED off "unstaffed" for the other two arms**, which is why this one is a gate
+    // rather than an empty crew alone: work already banked promises as much as a crew does, so an
+    // unstaffed half-built meter whose gate is OPEN is arm (2) or arm (3). The other no-answer
+    // states — a meter at zero with nobody on it, and the top of the ladder — take this branch.
+    let (mut app, source) =
+        world_with_a_patch_knowing(NOBODY_BUILDING, HALF_BUILT, !THE_GATE_IS_OPEN, A_GATHERER);
     let refused = resolve_a_turn(&mut app, source);
     assert_eq!(
         refused, NO_BUILD_TURNS_ESTIMATE,
-        "a build the rung's own gate refuses has promised nothing, whatever is banked or staffed"
+        "a refused gate with nobody standing on it has promised nothing at all"
     );
 
     // **Pairwise distinct**, which is what stops a new sentinel being wired to the wrong branch.
-    let published = [counted, holding, rotting, refused];
+    let published = [counted, holding, rotting, blocked, refused];
     for (index, left) in published.iter().enumerate() {
         for right in published.iter().skip(index + 1) {
             assert_ne!(
                 left, right,
-                "the four states must be four numbers on the wire: {published:?}"
+                "the five states must be five numbers on the wire: {published:?}"
             );
         }
     }
@@ -651,17 +798,21 @@ fn the_published_rot_is_exactly_what_the_next_decay_pass_bleeds() {
     );
 }
 
-/// **THE THREE SENTINELS ARE OUTSIDE THE RANGE A REAL COUNT LIVES IN, and are not each other** — the
+/// **THE FOUR SENTINELS ARE OUTSIDE THE RANGE A REAL COUNT LIVES IN, and are not each other** — the
 /// property every reader leans on when it branches on the sign.
 #[test]
-fn the_three_sentinels_are_distinct_and_below_every_real_count() {
+fn the_four_sentinels_are_distinct_and_below_every_real_count() {
     const {
         assert!(NO_BUILD_TURNS_ESTIMATE != BUILD_METER_HOLDS);
         assert!(NO_BUILD_TURNS_ESTIMATE != BUILD_METER_ROTS);
+        assert!(NO_BUILD_TURNS_ESTIMATE != BUILD_QUEUE_BLOCKED);
         assert!(BUILD_METER_HOLDS != BUILD_METER_ROTS);
+        assert!(BUILD_METER_HOLDS != BUILD_QUEUE_BLOCKED);
+        assert!(BUILD_METER_ROTS != BUILD_QUEUE_BLOCKED);
         assert!(NO_BUILD_TURNS_ESTIMATE < 0);
         assert!(BUILD_METER_HOLDS < 0);
         assert!(BUILD_METER_ROTS < 0);
+        assert!(BUILD_QUEUE_BLOCKED < 0);
     }
 }
 
@@ -720,10 +871,20 @@ fn an_unstarted_patch_publishes_the_quoted_rungs_upkeep_where_the_billed_one_is_
     // and therefore nothing to rot. The quote used to read `-3` here — *"the meter never reaches its
     // cost"* — about a build that finishes perfectly well.
     let cost = published_patch_field(&app, source, |patch| patch.cultivationWorkCost());
+    // **LESS WHAT THE POOL'S TOOLS TAKE OFF IT.** The builders row names no kit, so the pool derives
+    // one per queue entry and the roster answers `tillage` for a patch — the hoes are the plant web's
+    // build tool. Read off the band's own kit row rather than stated as a literal, so retuning the
+    // tool moves the fixture with the game.
+    let gear = published_tillage_gear(&app, A_CREW_UNDER_THE_RATE);
+    assert!(
+        gear > core_sim::NO_BUILD_GEAR,
+        "fixture: the derived builders kit must take real work off a plant build, or this arm is \
+         the un-geared quote wearing a gear term's clothes (gear {gear})"
+    );
     assert_eq!(
         published_build_turns(&app, source),
-        (cost / core_sim::PER_WORKER_OUTPUT).ceil() as i32,
-        "one builder is quoted `work_cost / crew` turns — the rate is the keeping's bill"
+        ((cost - gear) / core_sim::PER_WORKER_OUTPUT).ceil() as i32,
+        "one builder is quoted `(work_cost − gear) / crew` turns — the rate is the keeping's bill"
     );
     assert_eq!(
         published_patch_field(&app, source, |patch| patch.meterRotPerTurn()),

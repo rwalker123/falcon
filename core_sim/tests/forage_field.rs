@@ -24,7 +24,6 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
-use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     advance_cultivation, advance_forage_regrowth, advance_labor_allocation,
     default_species_for_rung, generate_hydrology, rung_site_refusal, scalar_from_f32, scalar_one,
@@ -445,21 +444,28 @@ fn spawn_forager_of(
                             species: None,
                         },
                         workers: foragers,
-                        improvement,
                         kit: None,
-                        // **The same crew staffs the build** — what this fixture meant when one
-                        // crew did every job (`docs/plan_standing_upkeep.md` §2.2).
-                        improvement_workers: improvement
-                            .map_or(NO_CREW_ON_THIS_ACTIVITY, |_| foragers),
                     },
                     LaborAssignment {
                         target: LaborTarget::Agriculture,
                         workers: keepers,
-                        improvement: None,
                         kit: None,
-                        improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
+                    },
+                    // **A pool of the same size staffs the build** — what this fixture meant when
+                    // one crew did every job (`docs/plan_standing_upkeep.md` §2.5).
+                    LaborAssignment {
+                        target: LaborTarget::Builders,
+                        workers: foragers,
+                        kit: Some(bare_builders()),
                     },
                 ],
+                build_queue: improvement
+                    .map(|declared| core_sim::BuildQueueEntry {
+                        source: core_sim::BuildSource::Patch(patch),
+                        declared: core_sim::BuildJob::Rung(declared),
+                    })
+                    .into_iter()
+                    .collect(),
                 ..Default::default()
             },
         ))
@@ -565,10 +571,11 @@ fn sow_crew(app: &App) -> u32 {
     /// The net supply the `plant:field` rung's 75-unit `work_cost` was priced against — the
     /// staffing this file's paces are all quoted at.
     const NET_WORKER_TURNS: u32 = 3;
-    // **Plus the rung's maintenance rate**, which the build crew is also paying: the rate is owed
-    // while a meter is being raised and below its cost the builders are who supply it
-    // (`docs/plan_standing_upkeep.md` §2.4). A bare three hands is *below* a Field's four-work rate,
-    // so a fixture staffed there would measure a Sow that goes backwards.
+    // **Plus the rung's maintenance rate**, which the *keeping* pool owes while the meter is being
+    // raised — the builders supply none of it (`docs/plan_standing_upkeep.md` §4.6a). The padding
+    // survives because these fixtures size one band against everything it staffs: a bare three hands
+    // leaves nothing for the `agriculture` row, and a Field rotting under its own builders is not
+    // the pace this file measures.
     app.world
         .resource::<LadderConfigHandle>()
         .get()
@@ -622,6 +629,32 @@ fn turns_to_sow(app: &App) -> u32 {
 ///
 /// It asserts the *existence* of sowable ground, not a count: the count is an emergent property of
 /// the heightfield and legitimately moves with worldgen tuning. Zero is the only unplayable answer.
+/// **What a band has queued on a patch** — the 6b reading of what a fixture used to get off the
+/// row's `improvement` field (`docs/plan_standing_upkeep.md` §2.5).
+fn queued_job(
+    app: &App,
+    band: bevy::prelude::Entity,
+    tile: bevy::math::UVec2,
+) -> Option<core_sim::BuildJob> {
+    app.world
+        .get::<LaborAllocation>(band)
+        .expect("the fixture band keeps its allocation")
+        .build_queue_entry(&core_sim::BuildSource::Patch(tile))
+        .map(|entry| entry.declared)
+}
+
+/// [`queued_job`] as a rung verb — `None` for a ring, which names no rung.
+fn declared_rung(
+    app: &App,
+    band: bevy::prelude::Entity,
+    tile: bevy::math::UVec2,
+) -> Option<Improvement> {
+    match queued_job(app, band, tile) {
+        Some(core_sim::BuildJob::Rung(improvement)) => Some(improvement),
+        Some(core_sim::BuildJob::ExtendPen) | None => None,
+    }
+}
+
 #[test]
 fn the_shipped_map_carries_sowable_ground() {
     let shipped_grid = SimulationConfig::builtin().grid_size;
@@ -1006,9 +1039,9 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
         field_progress_of(&app, coord)
     );
     assert_eq!(
-        app.world.get::<LaborAllocation>(band).unwrap().assignments[0].improvement,
-        Some(Improvement::Sow),
-        "an unfinished build keeps its verb — only completion clears it"
+        queued_job(&app, band, coord),
+        Some(core_sim::BuildJob::Rung(Improvement::Sow)),
+        "an unfinished build keeps its entry — only completion retires it"
     );
 
     run_turns_with_forage(&mut app, 1);
@@ -1021,9 +1054,8 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
         "fixture: this is the completing turn"
     );
     let allocation = app.world.get::<LaborAllocation>(band).unwrap();
-    // **The worked source is still one row — and the band holds one more.** A finished rung that
-    // costs something to hold hands its builders to the band's own `agriculture` keeping role
-    // (`docs/plan_standing_upkeep.md` §2.5), which is a band-wide row rather than a source.
+    // **The worked source is still one row — and the band holds the standing-role rows beside it**
+    // (`agriculture`, `builders`), which are band-wide rather than sources.
     let sources: Vec<&core_sim::LaborAssignment> = allocation
         .assignments
         .iter()
@@ -1041,8 +1073,9 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
         "the crew stays on the ground it sowed"
     );
     assert_eq!(
-        assignment.improvement, None,
-        "completion clears the improvement — there is nothing left to sow here"
+        queued_job(&app, band, coord),
+        None,
+        "completion retires the entry — there is nothing left to sow here"
     );
     let LaborTarget::Forage {
         tile: sown_tile,
@@ -1246,7 +1279,7 @@ fn a_completed_field_clears_the_sow_verb_for_every_band_that_was_building_it() {
         .expect("patch")
         .clone();
     for (label, band) in [("the finisher", first), ("the second crew", second)] {
-        let declared = app.world.get::<LaborAllocation>(band).unwrap().assignments[0].improvement;
+        let declared = declared_rung(&app, band, coord);
         assert_eq!(
             core_sim::patch_build_verb(&patch, declared),
             None,
@@ -1484,7 +1517,7 @@ fn a_cultivate_on_a_field_is_handed_back_rather_than_stalling_forever() {
         .patch(coord)
         .expect("patch")
         .clone();
-    let declared = app.world.get::<LaborAllocation>(band).unwrap().assignments[0].improvement;
+    let declared = declared_rung(&app, band, coord);
     assert_eq!(
         core_sim::patch_build_verb(&patch, declared),
         None,
@@ -1494,4 +1527,19 @@ fn a_cultivate_on_a_field_is_handed_back_rather_than_stalling_forever() {
         patch.cultivation_progress, 0.0,
         "…and the meter it named never moved"
     );
+}
+
+/// **THE EMPTY KIT, NAMED ON A FIXTURE'S `builders` ROW** — an isolation, not a default.
+///
+/// An absent kit means *derive per entry*, and the roster's answer (`tillage` for a patch,
+/// `hurdling` for a herd) takes `8.5` off the job per covered worker. A start-stocked band holds a
+/// unit per worker and a half, so at the crews these fixtures staff the gear alone pays a whole rung
+/// off and every pacing claim below collapses to *"one turn versus one turn"*. Naming `none` holds
+/// the gear axis at its identity so these arms measure the **crew**, exactly as
+/// `FaunaConfig::without_retreat` holds the retreat at its identity across the hunt suites. The
+/// geared default is pinned in `core_sim/tests/build_turns_closed_form.rs`.
+fn bare_builders() -> core_sim::KitChoice {
+    core_sim::EquipmentConfig::builtin()
+        .kit("none")
+        .expect("the shipped roster carries the empty kit")
 }

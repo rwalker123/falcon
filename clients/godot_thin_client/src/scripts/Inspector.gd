@@ -575,7 +575,12 @@ func _send_command(line: String, success_message: String,
 		command_client.call("poll")
 		err = command_client.call("send_line", line)
 	if err != OK:
-		_append_command_log("Command failed (%s): %s" % [line, error_string(err)], true)
+		# **A SEND THAT FAILS HERE IS A TRANSPORT FAILURE AND NOTHING ELSE**, so it says so —
+		# `send_line` only ever answers "no bridge" or "the bridge could not deliver", and a command
+		# the SIM refuses has already gone down the socket and comes back on the server's own stream.
+		# The old `Command failed (…): can't connect` read as a rules rejection; see
+		# `HudEventVocab.COMMAND_NOT_SENT_FORMAT`.
+		_append_command_log(HudEventVocab.COMMAND_NOT_SENT_FORMAT % line, true)
 		_update_command_status()
 		return false
 	_append_command_log(success_message, false, ack_kind)

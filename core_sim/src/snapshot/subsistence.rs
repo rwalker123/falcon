@@ -10,10 +10,13 @@ use crate::forage::{
     patch_neglect_grace_remaining, patch_provisions_per_biomass, tended_fodder,
 };
 use crate::intensification::{
-    build_fraction, build_work_per_worker_turn, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY,
-    NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, UNSCALED_UPKEEP,
+    build_fraction, build_work_per_worker_turn, NOT_IN_ANY_BUILD_QUEUE, NO_BUILD_GEAR,
+    NO_CREW_ON_THIS_ACTIVITY, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED,
+    UNSCALED_UPKEEP,
 };
-use sim_schema::{BUILD_METER_HOLDS, BUILD_METER_ROTS, NO_BUILD_TURNS_ESTIMATE};
+use sim_schema::{
+    BUILD_METER_HOLDS, BUILD_METER_ROTS, BUILD_QUEUE_BLOCKED, NO_BUILD_TURNS_ESTIMATE,
+};
 
 /// **THE COUNTDOWN, ON THE WIRE** — the one place `BuildTurns` becomes an `i32`, so the plant and the
 /// animal web cannot come to publish the same state as two different numbers.
@@ -25,6 +28,7 @@ fn published_build_turns(turns: crate::intensification::BuildTurns) -> i32 {
         crate::intensification::BuildTurns::Turns(count) => count as i32,
         crate::intensification::BuildTurns::Holding => BUILD_METER_HOLDS,
         crate::intensification::BuildTurns::Rotting => BUILD_METER_ROTS,
+        crate::intensification::BuildTurns::Blocked => BUILD_QUEUE_BLOCKED,
     }
 }
 
@@ -751,12 +755,15 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // `*WorkCost` it belongs beside is the assignment's own `improvement`, or the next
                 // rung up when that is empty. `-1` only where there is genuinely no answer (penned,
                 // a gate refuses, or a stalled build). The client can derive none of it.
-                // **THREE NEGATIVES, THREE FACTS** (`intensification::BuildTurns`): `-1` where
-                // there is genuinely no answer (nobody on the source, a gate refuses, the top of
-                // the ladder); `-2` where a **staffed** crew's net supply is exactly zero, so the
-                // meter holds where it is; and `-3` where it is negative, so the meter is going
-                // backwards. The last two are the ones the player can act on, and they are two
-                // answers because holding wastes a turn where rotting destroys bought work.
+                // **FOUR NEGATIVES, FOUR FACTS** (`intensification::BuildTurns`): `-1` where
+                // there is genuinely no answer (nothing queued here, a gate refuses a waiting
+                // entry, the top of the ladder); `-2` where the net supply is exactly zero, so the
+                // meter holds where it is; `-3` where it is negative, so the meter is going
+                // backwards; and `-4` where the band's **builders are staffed and standing on this
+                // entry** and its own gate refuses it, so the whole queue is stuck behind it. The
+                // last three are the ones the player can act on, and they are three answers because
+                // holding wastes a turn, rotting destroys bought work, and a block is fixed by
+                // staffing the KEEPING rather than by adding builders.
                 build_turns_remaining: herd
                     .and_then(|herd| herd.build_turns_remaining)
                     .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),
@@ -766,6 +773,11 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 build_work_from_gear: herd
                     .map(|herd| herd.build_work_from_gear)
                     .unwrap_or(NO_BUILD_GEAR),
+                // **Where this herd sits in that same band's queue** — the third of the set, and
+                // what makes a chained date legible rather than an unexplained number.
+                build_queue_position: herd
+                    .map(|herd| herd.build_queue_position)
+                    .unwrap_or(NOT_IN_ANY_BUILD_QUEUE),
                 // **The crew-output TERM the compose sheet evaluates its estimate from** (the
                 // boundary rule in `.claude/rules/core_sim/yield-forecast.md`): what one worker banks
                 // per turn. With `*WorkCost` / `*WorkDone` here and the gear pair on the band's own
@@ -989,18 +1001,23 @@ pub(crate) fn snapshot_forage_patches(
                 // beside the `*WorkCost` for the assignment's own `improvement`, or for the next rung
                 // up when that is empty. `-1` only where there is genuinely no answer (a Field, a
                 // gate that refuses, or a stalled build).
-                // **THREE NEGATIVES, THREE FACTS** (`intensification::BuildTurns`): `-1` where
-                // there is genuinely no answer (nobody on the source, a gate refuses, the top of
-                // the ladder); `-2` where a **staffed** crew's net supply is exactly zero, so the
-                // meter holds where it is; and `-3` where it is negative, so the meter is going
-                // backwards. The last two are the ones the player can act on, and they are two
-                // answers because holding wastes a turn where rotting destroys bought work.
+                // **FOUR NEGATIVES, FOUR FACTS** (`intensification::BuildTurns`): `-1` where
+                // there is genuinely no answer (nothing queued here, a gate refuses a waiting
+                // entry, the top of the ladder); `-2` where the net supply is exactly zero, so the
+                // meter holds where it is; `-3` where it is negative, so the meter is going
+                // backwards; and `-4` where the band's **builders are staffed and standing on this
+                // entry** and its own gate refuses it, so the whole queue is stuck behind it. The
+                // last three are the ones the player can act on, and they are three answers because
+                // holding wastes a turn, rotting destroys bought work, and a block is fixed by
+                // staffing the KEEPING rather than by adding builders.
                 build_turns_remaining: patch
                     .build_turns_remaining
                     .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),
-                // The plant twin — `NO_BUILD_GEAR` on every plant build today, since no plant item
-                // declares `EquipmentStat::BuildWork` yet (issue #539).
+                // The plant twin — the hoes' contribution, or `NO_BUILD_GEAR` for a pool sent
+                // out bare or carrying the animal web's hurdles.
                 build_work_from_gear: patch.build_work_from_gear,
+                // The plant twin — see the herd row.
+                build_queue_position: patch.build_queue_position,
                 // The plant twin — see the herd row for why the estimate's terms ship beside the
                 // sim's own answer.
                 build_work_per_worker_turn: build_work_per_worker_turn(),

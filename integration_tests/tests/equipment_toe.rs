@@ -21,7 +21,6 @@
 //! confusion this slice corrects.
 
 use bevy::{math::UVec2, prelude::Entity};
-use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     available_workers, build_headless_app, run_turn, BandEquipment, CommandEventKind,
     CommandEventLog, CreaturesConfig, EffectTier, EquipmentConfig, EquipmentStat,
@@ -114,9 +113,7 @@ fn hunting_world_of(
                     floor: SHALLOW_FLOOR,
                 },
                 workers: crew.unwrap_or(workers).max(1),
-                improvement: None,
                 kit: None,
-                improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             ..Default::default()
         },
@@ -147,9 +144,7 @@ fn gathering_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
                     species: None,
                 },
                 workers: workers.max(1),
-                improvement: None,
                 kit: None,
-                improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             ..Default::default()
         },
@@ -167,9 +162,7 @@ fn scouting_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
         assignments: vec![LaborAssignment {
             target: LaborTarget::Scout,
             workers: workers.max(1),
-            improvement: None,
             kit: None,
-            improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
         }],
         ..Default::default()
     });
@@ -268,8 +261,8 @@ const BASKETS: &str = "baskets";
 const WAYFINDING: &str = "wayfinding";
 /// The warrior TOE.
 const CLUBS: &str = "clubs";
-/// The husbandry TOE — hurdles, halters, vessels.
-const HUSBANDRY_GEAR: &str = "husbandry_gear";
+/// The animal web's handling and build gear — portable fence panels, halters, vessels.
+const HURDLES: &str = "hurdles";
 /// The passive device — snares, nets, weirs, one item.
 const THE_PASSIVE_DEVICE: &str = "traps";
 
@@ -1428,7 +1421,7 @@ fn only_the_husbandry_kit_collects_a_pen_at_the_shipped_rate() {
     );
     assert_eq!(
         equipment.pen_per_worker_biomass_capacity(baseline_rate, &big_game, &fresh),
-        unequipped_of(&equipment, HUSBANDRY_GEAR, EquipmentStat::PenCarry),
+        unequipped_of(&equipment, HURDLES, EquipmentStat::PenCarry),
         "a crew that brought spears and a sled to a pen collects at the bare rate — the sled is for \
          the range, and this is the decision the husbandry kit exists to make"
     );
@@ -1473,8 +1466,8 @@ fn a_pen_short_of_handling_gear_collects_between_the_bare_and_the_geared() {
     };
 
     let geared = pen_rate(&outfitted());
-    let partly = pen_rate(&short_of(HUSBANDRY_GEAR, GEAR_OWNED));
-    let bare = pen_rate(&dry(HUSBANDRY_GEAR));
+    let partly = pen_rate(&short_of(HURDLES, GEAR_OWNED));
+    let bare = pen_rate(&dry(HURDLES));
 
     assert_eq!(
         geared,
@@ -1483,7 +1476,7 @@ fn a_pen_short_of_handling_gear_collects_between_the_bare_and_the_geared() {
     );
     assert_eq!(
         bare,
-        unequipped_of(&equipment, HUSBANDRY_GEAR, EquipmentStat::PenCarry),
+        unequipped_of(&equipment, HURDLES, EquipmentStat::PenCarry),
         "and a crew with none of it collects at the bare rate"
     );
     assert!(
@@ -1571,10 +1564,7 @@ fn each_kit_wears_on_a_use_quantum_of_its_own_job() {
             .per
     };
     assert_eq!(quantum(WAYFINDING), core_sim::WearQuantum::TileRevealed);
-    assert_eq!(
-        quantum(HUSBANDRY_GEAR),
-        core_sim::WearQuantum::BiomassCollected
-    );
+    assert_eq!(quantum(HURDLES), core_sim::WearQuantum::BiomassCollected);
     // Every weapon, and only a weapon, is charged per blow landed.
     for weapon in [SPEARS, THE_PASSIVE_DEVICE, CLUBS] {
         assert_eq!(
@@ -1589,10 +1579,10 @@ fn each_kit_wears_on_a_use_quantum_of_its_own_job() {
         (SPEARS, BASKETS),
         (SLED, BASKETS),
         (SLED, WAYFINDING),
-        (SLED, HUSBANDRY_GEAR),
+        (SLED, HURDLES),
         (BASKETS, WAYFINDING),
-        (BASKETS, HUSBANDRY_GEAR),
-        (WAYFINDING, HUSBANDRY_GEAR),
+        (BASKETS, HURDLES),
+        (WAYFINDING, HURDLES),
     ] {
         assert_ne!(
             quantum(a),
@@ -1726,7 +1716,7 @@ fn the_reference_ledger_is_one_unit_and_the_shipped_lives_are_unchanged() {
         SLED,
         BASKETS,
         THE_PASSIVE_DEVICE,
-        HUSBANDRY_GEAR,
+        HURDLES,
         WAYFINDING,
         CLUBS,
     ] {
@@ -1757,7 +1747,7 @@ fn the_reference_ledger_is_one_unit_and_the_shipped_lives_are_unchanged() {
     assert_eq!(uses(SLED), 5000.0, "5000 biomass hauled");
     assert_eq!(uses(BASKETS), 2500.0, "2500 biomass gathered");
     assert_eq!(uses(THE_PASSIVE_DEVICE), 500.0, "500 kills of traps");
-    assert_eq!(uses(HUSBANDRY_GEAR), 2500.0, "2500 biomass butchered");
+    assert_eq!(uses(HURDLES), 2500.0, "2500 biomass butchered");
     assert_eq!(uses(WAYFINDING), 2000.0, "2000 first sightings");
     assert_eq!(uses(CLUBS), 50.0, "50 raids fought");
 }
@@ -1955,9 +1945,7 @@ fn report_the_strike_wear_the_shipped_opening_pays() {
                 floor: core_sim::MSY_BIOMASS_FRACTION,
             },
             workers: workers.max(1),
-            improvement: None,
             kit: None,
-            improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
         }],
         ..Default::default()
     });

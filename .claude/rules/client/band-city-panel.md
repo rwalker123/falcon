@@ -494,8 +494,10 @@ stretch, and widening it into that gap would put it over a live HUD column.
   **THE WORKFORCE SEGMENTS PARTITION `working_age`, WHICH IS WHY THE BENCH AND THE BUILDERS EACH HAVE
   ONE.** Forage · Hunt · **Build** · Roles · **Bench** · Idle, and the head states `n idle of m` off
   the same `HudBandLaborState.effective_idle` — which nets BOTH of those crews out: a worker at the
-  bench is assigned labor (`crafting-panel.md` → "The stepper's ceiling"), and a builder is the
-  source's SECOND allocation (`labor-ui.md` → "`effective_idle` SUMS `staffed_total`"). Without a
+  bench is assigned labor (`crafting-panel.md` → "The stepper's ceiling"), and a builder is the band's
+  own `builders` ROLE since §2.5 (`labor-ui.md` → "`effective_idle` SUMS `staffed_total`"; the segment
+  is `effective_role_workers(band, "builders")` now, the per-source build crew it used to sum having
+  left the tile). Without a
   segment of its own each would leave Idle and appear nowhere, so the bar would quietly stop adding up
   to the head beside it — which is exactly what shipped: `Forage 9 · Hunt 6 · Idle 3` accounting for
   18 with three builders both miscounted and invisible.
@@ -513,11 +515,14 @@ stretch, and widening it into that gap would put it over a live HUD column.
   all; a Parties SEGMENT therefore made the segments sum PAST their own denominator — a bar totalling
   22 above a head reading "4 idle of 16". The fact still has to be reachable, so it moved to the head
   rather than being deleted. `FactionRollup`'s bar takes the same clause off the same
-  `HudBandLaborState.band_party_workers` sum. **FOUR standing roles are CARDS** — Scout + Warrior
-  here, Agriculture + Husbandry in the KEEPING block below, in two rows of two — (bordered, name · the `−/+` stepper and its
-  `assign_labor` emit · **the kit picker and its gear line** · the role's description LAST), not rows
-  in a list — the fix for a standing role being indistinguishable from a worked source. See "The role
-  cards carry the band's OTHER two kits" below for the picker half and for why the prose trails.
+  `HudBandLaborState.band_party_workers` sum. **FIVE standing roles are CARDS** — Scout + Warrior
+  here, Agriculture + Husbandry + **Builders** in the KEEPING block below, in rows of two — (bordered, name · the `−/+` stepper and its
+  `assign_labor` emit · **the kit row, where the role has one** · the role's description LAST), not rows
+  in a list — the fix for a standing role being indistinguishable from a worked source. That middle
+  slot differs by role and the difference is a rule rather than a layout: Scout and Warrior mount a
+  PICKER over its gear line, Builders the gear line ALONE (a per-band pick over a per-entry
+  derivation), and the keeping pair neither. See "The role cards carry the band's OTHER two kits"
+  below for the picker half and for why the prose trails, and "THE KEEPING BLOCK" for the other two.
   **The Warrior card carries a LIVE THREAT ALERT** (Predators Phase 3): when
   `_band_predator_threat_present(band)` is true its static hint is replaced by the crimson
   (`HudStyle.THREAT_ACCENT`) `HudWorkVocab.WARRIOR_THREAT_ALERT_FORMAT` — `⚠ Predator nearby — N on
@@ -1861,6 +1866,28 @@ does*. The LARDER column now OVERFLOWS the 275px box in both cases, which is wha
 scroll is for — see "`PANEL_HEIGHT_WIDE` is the BODY's budget" for why deleting a block to avoid a
 scrollbar is the worse trade.
 
+### …AND THE BUILDERS CARD BROKE IT AGAIN, so the split is re-authored (§4.6b)
+
+`docs/plan_standing_upkeep.md` §2.5's builders pool is a THIRD role card in the keeping block, and one
+card took that block past what the split above could carry: the flank fell to **56%**, under the 65%
+floor. Re-authored and re-measured, all four candidates, at the KEEPING block's new height:
+
+| split | chartless | charted |
+|---|---|---|
+| vitals + PEOPLE + keeping \| outlook + WORKFORCE (the old winner) | 56% | — |
+| vitals + PEOPLE \| keeping + outlook + WORKFORCE | 32% | — |
+| vitals + keeping \| PEOPLE + outlook + WORKFORCE | 62% | — |
+| **vitals + WORKFORCE \| PEOPLE + keeping + outlook** | **93%** (372 / 345) | **81%** (372 / 461) |
+
+`vitals + WORKFORCE | PEOPLE + keeping + outlook` wins both, so ONE split still serves both cases and
+`people_column` stays deleted. It reads as *what the band IS and what it DOES | who they are and what
+they hold* — which, like its predecessor, is a defensible reading and NOT why it was chosen: it is the
+only candidate that clears the floor.
+
+**THE THIRD ROW IS THE ONE TO RE-MEASURE FROM, NOT TO SUBTRACT.** Subtraction predicted 67% for it and
+it measured **62%**, which is this section's own standing warning arriving for the third time in this
+flank's history. Re-measure all four; never derive one from another.
+
 **THE FLOOR MOVED, AND ONLY BECAUSE NO SPLIT CLEARS IT.** `band_panel_preview`'s
 `BAND_FLANK_BALANCE_FLOOR` went **0.75 → 0.65**. That is the re-calibration this file warns against,
 taken only after the re-authoring it mandates: with three chartless blocks there are three orderings
@@ -1904,19 +1931,58 @@ carries a `KEEPING` block under WORKFORCE's own: two cards in the SAME family as
 They are staffed by the same `assign_labor <faction> <band> <kind> <workers>` those two use, through
 the same `_build_role_card`; nothing about the keeping is a parallel surface.
 
-- **FOUR CARDS ARE TWO ROWS OF TWO, never one row of four.** At the narrow shell's 354px a
-  four-abreast row gives each card ~82px, which clips the role name and the kit face alike. The
-  pairing is the split the roles already have — the two EXPEDITIONARY roles above, the two KEEPING
-  ones below — so the second row reads as its own family rather than as an overflow of the first.
+- **THE CARDS ARE ROWS OF TWO, never one long row.** At the narrow shell's 354px a four-abreast row
+  gives each card ~82px, which clips the role name and the kit face alike. The pairing is the split
+  the roles already have — the two EXPEDITIONARY roles first, then the two KEEPING ones — so each row
+  reads as its own family rather than as an overflow of the one above. **§4.6b's `builders` card makes
+  a THIRD row**, alone: it is neither expeditionary nor keeping — it RAISES what the keeping then
+  holds — and a builder pushed up beside Husbandry would read as a third kind of keeper. Its own row
+  also costs nothing that pairing it would save, the row height being the card's either way.
 - **The keeping roles are in the WORKFORCE bar's `Roles` SEGMENT even though their cards are not in
   that block.** The segments partition `working_age`, `effective_idle` already nets these hands out
   of Idle, and a segment that omitted them would stop the key adding up to the head the zone states.
-- **THEY MOUNT NO KIT PICKER, and two independent facts say so.** The wire names no default kit for
-  either job — there is no `defaultAgricultureKitId` twin of `defaultScoutKitId`, so `(default)`
-  would be a guess and `HudBandLaborState.default_kit_id` falls through to the HUNT default — and no
-  shipped kit declares a maintenance contribution, so every entry the picker could offer moves no
-  number the player can see. `KIT_PICKER_ROLES` is the gate. A picker whose selection changes nothing
-  and whose default mark is wrong is worse than none.
+- **THE KEEPING PAIR MOUNTS NO KIT PICKER, and two independent facts say so.** The wire names no
+  default kit for either job — there is no `defaultAgricultureKitId` twin of `defaultScoutKitId`, so
+  `(default)` would be a guess and `HudBandLaborState.default_kit_id` falls through to the HUNT
+  default — and no shipped kit declares a maintenance contribution, so every entry the picker could
+  offer moves no number the player can see. `KIT_PICKER_ROLES` is the gate. A picker whose selection
+  changes nothing and whose default mark is wrong is worse than none.
+- **⛔ THE BUILDERS CARD MOUNTS NO PICKER EITHER, AND ITS REASON IS THE OPPOSITE ONE: a pick there
+  moves too much, permanently.** The roster carries two builders kits, one per web — `hurdling`
+  (hurdles, animal) and `tillage` (hoes, plant) — and which one a build gets is DERIVED from **that
+  queue ENTRY's** own branch (`labor-ui.md` → "A BUILD IS PRICED AT THE **BUILDERS'** KIT"). A card is
+  per BAND, so it could only answer a per-ENTRY question with one standing answer; and the only way
+  to *send* that answer, a `kit` token on the `builders` row, is an override the sim honours **over
+  the derivation from then on**. Measured in play: one click put `kit hurdling` on every later
+  builders command and pinned a band raising a plant Cultivate to the animal web's tool with no way
+  back — `none` being bare-handed rather than a way to un-pin. **The control was the defect, not its
+  rendering**, so `KIT_PICKER_ROLES` no longer names the role and `build_kit_row` is never called for
+  it. **The per-entry override lands on the QUEUE ROW** (§7's ② — one job, one kit, `(default)`
+  marked as hunting's is), which is where an entry can answer for itself.
+- **…BUT THE CARD STILL STATES WHAT THE POOL IS CARRYING, on a read-only gear line.** Removing the
+  selection is not removing the information: `KitRoster.role_gear_line` renders
+  `Tillage kit · 8.5 work off a build, per builder · Hoes 38` — the kit's name, then the picker's old
+  help text. **`KitRoster.ROLE_AXES` carries the role's build axis** so that hint prices the build
+  rather than falling through to `tier_hint`'s hunt wording (`attack 1.0 · carry 12.0 per hunter`, on
+  a role that fights nothing), and `_role_effect_phrase` renders NOTHING at the neutral tier, so a
+  band with no build gear reads a bare card rather than a boast of zero.
+- **IT IS `_role_kit_id`, THE BUILD QUEUE HEADER'S OWN CALL** — one resolution, two surfaces, so the
+  card and `3 builders · Tillage kit` cannot name two different webs' tools for one pool. The sim
+  publishes the `builders` row's kit already resolved; an unstaffed row is derived client-side through
+  `KitRoster.build_kit_for_branch`; and an EMPTY queue derives nothing and reads the bare kit's
+  `No kit`, rather than `resolve_selection`'s terminal fall-through to roster order, which presented
+  `hurdling` as a decision the player had never made.
+- **⛔ THE BUILDERS STEPPER SENDS NO `kit` TOKEN AT ALL, and that is this card's own rule.** Every
+  other role's `+` re-states either a stored kit or its job default, so the token is a no-op; echoing
+  the DERIVED id back here would pin the pool to whichever web it happened to be building the moment
+  the player pressed `+`. `_commanded_role_kit_id` forks on the role for exactly this and answers
+  `NO_KIT_ID` on the builders branch — which, with nothing left to write `_role_kit_ids` for that
+  role, it now always does. **The fork is kept because it is what STATES the omission is deliberate**;
+  collapsing it into the other roles' `_role_kit_id` restores the pin.
+- **THE ROLE ALSO NEEDED A BRANCH IN `Main.format_assign_labor`, which had never named it.** The
+  `assign_labor` builder matched `scout` / `warrior` / `agriculture` / `husbandry` and answered `{}`
+  for anything else, so the Builders card's stepper emitted NO COMMAND AT ALL and the pool could not
+  be staffed from the UI. The sim has parsed `builders` since §2.5.
 - **THE FUND-MODE ROW IS THE ONE DECISION THE ROLES CANNOT EXPRESS** — `Spread` (fund every source in
   proportion, so everything degrades a little) against `Priority` (fund the biggest investments in
   full and let the marginal ones rot), emitting `upkeep_mode <faction> <band> <mode>` through
@@ -1956,7 +2022,9 @@ Posts scouts that see around …             Guards the band — matters once �
 read every turn and acted on with two controls; the description is what a player reads ONCE, to learn
 what the role is. The gear line states what the SELECTED kit buys and moves when the picker moves, so
 nothing may come between the two — `build_kit_row` returns them as ONE block, which makes that
-adjacency structural rather than a rule this call site has to remember.
+adjacency structural rather than a rule this call site has to remember. **The Builders card keeps the
+help text after losing the control it helped**, one slot up in the same order, because what the pool
+is carrying is a fact worth stating whether or not the player may change it.
 
 **BOTH CARDS DRAW TO THE HEIGHT OF THE TALLER ONE, and nothing was ever shrinking them.** The row's
 `HBoxContainer` stretches a child to the row height wherever the child asks to FILL its cross axis,
@@ -2043,6 +2111,189 @@ all, since either alone passes on a builder that gets the tail exactly backwards
 command-guard` carries the other half: it now drives a band-wide role with a non-default kit and
 parses `assign_labor 0 <band> scout 2 kit none` with the real server parser, a grammar whose tail was
 closed until this.
+
+### …AND ITS FALLBACK WAS ROSTER ORDER, WHICH IS HOW IT NAMED THE WRONG WEB (§4.6b)
+
+Two symptoms, one root, both reported from play: the card displayed **`Hurdling kit`** on a band
+raising a Cultivate, and it *"is still forcing me to select 1 kit"* on a band with nothing queued.
+
+**The rule above was right and the FALL-THROUGH under it was not.** With nothing composed, no kit on
+the wire (an unstaffed `builders` row publishes none) and no queue head to derive from,
+`_role_kit_id` handed `KitRoster.resolve_selection` an empty selection — and that function's terminal
+answer is **`selectable[0]`, i.e. ROSTER ORDER**, which `equipment.json` authors as `hurdling`,
+`tillage`, `none`. So the card opened on the ANIMAL web's kit and presented it as a decision the
+player had made, on every band with an empty queue — and on any band whose head the client cannot
+resolve, which is the plant-head report's own shape.
+
+**`KitRoster.bare_kit_id(kits, job)` is the honest answer to *nothing is chosen and nothing can be
+derived***: the roster's own entry that carries nothing (`kit_supplies_any` false — the derived
+reading of the null kit, which is why nothing spells the id `none`). It stays selectable throughout,
+sending the pool out bare being how a player conserves gear.
+
+**IT IS THE `builders` ROW'S ALONE.** Every other role publishes either a stored kit or a job
+default, so roster order is unreachable for them; this is the one row where "nothing is derivable" is
+a real and common state. `_commanded_role_kit_id` is untouched — the stepper still sends the player's
+own pick or nothing, never the derived id.
+
+**WORST CASE THE CARD NOW READS `No kit`, WHICH IS A GAP RATHER THAN A LIE.** A band whose queue head
+the client cannot resolve — `head_build_branch` needs the source in `forage_patch_lookup()` /
+`world_herds()` and the entry at position 0 — still derives nothing, and the card says so instead of
+naming a web.
+
+**Asserted PNG-LESS, by EQUALITY, over THREE states** (`_assert_builders_card_kit_faces`): a plant
+head, an animal head and the EMPTY queue, because a resolver stuck on one web satisfies any one of
+them. Sabotage-verified by dropping the bare-kit fall-through — exactly the empty-queue claim fails,
+naming `🎒 Hurdling kit`, i.e. the reported defect in its own words.
+
+## THE BUILD QUEUE BLOCK — the band's own list, above the board's chips (§4.6b)
+
+The band's ordered build queue had **no surface at all**: a player could not see what was queued, in
+what order, or which entry the builders were funding. It is a block in the WORK zone, between
+`_build_work_head` and `_build_work_chips`.
+
+```
+BUILD QUEUE                          3 builders · Tillage kit
+▸ 🌱 Cultivate (71, 18)              ≈42 turns (0%)            ✕
+  🐄 Tame Red Deer                   ≈61 turns (0%)            ✕
+  ▦ Sow (72, 18)                     ≈98 turns (0%)            ✕
+```
+
+- **ABOVE THE CHIPS, DELIBERATELY.** The chips filter the BOARD; the queue is the band's own list
+  rather than a view of that board, so a block beneath them would read as a filtered subset of it —
+  which is also why `_build_queue_models` derives from the FULL model set and never from `filtered`.
+- **NO QUEUE MEANS NO BLOCK AT ALL** — zero nodes, zero height, zero chrome. That is the common
+  early-game state and it must cost nothing; an empty header or a hint there would be permanent
+  furniture explaining an absence.
+- **IT NEEDS NO BAND ID ON THE WIRE, and that is why the model keys were enough.** The sim keeps a
+  queue entry only while its source holds a labor assignment (`LaborAllocation::prune_build_queue` →
+  `holds_build_source`), and `_work_source_models` admits any source with a take crew — so every entry
+  of THIS band's queue has a model. A source queued by ANOTHER band is not in this band's
+  `effective_worker_map` at all, which is the per-band filter for free. The two keys added are
+  `build_queue_position` and `build_turns` (`SourceForecast.build_queue_position` /
+  `build_turns_remaining` off the same `rung_source` dict the rung marks already read).
+- **THE HEAD MARKER'S SLOT IS RESERVED ON EVERY ROW.** A conditionally-omitted Label shifts every row
+  behind the head sideways, which reads as a list that has lost its alignment rather than as a head.
+- **THE ROW IS THE BOARD'S OWN UNIT** — exactly `WORK_ROW_HEIGHT`, `HudStyle.work_row_stylebox`,
+  `HudWidgets.build_marker_icon` for the source mark — so the two lists read at one density and the
+  capacity arithmetic below still divides by that number.
+- **THE VERB IS `HudFormat.policy_face`'s, never a second table.** That is the same word and glyph
+  the board row's in-progress axis states in its tooltip and the map badge draws, so a rung under way
+  cannot be called two things on one screen. The SOURCE mark stays its own column beside it — what
+  the source IS against what is being DONE to it, the row's own standing distinction.
+- **THE DATE GOES THROUGH `DetailFormat.build_countdown_value`**, which is `rung_row_value`'s own
+  sentinel fork EXTRACTED rather than copied: a positive count, `-2` holding, `-3` rotting, `-4` the
+  queue blocked, `-1` no answer. A second fork here is precisely how this client has twice been left
+  behind by a newly-spelled sentinel. Its ink is `DetailFormat.rung_value_color`, the `Color` twin of
+  `rung_value_hex` written in terms of it (a `Label` can do nothing with a hex string).
+- **THE DATE COLUMN CLIPS AND THE ROW TOOLTIP CARRIES BOTH FACES IN FULL.**
+  `RUNG_BLOCKED_FORMAT` is a whole sentence, and letting it size the row would squeeze the job face
+  to nothing on a side dock.
+- **THE `✕` ASKS NOTHING.** `unqueue` withdraws a DECLARATION — the banked meter survives it, the row
+  keeps its crew and its kit, and re-declaring is one tick of the compose control — so it is the
+  parties zone's cancel-versus-recall rule read one surface over. It wears that zone's steady,
+  full-opacity `DANGER` treatment for the same reason: a destructive control reads as one.
+- **IT EMITS THE CONTROLLER'S OWN `unqueue_requested`, RELAYED by `HudLayer`**, with a payload
+  identical key-for-key to `DrawerComposeController`'s — so `Main.format_unqueue` serves both
+  surfaces and there is no second command builder.
+- **DRAG-TO-REORDER IS SLICE 7's.** `build_order` on the command line covers it meanwhile, which is
+  what the overflow row's tooltip says.
+
+### A JUST-DECLARED BUILD IS IN THE QUEUE THE MOMENT IT IS DECLARED
+
+`buildQueuePosition` is a WIRE field, so an entry the player declared this turn has none until the sim
+resolves the turn — and the block, derived from that field alone, stayed empty until the next tick.
+Reported from play as *"it is very confusing if it doesn't show up the moment I create it."*
+
+The optimistic overlay already carries the declaration (`record_pending_assign` takes the
+`improvement`, and `effective_worker_map` merges it), so `_build_queue_models` admits a **second**
+set: a model that is `pending`, carries a live `building_glyph`, and has NO wire position.
+
+- **PENDING ROWS SORT TO THE TAIL, after every confirmed entry.** The sim APPENDS, so the end of the
+  list is the only honest place for an entry with no position; interleaving would state a fact the sim
+  has not made. Within the tail they hold DECLARATION ORDER, read off `pending_assigns_for`'s own
+  insertion order, with the same `key` tiebreak the confirmed half uses so the whole list stays a
+  TOTAL order under Godot's unstable sort.
+- **A PENDING ROW STATES NO DATE.** The countdown is CHAINED down the queue, so there is no answer for
+  an entry that is not in the chain and any number there would be invented. The date slot carries the
+  client's ONE spelling of pending instead — `○` in `HudStyle.WARN`,
+  `FoodIcons.for_status(FoodIcons.STATUS_PENDING)`, the same mark the work rows' status clause and the
+  map's dashed-amber overlays wear — and the row tooltip carries that status's own words
+  (`HudFormat.status_tooltip_line`), which is where a one-character column has to say what it means.
+- **IT GETS NO HEAD MARKER, even when the queue is otherwise empty.** The `▸` is the entry the
+  builders pool is standing on, which the sim decides; a `▸` on an unplaced entry promises funding
+  nobody has committed. `_build_queue_row_is_pending` is the ONE derivation of "the wire has not
+  placed this" — a real position is 0-based, so *below the head* is exactly *no position* — and the
+  block's filter, the marker's suppression and the date all read it.
+- **THE `✕` STILL WORKS ON IT, and needs nothing of its own.** `unqueue` names a SOURCE, so
+  withdrawing a declaration made a second ago is the same command as withdrawing one placed ten turns
+  back — and unticking a build you just made is the most likely thing a player wants from this row.
+- **IT COSTS A FULL ROW**, so it goes into the SAME list `build_queue_block_height` counts and
+  `_work_board_capacity` subtracts. There is exactly one expression for the drawn height and the
+  reserved height (below), and a pending row drawn outside it would slice the board silently.
+- **THE RUNG IN FLIGHT IS PART OF THE TEST, not just the declaration.** `record_pending_assign` fires
+  on EVERY worker step and carries the improvement forward, so `pending` alone would keep a row here
+  after its build completed; `building_glyph` is `RungGates.rung_in_progress`'s already-resolved
+  answer, which goes empty the moment the meter does.
+- **THEY RECONCILE AWAY FOR FREE** — `reconcile_pending` drops the overlay entry on the first snapshot
+  with a newer turn, by which time the wire carries a real position, so the row becomes CONFIRMED
+  rather than disappearing. Verified rather than assumed: `_render_pending_queue_states`' fourth state
+  advances the turn, re-publishes the patch at position 1 and asserts the block still holds two rows
+  with no `○` among them.
+
+**Frames:** `band_panel_build_queue_pending` (one confirmed entry plus one declared this turn, in the
+tall LEFT dock) and `band_panel_build_queue_pending_wide` (the BOTTOM dock, so the pending row is in
+the HEIGHT BUDGET and not only in the arithmetic — `Zone_work` reads **252px of a 300px box** with the
+board still drawing four rows). **The PAIRED NEGATIVE runs FIRST**, on the same band with nothing
+declared: without it every claim above passes on a row drawn unconditionally, and the confirmed-only
+queue is the state the game spends most of its time in.
+
+### THE WORK ROW HAS THE SAME THREE-WAY ANSWER THE MAP BADGE HAS
+
+A build row's rung slot renders the verb glyph plus `⚠` in `HudStyle.WARN`, **percentage dropped**,
+when `SourceForecast.build_is_stalled` says the build is unstaffed or losing ground — the map badge's
+own fork, off the same single producer, because the board printing a confident `▦45%` beside a map
+plate already warning was reported from play. A build merely PARKED with its keeping covered keeps its
+number and its `SIGNAL_DEEP` ink. The verdict, the twin format constants and the frame set are
+specified in `labor-ui.md` → "A BUILD THAT IS NOT MOVING DOES NOT GET TO WEAR A PERCENT".
+
+**The BAND's builders pool is resolved ONCE per render** in `_work_source_models`, so every row on one
+board is judged against one crew count, and the model carries the answer as `build_stalled` rather
+than the row builder asking the question a second way.
+
+### THE BLOCK IS PAID FOR IN `_work_board_capacity`, OR IT SLICES THE BOARD
+
+The work zone `clip_contents`, so a block that draws without being subtracted from the board's room
+takes its height off the bottom of the zone SILENTLY — no overflow, no warning, just fewer rows than
+the pager thinks it drew. `HudWorkVocab.build_queue_block_height(entries)` is therefore ONE function
+that both the builder (as the block's `custom_minimum_size`) and the capacity's `chrome` term call,
+plus one more `ZONE_BLOCK_SEPARATION` for the gap the block adds:
+
+```text
+rows  = min(entries, BUILD_QUEUE_ROWS_MAX) + (1 if entries > BUILD_QUEUE_ROWS_MAX else 0)
+height = ZONE_HEAD_HEIGHT + rows × WORK_ROW_HEIGHT      (0 for an empty queue)
+```
+
+**`BUILD_QUEUE_ROWS_MAX` is 3, and the overflow row is the FOURTH rather than a replacement for the
+third.** Measured on the 1920 bottom dock: a four-entry queue costs `20 + 4×28 + 6 = 138px` and the
+work zone comes out **300px of a 300px box — 0 spare** with the board still paging two rows
+(`Page 1 / 2 · 1–2 of 4`). That is a real fit rather than a comfortable one, so **re-measure before
+adding anything to this zone**, and the lever if it has to give is the cap.
+
+**A truncated list with nothing under it reads as the whole list**, so the `+N more` row is not
+optional — the faction page's standing rule for a capped list, applied to the band's own.
+
+**Frames:** `band_panel_build_queue` (the tall LEFT dock, three entries mixing BOTH webs — a
+Cultivate, a Tame and a Sow, since the two webs reach the block through different branches of
+`_work_source_models` and a single-web fixture exercises one of them) ·
+`band_panel_build_queue_blocked` (the head at `BUILD_QUEUE_BLOCKED`, with every entry behind it
+carrying the same sentinel — the sim's own behaviour, and the half a block showing only the head
+would misreport) · **`band_panel_build_queue_none`** (the PAIRED NEGATIVE: a band with a work board
+and nothing queued, which is what stops every claim above passing on a block drawn unconditionally) ·
+`band_panel_build_queue_wide` (the BOTTOM dock, four entries, so the overflow row is in the
+measurement). The dates are asserted as STRICTLY ASCENDING because that is what a chained countdown
+means — equal dates would pass a "the dates render" check while proving nothing — and the `✕` is
+PNG-less, driven through the real handler and read back off `Main.format_unqueue` on BOTH webs, since
+either alone passes on a builder that gets the grammar backwards.
 
 ## Work rows carry ONE account, and the aggregates carry a SIBLING (issues #337 / #449 / #527)
 
@@ -2244,11 +2495,12 @@ before the shed does.
   — a herd cannot be short of hunters and overstaffed with them at once. With the take crew separated
   they can, routinely; they are not equal in weight, so the slot is not first-come.
 - **A HERD MID-BUILD RAISES NO KEEPER WARNING, and what says so is the METER rather than a zero.**
-  The keeping is owed only once the rung STANDS; while a Tame or a Corral is going up those hands are
-  the build crew's. `upkeepWorkersNeeded` used to be suppressed there and the gate could read it as
-  *"nobody is owed keepers, so this is a build"* — it publishes on **both sides of completion** now
-  (mid-build it is the minimum viable BUILD crew), so that inference would light this ⚠ on every
-  source being improved in the game, blaming the Husbandry pool for a bill the builders owe.
+  `upkeepWorkersNeeded` used to be suppressed mid-build and the gate could read that silence as
+  *"nobody is owed keepers, so this is a build"* — it publishes on **both sides of completion** now,
+  because since `docs/plan_standing_upkeep.md` §4.6a the keeping pool owes a meter's rate **from the
+  first work banked**, at any fullness. So that inference would light this ⚠ on every source being
+  improved in the game — on a bill the Husbandry pool really does owe, which is precisely why the
+  ⚠ is the wrong shape for it.
   `SourceForecast.is_under_kept` asks `build_is_in_flight` instead, which agrees with the drawer's own
   rung row: a build in flight states its turn count (or its `∞`), never a keeper verdict.
   **The rung that is going up gets its OWN warning instead** — see the section below.

@@ -439,6 +439,20 @@ pub struct Herd {
     /// and for its reason: the kit is re-read every turn, so no state may record *"this build was
     /// geared"*.
     pub build_work_from_gear: f32,
+    /// **WHERE THIS SOURCE SITS IN THE WINNING BAND'S BUILD QUEUE** — 0-based, and
+    /// [`crate::intensification::NOT_IN_ANY_BUILD_QUEUE`] (`-1`) when no band has queued it
+    /// (`docs/plan_standing_upkeep.md` §4.6b).
+    ///
+    /// **It rides the same winner as [`Self::build_turns_remaining`] and
+    /// [`Self::build_work_from_gear`]** — the three are read as one set, so a date from one band's
+    /// queue beside another band's position would be two answers pretending to be one.
+    ///
+    /// **Without it a chained date is a number with no explanation.** The whole builders pool goes
+    /// on the head of a queue, so an entry's turns are everything above it plus its own span — and
+    /// the player cannot tell forty turns of work from eight turns of work behind four other jobs.
+    ///
+    /// Transient per-turn scratch on [`Self::build_turns_remaining`]'s cycle, and for its reason.
+    pub build_queue_position: i32,
     /// **The `ExtendPen` "extending" state** (2d-β): `true` while a keeper is fencing the next ring
     /// (`pen_extend_progress` accruing, the harvest dipped to `corralling_yield_fraction`), the animal
     /// mirror of a herd's under-construction `corral_progress`. Set by the `ExtendPen` command, cleared
@@ -687,6 +701,7 @@ impl Herd {
             pen_extend_cost: RUNG_UNSTARTED,
             build_turns_remaining: None,
             build_work_from_gear: NO_BUILD_GEAR,
+            build_queue_position: crate::intensification::NOT_IN_ANY_BUILD_QUEUE,
             pen_extending: false,
             footprint_intake: 0.0,
             pen_pasture_fraction: 0.0,
@@ -948,6 +963,25 @@ impl Herd {
             return true;
         }
         false
+    }
+
+    /// **STOP AN UNFINISHED RING AND CLEAR ITS METER** — the state a ring leaves behind when its
+    /// queue entry goes ([`crate::fauna::cancel_dropped_rings`]).
+    ///
+    /// # THE BANKED PROGRESS IS DISCARDED, AND THAT IS THE HONEST STATE
+    ///
+    /// `unqueue`'s contract is that it leaves the source's meter alone, which argues for keeping
+    /// `pen_extend_progress`. But [`Self::begin_pen_extension`] **resets that meter to
+    /// [`RUNG_UNSTARTED`] on every start**, so a preserved ring meter could never be resumed by any
+    /// path the game has — it would be a number nothing can read. Clearing both says what is true:
+    /// the ring stopped, and the next one starts from nothing.
+    ///
+    /// Idempotent, so the completion path — which clears the same three fields itself — may pass
+    /// through it without a second rule.
+    pub fn cancel_pen_extension(&mut self) {
+        self.pen_extending = false;
+        self.pen_extend_progress = RUNG_UNSTARTED;
+        self.pen_extend_cost = RUNG_UNSTARTED;
     }
 
     /// **Update the hysteresis-stabilized keeper requirement for this herd** and return it — run once
@@ -3452,6 +3486,7 @@ pub fn advance_husbandry(
         // crew is still on it (Logistics runs before Population).
         herd.build_turns_remaining = None;
         herd.build_work_from_gear = NO_BUILD_GEAR;
+        herd.build_queue_position = crate::intensification::NOT_IN_ANY_BUILD_QUEUE;
         // **HOW WELL THE HERD WAS KEPT LAST TURN** — the same Population→Logistics lag
         // `pen_fed_fraction` runs on. Everything downstream of the staffing is resolved into locals
         // **here, before the field is cleared**, so the whole turn judges one reading: what went
@@ -3761,6 +3796,99 @@ pub fn herd_build_verb(
         return (!herd.is_domesticated()).then_some(Improvement::Tame);
     }
     (declared == Some(Improvement::Tame)).then_some(Improvement::Tame)
+}
+
+/// **IS THE RUNG THIS QUEUE ENTRY DECLARED ALREADY STANDING?** — the animal twin of
+/// `forage::patch_rung_already_built`, and the test that retires a **dead** entry
+/// (`docs/plan_standing_upkeep.md` §2.5).
+///
+/// # IT IS THE METER'S OWN FULLNESS, NOT THE RETAIN BAR
+///
+/// It asks exactly what [`herd_build_verb`] asks — `is_domesticated()` / `corral_meter_full()` —
+/// because the two must never disagree about whether there is work left. A *retain-bar* test
+/// (`is_corralled()`, which is what `validate_corral` asks the **player**) would answer *"already
+/// built"* for a meter that has eroded below its cost but not past its bar, i.e. for a rung the
+/// builders are legitimately repairing.
+///
+/// A rung the other web owns is never already built here — a `Cultivate` cannot stand on a herd —
+/// and the entry's own web decides which arm it reaches.
+pub fn herd_rung_already_built(herd: &Herd, declared: crate::components::Improvement) -> bool {
+    use crate::components::Improvement;
+    match declared {
+        Improvement::Tame => herd.is_domesticated(),
+        Improvement::Corral => herd.corral_meter_full(),
+        Improvement::Cultivate | Improvement::Sow => false,
+    }
+}
+
+/// **CANCEL EVERY RING NAMED BY AN ENTRY THAT JUST LEFT A BUILD QUEUE.**
+///
+/// `extend_pen` sets `Herd::pen_extending` **before** it queues, and only completion cleared it — so
+/// an entry dropped mid-ring left the flag set with nothing left to fund the ring, and
+/// [`Herd::begin_pen_extension`] refuses while it is set. That is a **permanent** dead end on that
+/// pen, one `✕` click away.
+///
+/// Handed the entries a drop produced (`LaborAllocation::prune_build_queue` returns them; the two
+/// command seams below read theirs before dropping), so every exit passes through one rule rather
+/// than each remembering it.
+pub fn cancel_dropped_rings(
+    herds: &mut HerdRegistry,
+    dropped: &[crate::components::BuildQueueEntry],
+) {
+    for entry in dropped {
+        let (crate::components::BuildJob::ExtendPen, crate::components::BuildSource::Herd(id)) =
+            (&entry.declared, &entry.source)
+        else {
+            continue;
+        };
+        if let Some(herd) = herds.herds.iter_mut().find(|herd| &herd.id == id) {
+            herd.cancel_pen_extension();
+        }
+    }
+}
+
+/// **WITHDRAW A DECLARATION, AND STOP THE RING IT WAS FUNDING** — the `unqueue` command's whole
+/// effect on one band. Returns whether an entry was there.
+///
+/// A `World`-level seam rather than a method on [`crate::components::LaborAllocation`] because the
+/// ring lives on the **herd**, and an allocation holds no registry. It is what `handle_unqueue`
+/// calls, so the command and the guard cannot come apart.
+pub fn unqueue_build_and_cancel_ring(
+    world: &mut World,
+    band: Entity,
+    source: &crate::components::BuildSource,
+) -> bool {
+    let Some(mut allocation) = world.get_mut::<crate::components::LaborAllocation>(band) else {
+        return false;
+    };
+    let entry = allocation.build_queue_entry(source).cloned();
+    if !allocation.unqueue_build(source) {
+        return false;
+    }
+    cancel_dropped_rings(&mut world.resource_mut::<HerdRegistry>(), entry.as_slice());
+    true
+}
+
+/// **PUT A HOLDING DOWN, AND STOP THE RING IT WAS FUNDING** — the `abandon` command's whole effect on
+/// one band, and [`unqueue_build_and_cancel_ring`]'s twin. Returns whether the band held the source.
+///
+/// The row's entry goes with it (`LaborAllocation::drop_source_row` prunes on the same edge), so the
+/// ring is read off the queue **before** the drop.
+pub fn drop_holding_and_cancel_ring(
+    world: &mut World,
+    band: Entity,
+    target: &crate::components::LaborTarget,
+) -> bool {
+    let Some(mut allocation) = world.get_mut::<crate::components::LaborAllocation>(band) else {
+        return false;
+    };
+    let entry = crate::components::BuildSource::of(target)
+        .and_then(|source| allocation.build_queue_entry(&source).cloned());
+    if !allocation.drop_source_row(target) {
+        return false;
+    }
+    cancel_dropped_rings(&mut world.resource_mut::<HerdRegistry>(), entry.as_slice());
+    true
 }
 
 // **RETIRED: `herd_is_maintaining`** — the animal twin of the retired `forage::patch_is_maintaining`,
@@ -5012,8 +5140,9 @@ fn forecast_production_and_take_at(
 ///   take inverted by the per-worker throughput (a ratio, so provisions-space matches the resolution
 ///   path's biomass-space result). It was `source_crew_needed(standing, take)`, a `max` blending a
 ///   herding headcount with a hauling one and a build's staffing floor, because one crew did every
-///   job on a source and the row had one number to give. **Each activity states its own crew now**
-///   (`docs/plan_standing_upkeep.md` §2.2), so each answers in its own unit,
+///   job on a source and the row had one number to give. **Each activity is staffed on its own row
+///   now** — the take on the source, the keeping and the building on the band
+///   (`docs/plan_standing_upkeep.md` §2.5) — so each answers in its own unit,
 /// - `overdraws` = whether this policy draws the stock below what it sustains — the ⚠ ([`SourceYield`]).
 ///
 /// **`managed` is rung 3 only** (slice 7): it marks "this source's harvest cannot overdraw", and only
@@ -5087,9 +5216,10 @@ pub(crate) fn forecast_source_yield(
         // (`docs/plan_standing_upkeep.md` §2.2). It used to be `source_crew_needed(standing, take)`,
         // a `max` that blended a herding headcount, a hauling one and a build's staffing floor into
         // one number — because one crew did every job on a source and the row had one number to
-        // give. **Each activity states its own crew now**, so each answers in its own unit: this one
-        // in haulers, the keeping's in `upkeepWorkersNeeded`, the build's in whatever the player
-        // typed. A `max` across units was always the compromise a single allocation forced.
+        // give. **Each activity is staffed on its own row now** (`docs/plan_standing_upkeep.md`
+        // §2.5), so each answers in its own unit: this one in haulers, the keeping's in
+        // `upkeepWorkersNeeded`, and the building's on the band's own `builders` row. A `max` across
+        // units was always the compromise a single allocation forced.
         //
         // The take side differs by whether the source is lumpy. A **whole-animal** (hunt) source uses
         // [`hunt_take_workers`] — the peak-drop crew that can both **reach** and **carry** the drop

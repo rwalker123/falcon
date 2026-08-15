@@ -175,15 +175,16 @@ pub enum EquipmentStat {
     /// **Not a two-tier rate, and that is what lets a SECOND item declare it.** The
     /// [`Self::TWO_TIER`] stats find their other side by searching the whole item table and taking
     /// the first match, so each may be declared by exactly one item or the answer resolves
-    /// alphabetically. A plant build tool (issue #539) is a second declarer by construction, so this
+    /// alphabetically. `hoes` are a second declarer and legal by construction, so this
     /// is the kind a kit resolves as the **max of what its live items declare**
     /// ([`KitChoice::best_declared`]) — `dispersion`/`exposure`'s shape, under which a spent tool
     /// steps back to the neutral and two tools that both help do not compound.
     ///
     /// **Deliberately NOT named for husbandry.** Both food webs' rungs read the one build seam, so a
     /// stat keyed to the animal branch would have to be renamed the day a hoe ships. What is
-    /// animal-only today is the *content* — `husbandry_gear` is the only item declaring it, so every
-    /// plant build resolves the neutral `0.0` until an item names them.
+    /// animal-only is one item: `hurdles` declare `branch: animal` and `hoes` declare
+    /// `branch: plant`, so which web a tool serves is *content* rather than a property of the stat.
+    /// See [`EquipmentEffect::branch`] for why an unqualified build tool is refused at load.
     BuildWork,
     /// **The rate a bench works at with this tool in hand** — the value
     /// `workers × progress_per_worker_turn ×` is multiplied by. Declared **equipped only**; the
@@ -334,6 +335,25 @@ pub struct EquipmentEffect {
     /// `3.3`, so any ceiling in that gap behaves identically and `1.0` is the round number in it.
     #[serde(default)]
     pub max_body_mass: Option<f32>,
+    /// **WHICH FOOD WEB'S BUILDS THIS EFFECT SERVES** — required on
+    /// [`EquipmentStat::BuildWork`] and rejected on every other stat.
+    ///
+    /// **It is [`Self::max_body_mass`]'s idiom, one stat over**: an effect carrying a bound on *when
+    /// it applies*, resolved where the effect is read rather than by a second table. A snare states
+    /// the size of animal it can hold; a hoe states the web it is a tool for.
+    ///
+    /// **Two builders kits cannot coexist without it.** `build_work` is a **per-worker sum** over
+    /// the crew, so an unqualified hoe would speed a `Tame` and a bundle carrying both a hoe and a
+    /// set of hurdles would take `8.5 + 8.5` off a plant build — twice what either tool is worth.
+    /// Outside its branch the effect contributes exactly nothing, which is the same shape a snare's
+    /// `attack` takes against a Red Deer: there is no *"this tool is not for that"* branch anywhere,
+    /// only a term that resolves to the neutral.
+    ///
+    /// **Absent is not "both".** An unqualified `build_work` would apply to *both* webs silently,
+    /// which is `config-loading.md`'s "looks live but isn't" in its most reassuring direction, so
+    /// `validate` refuses to load it — see [`EquipmentConfig::validate_build_branch`].
+    #[serde(default)]
+    pub branch: Option<crate::intensification::RungBranch>,
 }
 
 impl EquipmentEffect {
@@ -347,6 +367,16 @@ impl EquipmentEffect {
     /// Whether this effect names a size of quarry at all.
     pub fn is_mass_bounded(&self) -> bool {
         self.min_body_mass.is_some() || self.max_body_mass.is_some()
+    }
+
+    /// **Does this effect serve builds on this food web?** [`Self::reaches`]'s shape, one axis over.
+    ///
+    /// An effect that names no branch serves whatever asks — which is every stat but
+    /// [`EquipmentStat::BuildWork`], since `validate` requires one there and rejects one everywhere
+    /// else. So this reads `true` for the carries, the attacks and the multipliers, and only a build
+    /// tool is ever narrowed by it.
+    pub fn serves_branch(&self, branch: crate::intensification::RungBranch) -> bool {
+        self.branch.is_none_or(|declared| declared == branch)
     }
 }
 
@@ -576,7 +606,7 @@ pub struct ItemDefinition {
     /// other's rate — and it survives. What it never covered is an item lifting **one** stat that
     /// two different sites read.
     ///
-    /// `husbandry_gear` is that item. Hurdles, halters and a butchering stone are worked on the
+    /// `hurdles` are that item. The fence panels, halters and a butchering stone are worked on the
     /// beast at a slaughter ([`WearQuantum::BiomassCollected`]) *and* on the animals being gentled
     /// during a `Tame` or fenced during a `Corral` ([`WearQuantum::BuildProgress`], issue #515) —
     /// the same physical bundle, two kinds of work. With one slot the second was unbillable, and
@@ -839,18 +869,31 @@ pub enum KitJob {
     /// **The animal web's standing keepers** — the `husbandry` role's job, the twin of
     /// [`KitJob::Agriculture`] and separate from `Hunt` for its reason.
     Husbandry,
+    /// **THE BAND'S BUILDERS** — the `builders` role's job (`docs/plan_standing_upkeep.md` §2.5).
+    ///
+    /// ⛔ **A kit that declares [`EquipmentStat::BuildWork`] must name this job**, or the pool it is
+    /// meant to equip cannot be sent out with it. The build's gear offset used to ride the *source
+    /// row's* kit — a `Corral` was priced off the hunt row's husbandry gear — because the builders
+    /// stood on the tile. They stand on their own row now, so the offset is read off that row like
+    /// every other role's, and a kit carrying hurdles that does not list `builders` silently offsets
+    /// nothing.
+    ///
+    /// **One job for both webs**, matching the role: a build is a job rather than a standing charge,
+    /// and the queue already says which web is being worked.
+    Builders,
 }
 
 impl KitJob {
     /// Every job, for the validations and the wire — one list, so a new job cannot be validated in
     /// three places and forgotten in a fourth.
-    pub const ALL: [KitJob; 6] = [
+    pub const ALL: [KitJob; 7] = [
         KitJob::Hunt,
         KitJob::Forage,
         KitJob::Scout,
         KitJob::Warrior,
         KitJob::Agriculture,
         KitJob::Husbandry,
+        KitJob::Builders,
     ];
 
     /// The wire/command token for this job — the same string `assign_labor`'s role token uses (and
@@ -864,6 +907,7 @@ impl KitJob {
             KitJob::Warrior => "warrior",
             KitJob::Agriculture => "agriculture",
             KitJob::Husbandry => "husbandry",
+            KitJob::Builders => "builders",
         }
     }
 }
@@ -901,6 +945,12 @@ pub struct DefaultKitsConfig {
     pub agriculture: String,
     /// The animal keeper's default — see [`Self::agriculture`].
     pub husbandry: String,
+    /// **The builders' default: nothing.** The one item declaring
+    /// [`EquipmentStat::BuildWork`] rides the `husbandry` kit, which now lists `builders` among its
+    /// jobs — but *defaulting* the pool onto it would hand a plant build an animal-handling offset
+    /// no forage crew has ever had. So the role opens bare, like the two keeping roles, and naming
+    /// the husbandry kit on it is how the player brings the hurdles.
+    pub builders: String,
 }
 
 /// **What the kit is being resolved AGAINST** — the argument a mass-bounded effect is tested on.
@@ -1133,6 +1183,29 @@ impl KitChoice {
             .unwrap_or(neutral)
     }
 
+    /// **The best [`EquipmentStat::BuildWork`] this kit's live items declare FOR THIS FOOD WEB**, and
+    /// the branch it was found on — `None` when nothing live in the kit serves builds there.
+    ///
+    /// [`Self::best_declared`]'s two clauses hold unchanged: only declared values participate, and
+    /// the maximum wins because a worker uses the better tool rather than both at once. The branch
+    /// filter is what stops a kit carrying a hoe *and* a set of hurdles from taking `8.5 + 8.5` off
+    /// a plant build — and it is a **filter**, not a second maximum, so the two tools never meet.
+    fn best_build_work(
+        &self,
+        wear: &crate::components::BandEquipment,
+        config: &EquipmentConfig,
+        branch: crate::intensification::RungBranch,
+    ) -> Option<(f32, crate::intensification::RungBranch)> {
+        self.live_items(wear, config)
+            .filter_map(|item| item.effect_entry(EquipmentStat::BuildWork))
+            .filter(|effect| effect.serves_branch(branch))
+            .map(|effect| effect.tier.value())
+            .fold(None::<f32>, |best, value| {
+                Some(best.map_or(value, |best| best.max(value)))
+            })
+            .map(|worth| (worth, branch))
+    }
+
     /// **Is any live item in this kit declaring an EQUIPPED tier for `stat`?** — the predicate the
     /// two-tier stats resolve on. `attack` reads it directly; the carries read its inverse, because
     /// they declare the *unequipped* side (see [`EquipmentStat`]).
@@ -1307,6 +1380,75 @@ impl EquipmentConfig {
         let fresh = crate::components::BandEquipment::start_stocked(self);
         self.kits_for_job(job)
             .find(|kit| kit.supplies(stat, &fresh, self))
+    }
+
+    /// **THE BUILDERS KIT THIS FOOD WEB'S BUILDS WANT** — the earliest entry, in file order, whose
+    /// `build_work` serves `branch` at the **fresh** tier. `None` when the roster carries no such
+    /// kit, which is a real answer: nothing on it helps that web build, so the caller keeps
+    /// `default_kits.builders`.
+    ///
+    /// **[`Self::kit_supplying`]'s shape, with the branch the extra axis a build has and a pen does
+    /// not.** It is what keeps a kit id out of the sim — no `BuildJob → kit` match anywhere — so
+    /// adding a third build tool is a roster edit, exactly as a penned herd's default kit is.
+    ///
+    /// **Fresh, like every other default resolution**: which kit serves a web is a property of the
+    /// roster and must not move as a band wears its tools down.
+    pub fn build_kit_for_branch(
+        &self,
+        branch: crate::intensification::RungBranch,
+    ) -> Option<KitChoice> {
+        let fresh = crate::components::BandEquipment::start_stocked(self);
+        self.kits_for_job(KitJob::Builders)
+            .find(|kit| self.build_work_per_worker(kit, &fresh, branch) > NO_BUILD_GEAR)
+    }
+
+    /// **THE KIT THE BAND'S BUILDERS ARE ACTUALLY WORKING WITH** — the one seam the turn, the wear
+    /// charge and the wire all resolve through, so a card cannot state a kit the pool is not using.
+    ///
+    /// 1. **A kit named on the `builders` row wins**, `none` included — that is how a player sends
+    ///    the pool out bare-handed to conserve gear, and *"an absent `kitId` means the job's
+    ///    default"* is the rule every other row already follows.
+    /// 2. **Otherwise the roster answers for this web** ([`Self::build_kit_for_branch`]).
+    /// 3. **`default_kits.builders` is the FALL-BACK, not the answer** — reached when the row named
+    ///    nothing and either the queue is empty (`branch` is `None`: nothing is being raised, so no
+    ///    tool is out) or no roster entry serves that web.
+    pub fn builders_kit_for(
+        &self,
+        row_kit: Option<&KitChoice>,
+        branch: Option<crate::intensification::RungBranch>,
+    ) -> KitChoice {
+        row_kit
+            .cloned()
+            .or_else(|| branch.and_then(|branch| self.build_kit_for_branch(branch)))
+            .unwrap_or_else(|| self.default_kit(KitJob::Builders))
+    }
+
+    /// **The same kit holding only the tools that WORKED this build** — what a build's wear is
+    /// charged against ([`crate::systems::labor::charge_build_wear`]).
+    ///
+    /// **Wear follows the work actually done**, and a hoe brought to a `Tame` does none: its
+    /// `build_work` is filtered out of the offset by [`EquipmentEffect::serves_branch`], so charging
+    /// it would run a tool down for a job it contributed nothing to. Narrowing the kit is the same
+    /// move [`Self::coverage`] makes for an unevenly-equipped party — the id is kept, because what
+    /// the player chose has not changed.
+    pub fn build_gear_kit(
+        &self,
+        kit: &KitChoice,
+        wear: &crate::components::BandEquipment,
+        branch: crate::intensification::RungBranch,
+    ) -> KitChoice {
+        let serving: Vec<Arc<str>> = kit
+            .uses
+            .iter()
+            .filter(|item| {
+                self.live_item(item, wear).is_some_and(|live| {
+                    live.effect_entry(EquipmentStat::BuildWork)
+                        .is_some_and(|effect| effect.serves_branch(branch))
+                })
+            })
+            .cloned()
+            .collect();
+        kit.restricted_to(serving)
     }
 
     /// The roster entry with this id, or `None`.
@@ -1551,6 +1693,7 @@ impl EquipmentConfig {
             KitJob::Warrior => &self.default_kits.warrior,
             KitJob::Agriculture => &self.default_kits.agriculture,
             KitJob::Husbandry => &self.default_kits.husbandry,
+            KitJob::Builders => &self.default_kits.builders,
         }
     }
 
@@ -1843,12 +1986,39 @@ impl EquipmentConfig {
     /// so gear that could have helped a `Tame` and was left behind on another kit helps nothing, and
     /// choosing the handling kit for the climb costs the hunt job whatever that kit does not carry.
     /// That trade is the decision the stat exists to create.
+    ///
+    /// **IT IS ASKED OF A BRANCH, and a tool for the other web contributes exactly zero.** A hoe is
+    /// not a fence panel: [`EquipmentEffect::branch`] is what makes the two builders kits coexist,
+    /// and there is no *"this tool is not for that"* refusal anywhere — only a term that resolves to
+    /// [`NO_BUILD_GEAR`], the same shape a snare's bounded `attack` takes against a Red Deer.
     pub fn build_work_per_worker(
         &self,
         kit: &KitChoice,
         wear: &crate::components::BandEquipment,
+        branch: crate::intensification::RungBranch,
     ) -> f32 {
-        kit.best_declared(EquipmentStat::BuildWork, wear, self)
+        kit.best_build_work(wear, self, branch)
+            .map_or(NO_BUILD_GEAR, |(worth, _)| worth)
+    }
+
+    /// **The branch this kit's build gear serves, and what it is worth there** — the pair a surface
+    /// with no build in front of it publishes ([`ResolvedKitTiers::build_work_branch`]).
+    ///
+    /// `None` for a kit carrying nothing live that helps any build.
+    pub fn build_work_declared(
+        &self,
+        kit: &KitChoice,
+        wear: &crate::components::BandEquipment,
+    ) -> Option<(f32, crate::intensification::RungBranch)> {
+        crate::intensification::BOTH_BRANCHES
+            .iter()
+            .filter_map(|branch| kit.best_build_work(wear, self, *branch))
+            .fold(None::<(f32, _)>, |best, found| {
+                Some(match best {
+                    Some(best) if best.0 >= found.0 => best,
+                    _ => found,
+                })
+            })
     }
 
     /// **HOW MANY WORKERS THIS KIT CAN ACTUALLY EQUIP FOR A BUILD, out of what the band holds** —
@@ -1880,11 +2050,15 @@ impl EquipmentConfig {
     ///
     /// [`Self::build_work_per_worker`] is the **maximum** of what the live items declare (a worker
     /// uses the better tool; two do not compound), so the crew this answers for is the one covered
-    /// by the items declaring that best value. On the shipped roster exactly one item declares
-    /// `BuildWork` at all, so `min(w, this) × worth` **is** the coverage sum — pinned by
+    /// by the items declaring that best value. Each shipped builders kit carries exactly one build
+    /// tool, so `min(w, this) × worth` **is** the coverage sum — pinned by
     /// [`the_saturating_crew_reproduces_the_coverage_sum_at_every_crew_size`]. A kit carrying a
-    /// *second*, weaker build tool that reached further would take more off the job than this form
-    /// credits; that test is what makes the day one ships a decision rather than a silent drift.
+    /// *second*, weaker build tool **on the same branch** that reached further would take more off
+    /// the job than this form credits; that test is what makes the day one ships a decision rather
+    /// than a silent drift.
+    ///
+    /// **It answers for the BRANCH the caller names**, like the worth it caps: a kit's hoes cover
+    /// nobody on an animal build.
     ///
     /// [`NO_SATURATING_CREW`] where nothing live in the kit helps — including a kit that declares
     /// `BuildWork` and has worn every unit of it out.
@@ -1892,8 +2066,9 @@ impl EquipmentConfig {
         &self,
         kit: &KitChoice,
         wear: &crate::components::BandEquipment,
+        branch: crate::intensification::RungBranch,
     ) -> u32 {
-        let worth = self.build_work_per_worker(kit, wear);
+        let worth = self.build_work_per_worker(kit, wear, branch);
         if worth <= NO_BUILD_GEAR {
             return NO_SATURATING_CREW;
         }
@@ -1901,9 +2076,10 @@ impl EquipmentConfig {
             .iter()
             .filter_map(|item| {
                 let live = self.live_item(item, wear)?;
+                let effect = live.effect_entry(EquipmentStat::BuildWork)?;
                 // `>=` rather than `==` because `worth` IS one of these values by construction — the
                 // comparison is a "did this item set the maximum" test, not float equality.
-                (live.effect(EquipmentStat::BuildWork)?.value() >= worth).then(|| {
+                (effect.serves_branch(branch) && effect.tier.value() >= worth).then(|| {
                     wear.live_units(item, self)
                         .saturating_mul(live.item.workers_per_unit)
                 })
@@ -2000,6 +2176,7 @@ impl EquipmentConfig {
         wear: &crate::components::BandEquipment,
     ) -> ResolvedKitTiers {
         let (attack_min_body_mass, attack_max_body_mass) = self.attack_mass_bounds(kit, wear);
+        let build_work = self.build_work_declared(kit, wear);
         ResolvedKitTiers {
             attack: self
                 .hunter_profile_unbounded(hunter_intrinsic, kit, wear)
@@ -2031,7 +2208,12 @@ impl EquipmentConfig {
             attack_max_body_mass: attack_max_body_mass.unwrap_or(UNBOUNDED_BODY_MASS),
             dispersion: self.dispersion(kit, wear),
             exposure: self.exposure(kit, wear),
-            build_work_per_worker: self.build_work_per_worker(kit, wear),
+            // **The pair, resolved together.** There is no build in front of this call — it answers
+            // for the KIT — so the branch rides beside the worth rather than being an argument: a
+            // consumer holding an entry knows which web it is on and reads the worth only if the
+            // branches agree.
+            build_work_per_worker: build_work.map_or(NO_BUILD_GEAR, |(worth, _)| worth),
+            build_work_branch: build_work.map(|(_, branch)| branch),
         }
     }
 
@@ -2196,6 +2378,7 @@ impl EquipmentConfig {
                 });
             }
             Self::validate_mass_bounds(id, index, effect)?;
+            Self::validate_build_branch(id, index, effect)?;
         }
         Ok(())
     }
@@ -2596,6 +2779,44 @@ impl EquipmentConfig {
         Ok(())
     }
 
+    /// ⛔ **A `build_work` EFFECT MUST NAME ITS BRANCH, AND NOTHING ELSE MAY NAME ONE.**
+    ///
+    /// Both halves close the same door from opposite sides, and both are
+    /// `.claude/rules/core_sim/config-loading.md`'s *"looks live but isn't"*:
+    ///
+    /// - **Absent on a build tool** would apply to *both* food webs silently, so a hoe would speed a
+    ///   `Tame` and a kit bundling a hoe and a set of hurdles would take `8.5 + 8.5` off a plant
+    ///   build — `build_work` is a per-worker **sum**. It is the "placement rule that places no
+    ///   rule" failure `RungSiteRequirement` already rejects one config over.
+    /// - **Present on any other stat** would parse, validate and then be read by nothing, exactly as
+    ///   a `max_body_mass` on a stat no [`Quarry`] resolves would.
+    fn validate_build_branch(
+        id: &str,
+        index: usize,
+        effect: &EquipmentEffect,
+    ) -> Result<(), EquipmentConfigError> {
+        match (effect.stat, effect.branch) {
+            (EquipmentStat::BuildWork, None) => Err(EquipmentConfigError::InvalidRoster {
+                reason: format!(
+                    "item '{id}' declares effect[{index}] `build_work` with no `branch` - an \
+                     unqualified build tool would serve BOTH food webs, so a hoe would speed a \
+                     Tame; name \"plant\" or \"animal\""
+                ),
+            }),
+            (stat, Some(branch)) if stat != EquipmentStat::BuildWork => {
+                Err(EquipmentConfigError::InvalidRoster {
+                    reason: format!(
+                        "item '{id}' gives effect[{index}] ({stat:?}) a `branch` of \"{}\", but only \
+                         `build_work` is resolved against a food web - the qualifier would be \
+                         silently ignored",
+                        branch.as_str()
+                    ),
+                })
+            }
+            _ => Ok(()),
+        }
+    }
+
     fn require_positive(field: String, value: f32) -> Result<(), EquipmentConfigError> {
         if !value.is_finite() || value <= 0.0 {
             return Err(EquipmentConfigError::Invalid {
@@ -2753,9 +2974,18 @@ pub struct ResolvedKitTiers {
     pub dispersion: f32,
     /// What this kit multiplies the hunt's baseline injury hazard by. `1.0` is neutral.
     pub exposure: f32,
-    /// **The work units one worker carrying this kit takes off a build's cost.** [`NO_BUILD_GEAR`]
-    /// (`0.0`) is neutral — the reading of every kit but `husbandry` on the shipped roster.
+    /// **The work units one worker carrying this kit takes off a build's cost, ON
+    /// [`Self::build_work_branch`].** [`NO_BUILD_GEAR`] (`0.0`) is neutral — the reading of every
+    /// kit that carries no build tool.
     pub build_work_per_worker: f32,
+    /// **WHICH FOOD WEB [`Self::build_work_per_worker`] IS FOR** — `None` when the kit carries
+    /// nothing live that helps any build, in which case the worth beside it is the neutral.
+    ///
+    /// **The two are read as a pair, and a consumer that reads the worth alone is wrong.** A hoe
+    /// takes `8.5` off a Cultivate and nothing at all off a `Tame`, so a picker quoting the worth
+    /// against the wrong web quotes a saving the sim will never pay — the same class of defect as a
+    /// kit picker asking a snare whether it can hurt a Red Deer and reading its unbounded `attack`.
+    pub build_work_branch: Option<crate::intensification::RungBranch>,
 }
 
 /// **"This end of the attack's mass window is not bounded"** — `0`, which is both the FlatBuffers
@@ -2829,6 +3059,7 @@ mod tests {
     use crate::combat::RangeBand;
     use crate::components::BandEquipment;
     use crate::creatures_config::CreaturesConfig;
+    use crate::intensification::RungBranch;
 
     /// The shipped item ids. Named here rather than inlined so a rename shows up as a compile-adjacent
     /// diff in one place — the *sim* never spells an item, it resolves stats and quanta.
@@ -2836,6 +3067,9 @@ mod tests {
     const SLED: &str = "sled";
     const BASKETS: &str = "baskets";
     const TRAPS: &str = "traps";
+    /// The animal web's build tool — portable fence panels, and the handling gear a keeper works a
+    /// beast with. **The one item on two wear quanta.**
+    const HURDLES: &str = "hurdles";
 
     fn item<'a>(config: &'a EquipmentConfig, id: &str) -> &'a ItemDefinition {
         config
@@ -3247,7 +3481,7 @@ mod tests {
     #[test]
     fn an_item_may_wear_on_more_than_one_quantum() {
         let config = EquipmentConfig::builtin();
-        let gear = item(&config, "husbandry_gear");
+        let gear = item(&config, HURDLES);
         assert!(
             gear.wears_on(WearQuantum::BiomassCollected)
                 && gear.wears_on(WearQuantum::BuildProgress),
@@ -3282,7 +3516,7 @@ mod tests {
     fn validate_rejects_an_item_wearing_on_the_same_quantum_twice() {
         let mut json: serde_json::Value =
             serde_json::from_str(BUILTIN_EQUIPMENT_CONFIG).expect("the builtin parses");
-        json["items"]["husbandry_gear"]["wear"] = serde_json::json!([
+        json["items"]["hurdles"]["wear"] = serde_json::json!([
             { "per": "biomass_collected", "amount": 0.04 },
             { "per": "biomass_collected", "amount": 9.0 },
         ]);
@@ -3290,7 +3524,7 @@ mod tests {
             .expect_err("a duplicate quantum is invalid");
         assert!(
             matches!(&err, EquipmentConfigError::Invalid { field, .. }
-                if field == "items.husbandry_gear.wear[1].per"),
+                if field == "items.hurdles.wear[1].per"),
             "unexpected error: {err}"
         );
     }
@@ -3312,26 +3546,26 @@ mod tests {
         );
     }
 
-    /// **THE BUILD AXIS IS A MULTIPLIER RESOLVED LIKE THE OTHER TWO** — the max of what a kit's live
-    /// items declare, neutral when nothing does. Pinned here rather than only through a turn,
-    /// because *"the husbandry kit builds faster"* also passes for a resolver that answers the
-    /// husbandry kit's number for every kit.
+    /// **THE BUILD AXIS IS RESOLVED LIKE THE TWO MULTIPLIERS** — the max of what a kit's live items
+    /// declare, neutral when nothing does. Pinned here rather than only through a turn, because
+    /// *"the hurdling kit builds faster"* also passes for a resolver that answers that kit's number
+    /// for every kit.
     #[test]
     fn the_build_work_is_neutral_unless_a_live_item_declares_it() {
         let config = EquipmentConfig::builtin();
         let wear = crate::components::BandEquipment::start_stocked(&config);
-        let husbandry = config
-            .kit("husbandry")
-            .expect("the shipped roster carries the husbandry kit");
+        let hurdling = config
+            .kit("hurdling")
+            .expect("the shipped roster carries the hurdling kit");
         let big_game = config
             .kit("big_game")
             .expect("the shipped roster carries the stalking kit");
         assert!(
-            config.build_work_per_worker(&husbandry, &wear) > NO_BUILD_GEAR,
-            "the handling kit must declare a build contribution above neutral"
+            config.build_work_per_worker(&hurdling, &wear, RungBranch::Animal) > NO_BUILD_GEAR,
+            "the hurdling kit must declare a build contribution above neutral"
         );
         assert_eq!(
-            config.build_work_per_worker(&big_game, &wear),
+            config.build_work_per_worker(&big_game, &wear, RungBranch::Animal),
             NO_BUILD_GEAR,
             "a kit carrying nothing that helps a build must be exactly neutral"
         );
@@ -3341,15 +3575,170 @@ mod tests {
         let mut dry = wear.clone();
         dry.wear_item(
             &config,
-            "husbandry_gear",
+            "hurdles",
             WearQuantum::BuildProgress,
             f32::MAX / 2.0,
         );
         assert_eq!(
-            config.build_work_per_worker(&husbandry, &dry),
+            config.build_work_per_worker(&hurdling, &dry, RungBranch::Animal),
             NO_BUILD_GEAR,
-            "handling gear that has run dry must take nothing off the job"
+            "hurdles that have run dry must take nothing off the job"
         );
+    }
+
+    /// ⛔ **A TOOL FOR THE OTHER WEB CONTRIBUTES EXACTLY NOTHING, AND TWO OF THEM DO NOT COMPOUND.**
+    ///
+    /// The three claims the `branch` qualifier exists to make, asserted together because each is
+    /// vacuous alone: a branch filter that zeroed *everything* passes the two negatives, and a
+    /// filter that was never applied passes the two positives.
+    ///
+    /// **The double-count arm is the one that forced the qualifier.** `build_work` is a per-worker
+    /// **sum**, so an unqualified bundle carrying both tools would take `8.5 + 8.5` off a plant
+    /// build — twice what either tool is worth, off a job the hurdles do nothing for.
+    #[test]
+    fn a_build_tool_serves_its_own_web_and_two_of_them_do_not_compound() {
+        let config = EquipmentConfig::builtin();
+        let wear = crate::components::BandEquipment::start_stocked(&config);
+        let tillage = config
+            .kit("tillage")
+            .expect("the shipped roster carries the tillage kit");
+        let hurdling = config
+            .kit("hurdling")
+            .expect("the shipped roster carries the hurdling kit");
+
+        let hoed_plant = config.build_work_per_worker(&tillage, &wear, RungBranch::Plant);
+        let hurdled_animal = config.build_work_per_worker(&hurdling, &wear, RungBranch::Animal);
+        assert!(
+            hoed_plant > NO_BUILD_GEAR && hurdled_animal > NO_BUILD_GEAR,
+            "**LIVENESS**: each builders kit must be worth something on its own web - hoes/plant \
+             {hoed_plant}, hurdles/animal {hurdled_animal}"
+        );
+        assert_eq!(
+            config.build_work_per_worker(&tillage, &wear, RungBranch::Animal),
+            NO_BUILD_GEAR,
+            "a hoe must take nothing off an animal build"
+        );
+        assert_eq!(
+            config.build_work_per_worker(&hurdling, &wear, RungBranch::Plant),
+            NO_BUILD_GEAR,
+            "hurdles must take nothing off a plant build"
+        );
+
+        // **A BUNDLE CARRYING BOTH TOOLS**, which no shipped kit is - the roster splits them
+        // deliberately, and this is what says the split is not the only thing holding the
+        // arithmetic together.
+        let both = KitChoice {
+            id: Arc::from("both"),
+            uses: Arc::from(vec![Arc::from("hoes"), Arc::from("hurdles")]),
+        };
+        assert_eq!(
+            config.build_work_per_worker(&both, &wear, RungBranch::Plant),
+            hoed_plant,
+            "a kit holding a hoe AND hurdles must take ONE tool's worth off a plant build"
+        );
+        assert_eq!(
+            config.build_work_per_worker(&both, &wear, RungBranch::Animal),
+            hurdled_animal,
+            "...and one tool's worth off an animal build"
+        );
+    }
+
+    /// ⛔ **A `build_work` EFFECT WITH NO BRANCH FAILS TO LOAD** - the config-validation convention,
+    /// and the door the qualifier exists to shut: an unqualified build tool applies to *both* webs
+    /// silently, which is `config-loading.md`'s "looks live but isn't" in its most reassuring
+    /// direction.
+    #[test]
+    fn validate_rejects_a_build_work_effect_with_no_branch() {
+        let mut json: serde_json::Value =
+            serde_json::from_str(BUILTIN_EQUIPMENT_CONFIG).expect("the builtin parses");
+        let effect = &mut json["items"]["hoes"]["tiers"][0]["effects"][0];
+        assert_eq!(
+            effect["stat"], "build_work",
+            "fixture: the hoes' first flint effect must be the build tool this test unqualifies"
+        );
+        effect
+            .as_object_mut()
+            .expect("an effect is an object")
+            .remove("branch");
+        let err = EquipmentConfig::from_json_str(&json.to_string())
+            .expect_err("an unqualified build tool is invalid");
+        assert!(
+            matches!(&err, EquipmentConfigError::InvalidRoster { reason }
+                if reason.contains("hoes") && reason.contains("branch")),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// **AND A BRANCH ON ANY OTHER STAT IS REJECTED TOO** - the twin of the mass-bound rule, since
+    /// only `build_work` is resolved against a food web, so the qualifier would parse, validate and
+    /// then be read by nothing.
+    #[test]
+    fn validate_rejects_a_branch_on_a_stat_no_build_resolves() {
+        let mut json: serde_json::Value =
+            serde_json::from_str(BUILTIN_EQUIPMENT_CONFIG).expect("the builtin parses");
+        json["items"]["spears"]["tiers"][0]["effects"][0]["branch"] =
+            serde_json::Value::String("animal".to_string());
+        let err = EquipmentConfig::from_json_str(&json.to_string())
+            .expect_err("a branch on `attack` is invalid");
+        assert!(
+            matches!(&err, EquipmentConfigError::InvalidRoster { reason }
+                if reason.contains("spears") && reason.contains("branch")),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// ⛔ **EVERY WEB HAS A BUILDERS KIT, AND IT SERVES THAT WEB ALONE.**
+    ///
+    /// The replacement for *"every kit that supplies `build_work` offers the `builders` job"*, which
+    /// stopped being the invariant when `husbandry` kept its hurdles and gave up building: a kit may
+    /// now carry a build tool for another job's sake, so what matters is not that every declarer
+    /// offers the job but that **the job's derivation lands somewhere** for each ladder.
+    ///
+    /// It is the wiring check `build_kit_for_branch` needs: a roster where a web's builders kit went
+    /// missing would silently fall back to `default_kits.builders` (`none`) and every build on that
+    /// web would lose its tools for the rest of the game.
+    #[test]
+    fn every_branch_of_the_ladder_has_a_builders_kit_that_serves_only_it() {
+        let config = EquipmentConfig::builtin();
+        let fresh = crate::components::BandEquipment::start_stocked(&config);
+        for branch in crate::intensification::BOTH_BRANCHES {
+            let kit = config.build_kit_for_branch(branch).unwrap_or_else(|| {
+                panic!(
+                    "the shipped roster must carry a builders kit serving the {} web, or the pool \
+                     falls back to `none` and every build there is bare-handed",
+                    branch.as_str()
+                )
+            });
+            assert!(
+                config
+                    .kit_definition(kit.id())
+                    .expect("the roster resolves its own entry")
+                    .jobs
+                    .contains(&KitJob::Builders),
+                "'{}' is derived for the {} web, so the builders must be able to be sent out with \
+                 it",
+                kit.id(),
+                branch.as_str()
+            );
+            assert!(
+                config.build_work_per_worker(&kit, &fresh, branch) > NO_BUILD_GEAR,
+                "**LIVENESS**: '{}' must actually take work off a {} build",
+                kit.id(),
+                branch.as_str()
+            );
+            let other = match branch {
+                RungBranch::Plant => RungBranch::Animal,
+                RungBranch::Animal => RungBranch::Plant,
+            };
+            assert_eq!(
+                config.build_work_per_worker(&kit, &fresh, other),
+                NO_BUILD_GEAR,
+                "'{}' is the {} web's kit and must take nothing off a {} build",
+                kit.id(),
+                branch.as_str(),
+                other.as_str()
+            );
+        }
     }
 
     /// **THE PUBLISHED PAIR IS THE COVERAGE SUM, at every crew size** — `min(w, saturating crew) ×
@@ -3361,10 +3750,11 @@ mod tests {
     /// for the trivial reason that neither term is capped.
     ///
     /// **It is also the guard on the one condition the pair assumes.** The saturating crew counts
-    /// the items declaring the kit's *best* build contribution, so a kit carrying a **second,
-    /// weaker** build tool that reached further would take more off the job than the pair credits.
-    /// No shipped item does — `husbandry_gear` is the only declarer — and this is what makes the day
-    /// one ships a decision (publish the envelope) rather than a silent under-quote.
+    /// the items declaring the kit's *best* build contribution **on this web**, so a kit carrying a
+    /// **second, weaker** build tool for the *same* branch that reached further would take more off
+    /// the job than the pair credits. No shipped kit does — `tillage` and `hurdling` carry one tool
+    /// each, and a tool for the other web is filtered out rather than compared — and this is what
+    /// makes the day one ships a decision (publish the envelope) rather than a silent under-quote.
     #[test]
     fn the_saturating_crew_reproduces_the_coverage_sum_at_every_crew_size() {
         /// One set of hurdles, so the saturation point sits at a single worker and the sweep below
@@ -3372,23 +3762,25 @@ mod tests {
         const HELD: u32 = 1;
         let config = EquipmentConfig::builtin();
         let wear = crate::components::BandEquipment::start_stocked(&config);
-        let husbandry = config
-            .kit("husbandry")
-            .expect("the shipped roster carries the husbandry kit");
-        let worth = config.build_work_per_worker(&husbandry, &wear);
-        let saturating = config.build_work_saturating_crew(&husbandry, &wear);
+        let hurdling = config
+            .kit("hurdling")
+            .expect("the shipped roster carries the hurdling kit");
+        let worth = config.build_work_per_worker(&hurdling, &wear, RungBranch::Animal);
+        let saturating = config.build_work_saturating_crew(&hurdling, &wear, RungBranch::Animal);
         assert_eq!(
             saturating, HELD,
-            "fixture: the reference ledger holds one set of handling gear, so one worker saturates \
-             it — got {saturating}"
+            "fixture: the reference ledger holds one set of hurdles, so one worker saturates it - \
+             got {saturating}"
         );
 
         for workers in 0..=6u32 {
             let published = workers.min(saturating) as f32 * worth;
             let paid = crate::intensification::build_work_from_gear(
                 config
-                    .coverage(&husbandry, workers as f32, &wear)
-                    .weighted_rate(|kit| config.build_work_per_worker(kit, &wear)),
+                    .coverage(&hurdling, workers as f32, &wear)
+                    .weighted_rate(|kit| {
+                        config.build_work_per_worker(kit, &wear, RungBranch::Animal)
+                    }),
                 workers,
             );
             assert_eq!(
@@ -3599,7 +3991,7 @@ mod tests {
                     { "id": "big_game", "display_name": "A", "jobs": ["hunt"], "uses": [] },
                     { "id": "big_game", "display_name": "B", "jobs": ["hunt"], "uses": [] }
                 ],
-                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game" },
+                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -3609,7 +4001,7 @@ mod tests {
                 r#""kits": [
                     { "id": "big_game", "display_name": "A", "jobs": [], "uses": [] }
                 ],
-                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game" },
+                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -3619,7 +4011,7 @@ mod tests {
                 r#""kits": [
                     { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": [] }
                 ],
-                "default_kits": { "hunt": "ghost", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game" },
+                "default_kits": { "hunt": "ghost", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -3630,7 +4022,7 @@ mod tests {
                     { "id": "big_game", "display_name": "A", "jobs": ["hunt"], "uses": [] },
                     { "id": "gathering", "display_name": "B", "jobs": ["forage"], "uses": [] }
                 ],
-                "default_kits": { "hunt": "gathering", "forage": "gathering", "scout": "gathering", "warrior": "gathering", "agriculture": "gathering", "husbandry": "gathering" },
+                "default_kits": { "hunt": "gathering", "forage": "gathering", "scout": "gathering", "warrior": "gathering", "agriculture": "gathering", "husbandry": "gathering", "builders": "gathering" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -3660,7 +4052,7 @@ mod tests {
             r#""kits": [
                 { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": ["net_kit"] }
             ],
-            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game" },
+            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -3710,9 +4102,9 @@ mod tests {
             },
             "kits": [
                 { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": ["spears"] },
-                { "id": "warrior", "display_name": "W", "jobs": ["warrior", "scout", "agriculture", "husbandry"], "uses": ["snares"] }
+                { "id": "warrior", "display_name": "W", "jobs": ["warrior", "scout", "agriculture", "husbandry", "builders"], "uses": ["snares"] }
             ],
-            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "warrior", "warrior": "warrior", "agriculture": "warrior", "husbandry": "warrior" },
+            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "warrior", "warrior": "warrior", "agriculture": "warrior", "husbandry": "warrior", "builders": "warrior" },
             "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }
@@ -3732,9 +4124,9 @@ mod tests {
     const ROSTER_JSON: &str = r#""kits": [
                 { "id": "big_game", "display_name": "Stalking kit", "jobs": ["hunt"], "uses": ["spears", "sled"] },
                 { "id": "gathering", "display_name": "Gathering kit", "jobs": ["forage"], "uses": ["baskets"] },
-                { "id": "none", "display_name": "No kit", "jobs": ["hunt", "forage", "scout", "warrior", "agriculture", "husbandry"], "uses": [] }
+                { "id": "none", "display_name": "No kit", "jobs": ["hunt", "forage", "scout", "warrior", "agriculture", "husbandry", "builders"], "uses": [] }
             ],
-            "default_kits": { "hunt": "big_game", "forage": "gathering", "scout": "none", "warrior": "none", "agriculture": "none", "husbandry": "none" },
+            "default_kits": { "hunt": "big_game", "forage": "gathering", "scout": "none", "warrior": "none", "agriculture": "none", "husbandry": "none", "builders": "none" },
             "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#;

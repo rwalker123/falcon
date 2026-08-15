@@ -277,17 +277,18 @@ paths:
   - **Extend affordance** (`_build_extend_pen_control`, in the herd `%HerdAssignControls`): on a built
     pen with no ring in flight (`pen_extend_progress == 0`) a **`Fencers` stepper** over an
     **"Extend pen"** button, emitting `extend_pen_requested{faction,x,y,workers}` →
-    `Main._on_hud_extend_pen` → **`extend_pen <faction> <x> <y> <workers>`** at the pen anchor (a penned
-    herd sits AT `corralled_at`, so its own tile).
-    **THE RING GAINED A CREW** (`docs/plan_standing_upkeep.md` §2.2): it rides the same `animal:pen`
-    rung as the pen it widens, so it cannot be the one build in the game that is free — it staffs the
-    same BUILD allocation and draws on the same finite band. The stepper clamps to the band's published
-    `idleWorkers` (the sim REFUSES a crew a band cannot staff rather than trimming it), and the button
-    is **disabled at a crew of zero**: the sim would accept `0` and simply never work the ring off, so
-    the control states the requirement instead of sending a command that does nothing. The count is
-    held on `DrawerComposeController._pen_extend_crew` rather than on `ComposeState` — extend-pen is a
-    DRAWER action and never enters a compose sheet, so there is no composition for it to be part of.
-    While a ring is being fenced
+    `Main._on_hud_extend_pen` → **`extend_pen <faction> <x> <y>`** at the pen anchor (a penned
+    herd sits AT `corralled_at`, so its own tile). **The command names no crew** since
+    `docs/plan_standing_upkeep.md` §2.5 — it queues the ring, and the band's `builders` pool raises it
+    when it reaches the head.
+    **THE RING GAINED A CREW IN §2.2 AND LOST IT AGAIN IN §2.5.** It rides the same `animal:pen` rung
+    as the pen it widens, so it cannot be the one build in the game that is free — but what it costs is
+    the band's `builders` POOL, not a crew named on the verb. `extend_pen <faction> <x> <y>` is closed
+    at three tokens (a fourth is a parse error), so the stepper, its `idleWorkers` clamp and the
+    disabled-at-zero button are all gone and the control is a plain button again. `_pen_extend_crew` is
+    retired with them; there was never a composition for it to be part of, and now there is no count.
+    **What the pen is waiting on is the QUEUE**, which the button's tooltip says and no control here
+    can move. While a ring is being fenced
     (`pen_extend_progress > 0`) the button is replaced by a WARN-amber **"Fencing N%"** badge — the pen
     twin of the corral-build "Building N%" meter. The server rejects an extend at max radius / unowned /
     Herding-unknown with a feed message; the client does not pre-gate (max radius is not on the wire).

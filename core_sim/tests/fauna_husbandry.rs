@@ -298,11 +298,15 @@ fn spawn_crew_of(
                 // rather than at the assignment because several fixtures set the verb *later*
                 // (the full climb sets one per leg), when the pool is already fixed. Idle hands cost
                 // these fixtures nothing: every take is capped by the crew the assignment names.
-                // **Sized to what it actually staffs**: take + build + the keeping role. The build crew
-                // now carries the maintenance rate on top of the stated net, so a band sized at
-                // `hunters` twice over is short and `normalize` trims the build — which is exactly
+                // **Sized to what it actually staffs**: the take row, the `builders` pool and the
+                // `husbandry` role. Every one of them draws on the same band, so a band sized at
+                // `hunters` twice over is short and `normalize` trims the tail — which is exactly
                 // the stall these fixtures must not measure.
-                working: scalar_from_f32((hunters + builders + keepers) as f32),
+                // **Plus room for a `builders` pool a caller may stand on the band afterwards** —
+                // the projection arm quotes at the band's own pool since
+                // `docs/plan_standing_upkeep.md` §2.5, and a band with no headroom for one would
+                // have `normalize` trim the very row under measurement.
+                working: scalar_from_f32((hunters + builders + keepers + hunters) as f32),
                 elders: scalar_zero(),
                 stores: LocalStore::new(),
                 morale: scalar_one(),
@@ -336,18 +340,28 @@ fn spawn_crew_of(
                 // demand (`keeper_crew`), which is what a player reading `upkeepWorkersNeeded`
                 // would staff.
                 assignments: with_keeping_role(
-                    vec![LaborAssignment {
-                        target: LaborTarget::Hunt {
-                            fauna_id: herd_id.to_string(),
-                            floor: policy,
-                        },
-                        workers: hunters,
-                        improvement,
-                        kit: None,
-                        improvement_workers: builders,
-                    }],
+                    with_builders_pool(
+                        vec![LaborAssignment {
+                            target: LaborTarget::Hunt {
+                                fauna_id: herd_id.to_string(),
+                                floor: policy,
+                            },
+                            workers: hunters,
+                            kit: None,
+                        }],
+                        improvement.map_or(0, |_| hunters),
+                    ),
                     keepers,
                 ),
+                // **The declaration** — a verb states what is raised, and the `builders` pool above
+                // raises it (`docs/plan_standing_upkeep.md` §2.5).
+                build_queue: improvement
+                    .map(|declared| core_sim::BuildQueueEntry {
+                        source: core_sim::BuildSource::Herd(herd_id.to_string()),
+                        declared: core_sim::BuildJob::Rung(declared),
+                    })
+                    .into_iter()
+                    .collect(),
                 ..Default::default()
             },
             // A taming/keeping crew is a **resident** band (only resident bands allocate labor;
@@ -953,15 +967,31 @@ fn an_untamed_herd_quotes_the_tame_it_would_take_on_and_the_quote_halves_with_th
         if herding {
             grant_herding(&mut app);
         }
-        // No improvement in flight: this crew is hunting the herd, and deciding.
-        spawn_crew_of(&mut app, &id, MSY_BIOMASS_FRACTION, None, keepers);
+        // **Nothing queued on this herd: the band is hunting it and DECIDING**, which is by
+        // definition the state a compose sheet is looking at. The quote is what the band's own
+        // `builders` pool would take, so the fixture stands one — since
+        // `docs/plan_standing_upkeep.md` §2.5 there is a real crew to quote and the projection no
+        // longer falls back to the gatherers beside it.
+        let band = spawn_crew_of(&mut app, &id, MSY_BIOMASS_FRACTION, None, keepers);
+        app.world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the fixture band keeps its allocation")
+            .assignments
+            .push(LaborAssignment {
+                target: LaborTarget::Builders,
+                workers: keepers,
+                kit: None,
+            });
         run_turns_with_hunt(&mut app, 1);
         count(herd_of(&app, &id).build_turns_remaining)
     };
 
-    // **Twice the NET, half the turns.** The maintenance rate comes off a build crew before any of
-    // it is progress (`docs/plan_standing_upkeep.md` §2.4), so doubling the *head count* no longer
-    // halves the job — doubling what is left after the rate does.
+    // **Twice the POOL, half the turns.** The pool's whole output is progress — a build supplies
+    // nothing toward the keeping rate (`docs/plan_standing_upkeep.md` §4.6a) — so the quote is
+    // `work_cost / pool` and doubling the pool halves it.
+    //
+    // The `rate +` padding survives from the slice where a build crew paid the rate itself, and is
+    // harmless: both arms carry the same offset, so what is doubled is still the pool.
     let rate = {
         let app = spawn_world();
         let mut probe = app;
@@ -2153,40 +2183,65 @@ fn ladder_knowledge(app: &App, discovery: u32) -> f32 {
         .to_f32()
 }
 
-/// Check or clear the **improvement** on the band's (only) Hunt assignment — the sim side of the
+/// Declare or withdraw the build on the band's (only) Hunt assignment — the sim side of the
 /// client's checkbox, which is what the player does at each build leg of the climb. The stance is
 /// untouched (issue #442): the crew keeps Sustain-hunting throughout.
+///
+/// **A DECLARATION AND A POOL ARE TWO THINGS** (`docs/plan_standing_upkeep.md` §2.5). The verb
+/// appends a queue entry and names no crew; the hands stand on the band's `builders` row. So this
+/// does both, and withdrawing takes both away — a queue entry with an idle pool builds nothing, and
+/// a staffed pool with an empty queue has nothing to build.
 fn set_hunt_improvement(
     app: &mut App,
     band: bevy::prelude::Entity,
     improvement: Option<Improvement>,
 ) {
     let (herd_id, stated) = {
-        let mut allocation = app
-            .world
-            .get_mut::<LaborAllocation>(band)
-            .expect("band exists");
-        let assignment = &mut allocation.assignments[0];
-        assignment.improvement = improvement;
+        let allocation = app.world.get::<LaborAllocation>(band).expect("band exists");
+        let assignment = &allocation.assignments[0];
         let herd_id = match &assignment.target {
             LaborTarget::Hunt { fauna_id, .. } => fauna_id.clone(),
             _ => panic!("the climb's band hunts"),
         };
         (herd_id, assignment.workers)
     };
-    // **A verb needs a crew** (`docs/plan_standing_upkeep.md` §2.2) — the checkbox this stands in
-    // for is `corral <faction> <x> <y> <workers>`, so setting the verb staffs it and clearing it
-    // frees the hands. The whole band builds, which is what this climb meant before the split —
-    // **plus the maintenance rate those builders are also paying** (§2.4), or a crew sized at the
-    // herd's own keeper count nets nothing and the leg never completes.
+    // The whole band builds, which is what this climb meant before the crews split — **plus the
+    // maintenance rate the keeping is also paying** (§2.4), or a pool sized at the herd's own keeper
+    // count nets nothing and the leg never completes.
     let rate = keeper_crew_at_capacity(app, &herd_id);
     {
         let mut allocation = app
             .world
             .get_mut::<LaborAllocation>(band)
             .expect("band exists");
-        allocation.assignments[0].improvement_workers =
-            improvement.map_or(NO_CREW_ON_THIS_ACTIVITY, |_| stated.saturating_add(rate));
+        let source = core_sim::BuildSource::Herd(herd_id.clone());
+        match improvement {
+            Some(declared) => {
+                let builders = stated.saturating_add(rate);
+                match allocation
+                    .assignments
+                    .iter_mut()
+                    .find(|assignment| assignment.target == LaborTarget::Builders)
+                {
+                    Some(row) => row.workers = builders,
+                    None => allocation.assignments.push(LaborAssignment {
+                        target: LaborTarget::Builders,
+                        workers: builders,
+                        kit: None,
+                    }),
+                }
+                assert!(
+                    allocation.enqueue_build(source, core_sim::BuildJob::Rung(declared)),
+                    "the climb's band works the herd it is building on"
+                );
+            }
+            None => {
+                allocation.unqueue_build(&source);
+                allocation
+                    .assignments
+                    .retain(|assignment| assignment.target != LaborTarget::Builders);
+            }
+        }
     }
     fit_band_to_its_crews(app, band);
 }
@@ -2663,17 +2718,40 @@ fn set_maintain_workers(app: &mut App, band: bevy::prelude::Entity, workers: u32
     allocation.set_assignment(LaborTarget::Husbandry, workers, headroom, None);
 }
 
-/// **Append the band-wide `husbandry` role to a fixture's rows** — the keeping pool every
-/// managed-herd fixture needs since the keeping stopped being a per-source crew
-/// (`docs/plan_standing_upkeep.md` §2.5). A crew of zero adds no row, which is the honest reading
-/// of *"this band keeps nothing"*.
+/// **Append the band-wide `builders` pool to a fixture's rows** — the hands a declared build is
+/// raised by since the build crew left the tile (`docs/plan_standing_upkeep.md` §2.5). A pool of
+/// zero adds no row, which is the honest reading of *"this band is building nothing"*.
+///
+/// ⛔ **THE POOL GOES OUT BARE, and that is an isolation rather than a default.** An absent kit means
+/// *derive per entry*, and the roster's answer for a herd — `hurdling` — takes `8.5` off the job per
+/// covered worker. A start-stocked band holds a unit per worker and a half, so at the crews these
+/// fixtures staff the gear alone pays a whole `Tame` off and every pacing claim here collapses to
+/// *"one turn versus one turn"*. Naming `none` holds the gear axis at its identity so these arms
+/// measure the **crew**, exactly as `FaunaConfig::without_retreat` holds the retreat at its identity
+/// across the hunt suites; the geared default is pinned in
+/// `core_sim/tests/build_turns_closed_form.rs` and in `equipment_config`'s own unit tests.
+fn with_builders_pool(mut rows: Vec<LaborAssignment>, builders: u32) -> Vec<LaborAssignment> {
+    if builders > 0 {
+        rows.push(LaborAssignment {
+            target: LaborTarget::Builders,
+            workers: builders,
+            kit: Some(
+                core_sim::EquipmentConfig::builtin()
+                    .kit("none")
+                    .expect("the shipped roster carries the empty kit"),
+            ),
+        });
+    }
+    rows
+}
+
+/// **Append the band-wide `husbandry` role to a fixture's rows** — see [`with_builders_pool`] for
+/// the building half.
 fn with_keeping_role(mut rows: Vec<LaborAssignment>, keepers: u32) -> Vec<LaborAssignment> {
     if keepers > 0 {
         rows.push(LaborAssignment {
             target: LaborTarget::Husbandry,
             workers: keepers,
-            improvement: None,
-            improvement_workers: core_sim::NO_CREW_ON_THIS_ACTIVITY,
             kit: None,
         });
     }

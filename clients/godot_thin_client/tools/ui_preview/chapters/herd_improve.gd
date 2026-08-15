@@ -124,9 +124,9 @@ func _building_herd_band_fixture() -> Dictionary:
 ## else about `BandFx.band_fixture` is kept; only the assignment list is replaced, by the single hunt
 ## assignment whose `fauna_id` matches `HerdFx.fully_tamed_herd_fixture`'s and whose policy is the rung the
 ## ceiling pass has since hidden.
-## The BUILD's own crew on that assignment — the animal twin of
-## `BandFx.CULTIVATING_BAND_BUILDERS`, and stated for the same reason: a running build is STAFFED,
-## so a fixture leaving `improvement_workers` at the wire's `0` stages a build nobody is paying for.
+## The BAND'S `builders` POOL — the animal twin of `BandFx.CULTIVATING_BAND_BUILDERS`, and staffed
+## for the same reason: a running build is STAFFED, so a fixture that puts nobody on the pool stages a
+## build nobody is paying for (`docs/plan_standing_upkeep.md` §2.5).
 const TAME_STANDING_BUILDERS := 3
 
 func _tame_standing_band_fixture() -> Dictionary:
@@ -134,10 +134,9 @@ func _tame_standing_band_fixture() -> Dictionary:
 	band["labor_assignments"] = [{
 		"kind": "hunt", "workers": HerdFx.TAMED_HERD_CREW, "fauna_id": HerdFx.taming_herd_fixture()["id"],
 		"floor": 0.5, "improvement": "tame", "target_x": 70, "target_y": 17,
-		"improvement_workers": TAME_STANDING_BUILDERS,
 		"actual_yield": 0.45, "sustainable_yield": 0.45,
 		"workers_needed": HerdFx.TAMED_HERD_CREW, "overdraws": false,
-	}]
+	}, BandFx.builders_role_row(TAME_STANDING_BUILDERS)]
 	return band
 
 func run(harness) -> void:
@@ -190,7 +189,8 @@ func run(harness) -> void:
 	# the running control states the meter and the stepper beneath it is the whole of what a player can
 	# change about the build.
 	h._assert_hud("a running Tame mounts its BUILDERS stepper — the lever the uncheck used to be",
-		ForageFx.build_crew_row(h._hud._drawercompose._compose_sheet) != null)
+		Readout.stepper_count(h._hud._drawercompose._compose_sheet)
+			== Readout.COMPOSE_STEPPERS_PER_SHEET)
 	# **THE GEAR HALF OF THE ESTIMATE IS THE KIT'S, so its claims live with the kit** — the frames and
 	# the saturation assertions are `chapters/compose_rungs.gd`'s `_kit_swap_turn_estimate_states`,
 	# which is where a roster carrying the handling kit is staged. Nothing here states a gear term:
@@ -205,13 +205,15 @@ func run(harness) -> void:
 			== SourceForecast.YIELD_ROW_HEADER.to_upper())
 	h._assert_hud("…over readings that draw no arrow either",
 		not Readout.yields_show_a_transition(h._hud._drawercompose._compose_sheet))
-	# **THE HERD FORM, which is the one a shared branch gets wrong.** `tame` targets by VERB — a herd
-	# id — while `corral` is a herd's rung addressed by a TILE, so a formatter that reused one rule for
-	# both would send coordinates here. That split survived `abandon_improvement`'s retirement: walking
-	# away is the same set verb at zero builders, so it is the same targeting question.
+	# **THE HERD FORM, which is the one a shared branch gets wrong.** `unqueue` names a SOURCE, and its
+	# two shapes are told apart exactly as the sim's parser tells them apart — two integer tokens are a
+	# TILE, one token is a HERD id — so a formatter that reused the tile rule would send coordinates
+	# here. The split outlived both of the walk-away forms this probe has had.
 	await h._assert_walk_away_emits(SourceForecast.LABOR_KIND_HUNT, HudConst.LABOR_POLICY_TAME,
-		"tame %d %s 0" % [HudConst.PLAYER_FACTION_ID,
-			String(HerdFx.taming_herd_fixture()["id"])])
+		"unqueue %d %s" % [HudConst.PLAYER_FACTION_ID,
+			String(HerdFx.taming_herd_fixture()["id"])],
+		{"faction": HudConst.PLAYER_FACTION_ID, "x": 70, "y": 17,
+			"herd_id": String(HerdFx.taming_herd_fixture()["id"])})
 
 	# State 442-tame-done — the animal DONE state, and **THE ONE ASYMMETRY THAT SURVIVES** (spec §4):
 	# a fully tamed herd's ◎ Pastoral label carries NO upkeep, because a pastoral herd still grazes.
@@ -296,7 +298,7 @@ func run(harness) -> void:
 	# (3) **THE BUILD STATES ITS OWN CREW, ON ITS OWN CONTROL.** The stepper is the second allocation;
 	# without it the verb would carry no count and the sim would be told to staff nobody.
 	h._assert_hud("…and the build carries a crew row of its own beneath the verb",
-		Q.find_meta_node(dip_sheet, HudWidgets.BUILD_CREW_ROW_META) != null)
+		Readout.stepper_count(dip_sheet) == Readout.COMPOSE_STEPPERS_PER_SHEET)
 	# (4) **AND THE CREW ROW CLAIMS NO CARRY PENALTY.** The retired note read
 	# "— building this rung, each carries 50% as much"; a sheet that still said so would be describing
 	# arithmetic the sim no longer does.

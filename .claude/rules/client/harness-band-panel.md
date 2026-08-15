@@ -118,8 +118,53 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 242 `assert OK` lines, 348 `: PASS` ones and ZERO `FAIL` ones, over
-95 frames.** (It was 240 / 341 / 94 before **`band_panel_builders_segment`** — the BUILDERS segment
+**A clean run exits 0 and prints 260 `assert OK` lines, 420 `: PASS` ones and ZERO `FAIL` ones, over
+104 frames — RE-MEASURED, into an emptied `ui_preview_out/`.** The figure recorded here before the
+Builders card lost its kit picker read 254 / 377 / 101 and was already three frames and forty-three
+`PASS` behind the harness, so the delta of that change is not recoverable by subtracting them: it is
+**+2 `: PASS`, no `assert OK` and no frame** — eight of `_assert_builders_kit_picker`'s claims retired
+with the control, ten gear-line/absence claims and three stepper claims in their place.
+
+(It was 246 / 356 / 97 before the BUILD QUEUE BLOCK — `docs/plan_standing_upkeep.md` §4.6b, specified
+in `band-city-panel.md` → "THE BUILD QUEUE BLOCK". Its four states —
+`band_panel_build_queue` / `_blocked` / `_none` / `_wide` — account for the eight `assert OK`s (each
+state's own bounds/content-fits pair) and eighteen of the twenty-one `PASS`es; the other three are
+`_assert_builders_card_kit_faces`, PNG-less, which fixed the Builders card's roster-order
+fall-through. (It has since grown to six, that helper's picker-face claim having become a gear-line +
+picker-absence pair per state — see the BUILDERS KIT PAIR paragraph below.)
+**`band_panel_build_queue_none` is the PAIRED NEGATIVE and is what makes the other three worth
+anything** — a block drawn unconditionally passes every positive claim above it and fails only there,
+which is exactly what sabotage produced (28 failures: that one claim plus 27 zones the block's own
+20px head then overran). The wide state REPORTS its extent rather than only asserting the fit: the
+work zone comes out **300px of a 300px box, 0 spare**, with the board still paging two rows.)
+
+(It was 242 / 348 / 95 before the BUILDERS KIT PAIR — `band_panel_builders_kit_plant` /
+`band_panel_builders_kit_animal`, the frames on which the Builders card's gear line is judged. **The
+PAIR is the claim, and the fixture is what makes it one**: ONE band, whose forage row and hunt row
+already name the two sources, with the head moving by dialling those SOURCES' own
+`buildQueuePosition` — so the two frames differ in the queue head's WEB and in nothing else.
+
+**They asserted a PICKER's face, its greyed entry and the reason on it until slice 6b retired that
+control** (`band-city-panel.md` → "THE BUILDERS CARD MOUNTS NO PICKER EITHER"). Re-aimed rather than
+deleted, since the states themselves still matter: each now asserts the read-only gear line's WHOLE
+TEXT by equality — the kit's name, what its tool takes off a build, and the condition of the item
+behind it, composed from the vocabulary and the fixture's own numbers rather than through
+`KitRoster.role_gear_line` — beside the ABSENCE of a picker on that card, which is asked of the
+CONTROL (`KitRoster.KIT_PICKER_META`) and never of the label. `_assert_builders_card_kit_faces` runs
+the same helper over three states PNG-LESS, the EMPTY queue included, a resolver stuck on one web
+satisfying any one of them alone.
+
+**`_assert_builders_stepper_sends_no_kit` is the claim that made the retirement worth making**, and
+it is a PAIR: driving the Builders `+` must emit a line carrying no `kit` token at all — read off
+`Main.format_assign_labor`, so the sim keeps deriving per entry — while a Scout stepper driven onto
+its NON-default kit first still carries `kit none`. Without the Scout half the claim passes on a
+client that dropped the tail everywhere, `Main._kit_token` omitting a selection equal to the job
+default. Sabotage-verified on two DISJOINT mutations: collapsing `_commanded_role_kit_id`'s builders
+fork fails **exactly one**, naming `assign_labor 0 4904 builders 1 kit none`; restoring `builders` to
+`KIT_PICKER_ROLES` fails **ten** — the five picker-absence claims and the five gear lines that then
+have no label to read — and leaves the stepper pair green.)
+
+(It was 240 / 341 / 94 before **`band_panel_builders_segment`** — the BUILDERS segment
 state, whose two `assert OK`s are its own bounds/content-fits pair and whose seven `PASS`es are
 `_assert_people_matches_workforce`'s four plus three of its own. **Its fixture IS the claim**: the
 reference band's four assignments spend 13 of 16 workers, so putting THREE builders on its forage row
@@ -263,7 +308,7 @@ move" guards and correctly stay green.
 
 **THE PEN AND THE VANTAGE JOINED `BandKitTiers`, and that contributes FOUR `PASS` to `ui_preview`,
 ZERO frames and nothing at all to `band_panel_preview`.** Those two axes were the ones a per-kit
-readout had to answer off the ROSTER's fresh tier, so a dry-`husbandry_gear` band's pen compose
+readout had to answer off the ROSTER's fresh tier, so a dry-`hurdles` band's pen compose
 sheet read `pen 40.0 per keeper` against a sim collecting 12 and a Scout card read 2 tiles of sight
 against a reveal at 1. `BandFx.kit_tiers_rows` states all five axes now (it stated three, and a row
 that omits an axis exercises the absence path rather than the real one), and
@@ -965,3 +1010,65 @@ loudly refusing its own precondition rather than passing.
 **One frame added, none moved**: 73 pre-existing `band_panel_*` PNGs byte-identical to the pre-change
 baseline (captured by stashing the change and re-rendering), plus the new
 `band_panel_compose_hunt_empty`.
+
+## The build states, the rollback and the pending queue row (`docs/plan_standing_upkeep.md` §4.6a/b)
+
+Three blocks land at the end of the run, after `_render_build_queue_states`. Order is load-bearing
+here as everywhere: each restores the reference band and the herd roster on its way out, and the
+rollback block leaves the pending overlay empty.
+
+**`_render_work_build_state_states` — the WORK ROW's build states, as a SET.** ONE band, FOUR forage
+rows differing only in their meter and the wire's own countdown: climbing (`🌱45%`, `SIGNAL_DEEP`),
+declared-with-nobody-on-it (`🌱⚠`, `WARN`), losing ground (the same stalled face, from the wire's `-3`
+rather than from the staffing), and parked-with-keeping-covered (`🌱60%`, `SIGNAL_DEEP`). All four
+faces and all four inks are asserted by EQUALITY, and the faces are composed from `HudWorkVocab`'s own
+formats so the claim is the FORK and not the format.
+
+- **The SET is the claim.** A row builder that marked EVERYTHING passes the two stalled claims; one
+  that marked NOTHING passes the two healthy ones. Sabotage-verified in both directions, each failing
+  a disjoint pair.
+- **THE BAND HAS NO BUILDERS, and that is what makes four states reachable at once.** The pool is
+  BAND-level, so every row on one board is asked against one crew count — with hands on it no row
+  could be `UNSTARTED` and the states would have nowhere to differ. It is an ordinary live state
+  besides: another band's pool can be funding the same rung, which is why the map's badge sums the
+  count across bands.
+- **`_assert_work_row_and_badge_agree` is the two-surface claim, and no per-surface assertion can make
+  it** — each is perfectly self-consistent while contradicting the other. The row's face comes off the
+  RENDERED board (`HudWorkVocab.WORK_ROW_BUILD_STATE_META`, valued the face, because the three states
+  differ by one glyph and a text search would only confirm the string already assumed); the badge's
+  verdict is composed the way `BandOverlayRenderer._queue_source_badge` composes it. Its COUNTS —
+  four build rows, exactly two stalled — are what stop a hard-wired verdict agreeing with itself.
+- **`_work_row_build_faces` keys on the row's NAME label, found by `SIZE_EXPAND_FILL`.** Every other
+  slot in a work row is a fixed column, so that flag is the one structural handle on the label whose
+  text the assertion is trying to join against.
+
+**`_assert_pending_assign_rollback` — PNG-LESS, and it has to be**: a card showing three builders is a
+perfectly ordinary card. It asserts the two `has_method` names `Main` probes for (a failed probe fails
+SILENTLY, so a rename would simply stop rolling anything back), drives the REAL `_emit_assign_labor`
+for both writes so the payload under test is the one `Main` receives, then drops ONE and requires an
+unrelated pending edit on the same band to SURVIVE. **The survivor is half the claim** — a rollback
+that cleared the whole overlay passes the first half and is a worse bug. Sabotage-verified: erasing
+the entity's whole record fails exactly the survivor claim.
+
+> **What it does NOT drive is `Main`'s one-line `if not _send_formatted_command(...)`.** `Main` is a
+> scene node with a `_ready` this harness does not stand up, so the block drives everything up to and
+> including the method that handler reaches by name. The seam it cannot reach is one comparison.
+
+**`_render_pending_queue_states` — the pending queue row, NEGATIVE FIRST.** One confirmed entry and
+nothing declared (assert no row below the head position, no `○` anywhere), then the same band with a
+build declared through the real `record_pending_assign`, then the WIDE dock for the height budget,
+then a turn advance that reconciles the overlay away and leaves the row CONFIRMED. Four claims on the
+pending row — it sorts LAST, it wears `○` and states no date, it has no `▸`, and its `✕` still emits
+`unqueue 0 72 18` — asserted together, since any one alone is satisfied by a row that got the other
+three wrong. Sabotage-verified by admitting every un-positioned row: the negative fails in two states
+naming the phantom rows it found.
+
+- **`_declare_pending_build` calls `_hud._bandpanel.rerender()`, NOT `Hud._after_pending_change`, and
+  that is a HARNESS fact rather than a client one.** That method also re-renders the SELECTION card,
+  whose occupant this harness stages separately — a `_band_fixture()`-shaped Band 2 pushed long before
+  this block — so the re-render replaces the panel's subject with the OTHER fixture of the same band
+  and two of the queued rows vanish. A live client cannot reach that: both dicts come from one
+  snapshot.
+- **The wide dock reads `Zone_work` at 252px of a 300px box.** `Zone_band` at 749/300 and
+  `Zone_parties` at 300/300 are the same numbers `band_panel_build_queue_wide` prints and are
+  structural (the board is `EXPAND_FILL` and pages).

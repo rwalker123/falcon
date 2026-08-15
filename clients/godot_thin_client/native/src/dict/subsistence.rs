@@ -202,14 +202,26 @@ pub(crate) fn herds_to_array(
         // finite answer, and a `0` in its place is a promise. The client CANNOT compute it (it holds
         // neither the crew's output, nor the floor multiplier, nor the kit's contribution), so the
         // sim answers, exactly as it does for `pen_upkeep` and the yield forecast.
-        // **THREE NEGATIVES, THREE FACTS** — `-1` is *no estimate*, `-2` is *the meter holds
-        // exactly where it is* and `-3` is *the meter is going backwards*
-        // (`sim_schema::{NO_BUILD_TURNS_ESTIMATE, BUILD_METER_HOLDS, BUILD_METER_ROTS}`). Passed
-        // through verbatim so GDScript reads the sim's own answer rather than deriving a second
-        // opinion — and every one of them has to be READ on the other side: the client accepted the
-        // first two and flattened `-3` back to *no estimate*, which rendered a bleeding build as no
-        // line at all.
+        // **FOUR NEGATIVES, FOUR FACTS** — `-1` is *no estimate*, `-2` is *the meter holds exactly
+        // where it is*, `-3` is *the meter is going backwards* and `-4` is *the builders are
+        // staffed and standing on this entry, and its own gate refuses it*
+        // (`sim_schema::{NO_BUILD_TURNS_ESTIMATE, BUILD_METER_HOLDS, BUILD_METER_ROTS,
+        // BUILD_QUEUE_BLOCKED}`). Passed through verbatim so GDScript reads the sim's own answer
+        // rather than deriving a second opinion — and **every one of them has to be READ on the
+        // other side**: the client accepted the first two and flattened `-3` back to *no estimate*,
+        // which rendered a bleeding build as no line at all. `-4` arrived with the build QUEUE
+        // (`docs/plan_standing_upkeep.md` §4.6b) and is the one a client cannot derive — the other
+        // three are arithmetic about one meter, and a queue is not arithmetic.
         let _ = dict.insert("build_turns_remaining", herd.buildTurnsRemaining() as i64);
+        // **WHERE THIS SOURCE SITS IN THE WINNING BAND'S BUILD QUEUE** — 0-based, and
+        // `sim_schema::NOT_IN_ANY_BUILD_QUEUE` (`-1`) when no band has queued it
+        // (`docs/plan_standing_upkeep.md` §4.6b). The whole `builders` pool goes on the HEAD of a
+        // band's queue until that entry's meter fills, so `build_turns_remaining` above is a CHAINED
+        // date — everything ahead of this entry plus its own span — and without this field that date
+        // is an exact number with no explanation. **It rides the SAME winner** as
+        // `build_turns_remaining` and `build_work_from_gear`: several bands may work one source, the
+        // sooner estimate wins, and all three come from that band, so the three are read as one set.
+        let _ = dict.insert("build_queue_position", herd.buildQueuePosition() as i64);
         // WHAT THE CREW'S TOOLS TOOK OFF THIS BUILD, in work units — the `t` in
         // `effective_cost = work_cost − t`. `0` = no build in
         // flight, or the crew carries nothing that helps. It rides BESIDE the raw job rather than
@@ -523,6 +535,13 @@ pub(crate) fn kits_to_array(kits: Vector<'_, ForwardsUOffset<fb::KitOption<'_>>>
         // crew cancels the job's cost and so saves the same PERCENTAGE of turns on a garden and on a
         // farm; subtracted from the job, the job's own size decides what the tool is worth.
         let _ = dict.insert("build_work_per_worker", kit.buildWorkPerWorker() as f64);
+        // **WHICH FOOD WEB THAT BUILD AXIS IS FOR** — `"plant"` | `"animal"`, and `""` for a kit
+        // carrying no build tool at all. The pair is ONE reading: a hoe takes 8.5 off a Cultivate and
+        // NOTHING off a Tame, so a picker offering builders kits must grey the one whose branch
+        // disagrees with the entry in front of it, exactly as it greys a snare against a Red Deer.
+        // Decoding the worth without the branch is how a single number comes to be believed on both
+        // webs — the same failure `attack_max_body_mass` exists to prevent one axis over.
+        let _ = dict.insert("build_work_branch", kit.buildWorkBranch().unwrap_or(""));
         // What the kit does BESIDES the tiers. `dispersion` multiplies the quarry's own retreat and
         // `exposure` the hunt's injury hazard, both neutral at 1. The two mass bounds say which
         // quarry `attack` above actually applies to — 0 on an end is unbounded — so a picker can
@@ -630,12 +649,17 @@ pub(crate) fn forage_patches_to_array(
         let _ = dict.insert("field_work_cost", patch.fieldWorkCost());
         // The plant twin of the herd row's — `-1` no estimate, `-2` the meter holds, `-3` it rots.
         let _ = dict.insert("build_turns_remaining", patch.buildTurnsRemaining() as i64);
+        // The plant twin of the herd row's queue position — 0-based, `-1` = in no band's queue. See
+        // there for why the countdown beside it is a CHAINED date and why the three build fields are
+        // read as one set off one winning band.
+        let _ = dict.insert("build_queue_position", patch.buildQueuePosition() as i64);
         let _ = dict.insert("build_work_from_gear", patch.buildWorkFromGear());
         // The plant twin of the herd block's estimate TERM — see there for why it rides beside
         // `build_turns_remaining` rather than replacing it, why the figure is read rather than
         // assumed, and why the gear half is on the kit row instead. Every forage kit's saturating
-        // crew is `0` today (no plant item declares the build stat yet, issue #539), which the closed
-        // form handles as the ungeared case rather than as a missing term.
+        // crew is `0` (a basket is not a build tool); the plant web's build gear rides the
+        // `tillage` kit's row, and a row whose `build_work_branch` disagrees with the entry in front
+        // of the player is the ungeared case rather than a missing term.
         let _ = dict.insert("build_work_per_worker_turn", patch.buildWorkPerWorkerTurn());
         // WHY this ground will not take seed — "" when it will. "too_poor" / "too_dry" /
         // "too_poor_and_too_dry", resolved server-side through the SAME `RungSiteRequirement::refusal`

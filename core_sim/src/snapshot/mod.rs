@@ -895,7 +895,7 @@ mod indexed_diff_tests {
 
 #[cfg(test)]
 mod tests {
-    use crate::intensification::NO_CREW_ON_THIS_ACTIVITY;
+
     /// One animal, for the snapshot fixtures (slice 8). These tests assert what crosses the wire, not
     /// what a take pays, so the quantum is deliberately small enough never to bind.
     const SNAPSHOT_BODY_MASS: f32 = 1.0;
@@ -1375,6 +1375,7 @@ mod tests {
             kit_levers: &kit_levers,
             bench: None,
             craft_inputs: crate::snapshot::crafting::builtin_craft_inputs(),
+            build_sources: crate::snapshot::population::empty_build_sources(),
         })
     }
 
@@ -1393,9 +1394,7 @@ mod tests {
                         species: None,
                     },
                     workers: 10,
-                    improvement: None,
                     kit: None,
-                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
                 },
                 LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -1403,11 +1402,10 @@ mod tests {
                         floor: 0.5,
                     },
                     workers: 5,
-                    improvement: None,
                     kit: None,
-                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
                 },
             ],
+            build_queue: Vec::new(),
             last_yields: vec![
                 SourceYield {
                     // A staple gather: nothing anyone builds with, and no fodder crop in the basket.
@@ -1516,9 +1514,7 @@ mod tests {
                         species: Some("hay_grass".to_string()),
                     },
                     workers: 10,
-                    improvement: None,
                     kit: None,
-                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
                 },
                 LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -1526,11 +1522,10 @@ mod tests {
                         floor: 0.5,
                     },
                     workers: 5,
-                    improvement: None,
                     kit: None,
-                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
                 },
             ],
+            build_queue: Vec::new(),
             last_yields: vec![
                 SourceYield {
                     fodder: HAY_FODDER,
@@ -1588,10 +1583,9 @@ mod tests {
                     species: None,
                 },
                 workers: 10,
-                improvement: None,
                 kit: None,
-                improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
+            build_queue: Vec::new(),
             last_yields: Vec::new(),
             last_pen_feed_upkeep: 0.0,
             last_raid_forfeit: 0.0,
@@ -1631,14 +1625,13 @@ mod tests {
         let assignment = LaborAssignment {
             target,
             workers: 6,
-            improvement: None,
             kit: None,
-            improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
         };
         let state = labor_assignment_to_state(
             &assignment,
             &SourceYield::ZERO,
-            &crate::equipment_config::EquipmentConfig::builtin(),
+            NOTHING_QUEUED_HERE.to_string(),
+            assignment.kit_choice(&crate::equipment_config::EquipmentConfig::builtin()),
         );
         assert_eq!(state.floor, UNNAMED_FLOOR, "the floor crosses verbatim");
         // Only the outbound leg is asserted now. `labor_allocation_from_state` was the decoder,
@@ -1647,13 +1640,15 @@ mod tests {
         // for a test to call is the shape this arc removed, so the return leg went with it.
     }
 
-    /// **The two axes reach the wire as two fields** (issue #442): `policy` carries the stance and
-    /// `improvement` the build verb, `""` when there is none. A row that carried a build verb in
-    /// `policy` is now unrepresentable, which is the whole point — the client no longer has to
-    /// re-split one field into "is this a build or a stance?".
+    /// **The pressure and the BUILD reach the wire as two fields** (issue #442): `floor` carries the
+    /// stance and `improvement` what is being raised, `""` when nothing is.
+    ///
+    /// **The row no longer STORES the second one** (`docs/plan_standing_upkeep.md` §2.5) — the queue
+    /// is the declaration and the capture resolves it against the ground — so what this pins is that
+    /// the two still arrive as two fields and that an empty one is a real answer rather than an
+    /// omission.
     #[test]
-    fn the_stance_and_the_improvement_are_separate_wire_fields() {
-        use crate::components::Improvement;
+    fn the_pressure_and_the_build_are_separate_wire_fields() {
         let assignment = LaborAssignment {
             target: LaborTarget::Forage {
                 tile: UVec2::new(7, 9),
@@ -1661,37 +1656,39 @@ mod tests {
                 species: None,
             },
             workers: 6,
-            improvement: Some(Improvement::Cultivate),
             kit: None,
-            improvement_workers: 6,
         };
         let state = labor_assignment_to_state(
             &assignment,
             &SourceYield::ZERO,
-            &crate::equipment_config::EquipmentConfig::builtin(),
+            crate::components::Improvement::Cultivate
+                .as_str()
+                .to_string(),
+            assignment.kit_choice(&crate::equipment_config::EquipmentConfig::builtin()),
         );
         assert_eq!(state.floor, 0.15, "the pressure rides `floor`");
         assert_eq!(
             state.improvement, "cultivate",
-            "the build verb rides its own field — the two axes never share one"
+            "what is being raised rides its own field — the two axes never share one"
         );
 
         // A pure harvest says so with an empty string, not by omitting anything.
-        let harvesting = LaborAssignment {
-            improvement: None,
-            ..assignment
-        };
         let state = labor_assignment_to_state(
-            &harvesting,
+            &assignment,
             &SourceYield::ZERO,
-            &crate::equipment_config::EquipmentConfig::builtin(),
+            NOTHING_QUEUED_HERE.to_string(),
+            assignment.kit_choice(&crate::equipment_config::EquipmentConfig::builtin()),
         );
         assert_eq!(
             state.floor, 0.15,
             "…and the floor is untouched by the build axis"
         );
-        assert_eq!(state.improvement, "", "no build in flight");
+        assert_eq!(state.improvement, "", "nothing queued here");
     }
+
+    /// **The wire's word for "this band has nothing queued on this source"** — an empty token, which
+    /// is a real answer rather than an omission.
+    const NOTHING_QUEUED_HERE: &str = "";
 
     #[test]
     fn power_metrics_from_grid_tracks_totals() {

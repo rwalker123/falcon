@@ -695,12 +695,21 @@ static func _build_workforce_block(labor: HudBandLaborState) -> VBoxContainer:
         for key in merged:
             var model: Dictionary = merged[key]
             var workers := int(model.get("workers", 0))
-            build_workers += maxi(int(model.get(HudBandLaborState.BUILD_WORKERS_KEY, 0)), 0)
             match String(model.get("kind", "")):
                 SourceForecast.LABOR_KIND_FORAGE: forage_workers += workers
                 SourceForecast.LABOR_KIND_HUNT: hunt_workers += workers
+        # **THE BUILD SEGMENT IS THE `builders` ROLE**, the band zone's own reading one scale up
+        # (`docs/plan_standing_upkeep.md` §2.5): there is no per-source build crew to sum any more.
+        build_workers += int(labor.effective_role_workers(
+            band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))
+        # **ALL FOUR NON-BUILD ROLES, and the KEEPING PAIR was missing from this bar alone.** The band
+        # zone's twin has counted `agriculture` / `husbandry` since they landed; this one summed scout
+        # and warrior, so a faction whose bands keep anything lost those hands off a chart that is
+        # supposed to partition the same `working_age` its header sums.
         role_workers += int(labor.effective_role_workers(band, HudConst.LABOR_KIND_SCOUT).get("workers", 0)) \
-            + int(labor.effective_role_workers(band, HudConst.LABOR_KIND_WARRIOR).get("workers", 0))
+            + int(labor.effective_role_workers(band, HudConst.LABOR_KIND_WARRIOR).get("workers", 0)) \
+            + int(labor.effective_role_workers(band, HudConst.LABOR_KIND_AGRICULTURE).get("workers", 0)) \
+            + int(labor.effective_role_workers(band, HudConst.LABOR_KIND_HUSBANDRY).get("workers", 0))
         party_workers += labor.band_party_workers(band)
         bench_workers += labor.bench_workers(band)
     var segments: Array = []

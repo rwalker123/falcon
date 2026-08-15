@@ -85,6 +85,12 @@ const KIT_SCOUT_VANTAGE_KEY := "scout_vantage_range"
 ## HERE is decide applicability — see `kit_offer`.
 const KIT_BUILD_WORK_KEY := "build_work_per_worker"
 
+## **THE BUILD AXIS'S NEUTRAL — `0.0`, and NOT the multipliers' `1.0`.** It is a quantity of work a
+## tool takes off a job, so *no tool* is *no work*; reading the multipliers' neutral here would hand
+## every bare-handed crew a free work unit per worker off every build. The sim states the same split
+## on `EquipmentStat::neutral`.
+const BUILD_WORK_NONE := 0.0
+
 ## **HOW MANY OF THIS BAND'S WORKERS THIS KIT CAN ACTUALLY EQUIP FOR A BUILD** — the head count at or
 ## above which extra hands take no further work off a job. `0` (the neutral) means the kit carries
 ## nothing live that helps, which is every row but the handling gear's on the shipped roster.
@@ -98,6 +104,55 @@ const KIT_BUILD_WORK_KEY := "build_work_per_worker"
 ## resolved contribution for the crew that worked it this turn — a different question, and not one a
 ## stepper can move.
 const KIT_BUILD_SATURATING_CREW_KEY := "build_work_saturating_crew"
+
+## **WHICH FOOD WEB THE TWO AXES ABOVE ARE FOR** — `BUILD_BRANCH_PLANT` / `BUILD_BRANCH_ANIMAL`, and
+## `BUILD_BRANCH_NONE` for a kit carrying no build tool at all. It rides BOTH the roster's fresh
+## `KitOption` row and the band's own resolved `kit_tiers` row, because it is a property of the tool
+## and a spent tool declares nothing.
+##
+## **THE THREE BUILD FIELDS ARE ONE READING** (`equipment.md` → "A `build_work` EFFECT MUST DECLARE
+## ITS `branch`"). A hoe takes 8.5 off a Cultivate and NOTHING off a Tame; hurdles do the reverse. So
+## a worth read without its branch is a number that is real and simply not real HERE — the same
+## discipline `attack_max_body_mass` imposes on `attack`, and the same failure if it is skipped: a
+## sheet quoting the hurdles' contribution against a garden promises a build that cannot land.
+const KIT_BUILD_BRANCH_KEY := "build_work_branch"
+
+## The ladder's own two webs, spelled as the wire spells them (`RungBranch`), and the empty answer
+## that is a real reading rather than a gap: a kit with no build tool serves NO branch, which is why
+## `none` can never be the derived builders kit and is never greyed for the wrong one either.
+const BUILD_BRANCH_PLANT := "plant"
+const BUILD_BRANCH_ANIMAL := "animal"
+const BUILD_BRANCH_NONE := ""
+
+## **WHICH WEB A LABOR KIND'S BUILDS BELONG TO.** The web a queue entry sits on is a fact about the
+## SOURCE — a patch is plant, a herd is animal — which is exactly how `systems::labor` stamps an
+## entry, so a compose sheet knows its entry's branch from the job it is composing and needs no new
+## wire field to ask.
+const LABOR_KIND_BUILD_BRANCHES := {
+	SourceForecast.LABOR_KIND_FORAGE: BUILD_BRANCH_PLANT,
+	SourceForecast.LABOR_KIND_HUNT: BUILD_BRANCH_ANIMAL,
+}
+
+## The build branch of a source worked on this labor kind; `BUILD_BRANCH_NONE` for a kind that raises
+## nothing (scout, warrior, and the builders row itself, which stands on no source).
+static func build_branch_for_kind(kind: String) -> String:
+	return String(LABOR_KIND_BUILD_BRANCHES.get(kind, BUILD_BRANCH_NONE))
+
+## **THE BRANCH AS A PLAYER SAYS IT** — `a crop build` / `an animal build`, for the reason line on a
+## greyed builders kit. The table lives here rather than in the vocabulary module because a leaf may
+## not read a const off a module that reads one off it (`const` initializers evaluate at class load,
+## and that cycle fails to load the client); the WORDS are still `HudComposeVocab`'s.
+##
+## An unrecognised branch reads back as itself — the wire's own token is a poorer sentence than these
+## two and a better one than a blank.
+static func build_branch_noun(branch: String) -> String:
+	match branch:
+		BUILD_BRANCH_PLANT:
+			return HudComposeVocab.KIT_BUILD_BRANCH_PLANT_NOUN
+		BUILD_BRANCH_ANIMAL:
+			return HudComposeVocab.KIT_BUILD_BRANCH_ANIMAL_NOUN
+		_:
+			return branch
 
 ## **WHAT THE KIT DOES TO THE QUARRY'S RETREAT** — a multiplier on the species' own wariness, so the
 ## SPECIES decides what a noisy approach costs (`equipment.md`). Neutral at `1.0`; a trap ships `0`.
@@ -199,6 +254,28 @@ const JOB_FORAGE := SourceForecast.LABOR_KIND_FORAGE
 const JOB_SCOUT := "scout"
 const JOB_WARRIOR := "warrior"
 
+## **THE BUILDING ROLE IS A JOB TOO** (`docs/plan_standing_upkeep.md` §2.5). A build's gear offset used
+## to ride the SOURCE ROW's kit — a Corral was priced off the hunt row's husbandry gear — and it is
+## read off this role's own row now that the build crew has left the tile.
+##
+## **THERE ARE TWO BUILDERS KITS, ONE PER WEB — `hurdling` (hurdles) and `tillage` (hoes)** — and
+## `husbandry` is not one of them any more: it kept `hunt`, the one job it can actually do, and gave
+## up `builders` (`equipment.md` → "THE TWO BUILDERS KITS CARRY NO CARRY GEAR"). The claim this
+## comment used to carry — *`husbandry` is the ONE kit whose items declare `build_work`* — was the
+## whole reason an animal-handling bundle was offered for a Cultivate, and it is false in two
+## directions now: `hoes` declare the axis too, and the husbandry kit still declares it (it carries
+## hurdles) while being unable to take the builders job at all.
+##
+## ⚠ **THE WIRE NAMES NO DEFAULT FOR IT, AND THE ROW STATES THE DERIVED ANSWER INSTEAD.**
+## `SubsistenceSection` publishes `defaultHunt` / `Forage` / `Scout` / `WarriorKitId` and no builders
+## twin, so `HudBandLaborState.default_kit_id` answers `""` here and nothing is marked `(default)` —
+## the honest statement of what the client knows. What the card opens on is the band's OWN `builders`
+## row (`_role_kit_id`), which the sim resolves **per queue entry** before publishing
+## (`equipment.md` → "THE BUILDERS' KIT IS DERIVED PER QUEUE ENTRY"): a kit named on the row wins,
+## `none` included, and otherwise the roster answers for the head entry's web. So that row is a live
+## fact about what the pool is holding this turn rather than a stored id.
+const JOB_BUILDERS := "builders"
+
 ## **THE AXIS EACH BAND-WIDE ROLE IS PRICED ON** — a Scout's kit buys what a posted vantage can make
 ## out, a Warrior's buys the `attack` the camp is defended at. Only the two roles with no source to
 ## work appear: a hunt or forage crew's carry axis is a property of the SOURCE (`carry_axis_for`)
@@ -206,6 +283,13 @@ const JOB_WARRIOR := "warrior"
 const ROLE_AXES := {
 	JOB_SCOUT: KIT_SCOUT_VANTAGE_KEY,
 	JOB_WARRIOR: KIT_ATTACK_KEY,
+	# **AND THE BUILD AXIS, which the builders role card gave a home**
+	# (`docs/plan_standing_upkeep.md` §2.5). `KIT_BUILD_WORK_KEY`'s own note said it had no hint-line
+	# home; that was true while no card was priced on it, and the moment the pool became a role card
+	# the omission stopped being a decision and became a WRONG READOUT — `build_kit_row` falls through
+	# to the compose sheets' `tier_hint` for a job this table does not name, so a Builders card read
+	# `attack 1.0 · carry 12.0 per hunter`, a hunter's haul quoted on a builder's row.
+	JOB_BUILDERS: KIT_BUILD_WORK_KEY,
 }
 
 ## Is this a BAND-WIDE role — one standing slot, no source, priced on `ROLE_AXES`? The one test, so a
@@ -328,13 +412,14 @@ static func default_kit_for(job: String, source: Dictionary, job_default_id: Str
 ##
 ## **`kit_offer` is asked at the FRESH tier, so this list never reshuffles as gear wears** — see there.
 static func resolve_selection(kits: Array, job: String, default_id: String,
-		composed_id: String, quarry: Dictionary = {}, prefix: String = "") -> String:
+		composed_id: String, quarry: Dictionary = {}, prefix: String = "",
+		build_branch: String = BUILD_BRANCH_NONE) -> String:
 	var offered := kits_for_job(kits, job)
 	if offered.is_empty():
 		return NO_KIT_ID
 	var selectable: Array = []
 	for kit_variant in offered:
-		if kit_is_offered(kits, kit_variant, job, quarry, prefix):
+		if kit_is_offered(kits, kit_variant, job, quarry, prefix, build_branch):
 			selectable.append(kit_variant)
 	# A roster whose every hunt kit is withheld cannot happen while it carries a null kit (one is
 	# always offered), but a config is free to drop that entry — and a picker with no entries at all
@@ -664,6 +749,15 @@ static func kit_supplies_any(kit: Dictionary) -> bool:
 ##    sheet used to price that party a real take, and it brought home exactly nothing.
 ## 2. **A kit whose contribution is an axis this source cannot read.** `pen_carry` is read on a
 ##    CORRALLED herd and nowhere else, so a kit supplying it adds nothing to a wild hunt.
+## 3. **A BUILDERS kit whose tool serves the other web.** `build_branch` is the entry's own web and a
+##    kit's `build_work_branch` is its tool's; outside its branch the contribution is the neutral
+##    `0.0`, so the kit is exactly as inapplicable as a snare on a Red Deer. This rule needs no
+##    quarry — a builders row stands on no source — which is why it is answered before the two above
+##    and off its own parameter. **Its live reader is `resolve_selection`'s selectable list, not a
+##    picker**: the Builders role card mounts no control (`band-city-panel.md`), so what this rule
+##    does today is keep that card's gear line and the build queue's header off a kit the head
+##    entry's web cannot use. The withheld REASON it composes has no display surface until the
+##    per-entry picker lands on the queue row.
 ##
 ## **THE PEN RULE IS ASKED FIRST, so a kit reads the same reason on every quarry.** The husbandry kit
 ## fails both tests on a Red Deer (it carries no weapon either), and *"what it adds is only used on a
@@ -681,7 +775,21 @@ static func kit_supplies_any(kit: Dictionary) -> bool:
 ## because a picker that reshuffled between turns would leave the player unable to tell a kit that
 ## *cannot* work on this animal from one that has merely worn out.
 static func kit_offer(kits: Array, kit: Dictionary, job: String, quarry: Dictionary,
-		prefix: String) -> Dictionary:
+		prefix: String, build_branch: String = BUILD_BRANCH_NONE) -> Dictionary:
+	# **THE BUILDERS ROW HAS ITS OWN APPLICABILITY QUESTION, and it is the same one asked of a snare
+	# against a Red Deer**: can what this kit carries change the outcome of the job in front of it? A
+	# hoe takes nothing off a `Tame` and hurdles take nothing off a `Cultivate`, so a builders kit
+	# serving the other web is greyed WITH ITS REASON rather than hidden — a player should learn that
+	# a hoe is not for stock, and invisibility is what let the wrong tool be offered in the first
+	# place. `none` is never withheld here for the reason it is never withheld anywhere: it carries
+	# nothing, so there is no job it can be inapplicable *to*.
+	if job == JOB_BUILDERS:
+		if kit.is_empty() or build_branch == BUILD_BRANCH_NONE or not kit_supplies_any(kit):
+			return _kit_offered()
+		if kit_serves_build_branch(kits, kit, build_branch):
+			return _kit_offered()
+		return _kit_withheld(HudComposeVocab.KIT_WITHHELD_REASON_BUILD_BRANCH_FORMAT
+			% build_branch_noun(build_branch))
 	# No quarry in hand and no hunt to have: the forage sheets, and a sheet composed before the wire
 	# named a source. Nothing to be inapplicable to.
 	if job != JOB_HUNT or kit.is_empty() or quarry.is_empty():
@@ -719,8 +827,22 @@ static func kit_offer(kits: Array, kit: Dictionary, job: String, quarry: Diction
 
 ## The boolean half of the verdict, for callers with nothing to say about the reason.
 static func kit_is_offered(kits: Array, kit: Dictionary, job: String, quarry: Dictionary,
-		prefix: String) -> bool:
-	return bool(kit_offer(kits, kit, job, quarry, prefix)[OFFER_OFFERED_KEY])
+		prefix: String, build_branch: String = BUILD_BRANCH_NONE) -> bool:
+	return bool(kit_offer(kits, kit, job, quarry, prefix, build_branch)[OFFER_OFFERED_KEY])
+
+## **DOES THIS KIT'S BUILD TOOL SERVE THIS WEB?** — the fresh-tier pair read as one answer: a worth
+## above the neutral AND a branch that matches. Either half alone is a lie about a two-kit roster —
+## the worth alone offers hurdles for a garden, the branch alone offers a kit whose tool has no
+## contribution to make at all.
+##
+## **RESOLVED OFF THE ROSTER, never off the band's worn row**, like every other applicability test
+## here: which web a kit serves is a property of (kit × roster), and a band whose hoes are spent has
+## picked the right kit and worn it out, which is a different sentence from picking the wrong one.
+static func kit_serves_build_branch(kits: Array, kit: Dictionary, branch: String) -> bool:
+	if branch == BUILD_BRANCH_NONE:
+		return false
+	return kit_uses(kits, kit, KIT_BUILD_WORK_KEY) \
+		and String(kit.get(KIT_BUILD_BRANCH_KEY, BUILD_BRANCH_NONE)) == branch
 
 ## Freshly built each call rather than returned from a `const` Dictionary — a `const` container is not
 ## deeply read-only in GDScript, so one caller mutating the shared verdict would poison every later
@@ -898,18 +1020,101 @@ const ROLE_GEAR_STATED_KEY := "stated"
 ## that lands sooner than it can. `band_kit_tiers` is the one reader of that row, which is what keeps
 ## this and the band panel's gear line from coming from two different ones.
 ##
+## **THE BRANCH IS PART OF THE READING, NOT A FILTER ON TOP OF IT.** A row whose
+## `build_work_branch` disagrees with the build being priced contributes the neutral `0.0`, exactly
+## as the sim's `EquipmentEffect::serves_branch` does — so a sheet handed the wrong web's kit quotes
+## an ungeared build rather than the hurdles' 8.5 against a garden. `BUILD_BRANCH_NONE` asks for no
+## branch test at all, which is what a caller with no build in front of it wants.
+##
 ## `{}` for a kit this band publishes no row for, which `SourceForecast.build_turns_at` reads as the
 ## ungeared case — the same direction `TIER_ABSENT` errs in, and the honest answer for a wire this
 ## client cannot read.
-static func build_gear(band: Dictionary, kit_id: String) -> Dictionary:
+static func build_gear(band: Dictionary, kit_id: String,
+		build_branch: String = BUILD_BRANCH_NONE) -> Dictionary:
 	var resolved := band_kit_tiers(band, kit_id)
 	if resolved.is_empty():
+		return {}
+	if build_branch != BUILD_BRANCH_NONE \
+			and String(resolved.get(KIT_BUILD_BRANCH_KEY, BUILD_BRANCH_NONE)) != build_branch:
 		return {}
 	return {
 		SourceForecast.BUILD_GEAR_PER_WORKER: float(resolved.get(KIT_BUILD_WORK_KEY, TIER_ABSENT)),
 		SourceForecast.BUILD_GEAR_SATURATING_CREW: int(resolved.get(
 			KIT_BUILD_SATURATING_CREW_KEY, SourceForecast.BUILD_CREW_NONE)),
 	}
+
+## **THE BUILDERS KIT ONE QUEUE ENTRY IMPLIES** — the client's half of `equipment.md`'s "THE
+## BUILDERS' KIT IS DERIVED PER QUEUE ENTRY", and the ONE precedence, so the compose sheets' gear
+## term and the Builders card's picker cannot answer it differently.
+##
+## 1. **The kit the band's `builders` row publishes, where its tool serves THIS entry's web.** That
+##    row is already the sim's resolved answer — a kit named on the row, else the roster's answer for
+##    the HEAD entry's branch — so taking it whenever it fits is how the client reads the answer
+##    rather than re-deriving one.
+## 2. **A row kit that does not serve the HEAD's web either is a PIN, and it is kept.** The
+##    derivation cannot have produced it — it would have answered for the head's own branch — so the
+##    player named it, and a named kit wins for every entry in the queue. This is what preserves
+##    sending the pool out bare (`none`): with anything queued, a published `none` can only be a
+##    deliberate one, and the entry is priced at no gear rather than at the tool the roster would
+##    have handed it.
+## 3. **Otherwise the roster's own answer for this branch** (`build_kit_for_branch`), which is what
+##    the sim will resolve when this entry reaches the head of the queue. Without this step the first
+##    Cultivate a player ever declares would be quoted bare-handed — the queue is empty until they
+##    commit, so the row publishes `default_kits.builders` (`none`) — and the estimate would jump the
+##    moment the decision was already taken.
+## 4. **Otherwise the published row anyway**, including `none`: a roster with no kit for this web
+##    leaves the pool on whatever it is holding, which is the sim's own fall-back.
+##
+## ⚠ **ONE CASE REMAINS AMBIGUOUS AND IS QUOTED OPTIMISTICALLY, and the wire is why.** The `builders`
+## row publishes the RESOLVED kit and not the stored one, so a player who pinned the kit the HEAD's
+## own web would have derived anyway — `hurdling` while a Tame leads the queue — is indistinguishable
+## here from one who named nothing. Rule 3 then prices a plant entry at `tillage` where the sim will
+## keep the pin and take nothing off it. Closing it needs the stored id (or a "was it named" flag)
+## beside the resolved one on the wire; every other combination is resolved above.
+static func builders_kit_for(kits: Array, row_kit_id: String, branch: String,
+		head_branch: String = BUILD_BRANCH_NONE) -> String:
+	var row_kit := kit_by_id(kits, row_kit_id)
+	if not row_kit.is_empty() and kit_serves_build_branch(kits, row_kit, branch):
+		return row_kit_id
+	if head_branch != BUILD_BRANCH_NONE \
+			and build_kit_for_branch(kits, head_branch) != NO_KIT_ID \
+			and not kit_serves_build_branch(kits, row_kit, head_branch):
+		return row_kit_id
+	var derived := build_kit_for_branch(kits, branch)
+	return derived if derived != NO_KIT_ID else row_kit_id
+
+## **THE ROSTER'S OWN ANSWER FOR ONE WEB** — the earliest `builders` entry, in roster order, whose
+## build tool serves `branch` at the fresh tier. `NO_KIT_ID` when the roster carries none, which is a
+## real answer: nothing on it helps that web build.
+##
+## **The sim's `EquipmentConfig::build_kit_for_branch`, asked of the published roster** — same order,
+## same fresh-tier test, and the same reason it is a lookup rather than a table: ⛔ no `web → kit id`
+## match is spelled anywhere, so a third build tool is a roster edit on both halves.
+static func build_kit_for_branch(kits: Array, branch: String) -> String:
+	if branch == BUILD_BRANCH_NONE:
+		return NO_KIT_ID
+	for kit_variant in kits_for_job(kits, JOB_BUILDERS):
+		if kit_serves_build_branch(kits, kit_variant, branch):
+			return String((kit_variant as Dictionary).get(KIT_ID_KEY, NO_KIT_ID))
+	return NO_KIT_ID
+
+## **THE ROSTER'S BARE ENTRY FOR ONE JOB — the kit that carries nothing.** `kit_supplies_any` is the
+## derived reading of "the null kit" (`item_ids` empty), which is why nothing here spells the id
+## `none`; a future kit with an empty `uses` is the same thing and gets the same answer.
+##
+## **IT EXISTS FOR THE ROLE CARD THAT HAS NOTHING TO DERIVE.** `resolve_selection`'s terminal
+## fall-through is `selectable[0]`, i.e. ROSTER ORDER — right for a job whose default is always
+## resolvable, and wrong for the `builders` row, where "nothing is chosen and nothing can be derived"
+## is a real and common state (a band with an empty build queue). Falling to roster order there
+## presents `hurdling` as a decision the player never made, and pins the pool to the animal web the
+## moment they touch the stepper. The honest face is the bare kit.
+##
+## `NO_KIT_ID` when the job lists no bare entry at all, which every caller renders as no selection.
+static func bare_kit_id(kits: Array, job: String) -> String:
+	for kit_variant in kits_for_job(kits, job):
+		if not kit_supplies_any(kit_variant as Dictionary):
+			return String((kit_variant as Dictionary).get(KIT_ID_KEY, NO_KIT_ID))
+	return NO_KIT_ID
 
 ## **DOES THIS KIT SUPPLY THIS AXIS AT ALL?** — a kit supplies an axis exactly when its FRESH tier
 ## there beats the roster's bare-handed one. It answers an APPLICABILITY question only — *"can this
@@ -1019,6 +1224,25 @@ static func role_hint(kits: Array, kit: Dictionary, band: Dictionary, job: Strin
 				DetailFormat.kit_item_label(item_id), DetailFormat.kit_condition_face(band, item_id)])
 	return HudComposeVocab.KIT_HINT_SEPARATOR.join(parts)
 
+## **A ROLE CARD'S READ-ONLY GEAR LINE — the kit's NAME and then what it buys**, e.g.
+## `Tillage kit · 8.5 work off a build, per builder · Hoes 100`.
+##
+## **IT CARRIES THE NAME BECAUSE THERE IS NO PICKER LEFT TO CARRY IT.** `role_hint` alone states the
+## effect and the condition of the gear; the kit those are true OF was the picker's own face, so a
+## card that drops the control and keeps only the hint stops naming the tool its pool is holding.
+## Joined with `KIT_HINT_SEPARATOR`, so the name reads as the first clause of one line rather than as
+## a second row competing with the description beneath it.
+##
+## **A KIT WITH NOTHING TO SAY IS ITS NAME ALONE.** The bare entry takes nothing off a build and
+## carries no item, so `role_hint` is empty and this reads `No kit` — the same face the build queue's
+## own header states for that band, both being `BandPanelController._role_kit_id`'s one answer.
+static func role_gear_line(kits: Array, kit_id: String, band: Dictionary, job: String) -> String:
+	var display := display_name_for_id(kits, kit_id)
+	var hint := role_hint(kits, kit_by_id(kits, kit_id), band, job)
+	if hint == "":
+		return display
+	return HudComposeVocab.KIT_HINT_SEPARATOR.join([display, hint])
+
 ## What this role's tier BUYS, in words. **A vantage is a DISTANCE and the camp's attack is a small
 ## whole number**, so each takes the rounding the Gear popover already gives it — the vantage its own
 ## (the sim reveals in whole tiles), the attack the popover's shared whole-number face — and neither
@@ -1031,6 +1255,14 @@ static func _role_effect_phrase(job: String, tier: float) -> String:
 		JOB_WARRIOR:
 			return DetailFormat.KIT_ROLE_WARRIOR_ATTACK_FORMAT % String.num(
 				tier, DetailFormat.KIT_CONDITION_DECIMALS)
+		JOB_BUILDERS:
+			# **A NEUTRAL CONTRIBUTION STATES NOTHING**, the "absent terms render no line" convention:
+			# `none` — which is the builders' own default — takes nothing off a build, and `0 work off a
+			# build` costs a line to say so. The condition clauses beside it still render, so a kit that
+			# grants no build work but is wearing out still says which items it is spending.
+			if tier <= BUILD_WORK_NONE:
+				return ""
+			return DetailFormat.KIT_ROLE_BUILDERS_BUILD_FORMAT % DetailFormat.format_work_units(tier)
 	return ""
 
 ## One item's condition clause, appended only where there is something true to say: the band has to

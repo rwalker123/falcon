@@ -471,6 +471,11 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
         if SourceForecast.build_verb(tile_info, prefix, SourceForecast.SOURCE_KIND_FORAGE,
                 unstaffed_rung) == SourceForecast.IMPROVEMENT_CULTIVATE:
             lines.append_array(DetailFormat.build_gear_lines(tile_info, prefix))
+            # …and, on a BLOCKED queue alone, what frees it. Hung off the rung in flight for the
+            # gear line's own reason: the countdown is per SOURCE, so its remedy belongs on the one
+            # row that countdown is about.
+            lines.append_array(DetailFormat.build_blocked_lines(tile_info, prefix,
+                SourceForecast.SOURCE_KIND_FORAGE))
     # PLANT RUNG 3 — the Field, on its OWN row beside Cultivation. The patch carries TWO independent
     # build meters (a Field may stand on ground that was never tended: seed travels, so `Sow` needs no
     # prior patch), so they are two rows, never one merged "progress" number. This is the per-source
@@ -494,11 +499,14 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
         if SourceForecast.build_verb(tile_info, prefix, SourceForecast.SOURCE_KIND_FORAGE,
                 unstaffed_rung) == SourceForecast.IMPROVEMENT_SOW:
             lines.append_array(DetailFormat.build_gear_lines(tile_info, prefix))
+            lines.append_array(DetailFormat.build_blocked_lines(tile_info, prefix,
+                SourceForecast.SOURCE_KIND_FORAGE))
     # **WHAT THIS PATCH IS ABOUT TO LOSE, and how long it has** — the detail behind whichever rung row
     # above it is marked. It sits under both rather than beside either because the shortfall is a
     # property of the SOURCE, and a patch whose keeping is being paid prints no row at all, which is
     # what makes the silence readable.
-    lines.append_array(DetailFormat.at_risk_lines(tile_info, prefix))
+    lines.append_array(DetailFormat.at_risk_lines(tile_info, prefix,
+        SourceForecast.SOURCE_KIND_FORAGE))
     return lines
 
 ## The FORAGING row (or nothing) — the human-edible web's stock over its ceiling. The exact twin of

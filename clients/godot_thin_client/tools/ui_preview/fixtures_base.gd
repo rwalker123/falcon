@@ -148,7 +148,7 @@ const BUILD_TURNS_REMAINING := 11
 
 ## **NO PLANT ITEM DECLARES THE BUILD STAT YET** (issue #539 is the hoe), so a plant build's gear
 ## contribution is honestly `0` and the tile card renders no gear line. The ANIMAL fixtures carry a
-## real one — `husbandry_gear` ships 8.5 per equipped keeper — which is where that readout is judged.
+## real one — `hurdles` ships 8.5 per equipped keeper — which is where that readout is judged.
 const PLANT_BUILD_WORK_FROM_GEAR := 0.0
 
 ## **THE TERMS THE COMPOSE SHEET EVALUATES ITS OWN ESTIMATE FROM**, beside the sim's answer above.
@@ -198,6 +198,12 @@ static func price_plant_build(tile: Dictionary, turns: int = BUILD_TURNS_REMAINI
 	# now, per SOURCE rather than per rung, and it is what decides whether a build climbs, holds or
 	# slides back.
 	tile["patch_meter_rot_per_turn"] = maxf(rot, PLANT_METER_ROT_NONE)
+	# **AND WHERE IT SITS IN THE BAND'S QUEUE** (`docs/plan_standing_upkeep.md` §4.6b). A priced build
+	# is one the sim publishes a countdown for, and it publishes one only for a source some band has
+	# queued — so a fixture that priced a build and left the position at the sentinel would stage a
+	# countdown belonging to nothing, and the sheet would read it as an entry the pool is NOT on.
+	# `unbuilt` below puts it back to the sentinel, a patch nobody has declared being in no queue.
+	tile["patch_build_queue_position"] = SourceForecast.BUILD_QUEUE_HEAD
 	return tile
 
 ## **A PATCH NOBODY IS BUILDING — both plant meters at zero, re-priced.**
@@ -225,7 +231,11 @@ static func unbuilt(tile: Dictionary) -> Dictionary:
 	tile["patch_upkeep_workers_needed"] = 0
 	tile["patch_has_neglect_grace"] = false
 	tile["patch_neglect_grace_remaining"] = 0
-	return price_plant_build(tile)
+	tile = price_plant_build(tile)
+	# …and it is in NO band's queue, nothing having been declared on it. Set after the pricing above,
+	# which stamps the head position every priced build gets.
+	tile["patch_build_queue_position"] = SourceForecast.NOT_IN_ANY_BUILD_QUEUE
+	return tile
 
 static func food_tile_fixture() -> Dictionary:
 	var tile := {

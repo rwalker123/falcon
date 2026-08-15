@@ -323,7 +323,9 @@ entirely from the larder) and becomes **a piece of fenced land the herd grazes**
 investment worked off over turns, reusing the corral build ladder — no materials economy:
 
 - **`Command::ExtendPen { faction, target_x, target_y }`** (full proto/runtime/text/server plumbing —
-  `ExtendPenCommand` proto field **39**, verb `extend_pen <faction> <x> <y> <workers>`), routed like
+  `ExtendPenCommand` proto field **39** with its `workers` field `reserved`, verb
+  `extend_pen <faction> <x> <y>` — it **queues** the ring as `BuildJob::ExtendPen` and names no crew,
+  which the band's `builders` pool raises when it reaches the head), routed like
   `Corral`
   through `handle_extend_pen`. It reuses `CommandEventKind::Corral` (one kind for the pen's whole life).
   Validation (each with a clear rejection): a herd **penned exactly at that tile** (`corralled_at`, the

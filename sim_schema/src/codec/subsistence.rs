@@ -314,6 +314,9 @@ fn create_kits<'a>(
             .map(|item| builder.create_string(item))
             .collect();
         let item_ids = builder.create_vector(&item_ids);
+        // Which web this kit's build gear serves — `""` for a kit carrying none, which is most of
+        // the roster.
+        let build_work_branch = builder.create_string(&state.build_work_branch);
         entries.push(fb::KitOption::create(
             builder,
             &fb::KitOptionArgs {
@@ -336,6 +339,7 @@ fn create_kits<'a>(
                 exposure: state.exposure,
                 buildRate: state.build_rate,
                 buildWorkPerWorker: state.build_work_per_worker,
+                buildWorkBranch: Some(build_work_branch),
             },
         ));
     }
@@ -509,6 +513,10 @@ fn create_herds<'a>(
                 tameUpkeepDemand: herd.tame_upkeep_demand,
                 corralUpkeepDemand: herd.corral_upkeep_demand,
                 meterRotPerTurn: herd.meter_rot_per_turn,
+                // Where this herd sits in the winning band's queue — read as one set with
+                // `buildTurnsRemaining` and `buildWorkFromGear`, which is what makes a chained date
+                // legible (docs/plan_standing_upkeep.md 4.6b).
+                buildQueuePosition: herd.build_queue_position,
             },
         );
         entries.push(entry);
@@ -607,6 +615,8 @@ fn create_forage_patches<'a>(
                 cultivationUpkeepDemand: patch.cultivation_upkeep_demand,
                 fieldUpkeepDemand: patch.field_upkeep_demand,
                 meterRotPerTurn: patch.meter_rot_per_turn,
+                // The plant twin — see the herd row above.
+                buildQueuePosition: patch.build_queue_position,
             },
         );
         entries.push(entry);

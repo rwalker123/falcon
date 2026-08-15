@@ -202,23 +202,42 @@ exactly the keepers it always asked for (`every_species_asks_for_the_keepers_it_
 >    with no growth it never comes back above it;
 > 4. `systems::labor::crew_is_working_the_source` reads that room — `max(0, B − floor·K)` — as `0`, so
 >    the `Tame`'s own `eligible` goes false;
-> 5. `RungDef::build_supply` answers `None`, and the countdown publishes
->    `NO_BUILD_TURNS_ESTIMATE` (**`-1`**) — *"there is no answer"* — for as long as it lasts, while the
->    meter sits frozen and the flock bleeds away underneath it.
+> 5. `RungDef::build_supply` answers `None`, and — with the band's `builders` pool **staffed and
+>    standing on this entry** — the countdown publishes `BUILD_QUEUE_BLOCKED` (**`-4`**), *"the queue
+>    is stuck here"*, for as long as it lasts, while the meter sits frozen and the flock bleeds away
+>    underneath it. **Every entry behind it in that band's queue publishes `-4` too**, because
+>    nothing below a head that never finishes finishes either.
+>
+> **`-4` RATHER THAN `-1` IS THE WHOLE POINT OF THE SENTINEL** (`docs/plan_standing_upkeep.md`
+> §4.6b). `-1` is the *absence* of an answer and renders as **no line at all** — which is exactly the
+> silence this state must not be read as, on the one failure in the game whose remedy the player
+> cannot guess. A pool with nobody on it still reads `-1`: the blocked reading is about a
+> **committed** pool getting nowhere, and with no commitment there is nothing to report on.
 >
 > **THE REMEDY IS `assign_labor <faction> <band> husbandry <n>`, and nothing on the build reaches
-> it.** Adding builders, changing the verb and re-issuing the order all leave the room at zero. Step
-> 4 is why: it is an **eligibility** stall, not a balance one, so no term the countdown is struck
-> from — `build_work`, the rot, the keeping share — can see it. **`meterRotPerTurn` is `0` here and
-> honestly so**: neither animal rung declares a `meter_decay`, so nothing is eating the meter; what
-> is being lost is the *herd*.
+> it.** Adding builders, re-ordering the queue and re-issuing the verb all leave the room at zero.
+> Step 4 is why: it is an **eligibility** stall, not a balance one, so no term the countdown is
+> struck from — `build_work`, the rot, the keeping share — can see it. **`meterRotPerTurn` is `0`
+> here and honestly so**: neither animal rung declares a `meter_decay`, so nothing is eating the
+> meter; what is being lost is the *herd*. A surface showing `-4` must therefore pair it with this
+> herd's own `upkeepShortfall` / `neglectGraceRemaining`, which are where the sentence lives.
 >
 > **The plant web does not have this**, and the difference is not the predicate. A patch nobody
 > gathers regrows toward `K`, so its escapement room is large, its gate stays open, and an abandoned
 > half-built meter publishes an honest `-3`
 > (`build_turns_on_the_wire.rs::an_abandoned_half_built_patch_publishes_rotting_and_a_kept_one_holding`).
+> The plant web reaches `-4` only through a rung's *other* gates — an unlearned knowledge, a species
+> nothing in the basket can climb — which `core_sim/tests/build_queue.rs`'s blocked-head arm stages
+> and then **un**-stages, because a test that only ever sees the failure passes with the remedy
+> broken.
 > It is the **hunters' draw plus the suppressed regrowth together** that pins an animal source at its
-> floor; neither alone would.
+> floor; neither alone would. **Escaping it is not symmetric** — lifting the suppression is enough on
+> its own. Restoring the keeping restores `regrow_biomass`, and the regrowth outruns a
+> floor-respecting take, so the flock climbs back above `floor · K`, the room returns and the gate
+> opens **with the hunt row still at full strength**. Measured on
+> `build_queue.rs::the_animal_webs_escapement_stall_publishes_minus_four_beside_its_shortfall`:
+> 7–14 turns to a real countdown with the hunters left in place, indistinguishable from the same arm
+> with the hunters taken off, which is why the surface can name the keeping as the whole remedy.
 
 > #### THE HERD'S UPKEEP DEMAND *FALLS* AS AN UNKEPT FLOCK BLEEDS — a readout hazard, not a bug
 >
@@ -340,13 +359,15 @@ gated, **paid** verb, so both food webs read the same:
   whatever floor the crew holds, so a herd being tamed is still being hunted at that floor. It emits no
   `huntTripEstimates` row, because an expedition's mission carries a **floor** and therefore
   cannot name it at all.
-- **The investment is the keepers on the verb.** `tame` names its own crew, and those hands are not
-  hunting — that, and nothing else, is what a Tame costs (`docs/plan_standing_upkeep.md` §2.2). The
+- **The investment is the band's builders pool.** `tame` names no crew — it appends a queue entry
+  (`docs/plan_standing_upkeep.md` §2.5) — and the hands that raise it, when this herd reaches the
+  head of that queue, are hands that are not hunting. That, and nothing else, is what a Tame costs. The
   rung's `yield_fraction_while_building` is **retired**: the hunters beside the build carry exactly
   what they carried before, so the price is the same statement at every staffing, where the dip's
   depended on whether the herd's own escapement was binding the crew.
   `domestication_progress` accrues that crew's output in **work units** —
-  `improvement_workers × PER_WORKER_OUTPUT`, **no floor term** (a build crew is not pulling on the
+  the band's **builders pool** × `PER_WORKER_OUTPUT`, and only while this herd is the **head** of
+  that band's build queue, **no floor term** (a build crew is not pulling on the
   herd) — against a job costing
   `work_cost × the species' taming_cost_multiplier` (**50 units for a rabbit, 250 for a Steppe
   Runner**), via the shared `RungDef::build_accrual` / `build_cost` seam. **The keepers' KIT is not
@@ -377,8 +398,9 @@ gated, **paid** verb, so both food webs read the same:
   is still cleared each turn so it can't go stale, but its consumer (the retired decay-sparing) is gone.
   `taming_cost_multiplier` now prices only the `Tame` *job*, never a decay. **Distinct from an ordinary
   hunt at any other floor**: a plain hunt *harvests* a herd; only `Tame` raises the taming meter.
-- **`tame <faction_id> <herd_id> <workers>` command** (`handle_tame`; `TameCommand` proto field **40**,
-  `CommandEventKind::Tame`) — **sets the `Tame` improvement** on the bands already hunting the herd,
+- **`tame <faction_id> <herd_id>` command** (`handle_tame`; `TameCommand` proto field **40**, its
+  `workers` field `reserved`, `CommandEventKind::Tame`) — **queues the `Tame`** on the bands already
+  hunting the herd,
   the command form of the client's checkbox (issue #442: the floor beside it is left alone). It **tames nothing outright**. It targets a **herd id**
   (not a tile like `corral`): taming is the verb you reach for on a *roaming* herd, identified by who
   follows it, not by where it stands this turn. Rejections, each distinct (`validate_tame`, reached through `validate_improvement`): faction hasn't learned Herding / no such herd / the species is wild
@@ -481,12 +503,47 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
   pushes a `CommandEventKind::Corral` feed line, and **clears the assignment's `improvement`** — the
   keeper crew stays on the herd, under the stance it chose, rather than fencing a pen that is already
   up. Extending a pen is command-driven (`herd.pen_extending`), not improvement-driven, so the clear
-  cannot block a later ring. One seam for all four rungs — see "Completion CLEARS the improvement"
+  cannot block a later ring. One seam for all five build kinds — see "THE QUEUE IS THE DECLARATION"
   in `intensification.md`.
-- **`corral` command (repurposed)** — `corral <faction> <x> <y> <workers>` (`handle_corral`; unchanged
-  proto/runtime/text plumbing, `CommandEventKind::Corral`, `CorralCommand` proto field 38) **sets the
-  `Corral` improvement** on the band(s) already hunting the herd standing on that tile — the command
-  form of the client's checkbox. Since issue #442 it touches the improvement slot **only**: the band's
+
+> #### THE PEN RING'S LIFE, AND THE ONE STATE THAT COULD STRAND IT
+>
+> A ring (`extend_pen`, 2d-β) rides the `animal:pen` rung but has no rung of its own to complete, so
+> it carries a **flag** where the four rung verbs carry a meter: `Herd::pen_extending` is *"a ring is
+> in flight"*, `pen_extend_progress` is its meter, and `Herd::begin_pen_extension` **refuses while
+> the flag is set**. Three consequences follow, and they are the whole of the ring's lifecycle:
+>
+> | moment | what happens |
+> |---|---|
+> | `extend_pen` | `begin_pen_extension` sets the flag and **resets `pen_extend_progress` to `RUNG_UNSTARTED`**, *then* `BuildJob::ExtendPen` is queued on every keeping band |
+> | at the head | the band's whole `builders` pool raises it (`ring_workers`), against the pen rung's own `work_cost` at the pool's handling gear |
+> | completion | `accrue_pen_extension` widens the pen, **resets the meter, and clears the flag** |
+> | **the entry leaves the queue** | `Herd::cancel_pen_extension` clears the flag **and** the meter |
+>
+> **THE LAST ROW IS THE ONE THAT WAS MISSING, AND ITS ABSENCE WAS A PERMANENT DEAD END.** Because the
+> flag is set *before* the entry exists and only completion cleared it, an entry dropped mid-ring left
+> `pen_extending` set with nothing left to fund it — and every later `extend_pen` on that pen was
+> refused, for ever. The build-queue block puts a `✕` on that entry, so it was one click away.
+>
+> **Three exits drop an entry, and all three go through `fauna::cancel_dropped_rings`:**
+> `unqueue` (`fauna::unqueue_build_and_cancel_ring`, what `handle_unqueue` calls), `abandon`
+> (`fauna::drop_holding_and_cancel_ring`, what `handle_abandon` calls), and the **lapse** — the
+> per-turn `prune_build_queue` in `advance_labor_allocation`, which is the exit no command issues and
+> the easiest of the three to miss. The two command seams live in `fauna.rs` rather than on
+> `LaborAllocation` because the ring lives on the **herd**, and an allocation holds no registry.
+>
+> **THE BANKED RING PROGRESS IS DISCARDED, AND THAT IS THE HONEST STATE.** `unqueue`'s contract is
+> that it leaves the source's meter alone, which argues for keeping `pen_extend_progress` — but
+> `begin_pen_extension` **resets that meter on every start**, so a preserved ring meter could never be
+> resumed by any path the game has. Keeping it would be storing a number nothing can read.
+>
+> **A ring another band's entry was funding stops for that band too**, and the dead entry left behind
+> is retired the next turn by the already-built sweep (`!pen_extending` is a ring's *"already
+> built"*) — see "A DEAD ENTRY PARKS THE POOL FOR EVER" in `intensification.md`.
+- **`corral` command (repurposed)** — `corral <faction> <x> <y>` (`handle_corral`; `CorralCommand`
+  proto field 38 with its `workers` field `reserved`, `CommandEventKind::Corral`) **queues the
+  `Corral`** on the band(s) already hunting the herd standing on that tile — the command form of the
+  client's checkbox. Since issue #442 it touches the improvement slot **only**: the band's
   stance and crew are untouched by construction. It **pens nothing outright**. Rejections: no herd there / faction
   hasn't learned **Penning** ("…have not learned Penning yet. Tame and keep herds to learn it.") / not
   domesticated / not the owner / already corralled / **no band is hunting it** (staff it first). Same

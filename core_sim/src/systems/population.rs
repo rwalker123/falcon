@@ -1536,7 +1536,7 @@ mod demographics_tests {
 mod food_flow_tests {
     use super::band_food_flow;
     use crate::components::{LaborAllocation, LaborAssignment, LaborTarget, SourceYield};
-    use crate::intensification::NO_CREW_ON_THIS_ACTIVITY;
+
     use bevy::math::UVec2;
 
     fn forage_assignment() -> LaborAssignment {
@@ -1547,8 +1547,6 @@ mod food_flow_tests {
                 species: None,
             },
             workers: 4,
-            improvement: None,
-            improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
             kit: None,
         }
     }
@@ -1571,6 +1569,7 @@ mod food_flow_tests {
             last_transfer_received: 0.0,
             last_transfer_sent: 0.0,
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
+            build_queue: Vec::new(),
         };
         assert!(
             band_food_flow(Some(&labor)).is_none(),
@@ -1610,6 +1609,7 @@ mod food_flow_tests {
             last_transfer_received: 0.0,
             last_transfer_sent: 0.0,
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
+            build_queue: Vec::new(),
         };
         let flow = band_food_flow(Some(&labor)).expect("projected telemetry is real data");
         assert!(

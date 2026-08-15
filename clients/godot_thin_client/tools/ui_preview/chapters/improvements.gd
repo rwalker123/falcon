@@ -133,12 +133,13 @@ const ABANDONED_CULTIVATE_METER := 0.6
 ## whatever the field grows next, and the claim it pins is that an unknown answer renders as the
 ## STALLED hazard rather than falling into whichever branch happens to be last.
 ##
-## **IT WAS `-3`, AND WHILE IT WAS, IT PINNED A DEFECT.** The sim split `BUILD_METER_ROTS` out of
-## `BUILD_METER_HOLDS` and this constant went on asserting that `-3` "renders as NO answer" — so the
-## harness held the client's failure to follow the split in place, green. A sentinel-is-unknown claim
-## has to be re-aimed the day the wire spells that value; the value below is one past the LAST one the
-## schema defines, and it moves again the next time the schema grows.
-const UNKNOWN_BUILD_TURNS_SENTINEL := -4
+## **IT HAS BEEN RE-AIMED TWICE NOW, AND EACH TIME IT WAS PINNING A DEFECT UNTIL IT WAS.** It was
+## `-3` while the sim split `BUILD_METER_ROTS` out of `BUILD_METER_HOLDS`, and `-4` while §4.6b added
+## `BUILD_QUEUE_BLOCKED` — each time the harness went on asserting that the newly-spelled value
+## "renders as NO answer", holding the client's failure to follow in place, green. **A
+## sentinel-is-unknown claim has to be re-aimed the day the wire spells that value**; the value below
+## is one past the LAST one the schema defines, and it moves again the next time the schema grows.
+const UNKNOWN_BUILD_TURNS_SENTINEL := -5
 
 ## ---- THE REPAIR (`improvement_rung_slipped`) --------------------------------------------------
 ## Where a slipped tended patch's meter sits: below its cost, so the rung is BUILDING again, and
@@ -414,6 +415,25 @@ func _rotting_value() -> String:
 		HudSelectionVocab.RUNG_ROTTING_PHRASE,
 		HudFormat.progress_percent(REVERTING_METER_PROGRESS)]
 
+## …and the BLOCKED row's — the fourth sentinel (`docs/plan_standing_upkeep.md` §4.6b). It carries the
+## hazard mark like every other failure state and **no `∞`**: that glyph is a statement about a crew's
+## arithmetic, and no crew size is the remedy for a queue standing on a refusing gate.
+func _blocked_value() -> String:
+	return HudSelectionVocab.RUNG_BLOCKED_FORMAT % [
+		HudSelectionVocab.RUNG_HAZARD_GLYPH,
+		HudFormat.progress_percent(REVERTING_METER_PROGRESS)]
+
+## **THE BLOCKED FRAME'S KEEPING**, in work per turn — a demand the band's pool covers only part of,
+## which is the state `build_blocked_lines` pairs the block with. The two are stated apart rather than
+## as a shortfall, because the sim publishes all three and a fixture that derived one of them would be
+## making the client's own no-subtraction rule untestable.
+const BLOCKED_UPKEEP_DEMAND := 6.1
+const BLOCKED_UPKEEP_SUPPLIED := 4.1
+
+## …and the turns of grace left on it, so the `At risk:` row states a countdown rather than the
+## already-being-lost form.
+const BLOCKED_GRACE_TURNS := 2
+
 ## The staple tile as the COMPOSE SHEET sees it — `BaseFx.food_tile_fixture` already runs through
 ## `BaseFx.seed_forage_rows`, so this is simply the named handle the dip-comparison assertion reads its
 ## forecast from. Naming it keeps that assertion from re-stating which fixture it is judging.
@@ -551,12 +571,13 @@ func run(harness) -> void:
 		not Readout.teaching_line(h._hud._drawercompose._compose_sheet).contains(Readout.TEACHING_LESSON_NEEDLE))
 	h._assert_hud("…and no BUILDING half survives it — the floor paces no build now",
 		not Readout.teaching_line(h._hud._drawercompose._compose_sheet).contains(Readout.TEACHING_BUILD_NEEDLE))
-	# **THE LEVER ON A RUNNING BUILD IS ITS BUILDERS STEPPER, and it is never gated.** The ungated rule
-	# survives the control it was written for: a STALLED build is exactly when a player reaches for the
-	# remedy, and the remedy is hands. So the row has to be mounted here, on a build the sheet is
-	# reporting rather than offering.
-	h._assert_hud("a running improvement mounts its BUILDERS stepper — the lever that replaced the uncheck",
-		ForageFx.build_crew_row(h._hud._drawercompose._compose_sheet) != null)
+	# **THE LEVER ON A RUNNING BUILD IS THE BAND'S `builders` ROLE, so this sheet mounts none**
+	# (`docs/plan_standing_upkeep.md` §2.5). It carried a BUILDERS stepper for one slice and this claim
+	# asserted its presence; a verb declares and names no hands now, so the honest reading is that the
+	# sheet still offers exactly ONE stepper — the take's.
+	h._assert_hud("a running improvement mounts NO per-source builders stepper",
+		Readout.stepper_count(h._hud._drawercompose._compose_sheet)
+			== Readout.COMPOSE_STEPPERS_PER_SHEET)
 	# **THE NON-VACUITY HALF OF THE SUPPRESSION CLAIM, and it is not optional here.** Both caption
 	# claims above are satisfied for free by a crew that never reaches its floor — there would be no
 	# walk to suppress — so the same crew and floor are re-composed over a patch NOBODY IS BUILDING,
@@ -574,9 +595,8 @@ func run(harness) -> void:
 	# composition is restored immediately, leaving the sheet as the saved frame had it.
 	var prior_build_band: Dictionary = h._hud._band_labor._player_band
 	var prior_build_bands: Array = h._hud._band_labor._player_bands
-	var idle_band := BandFx.cultivating_forage_band_fixture()
+	var idle_band := BandFx.without_builders(BandFx.cultivating_forage_band_fixture())
 	idle_band["labor_assignments"][0].erase("improvement")
-	idle_band["labor_assignments"][0].erase("improvement_workers")
 	h._hud._band_labor._player_band = idle_band
 	h._hud._band_labor._player_bands = [idle_band]
 	h._hud._compose.reset_forage_source()
@@ -704,19 +724,25 @@ func run(harness) -> void:
 	h._assert_hud("the green forecast line quotes the PLAIN take the sim pays (%s) beside a running build"
 		% BUILD_CREW_UNDIPPED_TAKE, build_green.contains(BUILD_CREW_UNDIPPED_TAKE)
 		and build_green.contains(SourceForecast.YIELD_RENEWABLE_NOTE.to_upper()))
-	# **AND THE BUILD'S OWN CREW ROW IS THERE**, which is the control this frame gained: the verb is
-	# staffed by a stepper of its own, not by the gatherers above it.
-	h._assert_hud("…and the running Cultivate carries a build crew row of its own",
-		Q.find_meta_node(h._hud._drawercompose._compose_sheet,
-			HudWidgets.BUILD_CREW_ROW_META) != null)
+	# **AND THERE IS NO BUILDERS STEPPER ON IT** (`docs/plan_standing_upkeep.md` §2.5, §3.1). The verb
+	# carried a crew for one slice and this frame asserted the stepper's PRESENCE; a verb declares now
+	# and the hands are a band-level role, so the claim is inverted. **It is the §3.1 guard**: with the
+	# pool at zero the sim honestly publishes no estimate, and the tempting repair is a hypothetical
+	# crew slider to re-price it — which is exactly the per-source build staffing this slice deletes.
+	h._assert_hud("…and the running Cultivate offers NO per-source builders stepper",
+		Readout.stepper_count(h._hud._drawercompose._compose_sheet)
+			== Readout.COMPOSE_STEPPERS_PER_SHEET)
 
 	# WALKING AWAY, plant side — driven here rather than on the frame above because committing CLOSES
-	# the sheet and writes a pending assign, which the Deplete frame beside it reads. It is the SET
-	# verb at zero builders now: `abandon_improvement` cleared a stored intent and there is no stored
-	# intent left, so unstaffing the crew is the whole of walking away.
+	# the sheet and writes a pending assign, which the Deplete frame beside it reads. It is `unqueue`
+	# now: the crew-zero form SET the declaration rather than clearing it, which is the live defect
+	# slice 6b folded in (`docs/plan_standing_upkeep.md` §2.5).
 	await h._assert_walk_away_emits(SourceForecast.LABOR_KIND_FORAGE, "cultivate",
-		"cultivate %d %d %d 0" % [HudConst.PLAYER_FACTION_ID,
-			int(BaseFx.food_tile_fixture()["x"]), int(BaseFx.food_tile_fixture()["y"])])
+		"unqueue %d %d %d" % [HudConst.PLAYER_FACTION_ID,
+			int(BaseFx.food_tile_fixture()["x"]), int(BaseFx.food_tile_fixture()["y"])],
+		{"faction": HudConst.PLAYER_FACTION_ID,
+			"x": int(BaseFx.food_tile_fixture()["x"]),
+			"y": int(BaseFx.food_tile_fixture()["y"]), "herd_id": ""})
 
 	# State 442-cultivate-no-room — **THE FLOOR STANDS ABOVE THE STOCK, so the sheet quotes NOTHING.**
 	# It was `improvement_paused_plant`, and it asserted the contradiction as a pass: the frame is a
@@ -750,15 +776,21 @@ func run(harness) -> void:
 		not no_room_face.contains(ANY_TURN_ESTIMATE_NEEDLE))
 	h._assert_hud("…and no PAUSE line is stated anywhere on the sheet, the phase gating nothing",
 		not Q.has_label_containing(h._hud._drawercompose._compose_sheet, RETIRED_PAUSED_NOTE_NEEDLE))
-	h._assert_hud("a stalled build still reads as RUNNING — progress is not lost",
-		no_room_box is Label
+	# **IT READS AS DECLARED, AND THAT CHANGED WITH THE QUEUE** (`docs/plan_standing_upkeep.md` §4.6b).
+	# The claim was RUNNING while a per-source crew existed: this patch has NO work banked, so the only
+	# thing that made it "in flight" was a build crew on the tile. The hands are a band-level pool now
+	# and it funds the HEAD of the queue, so a wild patch nobody has queued is a DECLARATION — a live,
+	# ticked checkbox the player can withdraw — which is the state the one-way door was closed for.
+	h._assert_hud("a stalled rung nobody has queued reads as DECLARED, not as work in flight",
+		no_room_box is CheckBox
 			and String(no_room_box.get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
-				== HudWidgets.IMPROVEMENT_STATE_RUNNING)
+				== HudWidgets.IMPROVEMENT_STATE_DECLARED)
 	# **THE SHARPEST CASE FOR THE UNGATED RULE.** A STALLED build is exactly when a player reaches for
 	# the remedy, so the lever must be there — and this is the one frame where withholding it would
 	# look defensible (the source has left Thriving, which is what USED to gate the build's own start).
 	h._assert_hud("a stalled build still offers its BUILDERS stepper — staffing it is the whole point",
-		ForageFx.build_crew_row(h._hud._drawercompose._compose_sheet) != null)
+		Readout.stepper_count(h._hud._drawercompose._compose_sheet)
+			== Readout.COMPOSE_STEPPERS_PER_SHEET)
 
 	# State 442-cultivate-stressed-advances — **THE SAME STRESSED PATCH, BUILDING.** Only the floor
 	# moved: dropped beneath the patch's own stock the crew is working it again, so the build accrues
@@ -771,14 +803,17 @@ func run(harness) -> void:
 	# forage web's own form: a source change re-seeds the composition (`seed_forage`), so a count set
 	# before the sheet is opened on this tile is thrown away. The estimate is the BUILD crew's now, so
 	# without this the frame renders a face with no turns clause at all.
-	h._hud._compose.set_forage_build_count(BUILD_ROOM_BUILDERS)
+	BandFx.staff_builders(h._hud._band_labor, BUILD_ROOM_BUILDERS)
 	h._compose_forage(no_room_tile)
 	await h._settle()
 	await h._save("improvement_stressed_advances")
 	var advancing_face := ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, "cultivate")
 	print("ui_preview: stressed advancing  face=%s" % advancing_face)
+	# The needle is the COUNT's own clause rather than a whole face format: this rung is DECLARED now
+	# (nobody has queued it), so it wears the OFFER's `50 work, ≈50 turns · …` shape rather than the
+	# running face's tail — and what the claim is about is the number, not which face carries it.
 	h._assert_hud("a floor beneath the stock leaves room, so the SAME patch quotes its turns",
-		advancing_face.ends_with(_turns_clause(TURNS_AT_ROOM_FLOOR)))
+		advancing_face.contains(DetailFormat.build_turns_clause(TURNS_AT_ROOM_FLOOR)))
 	h._assert_hud("…and still says nothing about being paused, on a patch that is still Stressed",
 		not Q.has_label_containing(h._hud._drawercompose._compose_sheet, RETIRED_PAUSED_NOTE_NEEDLE))
 	# Back to the peak for the states below, which state no floor of their own.
@@ -1027,13 +1062,74 @@ func run(harness) -> void:
 	# **THE UNRECOGNISED SENTINEL, ASKED OF THE PRODUCER.** A negative this client does not know is
 	# *no answer*, never a guess — and with the row now leading on the count, "no answer" has to
 	# render as the STALLED hazard rather than as a bare percentage, which is the silence the whole
-	# redesign exists to remove. `-4` stands for whatever the wire grows next; it was `-3` until the
-	# wire spelled that, at which point this claim was pinning the bug above rather than the rule.
+	# redesign exists to remove. `-5` stands for whatever the wire grows next; it was `-3`, then `-4`,
+	# each until the wire spelled that value — at which point this claim was pinning a bug rather than
+	# the rule.
 	h._assert_hud("…and an unrecognised negative is marked as STALLED, never rendered bare",
 		_rung_value_for_turns(UNKNOWN_BUILD_TURNS_SENTINEL)
 			== HudSelectionVocab.RUNG_STALLED_FORMAT % [
 				HudSelectionVocab.RUNG_HAZARD_GLYPH,
 				HudFormat.progress_percent(REVERTING_METER_PROGRESS)])
+
+	#   (d2) **BLOCKED — the FIFTH answer, and the one whose remedy is on a different line**
+	#   (`docs/plan_standing_upkeep.md` §4.6b). The band's builders are STAFFED and standing on this
+	#   entry, its own rung's gate refuses it, so nothing banks and nothing queued behind it moves
+	#   either. It is neither of the two `∞` states beside it — those are answers about a crew's
+	#   arithmetic, and MORE builders is their remedy — so it wears the hazard mark and no `∞` at all.
+	#
+	#   **THE PAIRING IS THE CLAIM, twice over.** Judged against (d) so the two hazards are seen to
+	#   read differently, AND against the shortfall row beneath it: the build surface does not know
+	#   WHY the gate refuses, so what it renders is the state plus the two facts the same row already
+	#   publishes — `upkeepShortfall` and `neglectGraceRemaining` — with the remedy naming the keeping
+	#   ROLE. A frame that stated the block and invented a cause would be worse than one that said
+	#   nothing.
+	var blocked := BaseFx.unbuilt(BaseFx.food_tile_fixture())
+	blocked["patch_cultivation_progress"] = REVERTING_METER_PROGRESS
+	BaseFx.price_plant_build(blocked, SourceForecast.BUILD_TURNS_QUEUE_BLOCKED)
+	# **THE KEEPING IS SHORT, which is what the remedy sub-row is PAIRED with.** The published
+	# shortfall and its grace are the two facts already on this row; the block itself states no cause.
+	blocked["patch_upkeep_demand"] = BLOCKED_UPKEEP_DEMAND
+	blocked["patch_upkeep_supplied"] = BLOCKED_UPKEEP_SUPPLIED
+	blocked["patch_upkeep_shortfall"] = BLOCKED_UPKEEP_DEMAND - BLOCKED_UPKEEP_SUPPLIED
+	blocked["patch_has_neglect_grace"] = true
+	blocked["patch_neglect_grace_remaining"] = BLOCKED_GRACE_TURNS
+	h._hud._band_labor._player_band = BandFx.cultivating_forage_band_fixture(
+		int(blocked["x"]), int(blocked["y"]))
+	h._hud._band_labor._player_bands = [h._hud._band_labor.player_band()]
+	h._hud.clear_selection()
+	h._show_tile(blocked)
+	await h._settle()
+	await h._save("tile_meter_blocked")
+	var blocked_row = h._hud.tile_detail.text
+	print("ui_preview: meter blocked  %s" % Readout.detail_excerpt(blocked_row, CULTIVATION_ROW_KEY))
+	h._assert_hud("a queue standing on a refusing gate reads BLOCKED, marked, in WARN ink",
+		blocked_row.contains(_rung_value_markup(_blocked_value(), HudStyle.WARN_HEX)))
+	# **THE NEGATIVE THAT KEEPS THE FIVE ANSWERS FIVE.** A client that had not followed the fourth
+	# sentinel maps it to *no answer* and renders the STALLED hazard — a plausible-looking marked row
+	# naming the wrong state and the wrong remedy — so that value must be absent from this frame.
+	h._assert_hud("…and NOT the STALLED hazard an unfollowed sentinel would render",
+		not blocked_row.contains(_rung_value_for_turns(SourceForecast.BUILD_TURNS_NO_ESTIMATE)))
+	# **AND THE REMEDY IS BESIDE IT, naming the KEEPING role rather than the builders.** The measured
+	# escape is `assign_labor <f> <b> husbandry <n>` alone — staffing the keeping restores the
+	# source's regrowth and it climbs back over its own gate — so the sub-row must name the web's
+	# keeping role and must NOT hedge with a second half about the take crew.
+	h._assert_hud("…and the row beneath names the keeping role that frees it",
+		blocked_row.contains(HudSelectionVocab.RUNG_BLOCKED_REMEDY_FORMAT
+			% HudWorkVocab.ROLE_NAME_AGRICULTURE))
+	# …and the `At risk:` row still states what the shortfall COSTS, which is what makes the remedy
+	# above an instruction rather than an unquantified nudge.
+	h._assert_hud("…over the At risk: row the shortfall itself earns",
+		blocked_row.contains(DetailFormat.UPKEEP_RISK_ROW))
+	# **THE PAIRED NEGATIVE: a BLOCKED source whose keeping is PAID states the block and no cause.**
+	# PNG-less — the two frames differ by one sub-row — and it is what stops the remedy becoming a
+	# line the card prints whenever it is stuck.
+	var blocked_paid := BaseFx.unbuilt(BaseFx.food_tile_fixture())
+	blocked_paid["patch_cultivation_progress"] = REVERTING_METER_PROGRESS
+	BaseFx.price_plant_build(blocked_paid, SourceForecast.BUILD_TURNS_QUEUE_BLOCKED)
+	h._assert_hud("a blocked source whose keeping is PAID invents no cause for the block",
+		DetailFormat.build_blocked_lines(blocked_paid,
+			HudComposeVocab.FORAGE_FORECAST_PREFIX,
+			SourceForecast.SOURCE_KIND_FORAGE).is_empty())
 
 	#   (e) **STALLED — and the frame exists to pin that the SHEET and the CARD agree about it**
 	#   (§4.6a). A half-built Cultivate on a patch drawn to or below its own floor, with nobody on it:
@@ -1104,7 +1200,7 @@ func run(harness) -> void:
 	h._compose_forage(short_kept)
 	# Dialled AFTER the first open, for the reason `_compose_herd`'s docstring gives: the source change
 	# re-seeds the composition, so a build crew set before it is silently thrown away.
-	h._hud._compose.set_forage_build_count(TURNS_LONE_CREW)
+	BandFx.staff_builders(h._hud._band_labor, TURNS_LONE_CREW)
 	h._compose_forage(short_kept)
 	await h._settle()
 	await h._save("improvement_turns_lone_crew")
@@ -1116,7 +1212,7 @@ func run(harness) -> void:
 	# would read alike through a warned/not-warned reader.
 	var _face_ink_at_lone_crew := ForageFx.improvement_face_color(
 		h._hud._drawercompose._compose_sheet, "cultivate")
-	h._hud._compose.set_forage_build_count(TURNS_FULL_CREW)
+	BandFx.staff_builders(h._hud._band_labor, TURNS_FULL_CREW)
 	h._compose_forage(short_kept)
 	await h._settle()
 	await h._save("improvement_turns_full_crew")
@@ -1151,8 +1247,7 @@ func run(harness) -> void:
 	# **The absence is asserted on both sides of the A/B**, or a row that states a threshold only for
 	# the crew that clears it passes here.
 	h._assert_hud("the BUILDERS row states no threshold — the rate is not a bar a builder clears",
-		not Q.has_label_containing(h._hud._drawercompose._compose_sheet, RETIRED_BUILD_FLOOR_NEEDLE)
-			and ForageFx.build_crew_row(h._hud._drawercompose._compose_sheet) != null)
+		not Q.has_label_containing(h._hud._drawercompose._compose_sheet, RETIRED_BUILD_FLOOR_NEEDLE))
 	# **THE PACE IS A COLOUR, AND THE PAIR IS THE CLAIM.** Both these crews outrun the bleed, so both
 	# lines are GREEN; the red one is the zero-builder reading below. A face pinned to either ink
 	# passes one half and fails the other, which is what makes this a verdict rather than livery.
@@ -1165,7 +1260,7 @@ func run(harness) -> void:
 	# BACKWARDS and the face states `∞` in the LOSING red. **The boundary is *is there work banked*,
 	# not *is anyone staffed*** — this proposal used to answer *no estimate* and render as a silence on
 	# the one state that should stop the player.
-	h._hud._compose.set_forage_build_count(SourceForecast.BUILD_CREW_NONE)
+	BandFx.staff_builders(h._hud._band_labor, SourceForecast.BUILD_CREW_NONE)
 	h._compose_forage(short_kept)
 	await h._settle()
 	var empty_face := ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, "cultivate")
@@ -1206,7 +1301,7 @@ func run(harness) -> void:
 		and DetailFormat.build_turns_clause(SourceForecast.BUILD_TURNS_HOLDS,
 			TURNS_LONE_CREW).contains(DetailFormat.BUILD_TURNS_NEVER_GLYPH))
 	# Back to the full crew for the floor-drag frame below, which is about the FLOOR and nothing else.
-	h._hud._compose.set_forage_build_count(TURNS_FULL_CREW)
+	BandFx.staff_builders(h._hud._band_labor, TURNS_FULL_CREW)
 	h._compose_forage(short_kept)
 	await h._settle()
 	# The NEGATIVE that names the defect. Both faces reading the same number is exactly what a sheet
@@ -1282,73 +1377,22 @@ func run(harness) -> void:
 
 	_arrow_is_gated_on_what_is_SHOWN()
 	await _a_rung_that_slipped_is_building_again()
-	await _the_sheets_two_crews_share_one_pool()
 	await _a_reopened_sheet_shows_the_LIVE_crew()
 	await _a_declared_build_with_no_builders_says_so()
 	await _an_unstarted_rung_is_priced_at_its_own_rate()
 	await _both_live_meters_get_their_own_row()
 	await _a_band_with_no_free_hands_is_offered_a_dead_box()
 
-## **THE SHEET IS ONE TRANSACTION OVER A SOURCE'S TWO CREWS, AND IT IS CLAMPED AS ONE.** Reported
-## from play: a band with every hand on a herd, HUNTERS dropped 4 → 2, and BUILDERS still dead at a
-## maximum of 0 — the two hands freed inside the sheet were invisible to the other stepper until the
-## player committed, closed and reopened.
+## **RETIRED — `compose_pool_take_full` / `compose_pool_take_freed`, the shared-pool pair**
+## (`docs/plan_standing_upkeep.md` §2.5). They staged a band with every hand committed and asserted
+## that dropping the TAKE stepper inside the sheet immediately freed hands for the BUILDERS stepper
+## beside it — a claim about two steppers sharing one source pool. A verb states no crew now, so the
+## sheet has one stepper and there is no second ceiling for the first to give way to;
+## `source_crew_pool_forage` is a plain per-activity ceiling again.
 ##
-## **THE PRECONDITION IS `idle_workers == 0`, and every claim here is worthless without it.** With
-## spare hands in the band both steppers are live for reasons that have nothing to do with each other,
-## so the frame would pass against the pre-fix per-activity ceilings.
-##
-## **THE TWO HALVES ARE THE CLAIM, not either one.** A `+` that is dead at a full take passes on a
-## builders row that is dead always; a `+` that is live at a reduced take passes on one that never
-## clamps at all. So the state asks both, and finishes by pressing the `+` through the sheet's own
-## handler until the pool is spent — which is the third claim, that the clamp still refuses to offer
-## a crew this band does not have.
-func _the_sheets_two_crews_share_one_pool() -> void:
-	var tile := BaseFx.food_tile_fixture()
-	tile["patch_cultivation_progress"] = POOL_UNSTARTED_METER
-	BaseFx.price_plant_build(tile, SourceForecast.BUILD_TURNS_NO_ESTIMATE)
-	var band := _fully_committed_forage_band(tile, POOL_TAKE_CREW, SourceForecast.BUILD_CREW_NONE)
-	h._hud._band_labor._player_band = band
-	h._hud._band_labor._player_bands = [band]
-	h._hud._compose.reset_forage_source()
-	h._show_tile(tile)
-	h._compose_forage(tile)
-	await h._settle()
-	await h._save("compose_pool_take_full")
-	var sheet = h._hud._drawercompose._compose_sheet
-	h._assert_hud("the band has NO idle hands — every claim below is about the pool, not about slack",
-		int(band["idle_workers"]) == 0)
-	h._assert_hud("…and the sheet opens on the crew the band really has — %d" % POOL_TAKE_CREW,
-		Readout.stepper_value(sheet) == POOL_TAKE_CREW)
-	h._assert_hud("…with the BUILDERS stepper at nobody",
-		Readout.build_crew_value(sheet) == SourceForecast.BUILD_CREW_NONE)
-	h._assert_hud("…and its `+` dead, the take holding every hand the pool has",
-		not Readout.build_crew_can_add(sheet))
-	# DROP THE TAKE, IN THE SHEET, WITHOUT COMMITTING — which is the whole gesture under test.
-	h._hud._compose.set_forage_count(POOL_REDUCED_TAKE)
-	h._compose_forage(tile)
-	await h._settle()
-	await h._save("compose_pool_take_freed")
-	sheet = h._hud._drawercompose._compose_sheet
-	h._assert_hud("dropping the take to %d frees hands INSIDE the sheet" % POOL_REDUCED_TAKE,
-		Readout.stepper_value(sheet) == POOL_REDUCED_TAKE)
-	h._assert_hud("…so the BUILDERS `+` comes live with no commit, close and reopen",
-		Readout.build_crew_can_add(sheet))
-	# …AND STOPS EXACTLY WHERE THE BAND DOES. Pressed rather than written, so the ceiling clamp in the
-	# sheet's own handler is what answers. **Each press rebuilds the controls and the old row is
-	# `queue_free`d, i.e. still in the tree until the frame ends** — so the settle between presses is
-	# load-bearing: without it the second press lands on the freed row and the count never moves.
-	for _i in range(POOL_TAKE_CREW - POOL_REDUCED_TAKE):
-		Readout.build_crew_plus(h._hud._drawercompose._compose_sheet).pressed.emit()
-		await h._settle()
-	sheet = h._hud._drawercompose._compose_sheet
-	print("ui_preview: shared pool  take=%d  builders=%d  can_add=%s" % [
-		Readout.stepper_value(sheet), Readout.build_crew_value(sheet),
-		Readout.build_crew_can_add(sheet)])
-	h._assert_hud("…up to the %d the take gave back" % (POOL_TAKE_CREW - POOL_REDUCED_TAKE),
-		Readout.build_crew_value(sheet) == POOL_TAKE_CREW - POOL_REDUCED_TAKE)
-	h._assert_hud("…and no further — the sheet never offers a crew the sim would refuse",
-		not Readout.build_crew_can_add(sheet))
+## **WHAT SURVIVES OF IT IS ONE HALF, AND IT IS ASSERTED ELSEWHERE**: a fully-allocated band must
+## still be able to restate the crew it already has, which is what the standing term in that pool is
+## for and what `forage_reopened_crews` holds.
 
 ## **AN UNCOMMITTED EDIT MUST NOT OUTLIVE ITS SHEET.** Reported from play beside the pool bug: drop
 ## HUNTERS 4 → 2, close WITHOUT committing, reopen — and the sheet still showed 2 over a band that
@@ -1483,9 +1527,9 @@ func _fully_committed_forage_band(tile: Dictionary, take: int, builders: int) ->
 		"kind": "forage", "workers": take,
 		"target_x": int(tile["x"]), "target_y": int(tile["y"]),
 		"floor": SourceForecast.FLOOR_FOOD_PEAK,
-		"improvement": SourceForecast.IMPROVEMENT_CULTIVATE, "improvement_workers": builders,
+		"improvement": SourceForecast.IMPROVEMENT_CULTIVATE,
 		"workers_needed": ForageFx.CULTIVATE_SIM_WORKERS_NEEDED, "overdraws": false,
-	}]
+	}, BandFx.builders_role_row(builders)]
 	return band
 
 ## **THE REPAIR — a completed rung whose meter has eroded, BUILDING again with nothing declared**
@@ -1518,10 +1562,9 @@ func _a_rung_that_slipped_is_building_again() -> void:
 	BaseFx.price_plant_build(slipped, BaseFx.BUILD_TURNS_REMAINING, SLIPPED_METER_ROT_PER_TURN)
 	# **A BAND THAT DECLARED NOTHING.** Its forage assignment carries no `improvement` and no
 	# builders, so every reading below is the METER's answer and nothing else's.
-	var repair_band := BandFx.cultivating_forage_band_fixture(
-		int(slipped["x"]), int(slipped["y"]))
+	var repair_band := BandFx.without_builders(BandFx.cultivating_forage_band_fixture(
+		int(slipped["x"]), int(slipped["y"])))
 	repair_band["labor_assignments"][0].erase("improvement")
-	repair_band["labor_assignments"][0].erase("improvement_workers")
 	h._hud._band_labor._player_band = repair_band
 	h._hud._band_labor._player_bands = [repair_band]
 	h._hud._compose.reset_forage_source()
@@ -1554,18 +1597,26 @@ func _a_rung_that_slipped_is_building_again() -> void:
 	# from the BUILDERS stepper. **It names no threshold, and that is now half the claim** — the rate a
 	# builder had to beat retired with the fullness test (`docs/plan_standing_upkeep.md` §2.4), so the
 	# row offers hands and quotes no bar.
-	h._assert_hud("…and offers the BUILDERS stepper, stating no threshold beside it",
-		ForageFx.build_crew_row(h._hud._drawercompose._compose_sheet) != null
+	h._assert_hud("…and offers no per-source builders stepper, nor any threshold beside one",
+		Readout.stepper_count(h._hud._drawercompose._compose_sheet)
+				== Readout.COMPOSE_STEPPERS_PER_SHEET
 			and not Q.has_label_containing(h._hud._drawercompose._compose_sheet,
 				RETIRED_BUILD_FLOOR_NEEDLE))
 	# **THE LAND CARD STATES WHAT IS AT STAKE AND NOT WHAT IS OWED** (issue #545). The standing
 	# `Keeping:` bill is retired — it read as noise on every source that owed anything — so what
 	# survives is the row that only exists when the rate is going UNPAID, which is this patch.
 	var slipped_risk := "\n".join(DetailFormat.at_risk_lines(slipped,
-		HudComposeVocab.FORAGE_FORECAST_PREFIX))
+		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.SOURCE_KIND_FORAGE))
 	h._assert_hud("…and the land card states what the shortfall costs, never the pooled bill",
 		slipped_risk.contains(DetailFormat.UPKEEP_RISK_ROW)
 			and not slipped_risk.contains(UPKEEP_POOL_NEEDLE))
+	# **…AND IT NAMES THE ROLE THAT PAYS, which is the sentence the map's `⚠` cannot carry** (§4.6b).
+	# That badge is drawn with `draw_string` into `MapView`'s own canvas, so it can hold no tooltip;
+	# the card is where a player interrogates it, and the words are the work board's own note, so the
+	# two surfaces cannot phrase one hazard differently.
+	h._assert_hud("…and names the ROLE that pays it, in the work board's own words",
+		slipped_risk.contains(HudWorkVocab.under_kept_note_for_source(
+			SourceForecast.SOURCE_KIND_FORAGE)))
 
 ## **AN ARROW BETWEEN TWO IDENTICAL NUMBERS** — `0.26 → 0.26 FOOD`, reported from play beside a
 ## second account correctly reading `0.90 → 0.87`. The `after` reading is attached where it DIFFERS from the
@@ -1637,7 +1688,7 @@ func _an_unstarted_rung_is_priced_at_its_own_rate() -> void:
 	h._hud._compose.reset_forage_source()
 	h._show_tile(wild)
 	h._compose_forage(wild)
-	h._hud._compose.set_forage_build_count(UNSTARTED_BUILD_CREW)
+	BandFx.staff_builders(h._hud._band_labor, UNSTARTED_BUILD_CREW)
 	h._compose_forage(wild)
 	await h._settle()
 	await h._save("improvement_unstarted_standing_price")
@@ -1648,7 +1699,7 @@ func _an_unstarted_rung_is_priced_at_its_own_rate() -> void:
 	# keeping pool rather than taken off this crew.
 	h._assert_hud("a lone builder on an UNSTARTED rung is quoted %d turns — its whole output is progress"
 		% UNSTARTED_BUILD_TURNS,
-		face.contains(_turns_clause(UNSTARTED_BUILD_TURNS)))
+		face.contains(DetailFormat.build_turns_clause(UNSTARTED_BUILD_TURNS)))
 	# **THE NEGATIVE THAT NAMES THE RETIRED MECHANISM.** `∞` is what the rate-as-a-build-term
 	# arithmetic answered here, and it is the reading that would tell a player this build can never
 	# advance when in fact it lands in fifty turns. It must not appear in any ink.
@@ -1664,7 +1715,7 @@ func _an_unstarted_rung_is_priced_at_its_own_rate() -> void:
 	#
 	# Composed through the shipped format so the claim pins the NUMBER and not the wording, and stated
 	# in WORK because a supplier's output is not one hand.
-	h._hud._compose.set_forage_build_count(SourceForecast.BUILD_CREW_NONE)
+	BandFx.staff_builders(h._hud._band_labor, SourceForecast.BUILD_CREW_NONE)
 	h._compose_forage(wild)
 	# The sheet rebuilds on the next frame, so the face is read AFTER a settle — without it this reads
 	# the crew-of-one sheet still standing and the claim is about the wrong control.
@@ -1673,7 +1724,8 @@ func _an_unstarted_rung_is_priced_at_its_own_rate() -> void:
 	print("ui_preview: unstarted cultivate OFFER face  %s" % offer_face)
 	h._assert_hud("…while the face it is DECIDED on quotes what holding it costs, in work, beside what building it costs",
 		offer_face.contains(HudComposeVocab.BUILD_PRICE_UPKEEP_FORMAT % ["",
-			DetailFormat.format_work_units(BaseFx.PLANT_TENDED_UPKEEP_PER_TURN)]))
+			DetailFormat.format_work_units(BaseFx.PLANT_TENDED_UPKEEP_PER_TURN),
+			HudWorkVocab.keeping_role_name(SourceForecast.SOURCE_KIND_FORAGE)]))
 	# …and the one-off price is still on it, or "quotes the standing price" is satisfied by a face that
 	# has dropped the pile it sits beside.
 	h._assert_hud("…beside the pile itself, both prices on one line",
@@ -1772,10 +1824,9 @@ func _both_live_meters_get_their_own_row() -> void:
 	# for a meter nobody is touching. `built` forks before the routing does, so the claim above says
 	# nothing about this arm and it is asserted separately.
 	var abandoned := _an_abandoned_cultivate_under_a_declared_sow()
-	var abandoning_band := BandFx.cultivating_forage_band_fixture(
-		int(abandoned["x"]), int(abandoned["y"]))
+	var abandoning_band := BandFx.without_builders(BandFx.cultivating_forage_band_fixture(
+		int(abandoned["x"]), int(abandoned["y"])))
 	abandoning_band["labor_assignments"][0]["improvement"] = SourceForecast.IMPROVEMENT_SOW
-	abandoning_band["labor_assignments"][0]["improvement_workers"] = SourceForecast.BUILD_CREW_NONE
 	h._hud._band_labor._player_band = abandoning_band
 	h._hud._band_labor._player_bands = [abandoning_band]
 	h._hud.clear_selection()
@@ -1808,16 +1859,20 @@ const BOTH_METERS_FIELD_PROGRESS := 0.12
 
 const BOTH_METERS_FIELD_TURNS := 30
 
-## **A BAND WITH NO FREE HANDS IS OFFERED A DEAD BOX WITH ITS REASON, NEVER A LIVE ONE.** Reported
-## from play: a player ticked `cultivate` on a site their band could not staff, and the sheet went
-## straight to the running state — a `Label`, so there was nothing left to untick. The declaration
-## itself is now re-tickable (`tile_build_unstaffed`), and this is the other half: the click that
-## creates that state is refused BEFORE it happens, with the reason where the offer was.
+## **A BAND WITH NO FREE HANDS IS OFFERED A LIVE BOX, AND THAT REVERSES THIS FRAME'S OWN CLAIM**
+## (`docs/plan_standing_upkeep.md` §2.5). The box was greyed with a reason for one slice, because
+## ticking it declared a build WITH a crew and the sim refused a count the band could not staff —
+## which was the click that made the un-undoable `Cultivating 0 / 50 work (0%)` state.
 ##
-## **THE FIXTURE IS A SECOND PATCH, and that is what makes the pool empty.** The band's every hand is
-## on tile A, so a sheet opened over an UNWORKED tile B has `crew_pool == 0` — the sheet's build pool
-## being the SOURCE's pool less the composed take, not the band's idle count. Reusing tile A would
-## stage a source whose own crew is in the pool and the box would rightly stay live.
+## **A VERB DECLARES NOW.** Ticking appends an entry to the band's build queue, which is legal and
+## costs nothing whether or not anybody stands on the `builders` role, and unticking sends `unqueue`,
+## which really does withdraw it. So there is nothing left to refuse in advance: what says nobody is
+## building the rung is the *not started* warning on the declared control, and what fixes it is a role
+## card on the Band panel.
+##
+## **THE FIXTURE IS A SECOND PATCH, and it is kept** — the band's every hand is on tile A, so a sheet
+## opened over an UNWORKED tile B is the emptiest state the offer can be in. That is exactly where a
+## re-added hands gate would fire, which is what makes this the frame for the negative.
 func _a_band_with_no_free_hands_is_offered_a_dead_box() -> void:
 	var worked := BaseFx.food_tile_fixture()
 	var band := _fully_committed_forage_band(worked, POOL_TAKE_CREW,
@@ -1838,18 +1893,16 @@ func _a_band_with_no_free_hands_is_offered_a_dead_box() -> void:
 	var sheet = h._hud._drawercompose._compose_sheet
 	var box = ForageFx.find_improvement_control(sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
 	# THE PRECONDITION, without which every claim below is about an ordinary band: this band really
-	# has nothing free, so the offer really is unstaffable.
-	h._assert_hud("the band has no idle hands at all — the pool the offer draws on is empty",
+	# has nothing free, so a hands gate would fire here if one existed anywhere.
+	h._assert_hud("the band has no idle hands at all — the state a hands gate would refuse",
 		h._hud._band_labor.effective_idle(band) == 0)
-	h._assert_hud("the rung is still OFFERED — it is refused, not hidden",
+	h._assert_hud("the rung is OFFERED — declaring costs no hands, so nothing is refused in advance",
 		box is CheckBox
 			and String(box.get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
 				== HudWidgets.IMPROVEMENT_STATE_OFFERED)
-	h._assert_hud("…and DISABLED, so the click that made the un-undoable state cannot happen",
-		box is CheckBox and (box as CheckBox).disabled)
-	h._assert_hud("…with the reason in its own slot, never a dead control that says nothing",
-		Q.has_label_containing(sheet, HudComposeVocab.BUILD_NO_HANDS_REASON))
-	# The NEGATIVE that names what a dead offer must not grow: a BUILDERS stepper for a build nobody
-	# can staff would be the same live-but-useless control one row down.
-	h._assert_hud("…and no BUILDERS stepper beneath it — there is nothing to staff it with",
-		ForageFx.build_crew_row(sheet) == null)
+	h._assert_hud("…and LIVE, because ticking it appends a queue entry rather than staffing one",
+		box is CheckBox and not (box as CheckBox).disabled)
+	# The NEGATIVE that names the retired mechanism: the sheet must offer no per-source build control
+	# of any kind, which is §3.1's rule and the one this whole slice is most likely to walk back.
+	h._assert_hud("…and no builders stepper beneath it — the hands are a band-level role",
+		Readout.stepper_count(sheet) == Readout.COMPOSE_STEPPERS_PER_SHEET)

@@ -26,7 +26,6 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
-use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     advance_band_movement, advance_expeditions, advance_herds, advance_labor_allocation,
     build_headless_app, hunt_engage_workers, hunt_haul_workers, hunt_source_yield_preview,
@@ -241,9 +240,7 @@ fn spawn_hunters(
                         floor,
                     },
                     workers,
-                    improvement: NO_IMPROVEMENT_UNDERWAY,
                     kit: None,
-                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },
@@ -689,16 +686,31 @@ fn spawn_resident_crew(
             },
             ResidentBand,
             LaborAllocation {
-                assignments: vec![LaborAssignment {
-                    target: LaborTarget::Hunt {
-                        fauna_id: fauna_id.to_string(),
-                        floor,
+                assignments: vec![
+                    LaborAssignment {
+                        target: LaborTarget::Hunt {
+                            fauna_id: fauna_id.to_string(),
+                            floor,
+                        },
+                        workers,
+                        kit: None,
                     },
-                    workers,
-                    improvement,
-                    kit: None,
-                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                }],
+                    // **The build's hands are a band-level pool** since
+                    // `docs/plan_standing_upkeep.md` §2.5, staffed at the same count the take is so
+                    // the declared build is genuinely running beside the hunters.
+                    LaborAssignment {
+                        target: LaborTarget::Builders,
+                        workers,
+                        kit: Some(bare_builders()),
+                    },
+                ],
+                build_queue: improvement
+                    .map(|declared| core_sim::BuildQueueEntry {
+                        source: core_sim::BuildSource::Herd(fauna_id.to_string()),
+                        declared: core_sim::BuildJob::Rung(declared),
+                    })
+                    .into_iter()
+                    .collect(),
                 ..Default::default()
             },
         ))
@@ -2382,3 +2394,15 @@ fn the_exported_crew_pays_for_the_retreat() {
 /// A wary, light-bodied quarry — the reach term binds (so the exported crew *is* the engagement
 /// count) and the shipped `wariness 0.65` is high enough that the retreat moves it by a lot.
 const WARY_SPECIES: &str = SMALL_BODIED_SPECIES;
+
+/// **THE EMPTY KIT, NAMED ON A FIXTURE'S `builders` ROW** — an isolation, not a default.
+///
+/// An absent kit means *derive per entry*, and the roster's answer (`tillage` for a patch,
+/// `hurdling` for a herd) takes `8.5` off the job per covered worker. Naming `none` holds the gear
+/// axis at its identity so these arms measure what they say they measure; the geared default is
+/// pinned in `core_sim/tests/build_turns_closed_form.rs`.
+fn bare_builders() -> core_sim::KitChoice {
+    core_sim::EquipmentConfig::builtin()
+        .kit("none")
+        .expect("the shipped roster carries the empty kit")
+}

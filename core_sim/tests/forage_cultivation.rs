@@ -217,23 +217,81 @@ fn declare_gathering_site(app: &mut App, coord: UVec2) {
     sites.set_sites(entries);
 }
 
-/// Check or clear the **improvement** on a band's (single) Forage assignment — what the client's
-/// checkbox does. Since issue #442 this touches only the improvement slot: the stance and the crew
-/// stay put, and completion clears the box itself.
+/// One Forage row, so the two shapes above cannot drift.
+fn forage_row(patch: UVec2, policy: f32, foragers: u32) -> LaborAssignment {
+    LaborAssignment {
+        target: LaborTarget::Forage {
+            tile: patch,
+            floor: policy,
+            species: None,
+        },
+        workers: foragers,
+        kit: None,
+    }
+}
+
+/// **Declare or withdraw the build** on a band's (single) Forage assignment — what the client's
+/// checkbox does. Since `docs/plan_standing_upkeep.md` §2.5 that is TWO facts and a fixture needs
+/// both: the **queue entry** (what is being raised) and the band's **`builders` pool** (the hands
+/// raising it). The take crew and the stance stay put, and completion retires the entry itself.
 fn set_forage_improvement(
     app: &mut App,
     band: bevy::prelude::Entity,
     improvement: Option<Improvement>,
 ) {
+    let builders = build_crew(app);
     let mut allocation = app
         .world
         .get_mut::<LaborAllocation>(band)
         .expect("band forages");
-    allocation
+    let LaborTarget::Forage { tile, .. } = allocation
         .assignments
-        .first_mut()
+        .first()
         .expect("a Forage assignment")
-        .improvement = improvement;
+        .target
+        .clone()
+    else {
+        panic!("the fixture band forages");
+    };
+    let source = core_sim::BuildSource::Patch(tile);
+    match improvement {
+        Some(declared) => {
+            assert!(allocation.enqueue_build(source, core_sim::BuildJob::Rung(declared)));
+            match allocation
+                .assignments
+                .iter_mut()
+                .find(|assignment| assignment.target == LaborTarget::Builders)
+            {
+                Some(row) => row.workers = builders,
+                None => allocation.assignments.push(LaborAssignment {
+                    target: LaborTarget::Builders,
+                    workers: builders,
+                    kit: Some(bare_builders()),
+                }),
+            }
+        }
+        None => {
+            allocation.unqueue_build(&source);
+            allocation
+                .assignments
+                .retain(|assignment| assignment.target != LaborTarget::Builders);
+        }
+    }
+}
+
+/// **What a band has queued on a patch, as a rung verb** — the 6b reading of what a fixture used to
+/// get off the row's `improvement` field (`docs/plan_standing_upkeep.md` §2.5).
+fn declared_rung(app: &App, band: bevy::prelude::Entity, tile: UVec2) -> Option<Improvement> {
+    match app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("the fixture band keeps its allocation")
+        .build_queue_entry(&core_sim::BuildSource::Patch(tile))
+        .map(|entry| entry.declared)
+    {
+        Some(core_sim::BuildJob::Rung(improvement)) => Some(improvement),
+        Some(core_sim::BuildJob::ExtendPen) | None => None,
+    }
 }
 
 /// A band foraging `patch`. `improvement` is the second axis; the **stance** is `Sustain` throughout
@@ -312,7 +370,7 @@ fn spawn_forager_at(
                 // staffed beside it — and `LaborAllocation::normalize` then trims the build away,
                 // leaving a fixture that measures a job nobody is doing. Idle hands cost these
                 // fixtures nothing: every take is capped by the crew the assignment names.
-                working: scalar_from_f32((foragers + foragers) as f32),
+                working: scalar_from_f32((foragers * 3) as f32),
                 elders: scalar_zero(),
                 stores: LocalStore::new(),
                 morale: scalar_one(),
@@ -338,23 +396,33 @@ fn spawn_forager_at(
                 tags: Vec::new(),
             },
             LaborAllocation {
-                assignments: vec![LaborAssignment {
-                    target: LaborTarget::Forage {
-                        tile: patch,
-                        floor: policy,
-                        species: None,
-                    },
-                    workers: foragers,
-                    improvement,
-                    kit: None,
-                    // **The same crew staffs the build** — what this fixture meant when one
-                    // crew did every job (`docs/plan_standing_upkeep.md` §2.2).
-                    improvement_workers: improvement.map_or(NO_CREW_ON_THIS_ACTIVITY, |_| foragers),
-                    // **NO KEEPER, and that is the point.** A meter still being raised is owed its
-                    // BUILDERS (`docs/plan_standing_upkeep.md` §2.4), so these fixtures measure a
-                    // build's stated pace with nobody on the keeping — and once it completes, the
-                    // hand-off moves the build's crew onto the keeping by itself.
-                }],
+                // **A pool of the same size staffs the build, and ONLY where one is declared** —
+                // what this fixture meant when one crew did every job
+                // (`docs/plan_standing_upkeep.md` §2.5). A role row standing at zero would eat
+                // headroom the keeping arms need.
+                //
+                // **NO KEEPER, and that is the point.** A meter still being raised is owed its
+                // keeping (§2.4), so these fixtures measure a build's stated pace with nobody on
+                // that role and let the caller staff it when the measurement needs it.
+                assignments: improvement
+                    .map(|_| {
+                        vec![
+                            forage_row(patch, policy, foragers),
+                            LaborAssignment {
+                                target: LaborTarget::Builders,
+                                workers: foragers,
+                                kit: Some(bare_builders()),
+                            },
+                        ]
+                    })
+                    .unwrap_or_else(|| vec![forage_row(patch, policy, foragers)]),
+                build_queue: improvement
+                    .map(|declared| core_sim::BuildQueueEntry {
+                        source: core_sim::BuildSource::Patch(patch),
+                        declared: core_sim::BuildJob::Rung(declared),
+                    })
+                    .into_iter()
+                    .collect(),
                 ..Default::default()
             },
         ))
@@ -1113,7 +1181,7 @@ fn a_completed_cultivation_announces_once_and_clears_every_bands_verb() {
         .expect("patch")
         .clone();
     for (label, band) in [("the finisher", first), ("the second crew", second)] {
-        let declared = app.world.get::<LaborAllocation>(band).unwrap().assignments[0].improvement;
+        let declared = declared_rung(&app, band, coord);
         assert_eq!(
             core_sim::patch_build_verb(&patch, declared),
             None,
@@ -2019,8 +2087,21 @@ fn an_unstarted_patch_quotes_the_next_rungs_job_and_the_quote_halves_with_the_cr
         let mut app = spawn_world();
         let (tile, coord) = prime_thriving_patch(&mut app);
         grant_cultivation_knowledge(&mut app, FactionId(0));
-        // No improvement in flight: this crew is gathering, and deciding.
-        spawn_forager_of(&mut app, tile, coord, None, workers);
+        // **Nothing queued here: the band is gathering and DECIDING**, which is by definition the
+        // state a compose sheet is looking at. The quote is what the band's own `builders` pool
+        // would take — since `docs/plan_standing_upkeep.md` §2.5 there is a real crew to quote and
+        // the projection no longer falls back to the gatherers beside it — so the fixture stands
+        // one at exactly the crew under test.
+        let band = spawn_forager_of(&mut app, tile, coord, None, workers);
+        app.world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the fixture band keeps its allocation")
+            .assignments
+            .push(LaborAssignment {
+                target: LaborTarget::Builders,
+                workers,
+                kit: Some(bare_builders()),
+            });
         run_turns_with_forage(&mut app, 1);
         published_count(
             app.world
@@ -2370,9 +2451,7 @@ fn spawn_band_keeping_two_patches(
             species: None,
         },
         workers: GATHERERS,
-        improvement: None,
         kit: None,
-        improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
     });
     let headroom = allocation.assigned_total() + keepers;
     allocation.set_assignment(LaborTarget::Agriculture, keepers, headroom, None);
@@ -2961,16 +3040,25 @@ fn a_rung_that_erodes_below_its_cost_is_still_held_and_can_be_repaired() {
 // THE BUILD VERB IS DERIVED FROM THE METER (`docs/plan_standing_upkeep.md` §2.4)
 // ---------------------------------------------------------------------------------------------
 
-/// **COMPLETE → ERODE → REPAIR → COMPLETE, WITH NO COMMAND ISSUED AT ANY POINT.**
+/// **COMPLETE → ERODE → REPAIR → COMPLETE, AND THE REPAIR IS A FRESH DECISION.**
 ///
-/// `RungDef::build_accrual` banks nothing unless the rung's verb is in flight, and completion frees
-/// the declaration — so before the derivation a rung that slipped could not be repaired until the
-/// player re-issued `cultivate`. They never withdrew that intent. **A meter carrying progress IS the
-/// declaration**, so what a player owes a slipping rung is *hands*, not a command.
+/// The whole round trip on one band, and the two halves of the rule that governs it
+/// (`docs/plan_standing_upkeep.md` §2.4):
 ///
-/// The whole round trip runs here on one band, issuing the verb exactly **once** at the very start.
+/// - **The eroded rung still DERIVES its own verb.** `forage::patch_build_verb` reads a meter below
+///   its cost as *building that rung*, so the player never has to work out **which** job a repair
+///   is, and a rung that slipped is repairable without re-issuing a verb they never withdrew.
+/// - **⛔ BUT NOTHING RE-ADOPTS IT.** Deriving the verb says *what* a repair would be; it does not
+///   put the source back in the band's **build queue**. Repairing is a fresh decision the player
+///   makes by **re-queueing** — which is the point of the change: a queue funded all-hands-on-the-head
+///   would otherwise let a one-percent-eroded Field displace the build the player actually ordered,
+///   be topped up, fall back below its cost, and oscillate there forever while the real build stood
+///   still.
+///
+/// So a repair is the same two things any build is — **the declaration and the pool** — and the
+/// derivation's job is only to name the rung.
 #[test]
-fn a_rung_completes_erodes_and_repairs_with_no_command_after_the_first() {
+fn a_rung_completes_erodes_and_is_repaired_only_by_re_queueing_it() {
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
     grant_cultivation_knowledge(&mut app, FactionId(0));
@@ -2992,13 +3080,11 @@ fn a_rung_completes_erodes_and_repairs_with_no_command_after_the_first() {
     );
     let full = progress_of(&app, coord);
 
-    // **Erode it.** The builders were freed at completion, and nobody is on the keeping — so the
-    // meter slips below its cost with no command involved either.
+    // **Erode it.** Completion retired the queue entry, and nobody is on the keeping — so the meter
+    // slips below its cost with no command involved either.
     set_forage_improvement(&mut app, band, None);
     set_forage_workers(&mut app, band, A_KEEPER);
-    // **And take the keepers off.** The completion hand-off moved the builders onto the band's
-    // `agriculture` role, which is exactly what stops a fresh rung decaying — so a test about
-    // erosion has to unstaff it, which is the player's own `assign_labor … agriculture 0`.
+    // **And take the keepers off**, which is the player's own `assign_labor … agriculture 0`.
     {
         let mut allocation = app
             .world
@@ -3024,7 +3110,8 @@ fn a_rung_completes_erodes_and_repairs_with_no_command_after_the_first() {
         "…while staying tended, which is the state a repair is FOR"
     );
 
-    // **THE DERIVED VERB IS BACK, with no command.**
+    // **(1) THE ERODED RUNG STILL DERIVES ITS OWN VERB** — the meter below its cost names the rung
+    // it is short of, so the player never has to work out *which* job a repair is.
     let patch = app
         .world
         .resource::<ForageRegistry>()
@@ -3034,11 +3121,15 @@ fn a_rung_completes_erodes_and_repairs_with_no_command_after_the_first() {
     assert_eq!(
         core_sim::patch_build_verb(&patch, None),
         Some(Improvement::Cultivate),
-        "a meter below its cost declares its own rung — the player re-issues nothing"
+        "a meter below its cost declares its own rung — the player names no verb"
     );
 
-    // **Adding HANDS is the whole of what the player does.** The declaration slot is left empty on
-    // purpose: if the repair needed it, this would not move.
+    // ⛔ **(2) BUT NOTHING RE-ADOPTS IT** (`docs/plan_standing_upkeep.md` §2.4). Repairing an eroded
+    // rung is a **fresh decision**, made by putting the source back in the queue — which is what
+    // keeps a one-percent-eroded Field from displacing the build the player actually ordered off
+    // the head of a pool funded all-hands-on-one.
+    //
+    // So a repair is two things, as any build is: the declaration, and the pool.
     let builders = build_crew(&app);
     set_forage_workers(&mut app, band, builders);
     {
@@ -3046,24 +3137,33 @@ fn a_rung_completes_erodes_and_repairs_with_no_command_after_the_first() {
             .world
             .get_mut::<LaborAllocation>(band)
             .expect("band exists");
-        assert_eq!(
-            allocation.assignments[0].improvement, None,
-            "fixture: no declaration is stored — the derivation is doing the work"
+        assert!(
+            allocation.build_queue.is_empty(),
+            "fixture: completion retired the entry and nothing has re-enrolled it"
         );
-        allocation.assignments[0].improvement_workers = builders;
+        allocation.assignments.push(LaborAssignment {
+            target: LaborTarget::Builders,
+            workers: builders,
+            kit: Some(bare_builders()),
+        });
+        assert!(allocation.enqueue_build(
+            core_sim::BuildSource::Patch(coord),
+            core_sim::BuildJob::Rung(Improvement::Cultivate),
+        ));
     }
-    // **And the keeping goes back on with them** — still hands rather than a declaration. Since
+    // **And the keeping goes back on with them.** Since
     // §4.6a the meter is billed while it is raised, so a repair run with the role empty is racing
     // its own rot and would top out below the cost it is climbing back to.
     set_maintain_workers(&mut app, band, tended_keeping_crew());
     run_turns_with_forage(&mut app, 1);
     assert!(
         progress_of(&app, coord) > eroded,
-        "hands alone repair it: {eroded} -> {}",
+        "re-queueing it and staffing the pool repairs it: {eroded} -> {}",
         progress_of(&app, coord)
     );
 
-    // …and it climbs all the way back to full, still with nothing re-issued.
+    // …and from there it climbs all the way back to full on the one declaration just made — the
+    // derivation carries the rest, so the player states the repair once rather than every turn.
     run_turns_with_forage(&mut app, build_turns + 1);
     assert_eq!(
         progress_of(&app, coord),
@@ -3180,4 +3280,19 @@ fn a_fully_feral_patch_clears_its_owner_species_and_rung_together() {
         None,
         "…so the ground implies nothing and the player must declare again — one notion of empty"
     );
+}
+
+/// **THE EMPTY KIT, NAMED ON A FIXTURE'S `builders` ROW** — an isolation, not a default.
+///
+/// An absent kit means *derive per entry*, and the roster's answer (`tillage` for a patch,
+/// `hurdling` for a herd) takes `8.5` off the job per covered worker. A start-stocked band holds a
+/// unit per worker and a half, so at the crews these fixtures staff the gear alone pays a whole rung
+/// off and every pacing claim below collapses to *"one turn versus one turn"*. Naming `none` holds
+/// the gear axis at its identity so these arms measure the **crew**, exactly as
+/// `FaunaConfig::without_retreat` holds the retreat at its identity across the hunt suites. The
+/// geared default is pinned in `core_sim/tests/build_turns_closed_form.rs`.
+fn bare_builders() -> core_sim::KitChoice {
+    core_sim::EquipmentConfig::builtin()
+        .kit("none")
+        .expect("the shipped roster carries the empty kit")
 }

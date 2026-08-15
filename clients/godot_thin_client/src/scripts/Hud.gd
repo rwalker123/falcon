@@ -67,13 +67,24 @@ signal split_band_requested(payload: Dictionary)
 ## in the game that is free.
 signal extend_pen_requested(payload: Dictionary)
 ## Emitted when the player commits an IMPROVEMENT — the second axis (issue #442). Payload keys:
-## { faction, improvement, x, y, herd_id, workers }. Main formats the matching verb
+## { faction, improvement, x, y, herd_id }. Main formats the matching verb
 ## (`cultivate` / `sow` / `tame` / `corral`). RELAYED from `DrawerComposeController`, which is its
 ## only emitter, exactly as `extend_pen_requested` is.
 ##
-## **`workers` IS THE BUILD'S OWN CREW** (`docs/plan_standing_upkeep.md` §2.2) — the second of a
-## source's three worker allocations, independent of the take crew `assign_labor` set.
+## **IT CARRIES NO CREW** (`docs/plan_standing_upkeep.md` §2.5) — the verb DECLARES, appending an
+## entry to the band's build queue, and the hands stand on the band-level `builders` role. A
+## `workers` key rode this payload for one slice and the trailing token it produced is now a parse
+## error.
 signal improvement_requested(payload: Dictionary)
+
+## The WITHDRAWAL of one of those declarations — { faction, x, y, herd_id }, Main formatting
+## `unqueue <faction> <x> <y>` / `unqueue <faction> <herd_id>` (`docs/plan_standing_upkeep.md` §2.5).
+## RELAYED from `DrawerComposeController` like the signal above.
+##
+## **ITS OWN SIGNAL BECAUSE ITS OWN GRAMMAR**: that one names a RUNG, this one names a SOURCE. It is
+## also the fix for the defect where unticking re-sent the set verb at zero builders, which SET the
+## declaration again instead of clearing it and left the rung stuck with no undo.
+signal unqueue_requested(payload: Dictionary)
 
 ## Emitted when the player picks how a band splits a keeping POOL it cannot stretch
 ## (`docs/plan_standing_upkeep.md` §2.5). Payload keys: { faction, band_id, mode }, `mode` being
@@ -451,6 +462,8 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: extend_pen_requested.emit(payload))
     _drawercompose.improvement_requested.connect(
         func(payload: Dictionary) -> void: improvement_requested.emit(payload))
+    _drawercompose.unqueue_requested.connect(
+        func(payload: Dictionary) -> void: unqueue_requested.emit(payload))
     # The command-targeting cluster. Constructed AFTER `_drawercompose` (its three close-sheet nudges)
     # and BEFORE `_bandpanel` (which injects `_targeting` — so `_targeting` must exist first). The pick
     # flow's `_bandpanel.rerender()` is therefore a lazily-bound lambda: `_bandpanel` is null now but
@@ -489,6 +502,11 @@ func _ready() -> void:
         func(band: Dictionary, scope: String) -> void: cancel_order_requested.emit(band, scope))
     _bandpanel.upkeep_mode_requested.connect(
         func(payload: Dictionary) -> void: upkeep_mode_requested.emit(payload))
+    # The BUILD QUEUE block's row `✕` (`docs/plan_standing_upkeep.md` §4.6b) joins the compose
+    # sheet's uncheck on the ONE `unqueue_requested` edge — the payloads are identical, so
+    # `Main.format_unqueue` serves both without knowing which control withdrew the entry.
+    _bandpanel.unqueue_requested.connect(
+        func(payload: Dictionary) -> void: unqueue_requested.emit(payload))
     _bandpanel.send_hunt_expedition_requested.connect(
         func(payload: Dictionary) -> void: send_hunt_expedition_requested.emit(payload))
     _bandpanel.send_denial_raid_requested.connect(
@@ -982,6 +1000,12 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
         "kit_id": kit_id,
         "default_kit_id": KitRoster.default_kit_for(kind,
             _band_labor.find_world_herd(herd_id), _band_labor.default_kit_id(kind)),
+        # **THE ROLLBACK HANDLE, AND IT IS NOT A COMMAND TOKEN.** The optimistic write below happens
+        # here and the send's OUTCOME is only known in `Main`, so the failure path has to be able to
+        # name the entry it must undo — and every reader of the overlay looks a band up by the
+        # client-local `entity`, never by `band_id` (see the two handles above). No `format_*` builder
+        # reads this key; `Main._on_hud_assign_labor` hands it straight back to `drop_pending_assign`.
+        "pending_entity": entity,
     })
     _band_labor.record_pending_assign(entity, kind, clamped, x, y, herd_id, floor, improvement)
     _after_pending_change()
@@ -1000,6 +1024,37 @@ func _after_pending_change() -> void:
         _render_selection_panel(_selection.tile_info(), _selection.unit(), _selection.herd())
     _bandpanel.rerender()
     emit_signal("labor_pending_changed", _band_labor.pending_labor())
+
+## **THE OPTIMISTIC WRITE'S UNDO, FOR A COMMAND THAT NEVER WENT.** `_emit_assign_labor` records the
+## pending entry BEFORE the send, which is right; nothing rolled it back when the send failed, so a
+## dropped `assign_labor` left the role card showing workers the server had never heard of until the
+## next turn reconciled them away.
+##
+## **BOTH OF THESE ARE `has_method`-PROBED BY NAME FROM `Main`, so they are thin HudLayer delegators
+## and stay ones** (`hud-modules.md` → the reflective-seam rule): a failed probe fails SILENTLY, and
+## the drop itself lives on `HudBandLaborState` beside `record_pending_assign` / `reconcile_pending`,
+## where the overlay's data lives.
+##
+## **`_after_pending_change()` RUNS ON THE ROLLBACK TOO** — the same re-render + MapView push the
+## write got. Without it the card keeps the number it has just stopped believing, which is the whole
+## defect one frame later.
+func drop_pending_assign(payload: Dictionary) -> void:
+    var entity := int(payload.get("pending_entity", -1))
+    if entity < 0:
+        return
+    if _band_labor.drop_pending_assign(entity, _band_labor.pending_key(
+            String(payload.get("kind", "")), int(payload.get("x", -1)),
+            int(payload.get("y", -1)), String(payload.get("herd_id", "")))):
+        _after_pending_change()
+
+## The move twin. The move overlay is one slot per band, so the payload's rollback handle is the whole
+## identity — see `HudBandLaborState.drop_pending_move`.
+func drop_pending_move(payload: Dictionary) -> void:
+    var entity := int(payload.get("pending_entity", -1))
+    if entity < 0:
+        return
+    if _band_labor.drop_pending_move(entity):
+        _after_pending_change()
 
 ## Drop pending entries the server has already processed: a snapshot with a turn NEWER than the
 ## entry's issue turn is authoritative confirmation (and reflects any clamping). Called each snapshot

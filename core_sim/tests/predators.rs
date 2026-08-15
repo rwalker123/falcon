@@ -12,7 +12,6 @@ use bevy::MinimalPlugins;
 
 use bevy::math::UVec2;
 
-use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     advance_herds, advance_labor_allocation, advance_predation, build_headless_app,
     scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_herds,
@@ -130,9 +129,7 @@ fn hunting_band(
             floor: 0.3,
         },
         workers: hunters,
-        improvement: None,
         kit: None,
-        improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
     }];
     app.world
         .spawn((
