@@ -212,6 +212,17 @@ func refit() -> void:
 	_sync_to_viewport()
 	_fit_width(card_style)
 	_place_card()
+	# **A SECOND FRAME, BECAUSE THE WIDTH FIT ABOVE INVALIDATES THE HEIGHT READING BELOW IT.**
+	# Godot's container sort is DEFERRED, so the body's combined minimum height read in the same pass
+	# that just moved the card's width still reports the PREVIOUS width's wrapping — the same reason
+	# this function waits a frame at all, one step further in. Measured: a compose sheet whose
+	# improvement face grew by a few words came back 19px (one line) short, with the internal scroll
+	# still DISABLED — i.e. the clamped-short-with-no-scroll state
+	# `_assert_compose_sheet_card_holds_its_content` exists to catch. `_fit_pending` is already false
+	# here, so a refit arriving during this wait is not swallowed.
+	await get_tree().process_frame
+	if not visible or _card == null or _body == null:
+		return
 	# THE CARD'S ONLY CEILING IS THE VIEWPORT. `fit_to_content` already clamps to `min(max_height,
 	# viewport height - global_position.y - bottom_margin)`, so a FIXED pixel `max_height` can only ever
 	# bite EARLIER than the real bound — and a sheet that stops growing with several hundred px of empty

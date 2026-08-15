@@ -1211,7 +1211,7 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
     # nothing is at risk, so the rot is `0` and every staffed crew gets a real count.
     var offer_turns := SourceForecast.build_turns_at(
         source, prefix, rung, build_crew, floor, kit_gear)
-    var offer_face := _improvement_offer_face(source, prefix, rung, offer_turns)
+    var offer_face := _improvement_offer_face(source, prefix, source_kind, rung, offer_turns)
     var reasons := RungGates.gate_reasons_for({rung: offer.get("reasons", [])}, rung)
     # **GATED — THE REASON IS THE CONTROL, and the offer text is not shown at all.** This used to
     # render the full offer ("🌱 Cultivate this patch · then 0.04 food · 0.81 fodder") as
@@ -1330,7 +1330,8 @@ func _mount_declared_control(source: Dictionary, prefix: String, source_kind: St
             SourceForecast.improvement_forecast(source, source_kind, prefix, floor, rung), band):
         notes.append(HudComposeVocab.IMPROVEMENT_DEAL_DEPLETED_NOTE)
     target.add_child(HudWidgets.build_improvement_control(rung,
-        HudWidgets.IMPROVEMENT_STATE_DECLARED, _improvement_offer_face(source, prefix, rung, turns),
+        HudWidgets.IMPROVEMENT_STATE_DECLARED,
+        _improvement_offer_face(source, prefix, source_kind, rung, turns),
         String(HudComposeVocab.IMPROVEMENT_HINTS.get(rung, "")), on_toggle,
         notes, true, SourceForecast.build_pace(turns, build_crew)))
     # The crop picker rides a declared rung exactly as it rides an offer: which crop this patch commits
@@ -1354,7 +1355,8 @@ func _rung_pays_nothing_under_its_feed(deal: Dictionary, band: Dictionary) -> bo
 ## The verb and its PRICE — the face an unstarted rung wears, whether it is merely OFFERED or already
 ## DECLARED. ONE composer, so a rung cannot be priced one way before the box is ticked and another
 ## after it.
-func _improvement_offer_face(source: Dictionary, prefix: String, rung: String, turns: int) -> String:
+func _improvement_offer_face(source: Dictionary, prefix: String, source_kind: String,
+        rung: String, turns: int) -> String:
     var face := HudComposeVocab.IMPROVEMENT_OFFER_BARE_FORMAT % [
         FoodIcons.for_policy(rung),
         String(HudComposeVocab.IMPROVEMENT_OFFER_LABELS.get(rung, rung.capitalize()))]
@@ -1365,7 +1367,7 @@ func _improvement_offer_face(source: Dictionary, prefix: String, rung: String, t
     # nowhere else on the sheet, because the offered face is where the deal is being weighed.
     var price := DetailFormat.build_price_clause(
         SourceForecast.build_work_cost(source, prefix, rung), turns,
-        SourceForecast.build_upkeep_demand(source, prefix, rung))
+        SourceForecast.build_upkeep_demand(source, prefix, rung), source_kind)
     if price == "":
         return face
     return HudComposeVocab.IMPROVEMENT_OFFER_PRICED_FORMAT % [face, price]

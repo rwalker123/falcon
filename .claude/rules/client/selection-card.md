@@ -483,9 +483,25 @@ including `HERDERS_SHED_FORMAT`, the one line in the client that says animals ar
 - **`At risk:` is WARN-inked now** (`_value_hex`'s own case). It fell through to neutral INK for as
   long as the calm `Keeping:` row above it carried the context; as the whole detail behind a marked
   rung, a shortfall stated in the same ink as a stock reading is the reassuring direction again.
-- **It takes no `kind`.** The row above states WHICH rung is in trouble and the four-hazard fork
-  decides the mark; this states what the trouble costs, off the published shortfall alone, so it covers
-  both sides of the meter without re-deciding which side it is on.
+- **The ROW itself takes no `kind`.** The rung row above states WHICH rung is in trouble and the
+  four-hazard fork decides the mark; this states what the trouble costs, off the published shortfall
+  alone, so it covers both sides of the meter without re-deciding which side it is on.
+- **…BUT IT NOW CARRIES A REMEDY SUB-ROW, AND THAT ONE DOES** (§4.6b). `at_risk_lines(src, prefix,
+  kind)` appends the work board's own note — `HudWorkVocab.under_kept_note_for_source` — indented
+  under the countdown: *"This ground is slipping — raise this band's Agriculture role."* The row
+  stated what was being LOST and never where the hands come from, and one surface up the map's `⚠`
+  badge could not be interrogated at all: `BandOverlayRenderer._draw_source_badge` paints it with
+  `draw_string` into `MapView`'s canvas, so it is not a Control and can hold no `tooltip_text`. **The
+  source's own card is therefore where that mark is interrogated**, and the words are the work row's,
+  so the two surfaces cannot phrase one hazard differently.
+  - **`under_kept_note_for_source` exists because the two kind vocabularies COLLIDE SILENTLY.**
+    `SOURCE_KIND_HERD` is `"herd"` and `LABOR_KIND_HUNT` is `"hunt"`, so handing a source kind
+    straight to the labor-keyed picker answers with the PLANT web's sentence on an animal source — a
+    wrong answer that looks like a right one. It delegates rather than re-spelling the pair.
+  - **A BLOCKED QUEUE SUPPRESSES IT**, because `build_blocked_lines` is already saying it on the row
+    the countdown is about; both would be one instruction twice on one card.
+  - Asserted on `improvement_rung_slipped` and sabotage-verified by dropping the append — exactly
+    that one claim fails.
 
 **The four per-rung BUILD VERBS went too** — `Preparing` / `Sowing` / `Domesticating` / `Building`
 each headlined a row that now leads with a number. The compose sheet keeps its own participles

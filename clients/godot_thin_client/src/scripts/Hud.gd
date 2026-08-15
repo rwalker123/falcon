@@ -502,6 +502,11 @@ func _ready() -> void:
         func(band: Dictionary, scope: String) -> void: cancel_order_requested.emit(band, scope))
     _bandpanel.upkeep_mode_requested.connect(
         func(payload: Dictionary) -> void: upkeep_mode_requested.emit(payload))
+    # The BUILD QUEUE block's row `✕` (`docs/plan_standing_upkeep.md` §4.6b) joins the compose
+    # sheet's uncheck on the ONE `unqueue_requested` edge — the payloads are identical, so
+    # `Main.format_unqueue` serves both without knowing which control withdrew the entry.
+    _bandpanel.unqueue_requested.connect(
+        func(payload: Dictionary) -> void: unqueue_requested.emit(payload))
     _bandpanel.send_hunt_expedition_requested.connect(
         func(payload: Dictionary) -> void: send_hunt_expedition_requested.emit(payload))
     _bandpanel.send_denial_raid_requested.connect(

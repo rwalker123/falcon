@@ -50,6 +50,12 @@ signal cancel_order_requested(band: Dictionary, scope: String)
 # controller is its only emitter. It is deliberately NOT routed through `_emit_assign_labor`, which
 # staffs a role; this states a policy and carries no worker count at all.
 signal upkeep_mode_requested(payload: Dictionary)
+# A build was WITHDRAWN from the band's queue (`docs/plan_standing_upkeep.md` §4.6b) — the BUILD
+# QUEUE block's row `✕`, relayed to HudLayer.unqueue_requested and formatted by `Main.format_unqueue`.
+# **The payload is byte-identical to `DrawerComposeController`'s** ({ faction, x, y, herd_id }), which
+# is what lets one command builder serve both surfaces: an unqueue names a SOURCE, and a source has
+# one grammar whichever control withdrew it.
+signal unqueue_requested(payload: Dictionary)
 # A hunting party was dispatched from the parties zone — relayed to HudLayer.send_hunt_expedition_requested.
 signal send_hunt_expedition_requested(payload: Dictionary)
 # A DENIAL raid was dispatched — relayed to HudLayer.send_denial_raid_requested. **Its own signal, not
@@ -1251,6 +1257,17 @@ func _role_kit_id(band: Dictionary, kind: String) -> String:
     # first.
     if composed == KitRoster.NO_KIT_ID and kind == HudConst.LABOR_KIND_BUILDERS:
         composed = KitRoster.build_kit_for_branch(_band_labor.kits(), branch)
+        # **…AND AN EMPTY QUEUE DERIVES NOTHING, WHICH IS THE `No kit` FACE AND NOT ROSTER ORDER.**
+        # `resolve_selection`'s terminal fall-through is `selectable[0]` — the first entry the roster
+        # authors for the job, `hurdling` on the shipped config — so with nothing composed, nothing on
+        # the wire and no queue head to derive from, the card opened on the ANIMAL web's kit and
+        # presented it as a choice the player had made. Reported from play twice over: "the Builders
+        # card says Hurdling kit" on a band raising a Cultivate, and "it is still forcing me to select
+        # 1 kit" on a band with nothing queued at all. The bare kit is the honest answer to *nothing
+        # is chosen and nothing can be derived*, and it stays selectable throughout — sending the pool
+        # out bare is how a player conserves gear.
+        if composed == KitRoster.NO_KIT_ID:
+            composed = KitRoster.bare_kit_id(_band_labor.kits(), kind)
     return KitRoster.resolve_selection(_band_labor.kits(), kind,
         _band_labor.default_kit_id(kind), composed, {}, "", branch)
 
@@ -1386,6 +1403,13 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
     col.add_child(_build_work_head(band, models,
         _work_component_sum(models, "rate"),
         _work_component_sum(models, "fodder_rate")))
+    # **THE QUEUE SITS ABOVE THE CHIPS, DELIBERATELY.** The chips filter the BOARD; the queue is the
+    # band's own ordered list rather than a view of that board, so a block beneath them would read as
+    # a filtered subset of it. It is derived from the FULL model set for the same reason — a chip must
+    # not be able to move it.
+    var queued := _build_queue_models(models)
+    if not queued.is_empty():
+        col.add_child(_build_build_queue_block(band, queued))
     # BEFORE the chips are built, so the pressed chip is always one that actually renders.
     _reconcile_work_filter(models)
     col.add_child(_build_work_chips(models))
@@ -1401,7 +1425,7 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
         hint.size_flags_vertical = Control.SIZE_EXPAND_FILL
         col.add_child(hint)
         return
-    var capacity := _work_board_capacity(filtered.size(), inspected)
+    var capacity := _work_board_capacity(filtered.size(), inspected, queued.size())
     var page_size := int(capacity["page_size"])
     var pages := int(capacity["pages"])
     _work_page = clampi(_work_page, 0, maxi(pages - 1, 0))
@@ -1420,11 +1444,22 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
 ## The pager is circular (it only exists when one page cannot hold everything, but it costs a row), so
 ## it is resolved in two passes: measure without it, and if that still needs more than one page, remeasure.
 ## `inspected` is the open inspector's model, EMPTY when none is open.
-func _work_board_capacity(count: int, inspected: Dictionary) -> Dictionary:
+##
+## **THE BUILD QUEUE BLOCK IS PAID FOR HERE OR IT SLICES THE BOARD** (§4.6b). This zone
+## `clip_contents`, so a block that draws without being subtracted from the board's room takes its
+## height off the bottom of the zone silently — no overflow, no warning, just fewer rows than the
+## pager thinks it drew. `queue_rows` is the ENTRY count, and the height comes from the same
+## `HudWorkVocab.build_queue_block_height` the builder sizes itself with, plus one more block
+## separation for the gap the block adds to the column.
+func _work_board_capacity(count: int, inspected: Dictionary, queue_rows: int) -> Dictionary:
     var box := _zone_box()
     var inspector_h := 0.0 if inspected.is_empty() else _work_inspector_height(inspected)
+    var queue_h := HudWorkVocab.build_queue_block_height(queue_rows)
+    var gaps := HudWorkVocab.WORK_ZONE_GAP_COUNT
+    if queue_h > 0.0:
+        gaps += 1.0
     var chrome := HudWorkVocab.ZONE_HEAD_HEIGHT + HudWorkVocab.WORK_CHIPS_HEIGHT + inspector_h \
-        + float(HudWorkVocab.ZONE_BLOCK_SEPARATION) * HudWorkVocab.WORK_ZONE_GAP_COUNT
+        + queue_h + float(HudWorkVocab.ZONE_BLOCK_SEPARATION) * gaps
     var rows := maxi(1, int((box.y - chrome) / HudWorkVocab.WORK_ROW_HEIGHT))
     var cols := _declare_work_columns(count, rows)
     var pages := ceili(float(count) / float(maxi(cols * rows, 1)))
@@ -1543,6 +1578,219 @@ func _build_work_head(band: Dictionary, models: Array, income: float,
         head.add_child(output_item)
         head.move_child(output_item, head.get_child_count() - 2)
     return head
+
+## **THE BAND'S BUILD QUEUE, IN ORDER** — the work-source models that carry a queue position, sorted
+## by it (`docs/plan_standing_upkeep.md` §4.6b).
+##
+## **IT IS DERIVED FROM THE FULL MODEL SET AND NEVER FROM `filtered`.** The chips filter the BOARD;
+## the queue is the band's own list, so a chip press must leave it alone.
+##
+## **IT IS COMPLETE AND IT IS PER BAND, both for free.** A queue entry requires a labor assignment on
+## its source (`LaborAllocation::prune_build_queue` → `holds_build_source`) and these models admit any
+## source with a take crew, so no entry of this band's queue can be missing one; and a source queued
+## by ANOTHER band is not in this band's `effective_worker_map`, so it never appears here. That is why
+## the block needs no band id on the wire.
+##
+## The `key` tiebreak makes it a TOTAL ORDER — `sort_custom` is not stable in Godot, and while two
+## live entries cannot share a position, an unexpected wire state must not reorder the list on an
+## unrelated re-render (the work board's own rule).
+func _build_queue_models(models: Array) -> Array:
+    var queued: Array = models.filter(func(m):
+        return int(m.get("build_queue_position", SourceForecast.NOT_IN_ANY_BUILD_QUEUE)) \
+            >= SourceForecast.BUILD_QUEUE_HEAD)
+    queued.sort_custom(func(a, b):
+        var pa := int((a as Dictionary).get("build_queue_position", 0))
+        var pb := int((b as Dictionary).get("build_queue_position", 0))
+        if pa != pb:
+            return pa < pb
+        return String((a as Dictionary).get("key", "")) < String((b as Dictionary).get("key", "")))
+    return queued
+
+## The BUILD QUEUE block — its head, up to `BUILD_QUEUE_ROWS_MAX` entry rows, and the overflow row
+## that stands for the rest.
+##
+## **ITS HEIGHT IS THE ONE `HudWorkVocab.build_queue_block_height` RESERVES**, written onto the block
+## as a minimum so the size it draws at and the size `_work_board_capacity` subtracts are the same
+## expression. The zone clips, so a block that drew taller than it was paid for would take the
+## difference off the bottom of the board with nothing to show for it.
+func _build_build_queue_block(band: Dictionary, queued: Array) -> VBoxContainer:
+    var block := VBoxContainer.new()
+    block.set_meta(HudWorkVocab.BUILD_QUEUE_BLOCK_META, queued.size())
+    block.add_theme_constant_override("separation", 0)
+    block.custom_minimum_size = Vector2(0.0,
+        HudWorkVocab.build_queue_block_height(queued.size()))
+    # **THE BUILDERS COUNT IS PENDING-AWARE**, the rule every compose sheet on this panel follows: a
+    # player who has just staffed the role must not read a header telling them nobody is on it.
+    var builders := int(_band_labor.effective_role_workers(
+        band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))
+    block.add_child(_build_build_queue_head(band, builders))
+    var drawn := mini(queued.size(), HudWorkVocab.BUILD_QUEUE_ROWS_MAX)
+    for index in range(drawn):
+        block.add_child(_build_build_queue_row(band, queued[index] as Dictionary,
+            index == SourceForecast.BUILD_QUEUE_HEAD, builders))
+    if queued.size() > drawn:
+        block.add_child(_build_build_queue_overflow_row(queued.size() - drawn))
+    return block
+
+## The block's head — `BUILD QUEUE` and, on the right, who is funding it and with what.
+##
+## **THE ZERO-BUILDERS BRANCH IS THE POINT OF THE READOUT, not a fallback.** Reported from play: a
+## Cultivate that was not progressing, with nothing on any surface saying why. The pool is the whole
+## reason a queue moves, so its absence is stated where the queue is, in the WARN ink and naming the
+## card that fixes it.
+##
+## **THE KIT COMES FROM `_role_kit_id`, THE SAME RESOLUTION THE BUILDERS CARD'S PICKER OPENS ON.**
+## One call, so the header and the card cannot name two different webs' tools for one pool.
+func _build_build_queue_head(band: Dictionary, builders: int) -> HBoxContainer:
+    if builders <= 0:
+        return HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_BUILD_QUEUE,
+            HudWorkVocab.BUILD_QUEUE_NO_BUILDERS_NOTE, null, HudStyle.WARN,
+            HudWorkVocab.BUILD_QUEUE_BUILDERS_TOOLTIP)
+    var kit_face := KitRoster.display_name_for_id(_band_labor.kits(),
+        _role_kit_id(band, HudConst.LABOR_KIND_BUILDERS))
+    return HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_BUILD_QUEUE,
+        HudWorkVocab.BUILD_QUEUE_BUILDERS_FORMAT % [builders, kit_face], null, HudStyle.INK_DIM,
+        HudWorkVocab.BUILD_QUEUE_BUILDERS_TOOLTIP)
+
+## One queue entry: the head marker, the source's mark, the job face, its date, and the withdrawal.
+##
+## **IT IS EXACTLY `WORK_ROW_HEIGHT` AND WEARS THE BOARD ROW'S STYLEBOX**, deliberately — the two
+## lists read at one density, and the capacity arithmetic above divides by that number.
+##
+## **THE MARKER SLOT IS RESERVED ON EVERY ROW.** A conditionally-omitted Label would shift every row
+## behind the head sideways, which reads as a list that has lost its alignment rather than as a head.
+func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
+        builders: int) -> PanelContainer:
+    var row := PanelContainer.new()
+    row.set_meta(HudWorkVocab.BUILD_QUEUE_ROW_META,
+        int(model.get("build_queue_position", SourceForecast.NOT_IN_ANY_BUILD_QUEUE)))
+    row.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
+    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_theme_stylebox_override("panel", HudStyle.work_row_stylebox(false))
+    var line := HBoxContainer.new()
+    line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    row.add_child(line)
+    var marker := Label.new()
+    marker.set_meta(HudWorkVocab.BUILD_QUEUE_MARKER_META, is_head)
+    marker.text = HudWorkVocab.BUILD_QUEUE_HEAD_MARKER if is_head else ""
+    marker.custom_minimum_size = Vector2(HudWorkVocab.BUILD_QUEUE_MARKER_WIDTH, 0.0)
+    marker.add_theme_color_override("font_color", HudStyle.SIGNAL)
+    marker.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+    marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(marker)
+    # The SOURCE mark, through the board row's own builder — bundled art where the client has it, the
+    # emoji where it does not, in the same fixed column so the two lists line up.
+    line.add_child(HudWidgets.build_marker_icon(
+        model.get("icon_texture") as Texture2D, String(model.get("icon", "")),
+        HudWorkVocab.WORK_ROW_ICON_WIDTH, HudWorkVocab.WORK_ROW_FONT_SIZE))
+    var face := _build_queue_job_face(model)
+    var label := Label.new()
+    label.set_meta(HudWorkVocab.BUILD_QUEUE_FACE_META, face)
+    label.text = face
+    label.clip_text = true
+    label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    label.add_theme_color_override("font_color", HudStyle.INK)
+    label.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(label)
+    # **THE DATE GOES THROUGH `DetailFormat.build_countdown_value`, WHICH IS THE RUNG ROW'S OWN
+    # FORK.** Every sentinel the wire can put on `buildTurnsRemaining` is answered there — a count,
+    # `-2` holding, `-3` rotting, `-4` the queue blocked, `-1` no answer — and a second fork here is
+    # exactly how the client has twice been left behind by a newly-spelled value.
+    var value := DetailFormat.build_countdown_value(
+        int(model.get("build_turns", SourceForecast.BUILD_TURNS_NO_ESTIMATE)), builders,
+        HudFormat.progress_percent(float(model.get("building_progress", 0.0))))
+    var date := Label.new()
+    date.set_meta(HudWorkVocab.BUILD_QUEUE_DATE_META, value)
+    date.text = value
+    date.clip_text = true
+    date.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    date.custom_minimum_size = Vector2(HudWorkVocab.BUILD_QUEUE_DATE_WIDTH, 0.0)
+    date.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+    date.add_theme_color_override("font_color", DetailFormat.rung_value_color(value))
+    date.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+    date.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(date)
+    # Both columns clip, so the row's own tooltip carries the pair in full.
+    row.tooltip_text = HudWorkVocab.BUILD_QUEUE_ROW_TOOLTIP_FORMAT % [face, value]
+    var withdraw := Button.new()
+    withdraw.set_meta(HudWorkVocab.BUILD_QUEUE_UNQUEUE_META,
+        int(model.get("build_queue_position", SourceForecast.NOT_IN_ANY_BUILD_QUEUE)))
+    withdraw.text = HudWorkVocab.BUILD_QUEUE_UNQUEUE_GLYPH
+    withdraw.focus_mode = Control.FOCUS_NONE
+    withdraw.tooltip_text = HudWorkVocab.BUILD_QUEUE_UNQUEUE_TOOLTIP
+    withdraw.custom_minimum_size = Vector2(HudWorkVocab.BUILD_QUEUE_UNQUEUE_WIDTH, 0.0)
+    HudStyle.apply_button(withdraw, "ghost")
+    # The parties zone's recall treatment: a steady, full-opacity DANGER red, because the steady red
+    # already reads as destructive and there is nothing further to brighten to on hover. It squeezes
+    # its chrome for the same reason every board control does — the default padding busts the row.
+    HudWidgets.compact(withdraw, HudWorkVocab.WORK_ROW_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
+    withdraw.add_theme_color_override("font_color", HudStyle.DANGER)
+    # **NO CONFIRM.** `unqueue` withdraws a DECLARATION: the banked meter survives it, the row keeps
+    # its crew and its kit, and re-declaring is one tick of the compose control. This panel's confirm
+    # path is for an act that loses something (`_confirm_destructive`), which is the parties zone's
+    # cancel-versus-recall rule read one surface over.
+    withdraw.pressed.connect(func() -> void: _emit_unqueue(band, model))
+    line.add_child(withdraw)
+    return row
+
+## `+2 more` — the rest of the queue, at the same row height and in the quiet ink.
+##
+## **A TRUNCATED LIST WITH NOTHING UNDER IT READS AS THE WHOLE LIST**, which is the faction page's
+## standing rule for a capped list applied to the band's own. Reordering is `build_order` on the
+## command line until slice 7 gives the list a drag.
+func _build_build_queue_overflow_row(remaining: int) -> PanelContainer:
+    var row := PanelContainer.new()
+    row.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
+    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_theme_stylebox_override("panel", HudStyle.work_row_stylebox(false))
+    row.set_meta(HudWorkVocab.BUILD_QUEUE_OVERFLOW_META, remaining)
+    row.tooltip_text = HudWorkVocab.BUILD_QUEUE_OVERFLOW_TOOLTIP
+    var line := HBoxContainer.new()
+    line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    row.add_child(line)
+    var spacer := Label.new()
+    spacer.custom_minimum_size = Vector2(HudWorkVocab.BUILD_QUEUE_MARKER_WIDTH, 0.0)
+    spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(spacer)
+    var label := Label.new()
+    label.text = HudWorkVocab.BUILD_QUEUE_OVERFLOW_FORMAT % remaining
+    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    label.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    label.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(label)
+    return row
+
+## The entry's job face — the declared verb plus the source it stands on.
+##
+## **THE VERB'S WORD AND GLYPH ARE `HudFormat.policy_face`'s**, i.e. the SAME pair the board row's
+## in-progress axis states in its own tooltip and the map badge draws. A second table of verb names
+## here is how one rung comes to be called two things on one screen.
+func _build_queue_job_face(model: Dictionary) -> String:
+    var verb := String(model.get("improvement", "")).strip_edges().to_lower()
+    if verb == SourceForecast.IMPROVEMENT_NONE:
+        # A queued entry always carries a declaration, but the meter answers for itself if one is
+        # ever missing — `building_policy` is `RungGates.rung_in_progress`'s already-resolved rung.
+        verb = String(model.get("building_policy", ""))
+    var face := HudFormat.policy_face(verb)
+    if String(model.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT:
+        return HudWorkVocab.BUILD_QUEUE_ANIMAL_FACE_FORMAT % [face,
+            _herd_label_for_id(String(model.get("herd_id", "")))]
+    return HudWorkVocab.BUILD_QUEUE_PLANT_FACE_FORMAT % [face,
+        int(model.get("x", -1)), int(model.get("y", -1))]
+
+## The withdrawal. **The payload is `DrawerComposeController`'s, key for key**, so `Main.format_unqueue`
+## serves both surfaces unchanged: `unqueue <faction> <x> <y>` for a patch, `unqueue <faction>
+## <herd_id>` for a herd, told apart by a non-empty herd id.
+func _emit_unqueue(band: Dictionary, model: Dictionary) -> void:
+    emit_signal("unqueue_requested", {
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "x": int(model.get("x", -1)),
+        "y": int(model.get("y", -1)),
+        "herd_id": String(model.get("herd_id", "")),
+    })
 
 ## The filter chips ARE the summary: counts + per-kind rates, and pressing one filters the board.
 ## **A chip for an EMPTY set never renders** — a kind the band works none of is dead weight in a row
@@ -2070,6 +2318,20 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "building_glyph": String(building.get("glyph", "")),
             "building_progress": float(building.get("progress", 0.0)),
             "floor": floor, "improvement": improvement, "x": x, "y": y, "herd_id": herd_id,
+            # **THE BAND'S BUILD QUEUE, DERIVED FROM THE ROWS IT ALREADY HAS** (§4.6b). A queue entry
+            # REQUIRES a labor assignment on its source (`LaborAllocation::prune_build_queue` →
+            # `holds_build_source`) and this list admits any source with a take crew, so every entry
+            # of this band's queue has a model here — and a source queued by ANOTHER band is not in
+            # this band's `effective_worker_map` at all, which is the per-band filter for free. That
+            # is why the queue block needs no band id on the wire.
+            "build_queue_position": SourceForecast.build_queue_position(
+                rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
+            # …and the RAW countdown beside it, normalised by the one reader of that field. The two
+            # are read together and never one instead of the other: the countdown is chained down the
+            # queue, so on its own it cannot tell forty turns of work from eight turns queued behind
+            # four other jobs, and the position is what says which.
+            "build_turns": SourceForecast.build_turns_remaining(
+                rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
             # **THE KIT THIS CREW IS ALREADY WORKING UNDER** (`LaborAssignment.kitId`, always a real
             # roster id on a forage/hunt row). It rides the model for one reason: `_emit_work_assign`
             # RESTATES it, so a `+`/`−` on the board cannot silently re-kit a crew back to the job

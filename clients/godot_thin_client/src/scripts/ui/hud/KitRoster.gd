@@ -1094,6 +1094,24 @@ static func build_kit_for_branch(kits: Array, branch: String) -> String:
 			return String((kit_variant as Dictionary).get(KIT_ID_KEY, NO_KIT_ID))
 	return NO_KIT_ID
 
+## **THE ROSTER'S BARE ENTRY FOR ONE JOB — the kit that carries nothing.** `kit_supplies_any` is the
+## derived reading of "the null kit" (`item_ids` empty), which is why nothing here spells the id
+## `none`; a future kit with an empty `uses` is the same thing and gets the same answer.
+##
+## **IT EXISTS FOR THE ROLE CARD THAT HAS NOTHING TO DERIVE.** `resolve_selection`'s terminal
+## fall-through is `selectable[0]`, i.e. ROSTER ORDER — right for a job whose default is always
+## resolvable, and wrong for the `builders` row, where "nothing is chosen and nothing can be derived"
+## is a real and common state (a band with an empty build queue). Falling to roster order there
+## presents `hurdling` as a decision the player never made, and pins the pool to the animal web the
+## moment they touch the stepper. The honest face is the bare kit.
+##
+## `NO_KIT_ID` when the job lists no bare entry at all, which every caller renders as no selection.
+static func bare_kit_id(kits: Array, job: String) -> String:
+	for kit_variant in kits_for_job(kits, job):
+		if not kit_supplies_any(kit_variant as Dictionary):
+			return String((kit_variant as Dictionary).get(KIT_ID_KEY, NO_KIT_ID))
+	return NO_KIT_ID
+
 ## **DOES THIS KIT SUPPLY THIS AXIS AT ALL?** — a kit supplies an axis exactly when its FRESH tier
 ## there beats the roster's bare-handed one. It answers an APPLICABILITY question only — *"can this
 ## kit change what this source pays?"* — and it is asked at the fresh tier for that reason.

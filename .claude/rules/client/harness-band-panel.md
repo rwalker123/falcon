@@ -118,8 +118,19 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 246 `assert OK` lines, 356 `: PASS` ones and ZERO `FAIL` ones, over
-97 frames.**
+**A clean run exits 0 and prints 254 `assert OK` lines, 377 `: PASS` ones and ZERO `FAIL` ones, over
+101 frames.**
+
+(It was 246 / 356 / 97 before the BUILD QUEUE BLOCK — `docs/plan_standing_upkeep.md` §4.6b, specified
+in `band-city-panel.md` → "THE BUILD QUEUE BLOCK". Its four states —
+`band_panel_build_queue` / `_blocked` / `_none` / `_wide` — account for the eight `assert OK`s (each
+state's own bounds/content-fits pair) and eighteen of the twenty-one `PASS`es; the other three are
+`_assert_builders_card_kit_faces`, PNG-less, which fixed the Builders card's roster-order fall-through.
+**`band_panel_build_queue_none` is the PAIRED NEGATIVE and is what makes the other three worth
+anything** — a block drawn unconditionally passes every positive claim above it and fails only there,
+which is exactly what sabotage produced (28 failures: that one claim plus 27 zones the block's own
+20px head then overran). The wide state REPORTS its extent rather than only asserting the fit: the
+work zone comes out **300px of a 300px box, 0 spare**, with the board still paging two rows.)
 
 (It was 242 / 348 / 95 before the BUILDERS KIT PAIR — `band_panel_builders_kit_plant` /
 `band_panel_builders_kit_animal`, the frames on which the Builders card's picker is judged. Their four

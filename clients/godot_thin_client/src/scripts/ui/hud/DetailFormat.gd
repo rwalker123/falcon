@@ -1123,7 +1123,29 @@ static func rung_row_value(src: Dictionary, prefix: String, improvement: String,
             return HudSelectionVocab.RUNG_REVERTING_FORMAT % [
                 HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
         return HudSelectionVocab.RUNG_HELD_FORMAT % percent
-    var turns := SourceForecast.build_turns_remaining(src, prefix)
+    return build_countdown_value(SourceForecast.build_turns_remaining(src, prefix),
+        build_crew, percent)
+
+## **THE SENTINEL FORK, ON ITS OWN — the countdown half of `rung_row_value`.** Everything above it in
+## that function is ROUTING (which of a card's two rows may print the source's one countdown, and
+## whether this row is a built badge or a bare declaration); this is the part that reads the wire's
+## `buildTurnsRemaining` and answers for every value it can carry — a positive count, `-2` holding,
+## `-3` rotting, `-4` the queue blocked, `-1` no answer.
+##
+## **IT IS EXTRACTED RATHER THAN COPIED, and that is the whole point.** The BUILD QUEUE block's date
+## column asks exactly this question and has none of the routing problem — a queue entry IS the rung,
+## so there is no second row to misattribute a number to. A second fork there would be a second place
+## for a newly-spelled sentinel to be missed, which is the mistake this family has already made twice
+## (`-3` split out of `-2`, then `-4` added beside them, each time with a reader left behind).
+##
+## **IT TAKES THE COUNTDOWN, NOT THE SOURCE**, so a caller that has already read the wire's value —
+## the work board's models do, once per render — hands it straight over rather than reaching into the
+## dict again. `SourceForecast.build_turns_remaining` is still the ONE reader of the field and still
+## the one place an unrecognised negative is normalised.
+##
+## `percent` is the meter's own fullness, supplied by the caller because the two callers read it from
+## different places — a rung row from its own meter, a queue row from the entry's.
+static func build_countdown_value(turns: int, build_crew: int, percent: int) -> String:
     if turns == SourceForecast.BUILD_TURNS_HOLDS:
         if build_crew <= SourceForecast.BUILD_CREW_NONE:
             return HudSelectionVocab.RUNG_HELD_FORMAT % percent
@@ -1166,14 +1188,29 @@ const BUILD_METER_EMPTY := 0.0
 ## `RUNG_ROTTING_PHRASE` is the same idea for the red: the row PRINTS the phrase this tests, so the
 ## words and the test cannot drift. The starving pen is the single case that outranks the mark, and it
 ## says so in its own leaf rather than here.
+## **AN EMPTY `built_needle` MEANS THE CALLER HAS NO BUILT BADGE TO MATCH**, and it must be guarded
+## rather than left to `contains`: every string contains the empty one, so an unguarded call would
+## paint every value signal green. The BUILD QUEUE block's date column is that caller — a queue entry
+## is by construction a rung that is NOT built, the sim pruning an entry off the queue when its meter
+## fills — so it has no badge word and must not invent one.
 static func rung_value_hex(value: String, built_needle: String) -> String:
     if value.contains(HudSelectionVocab.RUNG_ROTTING_PHRASE):
         return HudStyle.DANGER_HEX
     if value.contains(HudSelectionVocab.RUNG_HAZARD_GLYPH):
         return HudStyle.WARN_HEX
-    if value.to_lower().contains(built_needle):
+    if built_needle != "" and value.to_lower().contains(built_needle):
         return HudStyle.SIGNAL_HEX
     return HudStyle.INK_HEX
+
+## **THE `Color` TWIN OF THE RULE ABOVE, for a host that is a `Label` rather than BBCode** — the
+## `BandFoodStatus.color_for_morale` / `hex_for_morale` pairing, and taken for the same reason: a
+## `Label` takes an `add_theme_color_override` and can do nothing with a hex string.
+##
+## **IT IS WRITTEN IN TERMS OF `rung_value_hex`, never as a second fork**, so the ink a rung value
+## takes is decided in exactly one place whichever kind of host is asking. `built_needle` defaults to
+## empty for the caller that has no badge to match (see above).
+static func rung_value_color(value: String, built_needle: String = "") -> Color:
+    return Color.html(rung_value_hex(value, built_needle))
 
 ## A quantity of WORK UNITS: whole numbers bare (`50`), fractions to one place (`17.6`). One unit is
 ## one worker-turn at the food peak with no gear, so a cost reads itself — and the shipped costs are
@@ -1184,7 +1221,8 @@ static func format_work_units(value: float) -> String:
     return String.num(value, HudSelectionVocab.BUILD_WORK_DECIMALS)
 
 ## **WHAT THE JOB COSTS, WHAT IT WOULD TAKE, AND WHAT HOLDING IT COSTS FOREVER — the compose sheet's
-## pre-commit quote**, as `50 work, ≈25 turns · 2 work a turn to hold` (or `50 work` alone where there
+## pre-commit quote**, as `50 work, ≈25 turns · 2 work a turn from Agriculture to hold` (or `50 work`
+## alone where there
 ## is neither an estimate nor a standing bill to state). The caller resolves the turns half; on the
 ## compose sheet that is `SourceForecast.build_turns_at`, evaluated against the crew and floor the
 ## player is proposing, because a quote for a job nobody has started is precisely what the sim's own
@@ -1202,7 +1240,15 @@ static func format_work_units(value: float) -> String:
 ## defect, and a rung that is free to hold should say nothing rather than say nothing twice.
 ## `""` for a rung the wire prices nothing on at all, which renders as no clause rather than a bare
 ## verb wearing an em-dash.
-static func build_price_clause(work_cost: float, turns: int, upkeep: float) -> String:
+##
+## **THE CLAUSE NAMES THE POOL THAT PAYS, so `kind` is required.** `… · 2 work a turn to hold` said
+## what the rate was and never who owed it, and reported from play it read on the compose sheet as a
+## demand on the crew under the stepper — which it is not. The role word is
+## `HudWorkVocab.keeping_role_name`, the same per-web pair the work row's under-kept note keys on, so
+## the two surfaces cannot send the player to two different cards. `kind` is a SOURCE kind
+## (`SOURCE_KIND_*`).
+static func build_price_clause(work_cost: float, turns: int, upkeep: float,
+        kind: String) -> String:
     if work_cost <= SourceForecast.BUILD_WORK_COST_NONE:
         return ""
     var price := HudComposeVocab.BUILD_PRICE_WORK_FORMAT % format_work_units(work_cost)
@@ -1210,7 +1256,8 @@ static func build_price_clause(work_cost: float, turns: int, upkeep: float) -> S
         price = HudComposeVocab.BUILD_PRICE_TURNS_FORMAT % [price, build_turns_clause(turns)]
     if upkeep < SourceForecast.UPKEEP_WORK_MIN:
         return price
-    return HudComposeVocab.BUILD_PRICE_UPKEEP_FORMAT % [price, format_work_units(upkeep)]
+    return HudComposeVocab.BUILD_PRICE_UPKEEP_FORMAT % [price, format_work_units(upkeep),
+        HudWorkVocab.keeping_role_name(kind)]
 
 ## RETIRED — **`build_turns_never(turns)`**, which answered *"is this the estimate that has to STOP the
 ## player?"*. Its doc called it the single test both compose faces gate their warning ink on, and it had
@@ -1290,16 +1337,27 @@ const UPKEEP_LOST_NOW_FORMAT := "short %s work — this rung is being lost NOW"
 ## is lost — three unkept turns costs a tended patch, two costs a Field. A player who loses a 25-turn
 ## investment with no warning reads it as a bug, so the warning stands wherever the improvement does.
 ##
-## **IT IS THE DETAIL BEHIND THE RUNG ROW'S OWN MARK, and that is why it needs no `kind`.** The row
-## above states WHICH rung is in trouble and the four-hazard fork decides the mark; this states what
-## the trouble costs. It fires on the published shortfall alone, so it covers both sides of the
-## meter — a built rung the pool underpaid, and a half-built one it underpaid just the same — without
-## re-deciding which of those it is.
+## **IT IS THE DETAIL BEHIND THE RUNG ROW'S OWN MARK.** The row above states WHICH rung is in trouble
+## and the four-hazard fork decides the mark; this states what the trouble costs. It fires on the
+## published shortfall alone, so it covers both sides of the meter — a built rung the pool underpaid,
+## and a half-built one it underpaid just the same — without re-deciding which of those it is.
+##
+## **`kind` IS FOR THE REMEDY, NOT FOR THE NUMBER, and that is why the row itself is still one
+## producer for both webs.** The shortfall and the countdown are worded identically on a patch and on
+## a herd and must stay so; what differs is the ROLE CARD that pays, and until this the card said what
+## was being lost and never where the hands come from. **That is the sentence the map's `⚠` badge has
+## no way to carry** — it is drawn with `draw_string` into `MapView`'s canvas, so it can hold no
+## tooltip — so the source's own card is where a player interrogates the mark, and this is the row it
+## interrogates. The words are `HudWorkVocab.under_kept_note_for_source`, the work board's own note,
+## so the two surfaces cannot phrase one hazard differently.
+##
+## **A BLOCKED QUEUE SUPPRESSES THE REMEDY HERE, because `build_blocked_lines` is already saying it**
+## on the row the countdown is about. Both would be the same instruction twice on one card.
 ##
 ## Nothing here is derived: the shortfall is a published field (never `demand − supplied`) and the
 ## countdown is `neglectGraceRemaining` read through its own flag. Empty on a source that is being
 ## paid, which is every wild patch and every held rung in the game.
-static func at_risk_lines(src: Dictionary, prefix: String) -> Array[String]:
+static func at_risk_lines(src: Dictionary, prefix: String, kind: String) -> Array[String]:
     var lines: Array[String] = []
     var state := SourceForecast.upkeep_state(src, prefix)
     if not SourceForecast.upkeep_is_short(state):
@@ -1311,10 +1369,14 @@ static func at_risk_lines(src: Dictionary, prefix: String) -> Array[String]:
     if not bool(state.get("at_risk", false)) or grace <= 0:
         lines.append("%s: %s" % [UPKEEP_RISK_ROW,
             UPKEEP_LOST_NOW_FORMAT % format_work_units(float(state["shortfall"]))])
-        return lines
-    lines.append("%s: %s" % [UPKEEP_RISK_ROW, UPKEEP_LOST_SOON_FORMAT % [
-        format_work_units(float(state["shortfall"])), grace,
-        "" if grace == 1 else HudAttentionVocab.ATTENTION_TURN_PLURAL_SUFFIX]])
+    else:
+        lines.append("%s: %s" % [UPKEEP_RISK_ROW, UPKEEP_LOST_SOON_FORMAT % [
+            format_work_units(float(state["shortfall"])), grace,
+            "" if grace == 1 else HudAttentionVocab.ATTENTION_TURN_PLURAL_SUFFIX]])
+    if SourceForecast.build_turns_remaining(src, prefix) \
+            != SourceForecast.BUILD_TURNS_QUEUE_BLOCKED:
+        lines.append("%s%s" % [MORALE_BREAKDOWN_INDENT,
+            HudWorkVocab.under_kept_note_for_source(kind)])
     return lines
 
 ## **THE ONE SUB-ROW A RUNNING BUILD STILL HANGS BENEATH ITSELF** — what the crew's tools took off the
@@ -1364,10 +1426,8 @@ static func build_blocked_lines(src: Dictionary, prefix: String, kind: String) -
         return lines
     if not SourceForecast.upkeep_is_short(SourceForecast.upkeep_state(src, prefix)):
         return lines
-    var role := HudWorkVocab.ROLE_NAME_HUSBANDRY if kind == SourceForecast.SOURCE_KIND_HERD \
-        else HudWorkVocab.ROLE_NAME_AGRICULTURE
     lines.append("%s%s" % [MORALE_BREAKDOWN_INDENT,
-        HudSelectionVocab.RUNG_BLOCKED_REMEDY_FORMAT % role])
+        HudSelectionVocab.RUNG_BLOCKED_REMEDY_FORMAT % HudWorkVocab.keeping_role_name(kind)])
     return lines
 
 ## The one turn count that takes the singular row — a build one turn from done.
@@ -2258,7 +2318,8 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
     # **WHAT THIS HERD IS ABOUT TO LOSE, and how long it has** — the animal web's half of the one
     # at-risk row both webs share, and the detail behind whichever rung row above it is marked. A herd
     # whose keeping is being paid prints none, which is what makes the silence readable.
-    lines.append_array(at_risk_lines(herd_data, HudComposeVocab.BARE_FORECAST_PREFIX))
+    lines.append_array(at_risk_lines(herd_data, HudComposeVocab.BARE_FORECAST_PREFIX,
+        SourceForecast.SOURCE_KIND_HERD))
     var next_x := int(herd_data.get("next_x", -1))
     var next_y := int(herd_data.get("next_y", -1))
     if next_x >= 0 and next_y >= 0:

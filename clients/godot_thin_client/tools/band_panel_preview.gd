@@ -2180,6 +2180,10 @@ func _ready() -> void:
 
 	await _render_builders_kit_states()
 
+	await _assert_builders_card_kit_faces()
+
+	await _render_build_queue_states()
+
 	await _assert_action_registry()
 
 	_assert_herd_field_pairs()
@@ -10643,3 +10647,353 @@ func _builders_picker_entry(picker: OptionButton, kit_name: String) -> Dictionar
 		if popup.get_item_text(i).begins_with(kit_name):
 			return {"text": popup.get_item_text(i), "disabled": popup.is_item_disabled(i)}
 	return {}
+
+# =====================================================================================
+#  THE BUILD QUEUE BLOCK — the band's ordered list, above the work board's chips
+# =====================================================================================
+# `docs/plan_standing_upkeep.md` §4.6b. Slice 6b's central concept had no surface at all: a player
+# could not see what was queued, in what order, or which entry the builders were actually funding.
+#
+# **THE FIXTURE IS THE CLAIM, and it mixes BOTH WEBS on ONE band.** A queue of three Cultivates would
+# pass every ordering assertion here while saying nothing about a block that reads the animal web's
+# entries wrongly — and the two webs reach the block through different branches of
+# `_work_source_models` (a patch by tile, a herd by id), so a single-web fixture exercises one of
+# them.
+#
+# **THE DATES ARE STRICTLY ASCENDING BY CONSTRUCTION.** A chained countdown is the sim's own answer
+# for a queue — an entry's date is every entry ahead of it plus its own span — so equal dates would
+# satisfy a "the dates render" check while proving nothing about the chaining the block exists to
+# make legible.
+
+## The band's own patch, plus two more it works, and the herd its hunt row already names. Positions
+## interleave the webs deliberately: plant at the head, animal behind it, plant behind that.
+const QUEUE_HEAD_PATCH := Vector2i(71, 18)
+const QUEUE_SECOND_PATCH := Vector2i(72, 18)
+const QUEUE_THIRD_PATCH := Vector2i(73, 18)
+const QUEUE_HERD_ID := "game_deer_07"
+const QUEUE_HERD_TILE := Vector2i(70, 17)
+
+## The chained countdowns, ascending down the queue. They are ordinary positive counts so the date
+## column renders `RUNG_TURNS_FORMAT` rather than a sentinel — the sentinel branch is
+## `band_panel_build_queue_blocked`'s subject.
+const QUEUE_TURNS_HEAD := 42
+const QUEUE_TURNS_SECOND := 61
+const QUEUE_TURNS_THIRD := 98
+const QUEUE_TURNS_FOURTH := 140
+
+## The pool funding it. Three, so the header states a plural and the count is distinguishable from
+## both the "nobody" branch and from `WORKER_STEP`.
+const QUEUE_BUILDERS := 3
+
+## The take crew on each queued source. Non-zero, because `_work_source_models` admits a row on its
+## TAKE crew — which is also why every queue entry is guaranteed a model (`prune_build_queue` keeps
+## an entry only while its source holds an assignment).
+const QUEUE_ROW_WORKERS := 1
+
+func _render_build_queue_states() -> void:
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+
+	#   (a) THE THREE-ENTRY QUEUE, both webs, in the tall LEFT dock.
+	_set_forage_patches(_build_queue_patches(3))
+	_set_world_herds(_build_queue_herds(SourceForecast.BUILD_QUEUE_HEAD + 1, QUEUE_TURNS_SECOND))
+	_push_bands([_build_queue_band_fixture(3)])
+	await _settle()
+	await _save("band_panel_build_queue")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_build_queue_block(3, "the three-entry queue")
+	_assert_build_queue_dates_ascend()
+	_assert_build_queue_head_readout()
+
+	#   (b) THE HEAD IS BLOCKED, and every entry behind it carries the SAME sentinel — which is the
+	# sim's own behaviour (the whole pool stands on the head, so nothing behind it moves) and the
+	# half a block showing only the head would misreport.
+	_set_forage_patches(_build_queue_patches(3, SourceForecast.BUILD_TURNS_QUEUE_BLOCKED))
+	_set_world_herds(_build_queue_herds(SourceForecast.BUILD_QUEUE_HEAD + 1,
+		SourceForecast.BUILD_TURNS_QUEUE_BLOCKED))
+	_push_bands([_build_queue_band_fixture(3)])
+	await _settle()
+	await _save("band_panel_build_queue_blocked")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_build_queue_block(3, "the blocked queue")
+	_assert_build_queue_all_blocked()
+
+	#   (c) THE PAIRED NEGATIVE — a band with a work board and NOTHING queued renders NO block at
+	# all. Without it every claim above passes on a block drawn unconditionally, and the
+	# no-queue-no-block rule is the one the common early game actually lives in.
+	_set_forage_patches(_build_queue_patches(0))
+	_set_world_herds(_build_queue_herds(SourceForecast.NOT_IN_ANY_BUILD_QUEUE,
+		SourceForecast.BUILD_TURNS_NO_ESTIMATE))
+	_push_bands([_build_queue_band_fixture(0)])
+	await _settle()
+	await _save("band_panel_build_queue_none")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_build_queue_absent()
+
+	#   (d) THE WIDE DOCK, four entries — so the OVERFLOW row is in the measurement rather than only
+	# in the arithmetic. This is the state the height budget is judged on.
+	await _pin_canvas(DOCKROW_CANVAS)
+	_panel.set_dock(SIDE_BOTTOM)
+	_set_forage_patches(_build_queue_patches(4))
+	_set_world_herds(_build_queue_herds(SourceForecast.BUILD_QUEUE_HEAD + 1, QUEUE_TURNS_SECOND))
+	_push_bands([_build_queue_band_fixture(4)])
+	await _settle()
+	await _save("band_panel_build_queue_wide")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_report_zone_content_extent("band_panel_build_queue_wide")
+	_assert_build_queue_block(4, "the wide dock's four-entry queue")
+	_assert_build_queue_overflow(4)
+	_assert_build_queue_leaves_the_board_rows()
+
+	# The `✕` is PNG-LESS: an emitted command line is a string, and a frame renders a plausible
+	# control whichever grammar it carries.
+	_assert_unqueue_command_grammar()
+
+	await _pin_canvas(PREVIEW_SIZE)
+	_panel.set_dock(SIDE_LEFT)
+	# Put the roster and the reference band back — `update_band_alerts` diffs against the last roster
+	# pushed, and everything below reads whatever this block leaves behind.
+	_set_forage_patches([])
+	_set_world_herds(_herd_fixtures())
+	_push_bands([_band_fixture()])
+	await _settle()
+
+## The band that owns the queue: the reference band, its forage and hunt rows given the declarations
+## the sim derives from its queue entries, plus however many extra patches this state needs and the
+## `builders` ROLE ROW that funds the lot.
+##
+## `entries == 0` is the NEGATIVE fixture — the same band with every declaration dropped, so the
+## board is unchanged and only the queue is gone.
+func _build_queue_band_fixture(entries: int) -> Dictionary:
+	var band := _band_fixture()
+	band["idle_workers"] = 0
+	var rows: Array = band["labor_assignments"]
+	var forage: Dictionary = (rows[0] as Dictionary).duplicate(true)
+	forage["improvement"] = SourceForecast.IMPROVEMENT_CULTIVATE if entries >= 1 \
+		else SourceForecast.IMPROVEMENT_NONE
+	rows[0] = forage
+	var hunt: Dictionary = (rows[1] as Dictionary).duplicate(true)
+	hunt["improvement"] = SourceForecast.IMPROVEMENT_TAME if entries >= 2 \
+		else SourceForecast.IMPROVEMENT_NONE
+	rows[1] = hunt
+	# The third and fourth entries are patches of their own, so the board carries rows the queue does
+	# not — which is what makes "the board still renders" a real claim beside the queue's own.
+	rows.append(_build_queue_forage_row(QUEUE_SECOND_PATCH,
+		SourceForecast.IMPROVEMENT_SOW if entries >= 3 else SourceForecast.IMPROVEMENT_NONE))
+	rows.append(_build_queue_forage_row(QUEUE_THIRD_PATCH,
+		SourceForecast.IMPROVEMENT_CULTIVATE if entries >= 4 else SourceForecast.IMPROVEMENT_NONE))
+	rows.append({
+		"kind": HudConst.LABOR_KIND_BUILDERS, "workers": QUEUE_BUILDERS,
+		"target_x": -1, "target_y": -1, "fauna_id": "",
+	})
+	return band
+
+func _build_queue_forage_row(tile: Vector2i, improvement: String) -> Dictionary:
+	return {
+		"kind": SourceForecast.LABOR_KIND_FORAGE, "workers": QUEUE_ROW_WORKERS,
+		"target_x": tile.x, "target_y": tile.y, "fauna_id": "",
+		"floor": 0.5, "improvement": improvement,
+		"actual_yield": 0.20, "sustainable_yield": 0.20,
+	}
+
+## The patches, carrying the two fields the block reads and nothing else — the queue POSITION and the
+## chained countdown. `turns_override` states the same sentinel on every entry, which is the blocked
+## state's own claim.
+func _build_queue_patches(entries: int, turns_override: int = 0) -> Array:
+	var tiles := [QUEUE_HEAD_PATCH, QUEUE_SECOND_PATCH, QUEUE_THIRD_PATCH]
+	# The head is entry 0, the herd entry 1, so the plant entries take 0, 2 and 3.
+	var positions := [SourceForecast.BUILD_QUEUE_HEAD, 2, 3]
+	var turns := [QUEUE_TURNS_HEAD, QUEUE_TURNS_THIRD, QUEUE_TURNS_FOURTH]
+	var out: Array = []
+	for i in range(tiles.size()):
+		var queued := (i == 0 and entries >= 1) or (i == 1 and entries >= 3) \
+			or (i == 2 and entries >= 4)
+		out.append({
+			"x": (tiles[i] as Vector2i).x, "y": (tiles[i] as Vector2i).y,
+			"build_queue_position": positions[i] if queued \
+				else SourceForecast.NOT_IN_ANY_BUILD_QUEUE,
+			"build_turns_remaining": (turns_override if turns_override != 0 else turns[i]) \
+				if queued else SourceForecast.BUILD_TURNS_NO_ESTIMATE,
+		})
+	return out
+
+## …and the herd the band's hunt row already names, at its own place in the queue.
+func _build_queue_herds(position: int, turns: int) -> Array:
+	return [{
+		"id": QUEUE_HERD_ID, "species": "Red Deer",
+		"x": QUEUE_HERD_TILE.x, "y": QUEUE_HERD_TILE.y,
+		"population": 120, "ecology_phase": "stressed",
+		"build_queue_position": position,
+		"build_turns_remaining": turns,
+	}]
+
+# ---- the block's own claims -------------------------------------------------------------------
+
+## The block exists, holds the rows the cap allows, and marks EXACTLY the head.
+##
+## **THE MARKER IS ASSERTED BOTH WAYS**: a `▸` on the head alone is the claim, and "the head has one"
+## passes on a block that marks every row.
+func _assert_build_queue_block(entries: int, where: String) -> void:
+	var block := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_BLOCK_META)
+	if block == null:
+		_fail("%s renders no BUILD QUEUE block at all" % where)
+		return
+	_assert_band_panel("%s renders a BUILD QUEUE block naming %d entries" % [where, entries],
+		int(block.get_meta(HudWorkVocab.BUILD_QUEUE_BLOCK_META)) == entries)
+	var rows := _build_queue_rows()
+	var wanted := mini(entries, HudWorkVocab.BUILD_QUEUE_ROWS_MAX)
+	_assert_band_panel("…drawing %d entry rows of %d queued (%d drawn)"
+			% [wanted, entries, rows.size()], rows.size() == wanted)
+	var marked: Array[int] = []
+	for row in rows:
+		var marker := _find_meta_control(row, HudWorkVocab.BUILD_QUEUE_MARKER_META)
+		if marker != null and (marker as Label).text == HudWorkVocab.BUILD_QUEUE_HEAD_MARKER:
+			marked.append(int(row.get_meta(HudWorkVocab.BUILD_QUEUE_ROW_META)))
+	_assert_band_panel("…and EXACTLY the head wears the `%s` marker (marked positions %s)"
+			% [HudWorkVocab.BUILD_QUEUE_HEAD_MARKER, str(marked)],
+		marked == [SourceForecast.BUILD_QUEUE_HEAD])
+
+## **THE DATES ARE STRICTLY ASCENDING, which is the whole point of a CHAINED countdown.** Equal dates
+## would pass a "the dates render" check while proving nothing, so the claim is the ordering — read
+## back off the rendered value through the vocabulary's own format rather than off the fixture.
+func _assert_build_queue_dates_ascend() -> void:
+	var wanted := [QUEUE_TURNS_HEAD, QUEUE_TURNS_SECOND, QUEUE_TURNS_THIRD]
+	var seen: Array[String] = []
+	for row in _build_queue_rows():
+		var date := _find_meta_control(row, HudWorkVocab.BUILD_QUEUE_DATE_META)
+		seen.append("" if date == null else String(date.get_meta(HudWorkVocab.BUILD_QUEUE_DATE_META)))
+	var expected: Array[String] = []
+	for turns in wanted:
+		expected.append(HudSelectionVocab.RUNG_TURNS_FORMAT % [turns, 0])
+	_assert_band_panel("the queue's three dates are the CHAINED counts, strictly ascending — %s"
+			% str(seen), seen == expected)
+
+## The head's readout names the pool and the kit it is holding.
+func _assert_build_queue_head_readout() -> void:
+	var block := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_BLOCK_META)
+	if block == null:
+		_fail("the BUILD QUEUE head cannot be read — no block")
+		return
+	var kit_face := KitRoster.display_name_for_id(_hud._band_labor.kits(),
+		BandFx.KIT_ID_TILLAGE)
+	var wanted := HudWorkVocab.BUILD_QUEUE_BUILDERS_FORMAT % [QUEUE_BUILDERS, kit_face]
+	_assert_band_panel("…and its head states the pool and the PLANT head's own kit — \"%s\"" % wanted,
+		_has_label_containing(block, wanted))
+
+## Every entry carries the blocked sentinel, not just the head — the sim's own behaviour, and a block
+## that showed it on the head alone would report a stuck queue as a moving one.
+func _assert_build_queue_all_blocked() -> void:
+	var blocked := 0
+	var seen: Array[String] = []
+	var needle := HudSelectionVocab.RUNG_BLOCKED_FORMAT % [HudSelectionVocab.RUNG_HAZARD_GLYPH, 0]
+	for row in _build_queue_rows():
+		var date := _find_meta_control(row, HudWorkVocab.BUILD_QUEUE_DATE_META)
+		var value := "" if date == null else String(date.get_meta(HudWorkVocab.BUILD_QUEUE_DATE_META))
+		seen.append(value)
+		if value == needle:
+			blocked += 1
+	_assert_band_panel("a blocked HEAD blocks the whole queue — all 3 entries read \"%s\" (%s)"
+			% [needle, str(seen)], blocked == 3)
+
+## **THE PAIRED NEGATIVE.** No queue means no block AT ALL — no head, no rows, no chrome — and the
+## board must still render, or "the block is gone" is satisfied by a zone that renders nothing.
+func _assert_build_queue_absent() -> void:
+	_assert_band_panel("a band with nothing queued renders NO BUILD QUEUE block at all",
+		_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_BLOCK_META) == null)
+	_assert_band_panel("…while its work board still renders its rows (%d)"
+			% _work_board_row_count(), _work_board_row_count() > 0)
+
+## The overflow row stands for the rest, and it says how many.
+func _assert_build_queue_overflow(entries: int) -> void:
+	var overflow := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_OVERFLOW_META)
+	if overflow == null:
+		_fail("a %d-entry queue draws no `+N more` row" % entries)
+		return
+	var remaining := entries - HudWorkVocab.BUILD_QUEUE_ROWS_MAX
+	_assert_band_panel("…and the overflow row stands for the rest — `%s`"
+			% (HudWorkVocab.BUILD_QUEUE_OVERFLOW_FORMAT % remaining),
+		int(overflow.get_meta(HudWorkVocab.BUILD_QUEUE_OVERFLOW_META)) == remaining
+			and _has_label_containing(overflow, HudWorkVocab.BUILD_QUEUE_OVERFLOW_FORMAT % remaining))
+
+## The block is PAID FOR in `_work_board_capacity`'s chrome, so the board keeps rows to page through.
+## The zone CLIPS, so a block drawn without being paid for takes its height off the bottom of the
+## board silently — and `_assert_zone_content_fits` cannot see it, a clipped row still reporting a
+## rect inside its host.
+func _assert_build_queue_leaves_the_board_rows() -> void:
+	_assert_band_panel("…and the board is still paged rather than squeezed out — %d rows"
+			% _work_board_row_count(), _work_board_row_count() > 0)
+
+func _build_queue_rows() -> Array[Control]:
+	return _collect_meta_controls(_panel, HudWorkVocab.BUILD_QUEUE_ROW_META, [])
+
+## How many WORK BOARD rows are rendered — the board's own rows, told from the queue's by the meta
+## only a board row carries (`HudWorkVocab.WORK_ROW_RUNG_META`, its reserved rung slot).
+func _work_board_row_count() -> int:
+	return _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_RUNG_META, []).size()
+
+## **THE `✕` DRIVES THE REAL HANDLER AND THE LINE IS READ OFF `Main.format_unqueue`.** Both webs, in
+## one assertion: a builder that gets the grammar backwards passes either half alone, `unqueue` being
+## told apart by whether a herd id is present.
+func _assert_unqueue_command_grammar() -> void:
+	var seen: Array = []
+	var sink := func(payload: Dictionary) -> void: seen.append(payload)
+	_hud.unqueue_requested.connect(sink)
+	var lines := {}
+	for row in _build_queue_rows():
+		var button := _find_meta_control(row, HudWorkVocab.BUILD_QUEUE_UNQUEUE_META) as Button
+		if button == null:
+			continue
+		seen.clear()
+		button.pressed.emit()
+		if seen.is_empty():
+			continue
+		lines[int(row.get_meta(HudWorkVocab.BUILD_QUEUE_ROW_META))] = String(
+			MAIN_SCRIPT.format_unqueue(seen[0] as Dictionary).get("line", ""))
+	_hud.unqueue_requested.disconnect(sink)
+	var patch_line := "unqueue %d %d %d" % [HudConst.PLAYER_FACTION_ID,
+		QUEUE_HEAD_PATCH.x, QUEUE_HEAD_PATCH.y]
+	_assert_band_panel("the queue's `%s` on a PATCH entry sends `%s` (got \"%s\")"
+			% [HudWorkVocab.BUILD_QUEUE_UNQUEUE_GLYPH, patch_line,
+				String(lines.get(SourceForecast.BUILD_QUEUE_HEAD, ""))],
+		String(lines.get(SourceForecast.BUILD_QUEUE_HEAD, "")) == patch_line)
+	var herd_line := "unqueue %d %s" % [HudConst.PLAYER_FACTION_ID, QUEUE_HERD_ID]
+	_assert_band_panel("…and on a HERD entry `%s` (got \"%s\")"
+			% [herd_line, String(lines.get(1, ""))],
+		String(lines.get(1, "")) == herd_line)
+
+## **THE BUILDERS CARD OPENS ON THE KIT THE QUEUE HEAD IMPLIES, and on `No kit` when there is no head
+## to imply one.** Three states, PNG-LESS and by EQUALITY, because a resolver stuck on ONE web
+## satisfies any one of them: a plant head, an animal head, and the EMPTY queue — which is the state
+## that shipped wrong, `KitRoster.resolve_selection`'s terminal fall-through being ROSTER ORDER, so
+## the card presented `hurdling` as a decision the player had never made.
+func _assert_builders_card_kit_faces() -> void:
+	var kits: Array = _hud._band_labor.kits()
+	var cases := [
+		["a PLANT queue head", SourceForecast.BUILD_QUEUE_HEAD,
+			SourceForecast.NOT_IN_ANY_BUILD_QUEUE, BandFx.KIT_ID_TILLAGE],
+		["an ANIMAL queue head", SourceForecast.NOT_IN_ANY_BUILD_QUEUE,
+			SourceForecast.BUILD_QUEUE_HEAD, BandFx.KIT_ID_HURDLING],
+		["an EMPTY queue", SourceForecast.NOT_IN_ANY_BUILD_QUEUE,
+			SourceForecast.NOT_IN_ANY_BUILD_QUEUE, BandFx.KIT_ID_NONE],
+	]
+	for case in cases:
+		_set_forage_patches([_builders_kit_patch(int(case[1]))])
+		_set_world_herds([_builders_kit_herd(int(case[2]))])
+		_push_bands([_builders_band_fixture()])
+		await _settle()
+		var card := _find_role_card(HudWorkVocab.ROLE_NAME_BUILDERS)
+		var picker: OptionButton = null if card == null \
+			else _find_meta_control(card, KitRoster.KIT_PICKER_META) as OptionButton
+		if picker == null:
+			_fail("the Builders card has no kit picker on %s" % String(case[0]))
+			continue
+		var wanted := HudComposeVocab.KIT_PICKER_FACE_FORMAT % [
+			String(HudComposeVocab.KIT_JOB_GLYPHS.get(KitRoster.JOB_BUILDERS,
+				HudComposeVocab.KIT_JOB_GLYPH_FALLBACK)),
+			KitRoster.display_name_for_id(kits, String(case[3]))]
+		_assert_band_panel("the Builders card opens on \"%s\" with %s (got \"%s\")"
+				% [wanted, String(case[0]), picker.text], picker.text == wanted)

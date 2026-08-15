@@ -422,20 +422,35 @@ const BUILD_TURNS_HELD := "held"
 # count, so the singular can only be decided in one place (`DetailFormat.build_turns_clause`).
 const BUILD_PRICE_TURNS_FORMAT := "%s, %s"
 
-# `50 work, ≈25 turns · 2 work a turn to hold` — **THE STANDING PRICE, BESIDE THE ONE-OFF ONE**
-# (`docs/plan_standing_upkeep.md` §2.4). A rung costs a PILE once and a RATE forever, and an offer
-# that quotes only the pile is quoting half of what the player is agreeing to.
+# `50 work, ≈25 turns · 2 work a turn from Agriculture to hold` — **THE STANDING PRICE, BESIDE THE
+# ONE-OFF ONE** (`docs/plan_standing_upkeep.md` §2.4). A rung costs a PILE once and a RATE forever,
+# and an offer that quotes only the pile is quoting half of what the player is agreeing to.
 #
-# **IT IS A PRICE, NOT A THRESHOLD, and the wording carries that.** `to hold` names what the rate
-# buys; the retired `holds this rung — only the surplus is progress` named a bar a build crew had to
-# clear, which is the mechanism slice 6a deleted. Nothing here compares it to a crew.
+# **IT NAMES THE POOL THAT PAYS, and it did not for a release.** The clause read `· 2 work a turn to
+# hold`, and reported from play it was meaningless in that context: the rate never said WHO owes it,
+# so on a sheet whose every other number is about the crew under the stepper it read as a demand on
+# that crew. It is not — it is the band's AGRICULTURE or HUSBANDRY role, and those are the only two
+# controls that move it. The role word is `HudWorkVocab.keeping_role_name`, i.e. the same per-web
+# pair the work row's under-kept note already names, so the two surfaces cannot send the player to
+# different cards.
+#
+# **IT IS A PRICE, NOT A THRESHOLD, and the wording still carries that.** `to hold` names what the
+# rate buys and `from <role>` who supplies it; the retired `holds this rung — only the surplus is
+# progress` named a bar a build crew had to clear, which is the mechanism slice 6a deleted. Nothing
+# here compares it to a crew.
 #
 # **IN WORK UNITS, because a supplier's output is not one.** How many hands the rate takes depends on
 # what they carry, so a head count here would be a number that goes stale with the band's gear.
 #
 # The `·` separator is the compose sheet's own, dividing two facts about one offer where the comma
 # above divides two halves of one price.
-const BUILD_PRICE_UPKEEP_FORMAT := "%s · %s work a turn to hold"
+#
+# **IT DELIBERATELY DOES NOT SAY `then`.** `· then ` is the RETIRED payoff clause's own phrase — the
+# `🌱 Cultivate this patch · then 1.20 food` face this arc replaced with the readout's labelled row —
+# and it is still the needle every "the face quotes no payoff" assertion greps for. A standing price
+# wearing it makes those assertions find this clause instead, on a sheet where both would be
+# legitimate. Same avoidance, same reason, as the crew note's refusal to say `while building`.
+const BUILD_PRICE_UPKEEP_FORMAT := "%s · %s work a turn from %s to hold"
 
 # `🌱 Cultivate this patch — 50 work, ≈25 turns` — the offered checkbox's face with its price. It
 # takes an em-dash rather than the running face's, because the two halves are a NAME and its PRICE

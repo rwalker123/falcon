@@ -1371,3 +1371,29 @@ for the same reason as before, its claim having inverted.**
   over the kept reference tile — **the same coordinates**, so the composition survives the swap and the
   only thing that moves is the shortfall — and the face reads `— held` where the short-kept one reads
   `— ∞ turns` at the identical crew of zero.
+
+## The build-queue arc's changes here (`docs/plan_standing_upkeep.md` §4.6b)
+
+**A clean run is 332 frames / 1076 `PASS`, exit 0 — RE-MEASURED.** No frame was added or removed; the
+one `PASS` is `improvements.gd`'s claim that the land card's `At risk:` block names the ROLE that pays
+(`selection-card.md` → "…BUT IT NOW CARRIES A REMEDY SUB-ROW"), sabotage-verified by dropping the
+append.
+
+**ONE FRAME MOVED, AND IT MOVED BECAUSE A LATENT FIT RACE WAS FIXED RATHER THAN BECAUSE THE COPY
+GREW.** `forage_fodder_locked`'s compose card rendered **782px against a panel demanding 789, with the
+internal scroll DISABLED** — precisely the clamped-short state
+`_assert_compose_sheet_card_holds_its_content` exists to catch, and the only state in the corpus
+within one line of that boundary.
+
+The cause is in `ComposeSheet.refit`, not in the fixture: it waits ONE frame, then `_fit_width`s the
+card and reads `_body.get_combined_minimum_size().y` **in the same pass**, so the height it fits to is
+the previous layout's wrapping. Lengthening the offered face's standing-price clause by three words
+was enough to make the two readings differ by 19px — one line. **`refit` now waits a second frame
+after the width fit**, and the state renders 801 (its correct fitted height) with every other compose
+sheet's card, panel minimum and body minimum **unchanged to the pixel** — measured across all eleven
+states that assertion rides.
+
+**The measurement that identified it is worth keeping**: print `card.size`, the panel's combined
+minimum and the BODY's minimum together for every state the assertion visits. `card − body_min` is the
+chrome `refit` used, and where that differs from the same subtraction on the panel, the two readings
+were taken at different widths.

@@ -64,6 +64,23 @@ const KIND_SYSTEM := "system"
 ## needs to hear from this channel.
 const KIND_COMMAND_ECHO := "command_echo"
 
+## **THE TRANSPORT FAILURE, WORDED AS ONE** — `Not connected to the server — "assign_labor 0 1
+## builders 1" was not sent.`
+##
+## **IT IS NEVER A SIM REFUSAL, AND THE OLD WORDING SAID IT WAS.** The line read
+## `Command failed (assign_labor 0 1 builders 1): can't connect`, which reported from play sent a
+## player looking for a rules problem that does not exist. `CommandClient.send_line` returns
+## `ERR_CANT_ACQUIRE_RESOURCE` when there is no bridge and `ERR_CANT_CONNECT` when the bridge could
+## not deliver, and **those are the only two values it can produce** — a command the sim REFUSES has
+## already been written to the socket, and its refusal arrives later on the server's own event
+## stream. So this site has exactly one meaning and states it: nothing reached the server, and the
+## line the player composed is still theirs to re-issue.
+##
+## **The underlying error code is NOT quoted**, because it carries nothing a player can act on and
+## the two codes mean the same thing here; `CommandClient` already `push_warning`s the bridge's own
+## message for a developer, and the Logs console keeps this line verbatim.
+const COMMAND_NOT_SENT_FORMAT := "Not connected to the server — \"%s\" was not sent."
+
 # ---- kinds the DOCK ignores ------------------------------------------------
 ## Kinds the dock drops at INGEST, in both inlets (`ingest_events` and `note_system`), never storing
 ## them. **Not a detail floor, not a channel toggle and not a render-time skip**: an ignored kind

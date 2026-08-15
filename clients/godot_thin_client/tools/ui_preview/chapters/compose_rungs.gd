@@ -1379,10 +1379,13 @@ func _kit_swap_price_clause_one() -> String:
 		HudComposeVocab.BUILD_TURNS_COUNT_ONE])
 
 ## The standing half, appended to whichever one-off price its caller composed — this warren's own
-## `KIT_SWAP_UPKEEP_PER_TURN`, stated in WORK.
+## `KIT_SWAP_UPKEEP_PER_TURN`, stated in WORK, and naming the ROLE that pays it. The warren is an
+## animal source, so that is Husbandry; the role word is composed through the shipped picker rather
+## than spelled here, so a re-worded pair moves the expectation with the sheet.
 func _kit_swap_held_price(price: String) -> String:
 	return HudComposeVocab.BUILD_PRICE_UPKEEP_FORMAT % [price,
-		DetailFormat.format_work_units(KIT_SWAP_UPKEEP_PER_TURN)]
+		DetailFormat.format_work_units(KIT_SWAP_UPKEEP_PER_TURN),
+		HudWorkVocab.keeping_role_name(SourceForecast.SOURCE_KIND_HERD)]
 
 func _kit_swap_turn_estimate_states() -> void:
 	h._hud.update_kit_roster(_offer_roster(), BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,

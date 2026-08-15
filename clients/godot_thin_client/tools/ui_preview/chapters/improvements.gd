@@ -1606,10 +1606,17 @@ func _a_rung_that_slipped_is_building_again() -> void:
 	# `Keeping:` bill is retired — it read as noise on every source that owed anything — so what
 	# survives is the row that only exists when the rate is going UNPAID, which is this patch.
 	var slipped_risk := "\n".join(DetailFormat.at_risk_lines(slipped,
-		HudComposeVocab.FORAGE_FORECAST_PREFIX))
+		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.SOURCE_KIND_FORAGE))
 	h._assert_hud("…and the land card states what the shortfall costs, never the pooled bill",
 		slipped_risk.contains(DetailFormat.UPKEEP_RISK_ROW)
 			and not slipped_risk.contains(UPKEEP_POOL_NEEDLE))
+	# **…AND IT NAMES THE ROLE THAT PAYS, which is the sentence the map's `⚠` cannot carry** (§4.6b).
+	# That badge is drawn with `draw_string` into `MapView`'s own canvas, so it can hold no tooltip;
+	# the card is where a player interrogates it, and the words are the work board's own note, so the
+	# two surfaces cannot phrase one hazard differently.
+	h._assert_hud("…and names the ROLE that pays it, in the work board's own words",
+		slipped_risk.contains(HudWorkVocab.under_kept_note_for_source(
+			SourceForecast.SOURCE_KIND_FORAGE)))
 
 ## **AN ARROW BETWEEN TWO IDENTICAL NUMBERS** — `0.26 → 0.26 FOOD`, reported from play beside a
 ## second account correctly reading `0.90 → 0.87`. The `after` reading is attached where it DIFFERS from the
@@ -1717,7 +1724,8 @@ func _an_unstarted_rung_is_priced_at_its_own_rate() -> void:
 	print("ui_preview: unstarted cultivate OFFER face  %s" % offer_face)
 	h._assert_hud("…while the face it is DECIDED on quotes what holding it costs, in work, beside what building it costs",
 		offer_face.contains(HudComposeVocab.BUILD_PRICE_UPKEEP_FORMAT % ["",
-			DetailFormat.format_work_units(BaseFx.PLANT_TENDED_UPKEEP_PER_TURN)]))
+			DetailFormat.format_work_units(BaseFx.PLANT_TENDED_UPKEEP_PER_TURN),
+			HudWorkVocab.keeping_role_name(SourceForecast.SOURCE_KIND_FORAGE)]))
 	# …and the one-off price is still on it, or "quotes the standing price" is satisfied by a face that
 	# has dropped the pile it sits beside.
 	h._assert_hud("…beside the pile itself, both prices on one line",

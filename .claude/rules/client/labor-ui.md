@@ -906,6 +906,27 @@ clamp; the short one asks for `panel_min − 9` and does not. All three of its a
 really clamped, the scroll came on, the card holds the panel) are sabotage-verified to fail, alongside
 eight of the nine roomy ones.
 
+#### …AND THE HEIGHT MUST BE READ A FRAME AFTER THE WIDTH IS FITTED
+
+`refit` waits a frame *before* it measures anything, for the reason above — and then fitted the
+card's WIDTH and read `_body.get_combined_minimum_size().y` in the same pass. Godot's container sort
+is deferred, so that height is the **previous** width's wrapping: the same one-frame staleness the
+leading `await` exists for, arriving one step further in and after it.
+
+**It was latent until a few words of copy moved a sheet across a line boundary.** Naming the keeping
+role on the offered face's standing price (`… · 2 work a turn from Agriculture to hold`) put
+`forage_fodder_locked` 19px — one line — over what `refit` had fitted to, and the card rendered
+**782px against a panel demanding 789 with the internal scroll still DISABLED**, which is exactly the
+state `_assert_compose_sheet_card_holds_its_content` was written to catch. Nothing about that state
+is special except that it was the only one within a line of the boundary; every sheet had the race.
+
+`refit` therefore waits a **second** frame after `_fit_width` / `_place_card`, re-checking `visible`
+and the two nodes on the way out like the first wait does. Measured across all eleven states that
+assertion rides: the mis-fitted one moves to its correct 801, and every other card, panel minimum and
+body minimum is unchanged to the pixel — so this is a fit that was wrong on one state rather than a
+resize of the family. `_fit_pending` is already false by then, so a refit arriving during the second
+wait is not swallowed.
+
 ### THE VERDICT LINE IS THE POINT OF THE REDESIGN (§7.1)
 
 The four-stance picker let a player select Eradicate with one worker and never eradicate anything:
@@ -3219,8 +3240,21 @@ one-off `workCost` cannot state.
 
 - **It renders on the OFFERED face beside the build's price**, through
   `DetailFormat.build_price_clause` and `HudComposeVocab.BUILD_PRICE_UPKEEP_FORMAT` —
-  `🌱 Cultivate this patch — 50 work, ≈25 turns · 2 work a turn to hold`. **In WORK, never in hands**,
-  and nothing compares it to a crew. A rung the wire prices no rate on states no standing clause.
+  `🌱 Cultivate this patch — 50 work, ≈25 turns · 2 work a turn from Agriculture to hold`. **In WORK,
+  never in hands**, and nothing compares it to a crew. A rung the wire prices no rate on states no
+  standing clause.
+- **IT NAMES THE POOL THAT PAYS, and for a release it did not.** The clause read
+  `· 2 work a turn to hold`, and reported from play it was meaningless in that context: the rate
+  never said WHO owes it, so on a sheet whose every other number is about the crew under the stepper
+  it read as a demand on that crew. It is not — it is the band's AGRICULTURE or HUSBANDRY role, and
+  those cards are the only controls that move it. `build_price_clause` therefore takes the SOURCE
+  kind, and the word is `HudWorkVocab.keeping_role_name`, i.e. the same per-web pair the work row's
+  under-kept note and the blocked-queue remedy already key on — so no two surfaces can send the
+  player to different cards.
+- **IT DELIBERATELY DOES NOT SAY `then`.** `· then ` is the RETIRED payoff clause's own phrase
+  (`🌱 Cultivate this patch · then 1.20 food`) and is still the needle every *"the face quotes no
+  payoff"* assertion greps for; a standing price wearing it makes those assertions find this clause
+  instead. Same avoidance, same reason, as the crew note's refusal to say `while building`.
 - **A RUNNING face carries no price at all** (it carries the meter), so this is the OFFERED and
   DECLARED states' alone — which is where the decision is being made anyway.
 - **The rung is picked with the SAME key table the cost is**, so price, meter and rate can never name

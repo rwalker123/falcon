@@ -2099,6 +2099,127 @@ command-guard` carries the other half: it now drives a band-wide role with a non
 parses `assign_labor 0 <band> scout 2 kit none` with the real server parser, a grammar whose tail was
 closed until this.
 
+### …AND ITS FALLBACK WAS ROSTER ORDER, WHICH IS HOW IT NAMED THE WRONG WEB (§4.6b)
+
+Two symptoms, one root, both reported from play: the card displayed **`Hurdling kit`** on a band
+raising a Cultivate, and it *"is still forcing me to select 1 kit"* on a band with nothing queued.
+
+**The rule above was right and the FALL-THROUGH under it was not.** With nothing composed, no kit on
+the wire (an unstaffed `builders` row publishes none) and no queue head to derive from,
+`_role_kit_id` handed `KitRoster.resolve_selection` an empty selection — and that function's terminal
+answer is **`selectable[0]`, i.e. ROSTER ORDER**, which `equipment.json` authors as `hurdling`,
+`tillage`, `none`. So the card opened on the ANIMAL web's kit and presented it as a decision the
+player had made, on every band with an empty queue — and on any band whose head the client cannot
+resolve, which is the plant-head report's own shape.
+
+**`KitRoster.bare_kit_id(kits, job)` is the honest answer to *nothing is chosen and nothing can be
+derived***: the roster's own entry that carries nothing (`kit_supplies_any` false — the derived
+reading of the null kit, which is why nothing spells the id `none`). It stays selectable throughout,
+sending the pool out bare being how a player conserves gear.
+
+**IT IS THE `builders` ROW'S ALONE.** Every other role publishes either a stored kit or a job
+default, so roster order is unreachable for them; this is the one row where "nothing is derivable" is
+a real and common state. `_commanded_role_kit_id` is untouched — the stepper still sends the player's
+own pick or nothing, never the derived id.
+
+**WORST CASE THE CARD NOW READS `No kit`, WHICH IS A GAP RATHER THAN A LIE.** A band whose queue head
+the client cannot resolve — `head_build_branch` needs the source in `forage_patch_lookup()` /
+`world_herds()` and the entry at position 0 — still derives nothing, and the card says so instead of
+naming a web.
+
+**Asserted PNG-LESS, by EQUALITY, over THREE states** (`_assert_builders_card_kit_faces`): a plant
+head, an animal head and the EMPTY queue, because a resolver stuck on one web satisfies any one of
+them. Sabotage-verified by dropping the bare-kit fall-through — exactly the empty-queue claim fails,
+naming `🎒 Hurdling kit`, i.e. the reported defect in its own words.
+
+## THE BUILD QUEUE BLOCK — the band's own list, above the board's chips (§4.6b)
+
+The band's ordered build queue had **no surface at all**: a player could not see what was queued, in
+what order, or which entry the builders were funding. It is a block in the WORK zone, between
+`_build_work_head` and `_build_work_chips`.
+
+```
+BUILD QUEUE                          3 builders · Tillage kit
+▸ 🌱 Cultivate (71, 18)              ≈42 turns (0%)            ✕
+  🐄 Tame Red Deer                   ≈61 turns (0%)            ✕
+  ▦ Sow (72, 18)                     ≈98 turns (0%)            ✕
+```
+
+- **ABOVE THE CHIPS, DELIBERATELY.** The chips filter the BOARD; the queue is the band's own list
+  rather than a view of that board, so a block beneath them would read as a filtered subset of it —
+  which is also why `_build_queue_models` derives from the FULL model set and never from `filtered`.
+- **NO QUEUE MEANS NO BLOCK AT ALL** — zero nodes, zero height, zero chrome. That is the common
+  early-game state and it must cost nothing; an empty header or a hint there would be permanent
+  furniture explaining an absence.
+- **IT NEEDS NO BAND ID ON THE WIRE, and that is why the model keys were enough.** The sim keeps a
+  queue entry only while its source holds a labor assignment (`LaborAllocation::prune_build_queue` →
+  `holds_build_source`), and `_work_source_models` admits any source with a take crew — so every entry
+  of THIS band's queue has a model. A source queued by ANOTHER band is not in this band's
+  `effective_worker_map` at all, which is the per-band filter for free. The two keys added are
+  `build_queue_position` and `build_turns` (`SourceForecast.build_queue_position` /
+  `build_turns_remaining` off the same `rung_source` dict the rung marks already read).
+- **THE HEAD MARKER'S SLOT IS RESERVED ON EVERY ROW.** A conditionally-omitted Label shifts every row
+  behind the head sideways, which reads as a list that has lost its alignment rather than as a head.
+- **THE ROW IS THE BOARD'S OWN UNIT** — exactly `WORK_ROW_HEIGHT`, `HudStyle.work_row_stylebox`,
+  `HudWidgets.build_marker_icon` for the source mark — so the two lists read at one density and the
+  capacity arithmetic below still divides by that number.
+- **THE VERB IS `HudFormat.policy_face`'s, never a second table.** That is the same word and glyph
+  the board row's in-progress axis states in its tooltip and the map badge draws, so a rung under way
+  cannot be called two things on one screen. The SOURCE mark stays its own column beside it — what
+  the source IS against what is being DONE to it, the row's own standing distinction.
+- **THE DATE GOES THROUGH `DetailFormat.build_countdown_value`**, which is `rung_row_value`'s own
+  sentinel fork EXTRACTED rather than copied: a positive count, `-2` holding, `-3` rotting, `-4` the
+  queue blocked, `-1` no answer. A second fork here is precisely how this client has twice been left
+  behind by a newly-spelled sentinel. Its ink is `DetailFormat.rung_value_color`, the `Color` twin of
+  `rung_value_hex` written in terms of it (a `Label` can do nothing with a hex string).
+- **THE DATE COLUMN CLIPS AND THE ROW TOOLTIP CARRIES BOTH FACES IN FULL.**
+  `RUNG_BLOCKED_FORMAT` is a whole sentence, and letting it size the row would squeeze the job face
+  to nothing on a side dock.
+- **THE `✕` ASKS NOTHING.** `unqueue` withdraws a DECLARATION — the banked meter survives it, the row
+  keeps its crew and its kit, and re-declaring is one tick of the compose control — so it is the
+  parties zone's cancel-versus-recall rule read one surface over. It wears that zone's steady,
+  full-opacity `DANGER` treatment for the same reason: a destructive control reads as one.
+- **IT EMITS THE CONTROLLER'S OWN `unqueue_requested`, RELAYED by `HudLayer`**, with a payload
+  identical key-for-key to `DrawerComposeController`'s — so `Main.format_unqueue` serves both
+  surfaces and there is no second command builder.
+- **DRAG-TO-REORDER IS SLICE 7's.** `build_order` on the command line covers it meanwhile, which is
+  what the overflow row's tooltip says.
+
+### THE BLOCK IS PAID FOR IN `_work_board_capacity`, OR IT SLICES THE BOARD
+
+The work zone `clip_contents`, so a block that draws without being subtracted from the board's room
+takes its height off the bottom of the zone SILENTLY — no overflow, no warning, just fewer rows than
+the pager thinks it drew. `HudWorkVocab.build_queue_block_height(entries)` is therefore ONE function
+that both the builder (as the block's `custom_minimum_size`) and the capacity's `chrome` term call,
+plus one more `ZONE_BLOCK_SEPARATION` for the gap the block adds:
+
+```text
+rows  = min(entries, BUILD_QUEUE_ROWS_MAX) + (1 if entries > BUILD_QUEUE_ROWS_MAX else 0)
+height = ZONE_HEAD_HEIGHT + rows × WORK_ROW_HEIGHT      (0 for an empty queue)
+```
+
+**`BUILD_QUEUE_ROWS_MAX` is 3, and the overflow row is the FOURTH rather than a replacement for the
+third.** Measured on the 1920 bottom dock: a four-entry queue costs `20 + 4×28 + 6 = 138px` and the
+work zone comes out **300px of a 300px box — 0 spare** with the board still paging two rows
+(`Page 1 / 2 · 1–2 of 4`). That is a real fit rather than a comfortable one, so **re-measure before
+adding anything to this zone**, and the lever if it has to give is the cap.
+
+**A truncated list with nothing under it reads as the whole list**, so the `+N more` row is not
+optional — the faction page's standing rule for a capped list, applied to the band's own.
+
+**Frames:** `band_panel_build_queue` (the tall LEFT dock, three entries mixing BOTH webs — a
+Cultivate, a Tame and a Sow, since the two webs reach the block through different branches of
+`_work_source_models` and a single-web fixture exercises one of them) ·
+`band_panel_build_queue_blocked` (the head at `BUILD_QUEUE_BLOCKED`, with every entry behind it
+carrying the same sentinel — the sim's own behaviour, and the half a block showing only the head
+would misreport) · **`band_panel_build_queue_none`** (the PAIRED NEGATIVE: a band with a work board
+and nothing queued, which is what stops every claim above passing on a block drawn unconditionally) ·
+`band_panel_build_queue_wide` (the BOTTOM dock, four entries, so the overflow row is in the
+measurement). The dates are asserted as STRICTLY ASCENDING because that is what a chained countdown
+means — equal dates would pass a "the dates render" check while proving nothing — and the `✕` is
+PNG-less, driven through the real handler and read back off `Main.format_unqueue` on BOTH webs, since
+either alone passes on a builder that gets the grammar backwards.
+
 ## Work rows carry ONE account, and the aggregates carry a SIBLING (issues #337 / #449 / #527)
 
 A board row's rate column is a single fixed width, so it states the account the source actually PAYS,

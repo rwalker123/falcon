@@ -505,7 +505,8 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # above it is marked. It sits under both rather than beside either because the shortfall is a
     # property of the SOURCE, and a patch whose keeping is being paid prints no row at all, which is
     # what makes the silence readable.
-    lines.append_array(DetailFormat.at_risk_lines(tile_info, prefix))
+    lines.append_array(DetailFormat.at_risk_lines(tile_info, prefix,
+        SourceForecast.SOURCE_KIND_FORAGE))
     return lines
 
 ## The FORAGING row (or nothing) — the human-edible web's stock over its ceiling. The exact twin of
