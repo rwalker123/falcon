@@ -412,6 +412,8 @@ makes a hand worth more. A pool has no leftover by construction.
 >   swept per turn by `LaborAllocation::prune_build_queue`, so no seam can be missed.
 > - **Nothing enrols itself**, and completion **retires** the entry, which hands the pool to whatever
 >   the player put next.
+> - **An entry whose declared job is ALREADY STANDING is retired too**, on the finished verb's own
+>   feed channel (`status=already_built action=build_retired`) — see the callout below.
 > - **⛔ `build_queue` is part of `LaborAllocation`'s hand-written `PartialEq`.** Equality is *intent*,
 >   and the queue and its **order** are as much intent as the head counts: left out, two allocations
 >   with different queues compare equal, so the rollback record and the command no-op guard would
@@ -421,6 +423,40 @@ makes a hand worth more. A pool has no leftover by construction.
 > degrades toward a threshold you can stay above, so spreading a short keeping pool loses nothing
 > while you recover; splitting a builder pool across three jobs just means nothing finishes. A queue
 > removes the choice rather than offering a bad one.
+
+> #### ⛔ A DEAD ENTRY PARKS THE POOL FOR EVER, SO IT IS RETIRED AND ANNOUNCED
+>
+> **Two bands of one faction on one source is the ordinary result of a single command**, not an
+> edge: `queue_build_on_working_bands` enqueues on **every** band with workers on that source. When
+> one of them finishes the rung, the other's entry declares a job that no longer exists — and
+> nothing retired it. `build_workers` is gated on the **declaration** while the arms that consume it
+> read the **derived verb**, so the survivor's whole `builders` pool was aimed at a head no arm
+> claimed: it banked nothing, `completed` never fired, and `prune_build_queue` only drops entries
+> whose *row* is gone. Silently, and for the life of the band. On a patch it was worse than idle —
+> the *"nothing left to build"* projection of the **next** rung was consumed by the chain as the
+> dead head's own span, so the entry published a finish date that would never arrive and mis-dated
+> every entry behind it.
+>
+> `systems::labor::retire_entries_already_built` runs post-loop **beside the completion pass**, in
+> the same shape and the same place, so the next entry becomes the head on the schedule a real
+> completion gives it and the chain below dates a queue with no dead entry in it. It pushes the
+> completion line's twin on the verb's own channel — *"… is already built — your builders move to
+> the next job"*, `status=already_built action=build_retired job=<verb>` — because the player
+> staffed those builders and is owed the reason the job left the list.
+>
+> **The test is "this rung is already achieved", NEVER "the derived verb is `None`"**
+> (`forage::patch_rung_already_built` / `fauna::herd_rung_already_built`; a ring's is
+> `!Herd::pen_extending`, since a ring has no rung of its own to complete). A verb also derives
+> `None` for a source with nothing banked and nothing declared, which is a live entry that has
+> simply not started.
+>
+> **And the predicate is the METER'S OWN FULLNESS, not the retain bar.** It asks exactly what
+> `patch_build_verb` / `herd_build_verb` ask — `cultivation_meter_full` / `field_meter_full` /
+> `is_domesticated` / `corral_meter_full` — so the two can never disagree about whether there is
+> work left. `is_cultivated()` (what `validate_cultivate` asks the *player*) compares against the
+> **retain bar**, which sits below the cost, so it answers *already built* for a meter that has
+> eroded between the two — a rung the builders are legitimately repairing, whose entry retiring
+> would cancel the repair.
 
 > #### THE WIRE STILL SAYS WHAT IS BEING RAISED HERE — derived, not stored
 >
@@ -703,6 +739,29 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
 > > rule — *more net supply is better news* — rather than starting a second: a band rotting a meter is
 > > at least supplying something to it, a blocked queue supplies nothing at all, and silence is the
 > > absence of an answer.
+>
+> > #### ⛔ EVERY ENTRY KIND RECORDS A `BuildQuote`, THE PEN RING INCLUDED
+> >
+> > `publish_build_chain` mints `-4` for a head it has **no quote for**, so an entry kind that
+> > forgets to record one does not merely go undated: it tells the player its builders are standing
+> > on a refused gate, and `carried` then hands that same `-4` to **every other source the band
+> > works**, every turn, while the entry accrues perfectly normally.
+> >
+> > The pen ring was that kind. It is resolved in the Hunt arm's corralled-herd **tend branch**,
+> > which `continue`s before every one of the four rung arms and before the *"nothing left to
+> > build"* projection, so none of the five `build_quotes.push` sites was on its path. The tend
+> > branch now records the ring's own terms — the pen rung's bar at the pool's gear, the ring meter,
+> > the balance at the **full pool**, and `Herd::pen_extending` as its `gate_holds` — and a ring at
+> > the head publishes an ordinary countdown like any other build.
+> >
+> > **The quote reads the bar the ring just cleared on the turn it completes**, not the live meter:
+> > `accrue_pen_extension` resets `pen_extend_progress` to `RUNG_UNSTARTED` at completion, so quoting
+> > the field there would publish the span of a whole *new* ring on the very turn the old one
+> > finished.
+> >
+> > **The alternative — exempting `ExtendPen` from the `Blocked` mint — was rejected**: it trades a
+> > wrong answer for no answer, and the player loses a date the model can state. `BUILD_QUEUE_BLOCKED`
+> > keeps meaning exactly *the builders are standing on this entry and its own gate refuses it*.
 >
 > **AND THE TWO NON-FINISHING STATES COST THE PLAYER DIFFERENTLY, so they are two values.** At the
 > rot exactly the meter stands still — which is **not always a failure**: with no builders and the

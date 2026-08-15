@@ -6030,7 +6030,10 @@ fn handle_abandon(app: &mut bevy::prelude::App, faction: FactionId, source: Buil
         return;
     }
     for band in &bands {
-        band_allocation_mut(app, *band).drop_source_row(&target);
+        // **A ring the dropped entry was funding stops with it** — putting the pen down while a
+        // fence ring was in flight otherwise left `pen_extending` set with nothing left to raise
+        // it, and every later `extend_pen` on that pen refused.
+        core_sim::drop_holding_and_cancel_ring(&mut app.world, *band, &target);
     }
     let tick = app.world.resource::<SimulationTick>().0;
     push_command_event(
@@ -6071,7 +6074,10 @@ fn handle_unqueue(app: &mut bevy::prelude::App, faction: FactionId, source: Buil
     };
     let mut dropped = 0usize;
     for band in bands_working_source(app, faction, &target) {
-        if band_allocation_mut(app, band).unqueue_build(&build_source) {
+        // **A withdrawn ring is cancelled, not paused** — the flag `extend_pen` set before it
+        // queued is cleared here, so the pen can be extended again (see
+        // [`core_sim::cancel_dropped_rings`]).
+        if core_sim::unqueue_build_and_cancel_ring(&mut app.world, band, &build_source) {
             dropped += 1;
         }
     }

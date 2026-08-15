@@ -553,8 +553,10 @@ pub fn advance_labor_allocation(
             maintenance_shares(&allocation, &forage_registry, &registry, &fauna, &ladder);
         // **AN ENTRY REQUIRES A ROW** (`docs/plan_standing_upkeep.md` §3.2 of the slice brief): the
         // queue is pruned of anything the band no longer works before a single work unit is aimed,
-        // so no seam that drops a row can leave the pool funding ground nobody stands on.
-        let _ = allocation.prune_build_queue();
+        // so no seam that drops a row can leave the pool funding ground nobody stands on. A ring
+        // whose entry goes here stops with it ([`fauna::cancel_dropped_rings`]).
+        let pruned_entries = allocation.prune_build_queue();
+        fauna::cancel_dropped_rings(&mut registry, &pruned_entries);
         // **THE BAND'S BUILDERS** — one pool, whose whole output goes on the **head** of the queue
         // until that entry's meter fills, then on the next (§2.5). It is not a crew on any tile: a
         // verb declares, and the hands are here.
@@ -644,13 +646,16 @@ pub fn advance_labor_allocation(
             } else {
                 NO_CREW_ON_THIS_ACTIVITY
             };
+            // **HAS THIS BAND DECLARED A RING HERE?** — the ring's own membership test, kept apart
+            // from the head test below because a *waiting* ring must still be **quoted** (every
+            // entry is dated at the full pool, §4.6b) even though it is funded at nothing.
+            let ring_queued = matches!(
+                queued.map(|entry| entry.declared),
+                Some(BuildJob::ExtendPen)
+            );
             // The **ring's** own funding, which the head declares as its own queue kind rather than
             // through a rung verb: a built pen carries no meter for a verb to name.
-            let ring_workers = if is_queue_head
-                && matches!(
-                    queued.map(|entry| entry.declared),
-                    Some(BuildJob::ExtendPen)
-                ) {
+            let ring_workers = if is_queue_head && ring_queued {
                 builders
             } else {
                 NO_CREW_ON_THIS_ACTIVITY
@@ -2046,8 +2051,16 @@ pub fn advance_labor_allocation(
                         // now, so it is no longer one number for the whole world — a keeper who
                         // brought hurdles raises a ring faster than one who did not, exactly as they
                         // build the original pen faster.
-                        let pen_extend_accrual =
-                            pen_rung.build_accrual(Some(Improvement::Corral), true, ring_workers);
+                        //
+                        // **`pen_extending` IS THE RING'S WHOLE GATE**, and it is passed as the
+                        // rung's `eligible` rather than checked beside it, so the accrual and the
+                        // quote below cannot come to disagree about whether a ring is running.
+                        let ring_in_flight = herd.pen_extending;
+                        let pen_extend_accrual = pen_rung.build_accrual(
+                            Some(Improvement::Corral),
+                            ring_in_flight,
+                            ring_workers,
+                        );
                         // A ring costs what the pen it widens costs — the same rung record, so the
                         // two can never drift — and the same keepers' tools take the same work off
                         // it.
@@ -2056,6 +2069,15 @@ pub fn advance_labor_allocation(
                             .expect("the pen rung has a build meter");
                         let ring_bar =
                             ladder.effective_build_cost(ring_cost, builders_gear.animal.pool_gear);
+                        // **The countdown's signed twin, at the FULL POOL** — the Corral arm's rule,
+                        // on the ring's own gate. Recorded below so `publish_build_chain` can date
+                        // the ring like any other entry.
+                        let ring_balance = pen_rung.build_balance(
+                            Some(Improvement::Corral),
+                            ring_in_flight,
+                            builders,
+                            meter_rot,
+                        );
                         // Accrue the extension ring **after** the take (mirroring `accrue_corral`), so
                         // this turn pays exactly the dipped yield the forecast promised; the completed
                         // larger footprint's higher K arrives on the next `advance_herds`.
@@ -2069,7 +2091,7 @@ pub fn advance_labor_allocation(
                         // and turn it into a phantom charge; and `accrue_pen_extension` *resets*
                         // `pen_extend_progress` to zero when the ring completes, so a before/after
                         // delta would read negative on exactly the turn the crew worked hardest.
-                        if herd.pen_extending {
+                        if ring_in_flight {
                             charge_build_wear(
                                 band_equipment.as_deref_mut(),
                                 &equipment_cfg,
@@ -2077,14 +2099,45 @@ pub fn advance_labor_allocation(
                                 pen_extend_accrual,
                             );
                         }
-                        if herd.pen_extending
+                        let ring_finished = ring_in_flight
                             && herd.accrue_pen_extension(
                                 pen_extend_accrual,
                                 ring_cost,
                                 ring_bar,
                                 husbandry.pen_radius_max,
-                            )
-                        {
+                            );
+                        // **A RING IS AN ORDINARY BUILD AND IS DATED LIKE ONE** — recorded for the
+                        // band's chain pass exactly as the four rung arms record theirs.
+                        //
+                        // **Without this the ring was the one queue entry with no quote**, so
+                        // `publish_build_chain`'s `None` arm minted [`BuildTurns::Blocked`] for a
+                        // ring that was accruing perfectly normally — and `carried` then handed that
+                        // `-4` to **every other source the band works**. `extend_pen` is a one-click
+                        // shipped button, so that was ordinary play, not an edge.
+                        //
+                        // **The meter is read as the ring left it, not as the reset left it.**
+                        // `accrue_pen_extension` resets `pen_extend_progress` to `RUNG_UNSTARTED`
+                        // on the turn the ring completes, so quoting the live field there would
+                        // publish the span of a whole *new* ring on the very turn the old one
+                        // finished. Reading the bar it just cleared makes the completing turn say
+                        // what the Corral arm's does: there is nothing left to wait for.
+                        let ring_banked = if ring_finished {
+                            ring_cost
+                        } else {
+                            herd.pen_extend_progress
+                        };
+                        if ring_queued {
+                            build_quotes.push((
+                                BuildSource::Herd(herd.id.clone()),
+                                BuildQuote {
+                                    bar: ring_bar,
+                                    banked: ring_banked,
+                                    balance: ring_balance,
+                                    gate_holds: ring_in_flight,
+                                },
+                            ));
+                        }
+                        if ring_finished {
                             completed
                                 .push((BuildSource::Herd(herd.id.clone()), BuildJob::ExtendPen));
                             let pen_tile = herd.corralled_at.unwrap_or_else(|| herd.position());
@@ -2786,8 +2839,36 @@ pub fn advance_labor_allocation(
         allocation.last_yields = yields;
         allocation.last_pen_feed_upkeep = pen_feed_paid;
         // **A row that lapsed mid-loop takes its declaration with it**, on the same rule the
-        // pre-loop prune enforces: an entry requires a row.
-        let _ = allocation.prune_build_queue();
+        // pre-loop prune enforces: an entry requires a row. **And a ring the dropped entry was
+        // funding stops with it** — see [`fauna::cancel_dropped_rings`]; the lapse is the one exit
+        // no command issues, so nothing else would clear the flag.
+        let lapsed_entries = allocation.prune_build_queue();
+        fauna::cancel_dropped_rings(&mut registry, &lapsed_entries);
+        // **RETIRE EVERY ENTRY WHOSE DECLARED JOB IS ALREADY STANDING** — and say so on the verb's
+        // own channel, exactly as a completion is announced.
+        //
+        // A verb enqueues on **every** band of the faction working the source
+        // (`queue_build_on_working_bands`), so two bands on one patch or one herd is the ordinary
+        // result of a single `cultivate` / `corral` / `extend_pen`. When one of them finishes the
+        // rung, the other's entry declares a job that no longer exists: `build_workers` is still the
+        // whole pool, **no arm consumes it**, `completed` never fires for that band, and
+        // `prune_build_queue` only drops entries whose *row* is gone. So the survivor's builders
+        // banked nothing, for ever, with no line saying why — and, on a patch, the projection of the
+        // **next** rung was consumed by the chain as the dead head's own span, mis-dating every
+        // entry behind it.
+        //
+        // **The test is "this rung is already achieved", never "the derived verb is `None`"**
+        // (`forage::patch_rung_already_built` / `fauna::herd_rung_already_built`): a verb also
+        // derives `None` for a source with nothing banked and nothing declared, which is a live
+        // entry that has simply not started.
+        retire_entries_already_built(
+            &mut allocation,
+            &forage_registry,
+            &registry,
+            faction,
+            tick.0,
+            &mut event_log,
+        );
         // **THE CHAIN** — every entry's published finish date, walked in **queue order**
         // (`docs/plan_standing_upkeep.md` §4.6b). It runs here, after the meters have moved and the
         // queue has been edited, because the answer is a fact about the band's whole list and no
@@ -2802,6 +2883,89 @@ pub fn advance_labor_allocation(
             &mut patch_build_claims,
             &mut herd_build_claims,
         );
+    }
+}
+
+/// **DROP EVERY QUEUE ENTRY WHOSE DECLARED JOB IS ALREADY STANDING, AND ANNOUNCE EACH ONE.**
+///
+/// The completion path's twin, for the job **another band** (or an earlier turn) finished: there is
+/// nothing left to raise, so the entry leaves the queue and the whole pool moves to whatever the
+/// player put next (`docs/plan_standing_upkeep.md` §2.4). It runs **post-loop, beside
+/// `completed`** — the same place and the same shape — so the next entry becomes the head on the
+/// same schedule a real completion gives it, and the chain pass below dates a queue with no dead
+/// entry in it.
+///
+/// # WHAT COUNTS AS ALREADY BUILT
+///
+/// | entry | test | seam |
+/// |---|---|---|
+/// | `Rung(Cultivate)` / `Rung(Sow)` | the meter it names is full | [`forage::patch_rung_already_built`] |
+/// | `Rung(Tame)` / `Rung(Corral)` | the meter it names is full | [`fauna::herd_rung_already_built`] |
+/// | `ExtendPen` | the ring is **not in flight** | `Herd::pen_extending` |
+///
+/// A ring's test is its flag rather than a meter because a ring has no rung of its own to complete:
+/// `extend_pen` sets `pen_extending` *before* it queues, so an entry standing over a cleared flag is
+/// a ring that finished, was cancelled, or was never begun — dead in every case.
+///
+/// A source the band no longer holds is not this function's business — `prune_build_queue` has
+/// already taken it, and an entry naming a source neither registry can resolve is left alone rather
+/// than guessed at.
+fn retire_entries_already_built(
+    allocation: &mut LaborAllocation,
+    forage_registry: &ForageRegistry,
+    herds: &HerdRegistry,
+    faction: FactionId,
+    tick: u64,
+    event_log: &mut CommandEventLog,
+) {
+    let dead: Vec<BuildQueueEntry> = allocation
+        .build_queue
+        .iter()
+        .filter(|entry| entry_job_already_built(entry, forage_registry, herds))
+        .cloned()
+        .collect();
+    for entry in &dead {
+        if !allocation.unqueue_build(&entry.source) {
+            continue;
+        }
+        let (channel, verb) = match entry.declared {
+            BuildJob::Rung(improvement) => {
+                (improvement_feed_channel(improvement), improvement.as_str())
+            }
+            BuildJob::ExtendPen => (CommandEventKind::Corral, EXTEND_PEN_ACTION),
+        };
+        let named = describe_build_source(&entry.source);
+        event_log.push(CommandEventEntry::new(
+            tick,
+            channel,
+            faction,
+            format!("{named} is already built — your builders move to the next job"),
+            Some(format!(
+                "status=already_built action=build_retired job={verb}"
+            )),
+        ));
+    }
+}
+
+/// Is this one entry's declared job already standing? See [`retire_entries_already_built`] for the
+/// table this implements.
+fn entry_job_already_built(
+    entry: &BuildQueueEntry,
+    forage_registry: &ForageRegistry,
+    herds: &HerdRegistry,
+) -> bool {
+    match (&entry.source, entry.declared) {
+        (BuildSource::Patch(tile), BuildJob::Rung(improvement)) => forage_registry
+            .patch(*tile)
+            .is_some_and(|patch| crate::forage::patch_rung_already_built(patch, improvement)),
+        (BuildSource::Herd(id), BuildJob::Rung(improvement)) => herds
+            .find(id.as_str())
+            .is_some_and(|herd| fauna::herd_rung_already_built(herd, improvement)),
+        (BuildSource::Herd(id), BuildJob::ExtendPen) => herds
+            .find(id.as_str())
+            .is_some_and(|herd| !herd.pen_extending),
+        // A ring names a herd; a patch entry can never carry one.
+        (BuildSource::Patch(_), BuildJob::ExtendPen) => false,
     }
 }
 

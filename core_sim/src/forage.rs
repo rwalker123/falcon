@@ -407,6 +407,32 @@ pub fn patch_build_verb(patch: &ForagePatch, declared: Option<Improvement>) -> O
     (declared == Some(Improvement::Cultivate)).then_some(Improvement::Cultivate)
 }
 
+/// **IS THE RUNG THIS QUEUE ENTRY DECLARED ALREADY STANDING?** — the test that retires a **dead**
+/// entry (`docs/plan_standing_upkeep.md` §2.5), and the plant twin of
+/// `fauna::herd_rung_already_built`.
+///
+/// # IT IS THE METER'S OWN FULLNESS, NOT THE RETAIN BAR
+///
+/// It asks exactly what [`patch_build_verb`] asks — [`ForagePatch::cultivation_meter_full`] /
+/// [`ForagePatch::field_meter_full`] — so the two can never disagree about whether there is work
+/// left. `is_cultivated()` (what `validate_cultivate` asks the **player**) compares against the
+/// *retain bar*, which sits below the cost: a meter that has eroded between the two is a rung the
+/// builders are legitimately repairing, and retiring its entry would cancel that repair.
+///
+/// # AND IT IS EMPHATICALLY NOT "THE DERIVED VERB IS `None`"
+///
+/// [`patch_build_verb`] also answers `None` for a source with nothing banked and nothing declared —
+/// a live entry that has simply not started — so retiring on that would drop an entry the turn the
+/// player made it.
+pub fn patch_rung_already_built(patch: &ForagePatch, declared: Improvement) -> bool {
+    match declared {
+        Improvement::Cultivate => patch.cultivation_meter_full(),
+        Improvement::Sow => patch.field_meter_full(),
+        // A rung the animal web owns can never stand on ground.
+        Improvement::Tame | Improvement::Corral => false,
+    }
+}
+
 /// **WHERE A BUILD METER LANDS THIS TURN — and the jump on the turn it completes.**
 ///
 /// `banked` is the meter plus what the crew produced; `cost` is the **raw** job; `effective_cost` is

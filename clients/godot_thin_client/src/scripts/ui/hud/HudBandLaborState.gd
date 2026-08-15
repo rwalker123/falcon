@@ -694,15 +694,19 @@ func _effort_on(key: String, bands: Array = []) -> Dictionary:
 			improvement = String(m.get("improvement", "")).strip_edges().to_lower()
 	return {"workers": workers, "improvement": improvement}
 
-## Optimistic idle = working-age minus **every** hand each effective assignment spends — the take crew
-## AND the builders (`staffed_total`) — minus the bench crew.
+## Optimistic idle = working-age minus **every** hand each effective assignment spends
+## (`staffed_total`), minus the bench crew.
 ##
-## **THE BUILDERS WERE MISSING AND EVERY CEILING BUILT ON THIS INHERITED IT.** This summed the wire's
-## per-assignment `workers` alone, which is the TAKE crew, so a band with three hands on a Cultivate
-## reported three idle who were already spent — `3 idle of 18` beside `Forage 9 · Hunt 6 · Idle 3`,
-## reported from play. The sim's `LaborAllocation::assigned_total` sums `LaborAssignment::staffed_total`,
-## i.e. `workers + improvement_workers`; this is that same sum, and the disagreement was entirely the
-## client's.
+## **THE BUILDERS ARE IN IT, AND THE MECHANISM THAT PUTS THEM THERE HAS CHANGED ONCE.** This summed
+## the wire's per-assignment `workers` alone while a build had its own per-source crew, so a band with
+## three hands on a Cultivate reported three idle who were already spent — `3 idle of 18` beside
+## `Forage 9 · Hunt 6 · Idle 3`, reported from play. The fix then was to sum `staffed_total`, i.e.
+## `workers + improvement_workers`. **`docs/plan_standing_upkeep.md` §2.5 retired that second crew**:
+## the builders are a band-level `builders` ROW of this same list now and `staffed_total` is `workers`
+## alone again, so they are counted for a different reason and the invariant survives its own
+## mechanism. **A reader that started filtering this list by KIND would put the phantom hands back.**
+## The sim's `LaborAllocation::assigned_total` sums the same `LaborAssignment::staffed_total`; any
+## disagreement here is the client's.
 ##
 ## **A WORKER AT THE BENCH IS ASSIGNED LABOR, AND THE BENCH IS NOT A `LaborTarget`.** A band's people
 ## are spent on the `labor_assignments` this overlays AND on the crafting bench, and a bench crew is

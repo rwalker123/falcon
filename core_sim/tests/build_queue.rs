@@ -1363,3 +1363,581 @@ fn bare_builders() -> core_sim::KitChoice {
         .kit("none")
         .expect("the shipped roster carries the empty kit")
 }
+
+// ---------------------------------------------------------------------------------------------
+// (12) A PEN RING IS AN ORDINARY BUILD
+// ---------------------------------------------------------------------------------------------
+
+/// **The fixture pen's herd id** — seated by hand rather than scouted off worldgen, because the
+/// claim is about the *queue*, not about which pennable species a generated map happened to place.
+const RING_HERD: &str = "fixture_pen_0";
+
+/// **A fixture display name that is NOT a roster species**, so its per-species husbandry density
+/// resolves to the neutral default — the same isolation `grazing_2d_pen.rs` makes, and for the same
+/// reason: this file measures the build queue, not the density ladder.
+const RING_SPECIES: &str = "Fixture Warren";
+
+/// The seated pen's ecology. None of it is under test — the pen only has to stand, be owned and be
+/// tended — so each is a fixture constant rather than a tuning lever.
+const RING_HERD_BIOMASS: f32 = 150.0;
+const RING_HERD_CAPACITY: f32 = 300.0;
+const RING_HERD_FODDER: f32 = 0.10;
+const RING_HERD_REGROWTH: f32 = 0.35;
+const RING_HERD_BODY_MASS: f32 = 40.0;
+
+/// The keepers on the pen — enough that the herd is genuinely tended, and few enough that the take
+/// crew is not what these arms measure.
+const RING_KEEPERS: u32 = 2;
+
+/// A world with **one band that keeps a pen mid-ring and gathers a patch beside it**, its queue
+/// `[ExtendPen(pen), Cultivate(patch)]` — the ring at the head, one ordinary entry behind it.
+///
+/// The two sources are deliberately the **same tile**: the band stands on it, so the pen is inside
+/// the hunt leash and the patch inside the work range without the fixture having to reason about
+/// either distance.
+fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) {
+    let mut app = build_headless_app();
+    app.update();
+    let source = cultivable_sites_in_one_work_range(&mut app)[0];
+    let tile = app
+        .world
+        .resource::<TileRegistry>()
+        .index(source.x, source.y)
+        .expect("the fixture tile resolves");
+    app.world
+        .resource_mut::<core_sim::DiscoveryProgressLedger>()
+        .add_progress(
+            FactionId(0),
+            core_sim::CULTIVATION_DISCOVERY_ID,
+            scalar_one(),
+        );
+    seat_a_pen_mid_ring(&mut app, source);
+
+    let assignments = vec![
+        LaborAssignment {
+            target: LaborTarget::Hunt {
+                fauna_id: RING_HERD.to_string(),
+                floor: FOOD_PEAK,
+            },
+            workers: RING_KEEPERS,
+            kit: None,
+        },
+        LaborAssignment {
+            target: LaborTarget::Forage {
+                tile: source,
+                floor: FOOD_PEAK,
+                species: None,
+            },
+            workers: GATHERERS,
+            kit: None,
+        },
+        LaborAssignment {
+            target: LaborTarget::Builders,
+            workers: builders,
+            kit: Some(bare_builders()),
+        },
+        LaborAssignment {
+            target: LaborTarget::Agriculture,
+            workers: keeping_for(ONE_SOURCE),
+            kit: None,
+        },
+        LaborAssignment {
+            target: LaborTarget::Husbandry,
+            workers: RING_KEEPERS,
+            kit: None,
+        },
+    ];
+    let staffed: u32 = assignments.iter().map(|row| row.workers).sum();
+    let band = app
+        .world
+        .spawn((
+            fixture_cohort(tile, staffed),
+            ResidentBand,
+            core_sim::BandId(FIXTURE_BAND),
+            LaborAllocation {
+                assignments,
+                build_queue: vec![
+                    core_sim::BuildQueueEntry {
+                        source: BuildSource::Herd(RING_HERD.to_string()),
+                        declared: BuildJob::ExtendPen,
+                    },
+                    core_sim::BuildQueueEntry {
+                        source: BuildSource::Patch(source),
+                        declared: BuildJob::Rung(Improvement::Cultivate),
+                    },
+                ],
+                ..Default::default()
+            },
+        ))
+        .id();
+    (app, band, RING_HERD.to_string(), source)
+}
+
+/// Seat a **built, owned pen with a ring already in flight** at `tile` — the state
+/// `corral` followed by `extend_pen` leaves behind, written straight onto the herd so the arm does
+/// not have to build two rungs first.
+fn seat_a_pen_mid_ring(app: &mut App, tile: UVec2) {
+    let radius_max = app
+        .world
+        .resource::<core_sim::FaunaConfigHandle>()
+        .get()
+        .husbandry
+        .pen_radius_max;
+    let mut registry = app.world.resource_mut::<core_sim::HerdRegistry>();
+    let mut herd = core_sim::Herd::new(
+        RING_HERD.to_string(),
+        RING_SPECIES.to_string(),
+        core_sim::SizeClass::Small,
+        vec![tile],
+        RING_HERD_BIOMASS,
+        RING_HERD_CAPACITY,
+        RING_HERD_FODDER,
+        RING_HERD_REGROWTH,
+        RING_HERD_BODY_MASS,
+    );
+    herd.tame_outright(FactionId(0));
+    assert!(
+        herd.corral_at(tile),
+        "fixture: the pen must stand before a ring can widen it"
+    );
+    assert!(
+        herd.begin_pen_extension(radius_max),
+        "fixture: a built pen below the maximum radius may begin a ring"
+    );
+    registry.herds.push(herd);
+}
+
+/// The fixture band's cohort — sized to what it staffs, and with a larder deep enough that the pen's
+/// own feed bill cannot starve it out from under the arm.
+fn fixture_cohort(tile: Entity, staffed: u32) -> PopulationCohort {
+    PopulationCohort {
+        home: tile,
+        current_tile: tile,
+        size: 200,
+        children: scalar_zero(),
+        working: scalar_from_f32(staffed as f32),
+        elders: scalar_zero(),
+        stores: {
+            let mut stores = LocalStore::new();
+            stores.add(core_sim::FOOD, scalar_from_f32(FIXTURE_LARDER));
+            stores
+        },
+        morale: scalar_one(),
+        last_food_consumption: 0.0,
+        last_turn_transfer_received: 0.0,
+        last_turn_transfer_sent: 0.0,
+        last_morale_delta: scalar_zero(),
+        last_morale_cause: MoraleCause::None,
+        last_morale_contributions: Default::default(),
+        last_fertility_factors: Default::default(),
+        discontent_fraction: scalar_zero(),
+        grievance: scalar_zero(),
+        last_emigrated: 0,
+        last_immigrated: 0,
+        age_turns: 0,
+        generation: 0 as GenerationId,
+        faction: FactionId(0),
+        knowledge: Vec::new(),
+        migration: None,
+    }
+}
+
+/// A larder deep enough that the pen's larder bill cannot starve the fixture band over the handful
+/// of turns these arms resolve.
+const FIXTURE_LARDER: f32 = 50_000.0;
+
+/// One pen turn, then republish.
+///
+/// **`advance_herds` is not decoration** — the published herd list is built from `HerdTelemetry`,
+/// which that pass fills, so a fixture that ran the labor system alone would have its pen on no
+/// wire at all. The **husbandry** sweep is deliberately left out: it rules on neglect, and these
+/// arms are about the queue.
+fn resolve_a_pen_turn(app: &mut App) {
+    app.world.run_system_once(core_sim::advance_herds);
+    app.world
+        .run_system_once(core_sim::advance_labor_allocation);
+    recapture_snapshot_in_place(&mut app.world);
+}
+
+/// **The herd row's `buildTurnsRemaining`, off the ENCODED buffer.**
+fn published_ring_turns(app: &App, id: &str) -> i32 {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .subsistence()
+        .and_then(|section| section.herds())
+        .expect("the subsistence section carries the herd list")
+        .iter()
+        .find(|herd| herd.id().unwrap_or_default() == id)
+        .expect("the fixture pen is on the wire — it is OWNED, which passes the fog gate")
+        .buildTurnsRemaining()
+}
+
+/// **A RING AT THE HEAD PUBLISHES ITS OWN COUNTDOWN, AND POISONS NOTHING BEHIND IT.**
+///
+/// `extend_pen` is a one-click shipped button, so a ring at the head of a band's queue is ordinary
+/// play. A ring that recorded no build quote made `publish_build_chain` mint
+/// [`sim_schema::BUILD_QUEUE_BLOCKED`] for it — *the builders are standing on this entry and its own
+/// gate refuses it* — which was false; and `carried` then handed that same `-4` to **every other
+/// source the band works**, every turn, while the ring accrued perfectly normally.
+///
+/// **Asserted on the ENCODED snapshot**, because the poisoning travels through the published chain,
+/// and on **both** rows, because an arm that only checked the ring's own date would pass on a fix
+/// that merely stopped the mint without quoting the ring.
+#[test]
+fn a_ring_at_the_head_publishes_a_real_countdown_and_leaves_the_queue_behind_it_alone() {
+    let (mut app, _band, herd_id, source) = world_with_a_ring_at_the_head(BUILDERS);
+    resolve_a_pen_turn(&mut app);
+
+    let ring = published_ring_turns(&app, &herd_id);
+    let behind = published_turns(&app, source);
+    println!("ring publishes {ring}; the entry behind it publishes {behind}");
+    assert!(
+        ring > 0,
+        "a ring the pool is raising has a finish date like any other build, not {ring}"
+    );
+    assert_ne!(
+        ring, BUILD_QUEUE_BLOCKED,
+        "…and it is emphatically not 'blocked': the ring is accruing"
+    );
+    assert!(
+        behind > ring,
+        "…and the entry behind it is CHAINED behind the ring ({behind} should follow {ring}), \
+         not poisoned by it"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// (13) AN ENTRY WHOSE RUNG ANOTHER BAND FINISHED IS RETIRED
+// ---------------------------------------------------------------------------------------------
+
+/// **A pool big enough to finish `plant:tended` in ONE turn** — the whole `work_cost` in hands, at
+/// `PER_WORKER_OUTPUT` each and bare gear. Read off the shipped ladder so a retune moves the fixture
+/// with the game.
+fn a_pool_that_finishes_a_cultivate_in_one_turn() -> u32 {
+    (tended_work_cost() / core_sim::PER_WORKER_OUTPUT).ceil() as u32
+}
+
+/// `plant:tended`'s own `work_cost` — the bar a bare crew strikes, since [`bare_builders`] takes
+/// nothing off it.
+fn tended_work_cost() -> f32 {
+    build_headless_app()
+        .world
+        .resource::<core_sim::LadderConfigHandle>()
+        .get()
+        .rung(RungKey::PlantTended)
+        .build_cost(core_sim::RUNG_COST_UNSCALED)
+        .expect("the tended rung builds")
+}
+
+/// The band whose queue the arm reads — the **survivor**, the one that did not finish the rung.
+const SURVIVOR_BAND: u64 = FIXTURE_BAND;
+
+/// The band that finishes the shared rung out from under the survivor, in one turn.
+const FINISHER_BAND: u64 = FIXTURE_BAND + 1;
+
+/// **TWO BANDS OF ONE FACTION ON ONE SOURCE**, which a single `cultivate` produces: the command
+/// enqueues on **every** band with workers on that source. The finisher carries the whole rung's
+/// worth of builders and one entry; the survivor carries an ordinary pool and a **second** entry
+/// behind the shared one, so the arm can read what the dead head does to the entry below it.
+fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
+    let mut app = build_headless_app();
+    app.update();
+    let sources: Vec<UVec2> = cultivable_sites_in_one_work_range(&mut app)
+        .into_iter()
+        .take(2)
+        .collect();
+    let anchor = sources[0];
+    let tile = app
+        .world
+        .resource::<TileRegistry>()
+        .index(anchor.x, anchor.y)
+        .expect("the fixture tile resolves");
+    app.world
+        .resource_mut::<core_sim::DiscoveryProgressLedger>()
+        .add_progress(
+            FactionId(0),
+            core_sim::CULTIVATION_DISCOVERY_ID,
+            scalar_one(),
+        );
+
+    let gather = |source: UVec2| LaborAssignment {
+        target: LaborTarget::Forage {
+            tile: source,
+            floor: FOOD_PEAK,
+            species: None,
+        },
+        workers: GATHERERS,
+        kit: None,
+    };
+    let cultivate = |source: UVec2| core_sim::BuildQueueEntry {
+        source: BuildSource::Patch(source),
+        declared: BuildJob::Rung(Improvement::Cultivate),
+    };
+
+    let finisher = vec![
+        gather(sources[0]),
+        LaborAssignment {
+            target: LaborTarget::Builders,
+            workers: a_pool_that_finishes_a_cultivate_in_one_turn(),
+            kit: Some(bare_builders()),
+        },
+        LaborAssignment {
+            target: LaborTarget::Agriculture,
+            workers: keeping_for(ONE_SOURCE),
+            kit: None,
+        },
+    ];
+    let survivor = vec![
+        gather(sources[0]),
+        gather(sources[1]),
+        LaborAssignment {
+            target: LaborTarget::Builders,
+            workers: BUILDERS,
+            kit: Some(bare_builders()),
+        },
+        LaborAssignment {
+            target: LaborTarget::Agriculture,
+            workers: keeping_for(2),
+            kit: None,
+        },
+    ];
+    let finisher_staffed: u32 = finisher.iter().map(|row| row.workers).sum();
+    let survivor_staffed: u32 = survivor.iter().map(|row| row.workers).sum();
+
+    app.world.spawn((
+        fixture_cohort(tile, finisher_staffed),
+        ResidentBand,
+        core_sim::BandId(FINISHER_BAND),
+        LaborAllocation {
+            assignments: finisher,
+            build_queue: vec![cultivate(sources[0])],
+            ..Default::default()
+        },
+    ));
+    let band = app
+        .world
+        .spawn((
+            fixture_cohort(tile, survivor_staffed),
+            ResidentBand,
+            core_sim::BandId(SURVIVOR_BAND),
+            LaborAllocation {
+                assignments: survivor,
+                build_queue: vec![cultivate(sources[0]), cultivate(sources[1])],
+                ..Default::default()
+            },
+        ))
+        .id();
+    (app, band, sources)
+}
+
+/// This band's queue, as the sources it names in order.
+fn queued_sources(app: &App, band: Entity) -> Vec<BuildSource> {
+    app.world
+        .get::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .build_queue
+        .iter()
+        .map(|entry| entry.source.clone())
+        .collect()
+}
+
+/// Every feed detail line the log carries, so an arm can say *which* line it wanted and print the
+/// rest when it is not there.
+fn feed_details(app: &App) -> Vec<String> {
+    app.world
+        .resource::<core_sim::CommandEventLog>()
+        .iter()
+        .filter_map(|entry| entry.detail.clone())
+        .collect()
+}
+
+/// **AN ENTRY WHOSE RUNG IS ALREADY STANDING IS RETIRED, AND THE PLAYER IS TOLD.**
+///
+/// `cultivate` enqueues on **every** band of the faction working the source, so two bands on one
+/// patch is the ordinary result of one command. When one of them finishes the rung, the other's
+/// entry derives no verb at all: its whole `builders` pool was aimed at the head and **no arm
+/// consumed it**, `completed` never fired, and `prune_build_queue` only drops entries whose *row* is
+/// gone — so the pool banked nothing, for ever, silently. Worse, the projection of the patch's
+/// **next** rung was consumed as the dead head's own span, mis-dating every entry behind it.
+#[test]
+fn an_entry_whose_rung_another_band_finished_is_retired_and_the_pool_moves_on() {
+    let (mut app, survivor, sources) = world_with_two_bands_on_one_source();
+    // Two turns: whichever band the query visits first, the shared rung is standing and the
+    // survivor has been visited once with it standing.
+    resolve_a_turn(&mut app);
+    resolve_a_turn(&mut app);
+
+    assert!(
+        app.world
+            .resource::<core_sim::ForageRegistry>()
+            .patch(sources[0])
+            .expect("the shared patch survives")
+            .is_cultivated(),
+        "fixture: the finisher band must actually have finished the shared rung"
+    );
+
+    let queue = queued_sources(&app, survivor);
+    println!("survivor queue after the rung was finished: {queue:?}");
+    assert_eq!(
+        queue,
+        vec![BuildSource::Patch(sources[1])],
+        "the dead entry leaves the survivor's queue and the next one becomes the head"
+    );
+
+    let details = feed_details(&app);
+    assert!(
+        details
+            .iter()
+            .any(|detail| detail.contains("action=build_retired")),
+        "…and the player is told why the job left the list; the feed carried only {details:?}"
+    );
+
+    // **The next entry's date is its OWN span**, not the dead head's cumulative sum: bare gear, so
+    // the bar is the rung's raw `work_cost`, and the keeping is staffed, so the balance is the
+    // pool's whole output.
+    let banked = meter(&app, sources[1]);
+    let expected = core_sim::build_turns_remaining(
+        tended_work_cost(),
+        banked,
+        BUILDERS as f32 * core_sim::PER_WORKER_OUTPUT,
+    )
+    .expect("a staffed head finishes");
+    assert_eq!(
+        published_turns(&app, sources[1]),
+        expected as i32,
+        "the entry behind the retired one publishes its own span from {banked} banked"
+    );
+
+    // …and the pool is genuinely free: the new head's meter moves on the following turn.
+    let before = meter(&app, sources[1]);
+    resolve_a_turn(&mut app);
+    assert!(
+        meter(&app, sources[1]) > before,
+        "the survivor's builders fund the new head: {before} -> {}",
+        meter(&app, sources[1])
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// (14) A RING THAT LEAVES THE QUEUE IS CANCELLED, NOT STRANDED
+// ---------------------------------------------------------------------------------------------
+
+/// **CAN THE PLAYER EXTEND THIS PEN AGAIN?** — the promise, asked through the very guard
+/// `handle_extend_pen` asks it through, so the command and this arm can never disagree. Acceptance
+/// is what the player experiences; `pen_extending` is only the mechanism.
+fn a_second_ring_is_accepted(app: &mut App, id: &str) -> bool {
+    let radius_max = app
+        .world
+        .resource::<core_sim::FaunaConfigHandle>()
+        .get()
+        .husbandry
+        .pen_radius_max;
+    app.world
+        .resource_mut::<core_sim::HerdRegistry>()
+        .herds
+        .iter_mut()
+        .find(|herd| herd.id == id)
+        .expect("the fixture pen survives")
+        .begin_pen_extension(radius_max)
+}
+
+/// **Walk the band clean off the map's other side**, so its Hunt row is past the leash and lapses —
+/// the third exit, and the one no command issues.
+fn walk_the_band_out_of_reach(app: &mut App, band: Entity, from: UVec2) {
+    let (width, height) = {
+        let registry = app.world.resource::<TileRegistry>();
+        (registry.width, registry.height)
+    };
+    let far = UVec2::new((from.x + width / 2) % width, (from.y + height / 2) % height);
+    let tile = app
+        .world
+        .resource::<TileRegistry>()
+        .index(far.x, far.y)
+        .expect("the far tile resolves");
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the band keeps its cohort")
+        .current_tile = tile;
+}
+
+/// **A RING THAT LEAVES THE BUILD QUEUE CAN BE STARTED AGAIN.**
+///
+/// `extend_pen` sets `pen_extending` *before* it queues, and only completion cleared it. So an entry
+/// dropped mid-ring left the flag set with nothing left to fund it, and
+/// `Herd::begin_pen_extension` refuses while it is set: a **permanent** dead end on a pen, one `✕`
+/// click away.
+///
+/// **The banked ring progress goes with it, and that is the honest state**: `begin_pen_extension`
+/// resets `pen_extend_progress` on every start, so a preserved meter could never be resumed — it
+/// would be a number nothing can read.
+///
+/// There are **three** exits and each gets its own arm, because they are three different seams and a
+/// single test would report only the first one that broke. This is `unqueue`.
+#[test]
+fn an_unqueued_ring_frees_the_pen_to_be_extended_again() {
+    let (mut app, band, herd_id, _) = world_with_a_ring_at_the_head(BUILDERS);
+    resolve_a_pen_turn(&mut app);
+    let ring_source = BuildSource::Herd(herd_id.clone());
+    assert!(
+        core_sim::unqueue_build_and_cancel_ring(&mut app.world, band, &ring_source),
+        "fixture: the entry was there to withdraw"
+    );
+    println!("after unqueue: is a second ring accepted?");
+    assert!(
+        a_second_ring_is_accepted(&mut app, &herd_id),
+        "an unqueued ring frees the pen: `extend_pen` must be accepted again"
+    );
+}
+
+/// The `abandon` exit — the whole holding is put down, entry and all
+/// ([`an_unqueued_ring_frees_the_pen_to_be_extended_again`] has the mechanism).
+#[test]
+fn an_abandoned_pen_frees_its_ring_to_be_started_again() {
+    let (mut app, band, herd_id, _) = world_with_a_ring_at_the_head(BUILDERS);
+    resolve_a_pen_turn(&mut app);
+    let keeper_row = LaborTarget::Hunt {
+        fauna_id: herd_id.clone(),
+        floor: FOOD_PEAK,
+    };
+    assert!(
+        core_sim::drop_holding_and_cancel_ring(&mut app.world, band, &keeper_row),
+        "fixture: the band held the pen"
+    );
+    println!("after abandon: is a second ring accepted?");
+    assert!(
+        a_second_ring_is_accepted(&mut app, &herd_id),
+        "an abandoned pen frees the ring: `extend_pen` must be accepted again"
+    );
+}
+
+/// The **LAPSE** exit — nobody issued a command at all, the keepers simply walked out of reach and
+/// the turn's prune took the entry. It is the easiest of the three to miss and it strands the ring
+/// identically ([`an_unqueued_ring_frees_the_pen_to_be_extended_again`] has the mechanism).
+#[test]
+fn a_lapsed_keeper_row_frees_its_ring_to_be_started_again() {
+    let (mut app, band, herd_id, source) = world_with_a_ring_at_the_head(BUILDERS);
+    resolve_a_pen_turn(&mut app);
+    walk_the_band_out_of_reach(&mut app, band, source);
+    resolve_a_pen_turn(&mut app);
+    assert!(
+        queued_sources(&app, band).is_empty(),
+        "fixture: the lapsed keeper row takes its ring entry with it"
+    );
+    println!("after the lapse: is a second ring accepted?");
+    assert!(
+        a_second_ring_is_accepted(&mut app, &herd_id),
+        "a lapsed keeper row frees the ring: `extend_pen` must be accepted again"
+    );
+}

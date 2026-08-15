@@ -505,6 +505,41 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
   up. Extending a pen is command-driven (`herd.pen_extending`), not improvement-driven, so the clear
   cannot block a later ring. One seam for all five build kinds — see "THE QUEUE IS THE DECLARATION"
   in `intensification.md`.
+
+> #### THE PEN RING'S LIFE, AND THE ONE STATE THAT COULD STRAND IT
+>
+> A ring (`extend_pen`, 2d-β) rides the `animal:pen` rung but has no rung of its own to complete, so
+> it carries a **flag** where the four rung verbs carry a meter: `Herd::pen_extending` is *"a ring is
+> in flight"*, `pen_extend_progress` is its meter, and `Herd::begin_pen_extension` **refuses while
+> the flag is set**. Three consequences follow, and they are the whole of the ring's lifecycle:
+>
+> | moment | what happens |
+> |---|---|
+> | `extend_pen` | `begin_pen_extension` sets the flag and **resets `pen_extend_progress` to `RUNG_UNSTARTED`**, *then* `BuildJob::ExtendPen` is queued on every keeping band |
+> | at the head | the band's whole `builders` pool raises it (`ring_workers`), against the pen rung's own `work_cost` at the pool's handling gear |
+> | completion | `accrue_pen_extension` widens the pen, **resets the meter, and clears the flag** |
+> | **the entry leaves the queue** | `Herd::cancel_pen_extension` clears the flag **and** the meter |
+>
+> **THE LAST ROW IS THE ONE THAT WAS MISSING, AND ITS ABSENCE WAS A PERMANENT DEAD END.** Because the
+> flag is set *before* the entry exists and only completion cleared it, an entry dropped mid-ring left
+> `pen_extending` set with nothing left to fund it — and every later `extend_pen` on that pen was
+> refused, for ever. The build-queue block puts a `✕` on that entry, so it was one click away.
+>
+> **Three exits drop an entry, and all three go through `fauna::cancel_dropped_rings`:**
+> `unqueue` (`fauna::unqueue_build_and_cancel_ring`, what `handle_unqueue` calls), `abandon`
+> (`fauna::drop_holding_and_cancel_ring`, what `handle_abandon` calls), and the **lapse** — the
+> per-turn `prune_build_queue` in `advance_labor_allocation`, which is the exit no command issues and
+> the easiest of the three to miss. The two command seams live in `fauna.rs` rather than on
+> `LaborAllocation` because the ring lives on the **herd**, and an allocation holds no registry.
+>
+> **THE BANKED RING PROGRESS IS DISCARDED, AND THAT IS THE HONEST STATE.** `unqueue`'s contract is
+> that it leaves the source's meter alone, which argues for keeping `pen_extend_progress` — but
+> `begin_pen_extension` **resets that meter on every start**, so a preserved ring meter could never be
+> resumed by any path the game has. Keeping it would be storing a number nothing can read.
+>
+> **A ring another band's entry was funding stops for that band too**, and the dead entry left behind
+> is retired the next turn by the already-built sweep (`!pen_extending` is a ring's *"already
+> built"*) — see "A DEAD ENTRY PARKS THE POOL FOR EVER" in `intensification.md`.
 - **`corral` command (repurposed)** — `corral <faction> <x> <y>` (`handle_corral`; `CorralCommand`
   proto field 38 with its `workers` field `reserved`, `CommandEventKind::Corral`) **queues the
   `Corral`** on the band(s) already hunting the herd standing on that tile — the command form of the

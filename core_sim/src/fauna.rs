@@ -965,6 +965,25 @@ impl Herd {
         false
     }
 
+    /// **STOP AN UNFINISHED RING AND CLEAR ITS METER** — the state a ring leaves behind when its
+    /// queue entry goes ([`crate::fauna::cancel_dropped_rings`]).
+    ///
+    /// # THE BANKED PROGRESS IS DISCARDED, AND THAT IS THE HONEST STATE
+    ///
+    /// `unqueue`'s contract is that it leaves the source's meter alone, which argues for keeping
+    /// `pen_extend_progress`. But [`Self::begin_pen_extension`] **resets that meter to
+    /// [`RUNG_UNSTARTED`] on every start**, so a preserved ring meter could never be resumed by any
+    /// path the game has — it would be a number nothing can read. Clearing both says what is true:
+    /// the ring stopped, and the next one starts from nothing.
+    ///
+    /// Idempotent, so the completion path — which clears the same three fields itself — may pass
+    /// through it without a second rule.
+    pub fn cancel_pen_extension(&mut self) {
+        self.pen_extending = false;
+        self.pen_extend_progress = RUNG_UNSTARTED;
+        self.pen_extend_cost = RUNG_UNSTARTED;
+    }
+
     /// **Update the hysteresis-stabilized keeper requirement for this herd** and return it — run once
     /// per turn for every herd in [`advance_husbandry`]. `band` is the deadband in **animals**
     /// (`animals_per_herder × husbandry.herders_hysteresis_fraction`).
@@ -3777,6 +3796,99 @@ pub fn herd_build_verb(
         return (!herd.is_domesticated()).then_some(Improvement::Tame);
     }
     (declared == Some(Improvement::Tame)).then_some(Improvement::Tame)
+}
+
+/// **IS THE RUNG THIS QUEUE ENTRY DECLARED ALREADY STANDING?** — the animal twin of
+/// `forage::patch_rung_already_built`, and the test that retires a **dead** entry
+/// (`docs/plan_standing_upkeep.md` §2.5).
+///
+/// # IT IS THE METER'S OWN FULLNESS, NOT THE RETAIN BAR
+///
+/// It asks exactly what [`herd_build_verb`] asks — `is_domesticated()` / `corral_meter_full()` —
+/// because the two must never disagree about whether there is work left. A *retain-bar* test
+/// (`is_corralled()`, which is what `validate_corral` asks the **player**) would answer *"already
+/// built"* for a meter that has eroded below its cost but not past its bar, i.e. for a rung the
+/// builders are legitimately repairing.
+///
+/// A rung the other web owns is never already built here — a `Cultivate` cannot stand on a herd —
+/// and the entry's own web decides which arm it reaches.
+pub fn herd_rung_already_built(herd: &Herd, declared: crate::components::Improvement) -> bool {
+    use crate::components::Improvement;
+    match declared {
+        Improvement::Tame => herd.is_domesticated(),
+        Improvement::Corral => herd.corral_meter_full(),
+        Improvement::Cultivate | Improvement::Sow => false,
+    }
+}
+
+/// **CANCEL EVERY RING NAMED BY AN ENTRY THAT JUST LEFT A BUILD QUEUE.**
+///
+/// `extend_pen` sets `Herd::pen_extending` **before** it queues, and only completion cleared it — so
+/// an entry dropped mid-ring left the flag set with nothing left to fund the ring, and
+/// [`Herd::begin_pen_extension`] refuses while it is set. That is a **permanent** dead end on that
+/// pen, one `✕` click away.
+///
+/// Handed the entries a drop produced (`LaborAllocation::prune_build_queue` returns them; the two
+/// command seams below read theirs before dropping), so every exit passes through one rule rather
+/// than each remembering it.
+pub fn cancel_dropped_rings(
+    herds: &mut HerdRegistry,
+    dropped: &[crate::components::BuildQueueEntry],
+) {
+    for entry in dropped {
+        let (crate::components::BuildJob::ExtendPen, crate::components::BuildSource::Herd(id)) =
+            (&entry.declared, &entry.source)
+        else {
+            continue;
+        };
+        if let Some(herd) = herds.herds.iter_mut().find(|herd| &herd.id == id) {
+            herd.cancel_pen_extension();
+        }
+    }
+}
+
+/// **WITHDRAW A DECLARATION, AND STOP THE RING IT WAS FUNDING** — the `unqueue` command's whole
+/// effect on one band. Returns whether an entry was there.
+///
+/// A `World`-level seam rather than a method on [`crate::components::LaborAllocation`] because the
+/// ring lives on the **herd**, and an allocation holds no registry. It is what `handle_unqueue`
+/// calls, so the command and the guard cannot come apart.
+pub fn unqueue_build_and_cancel_ring(
+    world: &mut World,
+    band: Entity,
+    source: &crate::components::BuildSource,
+) -> bool {
+    let Some(mut allocation) = world.get_mut::<crate::components::LaborAllocation>(band) else {
+        return false;
+    };
+    let entry = allocation.build_queue_entry(source).cloned();
+    if !allocation.unqueue_build(source) {
+        return false;
+    }
+    cancel_dropped_rings(&mut world.resource_mut::<HerdRegistry>(), entry.as_slice());
+    true
+}
+
+/// **PUT A HOLDING DOWN, AND STOP THE RING IT WAS FUNDING** — the `abandon` command's whole effect on
+/// one band, and [`unqueue_build_and_cancel_ring`]'s twin. Returns whether the band held the source.
+///
+/// The row's entry goes with it (`LaborAllocation::drop_source_row` prunes on the same edge), so the
+/// ring is read off the queue **before** the drop.
+pub fn drop_holding_and_cancel_ring(
+    world: &mut World,
+    band: Entity,
+    target: &crate::components::LaborTarget,
+) -> bool {
+    let Some(mut allocation) = world.get_mut::<crate::components::LaborAllocation>(band) else {
+        return false;
+    };
+    let entry = crate::components::BuildSource::of(target)
+        .and_then(|source| allocation.build_queue_entry(&source).cloned());
+    if !allocation.drop_source_row(target) {
+        return false;
+    }
+    cancel_dropped_rings(&mut world.resource_mut::<HerdRegistry>(), entry.as_slice());
+    true
 }
 
 // **RETIRED: `herd_is_maintaining`** — the animal twin of the retired `forage::patch_is_maintaining`,

@@ -21,12 +21,12 @@ use crate::{
     combat_config::CombatConfigHandle,
     components::{
         available_workers, floor_overdraws, fragments_from_contract, fragments_to_contract,
-        raid_is_recurring, BandEquipment, BandId, BandTravel, BuildJob, BuildSource, DeathCause,
-        DemographicFlowAccumulator, ElementKind, Expedition, ExpeditionMission, ExpeditionPhase,
-        Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
-        MoraleCause, MoraleContributions, MountainMetadata, PendingMigration, PopulationCohort,
-        PowerNode, ResidentBand, SourceYield, StartingUnit, Tile, YieldRange,
-        DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, STRIP_IT_BARE,
+        raid_is_recurring, BandEquipment, BandId, BandTravel, BuildJob, BuildQueueEntry,
+        BuildSource, DeathCause, DemographicFlowAccumulator, ElementKind, Expedition,
+        ExpeditionMission, ExpeditionPhase, Improvement, KnowledgeFragment, LaborAllocation,
+        LaborAssignment, LaborTarget, LocalStore, MoraleCause, MoraleContributions,
+        MountainMetadata, PendingMigration, PopulationCohort, PowerNode, ResidentBand, SourceYield,
+        StartingUnit, Tile, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, STRIP_IT_BARE,
     },
     creatures_config::CreaturesConfigHandle,
     culture::{

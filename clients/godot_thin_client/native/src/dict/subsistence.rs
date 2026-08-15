@@ -202,13 +202,16 @@ pub(crate) fn herds_to_array(
         // finite answer, and a `0` in its place is a promise. The client CANNOT compute it (it holds
         // neither the crew's output, nor the floor multiplier, nor the kit's contribution), so the
         // sim answers, exactly as it does for `pen_upkeep` and the yield forecast.
-        // **THREE NEGATIVES, THREE FACTS** — `-1` is *no estimate*, `-2` is *the meter holds
-        // exactly where it is* and `-3` is *the meter is going backwards*
-        // (`sim_schema::{NO_BUILD_TURNS_ESTIMATE, BUILD_METER_HOLDS, BUILD_METER_ROTS}`). Passed
-        // through verbatim so GDScript reads the sim's own answer rather than deriving a second
-        // opinion — and every one of them has to be READ on the other side: the client accepted the
-        // first two and flattened `-3` back to *no estimate*, which rendered a bleeding build as no
-        // line at all.
+        // **FOUR NEGATIVES, FOUR FACTS** — `-1` is *no estimate*, `-2` is *the meter holds exactly
+        // where it is*, `-3` is *the meter is going backwards* and `-4` is *the builders are
+        // staffed and standing on this entry, and its own gate refuses it*
+        // (`sim_schema::{NO_BUILD_TURNS_ESTIMATE, BUILD_METER_HOLDS, BUILD_METER_ROTS,
+        // BUILD_QUEUE_BLOCKED}`). Passed through verbatim so GDScript reads the sim's own answer
+        // rather than deriving a second opinion — and **every one of them has to be READ on the
+        // other side**: the client accepted the first two and flattened `-3` back to *no estimate*,
+        // which rendered a bleeding build as no line at all. `-4` arrived with the build QUEUE
+        // (`docs/plan_standing_upkeep.md` §4.6b) and is the one a client cannot derive — the other
+        // three are arithmetic about one meter, and a queue is not arithmetic.
         let _ = dict.insert("build_turns_remaining", herd.buildTurnsRemaining() as i64);
         // **WHERE THIS SOURCE SITS IN THE WINNING BAND'S BUILD QUEUE** — 0-based, and
         // `sim_schema::NOT_IN_ANY_BUILD_QUEUE` (`-1`) when no band has queued it
