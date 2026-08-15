@@ -210,6 +210,15 @@ pub(crate) fn herds_to_array(
         // first two and flattened `-3` back to *no estimate*, which rendered a bleeding build as no
         // line at all.
         let _ = dict.insert("build_turns_remaining", herd.buildTurnsRemaining() as i64);
+        // **WHERE THIS SOURCE SITS IN THE WINNING BAND'S BUILD QUEUE** — 0-based, and
+        // `sim_schema::NOT_IN_ANY_BUILD_QUEUE` (`-1`) when no band has queued it
+        // (`docs/plan_standing_upkeep.md` §4.6b). The whole `builders` pool goes on the HEAD of a
+        // band's queue until that entry's meter fills, so `build_turns_remaining` above is a CHAINED
+        // date — everything ahead of this entry plus its own span — and without this field that date
+        // is an exact number with no explanation. **It rides the SAME winner** as
+        // `build_turns_remaining` and `build_work_from_gear`: several bands may work one source, the
+        // sooner estimate wins, and all three come from that band, so the three are read as one set.
+        let _ = dict.insert("build_queue_position", herd.buildQueuePosition() as i64);
         // WHAT THE CREW'S TOOLS TOOK OFF THIS BUILD, in work units — the `t` in
         // `effective_cost = work_cost − t`. `0` = no build in
         // flight, or the crew carries nothing that helps. It rides BESIDE the raw job rather than
@@ -630,6 +639,10 @@ pub(crate) fn forage_patches_to_array(
         let _ = dict.insert("field_work_cost", patch.fieldWorkCost());
         // The plant twin of the herd row's — `-1` no estimate, `-2` the meter holds, `-3` it rots.
         let _ = dict.insert("build_turns_remaining", patch.buildTurnsRemaining() as i64);
+        // The plant twin of the herd row's queue position — 0-based, `-1` = in no band's queue. See
+        // there for why the countdown beside it is a CHAINED date and why the three build fields are
+        // read as one set off one winning band.
+        let _ = dict.insert("build_queue_position", patch.buildQueuePosition() as i64);
         let _ = dict.insert("build_work_from_gear", patch.buildWorkFromGear());
         // The plant twin of the herd block's estimate TERM — see there for why it rides beside
         // `build_turns_remaining` rather than replacing it, why the figure is read rather than

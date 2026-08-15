@@ -1,15 +1,16 @@
-//! **THE BUILD COUNTDOWN'S FOUR STATES, ON THE WIRE** (`docs/plan_standing_upkeep.md` §2.4).
+//! **THE BUILD COUNTDOWN'S FIVE STATES, ON THE WIRE** (`docs/plan_standing_upkeep.md` §2.4/§4.6b).
 //!
-//! `buildTurnsRemaining` shipped as one sentinel covering four different situations, so the tile card
-//! and the herd drawer — the two surfaces a player reads every turn — rendered **no line at all** for
-//! all of them. Three of those situations are not an absence of information:
+//! `buildTurnsRemaining` shipped as one sentinel covering several different situations, so the tile
+//! card and the herd drawer — the two surfaces a player reads every turn — rendered **no line at
+//! all** for all of them. Most of those situations are not an absence of information:
 //!
 //! | published | meaning |
 //! |---|---|
-//! | `>= 0` | a real finish date at the crew that is on it |
-//! | `BUILD_METER_HOLDS` (`-2`) | a real, staffed, priced build banking **exactly** what its meter is bleeding — the ground stands still |
+//! | `>= 0` | a real finish date, **chained** behind everything above it in the band's queue |
+//! | `BUILD_METER_HOLDS` (`-2`) | a real, priced build banking **exactly** what its meter is bleeding — the ground stands still |
 //! | `BUILD_METER_ROTS` (`-3`) | the same build banking **less** than the bleed — work already bought is being lost |
-//! | `NO_BUILD_TURNS_ESTIMATE` (`-1`) | there is genuinely no answer — nobody is on the source |
+//! | `BUILD_QUEUE_BLOCKED` (`-4`) | the band's builders are **staffed and standing on this entry** and its own gate refuses it — nothing banks, and nothing behind it moves |
+//! | `NO_BUILD_TURNS_ESTIMATE` (`-1`) | there is genuinely no answer — nothing queued here, or a gate refusing a *waiting* entry |
 //!
 //! **THE ROT IS THE DENOMINATOR** (`docs/plan_standing_upkeep.md` §4.6a). A build crew supplies
 //! nothing toward the maintenance rate — the band's keeping pool owes that for every meter carrying
@@ -59,7 +60,9 @@ use core_sim::{
     LadderConfigHandle, LocalStore, MoraleCause, PopulationCohort, ResidentBand, RungKey,
     SnapshotHistory, StartingUnit, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR, UNSCALED_UPKEEP,
 };
-use sim_schema::{BUILD_METER_HOLDS, BUILD_METER_ROTS, NO_BUILD_TURNS_ESTIMATE};
+use sim_schema::{
+    BUILD_METER_HOLDS, BUILD_METER_ROTS, BUILD_QUEUE_BLOCKED, NO_BUILD_TURNS_ESTIMATE,
+};
 
 /// **A GATHERING SITE THE CULTIVATE GATE ADMITS.** Every plant rung requires one
 /// (`RungSiteRequirement::requires_gathering_site`), and a refused gate publishes *no estimate* for a
@@ -317,19 +320,38 @@ fn world_with_a_patch_knowing(
         },
         ResidentBand,
         LaborAllocation {
-            assignments: vec![LaborAssignment {
-                target: LaborTarget::Forage {
-                    tile: source,
-                    floor: DEFAULT_ESCAPEMENT_FLOOR,
-                    species: None,
+            assignments: vec![
+                LaborAssignment {
+                    target: LaborTarget::Forage {
+                        tile: source,
+                        floor: DEFAULT_ESCAPEMENT_FLOOR,
+                        species: None,
+                    },
+                    workers: gatherers,
+                    kit: None,
                 },
-                workers: gatherers,
-                // The verb is derived from the meter, so this states nothing: what decides the arm
-                // under test is the **crew**.
-                improvement: None,
-                kit: None,
-                improvement_workers: builders,
-            }],
+                // **The builders are a band-level POOL** (`docs/plan_standing_upkeep.md` §2.5), and
+                // the whole of it goes on the head of the queue below. `builders == 0` is the
+                // unstaffed arm — a role row still stands at zero, which is how a player says
+                // *stop building* without withdrawing what they declared.
+                LaborAssignment {
+                    target: LaborTarget::Builders,
+                    workers: builders,
+                    kit: None,
+                },
+            ],
+            // **THE DECLARATION, and only where there is something to declare it on.** A patch with
+            // **nothing banked** is exactly the state a compose sheet is looking at — the player has
+            // not queued it yet — and that is what makes the wire publish a *projection* rather than
+            // a running countdown. A half-built meter is a build in flight and carries its entry.
+            build_queue: if banked > core_sim::RUNG_UNSTARTED {
+                vec![core_sim::BuildQueueEntry {
+                    source: core_sim::BuildSource::Patch(source),
+                    declared: core_sim::BuildJob::Rung(core_sim::Improvement::Cultivate),
+                }]
+            } else {
+                Vec::new()
+            },
             ..Default::default()
         },
     ));
@@ -382,9 +404,9 @@ fn resolve_a_turn(app: &mut App, source: UVec2) -> i32 {
     published_build_turns(app, source)
 }
 
-/// **THE FOUR STATES, PAIRWISE DISTINCT, ON ONE FIXTURE.**
+/// **THE FIVE STATES, PAIRWISE DISTINCT, ON ONE FIXTURE.**
 #[test]
-fn the_build_countdown_publishes_a_count_holding_rotting_and_no_estimate_as_four_states() {
+fn the_build_countdown_publishes_five_distinct_states_on_the_wire() {
     // (1) **A staffed build on the SHIPPED ladder publishes a real count** — and it does so with
     // nobody on the keeping, which is the §4.6a headline: the rate is not the builders' bill.
     let (mut app, source) = world_with_a_cultivate_staffed_at(A_MULTI_TURN_CREW);
@@ -433,31 +455,41 @@ fn the_build_countdown_publishes_a_count_holding_rotting_and_no_estimate_as_four
         "an unkept half-built meter loses bought work — the meter goes backwards, and says so"
     );
 
-    // (4) **A REFUSED GATE publishes NO ESTIMATE**, neither holding nor rotting — the state that
-    // genuinely has no answer. It is asserted at a real crew on a half-built meter, i.e. the exact
-    // fixture that reaches every other arm, so it pins that the gate beats all three: a build that is
-    // not running has promised nothing, for a reason that has nothing to do with staffing or with the
-    // keeping.
-    //
-    // **The boundary MOVED off "unstaffed"**, which is why this arm is a gate rather than an empty
-    // crew: work already banked promises as much as a crew does, so an unstaffed half-built meter is
-    // arm (2) or arm (3). The other no-answer states — a meter at zero with nobody on it, and the top
-    // of the ladder — take the same branch.
+    // (4) **A REFUSED GATE AT THE HEAD OF A STAFFED QUEUE IS BLOCKED** (`docs/plan_standing_upkeep.md`
+    // §4.6b). The player has committed a pool, the pool is standing on this entry, its own gate
+    // refuses it, and so nothing banks and nothing behind it moves. That is a state to say **loudly**
+    // — which is exactly what `-1` cannot do, because it renders as no line at all.
     let (mut app, source) =
         world_with_a_patch_knowing(A_MULTI_TURN_CREW, HALF_BUILT, !THE_GATE_IS_OPEN, A_GATHERER);
+    let blocked = resolve_a_turn(&mut app, source);
+    assert_eq!(
+        blocked, BUILD_QUEUE_BLOCKED,
+        "the head of a staffed queue whose gate refuses it says so, rather than falling silent"
+    );
+
+    // (5) **AND THE SAME REFUSED GATE WITH NOBODY ON THE POOL IS STILL NO ESTIMATE.** The blocked
+    // reading is about a **committed pool** getting nowhere; with the pool empty there is no
+    // commitment to report on, and the honest answer is the absence of one.
+    //
+    // **The boundary MOVED off "unstaffed" for the other two arms**, which is why this one is a gate
+    // rather than an empty crew alone: work already banked promises as much as a crew does, so an
+    // unstaffed half-built meter whose gate is OPEN is arm (2) or arm (3). The other no-answer
+    // states — a meter at zero with nobody on it, and the top of the ladder — take this branch.
+    let (mut app, source) =
+        world_with_a_patch_knowing(NOBODY_BUILDING, HALF_BUILT, !THE_GATE_IS_OPEN, A_GATHERER);
     let refused = resolve_a_turn(&mut app, source);
     assert_eq!(
         refused, NO_BUILD_TURNS_ESTIMATE,
-        "a build the rung's own gate refuses has promised nothing, whatever is banked or staffed"
+        "a refused gate with nobody standing on it has promised nothing at all"
     );
 
     // **Pairwise distinct**, which is what stops a new sentinel being wired to the wrong branch.
-    let published = [counted, holding, rotting, refused];
+    let published = [counted, holding, rotting, blocked, refused];
     for (index, left) in published.iter().enumerate() {
         for right in published.iter().skip(index + 1) {
             assert_ne!(
                 left, right,
-                "the four states must be four numbers on the wire: {published:?}"
+                "the five states must be five numbers on the wire: {published:?}"
             );
         }
     }
@@ -651,17 +683,21 @@ fn the_published_rot_is_exactly_what_the_next_decay_pass_bleeds() {
     );
 }
 
-/// **THE THREE SENTINELS ARE OUTSIDE THE RANGE A REAL COUNT LIVES IN, and are not each other** — the
+/// **THE FOUR SENTINELS ARE OUTSIDE THE RANGE A REAL COUNT LIVES IN, and are not each other** — the
 /// property every reader leans on when it branches on the sign.
 #[test]
-fn the_three_sentinels_are_distinct_and_below_every_real_count() {
+fn the_four_sentinels_are_distinct_and_below_every_real_count() {
     const {
         assert!(NO_BUILD_TURNS_ESTIMATE != BUILD_METER_HOLDS);
         assert!(NO_BUILD_TURNS_ESTIMATE != BUILD_METER_ROTS);
+        assert!(NO_BUILD_TURNS_ESTIMATE != BUILD_QUEUE_BLOCKED);
         assert!(BUILD_METER_HOLDS != BUILD_METER_ROTS);
+        assert!(BUILD_METER_HOLDS != BUILD_QUEUE_BLOCKED);
+        assert!(BUILD_METER_ROTS != BUILD_QUEUE_BLOCKED);
         assert!(NO_BUILD_TURNS_ESTIMATE < 0);
         assert!(BUILD_METER_HOLDS < 0);
         assert!(BUILD_METER_ROTS < 0);
+        assert!(BUILD_QUEUE_BLOCKED < 0);
     }
 }
 

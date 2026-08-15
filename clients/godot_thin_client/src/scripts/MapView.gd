@@ -287,6 +287,10 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	"patch_cultivation_work_done", "patch_cultivation_work_cost",
 	"patch_field_work_done", "patch_field_work_cost",
 	"patch_build_turns_remaining", "patch_build_work_from_gear",
+	# WHERE THIS PATCH SITS IN THE WINNING BAND'S BUILD QUEUE (§4.6b). It rides the same winner as the
+	# pair above and is redacted with them: a queue position is live state about a band's declared
+	# work, which a remembered tile knows no better than it knows the countdown it explains.
+	"patch_build_queue_position",
 	# The estimate's per-source TERM travels under the same rule as the answer beside it — it is a
 	# figure about a build being worked, and a remembered tile knows no more about that than it knows
 	# the progress. (The gear half of the estimate is not here at all: it rides the band's kit row.)
@@ -2763,6 +2767,12 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		info["patch_build_turns_remaining"] = int(patch.get(
 			"build_turns_remaining", SourceForecast.BUILD_TURNS_NO_ESTIMATE))
 		info["patch_build_work_from_gear"] = float(patch.get("build_work_from_gear", 0.0))
+		# **WHERE THIS PATCH SITS IN THE WINNING BAND'S QUEUE** — 0-based, `-1` = queued nowhere. The
+		# countdown two lines up is a CHAINED date (everything ahead of this entry plus its own span
+		# at the full builders pool), and this is what makes that number explicable. Its default is
+		# the sentinel, never `0`, which would put every unqueued patch at the head of a queue.
+		info["patch_build_queue_position"] = int(patch.get(
+			"build_queue_position", SourceForecast.NOT_IN_ANY_BUILD_QUEUE))
 		# **THE ESTIMATE'S PER-SOURCE TERM, so the compose sheet can price a crew the player is
 		# PROPOSING.** The turn count above is the sim's answer for the crew already here; this is
 		# what the sheet's stepper and floor slider evaluate `turns(workers)` from — see

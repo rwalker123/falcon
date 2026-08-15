@@ -262,52 +262,32 @@ static func stepper_value(root: Node) -> int:
 	var value: Node = siblings[index + 1]
 	return int((value as Label).text) if value is Label else STEPPER_VALUE_ABSENT
 
-## **THE BUILDERS STEPPER — the SECOND one on the sheet, which `stepper_value` above cannot reach.**
-## That reader takes the first `−` it finds, which is the TAKE crew's, so a claim about the build
-## crew's own value or its `+` needs a reader scoped to the BUILD CREW ROW
-## (`HudWidgets.BUILD_CREW_ROW_META`, the row `_mount_build_crew_row` stamps).
-##
-## They exist because the two steppers now share ONE pool
-## (`HudBandLaborState.source_crew_pool_forage` / `_hunt`): "dropping the take crew immediately raises
-## the build's ceiling" is a claim about the OTHER stepper's `+`, and nothing here could see it.
-const BUILD_CREW_VALUE_ABSENT := -1
+## **RETIRED — `build_crew_value` / `build_crew_can_add` / `build_crew_plus` / `_build_crew_minus`,
+## the BUILDERS stepper's own readers** (`docs/plan_standing_upkeep.md` §2.5). They existed because a
+## sheet carried TWO steppers sharing one source pool, and `stepper_value` above takes the first `−`
+## it finds. A verb declares and names no crew now, so there is one stepper again — and the claim that
+## replaced theirs is `stepper_count` below, which is an assertion about there being no second one.
 
-static func build_crew_value(root: Node) -> int:
-	var minus := _build_crew_minus(root)
-	if minus == null:
-		return BUILD_CREW_VALUE_ABSENT
-	var siblings := minus.get_parent().get_children()
-	var value: Node = siblings[siblings.find(minus) + 1]
-	return int((value as Label).text) if value is Label else BUILD_CREW_VALUE_ABSENT
+## **HOW MANY STEPPERS THIS SHEET MOUNTS**, counted by the `−` faces `HudWidgets.add_stepper_controls`
+## builds. The answer is ONE on every compose sheet in the game (`COMPOSE_STEPPERS_PER_SHEET`), and
+## asserting the COUNT rather than the absence of a named row is what catches a per-source build
+## control re-added under any meta, any label or none at all (§3.1).
+const COMPOSE_STEPPERS_PER_SHEET := 1
 
-## Can the BUILDERS stepper still take a hand? `false` where the row is not rendered at all, which is
-## the honest answer for a control offering no build to staff.
-static func build_crew_can_add(root: Node) -> bool:
-	var plus := build_crew_plus(root)
-	return plus != null and not plus.disabled
-
-## The BUILDERS stepper's `+` itself, so a state can PRESS it rather than write the model behind it —
-## the press is what runs the ceiling clamp in the sheet's own handler.
-static func build_crew_plus(root: Node) -> Button:
-	var minus := _build_crew_minus(root)
-	if minus == null:
-		return null
-	var siblings := minus.get_parent().get_children()
-	var index := siblings.find(minus) + STEPPER_MINUS_TO_PLUS
-	if index >= siblings.size():
-		return null
-	var plus: Node = siblings[index]
-	return plus as Button if plus is Button else null
-
-## The `−` and the `+` sit either side of the value Label (`HudWidgets.add_stepper_controls`).
-const STEPPER_MINUS_TO_PLUS := 2
-
-static func _build_crew_minus(root: Node) -> Button:
-	var row := Q.find_meta_node(root, HudWidgets.BUILD_CREW_ROW_META)
-	if row == null:
-		return null
-	var minus := Q.find_button_by_text(row, Spine.COMPOSE_STEPPER_MINUS_FACE)
-	return minus if minus != null and minus.get_parent() != null else null
+## **IT SKIPS A SUBTREE ALREADY QUEUED FOR DELETION, AND THAT IS LOAD-BEARING.** Every control edit
+## rebuilds the compose block and `queue_free`s the previous one, which stays IN THE TREE until the
+## frame ends — so a count taken between a rebuild and the next settle reads every generation still
+## standing (measured at THREE on a state that had re-composed twice). A caller that had to remember
+## to settle first would be one forgotten `await` from a silently wrong number.
+static func stepper_count(root: Node) -> int:
+	if root == null or root.is_queued_for_deletion():
+		return 0
+	var found := 0
+	if root is Button and (root as Button).text == Spine.COMPOSE_STEPPER_MINUS_FACE:
+		found += 1
+	for child in root.get_children():
+		found += stepper_count(child)
+	return found
 
 ## How many characters of a detail card's BBCode `detail_excerpt` returns around the key it found —
 ## enough to carry the row's whole value cell into the run log, short enough not to swallow the rows

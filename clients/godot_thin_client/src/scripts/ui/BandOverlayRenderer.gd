@@ -33,6 +33,9 @@ extends RefCounted
 # See draw_band_work_highlights.
 const LABOR_KIND_FORAGE := "forage"
 const LABOR_KIND_HUNT := "hunt"
+# The band-level BUILD pool's row kind (`docs/plan_standing_upkeep.md` §2.5). It works no tile, so it
+# is never a worked source here — it is read for the source badge's *is anybody building this* fork.
+const LABOR_KIND_BUILDERS := "builders"
 # Selected-band RANGE BORDERS: three clean PERIMETER outlines (the outer boundary of each hex
 # disk, traced edge-by-edge — NOT a filled tile-by-tile mesh), so the band's three reaches read
 # apart at a glance: forage (green, ties to the worked-forage fills), hunt (red, ties to the
@@ -260,6 +263,10 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 	# **AND THE BUILD CREW IS AGGREGATED THE SAME WAY, because "nobody is building this" is a claim
 	# about the SOURCE and not about one band's row.** One band's declaration with no builders is
 	# covered by another band's builders on the same rung, so the badge asks the summed count.
+	#
+	# **THE COUNT IS THE BAND'S `builders` POOL, not a per-source crew** (`docs/plan_standing_upkeep.md`
+	# §2.5): a verb declares and names no hands. Added once per (band × source it works), which is the
+	# set of bands that could hold this source in a queue at all.
 	var builders: Dictionary = {}
 	for unit_variant in _view.units:
 		if not (unit_variant is Dictionary):
@@ -307,6 +314,9 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 							SourceForecast.IMPROVEMENT_NONE, false)
 			# A party carries no `labor_assignments` of its own; its one source is the quarry above.
 			continue
+		# This band's whole build pool, resolved once and credited to every source it works — the
+		# queue that spends it is the band's, and this renderer has no queue.
+		var band_builders := _builders_pool_of_marker(band)
 		for entry_variant in _labor_assignments_of_marker(band):
 			if not (entry_variant is Dictionary):
 				continue
@@ -322,7 +332,7 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 				var tcol := eff_col + _view._wrapped_col_delta(band_col, tx)
 				var fkey := _view.secondary_food_key(tx, trow)
 				crew[fkey] = int(crew.get(fkey, 0)) + int(entry.get("workers", 0))
-				builders[fkey] = int(builders.get(fkey, 0)) + int(entry.get("improvement_workers", 0))
+				builders[fkey] = int(builders.get(fkey, 0)) + band_builders
 				_draw_worked_mark(tcol, trow, fkey, FORAGE_WORKED_COLOR, selected, radius, origin)
 				_queue_source_badge(tcol, trow, fkey, LABOR_KIND_FORAGE,
 					_view.forage_patch_lookup.get(Vector2i(tx, trow), {}),
@@ -346,7 +356,7 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 				var hcol := eff_col + _view._wrapped_col_delta(band_col, hx)
 				var hkey := _view.secondary_herd_key(herd_id)
 				crew[hkey] = int(crew.get(hkey, 0)) + int(entry.get("workers", 0))
-				builders[hkey] = int(builders.get(hkey, 0)) + int(entry.get("improvement_workers", 0))
+				builders[hkey] = int(builders.get(hkey, 0)) + band_builders
 				_draw_worked_mark(hcol, hrow, hkey, HUNT_WORKED_COLOR, selected, radius, origin)
 				_queue_source_badge(hcol, hrow, hkey, LABOR_KIND_HUNT, herd,
 					String(entry.get("improvement", "")), int(crew[hkey]), radius, origin,
@@ -841,6 +851,17 @@ func _selected_player_band() -> Dictionary:
 func _labor_assignments_of_marker(band: Dictionary) -> Array:
 	var v: Variant = band.get("labor_assignments", [])
 	return v if v is Array else []
+
+## **THIS BAND'S `builders` POOL** (`docs/plan_standing_upkeep.md` §2.5) — an ordinary standing-role
+## row of `labor_assignments`, like `scout`. It is what the source badge asks now that a verb names no
+## crew: the same LOCAL-copy rule as the reader above, for the same reason.
+func _builders_pool_of_marker(band: Dictionary) -> int:
+	for entry_variant in _labor_assignments_of_marker(band):
+		if entry_variant is Dictionary \
+				and String((entry_variant as Dictionary).get("kind", "")).strip_edges().to_lower() \
+					== LABOR_KIND_BUILDERS:
+			return maxi(int((entry_variant as Dictionary).get("workers", 0)), 0)
+	return 0
 
 ## True if (col, row) is on-map AND within hex distance `r_range` of the band — the membership test
 ## for a range disk. Both coords share the band's effective column frame (see _band_effective_col),

@@ -199,21 +199,79 @@ static func forage_range_bands() -> Array:
 ## more about the retired dip than about the patch. With each activity stating its own crew there is
 ## no blended count for a rung's floor to raise, and the build's hands answer through the improvement
 ## verb's own stepper.
-## **THE BUILD'S OWN CREW ON THAT ASSIGNMENT** (`docs/plan_standing_upkeep.md` §2.2). A running
-## build is STAFFED — the hands are the commitment now — so a fixture leaving
-## `improvement_workers` at the wire's `0` stages a build nobody is paying for, which is a
-## different frame and a warned one. It is what the sheet's BUILDERS stepper seeds from, and what a
-## walk-away is measured against: taking a crew of zero to zero is no order at all.
+## **THE BAND'S `builders` POOL** (`docs/plan_standing_upkeep.md` §2.5). A running build is STAFFED,
+## and the hands are a band-level standing ROLE — not a count on the source, `improvementWorkers`
+## having left the wire with the per-source crew. A fixture that staffs nobody stages a build nobody
+## is paying for, which is a different frame and a warned one.
 const CULTIVATING_BAND_BUILDERS := 3
 
 static func cultivating_forage_band_fixture(x: int = 66, y: int = 10) -> Dictionary:
 	var band: Dictionary = forage_range_bands()[0]
 	band["labor_assignments"] = [{
 		"kind": "forage", "workers": 1, "target_x": x, "target_y": y, "floor": 0.5,
-		"improvement": "cultivate", "improvement_workers": CULTIVATING_BAND_BUILDERS,
+		"improvement": "cultivate",
 		"actual_yield": 0.08, "sustainable_yield": 0.96, "realized_yield": 0.08,
 		"workers_needed": ForageFx.CULTIVATE_SIM_WORKERS_NEEDED, "overdraws": false,
-	}]
+	}, builders_role_row(CULTIVATING_BAND_BUILDERS)]
+	return band
+
+## **THE `builders` ROLE ROW** — the band-level build pool, as an ordinary `labor_assignments` entry
+## of kind `builders`, exactly as the sim publishes it (`docs/plan_standing_upkeep.md` §2.5). Shared
+## rather than spelled per fixture, because a role row that omitted a key one chapter reads would
+## stage a pool the client cannot see while the frame's own comment says it is staffed.
+static func builders_role_row(workers: int) -> Dictionary:
+	return {
+		"kind": HudConst.LABOR_KIND_BUILDERS, "workers": workers,
+		"target_x": -1, "target_y": -1, "fauna_id": "",
+	}
+
+## **DIAL THE PLAYER BANDS' BUILD POOL** — the harness's replacement for the retired compose-sheet
+## BUILDERS stepper (`docs/plan_standing_upkeep.md` §2.5). A chapter that used to dial
+## `ComposeState.set_forage_build_count(n)` staffs the ROLE instead, because that is where the hands
+## are now and it is what `SourceForecast.build_turns_at` is quoted at.
+##
+## It rewrites every player band's row rather than one, so a chapter that stages a roster gets the
+## same answer whichever band the source resolves through; `build_crew_forage` / `_hunt` then restrict
+## it to the bands that actually work the source.
+static func staff_builders(band_labor, workers: int) -> void:
+	# **THE SINGLE `player_band()` IS COVERED TOO, and forgetting it is silent.** Several chapters set
+	# `_player_band` and leave `_player_bands` holding whatever the previous state left, and the compose
+	# sheet resolves its actor through the single one — so a helper that walked the roster alone edited
+	# a band the sheet never reads and the frame quoted the PREVIOUS fixture's pool.
+	var bands: Array = band_labor.player_bands().duplicate()
+	var single: Dictionary = band_labor.player_band()
+	if not single.is_empty() and not bands.has(single):
+		bands.append(single)
+	for band_variant in bands:
+		if not (band_variant is Dictionary):
+			continue
+		var band: Dictionary = band_variant
+		var rows: Array = band.get("labor_assignments", []) as Array
+		var found := false
+		for row_variant in rows:
+			if row_variant is Dictionary \
+					and String((row_variant as Dictionary).get("kind", "")) \
+						== HudConst.LABOR_KIND_BUILDERS:
+				(row_variant as Dictionary)["workers"] = workers
+				found = true
+		if not found:
+			rows.append(builders_role_row(workers))
+		band["labor_assignments"] = rows
+
+## **A BAND WITH NOBODY ON THE BUILD POOL** — the role row DROPPED, which is how the sim publishes a
+## band that has staffed nobody (a row exists only where somebody is). Its predecessor was
+## `erase("improvement_workers")` on the source's own assignment; dropping the row by KIND rather
+## than by index is what keeps a fixture that gains another role row from silently unstaffing that
+## one instead.
+static func without_builders(band: Dictionary) -> Dictionary:
+	var kept: Array = []
+	for row_variant in (band.get("labor_assignments", []) as Array):
+		if row_variant is Dictionary \
+				and String((row_variant as Dictionary).get("kind", "")) \
+					== HudConst.LABOR_KIND_BUILDERS:
+			continue
+		kept.append(row_variant)
+	band["labor_assignments"] = kept
 	return band
 
 ## The band the herd-panel LOCAL preview states staff: it sits ON the (66,10) herd (distance 0 ≤ reach
@@ -504,7 +562,14 @@ static func kit_roster_fixture() -> Array:
 		},
 		{
 			"id": KIT_ID_NONE, "display_name": "No kit",
-			"jobs": ["hunt", "forage", "scout", "warrior"],
+			# **`builders` IS ON THIS LIST BECAUSE THE SHIPPED ROSTER PUTS IT THERE**
+			# (`equipment.json`'s `none` lists every job, and `default_kits.builders` IS `none`). Without
+			# it the Builders role card mounts NO picker in this harness, and the one control §2.5 exists
+			# to make reachable — putting the husbandry kit on the builders row, the only kit whose items
+			# declare `build_work` — would be shipped and unrendered. This roster carries no husbandry kit,
+			# so the card renders the honest single option; the two-entry case rides `compose_rungs`'s own
+			# locally-built roster, which is where the handling kit is staged.
+			"jobs": ["hunt", "forage", "scout", "warrior", "builders"],
 			"attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,

@@ -26,7 +26,6 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
-use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     advance_band_movement, advance_expeditions, advance_herds, advance_labor_allocation,
     build_headless_app, hunt_engage_workers, hunt_haul_workers, hunt_source_yield_preview,
@@ -241,9 +240,7 @@ fn spawn_hunters(
                         floor,
                     },
                     workers,
-                    improvement: NO_IMPROVEMENT_UNDERWAY,
                     kit: None,
-                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },
@@ -689,16 +686,31 @@ fn spawn_resident_crew(
             },
             ResidentBand,
             LaborAllocation {
-                assignments: vec![LaborAssignment {
-                    target: LaborTarget::Hunt {
-                        fauna_id: fauna_id.to_string(),
-                        floor,
+                assignments: vec![
+                    LaborAssignment {
+                        target: LaborTarget::Hunt {
+                            fauna_id: fauna_id.to_string(),
+                            floor,
+                        },
+                        workers,
+                        kit: None,
                     },
-                    workers,
-                    improvement,
-                    kit: None,
-                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
-                }],
+                    // **The build's hands are a band-level pool** since
+                    // `docs/plan_standing_upkeep.md` §2.5, staffed at the same count the take is so
+                    // the declared build is genuinely running beside the hunters.
+                    LaborAssignment {
+                        target: LaborTarget::Builders,
+                        workers,
+                        kit: None,
+                    },
+                ],
+                build_queue: improvement
+                    .map(|declared| core_sim::BuildQueueEntry {
+                        source: core_sim::BuildSource::Herd(fauna_id.to_string()),
+                        declared: core_sim::BuildJob::Rung(declared),
+                    })
+                    .into_iter()
+                    .collect(),
                 ..Default::default()
             },
         ))

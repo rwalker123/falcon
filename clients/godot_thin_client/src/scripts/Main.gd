@@ -288,6 +288,8 @@ func _ready() -> void:
             hud.connect("upkeep_mode_requested", Callable(self, "_on_hud_upkeep_mode"))
         if hud.has_signal("improvement_requested") and not hud.is_connected("improvement_requested", Callable(self, "_on_hud_improvement")):
             hud.connect("improvement_requested", Callable(self, "_on_hud_improvement"))
+        if hud.has_signal("unqueue_requested") and not hud.is_connected("unqueue_requested", Callable(self, "_on_hud_unqueue")):
+            hud.connect("unqueue_requested", Callable(self, "_on_hud_unqueue"))
         if hud.has_signal("set_bench_requested") and not hud.is_connected("set_bench_requested", Callable(self, "_on_hud_set_bench")):
             hud.connect("set_bench_requested", Callable(self, "_on_hud_set_bench"))
         if hud.has_signal("bench_crew_requested") and not hud.is_connected("bench_crew_requested", Callable(self, "_on_hud_bench_crew")):
@@ -1198,24 +1200,24 @@ static func format_split_band(payload: Dictionary) -> Dictionary:
         "message": "Form a new band.",
     }
 
-## `extend_pen <faction> <x> <y> <workers>` targets the pen's ANCHOR TILE, so it names no band at all
-## — it is here for company, not because it carries a band handle.
+## `extend_pen <faction> <x> <y>` targets the pen's ANCHOR TILE, so it names no band at all — it is
+## here for company, not because it carries a band handle.
 ##
-## **THE CREW IS A REQUIRED POSITIONAL** (`docs/plan_standing_upkeep.md` §2.2): a ring rides the same
-## `animal:pen` rung as the pen it widens, so it staffs the same build allocation and draws on the
-## same finite band. The sim REFUSES a count the band cannot staff, naming the idle hands, which is
-## why the sheet clamps its stepper before this is ever built.
+## ⛔ **THE GRAMMAR IS CLOSED AT THREE TOKENS, and a trailing crew is a PARSE ERROR**
+## (`docs/plan_standing_upkeep.md` §2.5). It took a required worker count for one slice, back when a
+## ring staffed a per-source build allocation. A ring rides the same `animal:pen` rung as the pen it
+## widens and is funded exactly like every other build now: this DECLARES it, appending an entry to
+## the build queue of every band keeping the pen, and that band's `builders` pool raises it when it
+## reaches the head.
 static func format_extend_pen(payload: Dictionary) -> Dictionary:
     var faction := int(payload.get("faction", PLAYER_FACTION_ID))
     var x := int(payload.get("x", -1))
     var y := int(payload.get("y", -1))
     if x < 0 or y < 0:
         return {}
-    var workers: int = max(0, int(payload.get("workers", 0)))
     return {
-        "line": "extend_pen %d %d %d %d" % [faction, x, y, workers],
-        "message": "Extend pen at (%d, %d) with %d worker%s." % [
-            x, y, workers, "" if workers == 1 else "s"],
+        "line": "extend_pen %d %d %d" % [faction, x, y],
+        "message": "Queue another ring on the pen at (%d, %d)." % [x, y],
     }
 
 ## **THE SECOND AXIS's commands** (issue #442): `cultivate <faction> <x> <y>` / `sow <faction> <x> <y>`
@@ -1228,32 +1230,61 @@ static func format_extend_pen(payload: Dictionary) -> Dictionary:
 ## rejected outright.
 const IMPROVEMENT_HERD_TARGETED := ["tame"]
 
+## ⛔ **NONE OF THE FOUR VERBS TAKES A WORKER COUNT, and a trailing one is a PARSE ERROR**
+## (`docs/plan_standing_upkeep.md` §2.5). Each carried the build's own crew for one slice; they
+## DECLARE now — the verb appends an entry to the build queue of every band already working the
+## source, and the hands stand on `assign_labor <faction> <band> builders <n>`.
 static func format_improvement(payload: Dictionary) -> Dictionary:
     var improvement := String(payload.get("improvement", "")).strip_edges().to_lower()
     if improvement == "":
         return {}
     var faction := int(payload.get("faction", PLAYER_FACTION_ID))
-    # **THE BUILD'S OWN CREW, a required trailing positional on all four verbs**
-    # (`docs/plan_standing_upkeep.md` §2.2). It is what makes the build an allocation the player
-    # states rather than a rider on the take crew, and the sim REFUSES a count the band cannot staff.
-    var workers: int = max(0, int(payload.get("workers", 0)))
     if improvement in IMPROVEMENT_HERD_TARGETED:
         var herd_id := String(payload.get("herd_id", "")).strip_edges()
         if herd_id == "":
             return {}
         return {
-            "line": "%s %d %s %d" % [improvement, faction, herd_id, workers],
-            "message": "%s %s with %d worker%s." % [
-                improvement.capitalize(), herd_id, workers, "" if workers == 1 else "s"],
+            "line": "%s %d %s" % [improvement, faction, herd_id],
+            "message": "%s %s — queued for this band's builders." % [
+                improvement.capitalize(), herd_id],
         }
     var x := int(payload.get("x", -1))
     var y := int(payload.get("y", -1))
     if x < 0 or y < 0:
         return {}
     return {
-        "line": "%s %d %d %d %d" % [improvement, faction, x, y, workers],
-        "message": "%s (%d, %d) with %d worker%s." % [
-            improvement.capitalize(), x, y, workers, "" if workers == 1 else "s"],
+        "line": "%s %d %d %d" % [improvement, faction, x, y],
+        "message": "%s (%d, %d) — queued for this band's builders." % [
+            improvement.capitalize(), x, y],
+    }
+
+## **`unqueue <faction> <x> <y>` | `unqueue <faction> <herd_id>` — THE WITHDRAWAL**
+## (`docs/plan_standing_upkeep.md` §2.5). It drops the source's build-queue entry on every band of the
+## faction working it and leaves the row, its take crew, its kit and the meter exactly as they are.
+##
+## **IT NAMES A SOURCE, NOT A RUNG, and that is why it is its own builder rather than a branch of
+## `format_improvement`.** A band holds at most one entry per source, so there is nothing for a verb
+## argument to disambiguate — and the source's two shapes are told apart the way the sim's parser
+## tells them apart: **two integer tokens are a TILE, one token is a HERD id**. A herd id wins when it
+## is non-empty, which is the only way a caller can state the herd form unambiguously.
+##
+## **IT IS THE UNDO FOR A DECLARATION, NEVER FOR A BUILD WITH WORK ON IT.** `abandon` is what puts a
+## source with a live meter down, and it is deliberately command-line only in this slice.
+static func format_unqueue(payload: Dictionary) -> Dictionary:
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var herd_id := String(payload.get("herd_id", "")).strip_edges()
+    if herd_id != "":
+        return {
+            "line": "unqueue %d %s" % [faction, herd_id],
+            "message": "Withdraw the build queued on %s." % herd_id,
+        }
+    var x := int(payload.get("x", -1))
+    var y := int(payload.get("y", -1))
+    if x < 0 or y < 0:
+        return {}
+    return {
+        "line": "unqueue %d %d %d" % [faction, x, y],
+        "message": "Withdraw the build queued on (%d, %d)." % [x, y],
     }
 
 ## **`set_bench <faction_id> <band_id> recipe <recipe_id>`** — put a recipe on a band's crafting bench
@@ -1393,14 +1424,20 @@ func _on_hud_send_trade_expedition(payload: Dictionary) -> void:
 func _on_hud_extend_pen(payload: Dictionary) -> void:
     _send_formatted_command(format_extend_pen(payload))
 
-## Commit an improvement, and its CREW, on a source the band already works (the second axis, issue
-## #442). Sent immediately after the `assign_labor` that guarantees the crew is there.
+## DECLARE an improvement on a source the band already works (the second axis, issue #442). Sent
+## immediately after the `assign_labor` that guarantees the row is there — an improvement verb only
+## ever reaches bands already working the source.
 ##
-## **There is no abandon branch any more** (`docs/plan_standing_upkeep.md` §2.4). The verb carries a
-## worker count, so `<verb> … 0` is how a player walks away, and an EMPTY `improvement` now means only
-## *there is nothing here to state* — `format_improvement` answers `{}` for it and nothing is sent.
+## **IT NAMES NO CREW** (`docs/plan_standing_upkeep.md` §2.5): the verb appends a build-queue entry
+## and the band's `builders` pool raises whatever is at the head. An EMPTY `improvement` means *there
+## is nothing here to state* — `format_improvement` answers `{}` and nothing is sent.
 func _on_hud_improvement(payload: Dictionary) -> void:
     _send_formatted_command(format_improvement(payload))
+
+## WITHDRAW a declaration — the undo for the verb above, and its own handler because its own command
+## and its own grammar (it names a SOURCE, not a rung). See `format_unqueue`.
+func _on_hud_unqueue(payload: Dictionary) -> void:
+    _send_formatted_command(format_unqueue(payload))
 
 ## Say how this band splits a keeping pool it cannot stretch. Sent on its own — the fund mode is a
 ## standing policy on the band's allocation, not part of any source's commit.

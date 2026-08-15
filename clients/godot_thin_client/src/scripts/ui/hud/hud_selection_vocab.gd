@@ -214,6 +214,31 @@ const RUNG_REVERTING_FORMAT := "%s Reverting %d%%"
 # is the silence this whole family exists to remove).
 const RUNG_STALLED_FORMAT := "%s Stalled %d%%"
 
+# **HAZARD: THE QUEUE IS STUCK HERE** (`SourceForecast.BUILD_TURNS_QUEUE_BLOCKED`, the wire's own
+# `-4`, `docs/plan_standing_upkeep.md` §4.6b). The band's builders are staffed and standing on this
+# entry, its own gate refuses it, so nothing banks — and, the whole pool being on the head of the
+# queue, nothing behind it moves either.
+#
+# **IT IS NOT `RUNG_STALLED_FORMAT`, AND THE DIFFERENCE IS WHAT THE PLAYER DOES NEXT.** *Stalled* is
+# a rung nobody is being held up by; this one is holding the band's ENTIRE build programme, which is
+# why it names where the builders are rather than only what this rung is doing. The remedy is on a
+# different line entirely, so this format states no cause — `DetailFormat.build_blocked_lines` pairs
+# it with the two facts already published on the same row (`upkeepShortfall` /
+# `neglectGraceRemaining`), which is where the answer actually is.
+const RUNG_BLOCKED_FORMAT := "%s Blocked %d%% — your builders are held here"
+
+# **WHAT FREES A BLOCKED QUEUE, on the web whose keeping is short** — the sub-row beneath the row
+# above, rendered ONLY where the source publishes a shortfall, so the cause is READ rather than
+# invented (`docs/plan_standing_upkeep.md` §4.6b). `%s` is the band role that pays it.
+#
+# **THE REMEDY IS THE KEEPING ALONE, AND IT IS MEASURED RATHER THAN ASSUMED.** On the animal web the
+# blocked case is a half-tamed herd drawn to its escapement floor: staffing the keeping restores the
+# herd's regrowth and logistic growth outruns a floor-respecting take, so the flock climbs back over
+# the gate in ~7–14 turns **with the hunters left at full strength**. Taking them off as well is
+# indistinguishable, so this must NOT hedge with *"and stop hunting"* — a remedy with a second,
+# useless half reads as a guess.
+const RUNG_BLOCKED_REMEDY_FORMAT := "its keeping is short — staff this band's %s"
+
 # `your gear: −8.5 work off this job` — what the crew's tools took off the COST, in the units the
 # cost is quoted in. It is the only way a player can tell a tool is worth carrying to a garden and
 # not to a farm: the contribution is a fixed number of units against a job whose size is not, so its

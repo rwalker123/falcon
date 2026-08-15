@@ -361,7 +361,8 @@ pub fn calculate_visibility(
                         LaborTarget::Scout
                         | LaborTarget::Warrior
                         | LaborTarget::Agriculture
-                        | LaborTarget::Husbandry => None,
+                        | LaborTarget::Husbandry
+                        | LaborTarget::Builders => None,
                     };
                     // A Forage assignment carries raw command-supplied coords (see
                     // `handle_assign_labor`), so guard the bounds before pushing — an OOB tile

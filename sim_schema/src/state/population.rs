@@ -189,11 +189,18 @@ pub struct LaborAssignmentState {
     /// comment. Appended (append-only).
     #[serde(default)]
     pub material_yield: Vec<MaterialPayoff>,
-    /// **THE HANDS ON THE BUILD** — the improvement verb's own crew
-    /// (`docs/plan_standing_upkeep.md` §2.2), the second of this source's three allocations.
-    /// `0` whenever no verb is in flight, which is the common case. Appended (append-only).
-    #[serde(default)]
-    pub improvement_workers: u32,
+    // **RETIRED: `improvement_workers`** — the per-source BUILD crew, the twin of the keeper crew
+    // below and retired one slice after it (`docs/plan_standing_upkeep.md` §2.5).
+    //
+    // **The build left the tile too.** A verb names no crew now — it appends an entry to the band's
+    // ordered **build queue** — and the hands stand on the band-level `builders` role, which arrives
+    // as an ordinary **row in this very list** with its head count in [`Self::workers`], exactly as
+    // `agriculture` and `husbandry` do. The wire slot `improvementWorkers` is `(deprecated)` in
+    // place; FlatBuffers field ids are positional.
+    //
+    // What survives per source is [`Self::improvement`], which the sim **derives** from that band's
+    // queue entry at capture — so a client still reads *what is being raised here* off the row, and
+    // still does no arithmetic to get it.
     // **RETIRED: `maintain_workers`** — the per-source keeper crew. **Maintenance left the tile**
     // (`docs/plan_standing_upkeep.md` §2.5): it is a band-level standing role now
     // (`agriculture` / `husbandry`), which arrives as an ordinary **row in this very list** with its

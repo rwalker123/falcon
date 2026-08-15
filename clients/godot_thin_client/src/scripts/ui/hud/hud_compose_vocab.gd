@@ -137,9 +137,10 @@ const CREW_ROW_SEPARATION := 6
 # stated by `DetailFormat.at_risk_lines` where the source itself is described — and only when it is
 # going UNPAID, the standing bill having been retired with the `Keeping:` row (issue #545).
 #
-# The BUILD crew's row label — the second of a source's two allocations, stated on the improvement
-# control that names the verb these hands are filling.
-const CREW_ROW_BUILD_LABEL := "BUILDERS"
+# RETIRED — **`CREW_ROW_BUILD_LABEL`** (`BUILDERS`), the row label of the build crew's own stepper
+# (`docs/plan_standing_upkeep.md` §2.5). A verb DECLARES and names no hands: the stepper is gone with
+# the trailing worker count the improvement commands used to take, and the pool it would have staffed
+# is a standing role card on the Band panel.
 # The crew row's note separation, beside its label.
 const CREW_ROW_NOTE_SEPARATION := 5
 
@@ -156,14 +157,11 @@ const CREW_ROW_NOTE_SEPARATION := 5
 # The RATE is not lost: it is the STANDING PRICE on the offered face now
 # (`BUILD_PRICE_UPKEEP_FORMAT`), beside the build's one-off one, which is what it always was.
 
-# **THE REASON A DEAD IMPROVEMENT BOX CARRIES.** Ticking a rung the band cannot staff declares a build
-# that never starts — the sim REFUSES the crew rather than trimming it — so the offer is greyed with
-# this rather than left live for a click that does nothing.
-#
-# **It names BOTH levers, because the sheet's build pool is not the band's idle count**: it is the
-# source's crew pool less the take the player has just composed, so hands are freed either by idling
-# some of the band or by taking some off the crew row above.
-const BUILD_NO_HANDS_REASON := "No free workers to build with — free up idle hands, or take some off the crew above."
+# RETIRED — **`BUILD_NO_HANDS_REASON`**, the reason a dead improvement box carried
+# (`docs/plan_standing_upkeep.md` §2.5). Ticking a rung used to declare a build WITH a crew, and the
+# sim refused a count the band could not staff — so an empty build pool greyed the offer out. A verb
+# names no crew now: ticking APPENDS a queue entry, which is legal and free whether or not anybody is
+# on the `builders` role. What says nobody is on it is the rung row's own *not started* warning.
 
 # A crew TARGET is a PILL, and the shape is the point: the stepper beside it is a boxed control you
 # operate, a target is a value you can jump to. Its face carries two registers — the COUNT (what you
@@ -260,10 +258,10 @@ const POLICY_TOOLTIP_NAME_FORMAT := "%s — %s"
 # feed message, so the client does not pre-gate on those (max radius is not on the wire).
 const PEN_EXTEND_LABEL := "Extend pen"
 
-const PEN_EXTEND_TOOLTIP := "Fence another ring around the pen, worked off by the crew you name: a ring rides the same pen rung as the pen it widens, so it costs the same work and claims hands from the same band as the gathering and the keeping. Then the pen grazes more land and feeds itself further. Rejected at the pen-radius maximum, and refused outright if the band has fewer idle hands than you asked for."
-# The ring's crew row-label. Its own word rather than KEEPERS: these hands are FENCING, not holding
-# the herd, and the two allocations sit on the same card.
-const PEN_EXTEND_CREW_LABEL := "Fencers"
+const PEN_EXTEND_TOOLTIP := "Queue another ring around the pen. A ring rides the same pen rung as the pen it widens, so it joins the band's build queue like any other job and its builders raise it when it reaches the head. Then the pen grazes more land and feeds itself further. Rejected at the pen-radius maximum."
+# RETIRED — **`PEN_EXTEND_CREW_LABEL`** (`Fencers`), the ring's own crew row-label. The verb took a
+# trailing worker count for one slice; `extend_pen <faction> <x> <y>` is closed at three tokens again
+# (`docs/plan_standing_upkeep.md` §2.5), so there is no crew to name.
 
 const PEN_FENCING_LABEL := "Fencing %d%%"
 
@@ -548,7 +546,12 @@ const IMPROVEMENT_DEAL_DEPLETED_NOTE := "⚠ Too depleted to pen — it would ea
 # They are two flat consts rather than a state-keyed table because a table would put a live
 # `SourceForecast.*` reference in a `const` initializer here, and a vocabulary module is kept a
 # cycle-free LEAF; the two-branch pick lives at the one call site that already holds both states.
-const BUILD_UNSTARTED_NOTE := "⚠ Not started — no builders assigned. Set the builders below to begin."
+# **IT NAMES THE ROLE, BECAUSE THERE IS NO STEPPER BELOW IT ANY MORE**
+# (`docs/plan_standing_upkeep.md` §2.5). It read *"Set the builders below to begin"* while this
+# control carried a BUILDERS stepper of its own; that stepper is retired, so the sentence pointed at
+# a control the player cannot find — the warning-outliving-its-mechanism failure this arc keeps
+# producing. The lever is the band's Builders role card, and the line says so.
+const BUILD_UNSTARTED_NOTE := "⚠ Not started — nobody is on this band's Builders role."
 
 # RETIRED — **`BUILD_SLIDING_NOTE`**, `⚠ No builders — this rung is sliding back. Set the builders
 # below to hold it.` (`docs/plan_standing_upkeep.md` §4.6a).

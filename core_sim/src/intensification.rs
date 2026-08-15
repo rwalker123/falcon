@@ -287,7 +287,7 @@ pub fn build_turns_remaining(cost: f32, done: f32, work_this_turn: f32) -> Optio
     Some((remaining / work_this_turn).ceil() as u32)
 }
 
-/// **WHAT A SOURCE'S BUILD COUNTDOWN SAYS — FOUR ANSWERS, NOT TWO.**
+/// **WHAT A SOURCE'S BUILD COUNTDOWN SAYS — FIVE ANSWERS, NOT TWO.**
 ///
 /// [`build_turns_remaining`] is the arithmetic and answers `Option<u32>`; this is what the *source*
 /// stores and the wire publishes, because *"there is no answer"*, *"the meter is standing still"*
@@ -299,6 +299,7 @@ pub fn build_turns_remaining(cost: f32, done: f32, work_this_turn: f32) -> Optio
 /// | `Some(Turns(n))` | `n` | a real finish date |
 /// | `Some(Holding)` | [`sim_schema::BUILD_METER_HOLDS`] | **the meter holds exactly where it is** |
 /// | `Some(Rotting)` | [`sim_schema::BUILD_METER_ROTS`] | **the meter is going backwards** |
+/// | `Some(Blocked)` | [`sim_schema::BUILD_QUEUE_BLOCKED`] | **the head of a staffed queue is refused by its own gate** |
 /// | `None` | [`sim_schema::NO_BUILD_TURNS_ESTIMATE`] | there is genuinely no answer |
 ///
 /// # WHY THE TWO NON-FINISHING STATES ARE NOT ONE
@@ -342,6 +343,20 @@ pub enum BuildTurns {
     /// **A build banking LESS than its meter bleeds** — the ground is going backwards under it, so
     /// work already bought is being lost. Unambiguously bad, and the remedy is the keeping.
     Rotting,
+    /// **THE QUEUE IS BLOCKED HERE** — the band's builders are staffed and standing on this entry,
+    /// and the rung's own gate refuses it, so nothing banks and nothing behind it moves
+    /// (`docs/plan_standing_upkeep.md` §4.6b).
+    ///
+    /// **It is not [`build_turns_estimate`]'s to return.** That function answers for one build's
+    /// arithmetic and cannot see a queue; this variant is stamped by the band's chain pass, which is
+    /// the only place that knows a refusing gate is sitting at the **head** of a staffed pool rather
+    /// than merely waiting its turn.
+    ///
+    /// **The remedy is off the build line entirely.** The measured case is a half-tamed herd with an
+    /// empty `husbandry` role: the hunters draw the flock to their floor, the unmet keeping
+    /// suppresses its regrowth, and the `Tame`'s own escapement gate never reopens. What fixes it is
+    /// `assign_labor <faction> <band> husbandry <n>`.
+    Blocked,
 }
 
 /// **THE COUNTDOWN A SOURCE PUBLISHES** — [`build_turns_remaining`]'s arithmetic, with the two states
@@ -386,6 +401,50 @@ pub fn build_turns_estimate(
         None => Some(BuildTurns::Holding),
     }
 }
+
+/// **THE FOUR NUMBERS A BUILD'S COUNTDOWN IS STRUCK FROM, at one crew** — the bar the meter must
+/// reach, what is banked on it, the signed supply, and whether the rung's own gate holds at all.
+///
+/// It exists because the countdown stopped being a per-source question
+/// (`docs/plan_standing_upkeep.md` §4.6b). A band's builders fund the **head** of its queue and
+/// everything below it is dated by **chaining** — *the sum of everything above it plus its own span
+/// at the full pool* — so the band's chain pass has to hold each entry's inputs and evaluate them in
+/// **queue order**, which is not the order the labor loop visits sources in. Each arm records one of
+/// these as it goes; nothing else moved.
+///
+/// **Every entry is quoted at the FULL POOL**, waiting ones included — that is what *all hands on the
+/// head* means for everything below it, and it is why `balance` is the balance at `builders` rather
+/// than at whatever this source is funded at this turn.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BuildQuote {
+    /// The **tooled** bar: the job's cost less what the pool's gear takes off it.
+    pub bar: f32,
+    /// The work already on this rung's meter.
+    pub banked: f32,
+    /// `build_supply(at the full pool) − meter_rot` ([`RungDef::build_balance`]).
+    pub balance: f32,
+    /// The rung's own composed gate — knowledge, site, species, ownership, escapement room. `false`
+    /// is *"there is no answer"*, and at the head of a staffed queue it is [`BuildTurns::Blocked`].
+    pub gate_holds: bool,
+}
+
+impl BuildQuote {
+    /// This entry's **own span**, before any chaining — [`build_turns_estimate`] over the four.
+    pub fn turns(&self, builders: u32) -> Option<BuildTurns> {
+        build_turns_estimate(
+            self.bar,
+            self.banked,
+            self.balance,
+            self.gate_holds,
+            builders,
+        )
+    }
+}
+
+/// **NOT IN ANY BAND'S BUILD QUEUE** — the neutral of a source's published `buildQueuePosition`
+/// (`docs/plan_standing_upkeep.md` §4.6b). A real position is 0-based, so the sentinel sits outside
+/// the range the same way the countdown's negatives do.
+pub const NOT_IN_ANY_BUILD_QUEUE: i32 = -1;
 
 /// **THE BALANCE AT WHICH A METER NEITHER GROWS NOR ROTS** — a crew banking exactly what the meter
 /// bleeds, so `build_work − rot` is exactly this.
@@ -468,10 +527,10 @@ pub const FULLY_SUPPLIED: f32 = 0.0;
 /// and therefore the multiplier at which a rung bleeds its whole [`RungMeterDecay::per_turn`].
 pub const WHOLLY_UNSUPPLIED: f32 = 1.0;
 
-/// **NOBODY IS ON THIS ACTIVITY** — the crew of an assignment that is building nothing, or keeping
-/// nothing. It is the shipped default of both `LaborAssignment::improvement_workers` and
-/// `LaborAssignment::maintain_workers`, and it is how a player says *"stop maintaining this"*: there
-/// is no toggle, there is a **number**, and zero is the whole of what "off" means.
+/// **NOBODY IS ON THIS ACTIVITY** — an unstaffed crew or pool, and the head count of a standing role
+/// the player has switched off. It is how they say *"stop"*: there is no toggle, there is a
+/// **number**, and zero is the whole of what "off" means — for the take on one source
+/// (`assign_labor … 0`), and for a whole band-level role (`… builders 0`).
 pub const NO_CREW_ON_THIS_ACTIVITY: u32 = 0;
 
 /// **THE WORK A CREW ON ONE ACTIVITY PRODUCES IN ONE TURN** — `workers × PER_WORKER_OUTPUT`, and the
@@ -1338,10 +1397,11 @@ impl RungDef {
     /// sooner as the faction puts more hands or better tools on it, which is the progression
     /// statement the normalized meter could not make.
     ///
-    /// # `workers` is the BUILD's OWN CREW, and there is no cap
+    /// # `workers` is the BAND'S BUILDERS POOL, and there is no cap
     ///
-    /// `LaborAssignment::improvement_workers`, named by the improvement verb — **not** the take crew
-    /// this build rides beside (`docs/plan_standing_upkeep.md` §2.2). A worker is worth
+    /// `LaborAllocation::workers_on(&LaborTarget::Builders)` — **not** the take crew this build
+    /// rides beside, and the whole of it, because the pool funds only the **head** of the band's
+    /// queue (`docs/plan_standing_upkeep.md` §2.5). A worker is worth
     /// [`PER_WORKER_OUTPUT`], so `n` workers produce `n` units a turn and a Cultivate staffed at
     /// fifty finishes in a turn. That is allowed: the constraint is opportunity cost across systems,
     /// not a rule forbidding a play style (`docs/plan_unit_costed_work.md` §1.2).
@@ -1352,10 +1412,10 @@ impl RungDef {
     /// # THE FLOOR IS NOT HERE ANY MORE, and its removal is the point of the separate crew
     ///
     /// [`learn_multiplier`] used to scale this, on the rule *"a crew pulling hard on the source it is
-    /// improving builds slowly"*. **That rule was written when ONE crew did both jobs.** With the
-    /// build staffed in its own right the build crew is not pulling anything — and a build crew on a
-    /// source nobody is harvesting has **no floor to read at all**, so the term would have to be
-    /// invented from a default nobody chose. The floor stays where it still means something:
+    /// improving builds slowly"*. **That rule was written when ONE crew did both jobs.** The builders
+    /// are a band-level pool now ([`crate::components::LaborTarget::Builders`]) and are not pulling
+    /// on anything — and a pool raising a source nobody is harvesting has **no floor to read at
+    /// all**, so the term would have to be invented from a default nobody chose. The floor stays where it still means something:
     /// [`RungDef::knowledge_accrual`], where *how much you leave standing shapes what you learn*.
     ///
     /// **The shipped pace is unchanged**, because `learn_multiplier` is exactly `×1.0` at the food
@@ -1480,7 +1540,7 @@ impl RungDef {
 
     // **RETIRED: `yield_fraction_while_building()`** — the investment dip, `0.50` on all four rungs
     // that declared a build. It said *"this crew is preparing ground, not gathering"*, which is true
-    // of a **shared** crew and of nothing else; the player names the build's own crew now
+    // of a **shared** crew and of nothing else; the player staffs the band's `builders` pool now
     // (`docs/plan_standing_upkeep.md` §2.2), so what a build costs is the people who are clearing
     // instead and the gatherers beside them are untouched. Four magic numbers retired with it, along
     // with a term nobody ever chose — the plant web sat at `0.25` for years purely because that was
@@ -1504,14 +1564,19 @@ impl RungDef {
         })
     }
 
-    /// **Does this rung cost anything to HOLD?** — the question the build's completion hand-off asks
-    /// (`docs/plan_standing_upkeep.md` §2.2): a finished rung that declares an upkeep keeps the crew
-    /// that raised it, and one that declares none frees them.
+    /// **Does this rung cost anything to HOLD?** — the predicate the ladder's own validation and the
+    /// keeping-pool seams read, and **nothing forks on it at completion any more**.
+    ///
+    /// It used to be the question the build's completion hand-off asked: a finished rung that
+    /// declared an upkeep kept the crew that raised it, and one that declared none freed them. **That
+    /// hand-off is retired** (`docs/plan_standing_upkeep.md` §2.3), and twice over — the keeping bill
+    /// starts at the **first work banked** rather than at completion (§4.6a), and the builders never
+    /// stood on the source to be handed anywhere (§2.5). What completion does now is **retire the
+    /// entry from the band's build queue**, which hands the pool to whatever the player put next.
     ///
     /// **`true` on all four managed rungs** — `plant:tended`, `plant:field`, `animal:pastoral` and
-    /// `animal:pen` each declare one, so every completed build hands its crew onto the keeping rather
-    /// than freeing it. Only the two `wild` rungs answer `false`, and nothing is ever *built* on
-    /// those, so no completion reaches this asking about one.
+    /// `animal:pen` each declare one. Only the two `wild` rungs answer `false`, and nothing is ever
+    /// *built* on those.
     pub fn declares_upkeep(&self) -> bool {
         self.upkeep.is_some()
     }
@@ -1875,6 +1940,34 @@ impl LadderConfig {
         eligible: bool,
         rot_this_turn: f32,
     ) -> Option<BuildTurns> {
+        self.projected_build_quote(
+            rung,
+            cost_multiplier,
+            banked,
+            workers,
+            gear_per_worker,
+            eligible,
+            rot_this_turn,
+        )
+        .and_then(|quote| quote.turns(workers))
+    }
+
+    /// **The same projection, kept as its four terms** — what a band's build chain records so a
+    /// source can be dated at its place in the queue rather than on its own
+    /// (`docs/plan_standing_upkeep.md` §4.6b). [`Self::projected_build_turns`] is this plus
+    /// [`BuildQuote::turns`], so the quote a chain publishes and the quote a lone source publishes
+    /// cannot be different arithmetic.
+    #[allow(clippy::too_many_arguments)] // the same list its `_turns` twin takes
+    pub fn projected_build_quote(
+        &self,
+        rung: &RungDef,
+        cost_multiplier: f32,
+        banked: f32,
+        workers: u32,
+        gear_per_worker: f32,
+        eligible: bool,
+        rot_this_turn: f32,
+    ) -> Option<BuildQuote> {
         let cost = rung.build_cost(cost_multiplier)?;
         let bar = self.effective_build_cost(cost, build_work_from_gear(gear_per_worker, workers));
         // **Quoted NET OF THE ROT, exactly as the live stamp is** — never net of the maintenance
@@ -1887,7 +1980,12 @@ impl LadderConfig {
         // a running build states, so a projection says so rather than withholding the line. And a
         // quote for a rung with **work already banked on it** answers even at a crew of zero: the
         // player paid for that work, so *"it holds"* / *"it is losing ground"* is the news.
-        build_turns_estimate(bar, banked, balance, eligible, workers)
+        Some(BuildQuote {
+            bar,
+            banked,
+            balance,
+            gate_holds: eligible,
+        })
     }
 
     /// **The reference job every build-quantum readout is quoted against**, in work units — the
@@ -4118,8 +4216,8 @@ mod tests {
     /// It replaced `a_deeper_floor_builds_slower_and_stripping_builds_nothing`, which pinned
     /// `learn_multiplier` on the accrual — the rate that replaced the `EcologyPhase::Thriving` gate
     /// (`docs/plan_harvest_floor.md` §3.2) on the rule *"a crew pulling hard on the source it is
-    /// improving builds slowly"*. **That rule was written when one crew did both jobs.** With the
-    /// build staffed in its own right the builders are not pulling anything, and a build crew on a
+    /// improving builds slowly"*. **That rule was written when one crew did both jobs.** The
+    /// builders are a band-level pool now and are not pulling on anything, and a pool raising a
     /// source nobody is harvesting has no floor to read. The rate survives on
     /// [`RungDef::knowledge_accrual`], where restraint still shapes what is learned.
     #[test]
@@ -4140,8 +4238,8 @@ mod tests {
             assert_eq!(
                 banked,
                 expected_net(rung, crew),
-                "{key:?}: a build crew banks its head count LESS the maintenance rate it is also \
-                 paying"
+                "{key:?}: the builders bank their whole head count — the keeping pool owes the \
+                 rate, and a build supplies none of it (§4.6a)"
             );
             // **The floor cannot reach it: `build_accrual` does not take one.** What a *gatherer*
             // beside them holds is asserted end-to-end by

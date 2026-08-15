@@ -457,6 +457,17 @@ const AGRICULTURE_ROLE_HINT := "Keeps every tended patch and Field this band wor
 
 const HUSBANDRY_ROLE_HINT := "Keeps every tamed herd and pen this band works. Short of the sum, animals drift off."
 
+## **THE BUILDING ROLE** (`docs/plan_standing_upkeep.md` §2.5) — the third band-level pool, and the
+## card that replaced the per-source BUILDERS stepper the compose sheet used to carry.
+const ROLE_NAME_BUILDERS := "Builders"
+
+## **IT NAMES THE QUEUE, BECAUSE THE QUEUE IS WHERE THE HANDS GO.** Unlike the keeping pair this pool
+## is NOT split across everything the band holds: the whole of it goes on the HEAD of the band's build
+## queue until that entry's meter fills, then on the next. A hint that said "keeps every build" would
+## promise a spread the model deliberately does not offer — and *"builders with nothing to do"* needs
+## no warning, a build demand ending when its meter fills.
+const BUILDERS_ROLE_HINT := "Raises whatever this band has queued, one job at a time, head of the queue first."
+
 ## **THE FUND-MODE CONTROL** — how this band splits a keeping pool it cannot stretch, `spread` or
 ## `priority` (`upkeep_mode <faction> <band> …`). It renders under the two keeping cards and ONLY
 ## where the band holds something on either web: the choice is meaningless with nothing to fund, and
@@ -819,10 +830,10 @@ const WORK_INSPECT_OVERDRAW_LINE := "⚠ Overdraws the source at this policy."
 
 const WORK_INSPECT_ASSIGNED_FORMAT := "%d assigned"
 
-## …and the source's OTHER crew beside it (`docs/plan_standing_upkeep.md` §2.2), rendered only where
-## there are builders on it. A row admitted to the board on its builders alone would otherwise read
-## `0 assigned` with three hands standing on its meter.
-const WORK_INSPECT_BUILDERS_FORMAT := "%d building"
+## **RETIRED — `WORK_INSPECT_BUILDERS_FORMAT`, the `N building` clause**
+## (`docs/plan_standing_upkeep.md` §2.5). It named the SOURCE's own build crew, and a source has none:
+## a verb declares and the hands stand on the band's `builders` pool, which funds the head of its
+## queue. The count belongs to the queue, which is a list of its own.
 
 const WORK_INSPECT_SENTENCE_SEPARATOR := " · "
 

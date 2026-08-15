@@ -67,13 +67,24 @@ signal split_band_requested(payload: Dictionary)
 ## in the game that is free.
 signal extend_pen_requested(payload: Dictionary)
 ## Emitted when the player commits an IMPROVEMENT — the second axis (issue #442). Payload keys:
-## { faction, improvement, x, y, herd_id, workers }. Main formats the matching verb
+## { faction, improvement, x, y, herd_id }. Main formats the matching verb
 ## (`cultivate` / `sow` / `tame` / `corral`). RELAYED from `DrawerComposeController`, which is its
 ## only emitter, exactly as `extend_pen_requested` is.
 ##
-## **`workers` IS THE BUILD'S OWN CREW** (`docs/plan_standing_upkeep.md` §2.2) — the second of a
-## source's three worker allocations, independent of the take crew `assign_labor` set.
+## **IT CARRIES NO CREW** (`docs/plan_standing_upkeep.md` §2.5) — the verb DECLARES, appending an
+## entry to the band's build queue, and the hands stand on the band-level `builders` role. A
+## `workers` key rode this payload for one slice and the trailing token it produced is now a parse
+## error.
 signal improvement_requested(payload: Dictionary)
+
+## The WITHDRAWAL of one of those declarations — { faction, x, y, herd_id }, Main formatting
+## `unqueue <faction> <x> <y>` / `unqueue <faction> <herd_id>` (`docs/plan_standing_upkeep.md` §2.5).
+## RELAYED from `DrawerComposeController` like the signal above.
+##
+## **ITS OWN SIGNAL BECAUSE ITS OWN GRAMMAR**: that one names a RUNG, this one names a SOURCE. It is
+## also the fix for the defect where unticking re-sent the set verb at zero builders, which SET the
+## declaration again instead of clearing it and left the rung stuck with no undo.
+signal unqueue_requested(payload: Dictionary)
 
 ## Emitted when the player picks how a band splits a keeping POOL it cannot stretch
 ## (`docs/plan_standing_upkeep.md` §2.5). Payload keys: { faction, band_id, mode }, `mode` being
@@ -451,6 +462,8 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: extend_pen_requested.emit(payload))
     _drawercompose.improvement_requested.connect(
         func(payload: Dictionary) -> void: improvement_requested.emit(payload))
+    _drawercompose.unqueue_requested.connect(
+        func(payload: Dictionary) -> void: unqueue_requested.emit(payload))
     # The command-targeting cluster. Constructed AFTER `_drawercompose` (its three close-sheet nudges)
     # and BEFORE `_bandpanel` (which injects `_targeting` — so `_targeting` must exist first). The pick
     # flow's `_bandpanel.rerender()` is therefore a lazily-bound lambda: `_bandpanel` is null now but

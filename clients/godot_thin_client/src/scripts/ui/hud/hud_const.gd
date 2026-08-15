@@ -54,6 +54,16 @@ const LABOR_KIND_AGRICULTURE := "agriculture"
 
 const LABOR_KIND_HUSBANDRY := "husbandry"
 
+# **THE BUILDING ROLE** (`docs/plan_standing_upkeep.md` §2.5) — the third band-level standing pool,
+# staffed by the same `assign_labor <faction> <band> builders <workers>`, and the one that replaced
+# the per-source build crew a verb used to carry.
+#
+# **IT IS ONE POOL FOR BOTH WEBS, and the asymmetry with the keeping pair is honest rather than an
+# omission.** A build is a JOB rather than a standing charge, and the band's build QUEUE already says
+# which web is being worked — so the whole pool goes on the head of that queue until its meter fills,
+# and there is nothing left to split by web.
+const LABOR_KIND_BUILDERS := "builders"
+
 # **HOW A BAND SPLITS A KEEPING POOL IT CANNOT STRETCH** — `PopulationCohortState.upkeepFundMode`,
 # and the token `upkeep_mode <faction> <band> spread|priority` takes. `spread` funds every source in
 # proportion to its demand (everything degrades a little); `priority` funds sources completely,

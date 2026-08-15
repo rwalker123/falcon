@@ -10455,12 +10455,15 @@ func _worst_case_party_fixture() -> Dictionary:
 # **Reported from play: `3 idle of 18` on a band whose every hand was spent, beside
 # `Forage 9 · Hunt 6 · Idle 3` — the builders miscounted AND invisible, one defect wearing two
 # faces.** `HudBandLaborState.effective_idle` summed each assignment's `workers`, which is the TAKE
-# crew alone, where the sim's `LaborAllocation::assigned_total` sums `LaborAssignment::staffed_total`
-# (`workers + improvement_workers`); and the WORKFORCE bar had no segment for the hands idle was
-# netting out.
+# crew alone, where the sim's `LaborAllocation::assigned_total` sums `LaborAssignment::staffed_total`;
+# and the WORKFORCE bar had no segment for the hands idle was netting out.
+#
+# **THE HANDS HAVE SINCE MOVED OFF THE SOURCE** (`docs/plan_standing_upkeep.md` §2.5) — they are the
+# band's `builders` ROLE now — and the claim is unchanged: the bar still owes them a segment, and
+# `effective_idle` still nets them out, because a role row is a row of this same list.
 #
 # **THE FIXTURE IS THE CLAIM, and its arithmetic is what makes it one**: the reference band's four
-# assignments spend 13 of 16 workers, so putting THREE builders on its forage row takes it to exactly
+# assignments spend 13 of 16 workers, so putting THREE hands on its `builders` role takes it to exactly
 # `working_age`. Before the fix the zone read `3 idle of 16` over segments summing to 13; after it,
 # `0 idle of 16` over segments summing to 16. **A band with slack could not say this** — the idle
 # count would merely be wrong by three rather than wrong about whether the band has any hands at all.
@@ -10500,16 +10503,23 @@ func _render_builders_segment_state() -> void:
 		not _composition_counts(band_zone, HudWorkVocab.ZONE_HEADER_WORKFORCE).has(
 			HudWorkVocab.WORKFORCE_KEY_BUILD))
 
-## The reference band with a BUILD crew on the forage row it already works. Only two things move: the
-## row gains its `improvement` / `improvement_workers` pair, and `idle_workers` falls to nothing —
-## which is the sim's own answer for a band whose take crews, roles and builders account for every
-## working-age hand it has.
+## The reference band with its `builders` POOL staffed. Only three things move: the forage row gains
+## its `improvement` (the declaration the sim derives from the band's queue entry), the band gains a
+## `builders` ROLE ROW, and `idle_workers` falls to nothing — which is the sim's own answer for a band
+## whose take crews, roles and builders account for every working-age hand it has.
+##
+## **THE HANDS ARE A ROW OF THEIR OWN, not a second count on the source** (`docs/plan_standing_upkeep.md`
+## §2.5). `improvementWorkers` is off the wire: a verb declares and names nobody, and the pool is an
+## ordinary standing role in the same list as `scout`.
 func _builders_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["idle_workers"] = 0
 	var rows: Array = band["labor_assignments"]
 	var forage: Dictionary = (rows[0] as Dictionary).duplicate(true)
 	forage["improvement"] = SourceForecast.IMPROVEMENT_CULTIVATE
-	forage["improvement_workers"] = BUILDERS_SEGMENT_CREW
 	rows[0] = forage
+	rows.append({
+		"kind": HudConst.LABOR_KIND_BUILDERS, "workers": BUILDERS_SEGMENT_CREW,
+		"target_x": -1, "target_y": -1, "fauna_id": "",
+	})
 	return band

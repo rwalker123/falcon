@@ -280,11 +280,14 @@ Each mark docks to the ring of the source's OWN secondary marker, via the slot
   promised here, and stops saying it is being worked. The state comes from
   `SourceForecast.unstaffed_build_of`, asked off the meter `RungGates.rung_in_progress` has just
   resolved — so the warning and the glyph provably describe one verb, and this renderer resolves
-  nothing about the ladder for itself. The build crew is aggregated per SOURCE beside the take crew,
-  because "nobody is building this" is a claim about the source and not about one band's row. Full
-  rationale, and the other three surfaces, in `selection-card.md` → "A build DECLARED with nobody on
-  it is a fourth state". Frames: `map_worked_ready` / `map_worked_unstaffed`, an A/B on ONE patch with
-  only `improvement_workers` moving.
+  nothing about the ladder for itself. **The build crew is the band's `builders` ROLE row now**
+  (`docs/plan_standing_upkeep.md` §2.5) — `_builders_pool_of_marker` reads it off the marker's own
+  `labor_assignments` and the renderer credits it to each source that band WORKS, because "nobody is
+  building this" is a claim about the source and not about one band's row. **A LOCAL copy of that
+  read, deliberately**: a renderer must not depend on the HUD's band-labor model, the rule
+  `_labor_assignments_of_marker` beside it already follows. Full rationale, and the other three
+  surfaces, in `selection-card.md` → "A build DECLARED with nobody on it is a fourth state". Frames:
+  `map_worked_ready` / `map_worked_unstaffed`, an A/B on ONE band with only its `builders` ROW moving.
 - **The badge shows a rung ON OFFER or a rung UNDER WAY, never both** — one axis in two states,
   mutually exclusive by construction. Under way renders `<verb glyph><percent>%` in
   `HudStyle.SIGNAL_DEEP` with **no chevron** (`⌃` offers; this reports); on offer renders `⌃<glyph>` in

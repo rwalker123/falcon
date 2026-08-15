@@ -2493,6 +2493,10 @@ pub fn capture_snapshot(
                         // units, and the garden is the `plant:tended` rung's own `work_cost`.
                         reference_build_cost: ladder_config.reference_build_cost(),
                     },
+                    build_sources: &crate::snapshot::population::BuildSourceInputs {
+                        forage: &forage_registry,
+                        herds: &herd_registry,
+                    },
                 })
             },
         )

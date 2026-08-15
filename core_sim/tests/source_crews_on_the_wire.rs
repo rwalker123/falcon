@@ -1,25 +1,17 @@
-//! **WHAT A SOURCE'S CREWS AND A BAND'S KEEPING LOOK LIKE ON THE WIRE**
+//! **WHAT A SOURCE'S ROW AND A BAND'S STANDING ROLES LOOK LIKE ON THE WIRE**
 //! (`docs/plan_standing_upkeep.md` §2.2 and §2.5).
 //!
-//! The player allocates hands per activity — a take crew and a build crew on a **source**, and a
-//! keeping pool on the **band**. `LaborAssignment.workers` published only the first, so the build
-//! crew was **write-only from the client's side**: it could send `cultivate … <workers>` and never
-//! read back what a band already had.
+//! The player allocates hands per activity: a **take** crew on a source, and **three band-level
+//! pools** — `agriculture`, `husbandry`, `builders`. Every one of them arrives as an ordinary row of
+//! `laborAssignments`, distinguished by `kind` and with its hands in `workers`, exactly like scout
+//! and warrior. That is what this file pins, because a role published under a kind no client
+//! recognises is invisible in precisely the way the retired `maintainWorkers` was — and
+//! `improvementWorkers` is retired the same way now that the **build** left the tile too.
 //!
-//! Two things broke on that, and both are the reason `improvementWorkers` exists:
-//!
-//! - **A trap with no way out.** A compose sheet clamps its steppers to the band's *idle* workers,
-//!   because the sim refuses an over-staffed command. A fully-allocated band therefore has `0` idle
-//!   and offered a build maximum of `0` — the player could not **re-state** a crew they already
-//!   had, only take it to zero. The honest clamp is `idle + this source's own build crew`.
-//! - **A readout that said the opposite of the truth.** A sheet reopened on a source with two
-//!   builders read `0`.
-//!
-//! **AND THE KEEPING IS NOT A THIRD CREW ANY MORE.** Maintenance left the tile (§2.5): it is a
-//! band-level standing role, so it arrives as an ordinary **row of this same list** — `kind` of
-//! `"agriculture"` or `"husbandry"`, hands in `workers` — exactly like scout and warrior. That is
-//! what this file pins, because a role published under a kind no client recognises is invisible in
-//! precisely the way the retired `maintainWorkers` was.
+//! **What survives per source is `improvement`**, which the sim **derives** at capture from that
+//! band's build queue: the resolved job token, or `""` when nothing is queued there. So a client
+//! still reads *what is being raised here* off the row and still does no arithmetic to get it —
+//! and it can no longer read a per-source builder count, because the sim has stopped having one.
 //!
 //! **Asserted on the ENCODED envelope, never on the in-process `LaborAssignmentState`**, because a
 //! field can be right in the capture and absent from the buffer — the schema/codec/reader path is
@@ -31,9 +23,9 @@ use bevy::math::UVec2;
 
 use core_sim::{
     build_headless_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
-    FactionId, GenerationId, Improvement, LaborAllocation, LaborAssignment, LaborTarget,
-    LocalStore, MoraleCause, PopulationCohort, ResidentBand, SnapshotHistory, StartingUnit,
-    TileRegistry, UpkeepFundMode, DEFAULT_ESCAPEMENT_FLOOR, NO_CREW_ON_THIS_ACTIVITY,
+    BuildJob, BuildQueueEntry, BuildSource, FactionId, GenerationId, Improvement, LaborAllocation,
+    LaborAssignment, LaborTarget, LocalStore, MoraleCause, PopulationCohort, ResidentBand,
+    SnapshotHistory, StartingUnit, TileRegistry, UpkeepFundMode, DEFAULT_ESCAPEMENT_FLOOR,
 };
 
 /// **Three counts, three DIFFERENT numbers, none of them equal to another** — the whole point of the
@@ -44,8 +36,24 @@ const TAKE_CREW: u32 = 7;
 const BUILD_CREW: u32 = 3;
 const KEEP_CREW: u32 = 2;
 
-/// The tile the fixture band works and lives on.
-const SOURCE: UVec2 = UVec2::new(1, 1);
+/// **What the fixture band has queued on its one source** — the verb whose token the row must
+/// publish. `Sow` rather than `Cultivate` so the assertion cannot pass on a capture that hard-codes
+/// the first plant rung.
+const DECLARED: Improvement = Improvement::Sow;
+
+/// The tile the fixture band works and lives on — **a tile the world actually carries a patch on**,
+/// resolved at run time rather than named as a literal, because the `improvement` token is derived
+/// against the ground and a patch that is not in the registry can only answer `""`.
+fn source_tile(app: &App) -> UVec2 {
+    app.world
+        .resource::<core_sim::ForageRegistry>()
+        .patches
+        .keys()
+        .copied()
+        // Deterministic: the map iterates in hash order, so the fixture pins the lowest coord.
+        .min_by_key(|tile| (tile.y, tile.x))
+        .expect("worldgen seeded at least one forage patch")
+}
 
 /// **The crop this band asked for** — the field that was write-only from the client's side. A
 /// `flora_config.json` key rather than a display name, because that is what the assignment stores
@@ -54,19 +62,22 @@ const SOURCE: UVec2 = UVec2::new(1, 1);
 /// comes back out of the buffer as itself.
 const CROP: &str = "wild_emmer";
 
-/// A headless world with one resident band that staffs a Forage source's take and build crews and
-/// the band's own **agriculture** keeping role. The band is sized to afford all three: they draw on
-/// one pool, so a band short of `TAKE + BUILD + KEEP` would have `LaborAllocation::normalize` trim
+/// A headless world with one resident band that staffs a Forage source's take crew and the band's
+/// own **agriculture** and **builders** roles. The band is sized to afford all three rows: they draw
+/// on one pool, so a band short of `TAKE + BUILD + KEEP` would have `LaborAllocation::normalize` trim
 /// the tail and the fixture would publish numbers it never staffed.
-fn world_with_a_keeping_band() -> App {
+fn world_with_a_keeping_band() -> (App, UVec2) {
     let mut app = build_headless_app();
     // One `update()` runs the whole Startup worldgen chain, which is what seeds the `TileRegistry`
-    // the band is homed on.
-    app.update();
+    // the band is homed on and the patches it works.
+    let source = {
+        app.update();
+        source_tile(&app)
+    };
     let tile = app
         .world
         .resource::<TileRegistry>()
-        .index(SOURCE.x, SOURCE.y)
+        .index(source.x, source.y)
         .expect("the fixture tile resolves");
     app.world.spawn((
         PopulationCohort {
@@ -104,35 +115,42 @@ fn world_with_a_keeping_band() -> App {
             assignments: vec![
                 LaborAssignment {
                     target: LaborTarget::Forage {
-                        tile: SOURCE,
+                        tile: source,
                         floor: DEFAULT_ESCAPEMENT_FLOOR,
                         species: Some(CROP.to_string()),
                     },
                     workers: TAKE_CREW,
-                    improvement: Some(Improvement::Cultivate),
                     kit: None,
-                    improvement_workers: BUILD_CREW,
                 },
                 // The keeping — a row of its own, on the band rather than the tile.
                 LaborAssignment {
                     target: LaborTarget::Agriculture,
                     workers: KEEP_CREW,
-                    improvement: None,
                     kit: None,
-                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
+                },
+                // …and so is the building, since §2.5.
+                LaborAssignment {
+                    target: LaborTarget::Builders,
+                    workers: BUILD_CREW,
+                    kit: None,
                 },
             ],
+            // The declaration the source row's `improvement` token is derived from.
+            build_queue: vec![BuildQueueEntry {
+                source: BuildSource::Patch(source),
+                declared: BuildJob::Rung(DECLARED),
+            }],
             upkeep_fund_mode: UpkeepFundMode::Priority,
             ..Default::default()
         },
     ));
     recapture_snapshot_in_place(&mut app.world);
-    app
+    (app, source)
 }
 
 /// The fixture band's **source** row, read back out of the encoded buffer — the artifact a client
 /// parses, rather than the state struct the capture built.
-fn published_source_row(app: &App) -> (u32, u32, String) {
+fn published_source_row(app: &App) -> (u32, String, String) {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
     let bytes = encoded_snapshot(app);
@@ -151,7 +169,7 @@ fn published_source_row(app: &App) -> (u32, u32, String) {
         .expect("the fixture band's source assignment is on the wire");
     (
         row.workers(),
-        row.improvementWorkers(),
+        row.improvement().unwrap_or_default().to_string(),
         row.species().unwrap_or_default().to_string(),
     )
 }
@@ -186,34 +204,47 @@ fn encoded_snapshot(app: &App) -> Vec<u8> {
     sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref())
 }
 
-/// **Both of a source's crews survive the wire, and survive it DISTINCTLY.**
+/// **A SOURCE ROW STATES ITS TAKE CREW AND WHAT IS BEING RAISED ON IT** — two facts, two fields, and
+/// neither derivable from the other.
+///
+/// The row no longer states a **build crew**, because there is no per-source one to state
+/// (`docs/plan_standing_upkeep.md` §2.5); the hands are the `builders` row asserted below, and this
+/// pins that the source still says what those hands are working on.
 #[test]
-fn a_sources_take_and_build_crews_both_reach_the_client() {
-    let app = world_with_a_keeping_band();
-    let (take, build, _) = published_source_row(&app);
+fn a_source_row_states_its_take_crew_and_the_job_queued_on_it() {
+    let (app, _source) = world_with_a_keeping_band();
+    let (take, job, _) = published_source_row(&app);
+    assert_eq!(take, TAKE_CREW, "the take crew arrives as itself");
     assert_eq!(
-        (take, build),
-        (TAKE_CREW, BUILD_CREW),
-        "each activity's own crew must arrive as itself — the client cannot derive either from the \
-         other"
+        job,
+        DECLARED.as_str(),
+        "…beside the RESOLVED job the band has queued here — the client does no arithmetic for it"
     );
 }
 
-/// **THE KEEPING ARRIVES AS A ROW, UNDER THE ROLE'S OWN KIND.** It is the whole of what replaced
-/// `maintainWorkers`, and a role published under a kind no client recognises is invisible in exactly
-/// the way that retired field was.
+/// **EVERY STANDING POOL ARRIVES AS A ROW, UNDER ITS OWN KIND.** It is the whole of what replaced
+/// `maintainWorkers` and now `improvementWorkers`, and a role published under a kind no client
+/// recognises is invisible in exactly the way those retired fields were.
+///
+/// **The three counts are pairwise distinct**, so no assertion here can pass on a capture that wired
+/// every row to the same number.
 #[test]
-fn the_bands_keeping_role_reaches_the_client_as_its_own_row() {
-    let app = world_with_a_keeping_band();
+fn the_bands_standing_pools_reach_the_client_as_their_own_rows() {
+    let (app, _source) = world_with_a_keeping_band();
     assert_eq!(
         published_role(&app, "agriculture"),
         Some(KEEP_CREW),
         "the agriculture role is an ordinary assignment row with its hands in `workers`"
     );
     assert_eq!(
+        published_role(&app, "builders"),
+        Some(BUILD_CREW),
+        "and so is the builders pool — the band's only build staffing since §2.5"
+    );
+    assert_eq!(
         published_role(&app, "husbandry"),
         None,
-        "and the two webs' roles are separate rows — a band keeping no herds publishes none"
+        "and the roles are separate rows — a band keeping no herds publishes none"
     );
 }
 
@@ -223,7 +254,7 @@ fn the_bands_keeping_role_reaches_the_client_as_its_own_row() {
 fn the_bands_upkeep_fund_mode_reaches_the_client() {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
-    let app = world_with_a_keeping_band();
+    let (app, _source) = world_with_a_keeping_band();
     let bytes = encoded_snapshot(&app);
     let envelope =
         fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
@@ -257,7 +288,7 @@ fn the_bands_upkeep_fund_mode_reaches_the_client() {
 /// reopened on a patch nobody has worked yet has no other way to show the crop it is about to plant.
 #[test]
 fn the_crop_a_crew_asked_for_reaches_the_client() {
-    let app = world_with_a_keeping_band();
+    let (app, _source) = world_with_a_keeping_band();
     let (_, _, species) = published_source_row(&app);
     assert_eq!(
         species, CROP,
@@ -265,12 +296,13 @@ fn the_crop_a_crew_asked_for_reaches_the_client() {
     );
 }
 
-/// **A source with nothing being built publishes an honest zero**, not an absent field a reader has
-/// to guess about. `0` is the common reading — most sources carry no verb — so it has to be a value
-/// rather than a gap, and the take crew beside it has to be untouched by its absence.
+/// **A source with nothing QUEUED publishes an honest empty token**, not an absent field a reader
+/// has to guess about — and the take crew beside it is untouched by that emptiness.
+///
+/// It is the common reading: most sources have nothing being raised on them.
 #[test]
-fn a_bare_gathering_row_publishes_zero_for_the_build_it_does_not_staff() {
-    let mut app = world_with_a_keeping_band();
+fn a_bare_gathering_row_publishes_an_empty_job_token() {
+    let (mut app, source) = world_with_a_keeping_band();
     {
         let mut allocation = app
             .world
@@ -283,16 +315,17 @@ fn a_bare_gathering_row_publishes_zero_for_the_build_it_does_not_staff() {
                     .is_some_and(|a| a.workers == TAKE_CREW)
             })
             .expect("the fixture band exists");
-        let assignment = &mut allocation.assignments[0];
-        assignment.improvement = None;
-        assignment.improvement_workers = NO_CREW_ON_THIS_ACTIVITY;
+        assert!(
+            allocation.unqueue_build(&BuildSource::Patch(source)),
+            "fixture: the band had a declaration to withdraw"
+        );
     }
     recapture_snapshot_in_place(&mut app.world);
 
-    let (take, build, _) = published_source_row(&app);
+    let (take, job, _) = published_source_row(&app);
     assert_eq!(
-        (take, build),
-        (TAKE_CREW, 0),
-        "a pure gather states its take crew and an honest zero on the build"
+        (take, job.as_str()),
+        (TAKE_CREW, ""),
+        "a pure gather states its take crew and an honest empty job"
     );
 }

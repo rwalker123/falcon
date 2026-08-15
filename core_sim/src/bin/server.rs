@@ -27,16 +27,16 @@ use core_sim::sim_state::{restore_sim_state, Replaying};
 use core_sim::turn_profile;
 use core_sim::{
     apply_port_base, available_workers, floor_is_valid, forage_source_yield_preview,
-    hunt_source_yield_preview, knows, load_simulation_config_for_new_world, output_multiplier,
-    resolve_active_profile, resolve_committed_species, rung_site_refusal, tile_flora_composition,
-    tile_is_fresh_watered, ActiveStartProfile, ActivityCrew, BandBench, BandEquipment, BandTravel,
-    BandWorkforce, BeatCatalogHandle, BeatConfigHandle, BeatLedger, CampaignLabel,
-    CombatConfigHandle, CreaturesConfigHandle, Expedition, ExpeditionConfigHandle,
-    ExpeditionMission, ExpeditionPhase, FloraConfigHandle, FoodModuleTag, ForkAnswerError,
-    HuntingParty, KitChoice, KitJob, LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore,
-    MaterialsConfigHandle, RecipesConfigHandle, ResidentBand, RungKey, SiteRefusal, SpeciesRefusal,
-    StartProfile, StartProfileOverrides, UpkeepFundMode, WellbeingConfigHandle,
-    DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
+    herd_build_verb, hunt_source_yield_preview, knows, load_simulation_config_for_new_world,
+    output_multiplier, patch_build_verb, resolve_active_profile, resolve_committed_species,
+    rung_site_refusal, tile_flora_composition, tile_is_fresh_watered, ActiveStartProfile,
+    BandBench, BandEquipment, BandTravel, BandWorkforce, BeatCatalogHandle, BeatConfigHandle,
+    BeatLedger, BuildJob, BuildSource, CampaignLabel, CombatConfigHandle, CreaturesConfigHandle,
+    Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FloraConfigHandle,
+    FoodModuleTag, ForkAnswerError, HuntingParty, KitChoice, KitJob, LaborAllocation, LaborTarget,
+    LadderConfigHandle, LocalStore, MaterialsConfigHandle, RecipesConfigHandle, ResidentBand,
+    RungKey, SiteRefusal, SpeciesRefusal, StartProfile, StartProfileOverrides, UpkeepFundMode,
+    WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
@@ -450,6 +450,45 @@ fn main() {
     }
 }
 
+/// **HOW THE THREE QUEUE VERBS NAME A SOURCE** — a tile, or a herd id
+/// (`docs/plan_standing_upkeep.md` §2.5).
+///
+/// One type rather than three copies of the same optional triple, because `abandon`, `unqueue` and
+/// `build_order` address a source identically and a per-verb spelling is how one of them comes to
+/// accept a shape the others reject. It resolves to a [`LaborTarget`] once, in
+/// [`BuildSourceRef::target`].
+#[derive(Debug, Clone)]
+struct BuildSourceRef {
+    target_x: Option<u32>,
+    target_y: Option<u32>,
+    herd_id: Option<String>,
+}
+
+impl BuildSourceRef {
+    /// The labor target this names, or `None` when the wire carried neither shape. A herd id wins a
+    /// malformed both-shapes message only because the tile pair is tested first and requires both
+    /// halves — the text grammar cannot produce one at all.
+    fn target(&self) -> Option<LaborTarget> {
+        match (self.target_x, self.target_y, self.herd_id.as_ref()) {
+            (Some(x), Some(y), _) => Some(forage_source(UVec2::new(x, y))),
+            (_, _, Some(herd_id)) => Some(LaborTarget::Hunt {
+                fauna_id: herd_id.clone(),
+                floor: SOURCE_NAMED_NOT_ASSIGNED,
+            }),
+            _ => None,
+        }
+    }
+
+    /// What the feed line calls it.
+    fn label(&self) -> String {
+        match (self.target_x, self.target_y, self.herd_id.as_ref()) {
+            (Some(x), Some(y), _) => format!("({x}, {y})"),
+            (_, _, Some(herd_id)) => herd_id.clone(),
+            _ => "that source".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 enum Command {
     Turn(u32),
@@ -585,9 +624,6 @@ enum Command {
     Tame {
         faction: FactionId,
         herd_id: String,
-        /// The **build's** own crew — see `docs/plan_standing_upkeep.md` §2.2. `0` stops the
-        /// build without clearing its meter.
-        workers: u32,
     },
     /// The Telling: answer a pending narrative fork with one of its authored choices.
     AnswerFork {
@@ -599,29 +635,44 @@ enum Command {
         faction: FactionId,
         target_x: u32,
         target_y: u32,
-        /// The **build's** own crew — see `docs/plan_standing_upkeep.md` §2.2. `0` stops the
-        /// build without clearing its meter.
-        workers: u32,
     },
     Sow {
         faction: FactionId,
         target_x: u32,
         target_y: u32,
-        /// The **build's** own crew — see `docs/plan_standing_upkeep.md` §2.2. `0` stops the
-        /// build without clearing its meter.
-        workers: u32,
     },
     Corral {
         faction: FactionId,
         target_x: u32,
         target_y: u32,
-        /// The **build's** own crew — see `docs/plan_standing_upkeep.md` §2.2. `0` stops the
-        /// build without clearing its meter.
-        workers: u32,
     },
-    // **RETIRED: `AbandonImprovement`.** The build verb is derived from the meter now
-    // (`forage::patch_build_verb`, `docs/plan_standing_upkeep.md` §2.4), so there is no stored
-    // authority for it to clear; a player walks away by unstaffing the builders.
+    // **RETIRED: `AbandonImprovement`.** The build verb is derived from the meter
+    // (`forage::patch_build_verb`, `docs/plan_standing_upkeep.md` §2.4), so there was no stored
+    // authority for it to clear. What came back in its place is **disposal**, not arbitration:
+    // [`Command::Abandon`] puts the whole source down, and [`Command::Unqueue`] withdraws a
+    // declaration. Proto field 46 stays reserved.
+    /// See [`BuildSourceRef`].
+    /// **Put a source down** — drop the band's *holding* of it, the row and its queue entry, on
+    /// every band of the faction working it. The meters are untouched; the ground rots back down at
+    /// the rung's own rate with nobody keeping it (`docs/plan_standing_upkeep.md` §2.5).
+    Abandon {
+        faction: FactionId,
+        source: BuildSourceRef,
+    },
+    /// **Withdraw a declaration** — drop the source's build-queue entry only, leaving the row, its
+    /// take crew, its kit and the meter alone. The undo a declaration never had.
+    Unqueue {
+        faction: FactionId,
+        source: BuildSourceRef,
+    },
+    /// **Re-order one band's build queue** — move its entry for this source to a 0-based position.
+    /// The order *is* the funding decision, because the whole pool goes on the head.
+    BuildOrder {
+        faction: FactionId,
+        band_id: u64,
+        source: BuildSourceRef,
+        position: u32,
+    },
     /// Say how one band splits a maintenance pool it cannot stretch — `spread` or `priority`
     /// (`docs/plan_standing_upkeep.md` §2.5). See `handle_upkeep_mode`.
     UpkeepMode {
@@ -633,8 +684,6 @@ enum Command {
         faction: FactionId,
         target_x: u32,
         target_y: u32,
-        /// The ring's own crew — a build like any other (`docs/plan_standing_upkeep.md` §2.2).
-        workers: u32,
     },
     /// Put a recipe on a band's crafting bench and draw idle workers onto it. See
     /// `handle_set_bench` — **make IS the assignment**, so there is no Crafter role card and no
@@ -1861,6 +1910,8 @@ fn seed_source_yield(
         .forecast_range_sigmas;
 
     let seeded = match target {
+        // The three band-wide roles work no source, so there is nothing to price — see the arm at
+        // the end of this match.
         LaborTarget::Forage { tile, floor, .. } => {
             // Out of the band's work range → the turn pays 0 (assignment kept). Keep the zero row.
             if hex_distance_wrapped(band_pos, *tile, grid_width, wrap_horizontal)
@@ -2016,7 +2067,8 @@ fn seed_source_yield(
         LaborTarget::Scout
         | LaborTarget::Warrior
         | LaborTarget::Agriculture
-        | LaborTarget::Husbandry => return,
+        | LaborTarget::Husbandry
+        | LaborTarget::Builders => return,
     };
     band_allocation_mut(app, band).set_source_yield(target, seeded);
 }
@@ -2104,7 +2156,8 @@ fn validate_labor_policy(
         LaborTarget::Scout
         | LaborTarget::Warrior
         | LaborTarget::Agriculture
-        | LaborTarget::Husbandry => Ok(()),
+        | LaborTarget::Husbandry
+        | LaborTarget::Builders => Ok(()),
     }
 }
 
@@ -2154,7 +2207,8 @@ fn validate_improvement(
         LaborTarget::Scout
         | LaborTarget::Warrior
         | LaborTarget::Agriculture
-        | LaborTarget::Husbandry => Err(format!(
+        | LaborTarget::Husbandry
+        | LaborTarget::Builders => Err(format!(
             "There is nothing to {} on a standing role.",
             improvement.as_str()
         )),
@@ -2739,6 +2793,10 @@ fn handle_assign_labor(
         // upkeep of everything this band holds on that web, and `0` stops maintaining the whole web.
         "agriculture" => LaborTarget::Agriculture,
         "husbandry" => LaborTarget::Husbandry,
+        // **The builders** (`docs/plan_standing_upkeep.md` §2.5) — one pool for both webs, whose
+        // whole output goes on the head of this band's build queue. A verb declares what to raise;
+        // this is what raises it, and `0` stops building altogether.
+        "builders" => LaborTarget::Builders,
         other => {
             emit_command_failure(
                 app,
@@ -2759,6 +2817,9 @@ fn handle_assign_labor(
         // line sees the hands that hold it move.
         LaborTarget::Agriculture => CommandEventKind::Cultivate,
         LaborTarget::Husbandry => CommandEventKind::Corral,
+        // The builders serve both webs, so they have no web's channel to ride and report on the
+        // generic one, as the warriors do.
+        LaborTarget::Builders => CommandEventKind::CancelOrder,
     };
 
     // Stance validation. Unassigning (`workers == 0`) is always allowed — a player must be able to
@@ -2832,34 +2893,26 @@ fn handle_assign_labor(
     };
 
     let kind_label = target.kind();
-    let (applied, assigned_total, improvement) = {
+    let (applied, assigned_total) = {
         let mut allocation = band_allocation_mut(app, band.entity);
         let applied = allocation.set_assignment(target.clone(), workers, available, crew_kit);
-        // **Nothing built, nothing being built, nobody on it — the band's business here is over.**
-        // The build crew is part of the test: a `Cultivate` declared this turn has no progress on
-        // its meter yet, so dropping the row on the ground's answer alone would abandon a build the
-        // player had just staffed.
-        if applied == 0
-            && !source_holds_something
-            && allocation
-                .assignments
-                .iter()
-                .find(|assignment| assignment.target.same_source(&target))
-                .is_some_and(|assignment| {
-                    assignment.improvement_workers == core_sim::NO_CREW_ON_THIS_ACTIVITY
-                })
-        {
+        // **Nothing built, nothing DECLARED, nobody on it — the band's business here is over.**
+        // The **queue entry** is part of the test: a `Cultivate` declared this turn has no progress
+        // on its meter yet, so dropping the row on the ground's answer alone would abandon a build
+        // the player had just ordered (`docs/plan_standing_upkeep.md` §2.5 — an entry requires a
+        // row, so dropping the row would drop the entry with it).
+        let queued = BuildSource::of(&target)
+            .is_some_and(|source| allocation.build_queue_position(&source).is_some());
+        if applied == 0 && !source_holds_something && !queued {
             allocation.drop_source_row(&target);
         }
-        // `set_assignment` carries any running improvement across, so the seed must price the dip
-        // that is still in flight rather than the undipped stance.
-        let improvement = allocation
-            .assignments
-            .iter()
-            .find(|assignment| assignment.target.same_source(&target))
-            .and_then(|assignment| assignment.improvement);
-        (applied, allocation.assigned_total(), improvement)
+        (applied, allocation.assigned_total())
     };
+    // The seed must price the dip of whatever this band has **queued** here, rather than the
+    // undipped stance — a build in flight is the queue's, not the row's. Read after the allocation
+    // borrow is released, because resolving the declaration against the ground needs both webs'
+    // registries.
+    let improvement = build_verb_on_source_at(app, band.entity, &target);
     // Show the source's expected yield immediately (workers added/removed OR stance changed — every
     // shape of this command that moves the number): without the seed the row reads `+0.00` until the
     // player advances a turn.
@@ -4812,6 +4865,7 @@ fn cancel_scope_clears(scope: CancelScope, target: &LaborTarget) -> bool {
                 | LaborTarget::Warrior
                 | LaborTarget::Agriculture
                 | LaborTarget::Husbandry
+                | LaborTarget::Builders
         ),
     }
 }
@@ -4934,7 +4988,7 @@ fn handle_cancel_order(
 /// Gates (via the shared `validate_labor_policy`): the faction must know **Herding**, the species'
 /// `husbandry_ceiling` must allow domestication, and the herd must not already be domesticated or
 /// another faction's — plus the rejection when **no band is hunting it**.
-fn handle_tame(app: &mut bevy::prelude::App, faction: FactionId, herd_id: String, workers: u32) {
+fn handle_tame(app: &mut bevy::prelude::App, faction: FactionId, herd_id: String) {
     // The source, named by the herd id. Its *stance* is irrelevant here: `same_source` matches on the
     // id alone, and this command sets only the improvement — whatever stance each band holds is left
     // exactly as the player set it (issue #442).
@@ -4954,23 +5008,8 @@ fn handle_tame(app: &mut bevy::prelude::App, faction: FactionId, herd_id: String
         emit_command_failure(app, CommandEventKind::Tame, faction, reason);
         return;
     }
-
-    // **THE POOL GATE** — the build's hands come out of the same band as the gathering and the
-    // keeping (`docs/plan_standing_upkeep.md` §2.2), so a verb that asks for more than a band has is
-    // refused rather than trimmed. See [`crew_is_affordable`].
-    if let Err(idle) = crew_is_affordable(app, faction, &target, workers, ActivityCrew::Build) {
-        emit_crew_unaffordable(
-            app,
-            CommandEventKind::Tame,
-            faction,
-            "Taming",
-            workers,
-            idle,
-        );
-        return;
-    }
     let switched =
-        set_improvement_on_working_bands(app, faction, &target, Some(Improvement::Tame), workers);
+        queue_build_on_working_bands(app, faction, &target, BuildJob::Rung(Improvement::Tame));
     if switched == 0 {
         emit_command_failure(
             app,
@@ -5081,7 +5120,7 @@ fn handle_answer_fork(
 
 /// **The forage source at `tile`, as the improvement commands name it.** `same_source` matches on
 /// the tile alone, so the stance and crop slots are placeholders — this exists so the two build
-/// verbs cannot accidentally *carry* a stance or a crop into `set_improvement_on_working_bands`, and
+/// verbs cannot accidentally *carry* a stance or a crop into `queue_build_on_working_bands`, and
 /// so "the command names a source, not an assignment" is stated once.
 fn forage_source(tile: UVec2) -> LaborTarget {
     LaborTarget::Forage {
@@ -5174,7 +5213,7 @@ fn crops_named_on_forage_source(
 ///
 /// Gates (via the shared `validate_labor_policy`): the faction must know **Cultivation**, and the
 /// patch must be **Thriving**, not already cultivated, and not another faction's.
-fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2, workers: u32) {
+fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
     // The source, named by the tile. Its stance is the band's, not the command's: this sets only the
     // improvement, and `same_source` matches on the tile alone. The **crop** is the band's too, and
     // is therefore what the gate has to judge — see `crops_named_on_forage_source`.
@@ -5193,33 +5232,11 @@ fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec
         emit_command_failure(app, CommandEventKind::Cultivate, faction, reason);
         return;
     }
-
-    // **THE POOL GATE** — the build's hands come out of the same band as the gathering and the
-    // keeping (`docs/plan_standing_upkeep.md` §2.2), so a verb that asks for more than a band has is
-    // refused rather than trimmed. See [`crew_is_affordable`].
-    if let Err(idle) = crew_is_affordable(
+    let switched = queue_build_on_working_bands(
         app,
         faction,
         &forage_source(tile),
-        workers,
-        ActivityCrew::Build,
-    ) {
-        emit_crew_unaffordable(
-            app,
-            CommandEventKind::Cultivate,
-            faction,
-            "Cultivating",
-            workers,
-            idle,
-        );
-        return;
-    }
-    let switched = set_improvement_on_working_bands(
-        app,
-        faction,
-        &forage_source(tile),
-        Some(Improvement::Cultivate),
-        workers,
+        BuildJob::Rung(Improvement::Cultivate),
     );
     if switched == 0 {
         emit_command_failure(
@@ -5285,7 +5302,7 @@ fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec
 /// people already gather ("Nobody gathers at (x, y)…") and be fresh-watered, the faction must know
 /// **Seed Selection**, and the tile must not already be a Field or another people's — plus the
 /// rejection when **no band is foraging** it.
-fn handle_sow(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2, workers: u32) {
+fn handle_sow(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
     // As in `handle_cultivate`: the command sets the *improvement* and leaves the crew's stance and
     // crop alone — which is exactly why the crop it must gate on is the crew's, judged at **this**
     // verb's rung. A `tended`-ceiling crop is legal to cultivate and illegal to sow, so this is the
@@ -5304,26 +5321,11 @@ fn handle_sow(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2, wor
         emit_command_failure(app, CommandEventKind::Sow, faction, reason);
         return;
     }
-
-    // **THE POOL GATE** — the build's hands come out of the same band as the gathering and the
-    // keeping (`docs/plan_standing_upkeep.md` §2.2), so a verb that asks for more than a band has is
-    // refused rather than trimmed. See [`crew_is_affordable`].
-    if let Err(idle) = crew_is_affordable(
+    let switched = queue_build_on_working_bands(
         app,
         faction,
         &forage_source(tile),
-        workers,
-        ActivityCrew::Build,
-    ) {
-        emit_crew_unaffordable(app, CommandEventKind::Sow, faction, "Sowing", workers, idle);
-        return;
-    }
-    let switched = set_improvement_on_working_bands(
-        app,
-        faction,
-        &forage_source(tile),
-        Some(Improvement::Sow),
-        workers,
+        BuildJob::Rung(Improvement::Sow),
     );
     if switched == 0 {
         emit_command_failure(
@@ -5370,7 +5372,7 @@ fn handle_sow(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2, wor
 ///
 /// Gates (via the shared `validate_labor_policy`): the faction must know **Herding** and own the
 /// **domesticated**, not-yet-penned herd.
-fn handle_corral(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2, workers: u32) {
+fn handle_corral(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
     let Some(fauna_id) = app
         .world
         .resource::<HerdRegistry>()
@@ -5412,23 +5414,8 @@ fn handle_corral(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2, 
         emit_command_failure(app, CommandEventKind::Corral, faction, reason);
         return;
     }
-
-    // **THE POOL GATE** — the build's hands come out of the same band as the gathering and the
-    // keeping (`docs/plan_standing_upkeep.md` §2.2), so a verb that asks for more than a band has is
-    // refused rather than trimmed. See [`crew_is_affordable`].
-    if let Err(idle) = crew_is_affordable(app, faction, &target, workers, ActivityCrew::Build) {
-        emit_crew_unaffordable(
-            app,
-            CommandEventKind::Corral,
-            faction,
-            "Corralling",
-            workers,
-            idle,
-        );
-        return;
-    }
     let switched =
-        set_improvement_on_working_bands(app, faction, &target, Some(Improvement::Corral), workers);
+        queue_build_on_working_bands(app, faction, &target, BuildJob::Rung(Improvement::Corral));
     if switched == 0 {
         emit_command_failure(
             app,
@@ -5472,8 +5459,9 @@ fn handle_corral(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2, 
 // **RETIRED: `handle_abandon_improvement`.** The build verb is derived from the meter
 // (`forage::patch_build_verb` / `fauna::herd_build_verb`, `docs/plan_standing_upkeep.md` §2.4), so
 // the stored verb is only a declaration for a meter at zero and there is nothing for this command to
-// clear. **The commitment is the hands**: a player walks away by unstaffing the builders
-// (`cultivate <faction> <x> <y> 0`), which is the same control that started the build.
+// clear. **The undo is its own verb now**: `unqueue <faction> <source…>` withdraws the declaration
+// and leaves the row, the take crew, the kit and the meter alone, and `abandon` puts the whole
+// holding down (`docs/plan_standing_upkeep.md` §2.5).
 
 /// **SAY HOW A BAND SPLITS A MAINTENANCE POOL IT CANNOT STRETCH** —
 /// `upkeep_mode <faction> <band> spread|priority` (`docs/plan_standing_upkeep.md` §2.5).
@@ -5558,86 +5546,15 @@ fn handle_upkeep_mode(
     );
 }
 
-/// **CAN EVERY BAND WORKING THIS SOURCE SPARE `crew` FOR `activity`?** — the pool gate the
-/// improvement verbs and `extend_pen` both pass through
-/// (`docs/plan_standing_upkeep.md` §2.2).
-///
-/// **The three allocations draw on ONE finite band, so a command that staffs one of them has to be
-/// refusable.** Without this a band of five could put five on the take, five on a Cultivate and five
-/// on the keeping and produce fifteen worker-turns — free labour, and the end of the opportunity cost
-/// the per-activity split exists to create.
-///
-/// # It REFUSES; it does not trim
-///
-/// `assign_labor` clamps and says so, because the take crew is the number the player is directly
-/// editing and a smaller crew is a coherent version of the same order. These commands do not: a
-/// silent trim on a `cultivate` is how the gathering it was meant to improve gets disbanded, and
-/// *"you have four idle"* is a sentence the player can act on. `LaborAllocation::normalize` answers
-/// the other question — the band **shrank** — and that one genuinely has to be destructive.
-///
-/// # It is ATOMIC across the source's bands
-///
-/// The verbs set their crew on **every** band working the source, so the command is judged against
-/// the tightest of them: a partial application would leave one crew staffed and another not, on a
-/// verb the player issued once. `Err(idle)` carries that tightest band's free hands, which is the
-/// number the failure names.
-///
-/// `activity`'s own crew on this source is **given back before counting** — restating a build from 2
-/// to 3 needs one idle hand, not three.
-fn crew_is_affordable(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    target: &LaborTarget,
-    crew: u32,
-    activity: ActivityCrew,
-) -> Result<(), u32> {
-    let tightest = app
-        .world
-        .query::<(Entity, &PopulationCohort, &LaborAllocation)>()
-        .iter(&app.world)
-        .filter(|(_, cohort, _)| cohort.faction == faction)
-        .filter(|(_, _, allocation)| {
-            allocation
-                .assignments
-                .iter()
-                .any(|assignment| assignment.target.same_source(target))
-        })
-        .map(|(entity, _, _)| entity)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .map(|entity| {
-            let available = band_workforce(app, entity).assignable();
-            app.world
-                .get::<LaborAllocation>(entity)
-                .expect("the band was just queried")
-                .idle_for(available, target, activity)
-        })
-        .min();
-    match tightest {
-        // Nobody works the source; the caller's own "staff it first" rejection is the honest one.
-        None => Ok(()),
-        Some(idle) if crew <= idle => Ok(()),
-        Some(idle) => Err(idle),
-    }
-}
-
-/// The failure a command pushes when [`crew_is_affordable`] refuses — one sentence, so the four
-/// verbs and `extend_pen` cannot phrase the same refusal five ways.
-fn emit_crew_unaffordable(
-    app: &mut bevy::prelude::App,
-    kind: CommandEventKind,
-    faction: FactionId,
-    what: &str,
-    asked: u32,
-    idle: u32,
-) {
-    emit_command_failure(
-        app,
-        kind,
-        faction,
-        format!("{what} needs {asked} workers — the band has {idle} idle."),
-    );
-}
+// **RETIRED: `crew_is_affordable` / `emit_crew_unaffordable`** — the pool gate the four improvement
+// verbs and `extend_pen` passed through, and the one sentence they all refused with.
+//
+// **They existed only for those five gates**, and the gates went with the crew they named
+// (`docs/plan_standing_upkeep.md` §2.5): a verb states *what* to raise and never *who* raises it, so
+// there is no number left for it to refuse. The hands stand on the band-level `builders` role, whose
+// stepper clamps against the band's idle pool exactly as scout's and warrior's do — `assign_labor`
+// is the one enforcement of `Σ ≤ available`, and `LaborAllocation::normalize` still answers the
+// other question, a band that **shrank**.
 
 /// **A band's head-count, read off the world for a command to clamp against.**
 ///
@@ -5892,7 +5809,7 @@ fn handle_bench_crew(
 /// rides the same `animal:pen` rung as the initial build, so it takes that rung's gate — not Herding),
 /// `pen_radius` below `husbandry.pen_radius_max`, **no extension already in flight**, and a band is
 /// keeping it (or the ring never accrues, and an untended pen escapes anyway).
-fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2, workers: u32) {
+fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
     let Some(fauna_id) = app
         .world
         .resource::<HerdRegistry>()
@@ -6021,24 +5938,6 @@ fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVe
         return;
     }
 
-    // **A RING CLAIMS HANDS LIKE EVERY OTHER BUILD** (`docs/plan_standing_upkeep.md` §2.2). It rides
-    // the same `animal:pen` rung as the pen it widens, so it staffs the same `improvement_workers`
-    // allocation and passes the same pool gate — otherwise widening a fence would be the one build in
-    // the game that costs nothing, which is exactly what it became when the investment dip retired.
-    if let Err(idle) =
-        crew_is_affordable(app, faction, &keeper_target, workers, ActivityCrew::Build)
-    {
-        emit_crew_unaffordable(
-            app,
-            CommandEventKind::Corral,
-            faction,
-            "Extending the pen",
-            workers,
-            idle,
-        );
-        return;
-    }
-
     // Enter the extending state — `begin_pen_extension` re-checks is_corralled / not-extending /
     // below-max, so the guard and the validation above can never disagree.
     let began = {
@@ -6060,20 +5959,12 @@ fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVe
         return;
     }
 
-    // The ring's crew, on every band keeping the pen — the same "each band gets the number the
-    // command named" shape the four improvement verbs have.
-    let keeper_bands: Vec<Entity> = app
-        .world
-        .query::<(Entity, &PopulationCohort, &LaborAllocation)>()
-        .iter(&app.world)
-        .filter(|(_, cohort, _)| cohort.faction == faction)
-        .filter(|(_, _, allocation)| allocation.workers_on(&keeper_target) > 0)
-        .map(|(entity, _, _)| entity)
-        .collect();
-    for band in &keeper_bands {
-        let mut allocation = band_allocation_mut(app, *band);
-        allocation.set_build_workers(&keeper_target, workers);
-    }
+    // **A RING IS A QUEUE ENTRY LIKE EVERY OTHER BUILD** (`docs/plan_standing_upkeep.md` §2.5) — it
+    // is fencing work on the same `animal:pen` rung as the pen it widens, so it waits its turn in
+    // the same line and is funded from the same `builders` pool. It is the one entry kind that names
+    // no rung verb: a built pen carries no meter for the derived verb to name, which is exactly the
+    // gap `BuildJob::ExtendPen` fills.
+    queue_build_on_working_bands(app, faction, &keeper_target, BuildJob::ExtendPen);
 
     let tick = app.world.resource::<SimulationTick>().0;
     info!(
@@ -6081,7 +5972,6 @@ fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVe
         command = "extend_pen",
         faction = %faction.0,
         herd = %fauna_id,
-        workers,
         x = tile.x,
         y = tile.y,
         "command.extend_pen.extending"
@@ -6102,26 +5992,235 @@ fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVe
     );
 }
 
-/// Set (or clear) the **improvement** on every band of `faction` **already working** `target`'s
-/// source (matched by `LaborTarget::same_source`, so the tile / herd id). Returns how many bands were
-/// updated (`0` = nobody is working that source, which the callers report as *"staff it first"*).
-/// The shared body of the four improvement commands (`cultivate` / `sow` / `tame` / `corral`).
+/// **PUT A SOURCE DOWN** — `abandon <faction> <x> <y>` / `abandon <faction> <herd_id>`
+/// (`docs/plan_standing_upkeep.md` §2.5).
 ///
-/// **It touches nothing but the improvement slot** (issue #442). Its predecessor
-/// `set_policy_on_working_bands` had to rebuild each band's whole `LaborTarget` — and therefore had to
-/// carefully merge back the crop the band had selected, or a policy switch silently cleared it. With
-/// the verb in its own slot the target is never rewritten, so the stance, the crew and the committed
-/// species all survive by construction and the `merge_target` helper that guarded the species is gone.
-fn set_improvement_on_working_bands(
+/// Drops the band's **holding**: the assignment row *and* its build-queue entry, on every band of
+/// the faction working it. `drop_source_row` prunes the entry on the same edge, so the two cannot
+/// come apart.
+///
+/// # THE METERS ARE UNTOUCHED, AND THAT IS WHY IT NEEDS NO CONFIRMATION
+///
+/// The ground keeps whatever is on it and, with nobody holding it, rots back down at the rung's own
+/// rate over the following turns exactly as an unkept improvement already does. Nothing is destroyed
+/// on the spot, so there is no second destruction path and nothing to confirm — the player stops
+/// paying and the land goes back to what it was.
+///
+/// **One bit per source, never a number.** It is disposal rather than a smaller share; the
+/// per-source *funding* lever stays deleted.
+fn handle_abandon(app: &mut bevy::prelude::App, faction: FactionId, source: BuildSourceRef) {
+    let label = source.label();
+    let Some(target) = source.target() else {
+        emit_command_failure(
+            app,
+            CommandEventKind::CancelOrder,
+            faction,
+            "abandon needs a source: two numbers name a tile, one token names a herd.".to_string(),
+        );
+        return;
+    };
+    let bands = bands_working_source(app, faction, &target);
+    if bands.is_empty() {
+        emit_command_failure(
+            app,
+            CommandEventKind::CancelOrder,
+            faction,
+            format!("No band of yours holds {label}, so there is nothing to put down."),
+        );
+        return;
+    }
+    for band in &bands {
+        band_allocation_mut(app, *band).drop_source_row(&target);
+    }
+    let tick = app.world.resource::<SimulationTick>().0;
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::CancelOrder,
+        faction,
+        format!("Put down {label} — whatever is built there is left to go back to the wild"),
+        Some(format!(
+            "status=applied action=abandon source={label} bands={}",
+            bands.len()
+        )),
+    );
+}
+
+/// **WITHDRAW A DECLARATION** — `unqueue <faction> <x> <y>` / `unqueue <faction> <herd_id>`.
+///
+/// Drops the build-queue entry only, on every band of the faction working the source. The row, its
+/// take crew, its kit and the meter are untouched.
+///
+/// **It is the undo a declaration never had.** `cultivate <f> <x> <y> 0` *set* the improvement with
+/// zero builders rather than clearing it, so an unwanted verb was stuck on the row for the life of
+/// the band. A declaration carries no crew at all now, so this is the only undo — and
+/// [`handle_abandon`] is how a source with work already banked on it is put down.
+fn handle_unqueue(app: &mut bevy::prelude::App, faction: FactionId, source: BuildSourceRef) {
+    let label = source.label();
+    let Some(target) = source.target() else {
+        emit_command_failure(
+            app,
+            CommandEventKind::CancelOrder,
+            faction,
+            "unqueue needs a source: two numbers name a tile, one token names a herd.".to_string(),
+        );
+        return;
+    };
+    let Some(build_source) = BuildSource::of(&target) else {
+        return;
+    };
+    let mut dropped = 0usize;
+    for band in bands_working_source(app, faction, &target) {
+        if band_allocation_mut(app, band).unqueue_build(&build_source) {
+            dropped += 1;
+        }
+    }
+    if dropped == 0 {
+        emit_command_failure(
+            app,
+            CommandEventKind::CancelOrder,
+            faction,
+            format!("Nothing of yours is queued to be built at {label}."),
+        );
+        return;
+    }
+    let tick = app.world.resource::<SimulationTick>().0;
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::CancelOrder,
+        faction,
+        format!("Took {label} out of the build queue — the ground is left as it stands"),
+        Some(format!(
+            "status=applied action=unqueue source={label} bands={dropped}"
+        )),
+    );
+}
+
+/// **RE-ORDER ONE BAND'S BUILD QUEUE** — `build_order <faction> <band> <source…> <position>`.
+///
+/// **The queue's defining input.** The whole `builders` pool goes on the head entry until its meter
+/// fills, so where an entry sits *is* what it is funded at — and re-ordering is the one input a list
+/// can carry that a stepper cannot (`docs/plan_standing_upkeep.md` §2.5).
+///
+/// `position` is 0-based and **clamped** to the queue's length rather than refused: naming a place
+/// past the end is unambiguously *"put it last"*, which is a coherent version of the same order.
+/// A source the band has not queued **is** refused — inventing an entry here would enrol a build the
+/// player never declared.
+fn handle_build_order(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: u64,
+    source: BuildSourceRef,
+    position: u32,
+) {
+    let label = source.label();
+    let Some(target) = source.target() else {
+        emit_command_failure(
+            app,
+            CommandEventKind::CancelOrder,
+            faction,
+            "build_order needs a source: two numbers name a tile, one token names a herd."
+                .to_string(),
+        );
+        return;
+    };
+    let Some(build_source) = BuildSource::of(&target) else {
+        return;
+    };
+    let Some(band) = select_starting_band(
+        app,
+        faction,
+        Some(band_id),
+        "build_order",
+        CommandEventKind::CancelOrder,
+    ) else {
+        return;
+    };
+    let moved =
+        band_allocation_mut(app, band.entity).move_build_entry(&build_source, position as usize);
+    if !moved {
+        emit_command_failure(
+            app,
+            CommandEventKind::CancelOrder,
+            faction,
+            format!("{} has nothing queued at {label} to re-order.", band.label),
+        );
+        return;
+    }
+    let landed = band_allocation_mut(app, band.entity)
+        .build_queue_position(&build_source)
+        .unwrap_or_default();
+    let tick = app.world.resource::<SimulationTick>().0;
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::CancelOrder,
+        faction,
+        format!(
+            "{}: {label} is now #{} in the build queue",
+            band.label,
+            landed + 1
+        ),
+        Some(format!(
+            "status=applied action=build_order source={label} position={landed} band={band_id}"
+        )),
+    );
+}
+
+/// Every band of `faction` with a row on this source — the set all three queue verbs act over, and
+/// the same "a verb reaches only bands that already work the source" rule
+/// [`queue_build_on_working_bands`] applies.
+///
+/// **A row at zero take counts**, unlike the queueing path's: a holding the player is putting down
+/// or withdrawing is exactly the row that may have no gatherers left on it.
+fn bands_working_source(
     app: &mut bevy::prelude::App,
     faction: FactionId,
     target: &LaborTarget,
-    improvement: Option<Improvement>,
-    // **The BUILD's own crew** (`docs/plan_standing_upkeep.md` §2.2) — the number the verb named,
-    // applied to every band that is working this source. Ignored when `improvement` is `None`: an
-    // abandon frees the build's hands rather than resizing them.
-    build_workers: u32,
+) -> Vec<Entity> {
+    app.world
+        .query::<(Entity, &PopulationCohort, &LaborAllocation)>()
+        .iter(&app.world)
+        .filter(|(_, cohort, _)| cohort.faction == faction)
+        .filter(|(_, _, allocation)| {
+            allocation
+                .assignments
+                .iter()
+                .any(|assignment| assignment.target.same_source(target))
+        })
+        .map(|(entity, _, _)| entity)
+        .collect()
+}
+
+/// **QUEUE A BUILD ON EVERY BAND OF `faction` ALREADY WORKING `target`'s SOURCE** (matched by
+/// `LaborTarget::same_source`, so the tile / herd id). Returns how many bands were updated (`0` =
+/// nobody is working that source, which the callers report as *"staff it first"*). The shared body
+/// of the four improvement verbs and of `extend_pen`.
+///
+/// # A VERB DECLARES; IT DOES NOT STAFF
+///
+/// It appends a [`BuildQueueEntry`] and nothing else (`docs/plan_standing_upkeep.md` §2.5). The
+/// hands are the band's `builders` role, which the player staffs separately and which funds only the
+/// **head** of the queue — so this command names no crew, refuses nothing on affordability, and
+/// cannot disband the gathering it was meant to improve.
+///
+/// # RE-ISSUING KEEPS THE ENTRY'S PLACE IN THE LINE
+///
+/// `LaborAllocation::enqueue_build` replaces `declared` in place, so correcting `cultivate` → `sow`
+/// on a queued source does not cost the player their position. Withdrawing one is `unqueue`.
+///
+/// **A verb reaches only bands already WORKING the source** — the rule this function has always
+/// carried, and now the rule that keeps an entry paired with a row.
+fn queue_build_on_working_bands(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    target: &LaborTarget,
+    declared: BuildJob,
 ) -> usize {
+    let Some(source) = BuildSource::of(target) else {
+        return 0;
+    };
     // Each band's own assignment target, because the re-seed below must price the source under the
     // stance and crop that band actually holds — the command names neither.
     let bands: Vec<(Entity, u32, LaborTarget)> = app
@@ -6140,14 +6239,56 @@ fn set_improvement_on_working_bands(
     for (entity, workers, band_target) in &bands {
         {
             let mut allocation = band_allocation_mut(app, *entity);
-            allocation.set_improvement(band_target, improvement, build_workers);
+            allocation.enqueue_build(source.clone(), declared);
         }
-        // Starting (or finishing) a build no longer changes the take at all — the build has its
-        // own crew — but the row still carries the verb, so re-seed the source's telemetry from the
-        // new forecast, the same reason `handle_assign_labor` seeds after a stance edit.
+        // Queueing a build does not change the take at all, but the source's dip does depend on
+        // what is being raised on it, so re-seed the telemetry from the new forecast — the same
+        // reason `handle_assign_labor` seeds after a stance edit.
+        let improvement = build_verb_on_source_at(app, *entity, band_target);
         seed_source_yield(app, *entity, band_target, improvement, *workers);
     }
     bands.len()
+}
+
+/// **WHAT ONE BAND IS ACTUALLY RAISING ON A SOURCE** — its queue entry's declaration resolved
+/// against the ground (`forage::patch_build_verb` / `fauna::herd_build_verb`), which is what the
+/// yield seed has to price: a declaration answers only while the meter it names is at zero.
+///
+/// `None` for a source this band has not queued, for a ring (which raises no rung and pays no dip),
+/// and for an entry whose ground has moved on — a **dead** entry.
+fn build_verb_on_source(
+    allocation: &LaborAllocation,
+    target: &LaborTarget,
+    app: &bevy::prelude::App,
+) -> Option<Improvement> {
+    let source = BuildSource::of(target)?;
+    let declared = match allocation.build_queue_entry(&source)?.declared {
+        BuildJob::Rung(improvement) => improvement,
+        BuildJob::ExtendPen => return None,
+    };
+    match source {
+        BuildSource::Patch(tile) => app
+            .world
+            .resource::<ForageRegistry>()
+            .patch(tile)
+            .and_then(|patch| patch_build_verb(patch, Some(declared))),
+        BuildSource::Herd(id) => app
+            .world
+            .resource::<HerdRegistry>()
+            .find(&id)
+            .and_then(|herd| herd_build_verb(herd, Some(declared))),
+    }
+}
+
+/// [`build_verb_on_source`] for a band named by entity — the shape the queueing loop needs, where
+/// the allocation borrow has already been released.
+fn build_verb_on_source_at(
+    app: &bevy::prelude::App,
+    band: Entity,
+    target: &LaborTarget,
+) -> Option<Improvement> {
+    let allocation = app.world.get::<LaborAllocation>(band)?.clone();
+    build_verb_on_source(&allocation, target, app)
 }
 
 fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<String>) {
@@ -6872,44 +7013,79 @@ fn command_from_payload(
         ProtoCommandPayload::Tame {
             faction_id,
             herd_id,
-            workers,
         } => Some(Command::Tame {
             faction: FactionId(faction_id),
             herd_id,
-            workers,
         }),
         ProtoCommandPayload::Cultivate {
             faction_id,
             target_x,
             target_y,
-            workers,
         } => Some(Command::Cultivate {
             faction: FactionId(faction_id),
             target_x,
             target_y,
-            workers,
         }),
         ProtoCommandPayload::Sow {
             faction_id,
             target_x,
             target_y,
-            workers,
         } => Some(Command::Sow {
             faction: FactionId(faction_id),
             target_x,
             target_y,
-            workers,
         }),
         ProtoCommandPayload::Corral {
             faction_id,
             target_x,
             target_y,
-            workers,
         } => Some(Command::Corral {
             faction: FactionId(faction_id),
             target_x,
             target_y,
-            workers,
+        }),
+        ProtoCommandPayload::Abandon {
+            faction_id,
+            target_x,
+            target_y,
+            herd_id,
+        } => Some(Command::Abandon {
+            faction: FactionId(faction_id),
+            source: BuildSourceRef {
+                target_x,
+                target_y,
+                herd_id,
+            },
+        }),
+        ProtoCommandPayload::Unqueue {
+            faction_id,
+            target_x,
+            target_y,
+            herd_id,
+        } => Some(Command::Unqueue {
+            faction: FactionId(faction_id),
+            source: BuildSourceRef {
+                target_x,
+                target_y,
+                herd_id,
+            },
+        }),
+        ProtoCommandPayload::BuildOrder {
+            faction_id,
+            band_id,
+            target_x,
+            target_y,
+            herd_id,
+            position,
+        } => Some(Command::BuildOrder {
+            faction: FactionId(faction_id),
+            band_id,
+            source: BuildSourceRef {
+                target_x,
+                target_y,
+                herd_id,
+            },
+            position,
         }),
         ProtoCommandPayload::UpkeepMode {
             faction_id,
@@ -6924,12 +7100,10 @@ fn command_from_payload(
             faction_id,
             target_x,
             target_y,
-            workers,
         } => Some(Command::ExtendPen {
             faction: FactionId(faction_id),
             target_x,
             target_y,
-            workers,
         }),
         ProtoCommandPayload::SetBench {
             faction_id,
@@ -7753,12 +7927,8 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
         } => {
             handle_found_settlement(app, faction, target_x, target_y);
         }
-        Command::Tame {
-            faction,
-            herd_id,
-            workers,
-        } => {
-            handle_tame(app, faction, herd_id, workers);
+        Command::Tame { faction, herd_id } => {
+            handle_tame(app, faction, herd_id);
         }
         Command::AnswerFork {
             faction,
@@ -7771,25 +7941,22 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
             faction,
             target_x,
             target_y,
-            workers,
         } => {
-            handle_cultivate(app, faction, UVec2::new(target_x, target_y), workers);
+            handle_cultivate(app, faction, UVec2::new(target_x, target_y));
         }
         Command::Sow {
             faction,
             target_x,
             target_y,
-            workers,
         } => {
-            handle_sow(app, faction, UVec2::new(target_x, target_y), workers);
+            handle_sow(app, faction, UVec2::new(target_x, target_y));
         }
         Command::Corral {
             faction,
             target_x,
             target_y,
-            workers,
         } => {
-            handle_corral(app, faction, UVec2::new(target_x, target_y), workers);
+            handle_corral(app, faction, UVec2::new(target_x, target_y));
         }
         Command::UpkeepMode {
             faction,
@@ -7798,13 +7965,26 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
         } => {
             handle_upkeep_mode(app, faction, band_id, mode);
         }
+        Command::Abandon { faction, source } => {
+            handle_abandon(app, faction, source);
+        }
+        Command::Unqueue { faction, source } => {
+            handle_unqueue(app, faction, source);
+        }
+        Command::BuildOrder {
+            faction,
+            band_id,
+            source,
+            position,
+        } => {
+            handle_build_order(app, faction, band_id, source, position);
+        }
         Command::ExtendPen {
             faction,
             target_x,
             target_y,
-            workers,
         } => {
-            handle_extend_pen(app, faction, UVec2::new(target_x, target_y), workers);
+            handle_extend_pen(app, faction, UVec2::new(target_x, target_y));
         }
         Command::SetBench {
             faction,
@@ -8354,10 +8534,6 @@ fn handle_rollback(
 mod tests {
     use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 
-    /// **A build crew the command tests name outright** — the improvement verbs take a worker count
-    /// now (`docs/plan_standing_upkeep.md` §2.2). These are *command-validation* tests, so the
-    /// number never has to be the one a pacing test would choose; two is a plausible crew.
-    const A_BUILD_CREW: u32 = 2;
     /// **The shipped EQUIPPED haul rate** — off the sled's own tier. `labor_config`'s
     /// `hunt.per_worker_biomass_capacity` is the *bare-handed* baseline since quality tiers landed.
     fn equipped_haul_reference() -> f32 {
@@ -8468,9 +8644,7 @@ mod tests {
                     assignments: vec![core_sim::LaborAssignment {
                         target,
                         workers: BAND_WORKERS,
-                        improvement: None,
                         kit: None,
-                        improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
                     }],
                     ..Default::default()
                 },
@@ -8509,11 +8683,6 @@ mod tests {
 
     /// Workers each test band staffs on its source.
     const BAND_WORKERS: u32 = 5;
-    /// The crew an `extend_pen` fixture puts on the ring. A ring is a build like any other since
-    /// `docs/plan_standing_upkeep.md` §2.2, so every call has to name one; these tests are about the
-    /// command's *gates*, not its pacing, so one hand is enough and it is comfortably inside
-    /// [`BAND_WORKERS`]' band.
-    const A_RING_CREW: u32 = 1;
     /// Every fixture band's working-age head count — also what its start stock is sized against, so
     /// the two cannot drift and leave a fixture band partly equipped for reasons no test is about.
     const BAND_WORKING_AGE: u32 = 30;
@@ -8698,14 +8867,22 @@ mod tests {
         );
     }
 
-    /// The **improvement** the band's single assignment currently carries — what the four build
-    /// commands set, and what a command they reject must leave alone.
+    /// **What the band has DECLARED on its single worked source** — what the four build verbs
+    /// append to the band's queue, and what a command they reject must leave alone
+    /// (`docs/plan_standing_upkeep.md` §2.5).
+    ///
+    /// It reads the *declaration*, not the derived rung: what a rejected command must not have done
+    /// is change the player's stated intent.
     fn band_improvement(app: &bevy::prelude::App, band: Entity) -> Option<Improvement> {
-        app.world
+        let allocation = app
+            .world
             .get::<LaborAllocation>(band)
-            .expect("band has an allocation")
-            .assignments[0]
-            .improvement
+            .expect("band has an allocation");
+        let source = BuildSource::of(&allocation.assignments[0].target)?;
+        match allocation.build_queue_entry(&source)?.declared {
+            BuildJob::Rung(improvement) => Some(improvement),
+            BuildJob::ExtendPen => None,
+        }
     }
 
     /// The **floor** the band's single assignment currently carries.
@@ -8750,7 +8927,7 @@ mod tests {
             },
         );
 
-        handle_cultivate(&mut app, faction, coord, A_BUILD_CREW);
+        handle_cultivate(&mut app, faction, coord);
 
         assert!(
             cultivate_rejected_for_unknown(&app),
@@ -8767,18 +8944,27 @@ mod tests {
             "and it must never touch the band's floor"
         );
     }
+    // **RETIRED: `a_verb_asking_for_more_hands_than_the_band_has_is_refused_outright` and
+    // `extend_pen_claims_the_rings_hands_and_refuses_a_ring_the_band_cannot_staff`** — the two tests
+    // that pinned the improvement verbs' affordability refusal.
+    //
+    // **A VERB NAMES NO CREW ANY MORE** (`docs/plan_standing_upkeep.md` §2.5), so there is no number
+    // for it to refuse: the five build verbs append a queue entry, and the hands stand on the band's
+    // `builders` role, whose stepper clamps against idle exactly as scout's and warrior's do. What
+    // survives of the invariant is `assign_labor`'s own clamp, pinned where it lives, and the
+    // enrolment rule below — a verb still reaches only bands that already work the source.
 
-    /// **A BAND CANNOT CONJURE LABOUR OUT OF NOTHING** (`docs/plan_standing_upkeep.md` §2.2). The
-    /// take, the build and the keeping are three independent allocations drawing on **one** finite
-    /// band, so a verb asking for more hands than the band has idle is **refused** — and the refusal
-    /// names what is available, because *"you have N idle"* is a sentence the player can act on.
+    /// **A VERB DECLARES; IT DOES NOT STAFF** (`docs/plan_standing_upkeep.md` §2.5) — and it reaches
+    /// only bands that already work the source, which is the rule that keeps a queue entry paired
+    /// with a row.
     ///
-    /// It refuses rather than trimming, deliberately. `assign_labor` clamps (a smaller gathering
-    /// crew is a coherent version of the same order); a quietly-smaller *build* crew is a
-    /// commitment the player thinks they made and has not, and they would discover it from the
-    /// pacing. **Nothing about the assignment moves on a refusal** — not the verb, not the crew.
+    /// **The ring is the interesting half.** `extend_pen` rides the same `animal:pen` rung as the
+    /// pen it widens, so it waits in the same queue and is funded by the same pool — but it is the
+    /// one entry kind that names no rung verb, because a built pen carries no meter for the derived
+    /// verb to name. That is exactly the gap `BuildJob::ExtendPen` fills, and it is why the ring is
+    /// command-driven in the first place.
     #[test]
-    fn a_verb_asking_for_more_hands_than_the_band_has_is_refused_outright() {
+    fn a_build_verb_queues_the_source_and_stands_nobody_on_it() {
         let mut app = build_headless_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
@@ -8793,43 +8979,29 @@ mod tests {
                 species: None,
             },
         );
-        // Every hand the band has, plus one — the smallest ask the pool cannot meet, so the test
-        // measures the boundary rather than an absurdity.
-        let beyond_the_band = BAND_WORKING_AGE - BAND_WORKERS + 1;
 
-        handle_cultivate(&mut app, faction, coord, beyond_the_band);
+        handle_cultivate(&mut app, faction, coord);
 
-        assert!(
-            cultivate_failure_detail_contains(&app, "the band has"),
-            "the refusal must name the hands the band actually has idle"
-        );
         assert_eq!(
             band_improvement(&app, band),
-            None,
-            "a refused verb starts no build"
+            Some(Improvement::Cultivate),
+            "the verb's whole effect is the declaration"
         );
         assert_eq!(
             band_build_crew(&app, band),
             NO_CREW_ON_THIS_ACTIVITY,
-            "…and staffs nobody"
+            "…and it staffs nobody: the builders are the player's own `assign_labor … builders <n>`"
         );
-
-        // And the same band affords the crew it can pay for, so the gate is a bound rather than a
-        // blanket refusal.
-        handle_cultivate(&mut app, faction, coord, beyond_the_band - 1);
-        assert_eq!(band_improvement(&app, band), Some(Improvement::Cultivate));
-        assert_eq!(band_build_crew(&app, band), beyond_the_band - 1);
+        assert_eq!(
+            band_queue_position(&app, band, BuildSource::Patch(coord)),
+            Some(0),
+            "a first declaration goes to the head of an empty queue"
+        );
     }
 
-    /// **A RING CLAIMS HANDS LIKE EVERY OTHER BUILD.** `extend_pen` rides the same `animal:pen` rung
-    /// as the pen it widens, so it staffs the same `improvement_workers` allocation and passes the
-    /// same pool gate — otherwise widening a fence would be the one build in the game that costs
-    /// nothing, which is exactly what it became when the investment dip retired.
-    ///
-    /// It sets the crew **without** setting a verb: a built pen carries no `improvement` for one to
-    /// hang off, which is why the ring is command-driven in the first place.
+    /// **A RING IS A QUEUE ENTRY LIKE EVERY OTHER BUILD**, under its own kind.
     #[test]
-    fn extend_pen_claims_the_rings_hands_and_refuses_a_ring_the_band_cannot_staff() {
+    fn extend_pen_queues_the_ring_under_its_own_kind() {
         let mut app = build_headless_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
@@ -8843,22 +9015,8 @@ mod tests {
                 floor: 0.5,
             },
         );
-        let beyond_the_band = BAND_WORKING_AGE - BAND_WORKERS + 1;
 
-        handle_extend_pen(&mut app, faction, coord, beyond_the_band);
-
-        assert!(
-            corral_failure_detail_contains(&app, "the band has"),
-            "a ring the band cannot staff is refused, and the refusal names what it has"
-        );
-        assert_eq!(
-            herd_pen_state(&app, &id),
-            (0, false),
-            "a refused ring is not begun"
-        );
-        assert_eq!(band_build_crew(&app, band), NO_CREW_ON_THIS_ACTIVITY);
-
-        handle_extend_pen(&mut app, faction, coord, A_RING_CREW);
+        handle_extend_pen(&mut app, faction, coord);
 
         assert_eq!(
             herd_pen_state(&app, &id),
@@ -8866,25 +9024,54 @@ mod tests {
             "the ring is under way"
         );
         assert_eq!(
-            band_build_crew(&app, band),
-            A_RING_CREW,
-            "and the hands raising it are the band's, on the build allocation the rung's own verb \
-             would have used"
+            band_queue_job(&app, band, BuildSource::Herd(id.clone())),
+            Some(BuildJob::ExtendPen),
+            "a ring waits in the same queue, under the kind that names no rung"
         );
         assert_eq!(
             band_improvement(&app, band),
             None,
-            "a ring names no verb — a built pen has no improvement left to carry one"
+            "…and it declares no rung verb — a built pen has no meter left for one to name"
+        );
+        assert_eq!(
+            band_build_crew(&app, band),
+            NO_CREW_ON_THIS_ACTIVITY,
+            "the ring names no crew either; the `builders` pool raises it when it reaches the head"
         );
     }
 
-    /// The hands the band has on its one assignment's **build**.
+    /// Where a source sits in one band's build queue.
+    fn band_queue_position(
+        app: &bevy::prelude::App,
+        band: Entity,
+        source: BuildSource,
+    ) -> Option<usize> {
+        app.world
+            .get::<LaborAllocation>(band)
+            .expect("band has an allocation")
+            .build_queue_position(&source)
+    }
+
+    /// What one band has declared on a source.
+    fn band_queue_job(
+        app: &bevy::prelude::App,
+        band: Entity,
+        source: BuildSource,
+    ) -> Option<BuildJob> {
+        app.world
+            .get::<LaborAllocation>(band)
+            .expect("band has an allocation")
+            .build_queue_entry(&source)
+            .map(|entry| entry.declared)
+    }
+
+    /// **The band's BUILDERS POOL** — one head count for the whole band since
+    /// `docs/plan_standing_upkeep.md` §2.5, where it used to be one crew per source.
     fn band_build_crew(app: &bevy::prelude::App, band: Entity) -> u32 {
         app.world
             .get::<LaborAllocation>(band)
             .expect("band has an allocation")
-            .assignments[0]
-            .improvement_workers
+            .workers_on(&LaborTarget::Builders)
     }
 
     /// **`upkeep_mode` sets the band's fund mode, both ways, and refuses a mode it does not know**
@@ -9058,7 +9245,7 @@ mod tests {
             },
         );
 
-        handle_cultivate(&mut app, faction, coord, A_BUILD_CREW);
+        handle_cultivate(&mut app, faction, coord);
 
         assert!(
             !cultivate_failure_detail_contains(&app, "not thriving"),
@@ -9091,7 +9278,7 @@ mod tests {
             },
         );
 
-        handle_cultivate(&mut app, faction, coord, A_BUILD_CREW);
+        handle_cultivate(&mut app, faction, coord);
 
         assert_eq!(
             band_improvement(&app, band),
@@ -9123,7 +9310,7 @@ mod tests {
         seed_thriving_patch(&mut app, coord);
         grant_cultivation(&mut app, faction);
 
-        handle_cultivate(&mut app, faction, coord, A_BUILD_CREW);
+        handle_cultivate(&mut app, faction, coord);
 
         assert!(cultivate_failure_detail_contains(
             &app,
@@ -9212,7 +9399,9 @@ mod tests {
                 .world
                 .get_mut::<LaborAllocation>(band)
                 .expect("the band works the patch");
-            allocation.assignments[0].improvement = Some(Improvement::Cultivate);
+            let source = BuildSource::of(&allocation.assignments[0].target)
+                .expect("the fixture row names a source");
+            assert!(allocation.enqueue_build(source, BuildJob::Rung(Improvement::Cultivate)));
         }
         const EASED_OFF_WORKERS: u32 = BAND_WORKERS - 1;
         handle_assign_labor(
@@ -9329,7 +9518,7 @@ mod tests {
         // The control: with the band naming no crop, the paused build re-checks (the phase check is
         // the only thing that was refusing it, and it is now exempt).
         let mut control = paused_build_worked_by_a_band(faction, coord, None);
-        handle_cultivate(&mut control, faction, coord, A_BUILD_CREW);
+        handle_cultivate(&mut control, faction, coord);
         assert!(
             !cultivate_failure_detail_contains(&control, "not thriving")
                 && !cultivate_failure_detail_contains(&control, "know no plant"),
@@ -9337,7 +9526,7 @@ mod tests {
         );
 
         let mut named = paused_build_worked_by_a_band(faction, coord, Some("not_a_plant"));
-        handle_cultivate(&mut named, faction, coord, A_BUILD_CREW);
+        handle_cultivate(&mut named, faction, coord);
         assert!(
             cultivate_failure_detail_contains(&named, "know no plant"),
             "the species gate runs on a part-built, unhealthy patch — nothing above it exempts it"
@@ -10329,7 +10518,7 @@ mod tests {
             },
         );
 
-        handle_sow(&mut app, faction, coord, A_BUILD_CREW);
+        handle_sow(&mut app, faction, coord);
 
         assert!(
             sow_failure_detail_contains(&app, "Seed Selection"),
@@ -10366,7 +10555,7 @@ mod tests {
             },
         );
 
-        handle_sow(&mut app, faction, coord, A_BUILD_CREW);
+        handle_sow(&mut app, faction, coord);
 
         assert!(
             sow_failure_detail_contains(&app, "Nobody gathers at"),
@@ -10401,7 +10590,7 @@ mod tests {
             },
         );
 
-        handle_sow(&mut app, faction, coord, A_BUILD_CREW);
+        handle_sow(&mut app, faction, coord);
 
         assert!(
             sow_failure_detail_contains(&app, "too dry to take a crop"),
@@ -10457,7 +10646,7 @@ mod tests {
             },
         );
 
-        handle_sow(&mut app, faction, coord, A_BUILD_CREW);
+        handle_sow(&mut app, faction, coord);
 
         assert!(
             sow_failure_detail_contains(&app, "can be sown"),
@@ -10543,7 +10732,7 @@ mod tests {
             },
         );
 
-        handle_sow(&mut app, faction, coord, A_BUILD_CREW);
+        handle_sow(&mut app, faction, coord);
 
         assert!(sow_failure_detail_contains(&app, "Nobody gathers at"));
         assert!(
@@ -10562,12 +10751,7 @@ mod tests {
             (registry.width, registry.height)
         };
 
-        handle_sow(
-            &mut app,
-            faction,
-            UVec2::new(width + 5, height + 5),
-            A_BUILD_CREW,
-        );
+        handle_sow(&mut app, faction, UVec2::new(width + 5, height + 5));
 
         assert!(sow_failure_detail_contains(&app, "There is no tile at"));
     }
@@ -10599,7 +10783,7 @@ mod tests {
             },
         );
 
-        handle_sow(&mut app, faction, coord, A_BUILD_CREW);
+        handle_sow(&mut app, faction, coord);
 
         assert!(sow_failure_detail_contains(&app, "already sown"));
     }
@@ -10629,7 +10813,7 @@ mod tests {
             },
         );
 
-        handle_sow(&mut app, faction, coord, A_BUILD_CREW);
+        handle_sow(&mut app, faction, coord);
 
         assert!(sow_failure_detail_contains(&app, "Another people"));
     }
@@ -10644,7 +10828,7 @@ mod tests {
         let coord = find_sowable_tile(&app);
         grant_seed_selection(&mut app, faction);
 
-        handle_sow(&mut app, faction, coord, A_BUILD_CREW);
+        handle_sow(&mut app, faction, coord);
 
         assert!(sow_failure_detail_contains(&app, "No band is foraging"));
     }
@@ -10672,7 +10856,7 @@ mod tests {
             },
         );
 
-        handle_sow(&mut app, faction, coord, A_BUILD_CREW);
+        handle_sow(&mut app, faction, coord);
 
         assert_eq!(
             band_improvement(&app, band),
@@ -10751,7 +10935,7 @@ mod tests {
             );
 
             // What the COMMAND does about this ground.
-            handle_sow(&mut app, faction, coord, A_BUILD_CREW);
+            handle_sow(&mut app, faction, coord);
             match expected_command_fault {
                 None => {
                     assert!(
@@ -10992,7 +11176,7 @@ mod tests {
         let id = seed_herd(&mut app, coord, Some(faction));
         grant_herding(&mut app, faction);
 
-        handle_corral(&mut app, faction, coord, A_BUILD_CREW);
+        handle_corral(&mut app, faction, coord);
 
         assert!(
             corral_failure_detail_contains(&app, "learned Penning"),
@@ -11014,7 +11198,7 @@ mod tests {
         let id = seed_herd(&mut app, coord, None);
         grant_penning(&mut app, faction);
 
-        handle_corral(&mut app, faction, coord, A_BUILD_CREW);
+        handle_corral(&mut app, faction, coord);
 
         assert!(
             corral_failure_detail_contains(&app, "not domesticated"),
@@ -11033,7 +11217,7 @@ mod tests {
         let id = seed_herd(&mut app, coord, Some(owner));
         grant_penning(&mut app, intruder);
 
-        handle_corral(&mut app, intruder, coord, A_BUILD_CREW);
+        handle_corral(&mut app, intruder, coord);
 
         assert!(
             corral_failure_detail_contains(&app, "do not own"),
@@ -11061,7 +11245,7 @@ mod tests {
             },
         );
 
-        handle_corral(&mut app, faction, coord, A_BUILD_CREW);
+        handle_corral(&mut app, faction, coord);
 
         assert_eq!(
             band_improvement(&app, band),
@@ -11083,7 +11267,7 @@ mod tests {
         seed_herd(&mut app, coord, Some(faction));
         grant_penning(&mut app, faction);
 
-        handle_corral(&mut app, faction, coord, A_BUILD_CREW);
+        handle_corral(&mut app, faction, coord);
 
         assert!(corral_failure_detail_contains(&app, "No band is hunting"));
     }
@@ -11108,7 +11292,7 @@ mod tests {
             },
         );
 
-        handle_tame(&mut app, faction, id.clone(), A_BUILD_CREW);
+        handle_tame(&mut app, faction, id.clone());
 
         assert!(tame_failure_detail_contains(
             &app,
@@ -11140,7 +11324,7 @@ mod tests {
             },
         );
 
-        handle_tame(&mut app, faction, id.clone(), A_BUILD_CREW);
+        handle_tame(&mut app, faction, id.clone());
 
         assert_eq!(
             band_improvement(&app, band),
@@ -11174,7 +11358,7 @@ mod tests {
             },
         );
 
-        handle_tame(&mut app, faction, id.clone(), A_BUILD_CREW);
+        handle_tame(&mut app, faction, id.clone());
 
         assert!(tame_failure_detail_contains(&app, "already domesticated"));
     }
@@ -11210,7 +11394,7 @@ mod tests {
             },
         );
 
-        handle_tame(&mut app, intruder, id.clone(), A_BUILD_CREW);
+        handle_tame(&mut app, intruder, id.clone());
 
         assert!(tame_failure_detail_contains(
             &app,
@@ -11226,7 +11410,7 @@ mod tests {
         let id = seed_herd(&mut app, UVec2::new(1, 1), None);
         grant_herding(&mut app, faction);
 
-        handle_tame(&mut app, faction, id.clone(), A_BUILD_CREW);
+        handle_tame(&mut app, faction, id.clone());
 
         assert!(tame_failure_detail_contains(&app, "No band is hunting"));
     }
@@ -11238,12 +11422,7 @@ mod tests {
         let faction = FactionId(0);
         grant_herding(&mut app, faction);
 
-        handle_tame(
-            &mut app,
-            faction,
-            "game_nonexistent".to_string(),
-            A_BUILD_CREW,
-        );
+        handle_tame(&mut app, faction, "game_nonexistent".to_string());
 
         assert!(tame_failure_detail_contains(&app, "No herd"));
     }
@@ -11281,7 +11460,7 @@ mod tests {
         let id = seed_penned_herd(&mut app, coord, Some(faction));
         grant_herding(&mut app, faction);
 
-        handle_extend_pen(&mut app, faction, coord, A_RING_CREW);
+        handle_extend_pen(&mut app, faction, coord);
 
         assert!(corral_failure_detail_contains(&app, "learned Penning"));
         assert_eq!(herd_pen_state(&app, &id), (0, false), "no ring started");
@@ -11297,7 +11476,7 @@ mod tests {
         let id = seed_herd(&mut app, coord, Some(faction));
         grant_penning(&mut app, faction);
 
-        handle_extend_pen(&mut app, faction, coord, A_RING_CREW);
+        handle_extend_pen(&mut app, faction, coord);
 
         assert!(corral_failure_detail_contains(&app, "No pen at"));
         assert_eq!(herd_pen_state(&app, &id), (0, false));
@@ -11313,7 +11492,7 @@ mod tests {
         let id = seed_penned_herd(&mut app, coord, Some(owner));
         grant_penning(&mut app, intruder);
 
-        handle_extend_pen(&mut app, intruder, coord, A_RING_CREW);
+        handle_extend_pen(&mut app, intruder, coord);
 
         assert!(corral_failure_detail_contains(&app, "do not own the pen"));
         assert_eq!(herd_pen_state(&app, &id), (0, false));
@@ -11349,7 +11528,7 @@ mod tests {
             },
         );
 
-        handle_extend_pen(&mut app, faction, coord, A_RING_CREW);
+        handle_extend_pen(&mut app, faction, coord);
 
         assert!(corral_failure_detail_contains(&app, "maximum size"));
         assert_eq!(herd_pen_state(&app, &id), (radius_max, false));
@@ -11364,7 +11543,7 @@ mod tests {
         let id = seed_penned_herd(&mut app, coord, Some(faction));
         grant_penning(&mut app, faction);
 
-        handle_extend_pen(&mut app, faction, coord, A_RING_CREW);
+        handle_extend_pen(&mut app, faction, coord);
 
         assert!(corral_failure_detail_contains(&app, "No band is keeping"));
         assert_eq!(herd_pen_state(&app, &id), (0, false));
@@ -11387,7 +11566,7 @@ mod tests {
             },
         );
 
-        handle_extend_pen(&mut app, faction, coord, A_RING_CREW);
+        handle_extend_pen(&mut app, faction, coord);
 
         assert_eq!(
             herd_pen_state(&app, &id),
@@ -11433,7 +11612,7 @@ mod tests {
             },
         );
 
-        handle_tame(&mut app, faction, id.clone(), A_BUILD_CREW);
+        handle_tame(&mut app, faction, id.clone());
 
         assert!(tame_failure_detail_contains(&app, "wild game"));
         assert!(
@@ -11478,7 +11657,7 @@ mod tests {
                 },
             );
 
-            handle_corral(&mut app, faction, coord, A_BUILD_CREW);
+            handle_corral(&mut app, faction, coord);
 
             assert!(
                 corral_failure_detail_contains(&app, "cannot be penned"),
@@ -11507,7 +11686,7 @@ mod tests {
             },
         );
 
-        handle_extend_pen(&mut app, faction, coord, A_RING_CREW);
+        handle_extend_pen(&mut app, faction, coord);
 
         assert!(corral_failure_detail_contains(&app, "cannot be penned"));
         assert_eq!(herd_pen_state(&app, &id), (0, false), "no ring started");
@@ -11959,7 +12138,7 @@ mod tests {
             "no gate may refuse a build because of the stance held beside it (§2.1)"
         );
 
-        handle_cultivate(&mut app, faction, coord, A_BUILD_CREW);
+        handle_cultivate(&mut app, faction, coord);
 
         assert_eq!(
             band_improvement(&app, band),

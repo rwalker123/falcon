@@ -15,7 +15,6 @@
 //! band with a wolf on its camp — so `raidForfeit` is genuinely non-zero.
 
 use bevy::prelude::Entity;
-use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     available_workers, build_headless_app, run_turn, scalar_from_f32, CommandEventKind,
     CommandEventLog, ForageRegistry, Herd, HerdRegistry, LaborAllocation, LaborAssignment,
@@ -69,9 +68,7 @@ fn the_food_ledger_reconciles_with_a_predator_raid() {
                 species: None,
             },
             workers: workers.max(1),
-            improvement: None,
             kit: None,
-            improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
         }],
         ..Default::default()
     });

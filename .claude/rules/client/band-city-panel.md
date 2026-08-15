@@ -494,8 +494,10 @@ stretch, and widening it into that gap would put it over a live HUD column.
   **THE WORKFORCE SEGMENTS PARTITION `working_age`, WHICH IS WHY THE BENCH AND THE BUILDERS EACH HAVE
   ONE.** Forage · Hunt · **Build** · Roles · **Bench** · Idle, and the head states `n idle of m` off
   the same `HudBandLaborState.effective_idle` — which nets BOTH of those crews out: a worker at the
-  bench is assigned labor (`crafting-panel.md` → "The stepper's ceiling"), and a builder is the
-  source's SECOND allocation (`labor-ui.md` → "`effective_idle` SUMS `staffed_total`"). Without a
+  bench is assigned labor (`crafting-panel.md` → "The stepper's ceiling"), and a builder is the band's
+  own `builders` ROLE since §2.5 (`labor-ui.md` → "`effective_idle` SUMS `staffed_total`"; the segment
+  is `effective_role_workers(band, "builders")` now, the per-source build crew it used to sum having
+  left the tile). Without a
   segment of its own each would leave Idle and appear nowhere, so the bar would quietly stop adding up
   to the head beside it — which is exactly what shipped: `Forage 9 · Hunt 6 · Idle 3` accounting for
   18 with three builders both miscounted and invisible.
@@ -513,8 +515,8 @@ stretch, and widening it into that gap would put it over a live HUD column.
   all; a Parties SEGMENT therefore made the segments sum PAST their own denominator — a bar totalling
   22 above a head reading "4 idle of 16". The fact still has to be reachable, so it moved to the head
   rather than being deleted. `FactionRollup`'s bar takes the same clause off the same
-  `HudBandLaborState.band_party_workers` sum. **FOUR standing roles are CARDS** — Scout + Warrior
-  here, Agriculture + Husbandry in the KEEPING block below, in two rows of two — (bordered, name · the `−/+` stepper and its
+  `HudBandLaborState.band_party_workers` sum. **FIVE standing roles are CARDS** — Scout + Warrior
+  here, Agriculture + Husbandry + **Builders** in the KEEPING block below, in rows of two — (bordered, name · the `−/+` stepper and its
   `assign_labor` emit · **the kit picker and its gear line** · the role's description LAST), not rows
   in a list — the fix for a standing role being indistinguishable from a worked source. See "The role
   cards carry the band's OTHER two kits" below for the picker half and for why the prose trails.
@@ -1861,6 +1863,28 @@ does*. The LARDER column now OVERFLOWS the 275px box in both cases, which is wha
 scroll is for — see "`PANEL_HEIGHT_WIDE` is the BODY's budget" for why deleting a block to avoid a
 scrollbar is the worse trade.
 
+### …AND THE BUILDERS CARD BROKE IT AGAIN, so the split is re-authored (§4.6b)
+
+`docs/plan_standing_upkeep.md` §2.5's builders pool is a THIRD role card in the keeping block, and one
+card took that block past what the split above could carry: the flank fell to **56%**, under the 65%
+floor. Re-authored and re-measured, all four candidates, at the KEEPING block's new height:
+
+| split | chartless | charted |
+|---|---|---|
+| vitals + PEOPLE + keeping \| outlook + WORKFORCE (the old winner) | 56% | — |
+| vitals + PEOPLE \| keeping + outlook + WORKFORCE | 32% | — |
+| vitals + keeping \| PEOPLE + outlook + WORKFORCE | 62% | — |
+| **vitals + WORKFORCE \| PEOPLE + keeping + outlook** | **93%** (372 / 345) | **81%** (372 / 461) |
+
+`vitals + WORKFORCE | PEOPLE + keeping + outlook` wins both, so ONE split still serves both cases and
+`people_column` stays deleted. It reads as *what the band IS and what it DOES | who they are and what
+they hold* — which, like its predecessor, is a defensible reading and NOT why it was chosen: it is the
+only candidate that clears the floor.
+
+**THE THIRD ROW IS THE ONE TO RE-MEASURE FROM, NOT TO SUBTRACT.** Subtraction predicted 67% for it and
+it measured **62%**, which is this section's own standing warning arriving for the third time in this
+flank's history. Re-measure all four; never derive one from another.
+
 **THE FLOOR MOVED, AND ONLY BECAUSE NO SPLIT CLEARS IT.** `band_panel_preview`'s
 `BAND_FLANK_BALANCE_FLOOR` went **0.75 → 0.65**. That is the re-calibration this file warns against,
 taken only after the re-authoring it mandates: with three chartless blocks there are three orderings
@@ -1904,19 +1928,32 @@ carries a `KEEPING` block under WORKFORCE's own: two cards in the SAME family as
 They are staffed by the same `assign_labor <faction> <band> <kind> <workers>` those two use, through
 the same `_build_role_card`; nothing about the keeping is a parallel surface.
 
-- **FOUR CARDS ARE TWO ROWS OF TWO, never one row of four.** At the narrow shell's 354px a
-  four-abreast row gives each card ~82px, which clips the role name and the kit face alike. The
-  pairing is the split the roles already have — the two EXPEDITIONARY roles above, the two KEEPING
-  ones below — so the second row reads as its own family rather than as an overflow of the first.
+- **THE CARDS ARE ROWS OF TWO, never one long row.** At the narrow shell's 354px a four-abreast row
+  gives each card ~82px, which clips the role name and the kit face alike. The pairing is the split
+  the roles already have — the two EXPEDITIONARY roles first, then the two KEEPING ones — so each row
+  reads as its own family rather than as an overflow of the one above. **§4.6b's `builders` card makes
+  a THIRD row**, alone: it is neither expeditionary nor keeping — it RAISES what the keeping then
+  holds — and a builder pushed up beside Husbandry would read as a third kind of keeper. Its own row
+  also costs nothing that pairing it would save, the row height being the card's either way.
 - **The keeping roles are in the WORKFORCE bar's `Roles` SEGMENT even though their cards are not in
   that block.** The segments partition `working_age`, `effective_idle` already nets these hands out
   of Idle, and a segment that omitted them would stop the key adding up to the head the zone states.
-- **THEY MOUNT NO KIT PICKER, and two independent facts say so.** The wire names no default kit for
-  either job — there is no `defaultAgricultureKitId` twin of `defaultScoutKitId`, so `(default)`
-  would be a guess and `HudBandLaborState.default_kit_id` falls through to the HUNT default — and no
-  shipped kit declares a maintenance contribution, so every entry the picker could offer moves no
-  number the player can see. `KIT_PICKER_ROLES` is the gate. A picker whose selection changes nothing
-  and whose default mark is wrong is worse than none.
+- **THE KEEPING PAIR MOUNTS NO KIT PICKER, and two independent facts say so.** The wire names no
+  default kit for either job — there is no `defaultAgricultureKitId` twin of `defaultScoutKitId`, so
+  `(default)` would be a guess and `HudBandLaborState.default_kit_id` falls through to the HUNT
+  default — and no shipped kit declares a maintenance contribution, so every entry the picker could
+  offer moves no number the player can see. `KIT_PICKER_ROLES` is the gate. A picker whose selection
+  changes nothing and whose default mark is wrong is worse than none.
+- **THE BUILDERS CARD DOES MOUNT ONE, and both of those facts fall the other way for it** (§4.6b).
+  Gear really does move a build — `buildWorkPerWorker` is a kit tier the closed form reads
+  (`labor-ui.md` → "The build's closed form") — so the picker changes a number the player watches. Its
+  default is `KitRoster.NO_KIT_ID` rather than the hunt fall-through, which is the honest reading of a
+  wire that names no `defaultBuildersKitId`: *nothing is presumed*, not *a hunt kit is presumed*.
+  `KitRoster.ROLE_AXES` carries the role's build axis so `build_kit_row` prices it on that axis rather
+  than falling through to `tier_hint` — without the entry the card rendered the HUNT hint
+  (`attack 1.0 · carry 12.0 per hunter`) on a role that fights nothing, and `_role_effect_phrase`
+  renders NOTHING at the neutral tier, so a band with no build gear reads a bare card rather than a
+  boast of zero.
 - **THE FUND-MODE ROW IS THE ONE DECISION THE ROLES CANNOT EXPRESS** — `Spread` (fund every source in
   proportion, so everything degrades a little) against `Priority` (fund the biggest investments in
   full and let the marginal ones rot), emitting `upkeep_mode <faction> <band> <mode>` through
@@ -2244,11 +2281,12 @@ before the shed does.
   — a herd cannot be short of hunters and overstaffed with them at once. With the take crew separated
   they can, routinely; they are not equal in weight, so the slot is not first-come.
 - **A HERD MID-BUILD RAISES NO KEEPER WARNING, and what says so is the METER rather than a zero.**
-  The keeping is owed only once the rung STANDS; while a Tame or a Corral is going up those hands are
-  the build crew's. `upkeepWorkersNeeded` used to be suppressed there and the gate could read it as
-  *"nobody is owed keepers, so this is a build"* — it publishes on **both sides of completion** now
-  (mid-build it is the minimum viable BUILD crew), so that inference would light this ⚠ on every
-  source being improved in the game, blaming the Husbandry pool for a bill the builders owe.
+  `upkeepWorkersNeeded` used to be suppressed mid-build and the gate could read that silence as
+  *"nobody is owed keepers, so this is a build"* — it publishes on **both sides of completion** now,
+  because since `docs/plan_standing_upkeep.md` §4.6a the keeping pool owes a meter's rate **from the
+  first work banked**, at any fullness. So that inference would light this ⚠ on every source being
+  improved in the game — on a bill the Husbandry pool really does owe, which is precisely why the
+  ⚠ is the wrong shape for it.
   `SourceForecast.is_under_kept` asks `build_is_in_flight` instead, which agrees with the drawer's own
   rung row: a build in flight states its turn count (or its `∞`), never a keeper verdict.
   **The rung that is going up gets its OWN warning instead** — see the section below.

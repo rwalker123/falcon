@@ -156,24 +156,22 @@ message HuntFaunaCommand {
 message TameCommand {
   uint32 faction_id = 1;
   string herd_id = 2;
-  // THE BUILD'S OWN CREW (docs/plan_standing_upkeep.md section 2.2). A source carries up to three
-  // independent worker allocations from a band - the TAKE crew (assign_labor), this BUILD crew, and
-  // the MAINTAIN crew (MaintainCommand) - and the player states each. They draw on one finite band,
-  // so competing for hands IS the opportunity cost, visible in the numbers typed rather than buried
-  // in a fraction. There is no cap. `0` stops the build without clearing its meter.
-  uint32 workers = 3;
+  // 3 was `workers`, THE BUILD'S OWN CREW, retired with the per-source build crew
+  // (docs/plan_standing_upkeep.md section 2.5). A VERB DECLARES; IT DOES NOT STAFF: this appends an
+  // entry to the band's ordered build queue, and the hands stand on the band-level `builders` role
+  // (`assign_labor <faction> <band> builders <n>`), whose whole output goes on the HEAD of that
+  // queue. Withdraw a declaration with `unqueue`; put the whole source down with `abandon`.
+  reserved 3;
+  reserved "workers";
 }
 
 message CultivateCommand {
   uint32 faction_id = 1;
   uint32 target_x = 2;
   uint32 target_y = 3;
-  // THE BUILD'S OWN CREW (docs/plan_standing_upkeep.md section 2.2). A source carries up to three
-  // independent worker allocations from a band - the TAKE crew (assign_labor), this BUILD crew, and
-  // the MAINTAIN crew (MaintainCommand) - and the player states each. They draw on one finite band,
-  // so competing for hands IS the opportunity cost, visible in the numbers typed rather than buried
-  // in a fraction. There is no cap. `0` stops the build without clearing its meter.
-  uint32 workers = 4;
+  // 4 was `workers` - see TameCommand for why every build verb lost its crew.
+  reserved 4;
+  reserved "workers";
 }
 
 // The intensification ladder's plant rung-3 verb: set the Sow policy on the bands already foraging
@@ -188,12 +186,9 @@ message SowCommand {
   uint32 faction_id = 1;
   uint32 target_x = 2;
   uint32 target_y = 3;
-  // THE BUILD'S OWN CREW (docs/plan_standing_upkeep.md section 2.2). A source carries up to three
-  // independent worker allocations from a band - the TAKE crew (assign_labor), this BUILD crew, and
-  // the MAINTAIN crew (MaintainCommand) - and the player states each. They draw on one finite band,
-  // so competing for hands IS the opportunity cost, visible in the numbers typed rather than buried
-  // in a fraction. There is no cap. `0` stops the build without clearing its meter.
-  uint32 workers = 4;
+  // 4 was `workers` - see TameCommand for why every build verb lost its crew.
+  reserved 4;
+  reserved "workers";
 }
 
 // The intensification ladder's animal rung-3 verb: pen the domesticated herd standing on the target
@@ -205,12 +200,9 @@ message CorralCommand {
   uint32 faction_id = 1;
   uint32 target_x = 2;
   uint32 target_y = 3;
-  // THE BUILD'S OWN CREW (docs/plan_standing_upkeep.md section 2.2). A source carries up to three
-  // independent worker allocations from a band - the TAKE crew (assign_labor), this BUILD crew, and
-  // the MAINTAIN crew (MaintainCommand) - and the player states each. They draw on one finite band,
-  // so competing for hands IS the opportunity cost, visible in the numbers typed rather than buried
-  // in a fraction. There is no cap. `0` stops the build without clearing its meter.
-  uint32 workers = 4;
+  // 4 was `workers` - see TameCommand for why every build verb lost its crew.
+  reserved 4;
+  reserved "workers";
 }
 
 // Grazing 2d-beta: grow the fenced footprint of a built pen by one ring (pen_radius += 1), worked off
@@ -222,10 +214,11 @@ message ExtendPenCommand {
   uint32 faction_id = 1;
   uint32 target_x = 2;
   uint32 target_y = 3;
-  // THE RING'S OWN CREW (docs/plan_standing_upkeep.md section 2.2). A ring rides the same animal:pen
-  // rung as the pen it widens, so it staffs the same BUILD allocation and draws on the same finite
-  // band - otherwise widening a fence would be the one build in the game that costs nothing.
-  uint32 workers = 4;
+  // 4 was `workers`, THE RING'S OWN CREW. A ring rides the same animal:pen rung as the pen it
+  // widens, so it waits in the same queue and is funded by the same `builders` pool - see
+  // TameCommand.
+  reserved 4;
+  reserved "workers";
 }
 
 // The Telling (fork tier): answer a pending narrative fork. `beat_id` names the fork the faction
@@ -431,6 +424,56 @@ message ResyncCommand {}
 //
 // Field 56 was SetMaintainCommand (a bool), then MaintainCommand (a per-source crew); the slot is
 // reused rather than burned, there being no shipped client to keep compatible with.
+// Drop a band's HOLDING of a source: the assignment row AND its build-queue entry, on every band of
+// the faction working it (docs/plan_standing_upkeep.md section 2.5).
+//
+// THE METERS ARE UNTOUCHED. The ground keeps whatever is on it and, with nobody holding it, rots
+// back down at the rung's own rate over the following turns exactly as an unkept improvement already
+// does. Nothing is destroyed on the spot, so it needs no confirmation.
+//
+// IT EXISTS BECAUSE A METER IS BILLED FROM THE FIRST WORK BANKED (section 2.4), so a half-built
+// patch the player has lost interest in otherwise draws keepers forever. ONE BIT PER SOURCE, NEVER A
+// NUMBER: this is disposal, not a smaller share - the per-source funding lever stays deleted.
+//
+// SOURCE ADDRESSING, shared by all three of these verbs: two integer tokens name a TILE, one token
+// names a HERD id. The tile form is parsed first.
+message AbandonCommand {
+  uint32 faction_id = 1;
+  // The tile form. Both present = a patch at (x, y); both absent = the herd named below.
+  optional uint32 target_x = 2;
+  optional uint32 target_y = 3;
+  // The herd form.
+  optional string herd_id = 4;
+}
+
+// Drop a source's BUILD-QUEUE ENTRY only, on every band of the faction working it. The row, its take
+// crew, its kit and the meter are all untouched - this is the UNDO for a declaration.
+//
+// It is the fix for a live defect: `cultivate <f> <x> <y> 0` used to SET the improvement with zero
+// builders rather than clearing it, so an unwanted declaration was stuck with no way to withdraw it.
+// A declaration carries no crew at all now, so unqueueing is the only undo, and `abandon` is how a
+// source with work already on it is put down.
+message UnqueueCommand {
+  uint32 faction_id = 1;
+  optional uint32 target_x = 2;
+  optional uint32 target_y = 3;
+  optional string herd_id = 4;
+}
+
+// Move one band's build-queue entry to a 0-based position, clamped to the queue's length.
+//
+// THIS IS THE QUEUE'S DEFINING INPUT. The whole `builders` pool goes on the HEAD until that entry's
+// meter fills, so the ORDER IS THE FUNDING DECISION - re-ordering is the one input a list can carry
+// that a stepper cannot. Without it "all hands on the head" cannot be steered at all.
+message BuildOrderCommand {
+  uint32 faction_id = 1;
+  uint64 band_id = 2;
+  optional uint32 target_x = 3;
+  optional uint32 target_y = 4;
+  optional string herd_id = 5;
+  uint32 position = 6;
+}
+
 message UpkeepModeCommand {
   uint32 faction_id = 1;
   uint64 band_id = 2;
@@ -817,5 +860,11 @@ message CommandEnvelope {
     SendTradeExpeditionCommand send_trade_expedition = 55;
     // 55 is held by `send_trade_expedition`, so the upkeep mode takes 56 (append-only).
     UpkeepModeCommand upkeep_mode = 56;
+    // 56 is held by `upkeep_mode`, so the build queue's three take 57-59 (append-only; 46 is
+    // RESERVED for the retired `abandon_improvement` and must never be reused, so `abandon` - which
+    // is a different verb with a different meaning - takes a fresh number).
+    AbandonCommand abandon = 57;
+    UnqueueCommand unqueue = 58;
+    BuildOrderCommand build_order = 59;
   }
 }

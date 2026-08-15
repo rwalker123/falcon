@@ -731,9 +731,10 @@ const CREW_ROW_LABEL_META := "crew_row_label"
 ## there is nothing here for a harness to find. What a source's keeping costs is stated by
 ## `DetailFormat.at_risk_lines` on the land card and the herd drawer.
 
-## The BUILD crew's stepper row, as `Control` meta — the second of a source's two allocations, mounted
-## on the improvement control that states the verb it staffs.
-const BUILD_CREW_ROW_META := "build_crew_row"
+## **RETIRED — `BUILD_CREW_ROW_META`** (`docs/plan_standing_upkeep.md` §2.5), the third meta on this
+## list to go the same way. It tagged the BUILDERS stepper on the improvement control; a verb
+## declares and names no hands, so there is no per-source build crew and nothing here to find. The
+## pool is a standing role card, and the queue that spends it is the band's.
 
 ## The VERDICT line, as `Control` meta — value is the severity (`SourceForecast.VERDICT_*`), which is
 ## the assertable half: the sentence carries turn counts and percentages that move with the fixture.

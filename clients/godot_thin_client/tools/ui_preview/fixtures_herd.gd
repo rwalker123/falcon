@@ -419,6 +419,10 @@ static func price_animal_build(fixture: Dictionary,
 	fixture["corral_upkeep_demand"] = upkeep
 	# **AND THE ROT, WHICH ON THIS WEB IS STRUCTURALLY NOTHING** — see `ANIMAL_METER_ROT` below.
 	fixture["meter_rot_per_turn"] = ANIMAL_METER_ROT
+	# **AND WHERE IT SITS IN THE BAND'S QUEUE** (`docs/plan_standing_upkeep.md` §4.6b), the plant
+	# twin's rule: the sim publishes a countdown only for a source some band has queued, so a priced
+	# build with the sentinel position would stage a countdown belonging to no entry.
+	fixture["build_queue_position"] = SourceForecast.BUILD_QUEUE_HEAD
 	return fixture
 
 ## **NO ANIMAL RUNG CAN LOSE METER, SO THIS IS A CONSTANT AND NOT A PARAMETER**

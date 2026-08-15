@@ -178,8 +178,8 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > ```
 >
 > **THERE IS NO BUILD TERM IN IT** (`docs/plan_standing_upkeep.md` §2.2). The dip is retired: a build
-> has its own crew now, so the gatherers a `expected(workers)` describes are gathering and nothing is
-> being multiplied. `expected` no longer takes a rung at all, which is what makes the curve one
+> is raised by the band's **`builders` pool** rather than by the crew on the tile (§2.5), so the
+> gatherers an `expected(workers)` describes are gathering and nothing is being multiplied. `expected` no longer takes a rung at all, which is what makes the curve one
 > expression instead of one per verb.
 >
 > **ON THE ANIMAL WEB THAT `min()` HAS A THIRD ARM, and leaving it out overstates a light-bodied
@@ -389,9 +389,9 @@ projection* is the sustained MSY. Pinned by
   build is not in the take (`docs/plan_standing_upkeep.md` §2.2).
 - **THE PLANT CREW FLOOR IS RETIRED WITH `crew_needed`.** It existed because `workers_needed` was
   inverted out of a **dipped** take, so a patch under a 25-turn Cultivate asked for *fewer* hands than
-  the same patch merely gathered. With each activity stating its own crew there is no blended count to
-  floor: `workers_needed` is the **take**'s own hands, `upkeepWorkersNeeded` is the **maintain**'s, and
-  the build's crew is the number the player typed on the verb.
+  the same patch merely gathered. With each role staffed on its own row there is no blended count to
+  floor: `workers_needed` is the **take**'s own hands, `upkeepWorkersNeeded` is the **keeping**'s, and
+  the builders are the band's own pool.
   `intensification::source_crew_needed`, `LadderConfig::build_crew` and the `cultivateCrewNeeded` /
   `sowCrewNeeded` wire slots are gone (the slots `(deprecated)`). **`herdersNeeded` /
   `herdersNeededIfManaged` keep their own fields** — a herd's keeper count is a fact about the herd,
@@ -523,7 +523,7 @@ The retained `SourceYield` telemetry used to be written **only** during turn res
 snapshot serialized `actual_yield = 0.0` — the map annotation and the Band panel read **`+0.00`** for
 every fresh assignment, and the client cannot distinguish "0 because not computed yet" from "0 because
 the source is barren". Fixed server-side: `handle_assign_labor` (and the `cultivate`/`corral` policy
-shorthands, via `set_improvement_on_working_bands`) **seeds the touched source's `SourceYield` from its
+shorthands, via `queue_build_on_working_bands`) **seeds the touched source's `SourceYield` from its
 pre-commit forecast** right after mutating the `LaborAllocation` (`server.rs::seed_source_yield` →
 `LaborAllocation::set_source_yield`). Because forecast == actual (above), the seeded number is exactly
 what the turn then pays under unchanged conditions — **no jump** — and it is the same number the

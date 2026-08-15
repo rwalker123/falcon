@@ -621,26 +621,41 @@ func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContaine
         _band_zone_tier != HudWorkVocab.BAND_ZONE_TIER_TALL)
     var workforce := _build_workforce_block(band)
     var keeping := _build_keeping_block(band)
-    # **ONE AUTHORED SPLIT: everything but WORKFORCE on the left.** It was TWO — PEOPLE crossed to the
-    # WORKFORCE column whenever a chart was built, because the larder column then carried two blocks
-    # already — and arc #527's retirement of the Trade row took ~26px out of the only block that
-    # column could pay with, which put the charted pairing at 220/326 (67%) against a 75% floor. Of the
-    # eight orderings the four blocks admit, `vitals + PEOPLE + outlook | WORKFORCE` is the best at
-    # **290/256 = 88%**, and it is also the best CHARTLESS one (**174/256 = 68%**) — so the two
-    # hand-measured layouts collapsed into one and the boolean went with them.
+    # **ONE AUTHORED SPLIT, RE-AUTHORED AND RE-MEASURED WHEN THE BUILDERS CARD LANDED**
+    # (`docs/plan_standing_upkeep.md` §2.5). The KEEPING block grew a second card ROW — the `builders`
+    # pool beside the two keeping roles — taking it from 168 to **287px**, and the previous pairing
+    # (`vitals + PEOPLE + keeping | outlook + WORKFORCE`) fell to **461/256 = 56%** chartless against
+    # the 65% floor. The four candidate re-authorings were measured rather than reasoned:
     #
-    # **RE-MEASURE ALL EIGHT BEFORE MOVING A BLOCK.** The pairing reads as *the larder | the people*,
-    # which is defensible on its own terms and is not a principle that would survive the blocks
-    # changing size — this one is simply the arrangement that fits.
+    # | split | chartless | charted |
+    # |---|---|---|
+    # | vitals + PEOPLE + keeping \| outlook + WORKFORCE | 461/256 = **56%** | 461/372 = 81% |
+    # | vitals + PEOPLE \| keeping + outlook + WORKFORCE | 174/543 = **32%** | 174/659 = 26% |
+    # | vitals + PEOPLE + WORKFORCE \| keeping + outlook | 442/275 = **62%** | — |
+    # | **vitals + WORKFORCE \| PEOPLE + keeping + outlook** | **372/345 = 93%** | **372/461 = 81%** |
+    #
+    # The last is the only one that clears the floor chartless and it is the best charted too, so ONE
+    # split still serves both and the boolean stays retired.
+    #
+    # **THE THIRD ROW IS WHY THESE ARE MEASURED RATHER THAN DERIVED.** Predicted by subtraction from
+    # the first two it comes to 430/287 = 67% — a pass — and it measures **62%**, a fail: separations
+    # and spacing differ per grouping, which is a trap this block has now sprung twice.
+    #
+    # **RE-MEASURE BEFORE MOVING A BLOCK.** It reads as *the band and what its hands are doing | who
+    # they are, what they keep and where the larder is going*, which is defensible on its own terms
+    # and is not a principle that would survive the blocks changing size — this one is simply the
+    # arrangement that fits. **The two
+    # column CONSTANTS are named for an older pairing and are now positional**, which is why they are
+    # not renamed with each re-authoring: they are left and right, not larder and people.
     var blocks: Array[Dictionary] = []
     if vitals != null:
         blocks.append({"control": vitals, "column": BAND_COLUMN_LARDER})
     if people != null:
-        blocks.append({"control": people, "column": BAND_COLUMN_LARDER})
-    blocks.append({"control": keeping, "column": BAND_COLUMN_LARDER})
+        blocks.append({"control": people, "column": BAND_COLUMN_PEOPLE})
+    blocks.append({"control": keeping, "column": BAND_COLUMN_PEOPLE})
     if outlook != null:
         blocks.append({"control": outlook, "column": BAND_COLUMN_PEOPLE})
-    blocks.append({"control": workforce, "column": BAND_COLUMN_PEOPLE})
+    blocks.append({"control": workforce, "column": BAND_COLUMN_LARDER})
     # BOTH layouts go inside the scroll — the flat stack and the two-column row alike. A widened flank
     # halves what each column carries but does not make either of them unable to overflow, and a rule
     # that scrolled one layout and clipped the other would be the same content loss on a wider monitor.
@@ -823,15 +838,20 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
     var idle := _band_labor.effective_idle(band)
     var forage_workers := 0
     var hunt_workers := 0
-    # **THE BUILDERS ARE THEIR OWN SEGMENT, ACROSS BOTH WEBS.** A build crew is staffed labor on a
-    # source but it is not taking anything from it, so it belongs in neither the Forage nor the Hunt
-    # slice — and it has to be SOMEWHERE, `effective_idle` having netted it out.
-    var build_workers := 0
+    # **THE BUILDERS ARE THEIR OWN SEGMENT, ACROSS BOTH WEBS.** They are staffed labor that takes
+    # nothing from any source, so they belong in neither the Forage nor the Hunt slice — and they have
+    # to be SOMEWHERE, `effective_idle` having netted them out.
+    #
+    # **THE COUNT IS THE BAND'S `builders` POOL, not a sum of per-source build crews**
+    # (`docs/plan_standing_upkeep.md` §2.5). It is a standing ROLE row like scout and warrior, which
+    # is also why it is not folded into `role_workers` below: a build is a job the queue names, and
+    # the segment says how many hands are on that queue at all.
+    var build_workers := int(_band_labor.effective_role_workers(
+        band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))
     var merged := _band_labor.effective_worker_map(band)
     for key in merged:
         var m: Dictionary = merged[key]
         var workers := int(m.get("workers", 0))
-        build_workers += maxi(int(m.get(HudBandLaborState.BUILD_WORKERS_KEY, 0)), 0)
         match String(m.get("kind", "")):
             SourceForecast.LABOR_KIND_FORAGE: forage_workers += workers
             SourceForecast.LABOR_KIND_HUNT: hunt_workers += workers
@@ -897,10 +917,17 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
     block.add_child(scout_row)
     return block
 
-## **THE KEEPING BLOCK — the two keeping roles and how their pools split when short**
-## (`docs/plan_standing_upkeep.md` §2.5). `agriculture` holds the plant web, `husbandry` the animal
-## one; they are staffed by the same `assign_labor` the WORKFORCE zone's two roles use, so they are
-## the same CARD and not a parallel surface.
+## **THE KEEPING BLOCK — the three standing pools of §2.5, and how the keeping two split when short**
+## (`docs/plan_standing_upkeep.md`). `agriculture` holds the plant web, `husbandry` the animal one,
+## and `builders` raises whatever the band has QUEUED; all three are staffed by the same
+## `assign_labor` the WORKFORCE zone's two roles use, so all three are the same CARD and not a
+## parallel surface.
+##
+## **THE BUILDERS SIT HERE RATHER THAN IN WORKFORCE, and the pairing is the reading.** These are the
+## three pools that decide what happens to what the band HOLDS — two that keep it and one that
+## raises it — where scout and warrior are about the world outside the camp. The fund-mode row
+## beneath governs the keeping pair alone, which is why the builders card is last: nothing about a
+## build queue is split when short (the whole pool goes on the head entry until it fills).
 ##
 ## **IT IS ITS OWN BLOCK RATHER THAN A SECOND ROW OF WORKFORCE, and that is a MEASURED conclusion.**
 ## Folding the pair and the fund-mode row into WORKFORCE took that block from 256px to 392 and put
@@ -914,7 +941,11 @@ func _build_keeping_block(band: Dictionary) -> VBoxContainer:
     var idle := _band_labor.effective_idle(band)
     var agriculture_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_AGRICULTURE)
     var husbandry_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_HUSBANDRY)
+    var builders_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_BUILDERS)
     var block := HudWidgets.make_zone_block()
+    # **THE HEAD COUNTS THE KEEPING PAIR AND NOT THE BUILDERS.** It reads `N on keeping`, and a build
+    # is a job rather than a standing charge — folding the third pool in would make the number
+    # disagree with its own word and with the fund-mode line two rows down.
     block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_KEEPING,
         HudWorkVocab.KEEPING_ZONE_READOUT_FORMAT % (int(agriculture_eff.get("workers", 0))
             + int(husbandry_eff.get("workers", 0)))))
@@ -924,6 +955,13 @@ func _build_keeping_block(band: Dictionary) -> VBoxContainer:
     cards.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_HUSBANDRY,
         HudWorkVocab.HUSBANDRY_ROLE_HINT, HudConst.LABOR_KIND_HUSBANDRY, husbandry_eff, idle))
     block.add_child(cards)
+    # **THE BUILDERS TAKE A ROW OF THEIR OWN, not a third cell beside the keeping pair.** The role
+    # cards are already ~175px in a 356px column, so a third abreast would ellipsise all three; and
+    # the two above are one decision (which web to keep) while this is another (what to raise next).
+    var build_cards := _build_role_card_row()
+    build_cards.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_BUILDERS,
+        HudWorkVocab.BUILDERS_ROLE_HINT, HudConst.LABOR_KIND_BUILDERS, builders_eff, idle))
+    block.add_child(build_cards)
     # The fund mode renders only where either web demands work this turn — see `_build_upkeep_mode_row`.
     var fund_mode := _build_upkeep_mode_row(band,
         _band_labor.upkeep_pool_state(band, SourceForecast.LABOR_KIND_FORAGE),
@@ -1166,9 +1204,19 @@ func _lift_role_gear_line(kit_row: Control) -> void:
 ## The role card mounts the shared kit row with NO field key — see `_build_role_card`.
 const ROLE_CARD_KIT_KEY_TEXT := ""
 
-## The standing roles whose card offers a KIT PICKER — the two the wire names a default kit for.
-## The keeping pair is deliberately absent; see `_build_role_card`.
-const KIT_PICKER_ROLES := [HudConst.LABOR_KIND_SCOUT, HudConst.LABOR_KIND_WARRIOR]
+## The standing roles whose card offers a KIT PICKER.
+##
+## **THE KEEPING PAIR IS DELIBERATELY ABSENT AND THE BUILDERS ARE DELIBERATELY PRESENT**, and the
+## difference is whether a kit moves a number the player can see. No shipped kit declares a
+## maintenance contribution, so an `agriculture` picker would change nothing; **`husbandry` is the one
+## kit whose items declare `build_work`** (`docs/plan_standing_upkeep.md` §2.5), so putting it on the
+## BUILDERS row is the only way a band brings its hurdles to a Tame or a Corral — the gear offset used
+## to ride the source row's kit and rides this role's own row now.
+##
+## ⚠ **It is the one entry here the wire names no default kit for** — see `KitRoster.JOB_BUILDERS`.
+## Nothing is marked `(default)`, and the picker opens on the band's own `builders` row.
+const KIT_PICKER_ROLES := [HudConst.LABOR_KIND_SCOUT, HudConst.LABOR_KIND_WARRIOR,
+    HudConst.LABOR_KIND_BUILDERS]
 
 ## The `_role_kit_ids` key for one band's one role. Two terms because the cycler walks bands: a
 ## per-role key alone would carry the pick made on one band onto every other band's card.
@@ -1813,9 +1861,9 @@ func _work_inspector_sentence(model: Dictionary) -> String:
     parts.append(HudFormat.status_label(FoodIcons.STATUS_PENDING if bool(model.get("pending", false)) \
         else FoodIcons.STATUS_WORKING))
     parts.append(HudWorkVocab.WORK_INSPECT_ASSIGNED_FORMAT % int(model.get("workers", 0)))
-    var builders := int(model.get("build_workers", 0))
-    if builders > 0:
-        parts.append(HudWorkVocab.WORK_INSPECT_BUILDERS_FORMAT % builders)
+    # **NO `N building` CLAUSE** (`docs/plan_standing_upkeep.md` §2.5). It named the source's own
+    # build crew, and a source has none: the builders are one band-level pool funding the head of the
+    # band's queue, so the count belongs to the QUEUE rather than to any row on this board.
     return HudWorkVocab.WORK_INSPECT_SENTENCE_SEPARATOR.join(parts)
 
 # ---- work-zone models + state ----------------------------------------------
@@ -1830,16 +1878,15 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         var m: Dictionary = merged[key]
         var kind := String(m.get("kind", "")).strip_edges().to_lower()
         var workers := int(m.get("workers", 0))
-        # **A ROW THE BAND HAS ONLY BUILDERS ON IS STILL A ROW.** The board's admission test read the
-        # TAKE crew alone, so a source with three hands raising its meter and nobody gathering was
-        # dropped from the board, from its chip counts and from the WORK tab's badge — the one place
-        # the player would go to see what those hands are doing, and the one place the `+` that staffs
-        # them lives.
-        var build_workers := maxi(int(m.get(HudBandLaborState.BUILD_WORKERS_KEY, 0)), 0)
+        # **A ROW IS ADMITTED ON ITS TAKE CREW AGAIN** (`docs/plan_standing_upkeep.md` §2.5). It also
+        # admitted on the source's own build crew for one slice — a source with hands raising its
+        # meter and nobody gathering had to stay on the board — and that crew no longer exists per
+        # source: the builders are one band-level pool on the head of the band's QUEUE, which is a
+        # list of its own and is slice 7's to render.
         var pending := bool(m.get("pending", false))
         if not (kind == SourceForecast.LABOR_KIND_FORAGE or kind == SourceForecast.LABOR_KIND_HUNT):
             continue
-        if workers <= 0 and build_workers <= 0 and not pending:
+        if workers <= 0 and not pending:
             continue
         var yld := SourceForecast.source_yield_readout(m, kind)
         var x := int(m.get("x", -1))
@@ -1966,10 +2013,6 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "material_rows": yld.get("material_rows", []),
             "has_yield": bool(m.get("has_yield", false)),
             "workers": workers, "pending": pending, "warn": bool(yld.get("warn", false)),
-            # The source's OTHER crew, carried so a row admitted on its builders alone can say who is
-            # standing there — a row reading `0 assigned` with three hands on its meter is the same
-            # miscount the idle counter had, one surface along.
-            "build_workers": build_workers,
             # **ONE FLAG, WHERE THERE WERE TWO** (`docs/plan_standing_upkeep.md` §4.6a). It was
             # `under_herded` beside `unbuilt` — a keeper warning and a builder warning, split on
             # whether the meter was full — and one keeping pool owes both now, so the second key was a

@@ -38,7 +38,6 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
-use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     advance_herds, advance_labor_allocation, available_workers, scalar_from_f32, scalar_one,
     scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world, CommandEventKind,
@@ -167,9 +166,7 @@ fn forage_alloc_policy(tile: UVec2, workers: u32, policy: f32) -> LaborAllocatio
                 species: None,
             },
             workers,
-            improvement: None,
             kit: None,
-            improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
         }],
         ..Default::default()
     }
@@ -316,9 +313,7 @@ fn sustain_hunt_below_regrowth_lets_herd_grow() {
                     floor: 0.5,
                 },
                 workers: 1,
-                improvement: None,
                 kit: None,
-                improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             ..Default::default()
         },
@@ -405,9 +400,7 @@ fn a_hunt_actual_pulses_while_realized_holds_the_steady_average() {
                     floor: 0.5,
                 },
                 workers: 2,
-                improvement: None,
                 kit: None,
-                improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             ..Default::default()
         },
@@ -546,9 +539,7 @@ fn a_drawn_down_hunt_realized_drifts_smoothly_never_sawtooths() {
                     floor: 0.5,
                 },
                 workers: 4,
-                improvement: None,
                 kit: None,
-                improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             ..Default::default()
         },
@@ -621,9 +612,7 @@ fn hunt_lapses_beyond_leash() {
                     floor: 0.5,
                 },
                 workers: 3,
-                improvement: None,
                 kit: None,
-                improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             ..Default::default()
         },
@@ -973,9 +962,7 @@ fn stage_hunt(
                     floor: 0.5,
                 },
                 workers,
-                improvement: None,
                 kit: None,
-                improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             ..Default::default()
         },
@@ -1168,23 +1155,25 @@ fn a_spent_source_schedules_nothing() {
     );
 }
 
-/// **A trimmed-away assignment is announced, and the lost build is named.**
+/// **A trimmed-away assignment is announced, and its DECLARATION goes with it.**
 ///
 /// `LaborAllocation::normalize` drops from the tail when a band's working-age head-count shrinks
 /// below what it has committed, and it did so in **total silence** — the one place in the labor
 /// system that abandoned work without telling the player, against the out-of-range Forage lapse a
-/// few tests above which has always pushed a feed entry. The improvement rides the *assignment*, not
-/// the source, so a population dip could destroy a 25-turn `Cultivate` commitment with nothing said
-/// anywhere; the likely upstream cause of a playtest report of a tended patch that quietly ended up
-/// with zero workers.
+/// few tests above which has always pushed a feed entry.
+///
+/// **The lost build is no longer NAMED on the line, and that is the model rather than a regression**
+/// (`docs/plan_standing_upkeep.md` §2.5). A build lives in the band's queue, not on the row, so what
+/// a shed row costs is exactly the hands the line reports — and the queue entry that required that
+/// row is retired by the turn's own prune, which is the half this asserts.
 #[test]
-fn a_trimmed_assignment_is_announced_and_names_the_lost_build() {
+fn a_trimmed_assignment_is_announced_and_its_declaration_goes_with_it() {
     let mut app = spawn_world();
     let (patch_pos, patch_tile) = food_tile(&mut app);
     let herd_id = app.world.resource::<HerdRegistry>().herds[0].id.clone();
 
     // Two assignments, Σ = 6, on a band with only 3 hands: `normalize` drops the tail (the hunt) and
-    // trims the forage. The tail carries a build verb, which is the half that cannot come back.
+    // trims the forage. The tail carries a queued build, which is the half that cannot come back.
     let mut allocation = forage_alloc(patch_pos, 3);
     allocation.assignments.push(LaborAssignment {
         target: LaborTarget::Hunt {
@@ -1192,10 +1181,16 @@ fn a_trimmed_assignment_is_announced_and_names_the_lost_build() {
             floor: 0.5,
         },
         workers: 3,
-        improvement: Some(core_sim::Improvement::Tame),
         kit: None,
-        improvement_workers: 3,
     });
+    let source = core_sim::BuildSource::Herd(herd_id.clone());
+    assert!(
+        allocation.enqueue_build(
+            source.clone(),
+            core_sim::BuildJob::Rung(core_sim::Improvement::Tame)
+        ),
+        "fixture: the band works the herd it declares a Tame on"
+    );
     let band = spawn_band(&mut app, patch_tile, 3, allocation);
 
     app.world.run_system_once(advance_labor_allocation);
@@ -1208,6 +1203,14 @@ fn a_trimmed_assignment_is_announced_and_names_the_lost_build() {
             .len(),
         1,
         "the tail assignment is dropped — this test is meaningless if nothing was trimmed"
+    );
+    assert_eq!(
+        app.world
+            .get::<LaborAllocation>(band)
+            .expect("band allocation")
+            .build_queue_position(&source),
+        None,
+        "an entry requires a row, so the shed row takes its declaration with it"
     );
     let entry = app
         .world
@@ -1225,11 +1228,6 @@ fn a_trimmed_assignment_is_announced_and_names_the_lost_build() {
     assert!(
         detail.contains(&format!("herd={herd_id}")),
         "the entry names the source that was given up: {detail}"
-    );
-    assert!(
-        detail.contains("action=tame") && entry.label.contains("tame"),
-        "and names the build that was abandoned — the expensive half: {detail} / {}",
-        entry.label
     );
     assert!(
         matches!(entry.kind, CommandEventKind::Hunt),

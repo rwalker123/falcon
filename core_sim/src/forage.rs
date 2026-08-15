@@ -33,12 +33,12 @@
 //! - A **Sustain** forage on a **Thriving** patch earns the faction **Cultivation knowledge**
 //!   (`CULTIVATION_DISCOVERY_ID`, in the `DiscoveryProgressLedger`) — the gate on the policy below.
 //!   Sustain **never** accrues a patch's `cultivation_progress`.
-//! - Taming a patch means **staffing the `Cultivate` verb**: the player names the build's own crew,
-//!   those hands bank work units toward the `plant:tended` rung's `work_cost` (read off the shared
-//!   ladder, `crate::intensification`), and the gatherers beside them carry exactly what they always
-//!   did — what a Cultivate costs is the people who are clearing instead
-//!   (`docs/plan_standing_upkeep.md` §2.2). The `cultivate` command only **sets that verb** on bands
-//!   already foraging the tile; it claims nothing.
+//! - Taming a patch means **queueing the `Cultivate` and staffing the band's `builders` pool**: the
+//!   whole pool banks work units toward the `plant:tended` rung's `work_cost` (read off the shared
+//!   ladder, `crate::intensification`) while this patch is the **head** of that queue, and the
+//!   gatherers beside them carry exactly what they always did — what a Cultivate costs is the people
+//!   who are clearing instead (`docs/plan_standing_upkeep.md` §2.5). The `cultivate` command only
+//!   **appends the entry** on bands already foraging the tile; it names no crew and claims nothing.
 //! - A completed ("tended") patch pays only the band that **tends it** (a Forage assignment worked it
 //!   this turn — place-local, in `advance_labor_allocation`) a higher-than-wild yield without drawing
 //!   biomass down; `advance_cultivation` takes an **untended** patch **feral** (progress decays back
@@ -263,6 +263,20 @@ pub struct ForagePatch {
     /// [`Self::build_turns_remaining`]'s cycle, and for its reason: the kit is re-read every turn, so
     /// no state may record *"this build was geared"*.
     pub build_work_from_gear: f32,
+    /// **WHERE THIS SOURCE SITS IN THE WINNING BAND'S BUILD QUEUE** — 0-based, and
+    /// [`crate::intensification::NOT_IN_ANY_BUILD_QUEUE`] (`-1`) when no band has queued it
+    /// (`docs/plan_standing_upkeep.md` §4.6b).
+    ///
+    /// **It rides the same winner as [`Self::build_turns_remaining`] and
+    /// [`Self::build_work_from_gear`]** — the three are read as one set, so a date from one band's
+    /// queue beside another band's position would be two answers pretending to be one.
+    ///
+    /// **Without it a chained date is a number with no explanation.** The whole builders pool goes
+    /// on the head of a queue, so an entry's turns are everything above it plus its own span — and
+    /// the player cannot tell forty turns of work from eight turns of work behind four other jobs.
+    ///
+    /// Transient per-turn scratch on [`Self::build_turns_remaining`]'s cycle, and for its reason.
+    pub build_queue_position: i32,
     /// **The named plant this patch is COMMITTED to** — a `flora_config.json` species key, or `None`
     /// for the **wild mixed basket** (`docs/plan_flora_roster.md` §4.2/§4.3). Stored as the config
     /// key rather than the display name because the key is what `FloraConfig::species` and
@@ -365,9 +379,11 @@ pub struct ForagePatch {
 /// # AND IT RETIRED `abandon_improvement`
 ///
 /// That command existed to let a player walk away from a 25-turn commitment while the *verb* was the
-/// commitment. The commitment is the **hands** now — you walk away by unstaffing the builders
-/// (`cultivate <faction> <x> <y> 0`) — and a command that cleared a *derived* value would either do
-/// nothing or fight the derivation. There is no stored authority left for it to clear.
+/// commitment. A command that cleared a *derived* value would either do nothing or fight the
+/// derivation, and there is no stored authority left for it to clear. **The undo is its own verb
+/// now**: `unqueue <faction> <source…>` withdraws the declaration and leaves the row, the take crew,
+/// the kit and the meter alone, and `abandon` puts the whole holding down
+/// (`docs/plan_standing_upkeep.md` §2.5).
 ///
 /// **The declaration is honoured only at a zero meter**, which is what makes a spent one inert: once
 /// the first accrual lands, the meter answers and the stale declaration is filtered out here rather
@@ -428,6 +444,7 @@ impl ForagePatch {
             field_retain_bar: RUNG_UNSTARTED,
             build_turns_remaining: None,
             build_work_from_gear: NO_BUILD_GEAR,
+            build_queue_position: crate::intensification::NOT_IN_ANY_BUILD_QUEUE,
             species: None,
             owner: None,
             neglect_turns: NEGLECT_NONE,
@@ -2103,6 +2120,7 @@ pub fn advance_cultivation(
         // (Logistics runs before Population).
         patch.build_turns_remaining = None;
         patch.build_work_from_gear = NO_BUILD_GEAR;
+        patch.build_queue_position = crate::intensification::NOT_IN_ANY_BUILD_QUEUE;
         // **And this turn's supply**, on the same cycle and for the same reason: it describes the
         // keepers that held the patch, so a patch whose keepers have gone must stop reporting what
         // they paid. Clearing it is also what re-arms this pass — next turn's shortfall is the whole
@@ -3884,7 +3902,7 @@ mod tests {
     /// fullness test moved *who* answers for a meter; it did not make the arm a step function.
     ///
     /// Asserted at the seam rather than through the system because a build's *accrual* scales with
-    /// its own crew, so a system-level comparison would confound the two.
+    /// the band's **builders pool**, so a system-level comparison would confound the two.
     #[test]
     fn a_half_staffed_keeping_is_half_short_on_the_meter_it_is_raising() {
         let forage = test_forage_config();

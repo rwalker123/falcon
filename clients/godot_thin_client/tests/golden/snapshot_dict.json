@@ -430,6 +430,7 @@
   "forage_patches": [
     {
       "biomass": 69.25,
+      "build_queue_position": 117,
       "build_turns_remaining": 171,
       "build_work_from_gear": 76.230003,
       "build_work_per_worker_turn": 70.059998,
@@ -563,6 +564,7 @@
     },
     {
       "biomass": 74.910004,
+      "build_queue_position": 144,
       "build_turns_remaining": 172,
       "build_work_from_gear": 25.290001,
       "build_work_per_worker_turn": 23.07,
@@ -837,6 +839,7 @@
       "attack": 84.400002,
       "biomass": 109.120003,
       "body_mass": 32.599998,
+      "build_queue_position": 84,
       "build_turns_remaining": 128,
       "build_work_from_gear": 61.02,
       "build_work_per_worker_turn": 39.950001,
@@ -945,6 +948,7 @@
       "attack": 61.459999,
       "biomass": 44.529999,
       "body_mass": 55.09,
+      "build_queue_position": 153,
       "build_turns_remaining": 111,
       "build_work_from_gear": 23.51,
       "build_work_per_worker_turn": 104.040001,
@@ -2056,7 +2060,6 @@
           "floor": 110.599998,
           "fodder_yield": 46.790001,
           "improvement": "populations[0].labor_assignments[0].improvement",
-          "improvement_workers": 67,
           "kind": "populations[0].labor_assignments[0].kind",
           "kit_id": "populations[0].labor_assignments[0].kit_id",
           "material_yield": [
@@ -2088,7 +2091,6 @@
           "floor": 48.369999,
           "fodder_yield": 0.25,
           "improvement": "populations[0].labor_assignments[1].improvement",
-          "improvement_workers": 180,
           "kind": "populations[0].labor_assignments[1].kind",
           "kit_id": "populations[0].labor_assignments[1].kit_id",
           "material_yield": [
@@ -2621,7 +2623,6 @@
           "floor": 71.43,
           "fodder_yield": 0.66,
           "improvement": "populations[1].labor_assignments[0].improvement",
-          "improvement_workers": 74,
           "kind": "populations[1].labor_assignments[0].kind",
           "kit_id": "populations[1].labor_assignments[0].kit_id",
           "material_yield": [
@@ -2653,7 +2654,6 @@
           "floor": 95.239998,
           "fodder_yield": 2.93,
           "improvement": "populations[1].labor_assignments[1].improvement",
-          "improvement_workers": 25,
           "kind": "populations[1].labor_assignments[1].kind",
           "kit_id": "populations[1].labor_assignments[1].kit_id",
           "material_yield": [

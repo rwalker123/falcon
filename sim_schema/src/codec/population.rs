@@ -257,16 +257,12 @@ fn create_populations<'a>(
                                 // cash Field or an inedible quarry pays into. Appended last. An
                                 // EMPTY vector is "no row", never "zero".
                                 materialYield: Some(material_yield),
-                                // THE BUILD'S OWN CREW (`docs/plan_standing_upkeep.md` §2.2) —
-                                // `workers` above is the TAKE crew. Without it the client can SEND
-                                // the build allocation and never read it back, which clamps its
-                                // steppers to a band's idle workers and leaves a fully-allocated
-                                // band unable to re-state a crew it has. Appended last.
-                                //
-                                // `maintainWorkers` beside it is a `(deprecated)` slot: the keeping
-                                // is a band-level standing role now (§2.5) and arrives as an
-                                // ordinary row of this list.
-                                improvementWorkers: assignment.improvement_workers,
+                                // `improvementWorkers` and `maintainWorkers` are both `(deprecated)`
+                                // slots and are no longer written: the build and the keeping are
+                                // band-level standing roles (`docs/plan_standing_upkeep.md` §2.5)
+                                // and arrive as ordinary rows of this list. A reader that still
+                                // inserts either key is publishing a per-source crew the sim has
+                                // stopped having.
                                 // THE CROP THIS CREW ASKED FOR — the player's stated intent, which
                                 // the patch's own `committedSpecies` cannot stand in for: that one
                                 // is set only once a crew has worked the ground. Appended last.

@@ -687,31 +687,43 @@ func _forage_open_button() -> Button:
 	return null
 
 
-## **WALKING AWAY IS UNSTAFFING THE BUILDERS, and this drives that whole path** — the successor to
-## `_assert_abandon_emits`, which unchecked a running box and read the line through the retired
-## `Main.format_abandon_improvement`.
+## **A RUNNING BUILD CANNOT BE WITHDRAWN FROM THE SHEET, AND `unqueue` IS THE GRAMMAR THAT COULD**
+## — the successor to `_assert_abandon_emits` (which unchecked a running box and read the retired
+## `Main.format_abandon_improvement`) and then to the crew-zero form.
 ##
-## `abandon_improvement` is gone (`docs/plan_standing_upkeep.md` §2.4): the build verb is derived from
-## the meter, so there is no stored intent for a command to clear and the running control is a state
-## Label with nothing to uncheck. What a player does instead is take the BUILD crew to zero, and the
-## set verb carries that count — `cultivate <faction> <x> <y> 0`.
+## **THE CREW-ZERO FORM WAS THE DEFECT, NOT THE FIX** (`docs/plan_standing_upkeep.md` §2.5).
+## `cultivate <f> <x> <y> 0` *set* the declaration with nobody on it, so the source went on reading as
+## building, permanently, with no undo — and the trailing token is a PARSE ERROR now.
 ##
-## It asserts the shape FIRST, because a control that had stayed a checkbox would make the rest of the
-## probe meaningless: the running face must be a `Label` and must NOT be a `CheckBox`.
-func _assert_walk_away_emits(kind: String, improvement: String, want_line: String) -> void:
+## **SO THIS PROBE MAKES TWO CLAIMS, and the pair is what it is for.**
+##
+## (1) **THE RUNNING CONTROL IS A `Label`, and a running build therefore sends NOTHING.** The verb is
+## DERIVED from the meter, so a source with work banked answers its own rung whatever the composition
+## says — clearing the composed improvement cannot express a withdrawal there, and the commit must
+## emit no improvement command and no `unqueue`. Withdrawing work already banked is `abandon`, which
+## is command-line only in this slice.
+##
+## (2) **THE WITHDRAWAL'S OWN LINE, through `Main.format_unqueue`.** `unqueue` names a SOURCE, and its
+## two shapes are told apart exactly as the sim's parser tells them apart — two integer tokens are a
+## TILE, one token is a HERD id. That split is what a shared branch gets wrong, and it is the reason
+## this probe is worth making on both webs. The DECLARED control's own untick is driven where a
+## declared rung is actually staged (`chapters/improvements.gd`'s `tile_build_unstaffed`).
+func _assert_walk_away_emits(kind: String, improvement: String, want_line: String,
+		payload: Dictionary) -> void:
 	var sheet := _hud._drawercompose._compose_sheet
 	var control := ForageFx.find_improvement_control(sheet, improvement)
 	_assert_hud("a running %s build is a STATE, not a checkbox to uncheck" % kind,
 		control is Label and not (control is CheckBox))
 	var captured: Array[Dictionary] = []
-	var sink := func(payload: Dictionary) -> void: captured.append(payload)
+	var sink := func(p: Dictionary) -> void: captured.append(p)
 	_hud.improvement_requested.connect(sink)
-	# Take the builders off it, the way the stepper does, then re-render so the commit closure is built
-	# against the composition it is about to send.
+	_hud.unqueue_requested.connect(sink)
+	# Clear the composition and re-render, so the commit closure is built against it. On a RUNNING
+	# build the derivation puts the verb straight back, which is exactly the claim below.
 	if kind == SourceForecast.LABOR_KIND_FORAGE:
-		_hud._compose.set_forage_build_count(0)
+		_hud._compose.set_forage_improvement(SourceForecast.IMPROVEMENT_NONE)
 	else:
-		_hud._compose.set_hunt_build_count(0)
+		_hud._compose.set_hunt_improvement(SourceForecast.IMPROVEMENT_NONE)
 	_hud._drawercompose.refresh_compose_sheet()
 	await _settle()
 	# By META, not by face: the forage commit's verb follows the patch's rung (`Forage` on wild ground,
@@ -720,17 +732,17 @@ func _assert_walk_away_emits(kind: String, improvement: String, want_line: Strin
 	var commit := Q.compose_commit_button(sheet)
 	if commit == null:
 		_hud.improvement_requested.disconnect(sink)
+		_hud.unqueue_requested.disconnect(sink)
 		_assert_hud("walk away (%s): the sheet's commit button" % kind, false)
 		return
 	commit.pressed.emit()
 	_hud.improvement_requested.disconnect(sink)
-	if captured.is_empty():
-		_hud._band_labor._pending_labor.clear()
-		_assert_hud("walk away (%s): unstaffing a running build emits a command" % kind, false)
-		return
-	var line := String(MAIN_SCRIPT.format_improvement(captured[0]).get("line", ""))
+	_hud.unqueue_requested.disconnect(sink)
+	_assert_hud("a RUNNING %s build sends no improvement order — its meter is the declaration" % kind,
+		captured.is_empty())
+	var line := String(MAIN_SCRIPT.format_unqueue(payload).get("line", ""))
 	print("ui_preview: walk away %s -> %s" % [kind, line])
-	_assert_hud("unstaffing a running %s build transmits `%s`" % [kind, want_line],
+	_assert_hud("withdrawing a %s declaration would transmit `%s`" % [kind, want_line],
 		line == want_line)
 	# Committing also fired `assign_labor`, whose OPTIMISTIC pending entry would tint every later
 	# frame's rows amber. Drop it — the probe is about the command, not about the overlay.

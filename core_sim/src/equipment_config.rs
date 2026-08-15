@@ -839,18 +839,31 @@ pub enum KitJob {
     /// **The animal web's standing keepers** — the `husbandry` role's job, the twin of
     /// [`KitJob::Agriculture`] and separate from `Hunt` for its reason.
     Husbandry,
+    /// **THE BAND'S BUILDERS** — the `builders` role's job (`docs/plan_standing_upkeep.md` §2.5).
+    ///
+    /// ⛔ **A kit that declares [`EquipmentStat::BuildWork`] must name this job**, or the pool it is
+    /// meant to equip cannot be sent out with it. The build's gear offset used to ride the *source
+    /// row's* kit — a `Corral` was priced off the hunt row's husbandry gear — because the builders
+    /// stood on the tile. They stand on their own row now, so the offset is read off that row like
+    /// every other role's, and a kit carrying hurdles that does not list `builders` silently offsets
+    /// nothing.
+    ///
+    /// **One job for both webs**, matching the role: a build is a job rather than a standing charge,
+    /// and the queue already says which web is being worked.
+    Builders,
 }
 
 impl KitJob {
     /// Every job, for the validations and the wire — one list, so a new job cannot be validated in
     /// three places and forgotten in a fourth.
-    pub const ALL: [KitJob; 6] = [
+    pub const ALL: [KitJob; 7] = [
         KitJob::Hunt,
         KitJob::Forage,
         KitJob::Scout,
         KitJob::Warrior,
         KitJob::Agriculture,
         KitJob::Husbandry,
+        KitJob::Builders,
     ];
 
     /// The wire/command token for this job — the same string `assign_labor`'s role token uses (and
@@ -864,6 +877,7 @@ impl KitJob {
             KitJob::Warrior => "warrior",
             KitJob::Agriculture => "agriculture",
             KitJob::Husbandry => "husbandry",
+            KitJob::Builders => "builders",
         }
     }
 }
@@ -901,6 +915,12 @@ pub struct DefaultKitsConfig {
     pub agriculture: String,
     /// The animal keeper's default — see [`Self::agriculture`].
     pub husbandry: String,
+    /// **The builders' default: nothing.** The one item declaring
+    /// [`EquipmentStat::BuildWork`] rides the `husbandry` kit, which now lists `builders` among its
+    /// jobs — but *defaulting* the pool onto it would hand a plant build an animal-handling offset
+    /// no forage crew has ever had. So the role opens bare, like the two keeping roles, and naming
+    /// the husbandry kit on it is how the player brings the hurdles.
+    pub builders: String,
 }
 
 /// **What the kit is being resolved AGAINST** — the argument a mass-bounded effect is tested on.
@@ -1551,6 +1571,7 @@ impl EquipmentConfig {
             KitJob::Warrior => &self.default_kits.warrior,
             KitJob::Agriculture => &self.default_kits.agriculture,
             KitJob::Husbandry => &self.default_kits.husbandry,
+            KitJob::Builders => &self.default_kits.builders,
         }
     }
 
@@ -3599,7 +3620,7 @@ mod tests {
                     { "id": "big_game", "display_name": "A", "jobs": ["hunt"], "uses": [] },
                     { "id": "big_game", "display_name": "B", "jobs": ["hunt"], "uses": [] }
                 ],
-                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game" },
+                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -3609,7 +3630,7 @@ mod tests {
                 r#""kits": [
                     { "id": "big_game", "display_name": "A", "jobs": [], "uses": [] }
                 ],
-                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game" },
+                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -3619,7 +3640,7 @@ mod tests {
                 r#""kits": [
                     { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": [] }
                 ],
-                "default_kits": { "hunt": "ghost", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game" },
+                "default_kits": { "hunt": "ghost", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -3630,7 +3651,7 @@ mod tests {
                     { "id": "big_game", "display_name": "A", "jobs": ["hunt"], "uses": [] },
                     { "id": "gathering", "display_name": "B", "jobs": ["forage"], "uses": [] }
                 ],
-                "default_kits": { "hunt": "gathering", "forage": "gathering", "scout": "gathering", "warrior": "gathering", "agriculture": "gathering", "husbandry": "gathering" },
+                "default_kits": { "hunt": "gathering", "forage": "gathering", "scout": "gathering", "warrior": "gathering", "agriculture": "gathering", "husbandry": "gathering", "builders": "gathering" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -3660,7 +3681,7 @@ mod tests {
             r#""kits": [
                 { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": ["net_kit"] }
             ],
-            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game" },
+            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -3688,6 +3709,49 @@ mod tests {
         )
     }
 
+    /// ⛔ **EVERY KIT THAT SUPPLIES `build_work` MUST OFFER THE `builders` JOB** — the silent
+    /// regression `docs/plan_standing_upkeep.md` §2.5 opens the door to.
+    ///
+    /// A build's gear offset used to ride the **source row's** kit, because the builders stood on
+    /// the tile: a `Corral` was priced off whatever the hunt row was carrying. The builders are
+    /// their own band-level role now, so the offset is read off **their** row — and a kit whose
+    /// items declare `EquipmentStat::BuildWork` but whose `jobs` list omits `builders` cannot be
+    /// **named** on that role at all. `assign_labor <f> <b> builders <n> kit <id>` would be refused,
+    /// and every animal build would silently lose its hurdles offset for the rest of the game.
+    ///
+    /// **It is a wiring check, not a tuning one**: what it asserts is that the offer exists, never
+    /// how large the offset is.
+    #[test]
+    fn every_kit_that_supplies_build_work_offers_the_builders_job() {
+        let config = EquipmentConfig::builtin();
+        let fresh = crate::components::BandEquipment::start_stocked(&config);
+        let mut offered = 0;
+        for kit in &config.kits {
+            let choice = config
+                .kit(&kit.id)
+                .expect("the roster resolves its own entries");
+            if config.build_work_per_worker(&choice, &fresh) <= NO_BUILD_GEAR_DECLARED {
+                continue;
+            }
+            offered += 1;
+            assert!(
+                kit.jobs.contains(&KitJob::Builders),
+                "'{}' supplies build work, so the builders must be able to be sent out with it — \
+                 without `builders` in its jobs the pool cannot name it and the offset is dead \
+                 config",
+                kit.id
+            );
+        }
+        assert!(
+            offered > 0,
+            "**LIVENESS**: the shipped roster must carry at least one kit that supplies build work, \
+             or this guard holds over an empty loop"
+        );
+    }
+
+    /// What a kit carrying nothing that helps a build takes off a job — `intensification`'s neutral.
+    const NO_BUILD_GEAR_DECLARED: f32 = 0.0;
+
     /// A minimal **valid** roster, so a fixture testing one of the three *component* blocks does not
     /// have to restate the shipped kit list to get past the roster's own validation.
     /// **A BAND-WIDE role's weapon may not be bounded by body mass, because there is nothing on the
@@ -3710,9 +3774,9 @@ mod tests {
             },
             "kits": [
                 { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": ["spears"] },
-                { "id": "warrior", "display_name": "W", "jobs": ["warrior", "scout", "agriculture", "husbandry"], "uses": ["snares"] }
+                { "id": "warrior", "display_name": "W", "jobs": ["warrior", "scout", "agriculture", "husbandry", "builders"], "uses": ["snares"] }
             ],
-            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "warrior", "warrior": "warrior", "agriculture": "warrior", "husbandry": "warrior" },
+            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "warrior", "warrior": "warrior", "agriculture": "warrior", "husbandry": "warrior", "builders": "warrior" },
             "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }
@@ -3732,9 +3796,9 @@ mod tests {
     const ROSTER_JSON: &str = r#""kits": [
                 { "id": "big_game", "display_name": "Stalking kit", "jobs": ["hunt"], "uses": ["spears", "sled"] },
                 { "id": "gathering", "display_name": "Gathering kit", "jobs": ["forage"], "uses": ["baskets"] },
-                { "id": "none", "display_name": "No kit", "jobs": ["hunt", "forage", "scout", "warrior", "agriculture", "husbandry"], "uses": [] }
+                { "id": "none", "display_name": "No kit", "jobs": ["hunt", "forage", "scout", "warrior", "agriculture", "husbandry", "builders"], "uses": [] }
             ],
-            "default_kits": { "hunt": "big_game", "forage": "gathering", "scout": "none", "warrior": "none", "agriculture": "none", "husbandry": "none" },
+            "default_kits": { "hunt": "big_game", "forage": "gathering", "scout": "none", "warrior": "none", "agriculture": "none", "husbandry": "none", "builders": "none" },
             "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#;

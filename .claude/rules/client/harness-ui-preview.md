@@ -565,24 +565,25 @@ built from the code under test can only agree with itself. **They are the SIM's 
 from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
 payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-### The compose sheet's SHARED POOL, its reset on close, and the unstaffed build
+### The compose sheet's reset on close, and the unstaffed build
 
-Four frames and twenty `PASS` in `chapters/improvements.gd`, appended last — the two playtest bugs
-and their readouts. The behaviour is `labor-ui.md`'s and `selection-card.md`'s; what belongs here is
-the shape of the drive.
+Two frames in `chapters/improvements.gd`, appended last. The behaviour is `labor-ui.md`'s and
+`selection-card.md`'s; what belongs here is the shape of the drive.
 
-- **`compose_pool_take_full` / `compose_pool_take_freed` are an A/B on ONE band, and the PRECONDITION
-  is `idle_workers == 0`.** With spare hands both steppers are live for reasons that have nothing to
-  do with each other, so the state would pass against the per-activity ceilings it exists to replace.
-  The take crew is `ForageFx.CULTIVATE_SIM_WORKERS_NEEDED` — the patch's OWN max-useful, read off the
-  sim's published count rather than picked — because a crew above it is clamped away by the
-  usefulness ceiling and the state stops being about the pool at all.
-- **The ceiling is finished by PRESSING the builders `+`**, so the clamp in the sheet's own handler is
-  what answers rather than a model write. **Each press rebuilds the controls and `queue_free`s the old
-  row, which stays in the tree until the frame ends** — so the settle between presses is load-bearing:
-  without it the second press lands on the freed row and the count never moves.
-  `Readout.build_crew_value` / `build_crew_can_add` / `build_crew_plus` are the readers that reach it
-  (`Readout.stepper_value` takes the FIRST `−` on the sheet, which is the take crew's).
+**RETIRED — `compose_pool_take_full` / `compose_pool_take_freed`, with the shared pool they staged**
+(`docs/plan_standing_upkeep.md` §2.5). They were an A/B on ONE band at `idle_workers == 0` proving
+that the take and build steppers drew on ONE pool; there is one stepper on a sheet now, so the claim
+has no second control to make. `Readout.build_crew_value` / `build_crew_can_add` / `build_crew_plus`
+went with them, and **`Readout.stepper_count` replaced the set**: the surviving claim is the ABSENCE
+of any build control, asserted by COUNT rather than by a retired meta, since a re-added row would
+carry no tag and a tag search would pass vacuously.
+
+**Its one lesson outlived it, and applies to any press-driven state here.** A press rebuilds the
+controls and `queue_free`s the old row, **which stays in the tree until the frame ends** — so a settle
+between presses is load-bearing (without it the second press lands on the freed row and nothing
+moves), and any node COUNT taken in that window double-counts. `Readout.stepper_count` skips a control
+that `is_queued_for_deletion()` for exactly that reason; it read 3 steppers on a one-stepper sheet
+before it did.
 - **`compose_reopen_reseeds` drives the close through the real path** (`close_compose_sheet` → the
   sheet's `closed` → `_on_compose_sheet_closed`), because the reset rides that signal; poking
   `ComposeState` would assert the harness's own write. The PAIR is the claim — the edit must be
@@ -602,7 +603,7 @@ stopped being about an over-geared BUILD). Staged rather than worked around — 
 about six armed keepers, and a band that cannot field six beside its hunters is not the band the claim
 is about.
 
-**A clean run is 328 frames / 1033 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
+**A clean run is 332 frames / 1075 `PASS`, exit 0. RE-MEASURED, never summed** — this figure moved
 three times in one arc and once across a merge, and a running total kept by addition would be wrong
 by now. (The measurement above came back FIVE higher than the 895 recorded before it while the arc
 #527 review added exactly ONE claim — the `Carrying:` mass one. Four `PASS`es had accumulated
@@ -628,10 +629,11 @@ keeping.
 A/B plus a drag: `improvement_turns_lone_crew` / `improvement_turns_full_crew` (one patch, one floor,
 **BUILD** crews 1 and 4 — `≈20 turns` against `≈5 turns`) and `improvement_turns_learning_floor` (the
 same crew mid-DRAG at the Learning preset), all three in `chapters/improvements.gd`.
-**THE STEPPER THE A/B MOVES IS THE BUILD'S** (`docs/plan_standing_upkeep.md` §2.2) — the take crew no
-longer prices a build at all — and it is dialled AFTER the first open, the `_compose_herd` re-open
-contract in the forage web's form: a source change re-seeds the composition, so a build crew set
-before the sheet opens on that tile is thrown away and the face renders with no clause at all.
+**WHAT THE A/B MOVES IS THE BAND'S `builders` POOL** (`docs/plan_standing_upkeep.md` §2.5) — the take
+crew has not priced a build since §2.2, and the build's own stepper is retired with the per-source
+crew, so the harness staffs the ROLE through `BandFx.staff_builders`. **That helper covers
+`player_band()` as well as `player_bands()`**: several chapters set the single-band member alone, and
+a helper walking only the list was a silent no-op on every one of them.
 **The drag frame's claim INVERTED with the floor's retirement**: it used to assert a deeper floor
 quoted a FASTER build (`learn_multiplier` scaled the accrual); a build crew is not pulling on the
 source, so the same builders now read the SAME estimate at both floors, and the non-vacuity companion
@@ -1140,9 +1142,10 @@ and `labor-ui.md`'s; what belongs here is the shape of the drive and the fixture
 **THE FIXTURES GREW THE RUNGS' OWN RATES, AND TWO STATES HAD TO BE RE-STAFFED FOR IT.**
 `BaseFx.price_plant_build` now sets `patch_cultivation_upkeep_demand` / `patch_field_upkeep_demand`
 and `HerdFx.price_animal_build` takes the animal rate as a PARAMETER — the animal rungs both declare
-`1.0 × source_load`, so a warren's rate is not the reference herd's. With the rate a real term of the
-pace (`crew − rate`), `improvement_stressed_advances` staffed THREE builders where it staffed one and
-the kit-swap counts moved 17/11/9/4 → 25/17/11/6.
+`1.0 × source_load`, so a warren's rate is not the reference herd's. **While** the rate was a real
+term of the pace — it was briefly `crew − rate`, and is not now —
+`improvement_stressed_advances` staffed THREE builders where it staffed one and the kit-swap counts
+moved 17/11/9/4 → 25/17/11/6.
 
 **§4.6a UNDID BOTH OF THOSE, WHICH IS WHY THIS BLOCK IS WORTH READING TWICE.** The rate stopped being
 a build term, so the fixtures' rates stopped pacing anything and both re-staffings reverted: the
@@ -1167,12 +1170,13 @@ COLOUR"; what belongs here is the shape of the drive and the two re-pointings it
   `effective_idle` is 0*. Three claims rather than one because they are one claim each about the three
   ways it used to fail: the wrong node type (a `Label` has no toggle), an unticked box (which would
   read as no declaration at all), and a disabled one (which cannot be undone).
-- **`compose_offer_no_hands` stages a SECOND patch, and that is what makes the pool empty.** The
-  band's every hand is on tile A, so a sheet opened over an UNWORKED tile B has `crew_pool == 0` — the
-  sheet's build pool being the SOURCE's pool less the composed take, not the band's idle count.
-  Re-using tile A would stage a source whose own crew is in the pool and the box would rightly stay
-  live. Five claims: the precondition (`effective_idle == 0`), still OFFERED (refused, not hidden),
-  DISABLED, the reason rendered, and the NEGATIVE that no BUILDERS stepper grows beneath a dead offer.
+- **`compose_offer_no_hands` KEPT ITS NAME AND ITS FIXTURE AND ASSERTS THE INVERSE** (§2.5). It staged
+  a band whose every hand is on tile A and opened a sheet over an UNWORKED tile B, so the build pool
+  was empty and the box greyed out with its reason. **Declaring costs no hands now** — ticking appends
+  a queue entry — so the state it stages has no refusal left in it, and what it asserts is that the box
+  is OFFERED, LIVE, and mounts no builders control of any kind. The precondition
+  (`effective_idle == 0`) is what keeps that a claim rather than a tautology: a fixture that had
+  stopped being hand-starved would pass it for the wrong reason.
 - **The three INKS are asserted as a set across three frames**, read as the RESOLVED font colour
   through `ForageFx.improvement_face_color` — a `Color` reader, because the pace has three states and
   the two `∞` ones read alike through the warned/not-warned bool it replaced (which survives, written
@@ -1185,9 +1189,11 @@ COLOUR"; what belongs here is the shape of the drive and the two re-pointings it
   the mechanism under it is gone: the keeping pool owes the rate at every fullness, so no rung declares
   a build-crew bar. `ForageFx.build_work_floor` / `build_work_floor_tooltip` and
   `BUILD_WORK_FLOOR_ABSENT` are deleted with it, since a scanner for a meta nothing stamps answers
-  `absent` on every sheet in the game — an assertion that cannot fail. The claim is paired with *the
-  row still mounts* (`ForageFx.build_crew_row`), or "states no threshold" passes on a sheet with no
-  BUILDERS row at all.
+  `absent` on every sheet in the game — an assertion that cannot fail. It was paired with *the row
+  still mounts* (`ForageFx.build_crew_row`), or "states no threshold" passed on a sheet with no
+  BUILDERS row at all. **§2.5 retired the row itself**, so that pairing is gone with it and the
+  surviving structural claim is the opposite one — `Readout.stepper_count` pinning the sheet at ONE
+  stepper, which is what catches a build control re-added under any meta, any label or none.
 - **TWO EXISTING CLAIMS WERE RE-POINTED, and both were asserting the bug.**
   `improvement_turns_*`'s *"amber while the crew is under it, and quiet once it is cleared"* was about
   the deleted note. And `herd_compose_reopen_fresh`'s precondition asserted that a WILD herd with Tame

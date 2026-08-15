@@ -106,10 +106,10 @@ pub use combat_config::{
     BUILTIN_COMBAT_CONFIG,
 };
 pub use components::{
-    available_workers, floor_is_valid, floor_overdraws, raid_is_recurring, ActivityCrew, BandBench,
-    BandEquipment, BandId, BandTravel, BandWorkforce, BatchGrade, DeathCause,
-    DemographicFlowAccumulator, DrawnInputs, DrawnMaterial, ElementKind, EquipmentBatch,
-    Expedition, ExpeditionMission, ExpeditionPhase, Improvement, KnowledgeFragment,
+    available_workers, floor_is_valid, floor_overdraws, raid_is_recurring, BandBench,
+    BandEquipment, BandId, BandTravel, BandWorkforce, BatchGrade, BuildJob, BuildQueueEntry,
+    BuildSource, DeathCause, DemographicFlowAccumulator, DrawnInputs, DrawnMaterial, ElementKind,
+    EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase, Improvement, KnowledgeFragment,
     LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch, MaterialDraw,
     MoraleCause, PendingMigration, PopulationCohort, PowerNode, ResidentBand, Settlement,
     SourceYield, StartingUnit, Tile, TownCenter, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER,

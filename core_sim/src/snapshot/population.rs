@@ -15,16 +15,14 @@ pub(crate) fn labor_assignment_to_state(
     assignment: &LaborAssignment,
     yields: &SourceYield,
     equipment: &crate::equipment_config::EquipmentConfig,
+    // **The RESOLVED job this row's source is being raised on** — see [`resolved_build_job`]. Passed
+    // in rather than derived here because the resolution needs both webs' registries, which a row
+    // has no business holding.
+    build_job: String,
 ) -> LaborAssignmentState {
     let mut state = LaborAssignmentState {
         kind: assignment.target.kind().to_string(),
         workers: assignment.workers,
-        // **The build's own crew** (`docs/plan_standing_upkeep.md` §2.2), published verbatim beside
-        // the take's. It is the player's own number rather than anything derived, and the client
-        // cannot reconstruct it — so without it the client can send a build crew and never read back
-        // the one a band already has. The **keeping** crew is not here any more: it is a band-level
-        // standing role (§2.5) and arrives as its own row of this list.
-        improvement_workers: assignment.improvement_workers,
         actual_yield: yields.actual,
         sustainable_yield: yields.sustainable,
         workers_needed: yields.workers_needed,
@@ -54,12 +52,13 @@ pub(crate) fn labor_assignment_to_state(
         // real distribution; a resolved row carries the point it paid.
         actual_yield_low: yields.range.low,
         actual_yield_high: yields.range.high,
-        // **The second axis** (issue #442) — what this crew is building, `""` for a pure harvest.
-        // Written for every kind, because a band-wide role simply never carries one.
-        improvement: assignment
-            .improvement
-            .map(|improvement| improvement.as_str().to_string())
-            .unwrap_or_default(),
+        // **WHAT IS BEING RAISED ON THIS SOURCE**, `""` for a row with nothing queued. Written for
+        // every kind, because a band-wide role never carries one.
+        //
+        // **It is DERIVED at capture from the band's build queue** (`docs/plan_standing_upkeep.md`
+        // §2.4), which is the single authority: the row itself stopped carrying a verb when the
+        // per-source build crew retired, so there is no second store for this to drift from.
+        improvement: build_job,
         // **The kit this crew works under**, RESOLVED — the row's yields are priced at exactly it,
         // so the wire states the kit rather than "the player named none". **Every role now names
         // one**, including the two band-wide ones: this used to publish `""` for Scout/Warrior
@@ -82,12 +81,13 @@ pub(crate) fn labor_assignment_to_state(
             state.fauna_id = fauna_id.clone();
             state.floor = *floor;
         }
-        // The four band-wide roles carry no source and no floor: their whole content is the head
+        // The five band-wide roles carry no source and no floor: their whole content is the head
         // count already on the row.
         LaborTarget::Scout
         | LaborTarget::Warrior
         | LaborTarget::Agriculture
-        | LaborTarget::Husbandry => {}
+        | LaborTarget::Husbandry
+        | LaborTarget::Builders => {}
     }
     state
 }
@@ -282,6 +282,82 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// per-recipe plan resolved once for the whole capture, and this faction's known crafts. See
     /// `snapshot::crafting` for why the recipe-only half is hoisted out of the per-band pass.
     pub(crate) craft_inputs: &'a crate::snapshot::crafting::BandCraftInputs<'a>,
+    /// **What each queued source is actually being raised** — the three the `improvement` token is
+    /// derived from at capture (`docs/plan_standing_upkeep.md` §2.4: the sim answers, the client does
+    /// no arithmetic). A declaration answers only for a meter at **zero**, so the token a row
+    /// publishes has to be resolved against the ground, not read off the entry.
+    pub(crate) build_sources: &'a BuildSourceInputs<'a>,
+}
+
+/// The two webs' registries, for resolving a queue entry's **live** rung. No ladder: both
+/// `patch_build_verb` and `herd_build_verb` derive the rung from the source's own meters, so the
+/// config has nothing to say here.
+pub(crate) struct BuildSourceInputs<'a> {
+    pub(crate) forage: &'a crate::forage::ForageRegistry,
+    pub(crate) herds: &'a crate::fauna::HerdRegistry,
+}
+
+/// **THE JOB TOKEN A ROW PUBLISHES** — the rung this band's queue entry for `source` is actually
+/// raising, or `""` when the band has no entry for it.
+///
+/// **Resolved, not declared.** `BuildJob::Rung` is the player's declaration and it answers only
+/// while the meter it names is at zero; `patch_build_verb` / `herd_build_verb` derive the live rung
+/// from the meters otherwise. An entry on ground that has moved on therefore publishes `""` — it is
+/// **dead**, which is what the countdown's `-1` beside it says too.
+///
+/// A ring names no rung (a built pen has no meter for a verb to name), so it publishes the command's
+/// own name.
+fn resolved_build_job(
+    target: &LaborTarget,
+    allocation: &LaborAllocation,
+    sources: &BuildSourceInputs<'_>,
+) -> String {
+    let Some(source) = crate::components::BuildSource::of(target) else {
+        return String::new();
+    };
+    let Some(entry) = allocation.build_queue_entry(&source) else {
+        return String::new();
+    };
+    match (&entry.declared, &source) {
+        (crate::components::BuildJob::ExtendPen, _) => {
+            crate::systems::labor::EXTEND_PEN_ACTION.to_string()
+        }
+        (
+            crate::components::BuildJob::Rung(declared),
+            crate::components::BuildSource::Patch(tile),
+        ) => sources
+            .forage
+            .patch(*tile)
+            .and_then(|patch| crate::forage::patch_build_verb(patch, Some(*declared)))
+            .map(|improvement| improvement.as_str().to_string())
+            .unwrap_or_default(),
+        (crate::components::BuildJob::Rung(declared), crate::components::BuildSource::Herd(id)) => {
+            sources
+                .herds
+                .find(id)
+                .and_then(|herd| crate::fauna::herd_build_verb(herd, Some(*declared)))
+                .map(|improvement| improvement.as_str().to_string())
+                .unwrap_or_default()
+        }
+    }
+}
+
+/// **EMPTY REGISTRIES, for a fixture that asserts on a band's derived readouts** — the two webs'
+/// `BuildSourceInputs` when no source is seeded.
+///
+/// A queue entry on a source neither registry carries resolves to `""`, which is the honest answer:
+/// the sim cannot say what is being raised on ground it does not have. Fixtures that assert on the
+/// **job token** seed real registries instead.
+#[cfg(test)]
+pub(crate) fn empty_build_sources() -> &'static BuildSourceInputs<'static> {
+    use std::sync::OnceLock;
+    static FORAGE: OnceLock<crate::forage::ForageRegistry> = OnceLock::new();
+    static HERDS: OnceLock<crate::fauna::HerdRegistry> = OnceLock::new();
+    static INPUTS: OnceLock<BuildSourceInputs<'static>> = OnceLock::new();
+    INPUTS.get_or_init(|| BuildSourceInputs {
+        forage: FORAGE.get_or_init(Default::default),
+        herds: HERDS.get_or_init(Default::default),
+    })
 }
 
 pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationCohortState {
@@ -308,6 +384,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         kit_levers,
         bench,
         craft_inputs,
+        build_sources,
     } = inputs;
     // **The minimal TOE, resolved for the wire.** An absent component means the ledger was never
     // built, which reads as **start-stocked** — the same fallback `advance_labor_allocation`,
@@ -567,6 +644,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                         assignment,
                         a.last_yields.get(i).unwrap_or(&NO_YIELD),
                         kit_levers.config,
+                        resolved_build_job(&assignment.target, a, build_sources),
                     )
                 })
                 .collect()
@@ -1076,7 +1154,7 @@ pub(crate) fn snapshot_demographics(
 mod tests {
     use super::*;
     use crate::expedition_config::ExpeditionConfig;
-    use crate::intensification::NO_CREW_ON_THIS_ACTIVITY;
+
     // Test-only since the restore path that shared them was deleted.
     use crate::components::{
         ExpeditionPhase, FertilityFactors, LocalStore, MoraleCause, MoraleContributions,
@@ -1199,6 +1277,7 @@ mod tests {
             // These fixtures assert on the food ledger, not the bench.
             bench: None,
             craft_inputs: crate::snapshot::crafting::builtin_craft_inputs(),
+            build_sources: empty_build_sources(),
         })
     }
 
@@ -1223,9 +1302,7 @@ mod tests {
                     floor: 0.5,
                 },
                 workers: 4,
-                improvement: None,
                 kit: None,
-                improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             last_yields: vec![SourceYield {
                 arrivals,
@@ -1354,9 +1431,7 @@ mod tests {
             assignments: vec![LaborAssignment {
                 target: LaborTarget::Scout,
                 workers: 4,
-                improvement: None,
                 kit: None,
-                improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
             }],
             last_yields: vec![SourceYield::ZERO],
             ..Default::default()

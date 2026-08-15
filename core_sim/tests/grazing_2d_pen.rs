@@ -20,7 +20,6 @@ use bevy::prelude::Entity;
 use bevy::MinimalPlugins;
 
 use core_sim::grid_utils::hex_range_tiles;
-use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     advance_graze_regrowth, advance_herd_grazing, advance_herds, advance_husbandry,
     advance_labor_allocation, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_graze,
@@ -249,9 +248,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                         floor: 0.5,
                     },
                     workers: KEEPER_WORKERS,
-                    improvement: None,
                     kit: None,
-                    improvement_workers: NO_CREW_ON_THIS_ACTIVITY,
                 }],
                 ..Default::default()
             },
@@ -504,8 +501,10 @@ fn pen_state(app: &App, id: &str) -> (u32, bool, f32) {
 
 /// Put the penned herd into the ExtendPen "extending" state (the sim half of `handle_extend_pen`).
 /// Begin a fence extension **and staff it**, which is what `handle_extend_pen` does: a ring is a
-/// build like any other and names its own crew (`docs/plan_standing_upkeep.md` §2.2), so a fixture
-/// that only flipped the herd's flag would measure a ring nobody is raising.
+/// build like any other: it waits in the band's build queue under its own kind
+/// (`BuildJob::ExtendPen`) and is raised by the band's `builders` pool
+/// (`docs/plan_standing_upkeep.md` §2.5), so a fixture that only flipped the herd's flag would
+/// measure a ring nobody is raising.
 fn begin_extension(
     app: &mut App,
     id: &str,
@@ -520,11 +519,29 @@ fn begin_extension(
         .expect("herd persists")
         .begin_pen_extension(radius_max);
     if began {
-        app.world
+        let mut allocation = app
+            .world
             .get_mut::<LaborAllocation>(keeper)
-            .expect("the keeper band keeps its allocation")
-            .assignments[0]
-            .improvement_workers = KEEPER_WORKERS;
+            .expect("the keeper band keeps its allocation");
+        match allocation
+            .assignments
+            .iter_mut()
+            .find(|assignment| assignment.target == LaborTarget::Builders)
+        {
+            Some(row) => row.workers = KEEPER_WORKERS,
+            None => allocation.assignments.push(LaborAssignment {
+                target: LaborTarget::Builders,
+                workers: KEEPER_WORKERS,
+                kit: None,
+            }),
+        }
+        assert!(
+            allocation.enqueue_build(
+                core_sim::BuildSource::Herd(id.to_string()),
+                core_sim::BuildJob::ExtendPen,
+            ),
+            "the keeper band works the herd whose pen it is widening"
+        );
     }
     began
 }

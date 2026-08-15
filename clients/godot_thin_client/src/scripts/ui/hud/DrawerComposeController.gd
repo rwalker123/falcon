@@ -46,6 +46,12 @@ signal extend_pen_requested(payload: Dictionary)
 ## only emitter. `HudLayer` relays it to `Main`, which formats the verb.
 signal improvement_requested(payload: Dictionary)
 
+## **THE WITHDRAWAL** (`docs/plan_standing_upkeep.md` §2.5) — `unqueue <faction> <source>`, which
+## drops the source's build-queue entry and touches nothing else. Its own signal rather than an
+## empty-`improvement` payload on the one above, because they are different verbs on different
+## grammars: that one names a RUNG and this one names a SOURCE.
+signal unqueue_requested(payload: Dictionary)
+
 ## **THERE IS NO KEEPING SIGNAL HERE** (`docs/plan_standing_upkeep.md` §2.5). `maintain_requested`
 ## retired with the `maintain` command it carried: maintenance left the tile, so the keeping is
 ## staffed as a band-wide standing role from the Band panel's WORKFORCE zone and this sheet has no
@@ -86,11 +92,10 @@ var _compose_sheet: ComposeSheet = null
 # that flashes). Zero readers outside this controller, so they travelled with the builders.
 var _forage_drawer_shape: Array = []
 var _herd_drawer_shape: Array = []
-## **THE RING'S CREW**, held here rather than on `ComposeState` because extend-pen is a DRAWER action
-## and never enters a compose sheet — there is no composition for it to be part of. It survives the
-## per-snapshot restate of the drawer, which is what lets the stepper hold a dialled number while the
-## turn resolves.
-var _pen_extend_crew: int = 0
+## **RETIRED — `_pen_extend_crew`, the ring's own dialled crew** (`docs/plan_standing_upkeep.md`
+## §2.5). It held the number a stepper beside the Extend-pen button had dialled, because
+## `extend_pen` took a trailing worker count; the verb DECLARES now — it appends a queue entry and the
+## band's `builders` pool raises it at the head — so there is nothing left to hold between restates.
 
 ## **THE FORECAST QUERY SEAM**, injected by `HudLayer` after construction (`set_forecast_query`).
 ## The expedition branch's every number comes through it; the LOCAL hunt branch never touches it,
@@ -181,91 +186,68 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
     _emit_assign_labor_fn.call(band, kind, workers, x, y, herd_id, floor, species, improvement,
         kit_id)
 
-## Send the improvement command when the composed second axis differs from what the source is already
-## building — the SET verb (`cultivate` / `sow` / `tame` / `corral`) and its CREW. It is its OWN
-## command, never a token on `assign_labor` — that is what lets a crew-size edit stop re-asserting the
-## improvement, and with it the re-staffing gap where changing the crew of a PAUSED build re-ran the
-## build's own gates and was refused (issue #442 §6).
+## **DECLARE, OR WITHDRAW — the two orders the improvement axis can carry, and neither names a crew**
+## (`docs/plan_standing_upkeep.md` §2.5). Ticking the box sends the SET verb
+## (`cultivate` / `sow` / `tame` / `corral`), which APPENDS an entry to the build queue of every band
+## working the source; unticking sends **`unqueue <faction> <source>`**, which drops that entry and
+## leaves the row, its take crew, its kit and the meter exactly as they are.
 ##
-## **THERE IS ONE COMMAND NOW, AND ITS CREW IS BOTH LEVERS** (`docs/plan_standing_upkeep.md` §2.4).
-## `abandon_improvement` is retired: it cleared a STORED verb, and the verb is derived from the meter.
-## So unchecking an offer sends the same set verb **at zero builders** — `cultivate <f> <x> <y> 0` —
-## which is the one thing that can still be said about a rung whose meter has not started.
-## **IT TAKES THE HANDS OFF; IT DOES NOT WITHDRAW THE DECLARATION** — the server sets
-## `improvement = Some(verb)` with a crew of zero on every path, so the rung goes on reading as
-## declared-and-unstaffed and there is currently no undo (`labor-ui.md` → the callout under "RETIRED —
-## `abandon_improvement`"; `docs/plan_standing_upkeep.md` §4.6 owns the fix).
-## There is no second grammar and no second builder; `Main.format_improvement` is the
-## whole of it, targeted by the VERB (`tame` names a herd; `cultivate`/`sow`/`corral` name a tile —
-## `corral` being the case that proves the rule, a herd's rung addressed by the pen's place).
+## ⛔ **THE VERB TAKES NO TRAILING WORKER COUNT, and sending one is a PARSE ERROR.** It carried the
+## build's own crew for one slice; the hands stand on `assign_labor <faction> <band> builders <n>`
+## now, so there is no head count left to state and none to compare.
+##
+## **THAT IS ALSO THE FIX FOR A LIVE DEFECT** rather than a mechanical consequence. Unticking used to
+## re-send the SET verb at zero builders, which *set* `improvement = Some(verb)` with nobody on it —
+## and `patch_build_verb` honours a declaration at a zero meter, so the source went on reading as
+## building, permanently, with no undo. `unqueue` is the undo; `abandon` (command line only in this
+## slice) is how a source with work already banked is put down.
 ##
 ## **BOTH ARGUMENTS ARE DERIVED VERBS, not the compose state and not the assignment's field.** A
 ## running build the player never declared — an eroded rung, or one whose declaration the sim has
-## since spent — composes as `""` and must still be the verb a crew edit names, or stepping its
-## BUILDERS would send nothing at all.
+## since spent — composes as `""` and must still be the verb a withdrawal names.
 ##
-## **IT CARRIES THE BUILD'S CREW** (§2.2). The verb takes a worker count — it IS how the build
-## allocation is stated — so an unchanged verb at a CHANGED crew is a real order and must still be
-## sent; the early return therefore tests both halves.
-##
-## **`standing_workers` IS THE BAND'S OWN `improvement_workers`**, read back off the assignment, so a
-## sheet opened and closed on a staffed build sends nothing.
+## It is its OWN command and never a token on `assign_labor`: that is what lets a crew-size edit stop
+## re-asserting the improvement, and with it the re-staffing gap where changing the crew of a paused
+## build re-ran the build's own gates and was refused (issue #442 §6). `Main.format_improvement` and
+## `Main.format_unqueue` are the whole of the grammar, targeted by the VERB (`tame` names a herd;
+## `cultivate`/`sow`/`corral` name a tile — `corral` being the case that proves the rule, a herd's
+## rung addressed by the pen's place) and by the SOURCE (`unqueue`, one grammar for both webs).
 func _emit_improvement(band: Dictionary, kind: String, composed: String, standing: String,
-        x: int, y: int, herd_id: String, workers: int, standing_workers: int) -> void:
-    # Nothing is being built and nothing is declared: there is no verb to name, so no order exists.
+        x: int, y: int, herd_id: String) -> void:
+    # Nothing is declared and nothing was: there is no verb to name, so no order exists.
     if composed == SourceForecast.IMPROVEMENT_NONE and standing == SourceForecast.IMPROVEMENT_NONE:
         return
-    var verb := composed
-    var crew := workers
+    var faction := int(band.get("faction", HudConst.PLAYER_FACTION_ID))
     if composed == SourceForecast.IMPROVEMENT_NONE:
-        # The player unchecked what the source was building. The verb still names the job and the crew
-        # is the statement, so this takes every hand off it — which is as far as the command grammar
-        # goes today: the declaration itself stays set (see this function's own note).
-        verb = standing
-        crew = SourceForecast.BUILD_CREW_NONE
-    if verb == standing and crew == standing_workers:
+        # The player unticked what the source had queued. **The withdrawal names the SOURCE, not the
+        # rung** — a band holds at most one entry per source — so it needs no verb argument.
+        emit_signal("unqueue_requested", {
+            "faction": faction,
+            "x": x,
+            "y": y,
+            "herd_id": herd_id,
+        })
+        return
+    # An unchanged declaration is not an order. There is no crew half to this test any more, so a
+    # sheet opened and closed on a queued rung sends nothing at all.
+    if composed == standing:
         return
     emit_signal("improvement_requested", {
-        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
-        "improvement": verb,
+        "faction": faction,
+        "improvement": composed,
         "kind": kind,
         "x": x,
         "y": y,
         "herd_id": herd_id,
-        "workers": crew,
     })
 
-## **SEND THE SHEET'S TWO ORDERS IN THE ORDER THAT LEAVES THE BAND SOLVENT AT EVERY STEP.** The sheet
-## composes ONE transaction over a source's two crews; the command socket carries it as TWO commands,
-## each judged on its own against the hands free AT THAT MOMENT, so the order is part of the
-## composition rather than a formatting detail.
-##
-## **THE RULE IS: WHICHEVER CREW IS SHRINKING GOES FIRST**, and it is provably sufficient. Both
-## commands read back only their OWN activity's crew on this source (`LaborAllocation::idle_for`,
-## `set_assignment`'s `standing` term), so the take is affordable iff `take ≤ idle + standing take`
-## and the build iff `build ≤ idle + standing build`. The pool clamp guarantees
-## `take + build ≤ idle + standing take + standing build`, and that inequality forces at least one of
-## the two to already hold: if the build is shrinking it is affordable outright, and if it is not, the
-## take cannot have grown past its own ceiling. So one of the two orders always works and this test
-## picks it.
-##
-## **IT USED TO BE FIXED AT TAKE-THEN-BUILD, and that was right while the take stepper could not
-## exceed `idle + standing take`.** The pool clamp is what made the other direction reachable: a
-## player moving two hands off a Cultivate and onto the gathering now composes a take the sim would
-## have clamped away — silently, since `assign_labor` trims rather than refusing, and a trim to zero
-## DROPS the row and takes the build's own declaration with it.
-##
-## **The "staff it first" rejection is not reintroduced by the swap.** An improvement command only
-## reaches bands already working the source, and the build-first branch is taken only when the
-## standing build crew is positive — which means a staffed row exists to carry the verb.
-func _commit_source(send_take: Callable, send_build: Callable, build_crew: int,
-        standing_build: int) -> void:
-    if build_crew < standing_build:
-        send_build.call()
-        send_take.call()
-        return
-    send_take.call()
-    send_build.call()
+## **RETIRED — `_commit_source`, the shrinking-crew-goes-first ordering**
+## (`docs/plan_standing_upkeep.md` §2.5). The sheet composed a source's TAKE and its BUILD as one
+## transaction over one crew pool, and the two commands had to be ordered so the band was solvent at
+## every step. A verb states no hands now, so the improvement command spends nothing and cannot be
+## refused for want of workers: the commit is `assign_labor` and then the verb, in the order the sim
+## requires anyway — an improvement command only ever reaches bands ALREADY working the source, so
+## the row has to exist before the verb names it.
 
 ## The per-turn take `workers` from `band` get off `herd` under `policy` — the sim's LOCAL/band hunt
 ## take before the output multiplier, `min(workers × per-worker, band_ceiling)`, in PROVISIONS.
@@ -975,13 +957,12 @@ func _build_band_picker(selected_band: Dictionary, on_pick: Callable) -> HBoxCon
 ## take rather than a demand a kind of source makes, is applied INSIDE
 ## `SourceForecast.max_useful_workers`, so it reaches both twins without either being told about it.
 ##
-## **`assignable` IS THE SHEET'S SHARE OF THE SOURCE POOL, not the band's idle count**
-## (`HudBandLaborState.source_crew_pool_forage` minus the builders this sheet is proposing), so the
-## note has to be able to name the nearer lever. `build_crew` is that same proposal, passed for the
-## WORDING alone — the arithmetic is entirely the caller's, since only the caller knows which of the
-## two steppers it is capping.
-func _forecast_worker_cap(forecast: Dictionary, assignable: int,
-        build_crew: int = SourceForecast.BUILD_CREW_NONE) -> Dictionary:
+## **`assignable` IS THE SOURCE'S CREW POOL** — idle plus what this band already has on it
+## (`HudBandLaborState.source_crew_pool_forage`), which is the ceiling `assign_labor` is judged
+## against. It briefly had the sheet's own proposed BUILDERS subtracted from it, and the note took a
+## `build_crew` argument so it could name that nearer lever; the build is a band-level role now
+## (`docs/plan_standing_upkeep.md` §2.5), so there is one stepper and one remedy.
+func _forecast_worker_cap(forecast: Dictionary, assignable: int) -> Dictionary:
     # **NO KEEPER FLOOR UNDER THE TAKE CAP** (`docs/plan_standing_upkeep.md` §2.2). This used to be
     # raised to a managed herd's `herdersNeeded`, because one crew both hunted the animals and held
     # them: a cap sized on the take alone went dead below the count the sim asked for. Those keepers
@@ -994,11 +975,7 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int,
         # (useful == assignable) and no-forecast (UNBOUNDED) stay noteless.
         var labor_note := ""
         if useful != SourceForecast.MAX_USEFUL_UNBOUNDED and useful > assignable:
-            # WHICH remedy the line names is decided by where the missing hands actually are: with a
-            # crew on this sheet's own build, the builders stepper is the nearest place to get them.
-            labor_note = (SourceForecast.BUILD_BOUND_NOTE_FORMAT \
-                if build_crew > SourceForecast.BUILD_CREW_NONE \
-                else SourceForecast.LABOR_BOUND_NOTE_FORMAT) % [assignable, useful]
+            labor_note = SourceForecast.LABOR_BOUND_NOTE_FORMAT % [assignable, useful]
         return {"cap": assignable, "note": labor_note}
     var noun := SourceForecast.MAX_USEFUL_NOUN_ONE if useful == 1 else SourceForecast.MAX_USEFUL_NOUN_MANY
     return {"cap": useful, "note": SourceForecast.MAX_USEFUL_NOTE_FORMAT % [useful, noun]}
@@ -1054,16 +1031,20 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int,
 ## their turn estimate against them through `SourceForecast.build_turns_at`, which is the whole reason
 ## this control is rebuilt by the live-refresh registry at its call sites: the sim's own
 ## `buildTurnsRemaining` answers for the crew already there and cannot move under any of the three.
-## **`build_crew` IS THE SECOND ALLOCATION, AND IT IS WHAT THE ESTIMATE IS QUOTED AT**
-## (`docs/plan_standing_upkeep.md` §2.2). `workers` above is the TAKE crew and no longer prices a
-## build at all: the turns clause, the gear term and the command the box commits all read the
-## builders. `on_build_crew` moves it; a rung with no crew on it states its price and builds nothing,
-## which is the honest reading of a commitment the player has not staffed.
+## **`build_crew` IS THE BAND'S `builders` POOL, AND IT IS READ RATHER THAN COMPOSED**
+## (`docs/plan_standing_upkeep.md` §2.5). It was a stepper ON this control — the source's own build
+## allocation, which a verb carried as a trailing worker count — and both the stepper and the count
+## are retired: a verb DECLARES, appending an entry to the band's build queue, and the hands stand on
+## `assign_labor <faction> <band> builders <n>`. So this control quotes the estimate at the pool the
+## band already has (`HudBandLaborState.build_crew_forage` / `_hunt`) and offers nothing to dial.
+##
+## ⛔ **DO NOT GIVE IT A HYPOTHETICAL CREW SLIDER.** With the pool at zero the sim honestly publishes
+## *no estimate*, and the tempting repair is a proposed crew to re-price it — which is exactly the
+## per-source build staffing this slice deletes, re-implied by a control.
 func _build_improvement_control(kind: String, source: Dictionary, prefix: String, floor: float,
         composed: String, band: Dictionary, workers: int, kit_gear: Dictionary,
-        on_toggle: Callable, target: VBoxContainer,
-        extra_rows: Callable = Callable(), build_crew: int = 0, build_idle: int = 0,
-        on_build_crew: Callable = Callable()) -> void:
+        on_toggle: Callable, target: VBoxContainer, build_crew: int = 0,
+        extra_rows: Callable = Callable()) -> void:
     # THE RUNG IN FLIGHT — whatever the METERS say is going up, with `composed` reaching the derivation
     # as a declaration for a meter at zero. That covers the two cases no stored verb can: a rung eroded
     # back below its cost, and a build the player never re-declared.
@@ -1075,17 +1056,22 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
     # face is a `Label`, so a player who ticked `cultivate` on a band with no free hands got
     # `Cultivating 0 / 50 work (0%)` and no way back off it. Reported from play.
     #
-    # It is the DECLARED state instead: the same live checkbox, ticked, whose uncheck sends the
-    # `cultivate <faction> <x> <y> 0` the BUILDERS stepper beneath it sends — which unstaffs the rung
-    # rather than withdrawing it, the declaration having no clearing command. The *not started* warning
-    # travels with it and stays useful — a band that SHRINKS sheds its builders while the declaration
-    # stands, which is not a player choice and must still be flagged.
+    # It is the DECLARED state instead: the same live checkbox, ticked, whose uncheck sends
+    # `unqueue <faction> <source>` — the withdrawal that really does drop the declaration
+    # (`docs/plan_standing_upkeep.md` §2.5). The *not started* warning travels with it and stays
+    # useful, a band that SHRINKS shedding its builders while the declaration stands.
+    #
+    # **THE CREW TEST IS *ARE THEY ON THIS ONE*, WHICH IS THE QUEUE'S HEAD** (§4.6b). The whole
+    # `builders` pool goes on the head entry until its meter fills, so a staffed pool says nothing
+    # about an entry waiting third in line — and reading it as *in flight* would put the one-way
+    # `Cultivating 0 / 50 work (0%)` Label straight back on every queued-and-waiting rung.
     if running_verb != SourceForecast.IMPROVEMENT_NONE \
-            and build_crew <= SourceForecast.BUILD_CREW_NONE \
+            and not (build_crew > SourceForecast.BUILD_CREW_NONE \
+                and SourceForecast.build_is_queue_head(source, prefix)) \
             and SourceForecast.improvement_progress(source, prefix, running_verb) \
                 <= SourceForecast.BUILD_METER_UNSTARTED:
         _mount_declared_control(source, prefix, source_kind, running_verb, floor, band, kit_gear,
-            on_toggle, target, extra_rows, build_crew, build_idle, on_build_crew)
+            on_toggle, target, extra_rows, build_crew)
         return
     if running_verb != SourceForecast.IMPROVEMENT_NONE:
         var glyph := FoodIcons.for_policy(running_verb)
@@ -1167,7 +1153,6 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         target.add_child(HudWidgets.build_improvement_control(running_verb,
             HudWidgets.IMPROVEMENT_STATE_RUNNING, running_face,
             _improvement_running_tooltip(running_verb), on_toggle, notes, true, pace))
-        _mount_build_crew_row(target, build_crew, build_idle, on_build_crew)
         if extra_rows.is_valid():
             extra_rows.call(running_verb, target)
         return
@@ -1261,85 +1246,66 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
             # carry one, and dropping the rest would hide half of what the rung costs to unlock.
             reasons.slice(1)))
         return
-    # **A BAND WITH NO FREE HANDS IS OFFERED A DEAD BOX WITH ITS REASON, NEVER A LIVE ONE.** Ticking it
-    # would declare a build the band cannot staff — the state that produced `Cultivating 0 / 50 work
-    # (0%)` with no way back — and the sim refuses the command outright rather than trimming it. The
-    # pool this tests is the SHEET's (`build_idle` = the source's crew pool less the composed take), so
-    # the remedy names both levers: free an idle hand, or take one off the crew above.
-    var offer_blocked := build_idle <= SourceForecast.BUILD_CREW_NONE
+    # **THE OFFER IS NEVER DEAD FOR WANT OF HANDS ANY MORE** (`docs/plan_standing_upkeep.md` §2.5).
+    # It greyed out on an empty build pool, because ticking it would have declared a build with a crew
+    # of zero that the sim refused outright. A verb names no crew now: ticking APPENDS a queue entry,
+    # which is legal and costs nothing whether or not anybody is on the `builders` role — and the note
+    # that says nobody is comes from the rung row's own *not started* warning.
     target.add_child(HudWidgets.build_improvement_control(rung,
         HudWidgets.IMPROVEMENT_STATE_OFFERED, offer_face,
         String(HudComposeVocab.IMPROVEMENT_HINTS.get(rung, "")), on_toggle, [], false,
-        SourceForecast.build_pace(offer_turns),
-        HudComposeVocab.BUILD_NO_HANDS_REASON if offer_blocked else ""))
-    if offer_blocked:
-        return
-    _mount_build_crew_row(target, build_crew, build_idle, on_build_crew)
+        SourceForecast.build_pace(offer_turns, build_crew)))
     # The crop picker rides an OFFER only: "which crop do I commit this patch to?" is part of
     # committing, so it has no meaning where committing is refused — the gated branch above returns
     # before reaching it.
     if extra_rows.is_valid():
         extra_rows.call(rung, target)
 
-## **THE BUILD CREW'S STEPPER, mounted on the control that names the verb it staffs**
-## (`docs/plan_standing_upkeep.md` §2.2). It sits with the improvement rather than beside the take
-## crew because it IS the improvement's statement: the verb carries the count, so a rung with no
-## crew on it is a rung nobody is building.
+## **RETIRED — `_mount_build_crew_row`, the BUILDERS stepper on the improvement control**
+## (`docs/plan_standing_upkeep.md` §2.5). It stated the source's own build crew, because the verb
+## carried one as a trailing worker count; the verb DECLARES now — `cultivate <f> <x> <y>` appends an
+## entry to the band's build queue and the extra token is a PARSE ERROR — and the hands stand on
+## `assign_labor <faction> <band> builders <n>`, a standing role card on the Band panel.
 ##
-## **Clamped to the band's idle hands**, for the reason the keeping row is: the sim REFUSES a crew a
-## band cannot staff (it does not trim — a quietly-smaller build crew is a commitment the player
-## believes they made), so the `+` must not offer one.
+## **WHAT THE SHEET SHOWS INSTEAD IS ALREADY ON THE CONTROL**: the rung's `<rung>WorkCost` (the pile),
+## its `<rung>UpkeepDemand` (the rate it costs to hold, forever) and the chained
+## `buildTurnsRemaining` this source would get if queued now — all three published before anything is
+## queued. With the pool at zero the sim answers *no estimate*, and the face says so plainly rather
+## than rendering nothing.
 ##
-## **THE ROW STATES NO THRESHOLD, BECAUSE THERE IS NONE** (`docs/plan_standing_upkeep.md` §2.4). It
-## carried one — the quoted rung's maintenance rate, as a tooltip on this label, over
-## `HudWidgets.BUILD_WORK_FLOOR_META` — back when the build crew supplied that rate while the meter
-## was below its cost, so a crew under it banked nothing. **The keeping pool owes the rate at every
-## fullness now and a builder's whole output is progress**, so the smallest useful build crew is one
-## hand and a note naming a bar to clear would be a warning outliving its mechanism.
-##
-## **THE RATE IS STILL SAID, one control up**, as the offered face's standing price
-## (`_improvement_offer_face`): *this much to build it, this much every turn to hold it*. What this row
-## is for is the one question that stayed — HOW MANY HANDS — and the line above it already says which
-## way the meter is moving at the count they have dialled, in its own ink.
-##
-## Renders nothing without a live `on_build_crew` — the DONE and GATED states have no build to staff.
-func _mount_build_crew_row(target: VBoxContainer, crew: int, idle: int,
-        on_build_crew: Callable) -> void:
-    if not on_build_crew.is_valid():
-        return
-    var row := HBoxContainer.new()
-    row.set_meta(HudWidgets.BUILD_CREW_ROW_META, true)
-    row.add_theme_constant_override("separation", HudComposeVocab.CREW_ROW_NOTE_SEPARATION)
-    var row_label := HudWidgets.alloc_section_label(HudComposeVocab.CREW_ROW_BUILD_LABEL)
-    row.add_child(row_label)
-    var stepper := HBoxContainer.new()
-    stepper.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    HudWidgets.add_stepper_controls(stepper, crew, crew < idle, on_build_crew)
-    row.add_child(stepper)
-    target.add_child(row)
 
-## **THE DECLARED CONTROL — a rung this band has stated and has neither builders nor banked work on.**
-## The offer's own face (the verb and its price) on a TICKED, live checkbox, over the *not started*
-## warning, over the BUILDERS stepper that is the remedy.
+## **THE DECLARED CONTROL — a rung this band has queued and that has neither reached the head of that
+## queue nor banked any work.** The offer's own face (the verb and its price) on a TICKED, live
+## checkbox, over the *not started* warning.
 ##
 ## **IT IS A CHECKBOX BECAUSE IT IS A CHOICE, and that is the whole repair.** The running Label carries
-## no toggle, so a declaration rendered as RUNNING left the player with no control at all — and
-## unticking here sends what the stepper sends (`cultivate <faction> <x> <y> 0`), so the two levers
-## cannot disagree. **Both unstaff the rung; neither withdraws the declaration** — see
-## `_emit_improvement`'s note, and `labor-ui.md` for the fix that owns it.
+## no toggle, so a declaration rendered as RUNNING left the player with no control at all. Unticking
+## it sends **`unqueue <faction> <source>`** — which really does withdraw the declaration, leaving the
+## row, its take crew, its kit and the meter exactly as they are (`docs/plan_standing_upkeep.md`
+## §2.5). That is the fix for the state this control was built for: the old uncheck re-sent the SET
+## verb at zero builders, which set the declaration again rather than clearing it.
 ##
-## **IT IS NEVER DISABLED, however few hands the band has.** The offer one branch down greys out with
-## no free workers because ticking it would declare an unstaffable build; here the declaration already
-## stands and unticking is exactly what a player with no hands needs to do.
+## **IT IS NEVER DISABLED, however few hands the band has** — a queue entry costs nothing to hold,
+## and unqueueing is exactly what a player with no builders may want to do.
+## **IT IS PRICED AT THE BAND'S POOL, exactly as the OFFER beside it is** (§4.6b). A declared entry
+## that has not reached the head of the queue is not being worked THIS turn, and quoting it at nobody
+## would state *no estimate* for a band that has builders — the date it wants is *what this will take
+## once they reach it*, which is the closed form at the pool.
 func _mount_declared_control(source: Dictionary, prefix: String, source_kind: String, rung: String,
         floor: float, band: Dictionary, kit_gear: Dictionary, on_toggle: Callable,
-        target: VBoxContainer, extra_rows: Callable, build_crew: int, build_idle: int,
-        on_build_crew: Callable) -> void:
+        target: VBoxContainer, extra_rows: Callable, build_crew: int) -> void:
     var turns := SourceForecast.build_turns_at(source, prefix, rung, build_crew, floor, kit_gear)
-    # The *not started* warning LEADS, being the loudest thing true of this rung — and the pen's zero
-    # payoff rides beneath it exactly as it rides a running build's, that note being a warning about
-    # the RUNG the player is committing to rather than about the work in flight.
-    var notes: Array = [HudComposeVocab.BUILD_UNSTARTED_NOTE]
+    # **THE *NOT STARTED* WARNING IS GATED ON THE POOL, and it was unconditional**
+    # (`docs/plan_standing_upkeep.md` §2.5). It fired on every declared rung, which was right while
+    # DECLARED meant *nobody is building this*; a declaration is queued now, so a band with builders
+    # on the role really is going to raise it — the face beside this note quotes the date — and a
+    # warning there would be telling the player nothing is happening on a job that is simply waiting
+    # its turn. With the pool empty it is exactly as true as it ever was, and it LEADS, being the
+    # loudest thing true of the rung; the pen's zero payoff rides beneath it as it does on a running
+    # build, that note being about the RUNG rather than about the work in flight.
+    var notes: Array = []
+    if build_crew <= SourceForecast.BUILD_CREW_NONE:
+        notes.append(HudComposeVocab.BUILD_UNSTARTED_NOTE)
     if _rung_pays_nothing_under_its_feed(
             SourceForecast.improvement_forecast(source, source_kind, prefix, floor, rung), band):
         notes.append(HudComposeVocab.IMPROVEMENT_DEAL_DEPLETED_NOTE)
@@ -1347,7 +1313,6 @@ func _mount_declared_control(source: Dictionary, prefix: String, source_kind: St
         HudWidgets.IMPROVEMENT_STATE_DECLARED, _improvement_offer_face(source, prefix, rung, turns),
         String(HudComposeVocab.IMPROVEMENT_HINTS.get(rung, "")), on_toggle,
         notes, true, SourceForecast.build_pace(turns, build_crew)))
-    _mount_build_crew_row(target, build_crew, build_idle, on_build_crew)
     # The crop picker rides a declared rung exactly as it rides an offer: which crop this patch commits
     # to is part of the commitment, and the commitment stands.
     if extra_rows.is_valid():
@@ -1521,43 +1486,28 @@ func _build_extend_pen_control(herd: Dictionary, target: VBoxContainer) -> void:
     var y := int(herd.get("y", -1))
     if x < 0 or y < 0:
         return
-    # **THE RING HAS ITS OWN CREW** (`docs/plan_standing_upkeep.md` §2.2). A ring rides the same
-    # `animal:pen` rung as the pen it widens, so it cannot be the one build in the game that is free:
-    # the command takes a worker count and the button states one. It is a stepper beside the button
-    # rather than a sheet of its own, because extend-pen is a one-click standing action on a built pen
-    # and always has been — the crew is the only thing it now needs to be told.
-    var crew_row := HBoxContainer.new()
-    crew_row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    crew_row.add_child(HudWidgets.alloc_section_label(HudComposeVocab.PEN_EXTEND_CREW_LABEL))
-    var idle := _band_labor.effective_idle(_resolve_assign_band())
-    var crew := clampi(_pen_extend_crew, 0, idle)
-    _pen_extend_crew = crew
-    var stepper := HBoxContainer.new()
-    stepper.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    HudWidgets.add_stepper_controls(stepper, crew, crew < idle, func(n: int) -> void:
-        _pen_extend_crew = clampi(n, 0, idle)
-        build_herd_drawer_actions(herd))
-    crew_row.add_child(stepper)
-    target.add_child(crew_row)
+    # **THE RING QUEUES; IT DOES NOT STAFF** (`docs/plan_standing_upkeep.md` §2.5). A ring rides the
+    # same `animal:pen` rung as the pen it widens, so it is funded exactly like every other build: the
+    # press appends an entry to the build queue of every band keeping the pen, and the band's
+    # `builders` pool raises it when it reaches the head. It carried a CREW STEPPER for one slice,
+    # because the verb took a trailing worker count; that token is a parse error now, so the control
+    # is back to the one-click standing action it always was.
     var extend_btn := Button.new()
     extend_btn.text = HudComposeVocab.PEN_EXTEND_LABEL
     extend_btn.tooltip_text = HudComposeVocab.PEN_EXTEND_TOOLTIP
     HudStyle.apply_button(extend_btn, "ghost")
-    # **A RING WITH NOBODY ON IT IS NOT AN ORDER.** The sim would accept `0` and simply never work it
-    # off, so the button states the requirement instead of sending a command that does nothing.
-    extend_btn.disabled = crew <= 0
     extend_btn.pressed.connect(func() -> void:
-        _emit_extend_pen(x, y, crew))
+        _emit_extend_pen(x, y))
     target.add_child(extend_btn)
 
-## Emit the extend-pen request for the pen anchored at (x, y), with the crew that will work the ring
-## off. Main formats `extend_pen <faction> <x> <y> <workers>`.
-func _emit_extend_pen(x: int, y: int, workers: int) -> void:
+## Emit the extend-pen request for the pen anchored at (x, y). Main formats
+## `extend_pen <faction> <x> <y>` — **no worker count**: the verb declares and the `builders` pool
+## raises whatever is at the head of the band's queue.
+func _emit_extend_pen(x: int, y: int) -> void:
     emit_signal("extend_pen_requested", {
         "faction": HudConst.PLAYER_FACTION_ID,
         "x": x,
         "y": y,
-        "workers": workers,
     })
 
 # ---- THE FLOOR'S LIVE READINGS (docs/plan_harvest_floor.md §7.3, §7.1, §7.6) --------------------
@@ -1839,12 +1789,11 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var band_entity := int(band.get("entity", ComposeState.NO_BAND_ENTITY))
     if source_changed or _compose.hunt_seeded_band() != band_entity:
         var staffed := _band_labor.workers_for_hunt(band, herd_id)
-        # **BOTH CREWS SEED FROM THE BAND'S ROW** (`docs/plan_standing_upkeep.md` §2.2). The build
-        # count is on the wire, so a reopened sheet opens on what this band actually has; a `0` is
-        # the wire's answer (no verb in flight) and is never substituted for.
+        # **ONE CREW SEEDS FROM THE BAND'S ROW** (`docs/plan_standing_upkeep.md` §2.5). The build
+        # count seeded here too while a verb carried one; a verb declares and names no hands now, so
+        # the only crew this sheet composes is the take.
         _compose.seed_hunt(staffed if staffed > 0 else HudConst.WORKER_STEP,
-            _band_labor.floor_for_hunt(band, herd_id), standing_improvement,
-            _band_labor.build_workers_for_hunt(band, herd_id))
+            _band_labor.floor_for_hunt(band, herd_id), standing_improvement)
     # The effective (pending-aware) standing crew, which the commit's unassign/no-op test reads below.
     var current := _band_labor.effective_hunt_workers(band, herd_id)
     # Which band supplies the hunters (above the worker/party stepper, so it reads "which band →
@@ -1864,20 +1813,16 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         band_tile.x, band_tile.y, herd_x, herd_y, _band_labor.grid_width(), _band_labor.wrap_horizontal())
     # Beyond reach → expedition. Unknown distance (missing tiles) falls back to the local hunt.
     var is_expedition := distance >= 0 and distance > reach
-    # **THE HANDS THIS SHEET MAY SPEND** — idle plus every crew this band already has on this herd,
-    # take and build together (`HudBandLaborState.source_crew_pool_hunt`). **THE SHEET IS ONE
-    # TRANSACTION OVER BOTH CREWS AND IS CLAMPED AS ONE:** each stepper's ceiling is this pool minus
-    # what the other proposes, so dropping HUNTERS from 4 to 2 hands those two to BUILDERS in the same
-    # render rather than after a commit, a close and a reopen.
+    # **THE HANDS THIS SHEET MAY SPEND** — idle plus the crew this band already has on this herd
+    # (`HudBandLaborState.source_crew_pool_hunt`), which is the ceiling `assign_labor` is judged
+    # against. Without the standing term a fully-allocated band capped at `0` and the player could
+    # take a crew to nothing and never put it back.
     #
-    # **THIS IS ALSO WHAT MAKES A FULLY-ALLOCATED BAND EDITABLE.** Clamped at `idle` alone, a band with
-    # every hand committed capped both steppers at `0`: the player could take a crew to nothing and
-    # never put it back.
-    var crew_pool := _band_labor.source_crew_pool_hunt(band, herd_id)
-    # Local hunt caps at what the pool leaves after the builders; an expedition caps at the party
-    # ceiling — a detached party builds nothing, so there is no second crew to share with.
+    # **THE BUILDERS ARE NOT IN THIS TRANSACTION ANY MORE** (`docs/plan_standing_upkeep.md` §2.5).
+    # The sheet composed two crews and clamped them against one pool while a verb carried a head
+    # count; the build is a band-level role now, so this is the take's ceiling and nothing else.
     var assignable := SourceForecast.expedition_party_cap(band) if is_expedition \
-        else maxi(crew_pool - _compose.hunt_build_count(), 0)
+        else _band_labor.source_crew_pool_hunt(band, herd_id)
     # **THE KIT, RESOLVED HERE AND MOUNTED UNDER THE CREW ROW.** It is part of the question the sim is
     # asked, so every reading below is priced for it — the resolve leads and the ROW lands beside the
     # crew it describes.
@@ -1950,7 +1895,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         capped = SourceForecast.expedition_useful_cap(band, herd, _compose.hunt_floor(),
             int(raid_answer.get("useful_cap", 0)), assignable)
     elif not is_expedition:
-        capped = _forecast_worker_cap(forecast, assignable, _compose.hunt_build_count())
+        capped = _forecast_worker_cap(forecast, assignable)
     var cap := int(capped["cap"])
     # Auto-max on a FLOOR click — "give me everything this herd can spare at this floor": the
     # max-useful for that floor (clamped to idle below), which guarantees zero waste + the full rate.
@@ -1967,11 +1912,6 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     if _compose.consume_hunt_autofill():
         _compose.set_hunt_count(cap)
     _compose.clamp_hunt_count(cap)
-    # **AND THE BUILD'S CEILING IS THE REST OF THE POOL** — the forage sheet's twin, resolved AFTER
-    # the take is clamped so the two can never sum past what the band has. An EXPEDITION builds
-    # nothing and mounts no builders stepper, so the whole pool reads through to a control that is
-    # never rendered on that branch.
-    var build_ceiling := maxi(crew_pool - _compose.hunt_count(), 0)
     # A managed herd's local crew are HERDERS/keepers (workersNeeded scales with the herd), not a hunt
     # party — so a pen needing several keepers doesn't read as a hunt-party bug (fix #6).
     var crew_label := HudComposeVocab.HERD_CREW_LABEL \
@@ -2267,11 +2207,14 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                         HudComposeVocab.BARE_FORECAST_PREFIX, _live_floor(live),
                         composed_improvement, band, crew,
                         KitRoster.build_gear(band, kit_id),
-                        on_improvement_toggled, host as VBoxContainer, Callable(),
-                        _compose.hunt_build_count(), build_ceiling,
-                        func(n: int) -> void:
-                            _compose.set_hunt_build_count(clampi(n, 0, build_ceiling))
-                            _build_herd_assign_controls(_live_herd(herd_id, herd), target)))
+                        on_improvement_toggled, host as VBoxContainer,
+                        # **THE ESTIMATE IS QUOTED AT THE ACTING BAND'S OWN `builders` POOL**
+                        # (`docs/plan_standing_upkeep.md` §4). It was this sheet's retired BUILDERS
+                        # stepper; it is the band's standing role now, so the reading moves when the
+                        # player staffs that role and never when they touch this sheet. It is the
+                        # PICKED band's, not a fold across the source's workers: this is the band the
+                        # commit names, so it is the band whose hands would raise the entry.
+                        _band_labor.workers_for_role(band, HudConst.LABOR_KIND_BUILDERS)))
         # THE ONE RESOLUTION OF THIS SHEET'S DEAL, spent by the readout below. An unassign quotes
         # none: the control above is not built either, so there would be no rung on the card for the
         # rows to be about.
@@ -2349,17 +2292,10 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
             close_compose_sheet())
     else:
         assign_btn.pressed.connect(func() -> void:
-            var standing_build := _band_labor.build_workers_for_hunt(band, herd_id)
-            _commit_source(
-                func() -> void:
-                    _emit_assign_labor(band, SourceForecast.LABOR_KIND_HUNT, _compose.hunt_count(),
-                        herd_x, herd_y, herd_id, _compose.hunt_floor(), "", composed_improvement,
-                        kit_id),
-                func() -> void:
-                    _emit_improvement(band, SourceForecast.LABOR_KIND_HUNT, composed_improvement,
-                        standing_improvement, herd_x, herd_y, herd_id,
-                        _compose.hunt_build_count(), standing_build),
-                _compose.hunt_build_count(), standing_build)
+            _emit_assign_labor(band, SourceForecast.LABOR_KIND_HUNT, _compose.hunt_count(),
+                herd_x, herd_y, herd_id, _compose.hunt_floor(), "", composed_improvement, kit_id)
+            _emit_improvement(band, SourceForecast.LABOR_KIND_HUNT, composed_improvement,
+                standing_improvement, herd_x, herd_y, herd_id)
             close_compose_sheet())
     target.add_child(assign_btn)
 
@@ -2822,15 +2758,13 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         var staffed := _band_labor.workers_for_forage(band, x, y)
         _compose.seed_forage(staffed if staffed > 0 else HudConst.WORKER_STEP,
             _band_labor.floor_for_forage(band, x, y), standing_improvement,
-            _band_labor.build_workers_for_forage(band, x, y),
             _band_labor.species_for_forage(band, x, y))
     # The effective (pending-aware) standing crew, which the commit's unassign/no-op test reads below.
     var current := _band_labor.effective_forage_workers(band, x, y)
-    # **THE HANDS THIS SHEET MAY SPEND** — idle plus every crew this band already has on this patch.
-    # Both steppers draw on it and each is capped at what the other leaves, so the two ceilings are
-    # resolved where their proposals are known: the take's below (it needs the forecast too), the
-    # build's after the take has been clamped. See the hunt sheet's twin and
-    # `HudBandLaborState.source_crew_pool_forage`.
+    # **THE HANDS THIS SHEET MAY SPEND** — idle plus the crew this band already has on this patch
+    # (`HudBandLaborState.source_crew_pool_forage`), the ceiling `assign_labor` is judged against.
+    # **THE BUILD NO LONGER SHARES IT** (`docs/plan_standing_upkeep.md` §2.5): the sheet had two
+    # steppers each capped at what the other left, and a verb states no hands now.
     var crew_pool := _band_labor.source_crew_pool_forage(band, x, y)
     # Which band supplies the foragers (above the stepper). Switching re-runs the range check below
     # for that band.
@@ -2903,19 +2837,13 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # the DIPPED one and a 25-turn improvement therefore asked for fewer hands than gathering the same
     # ground. Both terms are retired: the take is undipped, so the quotient is the honest count, and
     # what a build costs is the builders' own stepper.
-    var capped := _forecast_worker_cap(forecast,
-        maxi(crew_pool - _compose.forage_build_count(), 0), _compose.forage_build_count())
+    var capped := _forecast_worker_cap(forecast, crew_pool)
     var cap := int(capped["cap"])
     # Auto-max on stance select — "give me everything this patch sustains": jump to the max-useful for
     # the stance (clamped to available below). Only ever set by a stance click, never by a −/+ tick.
     if _compose.consume_forage_autofill():
         _compose.set_forage_count(cap)
     _compose.clamp_forage_count(cap)
-    # **AND THE BUILD'S CEILING IS THE REST OF THE POOL** — resolved AFTER the take has been clamped,
-    # so a stepper the player has just pulled two hands off frees those two for the builders in the
-    # same render. The pair can never sum past the pool: the take is capped at `pool − build` above
-    # and the build at `pool − take` here, so whichever is edited, the other's ceiling gives way.
-    var build_ceiling := maxi(crew_pool - _compose.forage_count(), 0)
     var forage_takes := _forage_floor_takes(tile_info, band)
     var on_floor_picked := func(floor: float) -> void:
         _compose.set_forage_floor(floor)
@@ -3027,12 +2955,9 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
                 _build_improvement_control(SourceForecast.LABOR_KIND_FORAGE, tile_info,
                     HudComposeVocab.FORAGE_FORECAST_PREFIX, _live_floor(live), composed_improvement,
                     band, crew, KitRoster.build_gear(band, forage_kit_id),
-                    on_improvement_toggled, host as VBoxContainer, crop_rows,
-                    _compose.forage_build_count(), build_ceiling,
-                    func(n: int) -> void:
-                        _compose.set_forage_build_count(clampi(n, 0, build_ceiling))
-                        _build_forage_assign_controls(
-                            _live_tile_info(subject_key, tile_info), target)))
+                    on_improvement_toggled, host as VBoxContainer,
+                    # The plant twin — the ACTING band's own pool; see the hunt sheet's note.
+                    _band_labor.workers_for_role(band, HudConst.LABOR_KIND_BUILDERS), crop_rows))
     # **THE PAYOFF FOLLOWS THE SELECTED CROP, AND IT IS RESOLVED EXACTLY ONCE** (issue #419). The
     # readout's payoff row and the crop picker one control up must read ONE seam or they quote
     # different crops — which is the whole defect that issue named, in its second home. `deal_rung` is
@@ -3083,16 +3008,11 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # Out of range → disabled (no expedition fallback for stationary gathering).
     assign_btn.disabled = out_of_range or is_noop
     assign_btn.pressed.connect(func() -> void:
-        var standing_build := _band_labor.build_workers_for_forage(band, x, y)
-        _commit_source(
-            func() -> void:
-                _emit_assign_labor(band, SourceForecast.LABOR_KIND_FORAGE, _compose.forage_count(),
-                    x, y, "", _compose.forage_floor(), _compose.forage_species(),
-                    composed_improvement, forage_kit_id),
-            func() -> void:
-                _emit_improvement(band, SourceForecast.LABOR_KIND_FORAGE, composed_improvement,
-                    standing_improvement, x, y, "", _compose.forage_build_count(), standing_build),
-            _compose.forage_build_count(), standing_build)
+        _emit_assign_labor(band, SourceForecast.LABOR_KIND_FORAGE, _compose.forage_count(),
+            x, y, "", _compose.forage_floor(), _compose.forage_species(),
+            composed_improvement, forage_kit_id)
+        _emit_improvement(band, SourceForecast.LABOR_KIND_FORAGE, composed_improvement,
+            standing_improvement, x, y, "")
         close_compose_sheet())
     target.add_child(assign_btn)
 

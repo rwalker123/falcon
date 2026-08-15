@@ -439,6 +439,20 @@ pub struct Herd {
     /// and for its reason: the kit is re-read every turn, so no state may record *"this build was
     /// geared"*.
     pub build_work_from_gear: f32,
+    /// **WHERE THIS SOURCE SITS IN THE WINNING BAND'S BUILD QUEUE** — 0-based, and
+    /// [`crate::intensification::NOT_IN_ANY_BUILD_QUEUE`] (`-1`) when no band has queued it
+    /// (`docs/plan_standing_upkeep.md` §4.6b).
+    ///
+    /// **It rides the same winner as [`Self::build_turns_remaining`] and
+    /// [`Self::build_work_from_gear`]** — the three are read as one set, so a date from one band's
+    /// queue beside another band's position would be two answers pretending to be one.
+    ///
+    /// **Without it a chained date is a number with no explanation.** The whole builders pool goes
+    /// on the head of a queue, so an entry's turns are everything above it plus its own span — and
+    /// the player cannot tell forty turns of work from eight turns of work behind four other jobs.
+    ///
+    /// Transient per-turn scratch on [`Self::build_turns_remaining`]'s cycle, and for its reason.
+    pub build_queue_position: i32,
     /// **The `ExtendPen` "extending" state** (2d-β): `true` while a keeper is fencing the next ring
     /// (`pen_extend_progress` accruing, the harvest dipped to `corralling_yield_fraction`), the animal
     /// mirror of a herd's under-construction `corral_progress`. Set by the `ExtendPen` command, cleared
@@ -687,6 +701,7 @@ impl Herd {
             pen_extend_cost: RUNG_UNSTARTED,
             build_turns_remaining: None,
             build_work_from_gear: NO_BUILD_GEAR,
+            build_queue_position: crate::intensification::NOT_IN_ANY_BUILD_QUEUE,
             pen_extending: false,
             footprint_intake: 0.0,
             pen_pasture_fraction: 0.0,
@@ -3452,6 +3467,7 @@ pub fn advance_husbandry(
         // crew is still on it (Logistics runs before Population).
         herd.build_turns_remaining = None;
         herd.build_work_from_gear = NO_BUILD_GEAR;
+        herd.build_queue_position = crate::intensification::NOT_IN_ANY_BUILD_QUEUE;
         // **HOW WELL THE HERD WAS KEPT LAST TURN** — the same Population→Logistics lag
         // `pen_fed_fraction` runs on. Everything downstream of the staffing is resolved into locals
         // **here, before the field is cleared**, so the whole turn judges one reading: what went
@@ -5012,8 +5028,9 @@ fn forecast_production_and_take_at(
 ///   take inverted by the per-worker throughput (a ratio, so provisions-space matches the resolution
 ///   path's biomass-space result). It was `source_crew_needed(standing, take)`, a `max` blending a
 ///   herding headcount with a hauling one and a build's staffing floor, because one crew did every
-///   job on a source and the row had one number to give. **Each activity states its own crew now**
-///   (`docs/plan_standing_upkeep.md` §2.2), so each answers in its own unit,
+///   job on a source and the row had one number to give. **Each activity is staffed on its own row
+///   now** — the take on the source, the keeping and the building on the band
+///   (`docs/plan_standing_upkeep.md` §2.5) — so each answers in its own unit,
 /// - `overdraws` = whether this policy draws the stock below what it sustains — the ⚠ ([`SourceYield`]).
 ///
 /// **`managed` is rung 3 only** (slice 7): it marks "this source's harvest cannot overdraw", and only
@@ -5087,9 +5104,10 @@ pub(crate) fn forecast_source_yield(
         // (`docs/plan_standing_upkeep.md` §2.2). It used to be `source_crew_needed(standing, take)`,
         // a `max` that blended a herding headcount, a hauling one and a build's staffing floor into
         // one number — because one crew did every job on a source and the row had one number to
-        // give. **Each activity states its own crew now**, so each answers in its own unit: this one
-        // in haulers, the keeping's in `upkeepWorkersNeeded`, the build's in whatever the player
-        // typed. A `max` across units was always the compromise a single allocation forced.
+        // give. **Each activity is staffed on its own row now** (`docs/plan_standing_upkeep.md`
+        // §2.5), so each answers in its own unit: this one in haulers, the keeping's in
+        // `upkeepWorkersNeeded`, and the building's on the band's own `builders` row. A `max` across
+        // units was always the compromise a single allocation forced.
         //
         // The take side differs by whether the source is lumpy. A **whole-animal** (hunt) source uses
         // [`hunt_take_workers`] — the peak-drop crew that can both **reach** and **carry** the drop

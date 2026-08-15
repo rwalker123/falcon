@@ -85,6 +85,12 @@ const KIT_SCOUT_VANTAGE_KEY := "scout_vantage_range"
 ## HERE is decide applicability — see `kit_offer`.
 const KIT_BUILD_WORK_KEY := "build_work_per_worker"
 
+## **THE BUILD AXIS'S NEUTRAL — `0.0`, and NOT the multipliers' `1.0`.** It is a quantity of work a
+## tool takes off a job, so *no tool* is *no work*; reading the multipliers' neutral here would hand
+## every bare-handed crew a free work unit per worker off every build. The sim states the same split
+## on `EquipmentStat::neutral`.
+const BUILD_WORK_NONE := 0.0
+
 ## **HOW MANY OF THIS BAND'S WORKERS THIS KIT CAN ACTUALLY EQUIP FOR A BUILD** — the head count at or
 ## above which extra hands take no further work off a job. `0` (the neutral) means the kit carries
 ## nothing live that helps, which is every row but the handling gear's on the shipped roster.
@@ -199,6 +205,19 @@ const JOB_FORAGE := SourceForecast.LABOR_KIND_FORAGE
 const JOB_SCOUT := "scout"
 const JOB_WARRIOR := "warrior"
 
+## **THE BUILDING ROLE IS A JOB TOO** (`docs/plan_standing_upkeep.md` §2.5). A build's gear offset used
+## to ride the SOURCE ROW's kit — a Corral was priced off the hunt row's husbandry gear — and it is
+## read off this role's own row now that the build crew has left the tile. **`husbandry` is the ONE
+## kit whose items declare `build_work`**, so putting it on this row is how a player brings the
+## hurdles to a Tame or a Corral; the picker exists to make that reachable.
+##
+## ⚠ **THE WIRE NAMES NO DEFAULT FOR IT.** `SubsistenceSection` publishes `defaultHunt` / `Forage` /
+## `Scout` / `WarriorKitId` and no builders twin, so `HudBandLaborState.default_kit_id` answers `""`
+## here and nothing is marked `(default)` — the honest statement of what the client knows. The
+## opening selection therefore comes from the band's OWN `builders` row (`_role_kit_id`) wherever it
+## has one.
+const JOB_BUILDERS := "builders"
+
 ## **THE AXIS EACH BAND-WIDE ROLE IS PRICED ON** — a Scout's kit buys what a posted vantage can make
 ## out, a Warrior's buys the `attack` the camp is defended at. Only the two roles with no source to
 ## work appear: a hunt or forage crew's carry axis is a property of the SOURCE (`carry_axis_for`)
@@ -206,6 +225,13 @@ const JOB_WARRIOR := "warrior"
 const ROLE_AXES := {
 	JOB_SCOUT: KIT_SCOUT_VANTAGE_KEY,
 	JOB_WARRIOR: KIT_ATTACK_KEY,
+	# **AND THE BUILD AXIS, which the builders role card gave a home**
+	# (`docs/plan_standing_upkeep.md` §2.5). `KIT_BUILD_WORK_KEY`'s own note said it had no hint-line
+	# home; that was true while no card was priced on it, and the moment the pool became a role card
+	# the omission stopped being a decision and became a WRONG READOUT — `build_kit_row` falls through
+	# to the compose sheets' `tier_hint` for a job this table does not name, so a Builders card read
+	# `attack 1.0 · carry 12.0 per hunter`, a hunter's haul quoted on a builder's row.
+	JOB_BUILDERS: KIT_BUILD_WORK_KEY,
 }
 
 ## Is this a BAND-WIDE role — one standing slot, no source, priced on `ROLE_AXES`? The one test, so a
@@ -1031,6 +1057,14 @@ static func _role_effect_phrase(job: String, tier: float) -> String:
 		JOB_WARRIOR:
 			return DetailFormat.KIT_ROLE_WARRIOR_ATTACK_FORMAT % String.num(
 				tier, DetailFormat.KIT_CONDITION_DECIMALS)
+		JOB_BUILDERS:
+			# **A NEUTRAL CONTRIBUTION STATES NOTHING**, the "absent terms render no line" convention:
+			# `none` — which is the builders' own default — takes nothing off a build, and `0 work off a
+			# build` costs a line to say so. The condition clauses beside it still render, so a kit that
+			# grants no build work but is wearing out still says which items it is spending.
+			if tier <= BUILD_WORK_NONE:
+				return ""
+			return DetailFormat.KIT_ROLE_BUILDERS_BUILD_FORMAT % DetailFormat.format_work_units(tier)
 	return ""
 
 ## One item's condition clause, appended only where there is something true to say: the band has to

@@ -387,8 +387,9 @@ branches on mission:
   assignment's or mission's floor — and `quantise_animal_take` rounds it to whole animals. It takes
   **no ecology, no `FaunaConfig`, no `improvement` and no ladder**, which is what makes the take
   `r`-independent structurally rather than by convention; see "The hunt policy axis" in `fauna.md`.
-  **A build is not a term here or anywhere else on the take**: it has its own crew
-  (`docs/plan_standing_upkeep.md` §2.2), so there is nothing for this signature to put. The
+  **A build is not a term here or anywhere else on the take**: it is raised by the band's own
+  `builders` pool (`docs/plan_standing_upkeep.md` §2.5), so there is nothing for this signature to
+  put. The
   `improvement`/`ladder` parameters this file used to list are exactly what slice 3 removed.
   The expedition keeps its own `credit` accumulator for the *party's* processing throughput
   (`expedition_take_biomass`), which is a different quantity from the retired resident bank.
@@ -604,7 +605,8 @@ question asked:
   `ceilingSustain`/…/`ceilingCorral` twins, which carried literally the same numbers, are now retired
   `(deprecated)` slots), and the take path pays exactly them
   (forecast == actual). That also makes `Corral` **phase-correct for free**: the ordinary hunt
-  ceiling while the pen is being built by its own crew, and the **full corral yield**
+  ceiling while the pen is being built by the keeper band's own `builders` pool, and the **full
+  corral yield**
   once `is_corralled()` (a penned herd forecasts as `SourceYieldForecast::tended` — every ceiling is
   its managed yield). There is **no expedition ceiling field** — the retired
   `expeditionProvisionsPerTurn` was exactly the "one number that means a flow for Sustain and a stock

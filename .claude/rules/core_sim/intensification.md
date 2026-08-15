@@ -15,7 +15,7 @@ paths:
 
 | File | Purpose |
 |------|---------|
-| `src/data/intensification_ladder.json` | **THE INTENSIFICATION LADDER** — one grammar for both food webs (`intensification.rs`, env override **`INTENSIFICATION_LADDER_PATH`**; design `docs/plan_intensification_ladder.md` §5). A `knowledge` block (**`learn_rate` 1.0 / `lesson_costs` (a map, all eight at 20) / `completion_threshold` 1.0 / `craft_lesson_per_item` 4.0** — **A LESSON COSTS PRACTICE, AND PRACTICE IS NOT WORK**: `learn_rate` is what ONE TURN of practice at the food peak is worth, charged **once per source per turn** and scaled by the assignment's floor (`intensification::learn_multiplier`), and `lesson_costs[name]` is what that knowledge costs in those units, so `20` reads as *twenty worked turns at the food peak*. **It must NOT scale with hands** — knowledge is faction-level and credited once per source per turn, so a per-worker rate would let a faction learn ten times faster by piling hands onto one patch; *you learn by watching the practice, not by counting the hands doing it*, which is why `knowledge_accrual` takes no `workers` where `build_accrual` does. **The ledger stays normalized and the cost is a divisor at the seam** (`LadderKnowledge::ledger_credit` — `DiscoveryProgressLedger` clamps to `1.0` and is shared with great discoveries, espionage and the start profiles, so `completion_threshold` stays the ledger bar and the wire's `IntensificationKnowledgeState` fields stay `0..1`). `1.0 / 20` reproduces the retired `progress_per_turn` of `0.05` exactly — the inversion ships **pacing-neutral**. The map is keyed by the **knowledge**, not by the rung that teaches it, because a knowledge can be taught by more than one rung and a **craft by none**; `craft_lesson_per_item` is the crafting arc's dial and a *sibling* rather than a reading, because the quantum differs (per **item completed at a bench**, on the same quantum as that bench tool's wear), so `lesson_costs[craft] / craft_lesson_per_item` is a craft's length in **items** (`20 / 4` → 5). It lives here rather than in `recipes.json` so every knowledge pace in the game is tuned in one file — the same reason the ladder's own moved here in slice 4 — and it **moved with the currency** from `lesson_per_crafted_item` `0.2` rather than being left as a fraction of a normalized threshold, which is exactly the drift the consolidation existed to prevent. See `.claude/rules/core_sim/crafting.md`; **moved here in slice 4 from the two identical per-web copies** in `labor_config`'s `forage.cultivation` and `fauna_config`'s `husbandry`, once the earn path became one rung-driven seam — the number paces *both* webs, so it belongs to the ladder, exactly like the build dials) plus a flat `rungs` list; each record is one rung of one branch (`plant` = forage patches, `animal` = herds): `id`/`branch`/`order`, `verb` (the **`Improvement`** — `cultivate`/`sow`/`tame`/`corral` — that fills this rung's per-source build meter — **`null` = no verb drives this rung today, and the engine skips it**), `unlock_knowledge`/`earns_knowledge` (knowledge ids the rung gates on / **teaches when practised** — `null` = ungated / teaches nothing; **both are LIVE**: `unlock_knowledge` is what every gate resolves through, and `earns_knowledge` drives `RungDef::knowledge_accrual`, the one earn seam), `requires_rung` (the rung directly below on the ladder — the ladder is strictly sequential; **a claim about the ladder's SHAPE, not a per-source precondition** — no code reads it as one, and the per-source rule differs per branch: `corral` demands a herd you already tamed, `sow` demands a gathering site and fresh water — it used to demand no prior patch at all, which #464 reversed), `ceiling_required` (the per-species `husbandry_ceiling` gate, animal branch only), **`site_requirement`** (`{ requires_gathering_site, min_forage_capacity, requires_fresh_water }` — **what the LAND must be** for the rung to be placed on a tile; the plant twin of `ceiling_required`, keyed on the ground instead of the species. `null` = the rung asks nothing of the site, i.e. **every ANIMAL rung** — a herd carries its own site with it. **All three PLANT rungs state one** (issue #464): rungs 1–3 each `requires_gathering_site`, and rung 3 adds `requires_fresh_water` on top. `min_forage_capacity` is **0 on every shipped rung** — it carried rung 3's scarcity at 195 until the gathering-site rule took that job, and stacking both demanded a curated site that also landed on one of three biomes; it stays a live dial because **rung 4 (Farm) is the rung that needs it**. **Rung 4 IS this record with `requires_gathering_site: false` and the fertility floor put back** — that is the whole of what Farm unlocks, and it is a config edit), `build` (**`work_cost`**/**`grace_turns`** — **THE SIZE OF THE JOB IN WORK UNITS** (one unit = one worker-turn at the food peak with no gear; turns are the *output*, see "An improvement costs WORK, not turns") and the **un-worked-build neglect grace**, which **no shipped rung declares** any more: every one of them counts turns of upkeep SHORTFALL instead, so its grace lives in `upkeep.grace_turns` and a second number here would be a dial nothing reads. **`decay_fraction_per_turn`, `crew_needed` and `yield_fraction_while_building` are all RETIRED** — shortfall *is* the decay (`docs/plan_standing_upkeep.md` §2.4), and see "Three allocations per source" below; `null` on a rung with nothing to build), **`upkeep`** (**`work_per_turn`**/**`scaled_by`**/**`meter_decay`**/**`grace_turns`** — **WHAT IT COSTS TO HOLD THE RUNG, PER TURN, FOREVER** (`docs/plan_standing_upkeep.md` §2): the *rate* half of the ladder beside `build`'s *pile*, in the **same work units**, so *"what does it cost to hold this"* has one answer in one unit whichever rung is asked. `scaled_by` is a bounded coded primitive — the `behavior` idiom — `flat` (the rate as declared, the cost of the thing *existing*, which is what a patch owes because a patch is ONE TILE) or `source_load` (× the source's own load reading in whatever unit the rung quotes its rate in — the animal rungs quote per **keeper-load**, `head count / animals_per_herder`, which is what lets one rate say *a shepherd minds 300 sheep and a cowherd 80 cattle*; deliberately NOT a per-head rate, which would invent a 45-herder steppe megaherd out of the unit alone); `grace_turns` is consecutive turns of **shortfall** forgiven before the decay starts, and it is the rung's own number rather than a reading of `build.grace_turns` because a rung may be forgiving about an unworked build and strict about an unpaid bill. **`meter_decay` (`per_turn` / `retain_fraction`) IS THE THIRD AND FOURTH DIAL, and it is what decoupled the rot from the demand**: `per_turn` is what a WHOLLY unmaintained rung loses off its meter each turn (the loss is proportional — `(shortfall / demand) × per_turn` — so half the hands means half the rot), and `retain_fraction` is how far the meter may erode before the rung is REVOKED, as a fraction of that rung's own cost. Before the split the shortfall *was* the decay, so raising a demand made the improvement rot faster in exact proportion; and a completed meter sits exactly at its cost, so the first bleed of any size took the rung away. **`meter_decay` is NULL on both animal rungs** — an under-kept flock sheds animals at `fauna_config`'s own escape fractions, which are already the rate, and a second one here would be two numbers for one mechanic. **ALL FOUR BUILT RUNGS DECLARE AN `upkeep`.** The plant DEMANDS are whole numbers a player can staff exactly (`2` and `4`); their ROT RATES are the pacing-neutral inversion of the retired `decay_fraction_per_turn` (`0.01 × 50` and `0.01 × 75`), so the retune is provably neutral on the decay axis; the animal rates invert the retired `herders_needed` head count (`1.0` per keeper-load, so `ceil(demand)` is the count every species always asked for); and every `upkeep.grace_turns` is that rung's own former `build.grace_turns` moved across unchanged), and `behavior` (the bounded coded primitives `movement` ∈ `fixed|roam|drift_to_owner|pursue` — **read by `fauna::advance_herds`, the first live primitive (slice 3b)**; `pursue` (Predators Phase 2) is currently **diet-resolved** for a wild carnivore in `fauna::movement_primitive`, not assigned by a rung record, because the husbandry rungs are diet-orthogonal — `feeding` ∈ `photosynthesis|forage|self_graze`, `harvest` ∈ `worker_take|worker_tend|passive` — the last two still **parsed and validated only**). **Shipped rungs** (`build` quoted as `work_cost`/`grace`, `upkeep` as `work_per_turn`/`scaled_by`/`grace`): plant `wild`(1, earns `cultivation`)/`tended`(2, verb `cultivate`, gate `cultivation`, **earns `seed_selection`**, build `50`/**`null`**, **upkeep `2.0`/`flat`/rot `0.5` held to `0.75`/grace `2`** — a completed tended patch survives **28** wholly unmaintained turns)/**`field`(3, verb `sow`, gate `seed_selection`, earns nothing, build `75`/**`null`**, **upkeep `4.0`/`flat`/rot `0.75` held to `0.75`/grace `1`** — a completed Field survives **27**, `fixed`, site `{ requires_gathering_site true, min_forage_capacity 0, requires_fresh_water true }` → **174 of 4160 tiles clear the water rule** on the standard map, of which the **130–134 curated gathering markers** are what a band can actually reach — see "Placed, not conjured" in `cultivation.md`, and note the **49** this row carried until #466 came from a partial-chain test harness)**; animal `wild`(1, earns `herding`, `roam`)/`pastoral`(2, verb `tame`, gate `herding`, ceiling `pastoral`, **earns `penning`**, build `50`/**`null`**, **upkeep `1.0`/`source_load`/`2`**, **`drift_to_owner` + `worker_take`**)/`pen`(3, verb `corral`, gate **`penning`** (slice 4's §4.3 reshuffle — was `herding`), ceiling `pen`, **earns `foddering`** (Flora Roster F3 — running a pen teaches you to hay it; unlocks the fodder-draw, not a rung), build `75`/**`null`**, **upkeep `1.0`/`source_load`/`6`** — the same rate as pastoral, because a penned animal is not less work to mind, and a LONGER grace, which is what the fence buys (the turns-side statement of `pen_escape_fraction < pastoral_escape_fraction`), `fixed`). **The two webs' graces are not monotone in the same direction, and that is why the dial is per-rung**: on plants the NEWEST rung is the most fragile (a standing crop wants hands every turn; the cleared ground under it keeps its clearing longer), on animals the HIGHEST is the most forgiving (the fence does the holding). All four are playtest anchors. **The file describes what the sim does TODAY, deliberately** — later slices change behaviour by *editing it*. **Validated** — `LadderConfig::validate()` runs inside `from_json_str` (every load path, the `fauna_config.rs` convention): unique `(branch, id)` and `(branch, order)`, exactly one order-1 rung per branch, `requires_rung` resolving to a real same-branch rung at `order - 1` (and `null` iff `order == 1`), `verb` parsing to a real `Improvement`, `unlock_knowledge`/`earns_knowledge` resolving to a known discovery id, `0 < work_cost` finite, **`grace_turns < work_cost / reference_output` when present** — and the identical bound on **`upkeep.grace_turns`**, since either trigger's grace outlasting its own build makes the penalty evaporate — where `reference_output = SOLE_BUILDER × PER_WORKER_OUTPUT` (a grace that outlasts its own build makes walking away free for the whole span it took to build — a penalty evaporating silently, the time-axis twin of the site rule that requires nothing; one builder is the LONGEST the build can take and therefore the loosest the bound can be, which is the safe direction for a guard, and it replaced a `crew_needed` divisor when the rung stopped declaring a crew), **`upkeep.work_per_turn > 0`** finite **when the block is present** (a parked `0` is rejected because it means *"no upkeep"* while reading like a live dial; say `upkeep: null` — the same rule the retired `decay_fraction_per_turn` followed), **`upkeep.meter_decay.per_turn > 0`** finite and **`upkeep.meter_decay.retain_fraction` within `0..=1`** when that block is present (a rate of `0` says *"this never rots"*, which the config already says by declaring no `meter_decay` at all; a fraction above `1` would revoke the rung on the turn it completed, which is the very defect the bar exists to fix), and **`upkeep.scaled_by` parsing to a real variant** (the `behavior` idiom: an unknown token fails the *parse* rather than resolving to a default nobody chose), a `site_requirement`'s `min_forage_capacity` finite & `>= 0` **and the requirement actually requiring something** (a floor of `0` with `requires_fresh_water: false` **and `requires_gathering_site: false`** admits every tile — a placement rule that places no rule, which is how a rung's scarcity evaporates silently; say `null` instead), **`knowledge.learn_rate > 0`** finite (else nothing is ever learned and the ladder silently freezes at rung 1), **every `lesson_cost > 0`** finite (a free lesson is known before it is learned, so every gate it holds is open on turn 1), **every knowledge the ladder can teach PRICED** — each rung's `earns_knowledge` and every craft (`crafting::CRAFTS_WITH_A_DISCOVERY`); a missing entry is a load failure rather than a silent default, because a defaulted pace is a number nobody chose — **`craft_lesson_per_item > 0`** finite, and **`0 < knowledge.completion_threshold <= 1`** (at `0` every gate opens on turn 1; above `1` no gate can ever open, since the ledger clamps accrual to `1.0`) — all **stated once, for both webs**, having moved from each web's own config — and **every rung the engine names by hand (`RungKey`) present** (so a broken override cannot silently no-op a shipped rung); a broken invariant is logged at **error** level (`intensification_ladder.invalid_rejected`) and the builtin is used. See "The Intensification Ladder" |
+| `src/data/intensification_ladder.json` | **THE INTENSIFICATION LADDER** — one grammar for both food webs (`intensification.rs`, env override **`INTENSIFICATION_LADDER_PATH`**; design `docs/plan_intensification_ladder.md` §5). A `knowledge` block (**`learn_rate` 1.0 / `lesson_costs` (a map, all eight at 20) / `completion_threshold` 1.0 / `craft_lesson_per_item` 4.0** — **A LESSON COSTS PRACTICE, AND PRACTICE IS NOT WORK**: `learn_rate` is what ONE TURN of practice at the food peak is worth, charged **once per source per turn** and scaled by the assignment's floor (`intensification::learn_multiplier`), and `lesson_costs[name]` is what that knowledge costs in those units, so `20` reads as *twenty worked turns at the food peak*. **It must NOT scale with hands** — knowledge is faction-level and credited once per source per turn, so a per-worker rate would let a faction learn ten times faster by piling hands onto one patch; *you learn by watching the practice, not by counting the hands doing it*, which is why `knowledge_accrual` takes no `workers` where `build_accrual` does. **The ledger stays normalized and the cost is a divisor at the seam** (`LadderKnowledge::ledger_credit` — `DiscoveryProgressLedger` clamps to `1.0` and is shared with great discoveries, espionage and the start profiles, so `completion_threshold` stays the ledger bar and the wire's `IntensificationKnowledgeState` fields stay `0..1`). `1.0 / 20` reproduces the retired `progress_per_turn` of `0.05` exactly — the inversion ships **pacing-neutral**. The map is keyed by the **knowledge**, not by the rung that teaches it, because a knowledge can be taught by more than one rung and a **craft by none**; `craft_lesson_per_item` is the crafting arc's dial and a *sibling* rather than a reading, because the quantum differs (per **item completed at a bench**, on the same quantum as that bench tool's wear), so `lesson_costs[craft] / craft_lesson_per_item` is a craft's length in **items** (`20 / 4` → 5). It lives here rather than in `recipes.json` so every knowledge pace in the game is tuned in one file — the same reason the ladder's own moved here in slice 4 — and it **moved with the currency** from `lesson_per_crafted_item` `0.2` rather than being left as a fraction of a normalized threshold, which is exactly the drift the consolidation existed to prevent. See `.claude/rules/core_sim/crafting.md`; **moved here in slice 4 from the two identical per-web copies** in `labor_config`'s `forage.cultivation` and `fauna_config`'s `husbandry`, once the earn path became one rung-driven seam — the number paces *both* webs, so it belongs to the ladder, exactly like the build dials) plus a flat `rungs` list; each record is one rung of one branch (`plant` = forage patches, `animal` = herds): `id`/`branch`/`order`, `verb` (the **`Improvement`** — `cultivate`/`sow`/`tame`/`corral` — that fills this rung's per-source build meter — **`null` = no verb drives this rung today, and the engine skips it**), `unlock_knowledge`/`earns_knowledge` (knowledge ids the rung gates on / **teaches when practised** — `null` = ungated / teaches nothing; **both are LIVE**: `unlock_knowledge` is what every gate resolves through, and `earns_knowledge` drives `RungDef::knowledge_accrual`, the one earn seam), `requires_rung` (the rung directly below on the ladder — the ladder is strictly sequential; **a claim about the ladder's SHAPE, not a per-source precondition** — no code reads it as one, and the per-source rule differs per branch: `corral` demands a herd you already tamed, `sow` demands a gathering site and fresh water — it used to demand no prior patch at all, which #464 reversed), `ceiling_required` (the per-species `husbandry_ceiling` gate, animal branch only), **`site_requirement`** (`{ requires_gathering_site, min_forage_capacity, requires_fresh_water }` — **what the LAND must be** for the rung to be placed on a tile; the plant twin of `ceiling_required`, keyed on the ground instead of the species. `null` = the rung asks nothing of the site, i.e. **every ANIMAL rung** — a herd carries its own site with it. **All three PLANT rungs state one** (issue #464): rungs 1–3 each `requires_gathering_site`, and rung 3 adds `requires_fresh_water` on top. `min_forage_capacity` is **0 on every shipped rung** — it carried rung 3's scarcity at 195 until the gathering-site rule took that job, and stacking both demanded a curated site that also landed on one of three biomes; it stays a live dial because **rung 4 (Farm) is the rung that needs it**. **Rung 4 IS this record with `requires_gathering_site: false` and the fertility floor put back** — that is the whole of what Farm unlocks, and it is a config edit), `build` (**`work_cost`**/**`grace_turns`** — **THE SIZE OF THE JOB IN WORK UNITS** (one unit = one worker-turn at the food peak with no gear; turns are the *output*, see "An improvement costs WORK, not turns") and the **un-worked-build neglect grace**, which **no shipped rung declares** any more: every one of them counts turns of upkeep SHORTFALL instead, so its grace lives in `upkeep.grace_turns` and a second number here would be a dial nothing reads. **`decay_fraction_per_turn`, `crew_needed` and `yield_fraction_while_building` are all RETIRED** — shortfall *is* the decay (`docs/plan_standing_upkeep.md` §2.4), and see "ONE allocation per source, and BOTH standing pools are the band's" below; `null` on a rung with nothing to build), **`upkeep`** (**`work_per_turn`**/**`scaled_by`**/**`meter_decay`**/**`grace_turns`** — **WHAT IT COSTS TO HOLD THE RUNG, PER TURN, FOREVER** (`docs/plan_standing_upkeep.md` §2): the *rate* half of the ladder beside `build`'s *pile*, in the **same work units**, so *"what does it cost to hold this"* has one answer in one unit whichever rung is asked. `scaled_by` is a bounded coded primitive — the `behavior` idiom — `flat` (the rate as declared, the cost of the thing *existing*, which is what a patch owes because a patch is ONE TILE) or `source_load` (× the source's own load reading in whatever unit the rung quotes its rate in — the animal rungs quote per **keeper-load**, `head count / animals_per_herder`, which is what lets one rate say *a shepherd minds 300 sheep and a cowherd 80 cattle*; deliberately NOT a per-head rate, which would invent a 45-herder steppe megaherd out of the unit alone); `grace_turns` is consecutive turns of **shortfall** forgiven before the decay starts, and it is the rung's own number rather than a reading of `build.grace_turns` because a rung may be forgiving about an unworked build and strict about an unpaid bill. **`meter_decay` (`per_turn` / `retain_fraction`) IS THE THIRD AND FOURTH DIAL, and it is what decoupled the rot from the demand**: `per_turn` is what a WHOLLY unmaintained rung loses off its meter each turn (the loss is proportional — `(shortfall / demand) × per_turn` — so half the hands means half the rot), and `retain_fraction` is how far the meter may erode before the rung is REVOKED, as a fraction of that rung's own cost. Before the split the shortfall *was* the decay, so raising a demand made the improvement rot faster in exact proportion; and a completed meter sits exactly at its cost, so the first bleed of any size took the rung away. **`meter_decay` is NULL on both animal rungs** — an under-kept flock sheds animals at `fauna_config`'s own escape fractions, which are already the rate, and a second one here would be two numbers for one mechanic. **ALL FOUR BUILT RUNGS DECLARE AN `upkeep`.** The plant DEMANDS are whole numbers a player can staff exactly (`2` and `4`); their ROT RATES are the pacing-neutral inversion of the retired `decay_fraction_per_turn` (`0.01 × 50` and `0.01 × 75`), so the retune is provably neutral on the decay axis; the animal rates invert the retired `herders_needed` head count (`1.0` per keeper-load, so `ceil(demand)` is the count every species always asked for); and every `upkeep.grace_turns` is that rung's own former `build.grace_turns` moved across unchanged), and `behavior` (the bounded coded primitives `movement` ∈ `fixed|roam|drift_to_owner|pursue` — **read by `fauna::advance_herds`, the first live primitive (slice 3b)**; `pursue` (Predators Phase 2) is currently **diet-resolved** for a wild carnivore in `fauna::movement_primitive`, not assigned by a rung record, because the husbandry rungs are diet-orthogonal — `feeding` ∈ `photosynthesis|forage|self_graze`, `harvest` ∈ `worker_take|worker_tend|passive` — the last two still **parsed and validated only**). **Shipped rungs** (`build` quoted as `work_cost`/`grace`, `upkeep` as `work_per_turn`/`scaled_by`/`grace`): plant `wild`(1, earns `cultivation`)/`tended`(2, verb `cultivate`, gate `cultivation`, **earns `seed_selection`**, build `50`/**`null`**, **upkeep `2.0`/`flat`/rot `0.5` held to `0.75`/grace `2`** — a completed tended patch survives **28** wholly unmaintained turns)/**`field`(3, verb `sow`, gate `seed_selection`, earns nothing, build `75`/**`null`**, **upkeep `4.0`/`flat`/rot `0.75` held to `0.75`/grace `1`** — a completed Field survives **27**, `fixed`, site `{ requires_gathering_site true, min_forage_capacity 0, requires_fresh_water true }` → **174 of 4160 tiles clear the water rule** on the standard map, of which the **130–134 curated gathering markers** are what a band can actually reach — see "Placed, not conjured" in `cultivation.md`, and note the **49** this row carried until #466 came from a partial-chain test harness)**; animal `wild`(1, earns `herding`, `roam`)/`pastoral`(2, verb `tame`, gate `herding`, ceiling `pastoral`, **earns `penning`**, build `50`/**`null`**, **upkeep `1.0`/`source_load`/`2`**, **`drift_to_owner` + `worker_take`**)/`pen`(3, verb `corral`, gate **`penning`** (slice 4's §4.3 reshuffle — was `herding`), ceiling `pen`, **earns `foddering`** (Flora Roster F3 — running a pen teaches you to hay it; unlocks the fodder-draw, not a rung), build `75`/**`null`**, **upkeep `1.0`/`source_load`/`6`** — the same rate as pastoral, because a penned animal is not less work to mind, and a LONGER grace, which is what the fence buys (the turns-side statement of `pen_escape_fraction < pastoral_escape_fraction`), `fixed`). **The two webs' graces are not monotone in the same direction, and that is why the dial is per-rung**: on plants the NEWEST rung is the most fragile (a standing crop wants hands every turn; the cleared ground under it keeps its clearing longer), on animals the HIGHEST is the most forgiving (the fence does the holding). All four are playtest anchors. **The file describes what the sim does TODAY, deliberately** — later slices change behaviour by *editing it*. **Validated** — `LadderConfig::validate()` runs inside `from_json_str` (every load path, the `fauna_config.rs` convention): unique `(branch, id)` and `(branch, order)`, exactly one order-1 rung per branch, `requires_rung` resolving to a real same-branch rung at `order - 1` (and `null` iff `order == 1`), `verb` parsing to a real `Improvement`, `unlock_knowledge`/`earns_knowledge` resolving to a known discovery id, `0 < work_cost` finite, **`grace_turns < work_cost / reference_output` when present** — and the identical bound on **`upkeep.grace_turns`**, since either trigger's grace outlasting its own build makes the penalty evaporate — where `reference_output = SOLE_BUILDER × PER_WORKER_OUTPUT` (a grace that outlasts its own build makes walking away free for the whole span it took to build — a penalty evaporating silently, the time-axis twin of the site rule that requires nothing; one builder is the LONGEST the build can take and therefore the loosest the bound can be, which is the safe direction for a guard, and it replaced a `crew_needed` divisor when the rung stopped declaring a crew), **`upkeep.work_per_turn > 0`** finite **when the block is present** (a parked `0` is rejected because it means *"no upkeep"* while reading like a live dial; say `upkeep: null` — the same rule the retired `decay_fraction_per_turn` followed), **`upkeep.meter_decay.per_turn > 0`** finite and **`upkeep.meter_decay.retain_fraction` within `0..=1`** when that block is present (a rate of `0` says *"this never rots"*, which the config already says by declaring no `meter_decay` at all; a fraction above `1` would revoke the rung on the turn it completed, which is the very defect the bar exists to fix), and **`upkeep.scaled_by` parsing to a real variant** (the `behavior` idiom: an unknown token fails the *parse* rather than resolving to a default nobody chose), a `site_requirement`'s `min_forage_capacity` finite & `>= 0` **and the requirement actually requiring something** (a floor of `0` with `requires_fresh_water: false` **and `requires_gathering_site: false`** admits every tile — a placement rule that places no rule, which is how a rung's scarcity evaporates silently; say `null` instead), **`knowledge.learn_rate > 0`** finite (else nothing is ever learned and the ladder silently freezes at rung 1), **every `lesson_cost > 0`** finite (a free lesson is known before it is learned, so every gate it holds is open on turn 1), **every knowledge the ladder can teach PRICED** — each rung's `earns_knowledge` and every craft (`crafting::CRAFTS_WITH_A_DISCOVERY`); a missing entry is a load failure rather than a silent default, because a defaulted pace is a number nobody chose — **`craft_lesson_per_item > 0`** finite, and **`0 < knowledge.completion_threshold <= 1`** (at `0` every gate opens on turn 1; above `1` no gate can ever open, since the ledger clamps accrual to `1.0`) — all **stated once, for both webs**, having moved from each web's own config — and **every rung the engine names by hand (`RungKey`) present** (so a broken override cannot silently no-op a shipped rung); a broken invariant is logged at **error** level (`intensification_ladder.invalid_rejected`) and the builtin is used. See "The Intensification Ladder" |
 ## The Intensification Ladder
 
 **One grammar for both food webs** (`intensification.rs`, config `src/data/intensification_ladder.json`;
@@ -137,9 +137,10 @@ live in two slots:
   > **Two things changed, and neither is a retune.** (1) The `Thriving` gate is **deleted** on both
   > webs and replaced by the rate above — a slope where there was a cliff, with no lapse state left to
   > hold progress across. (2) **The dip moved off the ceiling and onto crew throughput** (§3.1), and
-  > has since **retired entirely** — see "Three allocations per source". **The build is staffed in
-  > its own right**, so a deep draw cannot build with a crew it is not paying for: §0.3's defect
-  > cannot recur for the stronger reason that there is no shared crew at all.
+  > has since **retired entirely** — see "ONE allocation per source, and BOTH standing pools are the
+  > band's". **The build is staffed in its own right, on the band's `builders` pool**, so a deep draw
+  > cannot build with a crew it is not paying for: §0.3's defect cannot recur for the stronger reason
+  > that there is no shared crew at all.
   >
   > **(3) And the FLOOR then came off the build rate.** The rate above described people pulling on the
   > source; a build crew is not pulling, and a build crew on a source nobody is harvesting has no
@@ -166,7 +167,8 @@ live in two slots:
   **never touches the improvement** — which is what makes a *paused* build re-staffable (`validate_labor_policy` no longer
   sees the verb, so the `Cultivate` start gate is not re-asserted). The improvement is set by its own
   verb: `cultivate` / `sow` / `tame` / `corral`, all four routing through
-  `set_improvement_on_working_bands` + `validate_improvement`.
+  `queue_build_on_working_bands` + `validate_improvement`. **None of them names a crew** — see
+  "THE QUEUE IS THE DECLARATION" below.
 
 > #### THE BUILD VERB IS **DERIVED FROM THE METER**, and the stored one is only a declaration
 >
@@ -175,9 +177,9 @@ live in two slots:
 >
 > | meter | state | who declares |
 > |---|---|---|
-> | **zero** | nothing in flight | **the player** — a wild patch could climb to tended *or* be sown, and the sim cannot guess |
+> | **zero** | nothing banked | **the player**, through the band's **build queue** — a wild patch could climb to tended *or* be sown, and the sim cannot guess |
 > | **between zero and its cost** | building that rung, **implied** | nobody — the progress banked on it *is* the answer |
-> | **at its cost** | maintaining | nobody |
+> | **at its cost** | nothing left to raise | nobody — the entry **leaves the queue** |
 >
 > **Newest meter first**, exactly as `patch_unwinding_rung` resolves: a Field with any progress on it
 > governs the tended ground beneath, so a `Cultivate` declared on a Field is **dead** rather than
@@ -185,9 +187,15 @@ live in two slots:
 >
 > **What it fixed.** `RungDef::build_accrual` banks nothing unless the rung's verb is in flight, and
 > completion freed the declaration — so a completed rung that eroded back below its cost re-entered
-> the *building* state with nothing set and could not be repaired until the player re-issued
-> `cultivate`. They never withdrew that intent. **A player who has paid for a rung and watched it slip
-> adds hands, not a command.**
+> the *building* state with nothing set, and the derivation is what lets the player see **which** job
+> a repair is without working it out.
+>
+> ⛔ **BUT AN ERODED RUNG IS NOT RE-ADOPTED** (`docs/plan_standing_upkeep.md` §2.4). Deriving the verb
+> says *what* a repair would be; it does not put the source back in the **queue**. Repairing is a
+> fresh decision the player makes by re-queueing — which is what keeps a one-percent-eroded Field
+> from displacing the build they actually ordered off the head of a pool funded all-hands-on-one.
+> `forage_cultivation::an_eroded_rung_is_still_funded_by_the_keeping_pool` and its repair twin pin
+> both halves.
 >
 > **RETIRED with it: `abandon_improvement`** (the command, the alias, `handle_abandon_improvement`,
 > `describe_source`, `improvement_event_kind`, and proto field 46 — **reserved, never reused**). It
@@ -195,20 +203,18 @@ live in two slots:
 > the commitment is the **hands** now. A command that cleared a *derived* value would either do
 > nothing or fight the derivation, and both are worse than not having it.
 >
-> > #### ⛔ A DECLARATION CANNOT CURRENTLY BE WITHDRAWN — and the walk-away path stated here was wrong
+> > #### THE UNDO IS `unqueue`, AND `abandon` PUTS THE WHOLE SOURCE DOWN
 > >
-> > This callout used to claim you walk away by unstaffing the builders with
-> > `cultivate <faction> <x> <y> 0`. **That command does not clear anything.** Every path reaches
-> > `set_improvement_on_working_bands(…, Some(verb), workers)` (`bin/server.rs`), so it sets
-> > `improvement = Some(Cultivate)` with `improvement_workers = 0`; `forage::patch_build_verb` honours
-> > a declaration whenever its meter is at zero, so the source reads as **building, forever, with no
-> > builders and no undo**. `set_improvement`'s `None` arm is unreachable from any command.
+> > A declaration used to be unwithdrawable: `cultivate <f> <x> <y> 0` *set* `improvement =
+> > Some(Cultivate)` with a crew of zero, and `patch_build_verb` honours a declaration whenever its
+> > meter is at zero — so the source read as **building, forever, with no builders and no undo**.
 > >
-> > The retirement itself still stands — the verb is derived and there is no stored authority worth a
-> > clearing command — but *"the hands are the commitment"* is only true once a declaration with no
-> > hands is inert, and it is not. `docs/plan_standing_upkeep.md` §4.6 owns the fix and folds it into
-> > the builder-pool slice, where pooling makes it sharper still: a declaration will carry no crew at
-> > all, so unticking becomes the **only** undo.
+> > A declaration carries no crew at all now (§2.5), so **withdrawing it is an ordinary list edit**:
+> > `unqueue <faction> <x> <y>` / `unqueue <faction> <herd_id>` drops the queue entry and leaves the
+> > row, its take crew, its kit and the meter exactly as they are. `abandon`, on the same source
+> > grammar, is the heavier one — it drops the band's whole **holding**, row and entry together, and
+> > leaves the meter to rot back down at the rung's own rate. Neither destroys anything on the spot,
+> > which is why neither asks for a confirmation.
 >
 > **RETIRED with it too: the "nothing left to build" test** (`forage_rung_already_built` /
 > `hunt_rung_already_built`). Its one job was to clear a verb the sim would otherwise have driven on a
@@ -230,8 +236,9 @@ call them instead of reaching for their own bespoke accrue/cost/decay levers, so
 `labor_config`/`fauna_config` and into the ladder. (`build_decay` is **retired** with the
 `decay_fraction_per_turn` it read: shortfall is the decay.)
 
-- **`build_accrual`** returns **the WORK UNITS this crew produces this turn** —
-  `workers × PER_WORKER_OUTPUT`, the build's own crew and no floor term — **only** when
+- **`build_accrual`** returns **the WORK UNITS THE BAND'S BUILDERS PRODUCE this turn** —
+  `builders × PER_WORKER_OUTPUT`, the pool's whole head count and no floor term, and only for the
+  source at the **head** of that band's queue — **only** when
   `improvement` **is** the rung's own `verb` *and* the caller's rung-specific gates hold (`eligible` —
   knows the unlock knowledge, **the crew took something**, species ceiling allows, faction owns it);
   otherwise `0`. **A rung with `verb: null` is never driven** — which is what keeps the two `wild`
@@ -290,14 +297,14 @@ call them instead of reaching for their own bespoke accrue/cost/decay levers, so
   is pulling on the source.
   `accrue_field` and the `Corral` arm still omit the *work predicate* from `eligible` — rung 3 never
   had the `Thriving` gate it replaced, and bare ground stands below every floor by construction.
-- **`ExtendPen` names its crew like every other build**, on the four verbs' own grammar
-  (`extend_pen <faction> <x> <y> <workers>`). It rides the same `animal:pen` rung as the pen it
-  widens, so it staffs the same `improvement_workers` allocation, passes the same pool gate and reads
-  the same gear — a ring cannot drift from the initial build. **It sets the crew without setting a
-  verb**: a built pen carries no `improvement` for one to hang off, which is why the ring is
-  command-driven rather than improvement-driven in the first place. Riding the assignment's *take*
-  crew, which it did while the investment dip was the only cost of a build, made widening a fence the
-  one build in the game that cost nothing the moment the dip retired.
+- **`ExtendPen` names a QUEUE KIND, on the four verbs' own grammar** (`extend_pen <faction> <x> <y>`).
+  It rides the same `animal:pen` rung as the pen it widens, so it waits in the same queue, is funded
+  by the same `builders` pool and reads the same gear — a ring cannot drift from the initial build.
+  **It is the one entry kind that names no rung verb**: a built pen carries no meter for
+  `herd_build_verb` to answer from, so `BuildJob::ExtendPen` states it instead. That is exactly the
+  gap the queue had to fill when the ring stopped naming a crew. Riding the assignment's *take* crew,
+  which it did while the investment dip was the only cost of a build, made widening a fence the one
+  build in the game that cost nothing the moment the dip retired.
 - **THE GRACE — the consecutive turns a rung forgives** before its penalty starts. Both webs count on
   a `neglect_turns: u16` (on `ForagePatch`/`Herd`) and gate different penalties on it: the plant
   meters bleed (`forage::advance_cultivation`), the animal flock sheds (`fauna::advance_husbandry`).
@@ -334,13 +341,15 @@ call them instead of reaching for their own bespoke accrue/cost/decay levers, so
   labor arm wrote *last* turn: `ForagePatch::upkeep_supplied` on the plant side, and the surviving
   `Herd::corralled_tended_this_turn` flag on the animal side until its own slice lands); a pen is
   lost outright with its herd rather than bleeding a meter.
-  The take, the build and the keeping each read their own crew off the assignment
-  (`LaborAssignment::{workers, improvement_workers, maintain_workers}`), and the take path is read by
+  The take reads its crew off the row (`LaborAssignment::workers`) and both standing pools off their
+  own band-level rows (`LaborAllocation::workers_on(&LaborTarget::{Builders, Agriculture,
+  Husbandry})`), and the take path is read by
   `forage::forage_take`, `systems::hunt_take`, both forward projections and
   `fauna::forecast_expected_take` alike, and the improvement axis moves none of them — so
   **forecast == actual** for free (see "Pre-commit Yield Forecast"). **Extending** a pen (2d-β) reads
   the *same* `animal:pen` rung, so a ring can never drift from the initial build.
-- **THE BUILD IS NOT IN THE TAKE AT ALL** — see "Three allocations per source", which is where the
+- **THE BUILD IS NOT IN THE TAKE AT ALL** — see "ONE allocation per source, and BOTH standing pools
+  are the band's", which is where the
   retired `yield_fraction_while_building` went. Neither the ceiling nor the crew carries a build
   term, which is what makes `SourceYieldForecast::ceiling_at` linear in terms already on the wire and
   so composable by the client — see "THE CEILING LISTS ARE RETIRED" in `yield-forecast.md`.
@@ -370,52 +379,77 @@ call them instead of reaching for their own bespoke accrue/cost/decay levers, so
   > constant, its ten call sites and that detail token are all deleted (issue #442): the stance was
   > never vacated, so there is nothing to restore.
 
-### TWO allocations per source, and the KEEPING is the band's
+### ONE allocation per source, and BOTH standing pools are the band's
 
-**A source carries two independent worker allocations from a band**
-(`docs/plan_standing_upkeep.md` §2.2), and the player states each:
+**A source row states the TAKE, and nothing else** (`docs/plan_standing_upkeep.md` §2.5):
 
-| Activity | Field | Set by | On the wire |
+| Activity | Where the hands are | Set by | On the wire |
 |---|---|---|---|
-| **take** | `LaborAssignment::workers` | `assign_labor` | `workers` |
-| **build** | `LaborAssignment::improvement_workers` | `cultivate\|sow\|tame\|corral <faction> <target…> <workers>` | `improvementWorkers` |
+| **take** | `LaborAssignment::workers` on the source's row | `assign_labor <faction> <band> forage\|hunt …` | `workers` |
+| **keeping** | `LaborTarget::Agriculture` / `LaborTarget::Husbandry`, a **band-level row** | `assign_labor <faction> <band> agriculture\|husbandry <n>` | a row of `laborAssignments`, `kind` = the role |
+| **building** | `LaborTarget::Builders`, a **band-level row** | `assign_labor <faction> <band> builders <n>` | likewise, `kind = "builders"` |
 
-**The third one left the tile** (§2.5). Maintenance is a **band-level standing role** —
-`LaborTarget::Agriculture` for the plant web, `LaborTarget::Husbandry` for the animal one, staffed
-through `assign_labor <faction> <band> agriculture|husbandry <workers>` exactly like scout and
-warrior — and its hands are a **pool** measured against the summed demand of everything the band
-holds on that web. See "MAINTENANCE IS A BAND-LEVEL POOL" below.
+**Both standing crews left the tile, one slice apart, and for the same reason**: an indivisible
+supplier meeting a per-source demand wastes whatever it does not spend, and the waste grows as gear
+makes a hand worth more. A pool has no leftover by construction.
 
-> #### BOTH ARE PUBLISHED, and the one that was not made a trap
+> #### THE QUEUE IS THE DECLARATION, and a verb no longer names a crew
 >
-> `LaborAssignment` carried only the **take** crew for three slices, which left the build crew
-> **write-only from the client's side**: it could send `cultivate … <workers>` and never read back
-> the crew a band already had. Two things broke on that.
+> `cultivate` / `sow` / `tame` / `corral` / `extend_pen` **append an entry** to
+> `LaborAllocation::build_queue` and staff nobody. The whole `builders` pool goes on
+> `build_queue[0]` until that entry's meter fills, then on the next — **all hands on the head**.
 >
-> **A trap with no way out.** A compose sheet clamps its steppers to the band's **idle** workers,
-> because the sim refuses an over-staffed command (`server::crew_is_affordable`). A fully-allocated
-> band therefore has `0` idle and was offered a keeper maximum of `0` — the player could **re-state
-> nothing**, only take a crew to zero. The honest clamp is `idle + this source's own crew for this
-> activity`, which is exactly what the two fields make computable.
+> | type | is | why not a `LaborTarget` |
+> |---|---|---|
+> | `BuildSource::{Patch, Herd}` | which source an entry names | a target carries the take crew's **floor** and **species**, which are facts about gathering rather than about building |
+> | `BuildJob::Rung(Improvement)` | the player's declaration, answering only for a meter at zero | — |
+> | `BuildJob::ExtendPen` | the pen ring, which names no rung | a built pen has no meter for the derived verb to answer from |
 >
-> **And a readout that said the opposite of the truth**: a sheet reopened on a herd with two keepers
-> read `0`, i.e. *"nothing is holding this"*, on the very row built to warn about decay.
+> - **At most ONE entry per source per band**, and re-issuing a verb **replaces `declared` in place
+>   and keeps its position** — correcting `cultivate` → `sow` must not cost the player their place.
+> - **An entry requires a ROW.** A verb reaches only bands that already work the source, and a row
+>   that dies takes its entry with it — enforced at the seams (`drop_source_row`, `clear_kinds`) and
+>   swept per turn by `LaborAllocation::prune_build_queue`, so no seam can be missed.
+> - **Nothing enrols itself**, and completion **retires** the entry, which hands the pool to whatever
+>   the player put next.
+> - **⛔ `build_queue` is part of `LaborAllocation`'s hand-written `PartialEq`.** Equality is *intent*,
+>   and the queue and its **order** are as much intent as the head counts: left out, two allocations
+>   with different queues compare equal, so the rollback record and the command no-op guard would
+>   both report *nothing changed* about the one input the whole funding rule reads.
 >
-> **`species` shipped with them**, and it is the same class rather than a fourth crew: the player can
-> state a crop on `assign_labor` and could not read it back. It is **not** the patch's
-> `ForagePatchState.committedSpecies` — that is what the *ground* is committed to and is set only
-> once a crew has worked it, while this is the selection the player made, which exists from the
-> moment they make it and rides the rollback record. A sheet reopened on unworked ground has no other
-> source for it. Pinned on the **encoded envelope** (not the capture) by
-> `core_sim/tests/three_crews_on_the_wire.rs`, at four values that all differ — three slots wired to
-> one source would pass a fixture that staffed the same count everywhere.
+> **Spread is not offered, and the asymmetry with the keeping is honest.** An under-kept improvement
+> degrades toward a threshold you can stay above, so spreading a short keeping pool loses nothing
+> while you recover; splitting a builder pool across three jobs just means nothing finishes. A queue
+> removes the choice rather than offering a bad one.
+
+> #### THE WIRE STILL SAYS WHAT IS BEING RAISED HERE — derived, not stored
+>
+> `LaborAssignmentState.improvement` survives, and the sim **resolves it at capture** from that
+> band's queue entry: the derived verb (`cultivate`/`sow`/`tame`/`corral`) or the literal
+> `"extend_pen"` for a ring, `""` when the band has nothing queued there. So a client still reads
+> *what is being raised* off the row and still does **no arithmetic** to get it — the `penFeedUpkeep`
+> discipline — while there is exactly one authority for the fact.
+>
+> **`improvementWorkers` is `(deprecated)` in place**, beside `maintainWorkers`; FlatBuffers field
+> ids are positional, so the slots stay and the sim stops writing them. Where the crews are is the
+> **rows** above. The place in the line and the finish date are the **source's** own fields —
+> `buildQueuePosition` beside `buildTurnsRemaining`.
+>
+> **`species` is the same class of field** and rides on: the player states a crop on `assign_labor`
+> and could not read it back. It is **not** the patch's `ForagePatchState.committedSpecies` — that is
+> what the *ground* is committed to and is set only once a crew has worked it, while this is the
+> selection the player made, which exists from the moment they make it and rides the rollback record.
+> Pinned on the **encoded envelope** (not the capture) by
+> `core_sim/tests/source_crews_on_the_wire.rs`, at counts that all differ — rows wired to one source
+> would pass a fixture that staffed the same number everywhere.
 
 Each crew's work is `intensification::activity_work(workers)` = `workers × PER_WORKER_OUTPUT`:
 
 ```text
 upkeep_supplied  = this source's share of the band's keeping POOL (§2.5)
 upkeep_shortfall = max(0, upkeep_demand − upkeep_supplied)     // → decay, at the rung's rate
-build_work       = build_workers × PER_WORKER_OUTPUT           // − the crew's gear, off the JOB
+build_work       = (this source is the queue's HEAD) ? builders × PER_WORKER_OUTPUT : 0
+                                                                // − the POOL's gear, off the JOB
 take             = min(take_workers × per_worker_capacity, source_offer)
 ```
 
@@ -445,8 +479,10 @@ take             = min(take_workers × per_worker_capacity, source_offer)
 >   instant the take goes to zero, so unstaffing a wild patch clears the row on the spot instead of
 >   leaving a `+0.00` row to age out; the **turn** asks it again in each source arm of
 >   `advance_labor_allocation`, so a holding whose meter finally rots away is retired without the
->   player touching it. The build crew is part of both tests — a `Cultivate` declared this turn has no
->   progress yet, so the ground's answer alone would abandon a build just staffed.
+>   player touching it. **A QUEUE ENTRY IS A HOLDING TOO**, and is part of both tests: a `Sow`
+>   declared on bare ground has no meter yet and may have no gatherers either — the create-from-
+>   nothing case the rung exists for — so the ground's answer alone would abandon a build just
+>   ordered.
 > - **Rows cannot accumulate for the life of a game**: a holding is retired the turn it empties, and
 >   the ordinary out-of-range / past-the-leash lapses reach a zero-crew row like any other, because
 >   the loop now visits it.
@@ -455,45 +491,39 @@ take             = min(take_workers × per_worker_capacity, source_offer)
 >   every band in range would claim it and the `+=` stamp would double-supply it. The assignment list
 >   is the only thing in the sim that answers *"whose"*, which is why the fix is to stop throwing the
 >   row away rather than to look somewhere else.
-> - **A zero-take row takes nothing, builds only what its own crew builds, and learns NOTHING.** The
+> - **A zero-take row takes nothing, is raised only when the band's builders reach it, and learns
+>   NOTHING.** The
 >   takes and the wear quanta fall out to zero on their own; the **lesson** does not, because it is
 >   credited once per assignment rather than per worker, so `systems::labor` gates all four earn sites
 >   on the take crew being present (`credit_managed_rung_lesson` takes it as its `eligible`). Free
 >   knowledge from a patch nobody works is the defect that gate exists to prevent.
 > - **Unstaffing the gatherers no longer abandons the build beside them.** The row survives, so the
->   `Cultivate` and its crew do too — `assign_labor … 0` is *"stop gathering"* and the verb at zero is
->   how you walk away from a build. Pinned by
+>   `Cultivate` and its entry do too — `assign_labor … 0` is *"stop gathering"*, and `unqueue` /
+>   `abandon` are how you walk away from a build. Pinned by
 >   `forage_cultivation::a_patch_with_no_gatherers_is_still_kept_by_the_bands_pool` (kept, and the
 >   liveness half that it still rots unfunded) and
 >   `components::tests::a_role_row_still_goes_at_zero_and_an_unworked_source_is_never_created`.
 
-- **They draw on one finite band, and that IS the opportunity cost.**
-  `LaborAssignment::staffed_total` sums a row's take and build, `LaborAllocation::assigned_total`
-  sums that over every row — **the keeping roles included, because they are rows** — and
+- **Every row draws on one finite band, and that IS the opportunity cost.**
+  `LaborAssignment::staffed_total` is a row's take, `LaborAllocation::assigned_total` sums it over
+  every row — **the three standing roles included, because they are rows** — and
   `BandWorkforce::assigned` reports it, so `idleWorkers` nets out builders and keepers like anyone
-  else. **"No cap" means no cap on ONE ACTIVITY** (fifty hands may finish a
-  Cultivate in a turn), never a licence to exceed the pool.
-- **THE POOL IS ENFORCED AT THE COMMAND, BY REFUSAL** (`server::crew_is_affordable`). The four
-  verbs and `extend_pen` each check the tightest band working the source and refuse an
-  order it cannot staff, naming what is idle: *"Cultivating needs 9 workers — the band has 4 idle."*
-  Without it a band of five could put five on the take, five on a Cultivate and five on the keeping
-  and produce fifteen worker-turns. **The check is atomic across the source's bands** (a verb sets
-  its crew on *every* band working the source, so a partial application would staff one crew and not
-  another off one command) and **gives back the activity's own crew before counting**, so moving a
-  build from two hands to three needs one idle hand rather than three.
-  - **It refuses where `assign_labor` clamps**, and the asymmetry is deliberate: a smaller *gathering*
-    crew is a coherent version of the same order, while a quietly-smaller *build* crew is a
-    commitment the player believes they made and would only discover from the pacing.
-- **`LaborAllocation::normalize` answers the other question — the band SHRANK** — and it trims both
-  crews of a row, tail-first, shedding **build → take** within it. A band that has just lost people
-  keeps gathering longest, because the build is an investment and the food is not. It stayed on the
-  take crews only while the build was unbounded, which left a shrunken band still fielding every
-  builder it had before. **A keeping role is shed with the tail like any other row**, because it *is*
-  a row — where it falls in the order is where the player put it in the list.
-- **A build's crew carries across a re-staffing** (`LaborAllocation::set_assignment`), for the verb's
-  own reason: it is a commitment in flight, and nudging the gatherers is not a statement about it.
-- **Clearing the verb frees its crew** (`set_improvement` with `None`), because hands on a build that
-  is not running are hands the band cannot see are free.
+  else. **"No cap" means no cap on ONE ROLE** (fifty builders may finish a Cultivate in a turn),
+  never a licence to exceed the pool.
+- **`assign_labor` IS THE ONE ENFORCEMENT, and it CLAMPS.** A role's stepper clamps against the
+  band's idle hands exactly as scout's and warrior's do.
+  - **RETIRED: `server::crew_is_affordable` / `emit_crew_unaffordable` / `ActivityCrew` /
+    `LaborAllocation::idle_for`.** They existed only for the five build verbs' affordability gate,
+    and that gate went with the crew it refused: a verb states *what* to raise and never *who* raises
+    it, so there is no number left to refuse and no "which of this row's crews am I overwriting"
+    question to answer.
+- **`LaborAllocation::normalize` answers the other question — the band SHRANK** — and it trims
+  **tail-first**, one crew per row, dropping a row that empties. **There is no within-row shedding
+  order any more**: the build→take order existed while a row carried two crews, and the building and
+  the keeping are rows of their own now, so where each falls in the shedding order is where the
+  player put it in the list — which is a statement the player can make and the old rule was not.
+- **A queued build survives a re-staffing BY CONSTRUCTION** (`LaborAllocation::set_assignment` does
+  not touch the queue at all), where it used to have to carry a field across a row it rebuilds.
 
 #### `yield_fraction_while_building` IS RETIRED, and so is `crew_needed`
 
@@ -544,22 +574,26 @@ all.
   therefore the loosest the bound can be, which is the safe direction for a guard. Every shipped rung
   still clears it by an order of magnitude (`the_shipped_graces_clear_the_loosened_bound`).
 
-#### Completion FREES the build's crew — the hand-off onto the keeping is RETIRED
+#### Completion RETIRES THE QUEUE ENTRY — and frees nobody, because nobody was standing there
 
-The turn a meter fills, the post-loop pass in `advance_labor_allocation` clears the verb and its crew,
-and those hands go back to the band's idle pool. It is **announced** on the finished verb's own feed
-channel (`improvement_feed_channel`), so a rung's whole life reads on one line and the player can
-re-task.
+The turn a meter fills, the post-loop pass in `advance_labor_allocation` removes that source's entry
+from `LaborAllocation::build_queue`, which hands the **whole pool** to whatever the player put next.
+The **row is untouched** — the take crew, the tile, its committed species and the stance all stay as
+they are. It is **announced** on the finished verb's own feed channel (`improvement_feed_channel`), so
+a rung's whole life reads on one line and the player sees the head move.
 
-**The carry-over onto the web's keeping role is gone** (`docs/plan_standing_upkeep.md` §2.3), and with
-it `RungKey::upkeep_role` and `LaborAllocation::add_role_workers`. It existed so that a brand-new pen
-did not start decaying on turn one because nobody had noticed it had begun costing something —
-**and §4.6a makes that unreachable**: the keeping bill starts at the **first work banked**, not at
-completion, so a player who built the thing at all was already paying to hold it. What is left would
-be the sim quietly moving hands between two rows the player staffs by hand.
+**Two hand-offs are retired here, not one.**
 
-**`RungDef::declares_upkeep` survives** as the fork nothing forks on any more; the completion event
-now says *"N of your cultivate crew are free"* on every rung.
+- **The carry-over onto the web's keeping role is gone** (`docs/plan_standing_upkeep.md` §2.3), and
+  with it `RungKey::upkeep_role` and `LaborAllocation::add_role_workers`. It existed so that a
+  brand-new pen did not start decaying on turn one because nobody had noticed it had begun costing
+  something — **and §4.6a makes that unreachable**: the keeping bill starts at the **first work
+  banked**, not at completion, so a player who built the thing at all was already paying to hold it.
+- **And there is no crew to free** (§2.5). The builders are a band-level pool that never stood on the
+  source, so completion moves nobody anywhere; what it moves is the **head of the queue**.
+
+**`RungDef::declares_upkeep` survives** as the predicate the keeping seams read — it is no longer a
+fork at completion, and there is no branch left for it to choose between.
 
 ### Standing upkeep — what it costs to HOLD a rung
 
@@ -611,22 +645,64 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
 > disagree. Only the shortfall **fraction** is shared — `intensification::upkeep_shortfall_fraction`,
 > stated once, applied at each web's own rate.
 
-> #### THE COUNTDOWN HAS FOUR ANSWERS, AND THREE OF THEM ARE NEGATIVE
+> #### THE COUNTDOWN HAS FIVE ANSWERS, AND FOUR OF THEM ARE NEGATIVE
 >
-> `intensification::BuildTurns` is what a source stores and
-> `build_turns_estimate(cost, done, balance, gate_holds, builders)` is what fills it:
+> `intensification::BuildTurns` is what a source stores;
+> `build_turns_estimate(cost, done, balance, gate_holds, builders)` fills the first four, and the
+> band's **chain pass** (`systems::labor::publish_build_chain`) mints the fifth:
 >
 > | stored | wire | meaning |
 > |---|---|---|
-> | `Some(Turns(n))` | `n` | a real finish date at the crew that is on it |
+> | `Some(Turns(n))` | `n` | a real finish date — **chained** behind everything above it in the band's queue |
 > | `Some(Holding)` | `BUILD_METER_HOLDS` (**`-2`**) | **the meter holds exactly where it is** — `build_work − rot` is exactly `0` |
 > | `Some(Rotting)` | `BUILD_METER_ROTS` (**`-3`**) | **the meter is going backwards** — that balance is negative |
+> | `Some(Blocked)` | `BUILD_QUEUE_BLOCKED` (**`-4`**) | **the queue is stuck here** — the pool is staffed and standing on this entry, and its own gate refuses it |
 > | `None` | `NO_BUILD_TURNS_ESTIMATE` (**`-1`**) | there is genuinely no answer |
 >
-> **All three of the negatives are ANSWERS or the absence of one, never a mix**, and the two the
-> player can act on are the last pair — *staff the keeping*, or add builders. Folded into `-1` they
-> rendered as **no line at all** on the tile card and the herd drawer, visible only to a compose
-> sheet that happened to redo the comparison itself.
+> **All four negatives are ANSWERS or the absence of one, never a mix**, and the three the player can
+> act on are the middle group. Folded into `-1` they rendered as **no line at all** on the tile card
+> and the herd drawer, visible only to a compose sheet that happened to redo the comparison itself.
+>
+> > #### ⛔ `-4` IS NOT `-1`, AND THE DIFFERENCE IS WHAT THE PLAYER IS BEING TOLD
+> >
+> > `-1` is the **absence** of an answer and renders as no line — which is exactly the silence a
+> > blocked queue must not be read as. The player has committed a pool, the pool is producing
+> > nothing, and everything behind the head is waiting on a build that cannot advance.
+> >
+> > **THE REMEDY IS OFF THE BUILD LINE ENTIRELY.** The measured case is the animal web's own:
+> > a half-tamed herd with an empty `husbandry` role advances three turns and freezes, because the
+> > hunters draw the flock to their floor, the unmet keeping suppresses its regrowth, and the
+> > `Tame`'s escapement gate never reopens. **Adding builders does nothing.** A surface showing `-4`
+> > must pair it with that source's own `upkeepShortfall` / `neglectGraceRemaining`, because the
+> > sentence is *staff the keeping* — `assign_labor <f> <b> husbandry <n>`.
+> >
+> > **ONLY THE HEAD, WITH A STAFFED POOL, IS `-4`.** A *waiting* entry whose gate refuses may well be
+> > eligible by the time it reaches the head, so it publishes the honest `-1` and stops the chain
+> > there: we cannot date what is behind an unanswerable entry. A blocked head, by contrast,
+> > propagates — every entry below it publishes `-4` too, because nothing below a head that never
+> > finishes finishes either.
+>
+> > #### THE CHAIN — a waiting entry gets a real finish date, not a "queued" badge
+> >
+> > The queue is deterministic (the head takes the whole pool until it fills, then the next one
+> > does), so an entry's turns are **the sum of everything above it plus its own span at the full
+> > pool**. Under §4.6a a waiting entry's meter is held by the *keeping*, not by the builders, so that
+> > chained number is **exact** rather than an estimate that drifts — and the bad news propagates for
+> > free, because the first entry that cannot name a number is what every entry below it publishes.
+> >
+> > **A source with NO entry is quoted at the BACK of the line** (`cumulative + its own span`), which
+> > is where a newly queued build would actually go. Quoting it as though it went to the head would
+> > over-promise the compose sheet by the whole queue.
+> >
+> > **`buildQueuePosition` rides the same winner** as `buildTurnsRemaining` and `buildWorkFromGear`,
+> > `-1` when no band has queued the source. Without it a chained date is an exact number with no
+> > explanation: the player cannot tell forty turns of work from eight turns of work behind four
+> > other jobs.
+> >
+> > **`EstimateStanding::Blocked` sits between `Rots` and `Silent`**, which continues the one stated
+> > rule — *more net supply is better news* — rather than starting a second: a band rotting a meter is
+> > at least supplying something to it, a blocked queue supplies nothing at all, and silence is the
+> > absence of an answer.
 >
 > **AND THE TWO NON-FINISHING STATES COST THE PLAYER DIFFERENTLY, so they are two values.** At the
 > rot exactly the meter stands still — which is **not always a failure**: with no builders and the
@@ -802,6 +878,55 @@ before its keepers were assigned. No grace and no rate could fix that, because t
   `field_meter_full`, `Herd::corral_meter_full`), and the hundred *is this ground tended* call sites
   all read the bar.
 
+#### THE BUILDERS ARE A BAND-LEVEL POOL TOO, and the QUEUE is what they work
+
+**One role for both webs** — `LaborTarget::Builders`, staffed through
+`assign_labor <faction> <band> builders <n>` like every other standing role and published as a
+`laborAssignments` row of `kind = "builders"` (§2.5). It is one pool rather than two because **a
+build is a job where a keeping is a standing charge**, and the queue already says which web is being
+worked; a second axis would ask the player to state the same thing twice.
+
+- **THE WHOLE POOL GOES ON THE HEAD.** `systems::labor` resolves `builders` and `pool_gear` once per
+  band before the assignment loop, and each source arm takes `build_work = pool_work` **iff** this
+  source is `build_queue[0]`'s source and the arm's rung is that entry's resolved job — otherwise
+  `0`. The pace is `work_cost / builders`, and **the only term that eats it is the ROT** (§4.6a):
+  a build supplies nothing toward the keeping rate, so nothing re-nets it.
+- **⛔ A BLOCKED HEAD STAYS AT THE HEAD.** It is not skipped, not reordered and not passed over —
+  it publishes `-4` and says loudly that it is stuck. Passing over it would quietly fund something
+  the player did not put first, and would hide the one state whose remedy is off the build line
+  entirely.
+- **THE GEAR IS THE POOL'S OWN, read off the `builders` row like every other role's tier.** One
+  `KitCoverage`, resolved over the pool, at the pool's count. It used to ride the *source row's* kit
+  — a `Corral` priced off whatever the hunt row was carrying — because the builders stood on the
+  tile.
+  - **⛔ A kit that declares `EquipmentStat::BuildWork` MUST list the `builders` job**, or the pool
+    cannot be sent out with it and the offset is dead config. On the shipped roster that is
+    `husbandry` (the only kit whose items declare the stat), which now lists `builders` beside
+    `hunt`. Pinned by
+    `equipment_config::tests::every_kit_that_supplies_build_work_offers_the_builders_job`, liveness
+    half included.
+  - **`default_kits.builders` is `none`**, matching the other two standing roles: a band that names
+    no kit builds bare-handed exactly as it did, and naming `husbandry` on the role is how the
+    player brings the hurdles. Defaulting the pool onto `husbandry` would hand a *plant* build an
+    animal-handling offset no forage crew has ever had.
+- **THE QUEUE'S THREE INPUTS**, all on one source grammar — **two integer tokens name a tile, one
+  token names a herd id**, the tile form parsed first:
+
+  | verb | proto | drops | leaves alone |
+  |---|---|---|---|
+  | `abandon <faction> <source…>` | 57 | the band's **holding**: the row *and* its entry, on every band working it | the **meters** — the ground rots back down at the rung's own rate, so nothing is destroyed on the spot and nothing is confirmed |
+  | `unqueue <faction> <source…>` | 58 | the queue entry only | the row, its take crew, its kit and the meter |
+  | `build_order <faction> <band> <source…> <position>` | 59 | — | moves that band's entry to a 0-based `position`, **clamped** to the queue's length |
+
+  **`abandon` is one bit per source, never a number** — disposal rather than a smaller share, so the
+  per-source *funding* lever stays deleted. It exists because §2.4 bills a meter from the first work
+  banked, so a half-built patch the player has lost interest in otherwise draws keepers forever.
+  **Proto 46 stays reserved** for the retired `abandon_improvement`, which was a different verb.
+
+  **`build_order` is the queue's defining input.** With the whole pool on the head, the order *is*
+  the funding decision — re-ordering is the one input a list can carry that a stepper cannot, and
+  without it *all hands on the head* cannot be steered at all.
+
 #### MAINTENANCE IS A BAND-LEVEL POOL, not a crew on the tile
 
 **Two standing roles, one per web** — `LaborTarget::Agriculture` keeps every tended patch and Field
@@ -846,6 +971,12 @@ other row (§2.5).
 - **RETIRED with it**: `LaborAssignment::maintain_workers`, `ActivityCrew::Maintain`,
   `LaborAllocation::set_maintain_workers`, the `maintain` command and `MaintainCommand`. The wire slot
   `maintainWorkers` is `(deprecated)` in place — FlatBuffers field ids are positional.
+- **AND THE BUILD CREW FOLLOWED IT OFF THE TILE ONE SLICE LATER**, taking
+  `LaborAssignment::improvement` / `improvement_workers`, `ActivityCrew`, `LaborAllocation::idle_for`,
+  `set_improvement` / `set_build_workers`, `server::crew_is_affordable` /
+  `emit_crew_unaffordable`, `systems::labor::quoted_build_crew` and the five verbs' trailing
+  `<workers>` argument (proto fields `reserved`) with it. `improvementWorkers` is `(deprecated)` in
+  place beside `maintainWorkers`, for the same positional reason.
 
 #### The standing upkeep on the wire
 
@@ -1091,7 +1222,8 @@ Appended (append-only) on both tables:
 |---|---|
 | `cultivationWorkDone` / `cultivationWorkCost`, `fieldWorkDone` / `fieldWorkCost` | the plant meters in **work units**, and what each job costs |
 | `tameWorkDone` / `tameWorkCost`, `corralWorkDone` / `corralWorkCost` | the animal pair, the Tame carrying the species' own cost multiplier |
-| `buildTurnsRemaining` | how many more turns at the crew, floor and kit that worked this source **this turn** — and, with no build in flight, the same question asked of the rung it would climb **next**. Four states: a count, `-2` the meter holds, `-3` the meter rots, `-1` no answer |
+| `buildTurnsRemaining` | how many more turns at the band's own builders pool — **chained** behind everything above this entry in that band's queue — and, with nothing queued here, the same question asked at the **back of the line** for the rung it would climb next. Five states: a count, `-2` the meter holds, `-3` the meter rots, `-4` the queue is blocked here, `-1` no answer |
+| `buildQueuePosition` | this source's 0-based place in the winning band's build queue, `-1` when no band has queued it. Rides the **same winner** as the two fields above — they are read as one set |
 | `buildWorkFromGear` | what that crew's **tools** took off the job, in work units — the `t` above |
 | `buildWorkPerWorkerTurn` | what **one** worker banks per turn on this source at the food peak, before the floor multiplier and before gear — `intensification::build_work_per_worker_turn`, today `PER_WORKER_OUTPUT` |
 | `cultivationUpkeepDemand` / `fieldUpkeepDemand`, `tameUpkeepDemand` / `corralUpkeepDemand` | what **that rung** costs to hold, per turn — the **rate** half of the same quote the `*WorkCost` beside it gives the **pile** half of |

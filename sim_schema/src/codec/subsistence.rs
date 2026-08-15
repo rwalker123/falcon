@@ -509,6 +509,10 @@ fn create_herds<'a>(
                 tameUpkeepDemand: herd.tame_upkeep_demand,
                 corralUpkeepDemand: herd.corral_upkeep_demand,
                 meterRotPerTurn: herd.meter_rot_per_turn,
+                // Where this herd sits in the winning band's queue — read as one set with
+                // `buildTurnsRemaining` and `buildWorkFromGear`, which is what makes a chained date
+                // legible (docs/plan_standing_upkeep.md 4.6b).
+                buildQueuePosition: herd.build_queue_position,
             },
         );
         entries.push(entry);
@@ -607,6 +611,8 @@ fn create_forage_patches<'a>(
                 cultivationUpkeepDemand: patch.cultivation_upkeep_demand,
                 fieldUpkeepDemand: patch.field_upkeep_demand,
                 meterRotPerTurn: patch.meter_rot_per_turn,
+                // The plant twin — see the herd row above.
+                buildQueuePosition: patch.build_queue_position,
             },
         );
         entries.push(entry);

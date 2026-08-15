@@ -356,6 +356,16 @@ const KIT_BUILD_WORK_NEUTRAL := 0.0
 const KIT_ROLE_SCOUT_VANTAGE_FORMAT := "%s-tile sight per vantage"
 const KIT_ROLE_WARRIOR_ATTACK_FORMAT := "attack %s defending the camp"
 
+## **THE BUILDERS ROLE CARD'S OWN GEAR LINE** (`docs/plan_standing_upkeep.md` §2.5) — what the selected
+## kit takes off a build, per builder. It is `KIT_ROLE_BUILD_WORK_SUFFIX`'s figure stated as a line
+## rather than as a clause on the handling gear's popover row, because on this card the build axis is
+## the WHOLE of what the kit buys: `husbandry` is the one kit whose items declare `build_work`, and
+## putting it on this row is the only way a band brings its hurdles to a Tame or a Corral.
+##
+## It takes the WORK-UNIT decimals rather than the carries' — a contribution is a quantity of work
+## against a job priced in work, and `format_work_units` is where that rule lives.
+const KIT_ROLE_BUILDERS_BUILD_FORMAT := "%s work off a build, per builder"
+
 # The bare-handed tag on a dry kit's breakdown row — the state worth saying plainly, since there is no
 # replenishment path and the role stays there.
 const KIT_BARE_HANDS_SUFFIX := " — bare hands"
@@ -1017,6 +1027,7 @@ static func build_meter_value(verb: String, progress: float,
 ## | banked work on a rung that is NOT the one in flight | `Held at 42%`, or `⚠ Reverting 42%` if the keeping is short | the source's ONE countdown is about the OTHER rung |
 ## | a crew on it banking exactly the ROT | `⚠ ∞ turns (42%)` | somebody IS on it and their turn is being wasted; the remedy is MORE of them |
 ## | under the rot, staffed or not | `⚠ ∞ turns, losing ground (42%)` | work already bought is going back — so it is RED, not amber |
+## | the builders standing on it, its gate refusing | `⚠ Blocked 42% — your builders are held here` | the whole QUEUE is stuck, not just this rung, and the remedy is off the build line entirely (`build_blocked_lines`) |
 ## | staffed, and nothing accrues anyway | `⚠ Stalled 42%` | a gate or an empty escapement room, which no crew size fixes |
 ## | otherwise | `≈11 turns (42%)` | the healthy reading, and the only one with no mark |
 ##
@@ -1103,6 +1114,14 @@ static func rung_row_value(src: Dictionary, prefix: String, improvement: String,
         return HudSelectionVocab.RUNG_ROTTING_FORMAT % [
             HudSelectionVocab.RUNG_HAZARD_GLYPH, BUILD_TURNS_NEVER_GLYPH,
             HudSelectionVocab.RUNG_ROTTING_PHRASE, percent]
+    # **THE QUEUE IS STUCK ON THIS ENTRY** (`docs/plan_standing_upkeep.md` §4.6b) — the band's
+    # builders are staffed and standing here and this rung's own gate refuses them, so nothing banks
+    # and nothing behind it moves. It wears NO `∞`: that mark is a statement about a crew's
+    # arithmetic, and no crew size is the remedy here. The remedy is `build_blocked_lines`' sub-row
+    # beneath, paired with the shortfall this same row already publishes.
+    if turns == SourceForecast.BUILD_TURNS_QUEUE_BLOCKED:
+        return HudSelectionVocab.RUNG_BLOCKED_FORMAT % [
+            HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
     if turns == SourceForecast.BUILD_TURNS_NO_ESTIMATE:
         return HudSelectionVocab.RUNG_STALLED_FORMAT % [
             HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
@@ -1300,6 +1319,36 @@ static func build_gear_lines(source: Dictionary, prefix: String) -> Array[String
     if gear > BUILD_GEAR_WORK_NONE:
         lines.append("%s%s" % [MORALE_BREAKDOWN_INDENT,
             HudSelectionVocab.BUILD_GEAR_WORK_ROW_FORMAT % format_work_units(gear)])
+    return lines
+
+## **THE REMEDY FOR A BLOCKED QUEUE, BY PAIRING RATHER THAN BY INVENTED TEXT**
+## (`docs/plan_standing_upkeep.md` §4.6b). `BUILD_TURNS_QUEUE_BLOCKED` says the band's builders are
+## standing on this entry and its own gate refuses them — and **the build surface does not know why**.
+## So this states no cause of its own: it renders ONLY where the same row already publishes an
+## `upkeepShortfall`, which is where the answer actually is, and names the keeping role that pays it.
+##
+## **THE ANIMAL WEB IS THE MEASURED CASE.** An unkept flock's regrowth is suppressed, the hunters draw
+## it to its escapement floor, and the `Tame`'s own gate closes over an empty room; staffing the
+## keeping restores `regrow_biomass` and logistic regrowth outruns a floor-respecting take, so the
+## herd climbs back over the gate in ~7–14 turns **with the hunters left at full strength**. Escape is
+## deliberately NOT symmetric with the pinning, which needs both the suppression and the draw — which
+## is why this copy must never hedge with *"and stop hunting"*, a second half that changes nothing.
+##
+## **IT IS A SUB-ROW, NOT A REPLACEMENT FOR `at_risk_lines`.** That row states what the shortfall
+## COSTS and how many turns of grace are left; this states what to do about it, and only on the one
+## state where the build is being held hostage by it. On a source that is blocked with its keeping
+## paid, nothing renders — a cause invented there would be a guess wearing a hazard's authority.
+static func build_blocked_lines(src: Dictionary, prefix: String, kind: String) -> Array[String]:
+    var lines: Array[String] = []
+    if SourceForecast.build_turns_remaining(src, prefix) \
+            != SourceForecast.BUILD_TURNS_QUEUE_BLOCKED:
+        return lines
+    if not SourceForecast.upkeep_is_short(SourceForecast.upkeep_state(src, prefix)):
+        return lines
+    var role := HudWorkVocab.ROLE_NAME_HUSBANDRY if kind == SourceForecast.SOURCE_KIND_HERD \
+        else HudWorkVocab.ROLE_NAME_AGRICULTURE
+    lines.append("%s%s" % [MORALE_BREAKDOWN_INDENT,
+        HudSelectionVocab.RUNG_BLOCKED_REMEDY_FORMAT % role])
     return lines
 
 ## The one turn count that takes the singular row — a build one turn from done.
@@ -2113,6 +2162,11 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
                 husbandry_built_label(), tamed, domestication, build_crew, unstaffed_build))
             if not tamed:
                 lines.append_array(build_gear_lines(herd_data, herd_prefix))
+                # …and, on a BLOCKED queue alone, what frees it. This is the web the measured case
+                # lives on: a half-tamed herd drawn to its escapement floor by hunters while its
+                # keeping goes unpaid (`build_blocked_lines`).
+                lines.append_array(build_blocked_lines(herd_data, herd_prefix,
+                    SourceForecast.SOURCE_KIND_HERD))
         # **THE CONSEQUENCE OF AN UNDER-KEPT HERD IS THE ONE KEEPER FACT THAT SURVIVED THE `Keepers:`
         # ROW** (issue #545). That row stated a demand every turn, on a herd where nothing was wrong,
         # and read as noise; this fires ONLY when the band's Husbandry pool failed to cover this herd
@@ -2174,6 +2228,8 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
                     corral_built_label(PenStatus.FULLY_FED), false, corral_progress,
                     build_crew, unstaffed_build))
                 lines.append_array(build_gear_lines(herd_data, herd_prefix))
+                lines.append_array(build_blocked_lines(herd_data, herd_prefix,
+                    SourceForecast.SOURCE_KIND_HERD))
         elif ceiling == SourceForecast.HUSBANDRY_CEILING_PASTORAL:
             lines.append(HUSBANDRY_PASTORAL_HINT)
     # **NO `Position` ROW.** These lines render in ONE place — the tile card's subject drawer — and
