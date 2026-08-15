@@ -56,6 +56,44 @@ presence — a dead branch is not a dependency), then extract behaviour-neutral 
 big client files that were decomposed the same way (the native `lib.rs` module map; `Inspector.gd` →
 per-tab panels).
 
+## AN OPTIMISTIC WRITE NEEDS A ROLLBACK, AND THE SEND'S OUTCOME IS ONLY KNOWN IN `Main`
+
+`Hud._emit_assign_labor` records the pending entry BEFORE the command is emitted — which is right, the
+card must answer the stepper on the frame it was pressed — and nothing rolled it back when the send
+FAILED. Reported from play: an `assign_labor 0 1 builders 3 kit hurdling` that never reached the
+server (`Inspector.gd`'s `err != OK` transport branch) left the Builders card showing three builders
+the sim had never heard of until the next turn's `reconcile_pending` quietly took them away, while the
+build queue beside it correctly read `⚠ No builders`. One screen, two answers, and the wrong one was
+the one with the number on it.
+
+- **`Main._send_runtime_command` / `_send_formatted_command` ANSWER whether the line went.** They
+  warned and returned nothing; every caller that wrote something on the strength of that call must now
+  roll that write back on `false`, and the rest may ignore it exactly as before. `false` covers a
+  builder that DECLINED and a transport that refused — the same fact to a caller holding an overlay.
+- **The rollback is reached by a `has_method` PROBE, like every other HUD call from `Main`**
+  (`drop_pending_assign` / `drop_pending_move`, through `_hud_invoke`). That probe fails SILENTLY, so
+  both are thin `HudLayer` delegators and stay ones; the DROP itself lives on `HudBandLaborState`
+  beside `record_pending_assign` / `reconcile_pending`, where the overlay's data lives.
+- **THE PAYLOAD CARRIES THE ROLLBACK HANDLE, and it is not a command token.** Every reader of the
+  overlay looks a band up by the CLIENT-LOCAL `entity`, never by the durable `band_id` the command
+  names, so the emitted payload carries `pending_entity` — read by no `format_*` builder and handed
+  straight back to the drop. `TargetingController`'s `move_band_requested` payload carries the same
+  key for the same reason.
+- **IT DROPS THAT ENTRY AND NOTHING ELSE.** A rollback that emptied the whole overlay satisfies "the
+  bad entry is gone" and is a WORSE bug — it discards the player's other un-acknowledged edits on the
+  same band. `pending_key` is the identity; the entity's record is pruned only once it is genuinely
+  empty, so a band with a pending MOVE keeps it.
+- **`_after_pending_change()` RUNS ON THE ROLLBACK TOO** — the same re-render and MapView push the
+  write got. Without it the card keeps the number it has just stopped believing.
+- **NO RETRY, NO RECONNECT, NO QUEUE OF UNSENT COMMANDS.** A resend without the player's knowledge is
+  worse than a dropped one.
+
+**Asserted PNG-LESS in `band_panel_preview._assert_pending_assign_rollback`** — a card showing three
+builders is a perfectly ordinary card, and the whole defect is that the number is fiction. It drives
+the REAL emitter (so the payload under test is the one `Main` receives), asserts the `has_method`
+names `Main` probes for, then drops one entry and requires an unrelated pending edit on the SAME band
+to SURVIVE. The survivor is half the claim.
+
 ## Key scripts
 
 | Script | Purpose |

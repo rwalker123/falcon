@@ -302,6 +302,11 @@ func _try_dispatch_pending_move_band(tile_info: Dictionary) -> void:
 		"band_id": band_id,
 		"x": x,
 		"y": y,
+		# **THE ROLLBACK HANDLE, NOT A COMMAND TOKEN** — the same seam the labor payload carries. The
+		# optimistic move below is written here and the send's outcome is known only in `Main`, so the
+		# failure path needs the client-local `entity` the overlay is filed under. `format_move_band`
+		# does not read it; `Main._on_hud_move_band` hands it back to `drop_pending_move`.
+		"pending_entity": entity,
 	})
 	_pending_move_band = {}
 	_refresh_targeting()

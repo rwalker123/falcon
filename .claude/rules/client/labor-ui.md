@@ -3574,6 +3574,50 @@ can withhold at all. `improvement_no_room_plant` is the frame where withholding 
 defensible — and its own state moved with the mechanism: the patch there is unqueued at a meter of
 zero, so it renders DECLARED rather than RUNNING.
 
+### A BUILD THAT IS NOT MOVING DOES NOT GET TO WEAR A PERCENT — one verdict, two surfaces
+
+`SourceForecast.build_is_stalled(src, progress, build_workers)` is the ONE answer to *"should this
+build wear a `⚠`?"*: `true` when the rung is declared-and-never-started with nobody on it
+(`unstaffed_build_of` → `build_is_unstaffed`), or when the WIRE says its meter is going backwards
+(`build_is_losing`, which classifies the sim's own `buildTurnsRemaining`). `false` for a climbing
+build **and** for one merely PARKED with its keeping covered — `BUILD_PACE_HELD` is a decision, not a
+failure, and its number is honest.
+
+**IT EXISTS BECAUSE THE MAP AND THE WORK BOARD ANSWERED DIFFERENTLY.** `BandOverlayRenderer`'s source
+badge composed the pair itself and dropped the percentage; `BandPanelController._build_work_row` had
+no such fork and printed `▦45%` in `HudStyle.SIGNAL_DEEP` whatever the staffing. Reported from play as
+the map showing an alert the WORK tab did not — one screen, two verdicts, and the wrong one was the
+one with the number on it. **Two careful copies was the shape of the defect, so the fix is one
+producer**: both surfaces call this and neither re-derives it from a crew count or from the percentage
+sitting beside it.
+
+- **The inputs are the caller's ALREADY-RESOLVED rung**, not a second resolution: `progress` is the
+  meter `RungGates.rung_in_progress` just answered with, so the warning and the glyph provably
+  describe the same verb.
+- **`build_workers` is the BAND's `builders` POOL** (`docs/plan_standing_upkeep.md` §2.5) — a verb
+  declares and names no hands. The board resolves it ONCE per render for the whole model set
+  (`effective_role_workers`, pending-aware like every other readout on that panel); the map SUMS it
+  across bands, because *"nobody is building this"* is a claim about the SOURCE.
+- **The two faces are deliberate TWINS rather than a shared constant.** A HUD controller must not
+  import a map renderer, so `HudWorkVocab.WORK_ROW_BUILDING_UNSTAFFED_FORMAT` (`%s⚠`) and
+  `BandOverlayRenderer.BADGE_UNSTAFFED_FORMAT` (`%s⚠ `, with the trailing space its plate needs for
+  the crew count) are separate strings that cross-reference each other. What must not be duplicated is
+  the VERDICT, and it is not.
+- **The row's TOOLTIP forks with the face.** A hover still quoting `45% done` beside a `⚠` restates
+  the exact number the mark has just withdrawn, so a stalled build takes
+  `WORK_ROW_BUILDING_UNSTAFFED_TOOLTIP_FORMAT`, which names both remedies (the Builders role, or the
+  source's keeping) because the row cannot tell which half fired without stating a number it has
+  refused to state.
+
+**Frame + assertions:** `band_panel_preview`'s `band_panel_work_build_states` — ONE band, FOUR forage
+rows differing only in their meter and the wire's countdown (climbing · declared-with-nobody-on-it ·
+losing ground · parked-with-keeping-covered), with all four faces and all four inks asserted by
+EQUALITY. **The SET is the claim**: a row builder that marked everything passes the two stalled
+claims, and one that marked nothing passes the two healthy ones. `_assert_work_row_and_badge_agree`
+beside it is the two-surface claim no per-surface assertion can make — each is perfectly
+self-consistent while contradicting the other — and its counts (four build rows, exactly two stalled)
+are what stop a hard-wired verdict agreeing with itself.
+
 ### THE BUILD LINE'S STATE IS ITS COLOUR, AND THE PROSE THAT SAID IT IS DELETED
 
 `2 work a turn holds it — the surplus is progress` sat beside the BUILDERS stepper, one line under the

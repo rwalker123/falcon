@@ -277,10 +277,14 @@ Each mark docks to the ring of the source's OWN secondary marker, via the slot
   being the trouble channel's own subject rather than the opportunity `BADGE_READY_COLOR`'s note
   reserves cyan for. **The percentage IS the lie**: a `0%` plate over a build the player staffed with
   nobody is pixel-identical to one they started this turn. The plate still says WHICH rung is
-  promised here, and stops saying it is being worked. The state comes from
-  `SourceForecast.unstaffed_build_of`, asked off the meter `RungGates.rung_in_progress` has just
-  resolved — so the warning and the glyph provably describe one verb, and this renderer resolves
-  nothing about the ladder for itself. **The build crew is the band's `builders` ROLE row now**
+  promised here, and stops saying it is being worked. **The verdict is
+  `SourceForecast.build_is_stalled`, and it is ONE function shared with the WORK board's rung slot**
+  (`labor-ui.md` → "A build that is not moving does not get to wear a percent"): the two halves —
+  *declared and never started* off the meter `RungGates.rung_in_progress` has just resolved, and the
+  wire's own rot verdict — were composed here while the board had no fork at all, so the map showed an
+  alert the WORK tab did not. Neither surface re-derives it from a crew count or a percentage; a build
+  merely PARKED with its keeping covered answers `false` and keeps its number.
+  **The build crew is the band's `builders` ROLE row now**
   (`docs/plan_standing_upkeep.md` §2.5) — `_builders_pool_of_marker` reads it off the marker's own
   `labor_assignments` and the renderer credits it to each source that band WORKS, because "nobody is
   building this" is a claim about the source and not about one band's row. **A LOCAL copy of that

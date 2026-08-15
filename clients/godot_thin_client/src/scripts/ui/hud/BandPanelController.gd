@@ -1407,7 +1407,7 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
     # band's own ordered list rather than a view of that board, so a block beneath them would read as
     # a filtered subset of it. It is derived from the FULL model set for the same reason — a chip must
     # not be able to move it.
-    var queued := _build_queue_models(models)
+    var queued := _build_queue_models(band, models)
     if not queued.is_empty():
         col.add_child(_build_build_queue_block(band, queued))
     # BEFORE the chips are built, so the pressed chip is always one that actually renders.
@@ -1594,7 +1594,25 @@ func _build_work_head(band: Dictionary, models: Array, income: float,
 ## The `key` tiebreak makes it a TOTAL ORDER — `sort_custom` is not stable in Godot, and while two
 ## live entries cannot share a position, an unexpected wire state must not reorder the list on an
 ## unrelated re-render (the work board's own rule).
-func _build_queue_models(models: Array) -> Array:
+## **…AND THE DECLARATIONS THE WIRE HAS NOT PLACED YET RIDE ITS TAIL.** `buildQueuePosition` is a wire
+## field, so an entry declared this turn has none until the sim resolves — and this block, derived from
+## that field alone, stayed empty until the next tick. The optimistic overlay already carries the
+## declaration, so a source that is `pending` with a live rung in flight and NO wire position is a
+## pending entry, and `HudWorkVocab`'s "A DECLARATION THE WIRE HAS NOT PLACED YET" states the rest of
+## the rule (tail only, no date, no head marker, a full row of height, reconciles away for free).
+##
+## **THE TAIL IS NOT A GUESS AT A POSITION, it is the refusal to make one.** The sim APPENDS, so the
+## end of the list is the only honest place for an entry with no position; interleaving would state a
+## fact the sim has not made. Within the tail they hold DECLARATION ORDER, read off the pending
+## overlay's own insertion order (`pending_assigns_for` is written once per declaration and a Godot
+## Dictionary keeps its insertion order), with the same `key` tiebreak the confirmed half uses so the
+## whole list stays a TOTAL order under Godot's unstable sort.
+##
+## **THE RUNG IN FLIGHT IS PART OF THE TEST, not just the declaration.** `record_pending_assign` fires
+## on EVERY worker step and carries the improvement forward, so `pending` alone would keep a row here
+## after its build completed; `building_glyph` is `RungGates.rung_in_progress`'s already-resolved
+## answer, which goes empty the moment the meter does.
+func _build_queue_models(band: Dictionary, models: Array) -> Array:
     var queued: Array = models.filter(func(m):
         return int(m.get("build_queue_position", SourceForecast.NOT_IN_ANY_BUILD_QUEUE)) \
             >= SourceForecast.BUILD_QUEUE_HEAD)
@@ -1604,7 +1622,26 @@ func _build_queue_models(models: Array) -> Array:
         if pa != pb:
             return pa < pb
         return String((a as Dictionary).get("key", "")) < String((b as Dictionary).get("key", "")))
+    var declared: Array = _band_labor.pending_assigns_for(int(band.get("entity", -1))).keys()
+    var awaiting: Array = models.filter(func(m):
+        return _build_queue_row_is_pending(m as Dictionary) \
+            and bool(m.get("pending", false)) \
+            and String(m.get("building_glyph", "")) != "")
+    awaiting.sort_custom(func(a, b):
+        var ia := declared.find(String((a as Dictionary).get("key", "")))
+        var ib := declared.find(String((b as Dictionary).get("key", "")))
+        if ia != ib:
+            return ia < ib
+        return String((a as Dictionary).get("key", "")) < String((b as Dictionary).get("key", "")))
+    queued.append_array(awaiting)
     return queued
+
+## **IS THIS ENTRY ONE THE WIRE HAS NOT PLACED?** The one derivation of it, so the block's filter, the
+## head marker's suppression and the row's date can never disagree about which rows are pending. A
+## real position is 0-based, so "below the head" is exactly "no position".
+static func _build_queue_row_is_pending(model: Dictionary) -> bool:
+    return int(model.get("build_queue_position", SourceForecast.NOT_IN_ANY_BUILD_QUEUE)) \
+        < SourceForecast.BUILD_QUEUE_HEAD
 
 ## The BUILD QUEUE block — its head, up to `BUILD_QUEUE_ROWS_MAX` entry rows, and the overflow row
 ## that stands for the rest.
@@ -1626,8 +1663,13 @@ func _build_build_queue_block(band: Dictionary, queued: Array) -> VBoxContainer:
     block.add_child(_build_build_queue_head(band, builders))
     var drawn := mini(queued.size(), HudWorkVocab.BUILD_QUEUE_ROWS_MAX)
     for index in range(drawn):
-        block.add_child(_build_build_queue_row(band, queued[index] as Dictionary,
-            index == SourceForecast.BUILD_QUEUE_HEAD, builders))
+        var entry: Dictionary = queued[index] as Dictionary
+        # **A PENDING ROW NEVER WEARS THE HEAD MARKER, not even when it is the only row.** The head is
+        # the entry the builders pool is actually standing on, which the sim decides; an entry the sim
+        # has not placed is not that yet, and a `▸` on it would promise funding nobody has committed.
+        block.add_child(_build_build_queue_row(band, entry,
+            index == SourceForecast.BUILD_QUEUE_HEAD and not _build_queue_row_is_pending(entry),
+            builders))
     if queued.size() > drawn:
         block.add_child(_build_build_queue_overflow_row(queued.size() - drawn))
     return block
@@ -1698,9 +1740,17 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     # FORK.** Every sentinel the wire can put on `buildTurnsRemaining` is answered there — a count,
     # `-2` holding, `-3` rotting, `-4` the queue blocked, `-1` no answer — and a second fork here is
     # exactly how the client has twice been left behind by a newly-spelled value.
-    var value := DetailFormat.build_countdown_value(
-        int(model.get("build_turns", SourceForecast.BUILD_TURNS_NO_ESTIMATE)), builders,
-        HudFormat.progress_percent(float(model.get("building_progress", 0.0))))
+    #
+    # **A PENDING ENTRY STATES NO DATE AT ALL.** The countdown is CHAINED down the queue, so there is
+    # no answer for an entry that is not in the chain yet and any number here would be invented. The
+    # slot carries the client's one spelling of pending instead — `○` in amber, `FoodIcons`'
+    # `STATUS_PENDING`, the same mark the work rows' status clause and the map's dashed overlays wear
+    # — rather than a second vocabulary for the same idea.
+    var pending := _build_queue_row_is_pending(model)
+    var value := FoodIcons.for_status(HudWorkVocab.BUILD_QUEUE_PENDING_STATUS) if pending \
+        else DetailFormat.build_countdown_value(
+            int(model.get("build_turns", SourceForecast.BUILD_TURNS_NO_ESTIMATE)), builders,
+            HudFormat.progress_percent(float(model.get("building_progress", 0.0))))
     var date := Label.new()
     date.set_meta(HudWorkVocab.BUILD_QUEUE_DATE_META, value)
     date.text = value
@@ -1708,12 +1758,16 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     date.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
     date.custom_minimum_size = Vector2(HudWorkVocab.BUILD_QUEUE_DATE_WIDTH, 0.0)
     date.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-    date.add_theme_color_override("font_color", DetailFormat.rung_value_color(value))
+    date.add_theme_color_override("font_color",
+        HudStyle.WARN if pending else DetailFormat.rung_value_color(value))
     date.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     date.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(date)
-    # Both columns clip, so the row's own tooltip carries the pair in full.
-    row.tooltip_text = HudWorkVocab.BUILD_QUEUE_ROW_TOOLTIP_FORMAT % [face, value]
+    # Both columns clip, so the row's own tooltip carries the pair in full — and the pending row's
+    # half is the status glyph's OWN words ("Pending — starts when you advance the turn"), which is
+    # where a one-character date column has to say what it means.
+    row.tooltip_text = HudWorkVocab.BUILD_QUEUE_ROW_TOOLTIP_FORMAT % [face,
+        HudFormat.status_tooltip_line(HudWorkVocab.BUILD_QUEUE_PENDING_STATUS) if pending else value]
     var withdraw := Button.new()
     withdraw.set_meta(HudWorkVocab.BUILD_QUEUE_UNQUEUE_META,
         int(model.get("build_queue_position", SourceForecast.NOT_IN_ANY_BUILD_QUEUE)))
@@ -1948,14 +2002,28 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     # UNDER WAY beats ON OFFER in this slot. Before this the slot was empty while a verb was being
     # worked, so a patch you were actively cultivating looked emptier than the untouched one beside it
     # advertising `⌃` — the state the player is WAITING ON was the one state with no mark.
-    if building_glyph != "":
+    #
+    # **AND A BUILD THAT IS NOT MOVING DOES NOT GET TO WEAR A PERCENT** — the three-way answer the
+    # map's source badge has had since `docs/plan_standing_upkeep.md` §4.6a, arriving here. `⚠` and
+    # no number when the rung is unstaffed or losing ground; the ordinary face, number and all, when
+    # it is climbing OR merely parked with its keeping covered. The verdict is the model's
+    # `build_stalled`, which is `SourceForecast.build_is_losing` / `build_is_unstaffed` asked once —
+    # never a second reading of the crew count or the percentage sitting right here.
+    var ready_color := HudStyle.SIGNAL
+    if building_glyph != "" and bool(model.get("build_stalled", false)):
+        ready.text = HudWorkVocab.WORK_ROW_BUILDING_UNSTAFFED_FORMAT % building_glyph
+        ready_color = HudStyle.WARN
+    elif building_glyph != "":
         ready.text = HudWorkVocab.WORK_ROW_BUILDING_FORMAT % [building_glyph,
             HudFormat.progress_percent(float(model.get("building_progress", 0.0)))]
+        ready_color = HudStyle.SIGNAL_DEEP
     else:
         ready.text = "" if ready_glyph == "" else HudWorkVocab.WORK_ROW_READY_FORMAT % ready_glyph
+    # The rendered face, on a stable handle: the three states differ by one glyph, so an assertion
+    # that searched for their text would only confirm the string it had already assumed.
+    ready.set_meta(HudWorkVocab.WORK_ROW_BUILD_STATE_META, ready.text)
     ready.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_READY_WIDTH, 0.0)
-    ready.add_theme_color_override("font_color",
-        HudStyle.SIGNAL_DEEP if building_glyph != "" else HudStyle.SIGNAL)
+    ready.add_theme_color_override("font_color", ready_color)
     ready.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     ready.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(ready)
@@ -2162,6 +2230,12 @@ func _work_inspector_sentence(model: Dictionary) -> String:
 func _work_source_models(band: Dictionary, idle: int) -> Array:
     var models: Array = []
     var merged := _band_labor.effective_worker_map(band)
+    # **THE BAND'S BUILDERS POOL, RESOLVED ONCE FOR THE WHOLE BOARD** (`docs/plan_standing_upkeep.md`
+    # §2.5): a verb declares and names no hands, so every row's build verdict is asked against the
+    # same band-level pool the queue block's own head states. Pending-aware, the rule every readout on
+    # this panel follows — a player who has just staffed the role must not read a ⚠ they have fixed.
+    var builders := int(_band_labor.effective_role_workers(
+        band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))
     for key in merged:
         var m: Dictionary = merged[key]
         var kind := String(m.get("kind", "")).strip_edges().to_lower()
@@ -2253,6 +2327,28 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # The row's HARVEST mark is the floor's ZONE glyph — where this crew's floor sits relative to
         # the food peak. A continuous number cannot wear one glyph per value, and the zone is the whole
         # of what one mark can honestly say about it; the exact percent is in the row tooltip.
+        # **IS THAT RUNG UNSTAFFED, OR LOSING GROUND? — THE MAP BADGE'S OWN TWO QUESTIONS, ASKED OF
+        # THE SAME TWO SEAMS** (`docs/plan_standing_upkeep.md` §4.6a). `BandOverlayRenderer` forks its
+        # source plate on exactly this pair and drops the percent; this row printed a confident
+        # `▦45%` whatever the staffing, so one screen carried two verdicts and the wrong one was the
+        # one with a number on it.
+        #
+        # **IT IS NOT RE-DERIVED HERE — not from the crew count, not from the percentage sitting
+        # right there.** `SourceForecast.build_is_stalled` is the ONE producer of this verdict and the
+        # map badge calls the same function on the same two inputs, so the two surfaces cannot come
+        # apart again. A build merely PARKED with its keeping covered answers `false` and keeps its
+        # number, because that number is honest.
+        var build_stalled := not building.is_empty() and SourceForecast.build_is_stalled(
+            rung_source, float(building.get("progress", 0.0)), builders)
+        # …and the hover says the same thing the face does. A tooltip still quoting `45% done` beside
+        # a `⚠` would restate the exact number the mark exists to withdraw.
+        var building_tooltip := ""
+        if not building.is_empty():
+            building_tooltip = HudWorkVocab.WORK_ROW_BUILDING_UNSTAFFED_TOOLTIP_FORMAT \
+                    % HudFormat.policy_face(String(building.get("policy", ""))) if build_stalled \
+                else HudWorkVocab.WORK_ROW_BUILDING_TOOLTIP_FORMAT % [
+                    HudFormat.policy_face(String(building.get("policy", ""))),
+                    HudFormat.progress_percent(float(building.get("progress", 0.0)))]
         var marks := FoodIcons.for_floor_zone(SourceForecast.floor_zone(floor))
         if bool(yld.get("warn", false)):
             marks += " " + HudComposeVocab.OVERHUNT_FLAG
@@ -2317,6 +2413,10 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "building_policy": String(building.get("policy", "")),
             "building_glyph": String(building.get("glyph", "")),
             "building_progress": float(building.get("progress", 0.0)),
+            # …and whether that rung is STALLED — unstaffed, or losing ground. Derived ONCE, above,
+            # off the same two `SourceForecast` seams the map badge forks on, and carried as a flag
+            # so the row builder cannot ask the question a second way (see `build_stalled`).
+            "build_stalled": build_stalled,
             "floor": floor, "improvement": improvement, "x": x, "y": y, "herd_id": herd_id,
             # **THE BAND'S BUILD QUEUE, DERIVED FROM THE ROWS IT ALREADY HAS** (§4.6b). A queue entry
             # REQUIRES a labor assignment on its source (`LaborAllocation::prune_build_queue` →
@@ -2343,9 +2443,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
                 HudFormat.floor_hint(floor, kind), String(cap.get("note", "")),
                 HudWorkVocab.under_kept_tooltip(kind) if under_kept else "",
                 "" if ready.is_empty() else HudWorkVocab.WORK_ROW_READY_TOOLTIP_FORMAT % HudFormat.policy_face(String(ready.get("policy", ""))),
-                "" if building.is_empty() else HudWorkVocab.WORK_ROW_BUILDING_TOOLTIP_FORMAT % [
-                    HudFormat.policy_face(String(building.get("policy", ""))),
-                    HudFormat.progress_percent(float(building.get("progress", 0.0)))],
+                building_tooltip,
                 HudWorkVocab.WORK_ROW_OPEN_HINT]),
             # A source wants attention when it overdraws, wastes workers, or is still unacknowledged.
             "attention": bool(yld.get("warn", false)) or note != "" or pending,

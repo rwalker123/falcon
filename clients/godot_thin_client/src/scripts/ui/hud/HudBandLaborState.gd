@@ -462,6 +462,57 @@ func record_pending_move(entity: int, x: int, y: int) -> void:
 	_pending_labor[entity] = entry
 	changed.emit(&"pending")
 
+## **DROP ONE OPTIMISTIC ENTRY THAT NEVER LEFT THE CLIENT.** The write above is made BEFORE the
+## command is handed to the transport, which is right — the card must answer the stepper on the frame
+## it was pressed — but nothing rolled it back when the send FAILED. Reported from play: an
+## `assign_labor … builders 3` that never reached the server left the Builders card showing three
+## builders the sim had never heard of, until the next turn's `reconcile_pending` quietly took them
+## away, while the build queue beside it correctly read `⚠ No builders`. One screen, two answers, and
+## the wrong one was the one with the number on it.
+##
+## **IT DROPS THAT ENTRY AND NOTHING ELSE.** A failure clears the edit that failed; a rollback that
+## emptied the whole overlay would discard the player's OTHER un-acknowledged edits on the same band —
+## a worse bug than the one it fixes, and one that passes any "the bad entry is gone" check. The
+## entity's record itself is pruned only once it is genuinely empty, so a band with a pending MOVE
+## keeps it.
+##
+## Returns whether anything was dropped, so the caller re-renders exactly when there is something to
+## re-render.
+func drop_pending_assign(entity: int, key: String) -> bool:
+	var entry: Variant = _pending_labor.get(entity, null)
+	if not (entry is Dictionary):
+		return false
+	var assigns: Variant = (entry as Dictionary).get("assign", {})
+	if not (assigns is Dictionary) or not (assigns as Dictionary).has(key):
+		return false
+	(assigns as Dictionary).erase(key)
+	_prune_pending_entity(entity, entry as Dictionary)
+	changed.emit(&"pending")
+	return true
+
+## The move twin — same failure, same rule. The move overlay is ONE slot per band rather than a keyed
+## set, so the identity is the band alone and there is nothing narrower to name.
+func drop_pending_move(entity: int) -> bool:
+	var entry: Variant = _pending_labor.get(entity, null)
+	if not (entry is Dictionary) or not (entry as Dictionary).has("move"):
+		return false
+	(entry as Dictionary).erase("move")
+	_prune_pending_entity(entity, entry as Dictionary)
+	changed.emit(&"pending")
+	return true
+
+## Forget a band's pending RECORD once it holds nothing — but only then. `reconcile_pending` walks
+## these by entity and an empty husk would be a turn's worth of no-op work; a record still holding the
+## band's other un-acknowledged edits must survive untouched.
+func _prune_pending_entity(entity: int, entry: Dictionary) -> void:
+	var assigns: Variant = entry.get("assign", {})
+	if (assigns is Dictionary) and (assigns as Dictionary).is_empty():
+		entry.erase("assign")
+	if entry.has("assign") or entry.has("move"):
+		_pending_labor[entity] = entry
+		return
+	_pending_labor.erase(entity)
+
 ## Drop pending entries the server has already processed: a snapshot whose turn is NEWER than the
 ## entry's issue turn is authoritative confirmation (and reflects any clamping). Returns true when it
 ## dropped anything, so the caller can push the pruned overlay onward.

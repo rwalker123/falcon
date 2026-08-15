@@ -3409,6 +3409,25 @@ static func build_is_losing(src: Dictionary, build_workers: int) -> bool:
     return build_pace(build_turns_remaining(src, BARE_SOURCE_PREFIX), build_workers) \
         == BUILD_PACE_LOSING
 
+## **IS THIS BUILD STALLED? — THE ONE VERDICT EVERY SURFACE THAT MARKS A BUILD WEARS A `⚠` FOR.**
+## `true` when the rung is declared-and-never-started with nobody on it, OR when the wire says its
+## meter is going backwards; `false` for a climbing build AND for one merely PARKED with its keeping
+## covered, whose number is honest and whose state is a decision rather than a failure.
+##
+## **IT EXISTS BECAUSE THE MAP AND THE WORK BOARD ANSWERED DIFFERENTLY.** The map's source badge forked
+## on this pair and dropped the percentage; `BandPanelController._build_work_row` had no such fork and
+## printed a confident `▦45%` whatever the staffing — one screen, two verdicts, and the wrong one was
+## the one with the number on it. Both surfaces call THIS now: two producers of one verdict is exactly
+## how they came apart, and the fix is one producer rather than two careful copies.
+##
+## `src` is the BARE source dict (the raw wire patch or herd) and `progress` is the meter the caller
+## has already resolved through `RungGates.rung_in_progress` — asked, not re-derived, so the plate's
+## warning and its glyph provably describe the same verb. `build_workers` is the BAND's `builders`
+## POOL, not a per-source crew (§2.5): a verb declares and names no hands.
+static func build_is_stalled(src: Dictionary, progress: float, build_workers: int) -> bool:
+    return build_is_losing(src, build_workers) \
+        or build_is_unstaffed(unstaffed_build_of(progress, build_workers))
+
 ## A source dict whose forecast keys are UNPREFIXED — a herd, or the raw wire forage patch. The same
 ## empty string `HudComposeVocab.BARE_FORECAST_PREFIX` spells for the HUD; it is restated here so the
 ## readers above can be reached from the map layer, which holds no HUD vocabulary.

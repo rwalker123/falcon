@@ -1387,10 +1387,13 @@ static func format_upkeep_mode(payload: Dictionary) -> Dictionary:
     }
 
 ## Send whatever a `format_*` builder produced, or nothing at all when it declined.
-func _send_formatted_command(formatted: Dictionary) -> void:
+##
+## **`false` MEANS THE SERVER DID NOT GET IT — declined by the builder or refused by the transport,
+## which are the same fact to a caller holding an optimistic overlay.** See `_send_runtime_command`.
+func _send_formatted_command(formatted: Dictionary) -> bool:
     if formatted.is_empty():
-        return
-    _send_runtime_command(String(formatted["line"]), String(formatted["message"]))
+        return false
+    return _send_runtime_command(String(formatted["line"]), String(formatted["message"]))
 
 func _on_hud_cancel_order(band: Dictionary, scope: String) -> void:
     _send_formatted_command(format_cancel_order(band, scope))
@@ -1398,12 +1401,23 @@ func _on_hud_cancel_order(band: Dictionary, scope: String) -> void:
 ## Early-Game Labor (slice 3b): assign/unassign working-age workers to a source or a
 ## band-wide role. workers==0 removes/zeroes the assignment; the server clamps totals
 ## to available working-age. Payload built by the HUD allocation panel / assign controls.
+##
+## **A SEND THAT DID NOT GO TAKES THE HUD'S OPTIMISTIC WRITE WITH IT.** The pending entry is recorded
+## in the HUD before the command is emitted (`Hud._emit_assign_labor`) and the outcome is only known
+## here, so the two are joined by handing the payload straight back: it carries `pending_entity`, the
+## client-local handle the overlay is filed under, and `drop_pending_assign` drops THAT entry alone.
+## Reached by `has_method` like every other HUD call from this script, so a client without the method
+## simply keeps the old behaviour rather than erroring.
 func _on_hud_assign_labor(payload: Dictionary) -> void:
-    _send_formatted_command(format_assign_labor(payload))
+    if not _send_formatted_command(format_assign_labor(payload)):
+        _hud_invoke("drop_pending_assign", [payload])
 
 ## Early-Game Labor (slice 3b): relocate the band to a destination tile picked on the map.
+## Same rollback rule as the labor path above — the destination stops being marked pending the moment
+## the command that would have caused it is known not to have gone.
 func _on_hud_move_band(payload: Dictionary) -> void:
-    _send_formatted_command(format_move_band(payload))
+    if not _send_formatted_command(format_move_band(payload)):
+        _hud_invoke("drop_pending_move", [payload])
 
 ## Scouting expedition (docs/plan_exploration_and_sites.md §2): outfit a party off a resident
 ## band and send it to a target tile. The server draws the workers + provisions and spawns the
@@ -1510,15 +1524,23 @@ func _on_hud_answer_fork(payload: Dictionary) -> void:
 ## action just taken, so the dock ignores them (`HudEventVocab.IGNORED_KINDS`) and only the
 ## Inspector's debug console keeps them. A caller whose message reports a FAULT the client acted on
 ## by itself passes `HudEventVocab.KIND_SYSTEM` instead — see `_tick_resync`.
+##
+## **IT ANSWERS WHETHER THE LINE WENT, and that answer is load-bearing for any caller holding an
+## OPTIMISTIC overlay.** It used to warn and return nothing, so a send the transport refused
+## (`Inspector.gd`'s `err != OK` branch) left the HUD's pending write standing as fact until the next
+## turn reconciled it away — a Builders card reading `3` beside a queue reading `⚠ No builders`. Every
+## caller that wrote something on the strength of this call must roll that write back on `false`; the
+## rest may ignore it exactly as before.
 func _send_runtime_command(line: String, message: String,
-        ack_kind: String = HudEventVocab.KIND_COMMAND_ECHO) -> void:
+        ack_kind: String = HudEventVocab.KIND_COMMAND_ECHO) -> bool:
     if inspector != null and inspector.has_method("send_runtime_command"):
         var result: Variant = inspector.call("send_runtime_command", line, message, ack_kind)
         if result is bool and result:
-            return
+            return true
         push_warning("Command pending or rejected: %s" % line)
     else:
         push_warning("Inspector unavailable; cannot send command: %s" % line)
+    return false
 
 ## ESC PRECEDENCE, as data. Which surface claims the key, innermost first:
 ##   (1) an open pause menu resumes;

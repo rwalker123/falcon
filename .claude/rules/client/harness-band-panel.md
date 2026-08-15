@@ -991,3 +991,65 @@ loudly refusing its own precondition rather than passing.
 **One frame added, none moved**: 73 pre-existing `band_panel_*` PNGs byte-identical to the pre-change
 baseline (captured by stashing the change and re-rendering), plus the new
 `band_panel_compose_hunt_empty`.
+
+## The build states, the rollback and the pending queue row (`docs/plan_standing_upkeep.md` §4.6a/b)
+
+Three blocks land at the end of the run, after `_render_build_queue_states`. Order is load-bearing
+here as everywhere: each restores the reference band and the herd roster on its way out, and the
+rollback block leaves the pending overlay empty.
+
+**`_render_work_build_state_states` — the WORK ROW's build states, as a SET.** ONE band, FOUR forage
+rows differing only in their meter and the wire's own countdown: climbing (`🌱45%`, `SIGNAL_DEEP`),
+declared-with-nobody-on-it (`🌱⚠`, `WARN`), losing ground (the same stalled face, from the wire's `-3`
+rather than from the staffing), and parked-with-keeping-covered (`🌱60%`, `SIGNAL_DEEP`). All four
+faces and all four inks are asserted by EQUALITY, and the faces are composed from `HudWorkVocab`'s own
+formats so the claim is the FORK and not the format.
+
+- **The SET is the claim.** A row builder that marked EVERYTHING passes the two stalled claims; one
+  that marked NOTHING passes the two healthy ones. Sabotage-verified in both directions, each failing
+  a disjoint pair.
+- **THE BAND HAS NO BUILDERS, and that is what makes four states reachable at once.** The pool is
+  BAND-level, so every row on one board is asked against one crew count — with hands on it no row
+  could be `UNSTARTED` and the states would have nowhere to differ. It is an ordinary live state
+  besides: another band's pool can be funding the same rung, which is why the map's badge sums the
+  count across bands.
+- **`_assert_work_row_and_badge_agree` is the two-surface claim, and no per-surface assertion can make
+  it** — each is perfectly self-consistent while contradicting the other. The row's face comes off the
+  RENDERED board (`HudWorkVocab.WORK_ROW_BUILD_STATE_META`, valued the face, because the three states
+  differ by one glyph and a text search would only confirm the string already assumed); the badge's
+  verdict is composed the way `BandOverlayRenderer._queue_source_badge` composes it. Its COUNTS —
+  four build rows, exactly two stalled — are what stop a hard-wired verdict agreeing with itself.
+- **`_work_row_build_faces` keys on the row's NAME label, found by `SIZE_EXPAND_FILL`.** Every other
+  slot in a work row is a fixed column, so that flag is the one structural handle on the label whose
+  text the assertion is trying to join against.
+
+**`_assert_pending_assign_rollback` — PNG-LESS, and it has to be**: a card showing three builders is a
+perfectly ordinary card. It asserts the two `has_method` names `Main` probes for (a failed probe fails
+SILENTLY, so a rename would simply stop rolling anything back), drives the REAL `_emit_assign_labor`
+for both writes so the payload under test is the one `Main` receives, then drops ONE and requires an
+unrelated pending edit on the same band to SURVIVE. **The survivor is half the claim** — a rollback
+that cleared the whole overlay passes the first half and is a worse bug. Sabotage-verified: erasing
+the entity's whole record fails exactly the survivor claim.
+
+> **What it does NOT drive is `Main`'s one-line `if not _send_formatted_command(...)`.** `Main` is a
+> scene node with a `_ready` this harness does not stand up, so the block drives everything up to and
+> including the method that handler reaches by name. The seam it cannot reach is one comparison.
+
+**`_render_pending_queue_states` — the pending queue row, NEGATIVE FIRST.** One confirmed entry and
+nothing declared (assert no row below the head position, no `○` anywhere), then the same band with a
+build declared through the real `record_pending_assign`, then the WIDE dock for the height budget,
+then a turn advance that reconciles the overlay away and leaves the row CONFIRMED. Four claims on the
+pending row — it sorts LAST, it wears `○` and states no date, it has no `▸`, and its `✕` still emits
+`unqueue 0 72 18` — asserted together, since any one alone is satisfied by a row that got the other
+three wrong. Sabotage-verified by admitting every un-positioned row: the negative fails in two states
+naming the phantom rows it found.
+
+- **`_declare_pending_build` calls `_hud._bandpanel.rerender()`, NOT `Hud._after_pending_change`, and
+  that is a HARNESS fact rather than a client one.** That method also re-renders the SELECTION card,
+  whose occupant this harness stages separately — a `_band_fixture()`-shaped Band 2 pushed long before
+  this block — so the re-render replaces the panel's subject with the OTHER fixture of the same band
+  and two of the queued rows vanish. A live client cannot reach that: both dicts come from one
+  snapshot.
+- **The wide dock reads `Zone_work` at 252px of a 300px box.** `Zone_band` at 749/300 and
+  `Zone_parties` at 300/300 are the same numbers `band_panel_build_queue_wide` prints and are
+  structural (the board is `EXPAND_FILL` and pages).

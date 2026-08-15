@@ -2185,6 +2185,68 @@ BUILD QUEUE                          3 builders · Tillage kit
 - **DRAG-TO-REORDER IS SLICE 7's.** `build_order` on the command line covers it meanwhile, which is
   what the overflow row's tooltip says.
 
+### A JUST-DECLARED BUILD IS IN THE QUEUE THE MOMENT IT IS DECLARED
+
+`buildQueuePosition` is a WIRE field, so an entry the player declared this turn has none until the sim
+resolves the turn — and the block, derived from that field alone, stayed empty until the next tick.
+Reported from play as *"it is very confusing if it doesn't show up the moment I create it."*
+
+The optimistic overlay already carries the declaration (`record_pending_assign` takes the
+`improvement`, and `effective_worker_map` merges it), so `_build_queue_models` admits a **second**
+set: a model that is `pending`, carries a live `building_glyph`, and has NO wire position.
+
+- **PENDING ROWS SORT TO THE TAIL, after every confirmed entry.** The sim APPENDS, so the end of the
+  list is the only honest place for an entry with no position; interleaving would state a fact the sim
+  has not made. Within the tail they hold DECLARATION ORDER, read off `pending_assigns_for`'s own
+  insertion order, with the same `key` tiebreak the confirmed half uses so the whole list stays a
+  TOTAL order under Godot's unstable sort.
+- **A PENDING ROW STATES NO DATE.** The countdown is CHAINED down the queue, so there is no answer for
+  an entry that is not in the chain and any number there would be invented. The date slot carries the
+  client's ONE spelling of pending instead — `○` in `HudStyle.WARN`,
+  `FoodIcons.for_status(FoodIcons.STATUS_PENDING)`, the same mark the work rows' status clause and the
+  map's dashed-amber overlays wear — and the row tooltip carries that status's own words
+  (`HudFormat.status_tooltip_line`), which is where a one-character column has to say what it means.
+- **IT GETS NO HEAD MARKER, even when the queue is otherwise empty.** The `▸` is the entry the
+  builders pool is standing on, which the sim decides; a `▸` on an unplaced entry promises funding
+  nobody has committed. `_build_queue_row_is_pending` is the ONE derivation of "the wire has not
+  placed this" — a real position is 0-based, so *below the head* is exactly *no position* — and the
+  block's filter, the marker's suppression and the date all read it.
+- **THE `✕` STILL WORKS ON IT, and needs nothing of its own.** `unqueue` names a SOURCE, so
+  withdrawing a declaration made a second ago is the same command as withdrawing one placed ten turns
+  back — and unticking a build you just made is the most likely thing a player wants from this row.
+- **IT COSTS A FULL ROW**, so it goes into the SAME list `build_queue_block_height` counts and
+  `_work_board_capacity` subtracts. There is exactly one expression for the drawn height and the
+  reserved height (below), and a pending row drawn outside it would slice the board silently.
+- **THE RUNG IN FLIGHT IS PART OF THE TEST, not just the declaration.** `record_pending_assign` fires
+  on EVERY worker step and carries the improvement forward, so `pending` alone would keep a row here
+  after its build completed; `building_glyph` is `RungGates.rung_in_progress`'s already-resolved
+  answer, which goes empty the moment the meter does.
+- **THEY RECONCILE AWAY FOR FREE** — `reconcile_pending` drops the overlay entry on the first snapshot
+  with a newer turn, by which time the wire carries a real position, so the row becomes CONFIRMED
+  rather than disappearing. Verified rather than assumed: `_render_pending_queue_states`' fourth state
+  advances the turn, re-publishes the patch at position 1 and asserts the block still holds two rows
+  with no `○` among them.
+
+**Frames:** `band_panel_build_queue_pending` (one confirmed entry plus one declared this turn, in the
+tall LEFT dock) and `band_panel_build_queue_pending_wide` (the BOTTOM dock, so the pending row is in
+the HEIGHT BUDGET and not only in the arithmetic — `Zone_work` reads **252px of a 300px box** with the
+board still drawing four rows). **The PAIRED NEGATIVE runs FIRST**, on the same band with nothing
+declared: without it every claim above passes on a row drawn unconditionally, and the confirmed-only
+queue is the state the game spends most of its time in.
+
+### THE WORK ROW HAS THE SAME THREE-WAY ANSWER THE MAP BADGE HAS
+
+A build row's rung slot renders the verb glyph plus `⚠` in `HudStyle.WARN`, **percentage dropped**,
+when `SourceForecast.build_is_stalled` says the build is unstaffed or losing ground — the map badge's
+own fork, off the same single producer, because the board printing a confident `▦45%` beside a map
+plate already warning was reported from play. A build merely PARKED with its keeping covered keeps its
+number and its `SIGNAL_DEEP` ink. The verdict, the twin format constants and the frame set are
+specified in `labor-ui.md` → "A BUILD THAT IS NOT MOVING DOES NOT GET TO WEAR A PERCENT".
+
+**The BAND's builders pool is resolved ONCE per render** in `_work_source_models`, so every row on one
+board is judged against one crew count, and the model carries the answer as `build_stalled` rather
+than the row builder asking the question a second way.
+
 ### THE BLOCK IS PAID FOR IN `_work_board_capacity`, OR IT SLICES THE BOARD
 
 The work zone `clip_contents`, so a block that draws without being subtracted from the board's room

@@ -690,6 +690,34 @@ const WORK_ROW_BUILDING_FORMAT := "%s%d%%"
 
 const WORK_ROW_BUILDING_TOOLTIP_FORMAT := "%s in progress — %d%% done."
 
+## …and the SAME rung under way while nobody is raising it, or while it is losing ground: the verb
+## glyph and a `⚠`, with **the percentage dropped**. A percent on a build nobody is staffing implies
+## progress that is not happening, and a percent that is falling is the same lie one state over — so
+## the slot still says WHICH rung is promised here and stops saying it is being worked.
+##
+## **IT IS THE MAP BADGE'S FACE, RESTATED RATHER THAN SHARED.** `BandOverlayRenderer`'s
+## `BADGE_UNSTAFFED_FORMAT` is the identical `%s⚠` plus the trailing space its plate needs for the
+## crew count that follows it, which this row's own reserved slot does not. A HUD controller must not
+## import a MAP renderer, so the two faces are deliberate twins — but the VERDICT behind them is
+## genuinely one function: both fork on `SourceForecast.build_is_stalled`, neither re-derives it from
+## a crew count or a percentage, and that is what stops the map showing an alert the WORK tab does not.
+##
+## **A PARKED BUILD IS NOT THIS.** `BUILD_PACE_HELD` — a `-2` with nobody on it and its keeping
+## covered — keeps its number and its ordinary ink, because that number is honest and the state is a
+## decision rather than a failure (`labor-ui.md` → "THE BUILD LINE'S STATE IS ITS COLOUR").
+const WORK_ROW_BUILDING_UNSTAFFED_FORMAT := "%s⚠"
+
+## …and its tooltip, which drops the percent for the reason the face does and names both remedies —
+## the two ways a meter comes to a stop have two different fixes, and the row cannot tell which
+## without stating a number it has just refused to state.
+const WORK_ROW_BUILDING_UNSTAFFED_TOOLTIP_FORMAT := "%s in progress — it is NOT advancing. Staff the band's Builders role, or cover this source's keeping."
+
+## **THE ROW'S RUNG-AXIS SLOT, VALUED THE FACE IT RENDERED.** Every claim about that slot is a STRING
+## composed at render time, so a harness that found it by its text would only confirm the string it
+## had already assumed — and the three build states differ by one glyph at a thumbnail's size. The
+## meta is what lets an assertion find the Label first and read it second.
+const WORK_ROW_BUILD_STATE_META := "work_row_build_state"
+
 const WORK_CHIP_TOOLTIP := "Filter the board to these sources."
 
 const WORK_SOURCES_FORMAT := "%d sources"
@@ -944,6 +972,41 @@ const BUILD_QUEUE_UNQUEUE_TOOLTIP := "Withdraw this build. The work already bank
 
 ## The row's own tooltip: the job face and its date in full, since both columns clip.
 const BUILD_QUEUE_ROW_TOOLTIP_FORMAT := "%s — %s"
+
+# ---- A DECLARATION THE WIRE HAS NOT PLACED YET ---------------------------------------------------
+#
+# `buildQueuePosition` is a WIRE field, so an entry the player declared this turn has no position
+# until the sim resolves the turn — and the block, derived from that field alone, stayed empty until
+# the next tick. Reported from play as *"it is very confusing if it doesn't show up the moment I
+# create it."* The optimistic overlay already carries the declaration (`record_pending_assign` takes
+# the `improvement`, and `effective_worker_map` merges it), so a source whose EFFECTIVE improvement
+# is a live verb while its WIRE position is `NOT_IN_ANY_BUILD_QUEUE` is exactly a pending entry.
+#
+# **THREE THINGS IT DOES NOT DO, each because it would state a fact the sim has not made:**
+#   • it does not INTERLEAVE — pending rows sort to the TAIL, after every confirmed entry, because
+#     the sim APPENDS and the tail is the only honest position for an entry with none;
+#   • it states NO DATE — there is no chained answer for an entry that is not in the chain, and a
+#     number there would be invented;
+#   • it wears NO HEAD MARKER, even when the queue is otherwise empty — the head is the entry the
+#     pool is actually funding, which the sim decides.
+#
+# **ITS `✕` STILL WORKS**, and needs nothing of its own: `unqueue` names a SOURCE, so withdrawing a
+# declaration made a second ago is the same command as withdrawing one placed ten turns back — which
+# is also the most likely thing a player wants from this row.
+#
+# **IT COSTS A FULL ROW**, so it goes into the SAME list `build_queue_block_height` counts and
+# `_work_board_capacity` subtracts. There is exactly one expression for the drawn height and the
+# reserved height, and a pending row that was drawn outside it would slice the board silently.
+#
+# **IT RECONCILES AWAY FOR FREE**: `reconcile_pending` drops the overlay entry on the first snapshot
+# with a newer turn, by which time the wire carries a real position — so nothing has to remove it.
+
+## The pending row's date slot carries the CLIENT'S ONE SPELLING OF PENDING instead of a countdown —
+## `FoodIcons.for_status(FoodIcons.STATUS_PENDING)`, the `○` in amber that the work rows' status
+## clause and the map's dashed-amber overlays already use. Named here only so the rule is stated
+## where the block is; the GLYPH itself is never re-typed, and the tooltip is
+## `HudFormat.status_tooltip_line`'s own words ("Pending — starts when you advance the turn").
+const BUILD_QUEUE_PENDING_STATUS := FoodIcons.STATUS_PENDING
 
 ## **THE BLOCK'S STABLE HANDLES.** Every claim this block owes is a STRING composed at render time —
 ## the head marker, the job face, the date — so a harness that found them by their text would only
