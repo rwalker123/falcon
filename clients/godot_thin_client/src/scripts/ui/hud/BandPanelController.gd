@@ -2788,13 +2788,22 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
     close.pressed.connect(func() -> void: _toggle_work_inspector(String(model.get("key", ""))))
     head.add_child(close)
     col.add_child(head)
-    col.add_child(HudWidgets.build_status_part(_work_inspector_sentence(model), HudStyle.INK_DIM))
+    # **EVERY LINE IN THIS STRIP ELIDES, and that is a WIDTH decision the zone forces.** The zone's
+    # box is reserved (`PANEL_WIDTH` less chrome, 356px on a side dock) and its content is anchored
+    # full-rect into a host that clips — so a line reporting its whole text as a minimum width clamps
+    # the entire tab's column up to that width, and the POOLS readout, the Builders card's `+`, the
+    # BUILD QUEUE head's kit name and every board row's stepper are sliced off the right edge by a
+    # sentence none of them can see. `SourceForecast.yield_components` states EVERY account a source
+    # pays, so the sentence's length is a function of the ROSTER rather than of anything this panel
+    # controls: a deer paying meat, hide and bone measures 358px against that 356px box.
+    # `band_panel_work_inspector_width` is the frame, and `_assert_zone_content_width_fits` the claim.
+    col.add_child(HudWidgets.build_status_part(_work_inspector_sentence(model), HudStyle.INK_DIM, true))
     if bool(model.get("warn", false)):
-        col.add_child(HudWidgets.build_status_part(HudWorkVocab.WORK_INSPECT_OVERDRAW_LINE, HudStyle.WARN))
+        col.add_child(HudWidgets.build_status_part(HudWorkVocab.WORK_INSPECT_OVERDRAW_LINE, HudStyle.WARN, true))
     if String(model.get("note", "")) != "":
-        col.add_child(HudWidgets.build_status_part(String(model.get("note", "")), HudStyle.WARN))
+        col.add_child(HudWidgets.build_status_part(String(model.get("note", "")), HudStyle.WARN, true))
     if String(model.get("muted_note", "")) != "":
-        col.add_child(HudWidgets.build_status_part(String(model.get("muted_note", "")), HudStyle.INK_FAINT))
+        col.add_child(HudWidgets.build_status_part(String(model.get("muted_note", "")), HudStyle.INK_FAINT, true))
     var schedule: PackedFloat32Array = model.get("schedule", PackedFloat32Array())
     if ArrivalStrip.has_gap(schedule):
         var arrivals := ArrivalStrip.new()
@@ -3625,8 +3634,12 @@ func _build_parties_inspector(exp: Dictionary) -> PanelContainer:
     col.add_child(head)
     # The strip's `Collapse:` row is a forecast QUERY now, and this controller is what may ask one —
     # it holds the seam and it re-renders on `answered`, so the reply lands back here.
+    # It elides for the WORK strip's reason, one zone over: `Carried:` carries a term per material
+    # batch and the `Collapse:` verdict is a whole sentence, so this strip's longest line is a
+    # function of what the party is hauling — and a line wider than the reserved zone would take the
+    # tab's own controls off its right edge rather than its own tail. See `build_status_part`.
     for line in _banddetail.expedition_summary_lines(exp, null, launched_party_denial_view(exp)):
-        col.add_child(HudWidgets.build_status_part(line, HudStyle.INK_DIM))
+        col.add_child(HudWidgets.build_status_part(line, HudStyle.INK_DIM, true))
     var links := HBoxContainer.new()
     links.add_theme_constant_override("separation", HudWorkVocab.COMPOSITION_KEY_SEPARATION)
     links.add_child(HudWidgets.build_inline_link(HudComposeVocab.PARTY_INSPECT_JUMP, HudStyle.INK, func() -> void:

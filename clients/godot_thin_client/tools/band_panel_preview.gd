@@ -2238,6 +2238,8 @@ func _ready() -> void:
 
 	await _render_repair_and_declare_states()
 
+	await _render_work_inspector_width_states()
+
 	_assert_pending_assign_rollback()
 
 	await _assert_action_registry()
@@ -6202,9 +6204,13 @@ func _assert_zone_content_fits() -> void:
 		_collect_zone_content_shortfall(host, host, failures)
 	if failures.is_empty():
 		print("band_panel_preview: assert OK — every zone's content fits its zone box (%s)" % _current_state)
-		return
-	for failure in failures:
-		_fail("%s — %s" % [_current_state, failure])
+	else:
+		for failure in failures:
+			_fail("%s — %s" % [_current_state, failure])
+	# The WIDTH twin rides every call site of the HEIGHT one rather than being asked at a handful of
+	# states: a zone that clips clips on both axes, and the defect this caught shipped precisely
+	# because no state anywhere measured the second one.
+	_assert_zone_content_width_fits()
 
 ## Walk a zone host looking for content the BOX cannot hold. The zone content roots are plain
 ## `Control` wrappers (`HudWidgets.wrap_zone`) that report NO minimum size, so the measurable thing is the
@@ -6227,6 +6233,105 @@ func _collect_zone_content_shortfall(node: Node, host: Control, failures: Array[
 		if top + needed > box + ZONE_BOUNDS_TOLERANCE:
 			failures.append("zone %s: %s (%s) needs %.0fpx from y=%.0f but the box is only %.0fpx (short by %.0f)" % [
 				host.name, content.name, content.get_class(), needed, top, box, top + needed - box])
+
+## GUARD: nothing a zone renders may run past the zone's RIGHT edge either — the WIDTH twin of
+## `_assert_zone_content_fits`, and a separate defect rather than the same one on another axis.
+##
+## **A VERTICAL DOCK RESERVES ITS WIDTH**, so the narrow shell's one zone is a fixed
+## `PANEL_WIDTH − PANEL_CHROME_H` box and content wider than it has nowhere to go. Godot clamps a
+## `Control`'s size UP to its combined minimum, so the zone content — anchored full-rect into a host
+## that CLIPS — is laid out at its own minimum width rather than at the box's, and every row inside it
+## is then laid out that wide. **The clip therefore lands on the RIGHT END OF EVERY ROW AT ONCE**: a
+## head's right-justified readout, a stepper's `+`, a queue row's `✕`. One over-wide row makes every
+## other row lose its trailing control, which is why this is asked of the whole zone and not of the
+## row that happens to be widest.
+##
+## Reported from play as *"the band panel is still not wide enough when something is selected"* — the
+## work inspector strip being the one thing a selection adds.
+func _assert_zone_content_width_fits() -> void:
+	var failures: Array[String] = []
+	var widest := ""
+	for host_variant in _find_zone_hosts(_panel):
+		var host: Control = host_variant
+		_collect_zone_content_overrun(host, host, failures)
+		# **THE MARGIN IS PRINTED, not merely asserted** — the `band_panel_vitals_worst_case` rule. A
+		# zone one pixel inside its box and one with 200px to spare are the same green line otherwise,
+		# and this axis has almost no slack: EVERY Work-tab state reads **354 of a 356px box**, the
+		# POOLS block's three cards abreast being what asks for it, so two pixels is the whole margin
+		# a new control in that zone has to spend.
+		_widest_name = ""
+		var reach := _zone_content_width(host, host)
+		if reach > 0.0:
+			widest += " %s %.0f/%.0f [%s]" % [host.name, reach, host.size.x, _widest_name]
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — every zone's content fits its zone WIDTH (%s) —%s" % [
+			_current_state, widest])
+		return
+	for failure in failures:
+		_fail("%s — %s" % [_current_state, failure])
+
+## The control `_zone_content_width` last measured, for the report beside its number.
+var _widest_name := ""
+
+## What this zone's CONTENT COLUMN asks for in width — the number the box is spent against, and the
+## width twin of `_zone_content_extent`.
+##
+## **IT IS THE COLUMN'S OWN COMBINED MINIMUM, not the furthest-right control.** Every zone's head ends
+## in a right-justified control, so "how far right does anything reach" answers the box width back at
+## itself on every state and says nothing. A `BoxContainer` propagates its children's minimums — the
+## max of them down a column, the sum of them across a row — so the column's minimum IS the widest
+## single ask in the zone, and comparing it against the box is the whole question.
+##
+## It names the control it measured on `_widest_name` — an out-parameter rather than a return pair,
+## since the reader is one `print` and the walk is a recursion with an early return.
+func _zone_content_width(node: Node, host: Control) -> float:
+	for child in node.get_children():
+		if not (child is Control):
+			continue
+		var content: Control = child
+		if not content.visible:
+			continue
+		var needed := content.get_combined_minimum_size().x
+		if needed > 0.0:
+			_widest_name = "%s %s" % [content.name, content.get_class()]
+			return needed
+		# `HudWidgets.wrap_zone` produces plain `Control` wrappers that report no minimum at all, so
+		# the measurable column is one or more levels down — the `_collect_zone_content_shortfall`
+		# recursion, for the same reason.
+		var deeper := _zone_content_width(content, host)
+		if deeper > 0.0:
+			return deeper
+	return 0.0
+
+## Walk a zone host looking for the control that is ASKING for the width, and answer whether anything
+## beneath this node overran.
+##
+## **IT REPORTS THE DEEPEST OFFENDER, which is the opposite of the height walk's rule.** A column's
+## own minimum width is the MAX of its children's, so the outermost container always overruns too and
+## naming it says only "something in this zone is too wide". The recursion therefore descends first
+## and a node reports itself only when nothing below it did — so a row whose CHILDREN each fit while
+## their sum does not is named as the row, which is the answer a fix can act on.
+func _collect_zone_content_overrun(node: Node, host: Control, failures: Array[String]) -> bool:
+	var overran := false
+	for child in node.get_children():
+		if not (child is Control):
+			continue
+		var content: Control = child
+		if not content.visible:
+			continue
+		if _collect_zone_content_overrun(content, host, failures):
+			overran = true
+			continue
+		var needed := content.get_combined_minimum_size().x
+		if needed <= 0.0:
+			continue
+		var left := content.global_position.x - host.global_position.x
+		var box := host.size.x
+		if left + needed > box + ZONE_BOUNDS_TOLERANCE:
+			failures.append("zone %s: %s (%s) needs %.0fpx from x=%.0f but the box is only %.0fpx wide (over by %.0f)" % [
+				host.name, content.name, content.get_class(), needed, left, box, left + needed - box])
+			overran = true
+	return overran
 
 ## GUARD: nothing a zone renders may fall outside the zone rect it was given. Checked RECURSIVELY —
 ## the top-level content is anchored full-rect and so always "fits", while the thing that actually
@@ -13201,3 +13306,89 @@ func _assert_queue_row_states_the_price(where: String) -> void:
 	_assert_band_panel("%s: the queue row's hover states the job's full price — \"%s\" (got \"%s\")"
 			% [where, wanted, rows[0].tooltip_text],
 		wanted != "" and rows[0].tooltip_text.contains(wanted))
+
+# ---- THE WORK TAB'S WIDTH, WITH A ROW SELECTED ------------------------------------------------
+#
+# Reported from play: *"the band panel is still not wide enough when something is selected."* A LEFT
+# dock in the narrow shell, Work tab, one row open — and the panel's whole RIGHT EDGE sliced, ~20px
+# of it, taking the POOLS readout's last word, the Builders card's `+`, the BUILD QUEUE head's kit
+# name, the queue row's `✕` and EVERY work row's `+` stepper with it.
+#
+# **ONE control caused all of it.** The zone content is anchored full-rect into a host that CLIPS,
+# and Godot clamps a `Control`'s size UP to its combined minimum — so a single line whose minimum
+# exceeds the box widens the whole column, and every row in the tab is then laid out that wide and
+# loses its trailing control to the clip. The strip's own prose is where such a line comes from: it
+# is a bare `Label` at one line, and `SourceForecast.yield_components` states EVERY material a source
+# pays, so a quarry paying meat and two materials writes a sentence half again as long as a forage
+# patch's.
+#
+# **The state is a LEFT dock deliberately** — that is the shipped default edge and the narrowest box
+# the zone is ever given. The same sentence on a bottom dock has 789px to sit in and says nothing.
+
+## The two materials the reproduction's quarry pays, beside its meat. **TWO, not one**: the existing
+## `band_panel_work_trade_inspector` already opens a strip on a one-material row and its sentence fits
+## with room to spare, so a single-material fixture asserts the width claim vacuously. A deer paying
+## hide and bone is an ordinary roster animal, not a contrived worst case.
+const WIDE_SENTENCE_MATERIALS := [
+	{"material_id": "hide", "amount": 0.22},
+	{"material_id": "bone", "amount": 0.15},
+]
+## The quarry the strip is opened on — the shared deer, so the row also pays FOOD and the sentence
+## carries every account at once, which is the whole point of it.
+const WIDE_SENTENCE_HERD_ID := "game_deer_07"
+
+## A band whose deer pays meat AND two materials, so its work inspector's one-line sentence states
+## every account at once. Everything else is `_concerning_food_band_fixture`'s, which already gives
+## the tab a POOLS block, a work board and the chips above it.
+func _wide_sentence_band_fixture() -> Dictionary:
+	var band := _concerning_food_band_fixture()
+	band["labor_assignments"] = [
+		{"kind": "forage", "workers": 3, "target_x": 71, "target_y": 18,
+			"actual_yield": 0.15, "sustainable_yield": 0.15},
+		{"kind": "hunt", "workers": 2, "fauna_id": WIDE_SENTENCE_HERD_ID, "floor": 0.5,
+			"target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20,
+			"realized_yield": 0.46,
+			"material_yield": WIDE_SENTENCE_MATERIALS.duplicate(true)},
+		{"kind": "scout", "workers": 2},
+	]
+	return band
+
+func _render_work_inspector_width_states() -> void:
+	await _pin_canvas(PREVIEW_SIZE)
+	_push_bands([_wide_sentence_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	_open_work_inspector_for_herd(WIDE_SENTENCE_HERD_ID)
+	await _settle()
+	await _save("band_panel_work_inspector_width")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_report_zone_content_extent("band_panel_work_inspector_width")
+	# **THE PRECONDITIONS, without which the width claim above is a claim about an ordinary tab.** The
+	# shell has to be the narrow one (a wide shell hands the zone twice the box), a strip has to be
+	# open, and its sentence has to be the long one — a fixture whose materials never reached the
+	# model would render a perfectly short line and pass.
+	_assert_shell_is_wide(false, "band_panel_work_inspector_width")
+	_assert_band_panel("band_panel_work_inspector_width: a work inspector strip really is open",
+		_find_meta_control(_panel, HudWorkVocab.WORK_INSPECTOR_META) != null)
+	_assert_work_inspector_sentence_states_every_account("band_panel_work_inspector_width")
+	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
+	_push_bands([_band_fixture()])
+	await _settle()
+
+## GUARD: the open strip's sentence really names both materials — the fixture claim beneath the width
+## one. Asked of the RENDERED strip rather than of `_work_inspector_sentence`, because a builder that
+## composed the line correctly and mounted something else would satisfy a producer-side check.
+func _assert_work_inspector_sentence_states_every_account(state_name: String) -> void:
+	var strip := _find_meta_control(_panel, HudWorkVocab.WORK_INSPECTOR_META)
+	if strip == null:
+		_fail("%s — no work inspector strip to read" % state_name)
+		return
+	var missing: Array[String] = []
+	for row in WIDE_SENTENCE_MATERIALS:
+		var material := String((row as Dictionary).get("material_id", ""))
+		if not _has_label_containing(strip, material):
+			missing.append(material)
+	_assert_band_panel("%s: the strip's sentence states every account it pays (missing %s)"
+		% [state_name, missing], missing.is_empty())

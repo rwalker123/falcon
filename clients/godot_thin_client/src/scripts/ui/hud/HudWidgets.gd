@@ -191,11 +191,39 @@ static func build_row_note_label(text: String, color: Color, row_tooltip: String
 
 ## A secondary status part (line 2 of the two-line form): rendered a touch smaller
 ## (`HudWorkVocab.ALLOC_SECTION_FONT_SIZE`) than the title.
-static func build_status_part(text: String, color: Color) -> Label:
+##
+## **`elide` IS FOR A HOST WHOSE WIDTH IS RESERVED RATHER THAN EARNED**, and it is the fix for a
+## defect that read as the whole panel being too narrow. A `Label` with autowrap off reports its
+## WHOLE text as its minimum width, and a zone host's content is anchored full-rect into a box that
+## `clip_contents` — so in a fixed-width zone one long line clamps the entire content column up to
+## its own width, and every row in that zone is then laid out past the box and loses its trailing
+## control to the clip. Measured on `band_panel_work_inspector_width`: a work inspector sentence
+## naming meat and two materials asks **358px of a 356px box**, and the 2px it is over cost the POOLS
+## readout its last word, the Builders card its `+`, and every board row its stepper — 14px off the
+## right edge of the tab, none of it in the strip that caused it.
+##
+## `TextServer.OVERRUN_TRIM_ELLIPSIS` drops the reported minimum to one pixel AND marks the cut with
+## an `…`, which is why it is the mark rather than `clip_text` — that one cuts mid-word with nothing
+## to say it did, and reads as a broken label rather than a shortened one (the trade manifest row's
+## rule, `band-city-panel.md`). The full text rides the tooltip through `set_label_tooltip`, since a
+## `Label` defaults to `MOUSE_FILTER_IGNORE` and a bare `tooltip_text` on one is a silent no-op.
+##
+## **IT IS NOT THE DEFAULT, and the hosts are why.** The other callers mount these parts in an
+## `HFlowContainer` that WRAPS between parts, inside a surface with width to spare; eliding there
+## would shorten prose that fits today. A caller passes `true` when its host cannot grow.
+##
+## **AUTOWRAP IS THE WRONG TOOL HERE and is not an alternative.** Both inspector strips reserve their
+## height as an exact number of ONE-line parts (`HudWorkVocab.WORK_INSPECTOR_NOTE_LINE_HEIGHT`), and
+## the zone clips vertically too — so a line that wrapped would take its second row off the bottom of
+## the board, trading a width overflow for a height one.
+static func build_status_part(text: String, color: Color, elide: bool = false) -> Label:
     var label := Label.new()
     label.text = text
     label.add_theme_color_override("font_color", color)
     label.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
+    if elide:
+        label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+        set_label_tooltip(label, text)
     return label
 
 ## THE SPECIES / SITE MARK ON A TEXT ROW — bundled art where the client has it, the emoji where it
